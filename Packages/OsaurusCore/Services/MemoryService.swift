@@ -7,65 +7,69 @@
 //
 
 import Foundation
+import os
 
 public actor MemoryService {
     public static let shared = MemoryService()
 
     private let db = MemoryDatabase.shared
 
+    nonisolated(unsafe) private static let iso8601Formatter: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        return f
+    }()
+
     private init() {}
 
-    // MARK: - Path 1: Immediate Signal Processing
+    // MARK: - Record Conversation Turn
 
-    public func processImmediateSignals(
-        signals: [SignalType],
+    /// Stores a conversation turn and immediately extracts memories, profile facts, and graph data.
+    /// The turn is also persisted as a pending signal so post-activity processing can generate
+    /// a conversation summary once the user goes idle.
+    public func recordConversationTurn(
         userMessage: String,
         assistantMessage: String?,
         agentId: String,
         conversationId: String
     ) async {
+        do {
+            try db.insertPendingSignal(
+                PendingSignal(
+                    agentId: agentId,
+                    conversationId: conversationId,
+                    signalType: "conversation",
+                    userMessage: userMessage,
+                    assistantMessage: assistantMessage
+                )
+            )
+        } catch {
+            MemoryLogger.service.error("Failed to store conversation turn: \(error)")
+        }
+
         let config = await MainActor.run { MemoryConfigurationStore.load() }
         guard config.enabled else { return }
 
-        let signalNames = signals.map(\.rawValue).joined(separator: ", ")
-        print(
-            "[Memory] Immediate extraction starting — signals: [\(signalNames)], agent: \(agentId), model: \(config.coreModelIdentifier)"
-        )
-
         let startTime = Date()
-
-        for signal in signals {
-            do {
-                try db.insertPendingSignal(
-                    PendingSignal(
-                        agentId: agentId,
-                        conversationId: conversationId,
-                        signalType: signal.rawValue,
-                        userMessage: userMessage,
-                        assistantMessage: assistantMessage
-                    )
-                )
-            } catch {
-                print("[Memory] Failed to insert pending signal: \(error)")
-            }
+        let existingEntries: [MemoryEntry]
+        do {
+            existingEntries = try db.loadActiveEntries(agentId: agentId)
+        } catch {
+            MemoryLogger.service.error("Failed to load existing entries for agent \(agentId): \(error)")
+            existingEntries = []
         }
-
-        let existingEntries = (try? db.loadActiveEntries(agentId: agentId)) ?? []
 
         let prompt = buildExtractionPrompt(
             userMessage: userMessage,
             assistantMessage: assistantMessage,
-            signals: signals,
-            agentId: agentId,
             existingEntries: existingEntries
         )
 
         do {
             let response = try await callCoreModel(prompt: prompt, systemPrompt: extractionSystemPrompt, config: config)
-            print("[Memory] Core model responded (\(response.count) chars)")
 
-            let entries = parseExtractionResponse(
-                response,
+            let parsed = parseResponse(response)
+            let entries = buildMemoryEntries(
+                from: parsed.entries,
                 agentId: agentId,
                 conversationId: conversationId,
                 model: config.coreModelIdentifier
@@ -77,37 +81,38 @@ public actor MemoryService {
                 config: config
             )
 
-            let profileFacts = parseProfileContributions(response)
             insertProfileFacts(
-                profileFacts,
+                parsed.profileFacts,
                 agentId: agentId,
                 conversationId: conversationId,
                 model: config.coreModelIdentifier
             )
-
-            let graphData = parseGraphData(response)
-            insertGraphData(graphData, model: config.coreModelIdentifier)
+            insertGraphData(parsed.graph, model: config.coreModelIdentifier)
 
             let durationMs = Int(Date().timeIntervalSince(startTime) * 1000)
-            try? db.insertProcessingLog(
+            logProcessing(
                 agentId: agentId,
-                taskType: "immediate_extraction",
+                taskType: "turn_extraction",
                 model: config.coreModelIdentifier,
                 status: "success",
-                inputTokens: prompt.count / 4,
-                outputTokens: response.count / 4,
+                inputTokens: prompt.count / MemoryConfiguration.charsPerToken,
+                outputTokens: response.count / MemoryConfiguration.charsPerToken,
                 durationMs: durationMs
             )
-            print(
-                "[Memory] Immediate extraction completed in \(durationMs)ms — \(entries.count) entries (kept: \(verifyResult.kept), skipped: \(verifyResult.skipped), superseded: \(verifyResult.superseded)), \(profileFacts.count) profile facts"
+            MemoryLogger.service.debug(
+                "Turn extraction completed in \(durationMs)ms — \(entries.count) entries (kept: \(verifyResult.kept), skipped: \(verifyResult.skipped), superseded: \(verifyResult.superseded)), \(parsed.profileFacts.count) profile facts"
             )
 
-            try? await checkProfileRegeneration(config: config)
+            do {
+                try await checkProfileRegeneration(config: config)
+            } catch {
+                MemoryLogger.service.warning("Profile regeneration check failed: \(error)")
+            }
         } catch {
-            print("[Memory] Immediate extraction failed: \(error)")
-            try? db.insertProcessingLog(
+            MemoryLogger.service.error("Turn extraction failed: \(error)")
+            logProcessing(
                 agentId: agentId,
-                taskType: "immediate_extraction",
+                taskType: "turn_extraction",
                 model: config.coreModelIdentifier,
                 status: "error",
                 details: error.localizedDescription
@@ -121,7 +126,9 @@ public actor MemoryService {
         let config = await MainActor.run { MemoryConfigurationStore.load() }
         guard config.enabled else { return }
 
-        print("[Memory] Post-activity processing starting for agent: \(agentId), model: \(config.coreModelIdentifier)")
+        MemoryLogger.service.debug(
+            "Post-activity processing starting for agent: \(agentId), model: \(config.coreModelIdentifier)"
+        )
         let startTime = Date()
 
         do {
@@ -129,13 +136,15 @@ public actor MemoryService {
 
             let pendingSignals = try db.loadPendingSignals(agentId: agentId)
             let existingEntries = try db.loadActiveEntries(agentId: agentId)
-            print(
-                "[Memory] Post-activity: \(pendingSignals.count) pending signals, \(existingEntries.count) existing entries"
+            MemoryLogger.service.info(
+                "Post-activity: \(pendingSignals.count) pending signals, \(existingEntries.count) existing entries"
             )
 
             guard !pendingSignals.isEmpty else {
-                print("[Memory] Post-activity: no pending signals, skipping")
-                try? db.markAgentProcessing(agentId: agentId, status: "idle")
+                MemoryLogger.service.debug("Post-activity: no pending signals, skipping")
+                do { try db.markAgentProcessing(agentId: agentId, status: "idle") } catch {
+                    MemoryLogger.service.warning("Failed to mark agent idle: \(error)")
+                }
                 return
             }
 
@@ -146,10 +155,11 @@ public actor MemoryService {
             )
 
             let response = try await callCoreModel(prompt: prompt, systemPrompt: extractionSystemPrompt, config: config)
-            print("[Memory] Post-activity: core model responded (\(response.count) chars)")
+            MemoryLogger.service.info("Post-activity: core model responded (\(response.count) chars)")
 
-            let extracted = parseExtractionResponse(
-                response,
+            let parsed = parseResponse(response)
+            let extracted = buildMemoryEntries(
+                from: parsed.entries,
                 agentId: agentId,
                 conversationId: pendingSignals.first?.conversationId ?? "",
                 model: config.coreModelIdentifier
@@ -161,16 +171,17 @@ public actor MemoryService {
                 config: config
             )
 
-            let profileFacts = parseProfileContributions(response)
-            insertProfileFacts(profileFacts, agentId: agentId, model: config.coreModelIdentifier)
+            insertProfileFacts(
+                parsed.profileFacts,
+                agentId: agentId,
+                conversationId: pendingSignals.first?.conversationId,
+                model: config.coreModelIdentifier
+            )
+            insertGraphData(parsed.graph, model: config.coreModelIdentifier)
 
-            let graphData = parseGraphData(response)
-            insertGraphData(graphData, model: config.coreModelIdentifier)
-
-            let summary = parseSummary(response)
-            let hasSummary = summary != nil
-            if let summary {
-                let tokenCount = max(1, summary.count / 4)
+            let hasSummary = parsed.summary != nil
+            if let summary = parsed.summary {
+                let tokenCount = max(1, summary.count / MemoryConfiguration.charsPerToken)
                 let conversationId = pendingSignals.first?.conversationId ?? agentId
                 let summaryObj = ConversationSummary(
                     agentId: agentId,
@@ -178,36 +189,46 @@ public actor MemoryService {
                     summary: summary,
                     tokenCount: tokenCount,
                     model: config.coreModelIdentifier,
-                    conversationAt: ISO8601DateFormatter().string(from: Date())
+                    conversationAt: Self.iso8601Formatter.string(from: Date())
                 )
-                try? db.insertSummary(summaryObj)
+                do { try db.insertSummary(summaryObj) } catch {
+                    MemoryLogger.service.error("Failed to insert summary: \(error)")
+                }
                 await MemorySearchService.shared.indexSummary(summaryObj)
             }
 
             do { try db.markSignalsProcessed(agentId: agentId) } catch {
-                print("[Memory] Failed to mark signals processed: \(error)")
+                MemoryLogger.service.error("Failed to mark signals processed: \(error)")
             }
-            try? db.markAgentProcessing(agentId: agentId, status: "idle")
+            do { try db.markAgentProcessing(agentId: agentId, status: "idle") } catch {
+                MemoryLogger.service.warning("Failed to mark agent idle: \(error)")
+            }
 
             let durationMs = Int(Date().timeIntervalSince(startTime) * 1000)
-            try? db.insertProcessingLog(
+            logProcessing(
                 agentId: agentId,
                 taskType: "post_activity",
                 model: config.coreModelIdentifier,
                 status: "success",
-                inputTokens: prompt.count / 4,
-                outputTokens: response.count / 4,
+                inputTokens: prompt.count / MemoryConfiguration.charsPerToken,
+                outputTokens: response.count / MemoryConfiguration.charsPerToken,
                 durationMs: durationMs
             )
-            print(
-                "[Memory] Post-activity completed in \(durationMs)ms — \(extracted.count) entries (kept: \(verifyResult.kept), skipped: \(verifyResult.skipped), superseded: \(verifyResult.superseded)), \(profileFacts.count) profile facts, summary: \(hasSummary)"
+            MemoryLogger.service.debug(
+                "Post-activity completed in \(durationMs)ms — \(extracted.count) entries (kept: \(verifyResult.kept), skipped: \(verifyResult.skipped), superseded: \(verifyResult.superseded)), \(parsed.profileFacts.count) profile facts, summary: \(hasSummary)"
             )
 
-            try? await checkProfileRegeneration(config: config)
+            do {
+                try await checkProfileRegeneration(config: config)
+            } catch {
+                MemoryLogger.service.warning("Profile regeneration check failed: \(error)")
+            }
         } catch {
-            print("[Memory] Post-activity processing failed for \(agentId): \(error)")
-            try? db.markAgentProcessing(agentId: agentId, status: "idle")
-            try? db.insertProcessingLog(
+            MemoryLogger.service.error("Post-activity processing failed for \(agentId): \(error)")
+            do { try db.markAgentProcessing(agentId: agentId, status: "idle") } catch {
+                MemoryLogger.service.warning("Failed to mark agent idle after error: \(error)")
+            }
+            logProcessing(
                 agentId: agentId,
                 taskType: "post_activity",
                 model: config.coreModelIdentifier,
@@ -228,7 +249,7 @@ public actor MemoryService {
         }
         guard cfg.enabled else { return }
 
-        print("[Memory] Profile regeneration starting, model: \(cfg.coreModelIdentifier)")
+        MemoryLogger.service.debug("Profile regeneration starting, model: \(cfg.coreModelIdentifier)")
         let startTime = Date()
 
         do {
@@ -236,8 +257,8 @@ public actor MemoryService {
             let allContributions = try db.loadActiveContributions()
             let edits = try db.loadUserEdits()
             let contributions = allContributions.filter { $0.incorporatedIn == nil }
-            print(
-                "[Memory] Profile regen: \(contributions.count) new contributions (\(allContributions.count) total), \(edits.count) edits, current version: \(currentProfile?.version ?? 0)"
+            MemoryLogger.service.info(
+                "Profile regen: \(contributions.count) new contributions (\(allContributions.count) total), \(edits.count) edits, current version: \(currentProfile?.version ?? 0)"
             )
 
             let (systemPrompt, userPrompt) = buildProfileRegenerationPrompt(
@@ -248,7 +269,7 @@ public actor MemoryService {
 
             let response = try await callCoreModel(prompt: userPrompt, systemPrompt: systemPrompt, config: cfg)
             let profileText = stripPreamble(response)
-            let tokenCount = max(1, profileText.count / 4)
+            let tokenCount = max(1, profileText.count / MemoryConfiguration.charsPerToken)
             let version = (currentProfile?.version ?? 0) + 1
 
             let profile = UserProfile(
@@ -256,34 +277,40 @@ public actor MemoryService {
                 tokenCount: tokenCount,
                 version: version,
                 model: cfg.coreModelIdentifier,
-                generatedAt: ISO8601DateFormatter().string(from: Date())
+                generatedAt: Self.iso8601Formatter.string(from: Date())
             )
             try db.saveUserProfile(profile)
-            try? db.markContributionsIncorporated(version: version)
+            do { try db.markContributionsIncorporated(version: version) } catch {
+                MemoryLogger.service.warning("Failed to mark contributions incorporated: \(error)")
+            }
 
-            try? db.insertProfileEvent(
-                ProfileEvent(
-                    agentId: "system",
-                    eventType: "regeneration",
-                    content: "Profile regenerated to v\(version)",
-                    model: cfg.coreModelIdentifier
+            do {
+                try db.insertProfileEvent(
+                    ProfileEvent(
+                        agentId: "system",
+                        eventType: "regeneration",
+                        content: "Profile regenerated to v\(version)",
+                        model: cfg.coreModelIdentifier
+                    )
                 )
-            )
+            } catch {
+                MemoryLogger.service.warning("Failed to insert profile regeneration event: \(error)")
+            }
 
             let durationMs = Int(Date().timeIntervalSince(startTime) * 1000)
-            try? db.insertProcessingLog(
+            logProcessing(
                 agentId: "system",
                 taskType: "profile_regeneration",
                 model: cfg.coreModelIdentifier,
                 status: "success",
-                inputTokens: userPrompt.count / 4,
-                outputTokens: response.count / 4,
+                inputTokens: userPrompt.count / MemoryConfiguration.charsPerToken,
+                outputTokens: response.count / MemoryConfiguration.charsPerToken,
                 durationMs: durationMs
             )
-            print("[Memory] Profile regenerated to v\(version) in \(durationMs)ms (\(tokenCount) tokens)")
+            MemoryLogger.service.info("Profile regenerated to v\(version) in \(durationMs)ms (\(tokenCount) tokens)")
         } catch {
-            print("[Memory] Profile regeneration failed: \(error)")
-            try? db.insertProcessingLog(
+            MemoryLogger.service.error("Profile regeneration failed: \(error)")
+            logProcessing(
                 agentId: "system",
                 taskType: "profile_regeneration",
                 model: cfg.coreModelIdentifier,
@@ -298,45 +325,64 @@ public actor MemoryService {
     public func syncNow() async {
         let config = await MainActor.run { MemoryConfigurationStore.load() }
         guard config.enabled else {
-            print("[Memory] Sync skipped — memory system is disabled")
+            MemoryLogger.service.debug("Sync skipped — memory system is disabled")
             return
         }
 
-        print("[Memory] Manual sync starting...")
+        MemoryLogger.service.debug("Manual sync starting...")
 
         let agentIds: [String]
         do {
             agentIds = try db.agentsWithPendingSignals()
         } catch {
-            print("[Memory] Sync failed to load pending agents: \(error)")
+            MemoryLogger.service.error("Sync failed to load pending agents: \(error)")
             return
         }
 
         if !agentIds.isEmpty {
-            print("[Memory] Sync: processing \(agentIds.count) agent(s): \(agentIds)")
+            MemoryLogger.service.info("Sync: processing \(agentIds.count) agent(s): \(agentIds)")
             for agentId in agentIds {
                 await processPostActivity(agentId: agentId)
             }
         } else {
-            print("[Memory] Sync: no pending signals to process")
+            MemoryLogger.service.debug("Sync: no pending signals to process")
         }
 
-        let contributionCount = (try? db.contributionCountSinceLastRegeneration()) ?? 0
+        let contributionCount: Int
+        do {
+            contributionCount = try db.contributionCountSinceLastRegeneration()
+        } catch {
+            MemoryLogger.service.warning("Failed to check contribution count: \(error)")
+            contributionCount = 0
+        }
         if contributionCount > 0 {
-            print("[Memory] Sync: regenerating profile (\(contributionCount) unincorporated contributions)")
+            MemoryLogger.service.info("Sync: regenerating profile (\(contributionCount) unincorporated contributions)")
             await regenerateProfile(config: config)
         }
 
-        print("[Memory] Manual sync completed")
+        MemoryLogger.service.info("Manual sync completed")
     }
 
     // MARK: - Core Model Routing
 
     private let localServices: [ModelService] = [FoundationModelService(), MLXService.shared]
 
+    private static let maxRetries = 3
+    private static let baseRetryDelay: UInt64 = 1_000_000_000  // 1 second in nanoseconds
+
+    /// Circuit breaker state: tracks consecutive failures to avoid hammering a down service.
+    private var consecutiveFailures = 0
+    private var circuitOpenUntil: Date?
+    private static let circuitBreakerThreshold = 5
+    private static let circuitBreakerCooldown: TimeInterval = 60
+
     private func callCoreModel(prompt: String, systemPrompt: String? = nil, config: MemoryConfiguration) async throws
         -> String
     {
+        if let openUntil = circuitOpenUntil, Date() < openUntil {
+            throw MemoryServiceError.circuitBreakerOpen
+        }
+
         let model = config.coreModelIdentifier
         var messages: [ChatMessage] = []
         if let systemPrompt {
@@ -345,6 +391,40 @@ public actor MemoryService {
         messages.append(ChatMessage(role: "user", content: prompt))
         let params = GenerationParameters(temperature: 0.3, maxTokens: 2048)
 
+        var lastError: Error?
+        for attempt in 0 ..< Self.maxRetries {
+            do {
+                let result = try await executeModelCall(model: model, messages: messages, params: params)
+                consecutiveFailures = 0
+                circuitOpenUntil = nil
+                return result
+            } catch {
+                lastError = error
+                let isRetryable = !(error is MemoryServiceError)
+                if !isRetryable || attempt == Self.maxRetries - 1 { break }
+                let delay = Self.baseRetryDelay * UInt64(1 << attempt)  // exponential: 1s, 2s, 4s
+                MemoryLogger.service.warning(
+                    "Core model call failed (attempt \(attempt + 1)/\(Self.maxRetries)), retrying in \(1 << attempt)s: \(error)"
+                )
+                try? await Task.sleep(nanoseconds: delay)
+            }
+        }
+
+        consecutiveFailures += 1
+        if consecutiveFailures >= Self.circuitBreakerThreshold {
+            circuitOpenUntil = Date().addingTimeInterval(Self.circuitBreakerCooldown)
+            let cooldown = Int(Self.circuitBreakerCooldown)
+            MemoryLogger.service.error(
+                "Circuit breaker opened after \(consecutiveFailures) consecutive failures — cooling down for \(cooldown)s"
+            )
+        }
+
+        throw lastError ?? MemoryServiceError.coreModelUnavailable(model)
+    }
+
+    private func executeModelCall(model: String, messages: [ChatMessage], params: GenerationParameters) async throws
+        -> String
+    {
         let remoteServices: [ModelService] = await MainActor.run {
             RemoteProviderManager.shared.connectedServices()
         }
@@ -357,15 +437,20 @@ public actor MemoryService {
 
         switch route {
         case .service(let service, let effectiveModel):
-            print("[Memory] Routing to \(service.id) (model: \(effectiveModel), prompt: \(prompt.count) chars)")
+            let promptLen = messages.last?.content?.count ?? 0
+            MemoryLogger.service.debug(
+                "Routing to \(service.id) (model: \(effectiveModel), prompt: \(promptLen) chars)"
+            )
             return try await service.generateOneShot(
                 messages: messages,
                 parameters: params,
                 requestedModel: model
             )
         case .none:
-            print(
-                "[Memory] No service found for model '\(model)' — local: \(localServices.map(\.id)), remote: \(remoteServices.map(\.id))"
+            let localIds = self.localServices.map(\.id)
+            let remoteIds = remoteServices.map(\.id)
+            MemoryLogger.service.info(
+                "No service found for model '\(model)' — local: \(localIds), remote: \(remoteIds)"
             )
             throw MemoryServiceError.coreModelUnavailable(model)
         }
@@ -385,27 +470,19 @@ public actor MemoryService {
     private func buildExtractionPrompt(
         userMessage: String,
         assistantMessage: String?,
-        signals: [SignalType],
-        agentId: String,
-        existingEntries: [MemoryEntry] = []
+        existingEntries: [MemoryEntry]
     ) -> String {
         var prompt = ""
 
         if !existingEntries.isEmpty {
             prompt += "Existing memories (avoid duplicates, note contradictions):\n"
-            for entry in existingEntries.prefix(20) {
+            for entry in existingEntries.prefix(MemoryConfiguration.postActivityPromptEntryLimit) {
                 prompt += "- [\(entry.type.rawValue)] \(entry.content)\n"
             }
             prompt += "\n"
         }
 
-        let signalNames = signals.map(\.rawValue).joined(separator: ", ")
-        prompt += """
-            Detected signals: \(signalNames)
-
-            User message:
-            \(userMessage)
-            """
+        prompt += "User message:\n\(userMessage)"
 
         if let assistant = assistantMessage {
             prompt += "\n\nAssistant response:\n\(assistant)"
@@ -431,14 +508,14 @@ public actor MemoryService {
     ) -> String {
         var prompt = "Existing memories (check for contradictions):"
 
-        for entry in existingEntries.prefix(30) {
+        for entry in existingEntries.prefix(MemoryConfiguration.postActivityPromptEntryLimit) {
             prompt += "\n- [\(entry.type.rawValue)] \(entry.content) (confidence: \(entry.confidence))"
         }
 
-        prompt += "\n\nNew conversation signals to process:"
+        prompt += "\n\nConversation turns to process:"
 
         for signal in pendingSignals {
-            prompt += "\n---\nSignal type: \(signal.signalType)\nUser: \(signal.userMessage)"
+            prompt += "\n---\nUser: \(signal.userMessage)"
             if let assistant = signal.assistantMessage {
                 prompt += "\nAssistant: \(assistant)"
             }
@@ -495,6 +572,29 @@ public actor MemoryService {
 
     // MARK: - Response Parsing
 
+    private struct ExtractionParseResult {
+        struct EntryData: Decodable {
+            let type: String
+            let content: String
+            let confidence: Double?
+            let tags: [String]?
+            let valid_from: String?
+        }
+
+        var entries: [EntryData] = []
+        var profileFacts: [String] = []
+        var summary: String?
+        var graph: GraphExtractionResult = GraphExtractionResult()
+    }
+
+    private struct RawExtractionJSON: Decodable {
+        let entries: [ExtractionParseResult.EntryData]?
+        let profile_facts: [String]?
+        let summary: String?
+        let entities: [GraphExtractionResult.EntityData]?
+        let relationships: [GraphExtractionResult.RelationshipData]?
+    }
+
     private func extractJSON(from response: String) -> Data? {
         let trimmed = response.trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -528,37 +628,41 @@ public actor MemoryService {
             }
         }
 
-        print("[Memory] Could not extract JSON from response: \(trimmed.prefix(200))...")
+        MemoryLogger.service.error("Could not extract JSON from response: \(trimmed.prefix(200))...")
         return nil
     }
 
-    private func parseExtractionResponse(_ response: String, agentId: String, conversationId: String, model: String)
-        -> [MemoryEntry]
-    {
+    private func parseResponse(_ response: String) -> ExtractionParseResult {
         guard let data = extractJSON(from: response) else {
-            print("[Memory] parseExtractionResponse: no JSON found in response")
-            return []
+            MemoryLogger.service.info("parseResponse: no JSON found in response")
+            return ExtractionParseResult()
         }
 
-        struct ExtractionResult: Decodable {
-            struct EntryData: Decodable {
-                let type: String
-                let content: String
-                let confidence: Double?
-                let tags: [String]?
-                let valid_from: String?
-            }
-            let entries: [EntryData]?
-        }
-
-        guard let result = try? JSONDecoder().decode(ExtractionResult.self, from: data) else {
-            print(
-                "[Memory] JSON decoded but doesn't match expected schema: \(String(data: data, encoding: .utf8)?.prefix(200) ?? "nil")"
+        guard let raw = try? JSONDecoder().decode(RawExtractionJSON.self, from: data) else {
+            MemoryLogger.service.error(
+                "JSON decoded but doesn't match expected schema: \(String(data: data, encoding: .utf8)?.prefix(200) ?? "nil")"
             )
-            return []
+            return ExtractionParseResult()
         }
 
-        let entries = (result.entries ?? []).compactMap { entry -> MemoryEntry? in
+        return ExtractionParseResult(
+            entries: raw.entries ?? [],
+            profileFacts: raw.profile_facts ?? [],
+            summary: raw.summary,
+            graph: GraphExtractionResult(
+                entities: raw.entities ?? [],
+                relationships: raw.relationships ?? []
+            )
+        )
+    }
+
+    private func buildMemoryEntries(
+        from parsed: [ExtractionParseResult.EntryData],
+        agentId: String,
+        conversationId: String,
+        model: String
+    ) -> [MemoryEntry] {
+        let entries = parsed.compactMap { entry -> MemoryEntry? in
             guard let entryType = MemoryEntryType(rawValue: entry.type) else { return nil }
             let tagsJSON: String?
             if let tags = entry.tags, !tags.isEmpty {
@@ -578,50 +682,8 @@ public actor MemoryService {
             )
         }
 
-        print("[Memory] Parsed \(entries.count) entries from JSON")
+        MemoryLogger.service.info("Parsed \(entries.count) entries from JSON")
         return entries
-    }
-
-    private func parseProfileContributions(_ response: String) -> [String] {
-        guard let data = extractJSON(from: response) else { return [] }
-
-        struct PartialResult: Decodable {
-            let profile_facts: [String]?
-        }
-
-        guard let result = try? JSONDecoder().decode(PartialResult.self, from: data) else {
-            return []
-        }
-
-        return result.profile_facts ?? []
-    }
-
-    private func parseSummary(_ response: String) -> String? {
-        guard let data = extractJSON(from: response) else { return nil }
-
-        struct PartialResult: Decodable {
-            let summary: String?
-        }
-
-        return (try? JSONDecoder().decode(PartialResult.self, from: data))?.summary
-    }
-
-    private func parseGraphData(_ response: String) -> GraphExtractionResult {
-        guard let data = extractJSON(from: response) else { return GraphExtractionResult() }
-
-        struct PartialResult: Decodable {
-            let entities: [GraphExtractionResult.EntityData]?
-            let relationships: [GraphExtractionResult.RelationshipData]?
-        }
-
-        guard let result = try? JSONDecoder().decode(PartialResult.self, from: data) else {
-            return GraphExtractionResult()
-        }
-
-        return GraphExtractionResult(
-            entities: result.entities ?? [],
-            relationships: result.relationships ?? []
-        )
     }
 
     private func stripPreamble(_ response: String) -> String {
@@ -661,15 +723,15 @@ public actor MemoryService {
                     await MemorySearchService.shared.removeDocument(id: contradiction.id)
                     contradictions += 1
                 } catch {
-                    print("[Memory] Failed to supersede entry: \(error)")
+                    MemoryLogger.service.error("Failed to supersede entry: \(error)")
                 }
             }
             do {
                 try db.insertMemoryEntry(entry)
                 await MemorySearchService.shared.indexMemoryEntry(entry)
-                print("[Memory] Stored entry: [\(entry.type.rawValue)] \"\(entry.content.prefix(80))\"")
+                MemoryLogger.service.debug("Stored entry: [\(entry.type.rawValue)] \(entry.content.prefix(80))")
             } catch {
-                print("[Memory] Failed to insert entry: \(error)")
+                MemoryLogger.service.error("Failed to insert entry: \(error)")
             }
         }
         return contradictions
@@ -680,10 +742,22 @@ public actor MemoryService {
     private func insertProfileFacts(_ facts: [String], agentId: String, conversationId: String? = nil, model: String)
         -> Int
     {
+        guard !facts.isEmpty else { return 0 }
+        let existingContributions: [ProfileEvent]
+        do {
+            existingContributions = try db.loadActiveContributions()
+        } catch {
+            MemoryLogger.service.warning("Failed to load active contributions for dedup: \(error)")
+            existingContributions = []
+        }
+
         var stored = 0
         for fact in facts {
-            if isDuplicateContribution(fact) {
-                print("[Memory] Skipping duplicate profile fact: \"\(fact.prefix(80))\"")
+            let isDuplicate = existingContributions.contains {
+                TextSimilarity.jaccard($0.content, fact) > MemoryConfiguration.profileFactDedupThreshold
+            }
+            if isDuplicate {
+                MemoryLogger.service.debug("Skipping duplicate profile fact: \(fact.prefix(80))")
                 continue
             }
             do {
@@ -697,9 +771,9 @@ public actor MemoryService {
                     )
                 )
                 stored += 1
-                print("[Memory] Stored profile fact: \"\(fact.prefix(80))\"")
+                MemoryLogger.service.debug("Stored profile fact: \(fact.prefix(80))")
             } catch {
-                print("[Memory] Failed to insert profile fact: \(error)")
+                MemoryLogger.service.error("Failed to insert profile fact: \(error)")
             }
         }
         return stored
@@ -713,7 +787,7 @@ public actor MemoryService {
                 let entity = try db.resolveEntity(name: entityData.name, type: entityData.type, model: model)
                 resolved[entityData.name.lowercased()] = entity
             } catch {
-                print("[Memory] Failed to resolve entity '\(entityData.name)': \(error)")
+                MemoryLogger.service.error("Failed to resolve entity '\(entityData.name)': \(error)")
             }
         }
 
@@ -733,56 +807,29 @@ public actor MemoryService {
                     model: model
                 )
             } catch {
-                print("[Memory] Failed to insert relationship: \(error)")
+                MemoryLogger.service.error("Failed to insert relationship: \(error)")
             }
         }
-    }
-
-    private func isDuplicateContribution(_ fact: String) -> Bool {
-        let existing = (try? db.loadActiveContributions()) ?? []
-        return existing.contains { jaccardSimilarity($0.content, fact) > 0.6 }
     }
 
     private func findContradiction(entry: MemoryEntry, existing: [MemoryEntry]) -> MemoryEntry? {
         for e in existing {
             guard e.type == entry.type else { continue }
-            let sim = jaccardSimilarity(entry.content, e.content)
-            if sim > 0.3 && entry.content != e.content {
+            let sim = TextSimilarity.jaccard(entry.content, e.content)
+            if sim > MemoryConfiguration.contradictionJaccardThreshold && entry.content != e.content {
                 return e
             }
         }
         return nil
     }
 
-    private func jaccardSimilarity(_ a: String, _ b: String) -> Double {
-        let wordsA = Set(a.lowercased().split(separator: " ").map(String.init))
-        let wordsB = Set(b.lowercased().split(separator: " ").map(String.init))
-        guard !wordsA.isEmpty || !wordsB.isEmpty else { return 0 }
-        let intersection = wordsA.intersection(wordsB).count
-        let union = wordsA.union(wordsB).count
-        return Double(intersection) / Double(union)
-    }
-
     // MARK: - Entry Verification Pipeline
 
-    private let verificationSystemPrompt = """
-        You check if a new memory is already covered by an existing memory.
-        KEEP = new information worth saving. SKIP = already known or redundant.
-
-        Example:
-        New: User likes hiking on weekends
-        Existing: User enjoys outdoor activities on Saturdays
-        Answer: SKIP
-
-        New: User is allergic to shellfish
-        Existing: User prefers Italian restaurants
-        Answer: KEEP
-        """
-
-    /// Three-layer verification pipeline.
-    /// Layer 1: Jaccard dedup (> threshold -> SKIP)
-    /// Layer 2: Jaccard supersede (0.3–threshold, same type -> SUPERSEDE)
-    /// Layer 3: Model verification (ambiguous cases -> KEEP/SKIP)
+    /// Three-layer verification pipeline (all deterministic, no LLM calls).
+    /// Layer 1: Jaccard > dedupThreshold, same type -> SKIP (word-overlap duplicates)
+    /// Layer 2: Jaccard 0.3–dedupThreshold, same type -> SUPERSEDE (contradictions)
+    /// Layer 3: Vector similarity > semanticDedupThreshold -> SKIP (semantic duplicates Jaccard misses)
+    /// Everything else -> KEEP
     ///
     /// Falls back to insertEntries (Layer 2 only) if verification is disabled.
     private func verifyAndInsertEntries(
@@ -797,18 +844,17 @@ public actor MemoryService {
         }
 
         let dedupThreshold = config.verificationJaccardDedupThreshold
-        let similarityThreshold = config.verificationSimilarityThreshold
+        let semanticDedupThreshold = config.verificationSemanticDedupThreshold
 
         var kept = 0
         var skipped = 0
         var superseded = 0
-        var layer3Candidates: [(entry: MemoryEntry, similarContent: String)] = []
 
         for candidate in candidates {
-            // Layer 1: Near-duplicate dedup
+            // Layer 1: Near-duplicate dedup (word overlap)
             let isDuplicate = existingEntries.contains {
                 $0.type == candidate.type
-                    && jaccardSimilarity($0.content, candidate.content) > dedupThreshold
+                    && TextSimilarity.jaccard($0.content, candidate.content) > dedupThreshold
             }
             if isDuplicate {
                 logVerification(candidate, decision: "skip_duplicate", layer: 1, agentId: agentId)
@@ -816,7 +862,7 @@ public actor MemoryService {
                 continue
             }
 
-            // Layer 2: Contradiction supersede (existing behavior)
+            // Layer 2: Contradiction supersede
             if let contradiction = findContradiction(entry: candidate, existing: existingEntries) {
                 do {
                     try db.supersede(
@@ -826,7 +872,7 @@ public actor MemoryService {
                     )
                     await MemorySearchService.shared.removeDocument(id: contradiction.id)
                 } catch {
-                    print("[Memory] Failed to supersede entry: \(error)")
+                    MemoryLogger.service.error("Failed to supersede entry: \(error)")
                 }
                 await persistEntry(candidate, tag: "supersede")
                 logVerification(candidate, decision: "supersede", layer: 2, agentId: agentId)
@@ -834,15 +880,16 @@ public actor MemoryService {
                 continue
             }
 
-            // Survived Layers 1-2: check if Layer 3 is needed
+            // Layer 3: Semantic dedup (vector similarity threshold, no LLM call)
             let similar = await MemorySearchService.shared.searchMemoryEntriesWithScores(
                 query: candidate.content,
                 agentId: agentId,
                 topK: 1
             )
 
-            if let topMatch = similar.first, topMatch.score >= similarityThreshold {
-                layer3Candidates.append((entry: candidate, similarContent: topMatch.entry.content))
+            if let topMatch = similar.first, topMatch.score >= semanticDedupThreshold {
+                logVerification(candidate, decision: "skip_semantic_dup", layer: 3, agentId: agentId)
+                skipped += 1
             } else {
                 await persistEntry(candidate, tag: "novel")
                 logVerification(candidate, decision: "keep_novel", layer: 0, agentId: agentId)
@@ -850,27 +897,14 @@ public actor MemoryService {
             }
         }
 
-        // Layer 3: Model verification (batch)
-        guard !layer3Candidates.isEmpty else {
-            return (kept: kept, skipped: skipped, superseded: superseded)
-        }
-
-        let decisions: [Bool]
-        do {
-            decisions = try await modelVerify(layer3Candidates, config: config)
-        } catch {
-            print("[Memory] Verification model failed, keeping all: \(error)")
-            decisions = Array(repeating: true, count: layer3Candidates.count)
-        }
-
-        for (i, (entry, _)) in layer3Candidates.enumerated() {
-            if decisions[i] {
-                await persistEntry(entry, tag: "verified")
-                logVerification(entry, decision: "keep_verified", layer: 3, agentId: agentId)
-                kept += 1
-            } else {
-                logVerification(entry, decision: "skip_verified", layer: 3, agentId: agentId)
-                skipped += 1
+        if config.maxEntriesPerAgent > 0 {
+            do {
+                let archived = try db.archiveExcessEntries(agentId: agentId, maxEntries: config.maxEntriesPerAgent)
+                if archived > 0 {
+                    MemoryLogger.service.info("Archived \(archived) excess entries for agent \(agentId)")
+                }
+            } catch {
+                MemoryLogger.service.warning("Failed to archive excess entries: \(error)")
             }
         }
 
@@ -881,81 +915,10 @@ public actor MemoryService {
         do {
             try db.insertMemoryEntry(entry)
             await MemorySearchService.shared.indexMemoryEntry(entry)
-            print("[Memory] Stored entry (\(tag)): [\(entry.type.rawValue)] \"\(entry.content.prefix(80))\"")
+            MemoryLogger.service.debug("Stored entry (\(tag)): [\(entry.type.rawValue)] \(entry.content.prefix(80))")
         } catch {
-            print("[Memory] Failed to insert entry: \(error)")
+            MemoryLogger.service.error("Failed to insert entry: \(error)")
         }
-    }
-
-    /// Sends ambiguous candidates to the Core Model for binary KEEP/SKIP verification.
-    private func modelVerify(
-        _ candidates: [(entry: MemoryEntry, similarContent: String)],
-        config: MemoryConfiguration
-    ) async throws -> [Bool] {
-        let pairs = candidates.enumerated().map { (i, pair) in
-            (index: i + 1, candidate: pair.entry.content, similar: pair.similarContent)
-        }
-
-        let prompt = buildVerificationPrompt(pairs)
-        let startTime = CFAbsoluteTimeGetCurrent()
-
-        let response = try await callCoreModel(
-            prompt: prompt,
-            systemPrompt: verificationSystemPrompt,
-            config: config
-        )
-
-        let durationMs = Int((CFAbsoluteTimeGetCurrent() - startTime) * 1000)
-        try? db.insertProcessingLog(
-            agentId: candidates.first?.entry.agentId ?? "system",
-            taskType: "entry_verification",
-            model: config.coreModelIdentifier,
-            status: "success",
-            inputTokens: (verificationSystemPrompt.count + prompt.count) / 4,
-            outputTokens: response.count / 4,
-            durationMs: durationMs
-        )
-
-        return parseVerificationResponse(response, candidateCount: candidates.count)
-    }
-
-    private func buildVerificationPrompt(
-        _ pairs: [(index: Int, candidate: String, similar: String)]
-    ) -> String {
-        var lines: [String] = []
-        for pair in pairs {
-            lines.append(
-                """
-                \(pair.index).
-                New: \(pair.candidate)
-                Existing: \(pair.similar)
-                """
-            )
-        }
-        lines.append("")
-        lines.append("For each number, answer KEEP or SKIP:")
-        return lines.joined(separator: "\n")
-    }
-
-    /// Fault-tolerant parser for verification model output.
-    /// Defaults to KEEP for unparseable entries (safer to save than lose).
-    private func parseVerificationResponse(
-        _ response: String,
-        candidateCount: Int
-    ) -> [Bool] {
-        var decisions = Array(repeating: true, count: candidateCount)
-
-        for line in response.uppercased().split(separator: "\n") {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if let match = trimmed.firstMatch(of: /(\d+)\s*[:.]\s*(KEEP|SKIP)/) {
-                let index = Int(match.1)! - 1
-                if index >= 0 && index < candidateCount {
-                    decisions[index] = (String(match.2) == "KEEP")
-                }
-            }
-        }
-
-        return decisions
     }
 
     private func logVerification(
@@ -964,25 +927,61 @@ public actor MemoryService {
         layer: Int,
         agentId: String
     ) {
-        try? db.insertMemoryEvent(
-            entryId: entry.id,
-            eventType: "verification",
-            agentId: agentId,
-            model: nil,
-            reason: "layer_\(layer):\(decision)"
-        )
+        do {
+            try db.insertMemoryEvent(
+                entryId: entry.id,
+                eventType: "verification",
+                agentId: agentId,
+                model: nil,
+                reason: "layer_\(layer):\(decision)"
+            )
+        } catch {
+            MemoryLogger.service.warning("Failed to log verification event: \(error)")
+        }
+    }
+
+    // MARK: - Processing Log Helper
+
+    private func logProcessing(
+        agentId: String,
+        taskType: String,
+        model: String,
+        status: String,
+        inputTokens: Int = 0,
+        outputTokens: Int = 0,
+        durationMs: Int = 0,
+        details: String? = nil
+    ) {
+        do {
+            try db.insertProcessingLog(
+                agentId: agentId,
+                taskType: taskType,
+                model: model,
+                status: status,
+                inputTokens: inputTokens,
+                outputTokens: outputTokens,
+                durationMs: durationMs,
+                details: details
+            )
+        } catch {
+            MemoryLogger.service.warning("Failed to write processing log (\(taskType)/\(status)): \(error)")
+        }
     }
 
     // MARK: - Profile Threshold Check
 
     private func checkProfileRegeneration(config: MemoryConfiguration) async throws {
         let count = try db.contributionCountSinceLastRegeneration()
-        let hasProfile = (try? db.loadUserProfile()) != nil
+        let hasProfile: Bool
+        do { hasProfile = try db.loadUserProfile() != nil } catch {
+            MemoryLogger.service.warning("Failed to check user profile: \(error)")
+            hasProfile = false
+        }
         let threshold = hasProfile ? config.profileRegenerateThreshold : 1
 
         if count >= threshold {
-            print(
-                "[Memory] Profile regeneration triggered (\(count) contributions since last regen, threshold: \(threshold), existing profile: \(hasProfile))"
+            MemoryLogger.service.info(
+                "Profile regeneration triggered (\(count) contributions since last regen, threshold: \(threshold), existing profile: \(hasProfile))"
             )
             await regenerateProfile(config: config)
         }
@@ -993,11 +992,14 @@ public actor MemoryService {
 
 enum MemoryServiceError: Error, LocalizedError {
     case coreModelUnavailable(String)
+    case circuitBreakerOpen
 
     var errorDescription: String? {
         switch self {
         case .coreModelUnavailable(let model):
             return "Core model '\(model)' is not available for memory processing"
+        case .circuitBreakerOpen:
+            return "Memory service temporarily unavailable (too many recent failures)"
         }
     }
 }

@@ -1,0 +1,468 @@
+//
+//  MemoryTests.swift
+//  osaurus
+//
+//  Unit tests for the memory subsystem: text similarity, context assembly budgets,
+//  verification parsing, database CRUD, and transaction safety.
+//
+
+import Foundation
+import Testing
+
+@testable import OsaurusCore
+
+struct TextSimilarityTests {
+
+    @Test func identicalStringsReturnOne() {
+        let score = TextSimilarity.jaccard("hello world", "hello world")
+        #expect(score == 1.0)
+    }
+
+    @Test func completelyDifferentStringsReturnZero() {
+        let score = TextSimilarity.jaccard("hello world", "foo bar baz")
+        #expect(score == 0.0)
+    }
+
+    @Test func partialOverlap() {
+        let score = TextSimilarity.jaccard("the quick brown fox", "the slow brown dog")
+        // Intersection: {the, brown} = 2, Union: {the, quick, brown, fox, slow, dog} = 6
+        #expect(abs(score - 2.0 / 6.0) < 0.001)
+    }
+
+    @Test func caseInsensitive() {
+        let score = TextSimilarity.jaccard("Hello World", "hello world")
+        #expect(score == 1.0)
+    }
+
+    @Test func emptyStringsReturnZero() {
+        let score = TextSimilarity.jaccard("", "")
+        #expect(score == 0.0)
+    }
+
+    @Test func oneEmptyString() {
+        let score = TextSimilarity.jaccard("hello", "")
+        #expect(score == 0.0)
+    }
+}
+
+struct MemoryEntryTagsTests {
+
+    @Test func validTagsJSONDecoded() {
+        let entry = MemoryEntry(
+            agentId: "a",
+            type: .fact,
+            content: "test",
+            model: "m",
+            tagsJSON: "[\"swift\",\"ios\"]"
+        )
+        #expect(entry.tags == ["swift", "ios"])
+    }
+
+    @Test func nilTagsJSONReturnsEmpty() {
+        let entry = MemoryEntry(
+            agentId: "a",
+            type: .fact,
+            content: "test",
+            model: "m",
+            tagsJSON: nil
+        )
+        #expect(entry.tags.isEmpty)
+    }
+
+    @Test func invalidTagsJSONReturnsEmpty() {
+        let entry = MemoryEntry(
+            agentId: "a",
+            type: .fact,
+            content: "test",
+            model: "m",
+            tagsJSON: "not json"
+        )
+        #expect(entry.tags.isEmpty)
+    }
+
+    @Test func emptyArrayTagsJSON() {
+        let entry = MemoryEntry(
+            agentId: "a",
+            type: .fact,
+            content: "test",
+            model: "m",
+            tagsJSON: "[]"
+        )
+        #expect(entry.tags.isEmpty)
+    }
+}
+
+struct MemoryConfigurationTests {
+
+    @Test func defaultValues() {
+        let config = MemoryConfiguration()
+        #expect(config.enabled == true)
+        #expect(config.maxEntriesPerAgent == 500)
+        #expect(config.workingMemoryBudgetTokens == 500)
+        #expect(config.summaryBudgetTokens == 1000)
+        #expect(config.graphBudgetTokens == 300)
+        #expect(config.verificationJaccardDedupThreshold == 0.6)
+    }
+
+    @Test func decodesWithMissingKeys() throws {
+        let json = #"{"enabled": false}"#
+        let data = json.data(using: .utf8)!
+        let config = try JSONDecoder().decode(MemoryConfiguration.self, from: data)
+        #expect(config.enabled == false)
+        #expect(config.maxEntriesPerAgent == 500)
+        #expect(config.coreModelName == "claude-haiku-4-5")
+    }
+
+    @Test func roundTrips() throws {
+        var config = MemoryConfiguration()
+        config.maxEntriesPerAgent = 200
+        config.enabled = false
+        let data = try JSONEncoder().encode(config)
+        let decoded = try JSONDecoder().decode(MemoryConfiguration.self, from: data)
+        #expect(decoded == config)
+    }
+
+    @Test func validationClampsNegativeValues() {
+        var config = MemoryConfiguration()
+        config.inactivityTimeoutSeconds = -5
+        config.profileMaxTokens = -100
+        config.recallTopK = 0
+        config.mmrLambda = -0.5
+        config.mmrFetchMultiplier = 0.1
+        config.maxEntriesPerAgent = -1
+        let validated = config.validated()
+        #expect(validated.inactivityTimeoutSeconds == 10)
+        #expect(validated.profileMaxTokens == 100)
+        #expect(validated.recallTopK == 1)
+        #expect(validated.mmrLambda == 0.0)
+        #expect(validated.mmrFetchMultiplier == 1.0)
+        #expect(validated.maxEntriesPerAgent == 0)
+    }
+
+    @Test func validationClampsExcessiveValues() {
+        var config = MemoryConfiguration()
+        config.inactivityTimeoutSeconds = 999_999
+        config.profileMaxTokens = 999_999
+        config.recallTopK = 999
+        config.mmrLambda = 5.0
+        config.summaryRetentionDays = 9999
+        let validated = config.validated()
+        #expect(validated.inactivityTimeoutSeconds == 3600)
+        #expect(validated.profileMaxTokens == 50_000)
+        #expect(validated.recallTopK == 100)
+        #expect(validated.mmrLambda == 1.0)
+        #expect(validated.summaryRetentionDays == 365)
+    }
+
+    @Test func validationPreservesValidValues() {
+        let config = MemoryConfiguration()
+        let validated = config.validated()
+        #expect(validated.inactivityTimeoutSeconds == config.inactivityTimeoutSeconds)
+        #expect(validated.mmrLambda == config.mmrLambda)
+        #expect(validated.maxEntriesPerAgent == config.maxEntriesPerAgent)
+    }
+}
+
+struct MemoryEntryValidationTests {
+
+    @Test func confidenceClampedToRange() {
+        let entry = MemoryEntry(agentId: "a", type: .fact, content: "test", confidence: 1.5, model: "m")
+        #expect(entry.confidence == 1.0)
+        let entry2 = MemoryEntry(agentId: "a", type: .fact, content: "test", confidence: -0.5, model: "m")
+        #expect(entry2.confidence == 0.0)
+    }
+
+    @Test func contentTruncatedToMaxLength() {
+        let longContent = String(repeating: "a", count: MemoryConfiguration.maxContentLength + 100)
+        let entry = MemoryEntry(agentId: "a", type: .fact, content: longContent, model: "m")
+        #expect(entry.content.count == MemoryConfiguration.maxContentLength)
+    }
+
+    @Test func accessCountClampedToNonNegative() {
+        let entry = MemoryEntry(agentId: "a", type: .fact, content: "test", model: "m", accessCount: -5)
+        #expect(entry.accessCount == 0)
+    }
+}
+
+struct MemoryContextAssemblerTests {
+
+    private func makeTempDB() throws -> MemoryDatabase {
+        let db = MemoryDatabase()
+        try db.openInMemory()
+        return db
+    }
+
+    @Test func emptyDatabaseReturnsEmptyContext() async throws {
+        let config = MemoryConfiguration()
+        let context = await MemoryContextAssembler.assembleContext(agentId: "test", config: config)
+        #expect(context.isEmpty || !context.contains("Working Memory"))
+    }
+
+    @Test func disabledConfigReturnsEmpty() async {
+        var config = MemoryConfiguration()
+        config.enabled = false
+        let context = await MemoryContextAssembler.assembleContext(agentId: "test", config: config)
+        #expect(context.isEmpty)
+    }
+}
+
+struct MemoryDatabaseTests {
+
+    private func makeTempDB() throws -> MemoryDatabase {
+        let db = MemoryDatabase()
+        try db.openInMemory()
+        return db
+    }
+
+    @Test func insertAndLoadEntry() throws {
+        let db = try makeTempDB()
+        let entry = MemoryEntry(
+            agentId: "agent1",
+            type: .fact,
+            content: "User likes Swift",
+            model: "test"
+        )
+        try db.insertMemoryEntry(entry)
+        let loaded = try db.loadActiveEntries(agentId: "agent1")
+        #expect(loaded.count == 1)
+        #expect(loaded[0].content == "User likes Swift")
+        #expect(loaded[0].type == .fact)
+    }
+
+    @Test func deleteMemoryEntry() throws {
+        let db = try makeTempDB()
+        let entry = MemoryEntry(
+            agentId: "agent1",
+            type: .preference,
+            content: "Prefers dark mode",
+            model: "test"
+        )
+        try db.insertMemoryEntry(entry)
+        try db.deleteMemoryEntry(id: entry.id)
+        let loaded = try db.loadActiveEntries(agentId: "agent1")
+        #expect(loaded.isEmpty)
+    }
+
+    @Test func supersedeEntry() throws {
+        let db = try makeTempDB()
+        let old = MemoryEntry(agentId: "a", type: .fact, content: "Old fact", model: "m")
+        let new = MemoryEntry(agentId: "a", type: .fact, content: "New fact", model: "m")
+        try db.insertMemoryEntry(old)
+        try db.insertMemoryEntry(new)
+        try db.supersede(entryId: old.id, by: new.id, reason: "Updated")
+
+        let active = try db.loadActiveEntries(agentId: "a")
+        #expect(active.count == 1)
+        #expect(active[0].id == new.id)
+    }
+
+    @Test func touchMemoryEntryUpdatesAccess() throws {
+        let db = try makeTempDB()
+        let entry = MemoryEntry(agentId: "a", type: .fact, content: "Test", model: "m")
+        try db.insertMemoryEntry(entry)
+        try db.touchMemoryEntry(id: entry.id)
+        try db.touchMemoryEntry(id: entry.id)
+        let loaded = try db.loadActiveEntries(agentId: "a")
+        #expect(loaded[0].accessCount == 2)
+    }
+
+    @Test func batchTouchEntries() throws {
+        let db = try makeTempDB()
+        let e1 = MemoryEntry(agentId: "a", type: .fact, content: "A", model: "m")
+        let e2 = MemoryEntry(agentId: "a", type: .fact, content: "B", model: "m")
+        try db.insertMemoryEntry(e1)
+        try db.insertMemoryEntry(e2)
+        try db.touchMemoryEntries(ids: [e1.id, e2.id])
+        let loaded = try db.loadActiveEntries(agentId: "a")
+        for entry in loaded {
+            #expect(entry.accessCount == 1)
+        }
+    }
+
+    @Test func loadEntriesByIds() throws {
+        let db = try makeTempDB()
+        let e1 = MemoryEntry(agentId: "a", type: .fact, content: "A", model: "m")
+        let e2 = MemoryEntry(agentId: "a", type: .fact, content: "B", model: "m")
+        let e3 = MemoryEntry(agentId: "a", type: .fact, content: "C", model: "m")
+        try db.insertMemoryEntry(e1)
+        try db.insertMemoryEntry(e2)
+        try db.insertMemoryEntry(e3)
+        let loaded = try db.loadEntriesByIds([e1.id, e3.id])
+        #expect(loaded.count == 2)
+        let ids = Set(loaded.map(\.id))
+        #expect(ids.contains(e1.id))
+        #expect(ids.contains(e3.id))
+    }
+
+    @Test func archiveExcessEntries() throws {
+        let db = try makeTempDB()
+        for i in 0 ..< 5 {
+            let e = MemoryEntry(agentId: "a", type: .fact, content: "Fact \(i)", model: "m")
+            try db.insertMemoryEntry(e)
+        }
+        let archived = try db.archiveExcessEntries(agentId: "a", maxEntries: 3)
+        #expect(archived == 2)
+        let remaining = try db.loadActiveEntries(agentId: "a")
+        #expect(remaining.count == 3)
+    }
+
+    @Test func userProfileRoundTrip() throws {
+        let db = try makeTempDB()
+        let profile = UserProfile(
+            content: "Test user profile",
+            tokenCount: 10,
+            version: 1,
+            model: "test",
+            generatedAt: "2025-01-01T00:00:00Z"
+        )
+        try db.saveUserProfile(profile)
+        let loaded = try db.loadUserProfile()
+        #expect(loaded?.content == "Test user profile")
+        #expect(loaded?.version == 1)
+    }
+
+    @Test func userEditsLifecycle() throws {
+        let db = try makeTempDB()
+        try db.insertUserEdit("Always respond in English")
+        try db.insertUserEdit("Prefer concise answers")
+        var edits = try db.loadUserEdits()
+        #expect(edits.count == 2)
+        try db.deleteUserEdit(id: edits[0].id)
+        edits = try db.loadUserEdits()
+        #expect(edits.count == 1)
+        #expect(edits[0].content == "Prefer concise answers")
+    }
+
+    @Test func purgeOldEventData() throws {
+        let db = try makeTempDB()
+        let entry = MemoryEntry(agentId: "a", type: .fact, content: "F", model: "m")
+        try db.insertMemoryEntry(entry)
+        try db.purgeOldEventData(retentionDays: 0)
+    }
+
+    @Test func activeEntryCount() throws {
+        let db = try makeTempDB()
+        try db.insertMemoryEntry(MemoryEntry(agentId: "a", type: .fact, content: "A", model: "m"))
+        try db.insertMemoryEntry(MemoryEntry(agentId: "a", type: .fact, content: "B", model: "m"))
+        try db.insertMemoryEntry(MemoryEntry(agentId: "b", type: .fact, content: "C", model: "m"))
+        #expect(try db.activeEntryCount(agentId: "a") == 2)
+        #expect(try db.activeEntryCount(agentId: "b") == 1)
+        #expect(try db.activeEntryCount() == 3)
+    }
+
+    @Test func loadAllActiveEntriesRespectsLimit() throws {
+        let db = try makeTempDB()
+        for i in 0 ..< 10 {
+            try db.insertMemoryEntry(MemoryEntry(agentId: "a", type: .fact, content: "Fact \(i)", model: "m"))
+        }
+        let limited = try db.loadAllActiveEntries(limit: 3)
+        #expect(limited.count == 3)
+        let all = try db.loadAllActiveEntries(limit: 100)
+        #expect(all.count == 10)
+    }
+
+    @Test func pendingSignalRoundTrip() throws {
+        let db = try makeTempDB()
+        let signal = PendingSignal(
+            agentId: "agent1",
+            conversationId: "conv1",
+            signalType: "conversation",
+            userMessage: "Hello",
+            assistantMessage: "Hi there"
+        )
+        try db.insertPendingSignal(signal)
+        let loaded = try db.loadPendingSignals(agentId: "agent1")
+        #expect(loaded.count == 1)
+        #expect(loaded[0].userMessage == "Hello")
+        #expect(loaded[0].assistantMessage == "Hi there")
+    }
+
+    @Test func markSignalsProcessed() throws {
+        let db = try makeTempDB()
+        try db.insertPendingSignal(
+            PendingSignal(
+                agentId: "a",
+                conversationId: "c",
+                signalType: "conversation",
+                userMessage: "test"
+            )
+        )
+        #expect(try db.loadPendingSignals(agentId: "a").count == 1)
+        try db.markSignalsProcessed(agentId: "a")
+        #expect(try db.loadPendingSignals(agentId: "a").count == 0)
+    }
+
+    @Test func summaryRoundTrip() throws {
+        let db = try makeTempDB()
+        let summary = ConversationSummary(
+            agentId: "a",
+            conversationId: "c1",
+            summary: "Test summary",
+            tokenCount: 10,
+            model: "test",
+            conversationAt: "2025-01-01T00:00:00Z"
+        )
+        try db.insertSummary(summary)
+        let loaded = try db.loadSummaries(agentId: "a", days: 365)
+        #expect(loaded.count == 1)
+        #expect(loaded[0].summary == "Test summary")
+    }
+
+    @Test func profileEventLifecycle() throws {
+        let db = try makeTempDB()
+        try db.insertProfileEvent(
+            ProfileEvent(
+                agentId: "a",
+                eventType: "contribution",
+                content: "fact1",
+                model: "test"
+            )
+        )
+        try db.insertProfileEvent(
+            ProfileEvent(
+                agentId: "a",
+                eventType: "contribution",
+                content: "fact2",
+                model: "test"
+            )
+        )
+        let contributions = try db.loadActiveContributions()
+        #expect(contributions.count == 2)
+        let count = try db.contributionCountSinceLastRegeneration()
+        #expect(count == 2)
+    }
+
+    @Test func processingLogAndStats() throws {
+        let db = try makeTempDB()
+        try db.insertProcessingLog(agentId: "a", taskType: "test", model: "m", status: "success", durationMs: 100)
+        try db.insertProcessingLog(agentId: "a", taskType: "test", model: "m", status: "error", durationMs: 200)
+        let stats = try db.processingStats()
+        #expect(stats.totalCalls == 2)
+        #expect(stats.successCount == 1)
+        #expect(stats.errorCount == 1)
+    }
+
+    @Test func entityAndRelationshipRoundTrip() throws {
+        let db = try makeTempDB()
+        let entity1 = try db.resolveEntity(name: "Alice", type: "person", model: "test")
+        let entity2 = try db.resolveEntity(name: "ProjectX", type: "project", model: "test")
+        try db.insertRelationship(
+            sourceId: entity1.id,
+            targetId: entity2.id,
+            relation: "works_on",
+            confidence: 0.9,
+            model: "test"
+        )
+        let results = try db.queryRelationships(relation: "works_on")
+        #expect(results.count == 1)
+        #expect(results[0].path.contains("Alice"))
+        #expect(results[0].path.contains("ProjectX"))
+    }
+
+    @Test func resolveEntityDeduplicates() throws {
+        let db = try makeTempDB()
+        let e1 = try db.resolveEntity(name: "Alice", type: "person", model: "test")
+        let e2 = try db.resolveEntity(name: "Alice", type: "person", model: "test")
+        #expect(e1.id == e2.id)
+    }
+}

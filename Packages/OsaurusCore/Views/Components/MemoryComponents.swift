@@ -140,6 +140,8 @@ struct MemoryFilterChip: View {
                 )
         }
         .buttonStyle(PlainButtonStyle())
+        .accessibilityLabel("Filter: \(label)")
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }
 
@@ -222,6 +224,11 @@ struct MemoryEntryRow: View {
                 isHovering = hovering
             }
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(
+            "\(entry.type.displayName) memory: \(entry.content). Confidence \(Int(entry.confidence * 100)) percent"
+        )
+        .accessibilityHint("Hover to reveal delete option")
     }
 }
 
@@ -263,5 +270,9 @@ struct MemorySummaryRow: View {
                 .foregroundColor(theme.secondaryText)
         }
         .padding(.vertical, 6)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(
+            "Conversation summary: \(summary.summary). \(summary.tokenCount) tokens, \(summary.conversationAt)"
+        )
     }
 }

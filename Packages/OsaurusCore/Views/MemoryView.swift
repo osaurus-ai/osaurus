@@ -13,6 +13,8 @@ struct MemoryView: View {
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
+    private static let iso8601Formatter = ISO8601DateFormatter()
+
     @State private var hasAppeared = false
     @State private var config = MemoryConfiguration.default
     @State private var profile: UserProfile?
@@ -22,13 +24,15 @@ struct MemoryView: View {
 
     @State private var showProfileEditor = false
     @State private var showAddOverride = false
-    @State private var newOverrideText = ""
     @State private var isSyncing = false
     @State private var modelOptions: [ModelOption] = []
 
     // Toast & alert
     @State private var toastMessage: (text: String, isError: Bool)?
     @State private var showClearConfirmation = false
+    @State private var isLoading = true
+    @State private var showContextPreview = false
+    @State private var contextPreviewText = ""
 
     var body: some View {
         ZStack {
@@ -38,19 +42,35 @@ struct MemoryView: View {
                     .offset(y: hasAppeared ? 0 : -10)
                     .animation(.spring(response: 0.4, dampingFraction: 0.8), value: hasAppeared)
 
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 16) {
-                        if !config.enabled {
-                            disabledBanner
+                Group {
+                    if isLoading {
+                        VStack {
+                            Spacer()
+                            ProgressView()
+                                .controlSize(.small)
+                                .padding(.bottom, 4)
+                            Text("Loading memory...")
+                                .font(.system(size: 12))
+                                .foregroundColor(theme.tertiaryText)
+                            Spacer()
                         }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else {
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 16) {
+                                if !config.enabled {
+                                    disabledBanner
+                                }
 
-                        profileSection
-                        overridesSection
-                        statsSection
-                        configurationSection
-                        dangerZoneSection
+                                profileSection
+                                overridesSection
+                                statsSection
+                                configurationSection
+                                dangerZoneSection
+                            }
+                            .padding(24)
+                        }
                     }
-                    .padding(24)
                 }
                 .opacity(hasAppeared ? 1 : 0)
             }
@@ -94,6 +114,10 @@ struct MemoryView: View {
             )
             .frame(minWidth: 440, minHeight: 220)
         }
+        .sheet(isPresented: $showContextPreview) {
+            ContextPreviewSheet(context: contextPreviewText)
+                .frame(minWidth: 560, minHeight: 420)
+        }
         .themedAlert(
             "Clear All Memory",
             isPresented: $showClearConfirmation,
@@ -126,10 +150,26 @@ struct MemoryView: View {
                 }
             }
             .disabled(isSyncing || !config.enabled)
+            .accessibilityLabel(isSyncing ? "Syncing memory" : "Sync memory now")
+            .accessibilityHint("Processes pending conversations and regenerates profile if needed")
+
+            HeaderSecondaryButton("Preview Context", icon: "eye") {
+                Task {
+                    let config = MemoryConfigurationStore.load()
+                    let ctx = await MemoryContextAssembler.assembleContext(agentId: "preview", config: config)
+                    contextPreviewText =
+                        ctx.isEmpty ? "(No memory context assembled — memory may be empty or disabled)" : ctx
+                    showContextPreview = true
+                }
+            }
+            .disabled(!config.enabled)
+            .accessibilityLabel("Preview memory context")
+            .accessibilityHint("Shows the memory context that will be injected into conversations")
 
             HeaderIconButton("arrow.clockwise", help: "Refresh") {
                 loadData()
             }
+            .accessibilityLabel("Refresh memory data")
         }
     }
 
@@ -476,20 +516,63 @@ struct MemoryView: View {
                 .foregroundColor(theme.tertiaryText)
         }
         .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(label): \(value)")
     }
 
     // MARK: - Data Loading
 
     private func loadData() {
         config = MemoryConfigurationStore.load()
-        let db = MemoryDatabase.shared
-        if !db.isOpen {
-            try? db.open()
+        Task.detached(priority: .userInitiated) {
+            let db = MemoryDatabase.shared
+            if !db.isOpen {
+                do { try db.open() } catch {
+                    MemoryLogger.database.error("Failed to open database from MemoryView: \(error)")
+                    await MainActor.run {
+                        isLoading = false
+                        showToast("Failed to open memory database", isError: true)
+                    }
+                    return
+                }
+            }
+            var loadError: String?
+            let loadedProfile: UserProfile?
+            let loadedEdits: [UserEdit]
+            let loadedStats: ProcessingStats
+            let loadedSize: Int64
+            do {
+                loadedProfile = try db.loadUserProfile()
+            } catch {
+                MemoryLogger.database.error("Failed to load profile: \(error)")
+                loadedProfile = nil
+                loadError = "Failed to load profile"
+            }
+            do {
+                loadedEdits = try db.loadUserEdits()
+            } catch {
+                MemoryLogger.database.error("Failed to load edits: \(error)")
+                loadedEdits = []
+                loadError = loadError ?? "Failed to load overrides"
+            }
+            do {
+                loadedStats = try db.processingStats()
+            } catch {
+                MemoryLogger.database.error("Failed to load stats: \(error)")
+                loadedStats = ProcessingStats()
+            }
+            loadedSize = db.databaseSizeBytes()
+            await MainActor.run {
+                profile = loadedProfile
+                userEdits = loadedEdits
+                processingStats = loadedStats
+                dbSizeBytes = loadedSize
+                isLoading = false
+                if let loadError {
+                    showToast(loadError, isError: true)
+                }
+            }
         }
-        profile = try? db.loadUserProfile()
-        userEdits = (try? db.loadUserEdits()) ?? []
-        processingStats = (try? db.processingStats()) ?? ProcessingStats()
-        dbSizeBytes = db.databaseSizeBytes()
     }
 
     private func loadModelOptions() {
@@ -531,43 +614,58 @@ struct MemoryView: View {
     // MARK: - Actions
 
     private func removeOverride(id: Int) {
-        try? MemoryDatabase.shared.deleteUserEdit(id: id)
+        do {
+            try MemoryDatabase.shared.deleteUserEdit(id: id)
+        } catch {
+            MemoryLogger.database.error("Failed to remove override: \(error)")
+            showToast("Failed to remove override", isError: true)
+        }
         loadData()
     }
 
     private func addOverride(_ text: String) {
-        try? MemoryDatabase.shared.insertUserEdit(text)
-        try? MemoryDatabase.shared.insertProfileEvent(
-            ProfileEvent(
-                agentId: "user",
-                eventType: "user_edit",
-                content: text
+        do {
+            try MemoryDatabase.shared.insertUserEdit(text)
+            try MemoryDatabase.shared.insertProfileEvent(
+                ProfileEvent(
+                    agentId: "user",
+                    eventType: "user_edit",
+                    content: text
+                )
             )
-        )
+        } catch {
+            MemoryLogger.database.error("Failed to add override: \(error)")
+            showToast("Failed to add override", isError: true)
+        }
         loadData()
     }
 
     private func saveProfileEdit(_ content: String) {
-        let tokenCount = max(1, content.count / 4)
+        let tokenCount = max(1, content.count / MemoryConfiguration.charsPerToken)
         var updated =
             profile
             ?? UserProfile(
                 content: content,
                 tokenCount: tokenCount,
                 model: "user",
-                generatedAt: ISO8601DateFormatter().string(from: Date())
+                generatedAt: Self.iso8601Formatter.string(from: Date())
             )
         updated.content = content
         updated.tokenCount = tokenCount
 
-        try? MemoryDatabase.shared.saveUserProfile(updated)
-        try? MemoryDatabase.shared.insertProfileEvent(
-            ProfileEvent(
-                agentId: "user",
-                eventType: "user_edit",
-                content: "Profile manually edited"
+        do {
+            try MemoryDatabase.shared.saveUserProfile(updated)
+            try MemoryDatabase.shared.insertProfileEvent(
+                ProfileEvent(
+                    agentId: "user",
+                    eventType: "user_edit",
+                    content: "Profile manually edited"
+                )
             )
-        )
+        } catch {
+            MemoryLogger.database.error("Failed to save profile: \(error)")
+            showToast("Failed to save profile", isError: true)
+        }
         loadData()
     }
 
@@ -814,7 +912,7 @@ private struct ProfileEditSheet: View {
             Divider().opacity(0.5)
 
             HStack {
-                Text("\(max(1, editText.count / 4)) tokens")
+                Text("\(max(1, editText.count / MemoryConfiguration.charsPerToken)) tokens")
                     .font(.system(size: 11))
                     .foregroundColor(theme.tertiaryText)
 
@@ -982,5 +1080,68 @@ private struct AddOverrideSheet: View {
         .onAppear {
             isFocused = true
         }
+    }
+}
+
+// MARK: - Context Preview Sheet
+
+private struct ContextPreviewSheet: View {
+    let context: String
+
+    @ObservedObject private var themeManager = ThemeManager.shared
+    private var theme: ThemeProtocol { themeManager.currentTheme }
+
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Memory Context Preview")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
+                    Text("This is injected before the system prompt on each message")
+                        .font(.system(size: 12))
+                        .foregroundColor(theme.tertiaryText)
+                }
+                Spacer()
+
+                let tokenEstimate = max(1, context.count / MemoryConfiguration.charsPerToken)
+                Text("~\(tokenEstimate) tokens")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Capsule().fill(theme.tertiaryBackground))
+
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(theme.secondaryText)
+                        .frame(width: 28, height: 28)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(theme.tertiaryBackground)
+                        )
+                }
+                .buttonStyle(PlainButtonStyle())
+            }
+            .padding(20)
+
+            Divider().opacity(0.5)
+
+            ScrollView {
+                Text(context)
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundColor(theme.primaryText)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(16)
+            }
+        }
+        .background(theme.primaryBackground)
+        .environment(\.theme, themeManager.currentTheme)
     }
 }

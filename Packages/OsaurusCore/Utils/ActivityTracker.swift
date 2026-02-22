@@ -14,6 +14,9 @@ public final class ActivityTracker: ObservableObject {
 
     private var timer: Timer?
     private static let pollInterval: TimeInterval = 30
+    private var lastPurge: Date = .distantPast
+    private static let purgeInterval: TimeInterval = 24 * 60 * 60
+    private var processingAgentIds: Set<String> = []
 
     private init() {}
 
@@ -35,7 +38,11 @@ public final class ActivityTracker: ObservableObject {
 
     /// Record activity for an agent. Called on every message send.
     public func recordActivity(agentId: String) {
-        try? MemoryDatabase.shared.updateAgentActivity(agentId: agentId)
+        do {
+            try MemoryDatabase.shared.updateAgentActivity(agentId: agentId)
+        } catch {
+            MemoryLogger.service.warning("Failed to record agent activity: \(error)")
+        }
     }
 
     /// Check all agents for inactivity and trigger processing.
@@ -43,15 +50,41 @@ public final class ActivityTracker: ObservableObject {
         let config = MemoryConfigurationStore.load()
         guard config.enabled else { return }
 
+        do { try MemoryDatabase.shared.resetStuckAgents(staleSeconds: 300) } catch {
+            MemoryLogger.service.warning("Failed to reset stuck agents: \(error)")
+        }
+
         let timeout = config.inactivityTimeoutSeconds
 
-        guard let agentIds = try? MemoryDatabase.shared.agentsNeedingProcessing(inactivitySeconds: timeout) else {
+        let agentIds: [String]
+        do {
+            agentIds = try MemoryDatabase.shared.agentsNeedingProcessing(inactivitySeconds: timeout)
+        } catch {
+            MemoryLogger.service.error("Failed to query agents needing processing: \(error)")
             return
         }
 
         for agentId in agentIds {
-            Task.detached {
+            guard !processingAgentIds.contains(agentId) else { continue }
+            processingAgentIds.insert(agentId)
+            Task { @MainActor [weak self] in
                 await MemoryService.shared.processPostActivity(agentId: agentId)
+                self?.processingAgentIds.remove(agentId)
+            }
+        }
+
+        purgeIfNeeded()
+    }
+
+    private func purgeIfNeeded() {
+        let now = Date()
+        guard now.timeIntervalSince(lastPurge) >= Self.purgeInterval else { return }
+        lastPurge = now
+        Task.detached {
+            do {
+                try MemoryDatabase.shared.purgeOldEventData()
+            } catch {
+                MemoryLogger.database.error("Failed to purge old event data: \(error)")
             }
         }
     }

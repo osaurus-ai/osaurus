@@ -10,6 +10,7 @@
 import CryptoKit
 import Foundation
 import VecturaKit
+import os
 
 public actor MemorySearchService {
     public static let shared = MemorySearchService()
@@ -45,9 +46,9 @@ public actor MemorySearchService {
             let embedder = SwiftEmbedder(modelSource: .default)
             vectorDB = try await VecturaKit(config: config, embedder: embedder)
             isInitialized = true
-            print("[Memory] VecturaKit initialized successfully")
+            MemoryLogger.search.info("VecturaKit initialized successfully")
         } catch {
-            print("[Memory] VecturaKit initialization failed (text search fallback active): \(error)")
+            MemoryLogger.search.error("VecturaKit initialization failed (text search fallback active): \(error)")
             vectorDB = nil
         }
     }
@@ -61,7 +62,7 @@ public actor MemorySearchService {
             let id = UUID(uuidString: entry.id) ?? UUID()
             _ = try await db.addDocument(text: "[\(entry.type.rawValue)] \(entry.content)", id: id)
         } catch {
-            print("[Memory] Failed to index entry \(entry.id): \(error)")
+            MemoryLogger.search.error("Failed to index entry \(entry.id): \(error)")
         }
     }
 
@@ -72,7 +73,7 @@ public actor MemorySearchService {
             let id = deterministicUUID(from: "chunk:\(chunk.conversationId):\(chunk.chunkIndex)")
             _ = try await db.addDocument(text: chunk.content, id: id)
         } catch {
-            print("[Memory] Failed to index chunk: \(error)")
+            MemoryLogger.search.error("Failed to index chunk: \(error)")
         }
     }
 
@@ -85,7 +86,7 @@ public actor MemorySearchService {
             )
             _ = try await db.addDocument(text: summary.summary, id: id)
         } catch {
-            print("[Memory] Failed to index summary: \(error)")
+            MemoryLogger.search.error("Failed to index summary: \(error)")
         }
     }
 
@@ -95,14 +96,11 @@ public actor MemorySearchService {
         do {
             try await db.deleteDocuments(ids: [uuid])
         } catch {
-            print("[Memory] Failed to remove document \(id) from index: \(error)")
+            MemoryLogger.search.error("Failed to remove document \(id) from index: \(error)")
         }
     }
 
     // MARK: - Search
-    // NOTE: The vector search paths below load all rows from SQLite and filter in-memory.
-    // At scale (thousands of entries), switch to fetching matched IDs from VecturaKit
-    // then using a WHERE id IN (...) SQL query to avoid loading everything.
 
     /// Search memory entries using hybrid search (vector + BM25) with MMR reranking.
     /// Falls back to SQLite text search when VecturaKit is unavailable.
@@ -115,35 +113,37 @@ public actor MemorySearchService {
     ) async -> [MemoryEntry] {
         if let db = vectorDB {
             do {
-                let mult = fetchMultiplier ?? 2.0
-                let fetchCount = Int(Double(topK) * mult)
+                let fetchCount = Int(Double(topK) * (fetchMultiplier ?? 2.0))
                 let results = try await db.search(query: .text(query), numResults: fetchCount, threshold: 0.3)
 
                 let scoreMap = Dictionary(
-                    results.map { ($0.id, (score: Double($0.score), text: $0.text)) },
+                    results.map { ($0.id.uuidString, (score: Double($0.score), text: $0.text)) },
                     uniquingKeysWith: { first, _ in first }
                 )
 
-                let allEntries = (try? MemoryDatabase.shared.loadAllActiveEntries()) ?? []
-                let scored: [(item: MemoryEntry, score: Double, content: String)] = allEntries.compactMap { entry in
-                    guard let entryUUID = UUID(uuidString: entry.id),
-                        let match = scoreMap[entryUUID],
-                        agentId == nil || entry.agentId == agentId
-                    else { return nil }
+                let idStrings = results.map { $0.id.uuidString }
+                let entries = try MemoryDatabase.shared.loadEntriesByIds(idStrings, agentId: agentId)
+                let scored: [(item: MemoryEntry, score: Double, content: String)] = entries.compactMap { entry in
+                    guard let match = scoreMap[entry.id] else { return nil }
                     return (item: entry, score: match.score, content: entry.content)
                 }
 
                 return mmrRerank(results: scored, lambda: lambda ?? 0.7, topK: topK)
             } catch {
-                print("[Memory] Vector search failed, falling back to text: \(error)")
+                MemoryLogger.search.error("Vector search failed, falling back to text: \(error)")
             }
         }
 
-        return (try? MemoryDatabase.shared.searchMemoryEntries(query: query, agentId: agentId)) ?? []
+        do {
+            return try MemoryDatabase.shared.searchMemoryEntries(query: query, agentId: agentId)
+        } catch {
+            MemoryLogger.search.error("Text fallback search failed: \(error)")
+            return []
+        }
     }
 
     /// Search memory entries returning raw similarity scores (no MMR reranking).
-    /// Used by the verification pipeline to gate model calls on similarity.
+    /// Used by the verification pipeline for Layer 3 semantic deduplication.
     public func searchMemoryEntriesWithScores(
         query: String,
         agentId: String? = nil,
@@ -154,22 +154,22 @@ public actor MemorySearchService {
             let results = try await db.search(query: .text(query), numResults: topK, threshold: 0.3)
 
             let scoreMap = Dictionary(
-                results.map { ($0.id, Double($0.score)) },
+                results.map { ($0.id.uuidString, Double($0.score)) },
                 uniquingKeysWith: { first, _ in first }
             )
 
-            let allEntries = (try? MemoryDatabase.shared.loadAllActiveEntries()) ?? []
-            let matched: [(entry: MemoryEntry, score: Double)] = allEntries.compactMap { entry in
-                guard let entryUUID = UUID(uuidString: entry.id),
-                    let score = scoreMap[entryUUID],
-                    agentId == nil || entry.agentId == agentId
-                else { return nil }
+            let idStrings = results.map { $0.id.uuidString }
+            let entries = try MemoryDatabase.shared.loadEntriesByIds(idStrings, agentId: agentId)
+
+            return entries.compactMap { entry in
+                guard let score = scoreMap[entry.id] else { return nil }
                 return (entry: entry, score: score)
             }
-
-            return matched.sorted { $0.score > $1.score }.prefix(topK).map { $0 }
+            .sorted { $0.score > $1.score }
+            .prefix(topK)
+            .map { $0 }
         } catch {
-            print("[Memory] Vector search (with scores) failed: \(error)")
+            MemoryLogger.search.error("Vector search (with scores) failed: \(error)")
             return []
         }
     }
@@ -186,8 +186,7 @@ public actor MemorySearchService {
     ) async -> [ConversationChunk] {
         if let db = vectorDB {
             do {
-                let mult = fetchMultiplier ?? 2.0
-                let fetchCount = Int(Double(topK) * mult)
+                let fetchCount = Int(Double(topK) * (fetchMultiplier ?? 2.0))
                 let results = try await db.search(query: .text(query), numResults: fetchCount, threshold: 0.3)
 
                 let scoreMap = Dictionary(
@@ -195,7 +194,7 @@ public actor MemorySearchService {
                     uniquingKeysWith: { first, _ in first }
                 )
 
-                let allChunks = (try? MemoryDatabase.shared.loadAllChunks(agentId: agentId, days: days)) ?? []
+                let allChunks = try MemoryDatabase.shared.loadAllChunks(agentId: agentId, days: days)
                 let scored: [(item: ConversationChunk, score: Double, content: String)] = allChunks.compactMap {
                     chunk in
                     let chunkUUID = deterministicUUID(from: "chunk:\(chunk.conversationId):\(chunk.chunkIndex)")
@@ -207,11 +206,16 @@ public actor MemorySearchService {
                     return mmrRerank(results: scored, lambda: lambda ?? 0.7, topK: topK)
                 }
             } catch {
-                print("[Memory] Vector search for chunks failed, falling back to text: \(error)")
+                MemoryLogger.search.error("Vector search for chunks failed, falling back to text: \(error)")
             }
         }
 
-        return (try? MemoryDatabase.shared.searchChunks(query: query, agentId: agentId, days: days)) ?? []
+        do {
+            return try MemoryDatabase.shared.searchChunks(query: query, agentId: agentId, days: days)
+        } catch {
+            MemoryLogger.search.error("Text fallback chunk search failed: \(error)")
+            return []
+        }
     }
 
     /// Search conversation summaries using hybrid search (vector + BM25) with MMR reranking.
@@ -226,8 +230,7 @@ public actor MemorySearchService {
     ) async -> [ConversationSummary] {
         if let db = vectorDB {
             do {
-                let mult = fetchMultiplier ?? 2.0
-                let fetchCount = Int(Double(topK) * mult)
+                let fetchCount = Int(Double(topK) * (fetchMultiplier ?? 2.0))
                 let results = try await db.search(query: .text(query), numResults: fetchCount, threshold: 0.3)
 
                 let scoreMap = Dictionary(
@@ -235,7 +238,7 @@ public actor MemorySearchService {
                     uniquingKeysWith: { first, _ in first }
                 )
 
-                let allSummaries = (try? MemoryDatabase.shared.loadAllSummaries(days: days)) ?? []
+                let allSummaries = try MemoryDatabase.shared.loadAllSummaries(days: days)
                 let scored: [(item: ConversationSummary, score: Double, content: String)] = allSummaries.compactMap {
                     summary in
                     let summaryUUID = deterministicUUID(
@@ -251,11 +254,16 @@ public actor MemorySearchService {
                     return mmrRerank(results: scored, lambda: lambda ?? 0.7, topK: topK)
                 }
             } catch {
-                print("[Memory] Vector search for summaries failed, falling back to text: \(error)")
+                MemoryLogger.search.error("Vector search for summaries failed, falling back to text: \(error)")
             }
         }
 
-        return (try? MemoryDatabase.shared.searchSummaries(query: query, agentId: agentId, days: days)) ?? []
+        do {
+            return try MemoryDatabase.shared.searchSummaries(query: query, agentId: agentId, days: days)
+        } catch {
+            MemoryLogger.search.error("Text fallback summary search failed: \(error)")
+            return []
+        }
     }
 
     // MARK: - Graph Search
@@ -269,13 +277,22 @@ public actor MemorySearchService {
     ) async -> [GraphResult] {
         guard MemoryDatabase.shared.isOpen else { return [] }
         if let entityName {
-            return
-                (try? MemoryDatabase.shared.queryEntityGraph(
+            do {
+                return try MemoryDatabase.shared.queryEntityGraph(
                     name: entityName,
                     depth: min(depth, 4)
-                )) ?? []
+                )
+            } catch {
+                MemoryLogger.search.error("Graph entity search failed: \(error)")
+                return []
+            }
         } else if let relation {
-            return (try? MemoryDatabase.shared.queryRelationships(relation: relation)) ?? []
+            do {
+                return try MemoryDatabase.shared.queryRelationships(relation: relation)
+            } catch {
+                MemoryLogger.search.error("Graph relationship search failed: \(error)")
+                return []
+            }
         }
         return []
     }
@@ -289,16 +306,16 @@ public actor MemorySearchService {
         do {
             try await db.reset()
 
-            let entries = (try? MemoryDatabase.shared.loadAllActiveEntries()) ?? []
+            let entries = try MemoryDatabase.shared.loadAllActiveEntries()
             let texts = entries.map { "[\($0.type.rawValue)] \($0.content)" }
             let ids = entries.compactMap { UUID(uuidString: $0.id) }
             if texts.count == ids.count && !texts.isEmpty {
                 _ = try await db.addDocuments(texts: texts, ids: ids)
             }
 
-            print("[Memory] Index rebuilt with \(entries.count) entries")
+            MemoryLogger.search.info("Index rebuilt with \(entries.count) entries")
         } catch {
-            print("[Memory] Index rebuild failed: \(error)")
+            MemoryLogger.search.error("Index rebuild failed: \(error)")
         }
     }
 
@@ -335,7 +352,7 @@ public actor MemorySearchService {
                 let maxSim =
                     selected.isEmpty
                     ? 0.0
-                    : selected.map { jaccardSimilarity(candidate.content, $0.content) }.max()!
+                    : selected.map { TextSimilarity.jaccard(candidate.content, $0.content) }.max()!
 
                 let mmrScore = lambda * candidate.score - (1.0 - lambda) * maxSim
 
@@ -350,15 +367,6 @@ public actor MemorySearchService {
         }
 
         return selected.map(\.item)
-    }
-
-    private nonisolated func jaccardSimilarity(_ a: String, _ b: String) -> Double {
-        let wordsA = Set(a.lowercased().split(separator: " ").map(String.init))
-        let wordsB = Set(b.lowercased().split(separator: " ").map(String.init))
-        guard !wordsA.isEmpty || !wordsB.isEmpty else { return 0 }
-        let intersection = wordsA.intersection(wordsB).count
-        let union = wordsA.union(wordsB).count
-        return Double(intersection) / Double(union)
     }
 
     // MARK: - Helpers

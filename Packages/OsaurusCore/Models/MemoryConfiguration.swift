@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import os
 
 public struct MemoryConfiguration: Codable, Equatable, Sendable {
     /// Core Model provider (e.g. "anthropic")
@@ -47,13 +48,16 @@ public struct MemoryConfiguration: Codable, Equatable, Sendable {
     /// Over-fetch multiplier for MMR: fetch this many times topK from VecturaKit, then rerank down.
     public var mmrFetchMultiplier: Double
 
+    /// Maximum active entries per agent before oldest are archived (0 = unlimited)
+    public var maxEntriesPerAgent: Int
+
     /// Whether the memory system is enabled
     public var enabled: Bool
 
     /// Whether entry verification pipeline is enabled
     public var verificationEnabled: Bool
-    /// VecturaKit similarity score threshold — below this, candidates auto-KEEP without model call
-    public var verificationSimilarityThreshold: Double
+    /// VecturaKit similarity score threshold for semantic dedup — above this, candidates are SKIP'd as semantic duplicates
+    public var verificationSemanticDedupThreshold: Double
     /// Jaccard threshold for Layer 1 near-duplicate detection (above this = auto-SKIP)
     public var verificationJaccardDedupThreshold: Double
 
@@ -62,12 +66,28 @@ public struct MemoryConfiguration: Codable, Equatable, Sendable {
         coreModelProvider.isEmpty ? coreModelName : "\(coreModelProvider)/\(coreModelName)"
     }
 
+    // MARK: - Internal Constants (not user-configurable)
+
+    /// Approximate characters per token for budget calculations.
+    public static let charsPerToken = 4
+    /// Max existing entries included in the extraction prompt.
+    public static let postActivityPromptEntryLimit = 30
+    /// Default LIMIT for fallback text search queries.
+    public static let fallbackSearchLimit = 20
+    /// Jaccard threshold for profile fact deduplication.
+    public static let profileFactDedupThreshold = 0.6
+    /// Jaccard threshold for contradiction detection (entries with same type and similarity above this are potential contradictions).
+    public static let contradictionJaccardThreshold = 0.3
+
+    /// Maximum allowed content length for memory entries and profile (in characters).
+    public static let maxContentLength = 50_000
+
     public init(
         coreModelProvider: String = "anthropic",
         coreModelName: String = "claude-haiku-4-5",
         embeddingBackend: String = "mlx",
         embeddingModel: String = "nomic-embed-text-v1.5",
-        inactivityTimeoutSeconds: Int = 300,
+        inactivityTimeoutSeconds: Int = 60,
         profileMaxTokens: Int = 2000,
         profileRegenerateThreshold: Int = 10,
         workingMemoryBudgetTokens: Int = 500,
@@ -78,9 +98,10 @@ public struct MemoryConfiguration: Codable, Equatable, Sendable {
         temporalDecayHalfLifeDays: Int = 30,
         mmrLambda: Double = 0.7,
         mmrFetchMultiplier: Double = 2.0,
+        maxEntriesPerAgent: Int = 500,
         enabled: Bool = true,
         verificationEnabled: Bool = true,
-        verificationSimilarityThreshold: Double = 0.4,
+        verificationSemanticDedupThreshold: Double = 0.85,
         verificationJaccardDedupThreshold: Double = 0.6
     ) {
         self.coreModelProvider = coreModelProvider
@@ -98,10 +119,31 @@ public struct MemoryConfiguration: Codable, Equatable, Sendable {
         self.temporalDecayHalfLifeDays = temporalDecayHalfLifeDays
         self.mmrLambda = mmrLambda
         self.mmrFetchMultiplier = mmrFetchMultiplier
+        self.maxEntriesPerAgent = maxEntriesPerAgent
         self.enabled = enabled
         self.verificationEnabled = verificationEnabled
-        self.verificationSimilarityThreshold = verificationSimilarityThreshold
+        self.verificationSemanticDedupThreshold = verificationSemanticDedupThreshold
         self.verificationJaccardDedupThreshold = verificationJaccardDedupThreshold
+    }
+
+    /// Returns a copy with all values clamped to valid ranges.
+    public func validated() -> MemoryConfiguration {
+        var c = self
+        c.inactivityTimeoutSeconds = max(10, min(c.inactivityTimeoutSeconds, 3600))
+        c.profileMaxTokens = max(100, min(c.profileMaxTokens, 50_000))
+        c.profileRegenerateThreshold = max(1, min(c.profileRegenerateThreshold, 100))
+        c.workingMemoryBudgetTokens = max(50, min(c.workingMemoryBudgetTokens, 10_000))
+        c.summaryRetentionDays = max(1, min(c.summaryRetentionDays, 365))
+        c.summaryBudgetTokens = max(50, min(c.summaryBudgetTokens, 10_000))
+        c.graphBudgetTokens = max(50, min(c.graphBudgetTokens, 5_000))
+        c.recallTopK = max(1, min(c.recallTopK, 100))
+        c.temporalDecayHalfLifeDays = max(1, min(c.temporalDecayHalfLifeDays, 365))
+        c.mmrLambda = max(0.0, min(c.mmrLambda, 1.0))
+        c.mmrFetchMultiplier = max(1.0, min(c.mmrFetchMultiplier, 10.0))
+        c.maxEntriesPerAgent = max(0, min(c.maxEntriesPerAgent, 10_000))
+        c.verificationSemanticDedupThreshold = max(0.0, min(c.verificationSemanticDedupThreshold, 1.0))
+        c.verificationJaccardDedupThreshold = max(0.0, min(c.verificationJaccardDedupThreshold, 1.0))
+        return c
     }
 
     public init(from decoder: Decoder) throws {
@@ -130,12 +172,14 @@ public struct MemoryConfiguration: Codable, Equatable, Sendable {
         mmrLambda = try c.decodeIfPresent(Double.self, forKey: .mmrLambda) ?? defaults.mmrLambda
         mmrFetchMultiplier =
             try c.decodeIfPresent(Double.self, forKey: .mmrFetchMultiplier) ?? defaults.mmrFetchMultiplier
+        maxEntriesPerAgent =
+            try c.decodeIfPresent(Int.self, forKey: .maxEntriesPerAgent) ?? defaults.maxEntriesPerAgent
         enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? defaults.enabled
         verificationEnabled =
             try c.decodeIfPresent(Bool.self, forKey: .verificationEnabled) ?? defaults.verificationEnabled
-        verificationSimilarityThreshold =
-            try c.decodeIfPresent(Double.self, forKey: .verificationSimilarityThreshold)
-            ?? defaults.verificationSimilarityThreshold
+        verificationSemanticDedupThreshold =
+            try c.decodeIfPresent(Double.self, forKey: .verificationSemanticDedupThreshold)
+            ?? defaults.verificationSemanticDedupThreshold
         verificationJaccardDedupThreshold =
             try c.decodeIfPresent(Double.self, forKey: .verificationJaccardDedupThreshold)
             ?? defaults.verificationJaccardDedupThreshold
@@ -154,7 +198,11 @@ public enum MemoryConfigurationStore {
         return e
     }()
 
+    private static var cached: MemoryConfiguration?
+
     public static func load() -> MemoryConfiguration {
+        if let cached { return cached }
+
         let url = OsaurusPaths.memoryConfigFile()
         guard FileManager.default.fileExists(atPath: url.path) else {
             let defaults = MemoryConfiguration.default
@@ -163,21 +211,29 @@ public enum MemoryConfigurationStore {
         }
         do {
             let data = try Data(contentsOf: url)
-            return try JSONDecoder().decode(MemoryConfiguration.self, from: data)
+            let config = try JSONDecoder().decode(MemoryConfiguration.self, from: data).validated()
+            cached = config
+            return config
         } catch {
-            print("[Memory] Failed to load config: \(error)")
+            MemoryLogger.config.error("Failed to load config: \(error)")
             return .default
         }
     }
 
     public static func save(_ config: MemoryConfiguration) {
+        let validated = config.validated()
         let url = OsaurusPaths.memoryConfigFile()
         OsaurusPaths.ensureExistsSilent(url.deletingLastPathComponent())
         do {
-            let data = try encoder.encode(config)
+            let data = try encoder.encode(validated)
             try data.write(to: url, options: .atomic)
+            cached = validated
         } catch {
-            print("[Memory] Failed to save config: \(error)")
+            MemoryLogger.config.error("Failed to save config: \(error)")
         }
+    }
+
+    public static func invalidateCache() {
+        cached = nil
     }
 }

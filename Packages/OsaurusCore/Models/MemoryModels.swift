@@ -114,8 +114,16 @@ public struct MemoryEntry: Codable, Sendable, Identifiable {
     public var validFrom: String
     public var validUntil: String?
 
-    public var tags: [String] {
-        guard let json = tagsJSON, let data = json.data(using: .utf8),
+    public var tags: [String]
+
+    private enum CodingKeys: String, CodingKey {
+        case id, agentId, type, content, confidence, model, sourceConversationId
+        case tagsJSON, status, supersededBy, createdAt, lastAccessed, accessCount
+        case validFrom, validUntil
+    }
+
+    private static func decodeTags(from json: String?) -> [String] {
+        guard let json, let data = json.data(using: .utf8),
             let array = try? JSONDecoder().decode([String].self, from: data)
         else { return [] }
         return array
@@ -141,8 +149,8 @@ public struct MemoryEntry: Codable, Sendable, Identifiable {
         self.id = id
         self.agentId = agentId
         self.type = type
-        self.content = content
-        self.confidence = confidence
+        self.content = String(content.prefix(MemoryConfiguration.maxContentLength))
+        self.confidence = min(1.0, max(0.0, confidence))
         self.model = model
         self.sourceConversationId = sourceConversationId
         self.tagsJSON = tagsJSON
@@ -150,9 +158,30 @@ public struct MemoryEntry: Codable, Sendable, Identifiable {
         self.supersededBy = supersededBy
         self.createdAt = createdAt
         self.lastAccessed = lastAccessed
-        self.accessCount = accessCount
+        self.accessCount = max(0, accessCount)
         self.validFrom = validFrom
         self.validUntil = validUntil
+        self.tags = Self.decodeTags(from: tagsJSON)
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        agentId = try c.decode(String.self, forKey: .agentId)
+        type = try c.decode(MemoryEntryType.self, forKey: .type)
+        content = try c.decode(String.self, forKey: .content)
+        confidence = try c.decode(Double.self, forKey: .confidence)
+        model = try c.decode(String.self, forKey: .model)
+        sourceConversationId = try c.decodeIfPresent(String.self, forKey: .sourceConversationId)
+        tagsJSON = try c.decodeIfPresent(String.self, forKey: .tagsJSON)
+        status = try c.decode(String.self, forKey: .status)
+        supersededBy = try c.decodeIfPresent(String.self, forKey: .supersededBy)
+        createdAt = try c.decode(String.self, forKey: .createdAt)
+        lastAccessed = try c.decode(String.self, forKey: .lastAccessed)
+        accessCount = try c.decode(Int.self, forKey: .accessCount)
+        validFrom = try c.decode(String.self, forKey: .validFrom)
+        validUntil = try c.decodeIfPresent(String.self, forKey: .validUntil)
+        tags = Self.decodeTags(from: tagsJSON)
     }
 }
 
@@ -359,26 +388,4 @@ struct GraphExtractionResult {
     }
     var entities: [EntityData] = []
     var relationships: [RelationshipData] = []
-}
-
-// MARK: - Signal Detection
-
-public enum SignalType: String, Sendable, CaseIterable {
-    case explicitMemory
-    case correction
-    case identity
-    case preference
-    case decision
-    case commitment
-
-    public var memoryEntryType: MemoryEntryType {
-        switch self {
-        case .explicitMemory: return .fact
-        case .correction: return .correction
-        case .identity: return .fact
-        case .preference: return .preference
-        case .decision: return .decision
-        case .commitment: return .commitment
-        }
-    }
 }

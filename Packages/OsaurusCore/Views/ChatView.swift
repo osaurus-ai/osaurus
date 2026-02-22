@@ -830,8 +830,6 @@ final class ChatSession: ObservableObject {
             }
         }
 
-        // Signal detection (Path 1) — fire before streaming
-        let detectedSignals = hasContent ? SignalDetector.detect(in: trimmed) : []
         let memoryAgentId = (agentId ?? Agent.defaultId).uuidString
         let memoryConversationId = (sessionId ?? UUID()).uuidString
         if hasContent {
@@ -869,15 +867,21 @@ final class ChatSession: ObservableObject {
                     let aid = memoryAgentId
                     let chunkIdx = turns.count
                     let db = MemoryDatabase.shared
-                    try? db.upsertConversation(id: convId, agentId: aid, title: title)
+                    do { try db.upsertConversation(id: convId, agentId: aid, title: title) } catch {
+                        MemoryLogger.database.warning("Failed to upsert conversation: \(error)")
+                    }
                     let userChunkIndex = chunkIdx - 1
-                    try? db.insertChunk(
-                        conversationId: convId,
-                        chunkIndex: userChunkIndex,
-                        role: "user",
-                        content: userContent,
-                        tokenCount: max(1, userContent.count / 4)
-                    )
+                    do {
+                        try db.insertChunk(
+                            conversationId: convId,
+                            chunkIndex: userChunkIndex,
+                            role: "user",
+                            content: userContent,
+                            tokenCount: max(1, userContent.count / 4)
+                        )
+                    } catch {
+                        MemoryLogger.database.warning("Failed to insert user chunk: \(error)")
+                    }
                     let userChunk = ConversationChunk(
                         conversationId: convId,
                         chunkIndex: userChunkIndex,
@@ -887,13 +891,17 @@ final class ChatSession: ObservableObject {
                     )
                     Task.detached { await MemorySearchService.shared.indexConversationChunk(userChunk) }
                     if let ac = assistantContent, !ac.isEmpty {
-                        try? db.insertChunk(
-                            conversationId: convId,
-                            chunkIndex: chunkIdx,
-                            role: "assistant",
-                            content: ac,
-                            tokenCount: max(1, ac.count / 4)
-                        )
+                        do {
+                            try db.insertChunk(
+                                conversationId: convId,
+                                chunkIndex: chunkIdx,
+                                role: "assistant",
+                                content: ac,
+                                tokenCount: max(1, ac.count / 4)
+                            )
+                        } catch {
+                            MemoryLogger.database.warning("Failed to insert assistant chunk: \(error)")
+                        }
                         let assistantChunk = ConversationChunk(
                             conversationId: convId,
                             chunkIndex: chunkIdx,
@@ -905,15 +913,13 @@ final class ChatSession: ObservableObject {
                     }
                 }
 
-                if !detectedSignals.isEmpty {
-                    let signals = detectedSignals
+                if hasContent {
                     let userMsg = userContent
                     let asstMsg = assistantContent
                     let agentStr = memoryAgentId
                     let convStr = memoryConversationId
                     Task.detached {
-                        await MemoryService.shared.processImmediateSignals(
-                            signals: signals,
+                        await MemoryService.shared.recordConversationTurn(
                             userMessage: userMsg,
                             assistantMessage: asstMsg,
                             agentId: agentStr,
@@ -943,9 +949,9 @@ final class ChatSession: ObservableObject {
                 let baseSystemPrompt = AgentManager.shared.effectiveSystemPrompt(for: effectiveAgentId)
                     .trimmingCharacters(in: .whitespacesAndNewlines)
 
-                // Inject memory context before the system prompt
+                // Inject memory context before the system prompt (async to avoid main thread blocking)
                 let memoryConfig = MemoryConfigurationStore.load()
-                let memoryContext = MemoryContextAssembler.assembleContext(
+                let memoryContext = await MemoryContextAssembler.assembleContext(
                     agentId: effectiveAgentId.uuidString,
                     config: memoryConfig
                 )

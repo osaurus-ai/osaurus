@@ -289,9 +289,6 @@ public final class WorkSession: ObservableObject {
 
     // MARK: - Memory State
 
-    /// Signals detected from the most recent user input (for post-execution processing)
-    private var pendingSignals: [SignalType] = []
-
     /// Raw user message stored for memory extraction after execution completes
     private var pendingUserMessage: String?
 
@@ -442,7 +439,6 @@ public final class WorkSession: ObservableObject {
         errorMessage = nil
 
         if !rawQuery.isEmpty {
-            pendingSignals = SignalDetector.detect(in: rawQuery)
             pendingUserMessage = rawQuery
             ActivityTracker.shared.recordActivity(agentId: agentId.uuidString)
         }
@@ -609,7 +605,7 @@ public final class WorkSession: ObservableObject {
 
         resetExecutionState(for: issue)
 
-        let config = buildExecutionConfig()
+        let config = await buildExecutionConfig()
         let tools = ToolRegistry.shared.specs(withOverrides: config.toolOverrides)
         let skillCatalog = buildSkillCatalog()
 
@@ -662,13 +658,13 @@ public final class WorkSession: ObservableObject {
     }
 
     /// Builds execution configuration from current state
-    private func buildExecutionConfig() -> (model: String, systemPrompt: String, toolOverrides: [String: Bool]?) {
+    private func buildExecutionConfig() async -> (model: String, systemPrompt: String, toolOverrides: [String: Bool]?) {
         let baseSystemPrompt =
             windowState?.cachedSystemPrompt
             ?? AgentManager.shared.effectiveSystemPrompt(for: agentId)
 
         let memoryConfig = MemoryConfigurationStore.load()
-        let memoryContext = MemoryContextAssembler.assembleContext(
+        let memoryContext = await MemoryContextAssembler.assembleContext(
             agentId: agentId.uuidString,
             config: memoryConfig
         )
@@ -1027,7 +1023,7 @@ public final class WorkSession: ObservableObject {
         guard canResumeSelectedIssue, let issue = selectedIssue else { return }
 
         resetExecutionState(for: issue)
-        let config = buildExecutionConfig()
+        let config = await buildExecutionConfig()
         let tools = ToolRegistry.shared.specs(withOverrides: config.toolOverrides)
         let skillCatalog = buildSkillCatalog()
 
@@ -1149,19 +1145,17 @@ extension WorkSession: WorkEngineDelegate {
         notifyIfSelected(issue.id)
         Task { [weak self] in await self?.refreshIssues() }
 
-        // Memory processing: persist signals and record activity
+        // Memory processing: record conversation turn for post-activity extraction
         let agentStr = agentId.uuidString
         let userMessage = pendingUserMessage ?? ""
         let assistantContent =
             liveExecutionTurns
             .last(where: { $0.role == .assistant })?.content
 
-        if !pendingSignals.isEmpty {
-            let signals = pendingSignals
+        if !userMessage.isEmpty {
             let convId = issue.id
             Task.detached {
-                await MemoryService.shared.processImmediateSignals(
-                    signals: signals,
+                await MemoryService.shared.recordConversationTurn(
                     userMessage: userMessage,
                     assistantMessage: assistantContent,
                     agentId: agentStr,
@@ -1170,7 +1164,6 @@ extension WorkSession: WorkEngineDelegate {
             }
         }
 
-        pendingSignals = []
         pendingUserMessage = nil
         ActivityTracker.shared.recordActivity(agentId: agentStr)
     }
