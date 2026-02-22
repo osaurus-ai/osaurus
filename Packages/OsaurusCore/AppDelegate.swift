@@ -169,6 +169,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             if opened {
                 ActivityTracker.shared.start()
                 await MemorySearchService.shared.initialize()
+                await MemoryService.shared.recoverOrphanedSignals()
             } else {
                 MemoryLogger.database.error("Memory system disabled — database failed to open after 3 attempts")
             }

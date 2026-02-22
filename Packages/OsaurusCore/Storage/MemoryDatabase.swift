@@ -31,15 +31,32 @@ public enum MemoryDatabaseError: Error, LocalizedError {
 public final class MemoryDatabase: @unchecked Sendable {
     public static let shared = MemoryDatabase()
 
-    private static let schemaVersion = 2
+    private static let schemaVersion = 3
 
     private static let memoryEntryColumns = """
         id, agent_id, type, content, confidence, model, source_conversation_id, tags, status,
         superseded_by, created_at, last_accessed, access_count, valid_from, valid_until
         """
 
+    private static let insertMemoryEventSQL =
+        "INSERT INTO memory_events (entry_id, event_type, agent_id, model, reason) VALUES (?1, ?2, ?3, ?4, ?5)"
+
+    private static let touchMemoryEntrySQL =
+        "UPDATE memory_entries SET last_accessed = datetime('now'), access_count = access_count + 1 WHERE id = ?1"
+
+    nonisolated(unsafe) private static let iso8601Formatter: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        return f
+    }()
+
+    private static func iso8601Now() -> String {
+        iso8601Formatter.string(from: Date())
+    }
+
     private var db: OpaquePointer?
     private let queue = DispatchQueue(label: "ai.osaurus.memory.database")
+
+    private var cachedStatements: [String: OpaquePointer] = [:]
 
     public var isOpen: Bool {
         queue.sync { db != nil }
@@ -79,9 +96,43 @@ public final class MemoryDatabase: @unchecked Sendable {
 
     public func close() {
         queue.sync {
+            for (_, stmt) in cachedStatements {
+                sqlite3_finalize(stmt)
+            }
+            cachedStatements.removeAll()
             guard let connection = db else { return }
+            try? executeRaw("PRAGMA optimize")
             sqlite3_close(connection)
             db = nil
+        }
+    }
+
+    /// Get or create a cached prepared statement for the given SQL (must be called within queue).
+    private func cachedStatement(for sql: String) throws -> OpaquePointer {
+        if let stmt = cachedStatements[sql] {
+            sqlite3_reset(stmt)
+            sqlite3_clear_bindings(stmt)
+            return stmt
+        }
+        guard let connection = db else { throw MemoryDatabaseError.notOpen }
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(connection, sql, -1, &stmt, nil) == SQLITE_OK, let statement = stmt else {
+            throw MemoryDatabaseError.failedToPrepare(String(cString: sqlite3_errmsg(connection)))
+        }
+        cachedStatements[sql] = statement
+        return statement
+    }
+
+    /// Execute a cached prepared statement with bind/process closures (must be called within queue).
+    func prepareAndExecuteCached(
+        _ sql: String,
+        bind: (OpaquePointer) -> Void,
+        process: (OpaquePointer) throws -> Void
+    ) throws {
+        try queue.sync {
+            let stmt = try cachedStatement(for: sql)
+            bind(stmt)
+            try process(stmt)
         }
     }
 
@@ -105,6 +156,7 @@ public final class MemoryDatabase: @unchecked Sendable {
         let currentVersion = try getSchemaVersion()
         if currentVersion < 1 { try migrateToV1() }
         if currentVersion < 2 { try migrateToV2() }
+        if currentVersion < 3 { try migrateToV3() }
     }
 
     private func getSchemaVersion() throws -> Int {
@@ -421,6 +473,21 @@ public final class MemoryDatabase: @unchecked Sendable {
         MemoryLogger.database.info("Migration to v2 completed")
     }
 
+    /// V3 migration: add index on conversation_chunks(created_at) for time-range queries.
+    private func migrateToV3() throws {
+        MemoryLogger.database.info("Running migration to v3")
+
+        try executeRaw(
+            "CREATE INDEX IF NOT EXISTS idx_chunks_created_at ON conversation_chunks(created_at)"
+        )
+
+        try executeRaw(
+            "INSERT OR IGNORE INTO schema_version (version, description) VALUES (3, 'Add created_at index for conversation_chunks')"
+        )
+        try setSchemaVersion(3)
+        MemoryLogger.database.info("Migration to v3 completed")
+    }
+
     // MARK: - Query Execution
 
     private func executeRaw(_ sql: String) throws {
@@ -500,6 +567,20 @@ public final class MemoryDatabase: @unchecked Sendable {
                 try? executeRaw("ROLLBACK")
                 throw error
             }
+        }
+    }
+
+    /// Prepare, bind, step, and finalize a statement within an already-open transaction.
+    /// Must only be called inside `inTransaction` (i.e. on the serial queue with `db` valid).
+    private func transactionalStep(_ sql: String, bind: (OpaquePointer) -> Void) throws {
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK, let s = stmt else {
+            throw MemoryDatabaseError.failedToPrepare(String(cString: sqlite3_errmsg(db)))
+        }
+        defer { sqlite3_finalize(s) }
+        bind(s)
+        guard sqlite3_step(s) == SQLITE_DONE else {
+            throw MemoryDatabaseError.failedToExecute("step failed")
         }
     }
 
@@ -695,14 +776,31 @@ public final class MemoryDatabase: @unchecked Sendable {
 
     // MARK: - Memory Entries
 
+    private static let insertEntrySQL = """
+        INSERT INTO memory_entries (id, agent_id, type, content, confidence, model,
+            source_conversation_id, tags, status, valid_from)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+        """
+
+    private static let supersedeEntrySQL =
+        "UPDATE memory_entries SET status = 'superseded', superseded_by = ?1, valid_until = ?3 WHERE id = ?2"
+
     public func insertMemoryEntry(_ entry: MemoryEntry) throws {
         let validFrom = entry.validFrom.isEmpty ? Self.iso8601Now() : entry.validFrom
-        _ = try executeUpdate(
-            """
-            INSERT INTO memory_entries (id, agent_id, type, content, confidence, model, source_conversation_id, tags, status, valid_from)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
-            """
-        ) { stmt in
+        try inTransaction { _ in
+            try self.bindInsertEntry(entry, validFrom: validFrom)
+            try self.bindInsertEvent(
+                entryId: entry.id,
+                eventType: "created",
+                agentId: entry.agentId,
+                model: entry.model,
+                reason: nil
+            )
+        }
+    }
+
+    private func bindInsertEntry(_ entry: MemoryEntry, validFrom: String) throws {
+        try transactionalStep(Self.insertEntrySQL) { stmt in
             Self.bindText(stmt, index: 1, value: entry.id)
             Self.bindText(stmt, index: 2, value: entry.agentId)
             Self.bindText(stmt, index: 3, value: entry.type.rawValue)
@@ -714,25 +812,34 @@ public final class MemoryDatabase: @unchecked Sendable {
             Self.bindText(stmt, index: 9, value: entry.status)
             Self.bindText(stmt, index: 10, value: validFrom)
         }
-
-        try insertMemoryEvent(
-            entryId: entry.id,
-            eventType: "created",
-            agentId: entry.agentId,
-            model: entry.model,
-            reason: nil
-        )
     }
 
-    public func loadActiveEntries(agentId: String) throws -> [MemoryEntry] {
+    private func bindInsertEvent(entryId: String, eventType: String, agentId: String?, model: String?, reason: String?)
+        throws
+    {
+        try transactionalStep(Self.insertMemoryEventSQL) { stmt in
+            Self.bindText(stmt, index: 1, value: entryId)
+            Self.bindText(stmt, index: 2, value: eventType)
+            Self.bindText(stmt, index: 3, value: agentId)
+            Self.bindText(stmt, index: 4, value: model)
+            Self.bindText(stmt, index: 5, value: reason)
+        }
+    }
+
+    public func loadActiveEntries(agentId: String, limit: Int = 0) throws -> [MemoryEntry] {
         var entries: [MemoryEntry] = []
-        try prepareAndExecute(
-            """
+        var sql = """
             SELECT \(Self.memoryEntryColumns)
             FROM memory_entries WHERE agent_id = ?1 AND status = 'active'
             ORDER BY last_accessed DESC
-            """,
-            bind: { stmt in Self.bindText(stmt, index: 1, value: agentId) },
+            """
+        if limit > 0 { sql += " LIMIT ?2" }
+        try prepareAndExecute(
+            sql,
+            bind: { stmt in
+                Self.bindText(stmt, index: 1, value: agentId)
+                if limit > 0 { sqlite3_bind_int(stmt, 2, Int32(limit)) }
+            },
             process: { stmt in
                 while sqlite3_step(stmt) == SQLITE_ROW {
                     entries.append(Self.readMemoryEntry(stmt))
@@ -791,14 +898,45 @@ public final class MemoryDatabase: @unchecked Sendable {
 
     public func supersede(entryId: String, by newId: String, reason: String?) throws {
         let now = Self.iso8601Now()
-        _ = try executeUpdate(
-            "UPDATE memory_entries SET status = 'superseded', superseded_by = ?1, valid_until = ?3 WHERE id = ?2"
-        ) { stmt in
+        _ = try executeUpdate(Self.supersedeEntrySQL) { stmt in
             Self.bindText(stmt, index: 1, value: newId)
             Self.bindText(stmt, index: 2, value: entryId)
             Self.bindText(stmt, index: 3, value: now)
         }
         try insertMemoryEvent(entryId: entryId, eventType: "superseded", agentId: nil, model: nil, reason: reason)
+    }
+
+    /// Atomically supersede an old entry and insert its replacement in a single transaction.
+    public func supersedeAndInsert(
+        oldEntryId: String,
+        newEntry: MemoryEntry,
+        reason: String?
+    ) throws {
+        try inTransaction { _ in
+            let now = Self.iso8601Now()
+            let validFrom = newEntry.validFrom.isEmpty ? now : newEntry.validFrom
+
+            try self.transactionalStep(Self.supersedeEntrySQL) { stmt in
+                Self.bindText(stmt, index: 1, value: newEntry.id)
+                Self.bindText(stmt, index: 2, value: oldEntryId)
+                Self.bindText(stmt, index: 3, value: now)
+            }
+            try self.bindInsertEntry(newEntry, validFrom: validFrom)
+            try self.bindInsertEvent(
+                entryId: oldEntryId,
+                eventType: "superseded",
+                agentId: nil,
+                model: nil,
+                reason: reason
+            )
+            try self.bindInsertEvent(
+                entryId: newEntry.id,
+                eventType: "created",
+                agentId: newEntry.agentId,
+                model: newEntry.model,
+                reason: nil
+            )
+        }
     }
 
     public func deleteMemoryEntry(id: String) throws {
@@ -809,11 +947,11 @@ public final class MemoryDatabase: @unchecked Sendable {
     }
 
     public func touchMemoryEntry(id: String) throws {
-        _ = try executeUpdate(
-            "UPDATE memory_entries SET last_accessed = datetime('now'), access_count = access_count + 1 WHERE id = ?1"
-        ) { stmt in
-            Self.bindText(stmt, index: 1, value: id)
-        }
+        try prepareAndExecuteCached(
+            Self.touchMemoryEntrySQL,
+            bind: { stmt in Self.bindText(stmt, index: 1, value: id) },
+            process: { stmt in _ = sqlite3_step(stmt) }
+        )
     }
 
     public func touchMemoryEntries(ids: [String]) throws {
@@ -902,24 +1040,17 @@ public final class MemoryDatabase: @unchecked Sendable {
         model: String?,
         reason: String?
     ) throws {
-        _ = try executeUpdate(
-            "INSERT INTO memory_events (entry_id, event_type, agent_id, model, reason) VALUES (?1, ?2, ?3, ?4, ?5)"
-        ) { stmt in
-            Self.bindText(stmt, index: 1, value: entryId)
-            Self.bindText(stmt, index: 2, value: eventType)
-            Self.bindText(stmt, index: 3, value: agentId)
-            Self.bindText(stmt, index: 4, value: model)
-            Self.bindText(stmt, index: 5, value: reason)
-        }
-    }
-
-    nonisolated(unsafe) private static let iso8601Formatter: ISO8601DateFormatter = {
-        let f = ISO8601DateFormatter()
-        return f
-    }()
-
-    private static func iso8601Now() -> String {
-        iso8601Formatter.string(from: Date())
+        try prepareAndExecuteCached(
+            Self.insertMemoryEventSQL,
+            bind: { stmt in
+                Self.bindText(stmt, index: 1, value: entryId)
+                Self.bindText(stmt, index: 2, value: eventType)
+                Self.bindText(stmt, index: 3, value: agentId)
+                Self.bindText(stmt, index: 4, value: model)
+                Self.bindText(stmt, index: 5, value: reason)
+            },
+            process: { stmt in _ = sqlite3_step(stmt) }
+        )
     }
 
     private static func readMemoryEntry(_ stmt: OpaquePointer) -> MemoryEntry {
@@ -1113,7 +1244,7 @@ public final class MemoryDatabase: @unchecked Sendable {
         }
     }
 
-    public func loadAllChunks(agentId: String? = nil, days: Int = 30) throws -> [ConversationChunk] {
+    public func loadAllChunks(agentId: String? = nil, days: Int = 30, limit: Int = 5000) throws -> [ConversationChunk] {
         var chunks: [ConversationChunk] = []
         var sql = """
                 SELECT cc.id, cc.conversation_id, cc.chunk_index, cc.role, cc.content, cc.token_count, cc.created_at,
@@ -1124,12 +1255,15 @@ public final class MemoryDatabase: @unchecked Sendable {
             """
         if agentId != nil { sql += " AND c.agent_id = ?2" }
         sql += " ORDER BY cc.created_at DESC"
+        let limitParam = agentId != nil ? 3 : 2
+        sql += " LIMIT ?\(limitParam)"
 
         try prepareAndExecute(
             sql,
             bind: { stmt in
                 sqlite3_bind_int(stmt, 1, Int32(days))
                 if let agentId { Self.bindText(stmt, index: 2, value: agentId) }
+                sqlite3_bind_int(stmt, Int32(limitParam), Int32(min(limit, 10_000)))
             },
             process: { stmt in
                 while sqlite3_step(stmt) == SQLITE_ROW {
@@ -1384,6 +1518,26 @@ public final class MemoryDatabase: @unchecked Sendable {
         return (attrs?[.size] as? Int64) ?? 0
     }
 
+    // MARK: - Database Maintenance
+
+    /// Run PRAGMA optimize to let SQLite update internal statistics.
+    /// Best called on close or periodically.
+    public func optimize() {
+        queue.sync {
+            guard db != nil else { return }
+            try? executeRaw("PRAGMA optimize")
+        }
+    }
+
+    /// Run VACUUM to reclaim space and defragment the database.
+    /// This is expensive and should only be run infrequently (e.g., weekly).
+    public func vacuum() throws {
+        try queue.sync {
+            guard db != nil else { throw MemoryDatabaseError.notOpen }
+            try executeRaw("VACUUM")
+        }
+    }
+
     // MARK: - Retention Cleanup
 
     /// Delete old rows from memory_events and processing_log to prevent unbounded growth.
@@ -1505,6 +1659,91 @@ public final class MemoryDatabase: @unchecked Sendable {
                 Self.bindText(stmt, index: 1, value: query)
                 sqlite3_bind_int(stmt, 2, Int32(days))
                 if let agentId { Self.bindText(stmt, index: 3, value: agentId) }
+            },
+            process: { stmt in
+                while sqlite3_step(stmt) == SQLITE_ROW {
+                    summaries.append(Self.readSummary(stmt))
+                }
+            }
+        )
+        return summaries
+    }
+
+    // MARK: - Lightweight Key Queries (for search reverse-map building)
+
+    public func loadAllChunkKeys(days: Int = 365) throws -> [(conversationId: String, chunkIndex: Int)] {
+        var keys: [(conversationId: String, chunkIndex: Int)] = []
+        try prepareAndExecute(
+            """
+            SELECT conversation_id, chunk_index
+            FROM conversation_chunks
+            WHERE created_at >= datetime('now', '-' || ?1 || ' days')
+            """,
+            bind: { stmt in sqlite3_bind_int(stmt, 1, Int32(days)) },
+            process: { stmt in
+                while sqlite3_step(stmt) == SQLITE_ROW {
+                    keys.append(
+                        (
+                            conversationId: String(cString: sqlite3_column_text(stmt, 0)),
+                            chunkIndex: Int(sqlite3_column_int(stmt, 1))
+                        )
+                    )
+                }
+            }
+        )
+        return keys
+    }
+
+    public func loadAllSummaryKeys() throws -> [(agentId: String, conversationId: String, conversationAt: String)] {
+        var keys: [(agentId: String, conversationId: String, conversationAt: String)] = []
+        try prepareAndExecute(
+            """
+            SELECT agent_id, conversation_id, conversation_at
+            FROM conversation_summaries WHERE status = 'active'
+            """,
+            bind: { _ in },
+            process: { stmt in
+                while sqlite3_step(stmt) == SQLITE_ROW {
+                    keys.append(
+                        (
+                            agentId: String(cString: sqlite3_column_text(stmt, 0)),
+                            conversationId: String(cString: sqlite3_column_text(stmt, 1)),
+                            conversationAt: String(cString: sqlite3_column_text(stmt, 2))
+                        )
+                    )
+                }
+            }
+        )
+        return keys
+    }
+
+    public func loadSummariesByCompositeKeys(
+        _ keys: [(agentId: String, conversationId: String, conversationAt: String)],
+        filterAgentId: String? = nil
+    ) throws -> [ConversationSummary] {
+        guard !keys.isEmpty else { return [] }
+        let conditions = keys.enumerated().map { (i, _) in
+            "(agent_id = ?\(i * 3 + 1) AND conversation_id = ?\(i * 3 + 2) AND conversation_at = ?\(i * 3 + 3))"
+        }.joined(separator: " OR ")
+        var sql = """
+            SELECT id, agent_id, conversation_id, summary, token_count, model, conversation_at, status, created_at
+            FROM conversation_summaries WHERE status = 'active' AND (\(conditions))
+            """
+        if filterAgentId != nil { sql += " AND agent_id = ?\(keys.count * 3 + 1)" }
+        sql += " ORDER BY conversation_at DESC"
+
+        var summaries: [ConversationSummary] = []
+        try prepareAndExecute(
+            sql,
+            bind: { stmt in
+                for (i, key) in keys.enumerated() {
+                    Self.bindText(stmt, index: Int32(i * 3 + 1), value: key.agentId)
+                    Self.bindText(stmt, index: Int32(i * 3 + 2), value: key.conversationId)
+                    Self.bindText(stmt, index: Int32(i * 3 + 3), value: key.conversationAt)
+                }
+                if let agentId = filterAgentId {
+                    Self.bindText(stmt, index: Int32(keys.count * 3 + 1), value: agentId)
+                }
             },
             process: { stmt in
                 while sqlite3_step(stmt) == SQLITE_ROW {

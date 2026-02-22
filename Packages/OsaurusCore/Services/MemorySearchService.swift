@@ -18,6 +18,9 @@ public actor MemorySearchService {
     private var vectorDB: VecturaKit?
     private var isInitialized = false
 
+    private var chunkKeyMap: [String: (conversationId: String, chunkIndex: Int)] = [:]
+    private var summaryKeyMap: [String: (agentId: String, conversationId: String, conversationAt: String)] = [:]
+
     private init() {}
 
     // MARK: - Initialization
@@ -51,6 +54,34 @@ public actor MemorySearchService {
             MemoryLogger.search.error("VecturaKit initialization failed (text search fallback active): \(error)")
             vectorDB = nil
         }
+
+        buildReverseMaps()
+    }
+
+    /// Build reverse lookup maps from SQLite data so VecturaKit UUIDs can be
+    /// mapped back to chunk/summary composite keys without loading full rows.
+    private func buildReverseMaps() {
+        do {
+            let chunkKeys = try MemoryDatabase.shared.loadAllChunkKeys()
+            for key in chunkKeys {
+                let uuid = deterministicUUID(from: "chunk:\(key.conversationId):\(key.chunkIndex)")
+                chunkKeyMap[uuid.uuidString] = (key.conversationId, key.chunkIndex)
+            }
+
+            let summaryKeys = try MemoryDatabase.shared.loadAllSummaryKeys()
+            for key in summaryKeys {
+                let uuid = deterministicUUID(
+                    from: "summary:\(key.agentId):\(key.conversationId):\(key.conversationAt)"
+                )
+                summaryKeyMap[uuid.uuidString] = (key.agentId, key.conversationId, key.conversationAt)
+            }
+
+            MemoryLogger.search.info(
+                "Reverse maps built: \(self.chunkKeyMap.count) chunks, \(self.summaryKeyMap.count) summaries"
+            )
+        } catch {
+            MemoryLogger.search.warning("Failed to build reverse maps: \(error)")
+        }
     }
 
     // MARK: - Indexing
@@ -72,6 +103,7 @@ public actor MemorySearchService {
         do {
             let id = deterministicUUID(from: "chunk:\(chunk.conversationId):\(chunk.chunkIndex)")
             _ = try await db.addDocument(text: chunk.content, id: id)
+            chunkKeyMap[id.uuidString] = (chunk.conversationId, chunk.chunkIndex)
         } catch {
             MemoryLogger.search.error("Failed to index chunk: \(error)")
         }
@@ -85,6 +117,7 @@ public actor MemorySearchService {
                 from: "summary:\(summary.agentId):\(summary.conversationId):\(summary.conversationAt)"
             )
             _ = try await db.addDocument(text: summary.summary, id: id)
+            summaryKeyMap[id.uuidString] = (summary.agentId, summary.conversationId, summary.conversationAt)
         } catch {
             MemoryLogger.search.error("Failed to index summary: \(error)")
         }
@@ -175,6 +208,7 @@ public actor MemorySearchService {
     }
 
     /// Search conversation chunks using hybrid search (vector + BM25) with MMR reranking.
+    /// Uses reverse-map lookups for targeted DB queries instead of loading all rows.
     /// Falls back to SQLite text search when VecturaKit is unavailable.
     public func searchConversations(
         query: String,
@@ -189,21 +223,29 @@ public actor MemorySearchService {
                 let fetchCount = Int(Double(topK) * (fetchMultiplier ?? 2.0))
                 let results = try await db.search(query: .text(query), numResults: fetchCount, threshold: 0.3)
 
-                let scoreMap = Dictionary(
-                    results.map { ($0.id, (score: Double($0.score), text: $0.text)) },
-                    uniquingKeysWith: { first, _ in first }
-                )
-
-                let allChunks = try MemoryDatabase.shared.loadAllChunks(agentId: agentId, days: days)
-                let scored: [(item: ConversationChunk, score: Double, content: String)] = allChunks.compactMap {
-                    chunk in
-                    let chunkUUID = deterministicUUID(from: "chunk:\(chunk.conversationId):\(chunk.chunkIndex)")
-                    guard let match = scoreMap[chunkUUID] else { return nil }
-                    return (item: chunk, score: match.score, content: chunk.content)
+                var scoreByKey: [String: Double] = [:]
+                var keys: [(conversationId: String, chunkIndex: Int)] = []
+                for result in results {
+                    guard let key = chunkKeyMap[result.id.uuidString] else { continue }
+                    let compositeKey = "\(key.conversationId):\(key.chunkIndex)"
+                    scoreByKey[compositeKey] = Double(result.score)
+                    keys.append(key)
                 }
 
-                if !scored.isEmpty {
-                    return mmrRerank(results: scored, lambda: lambda ?? 0.7, topK: topK)
+                if !keys.isEmpty {
+                    let chunks = try MemoryDatabase.shared.loadChunksByKeys(keys)
+                    let scored: [(item: ConversationChunk, score: Double, content: String)] = chunks.compactMap {
+                        chunk in
+                        let compositeKey = "\(chunk.conversationId):\(chunk.chunkIndex)"
+                        guard let score = scoreByKey[compositeKey],
+                            agentId == nil || chunk.agentId == agentId
+                        else { return nil }
+                        return (item: chunk, score: score, content: chunk.content)
+                    }
+
+                    if !scored.isEmpty {
+                        return mmrRerank(results: scored, lambda: lambda ?? 0.7, topK: topK)
+                    }
                 }
             } catch {
                 MemoryLogger.search.error("Vector search for chunks failed, falling back to text: \(error)")
@@ -219,6 +261,7 @@ public actor MemorySearchService {
     }
 
     /// Search conversation summaries using hybrid search (vector + BM25) with MMR reranking.
+    /// Uses reverse-map lookups for targeted DB queries instead of loading all rows.
     /// Falls back to SQLite text search when VecturaKit is unavailable.
     public func searchSummaries(
         query: String,
@@ -233,25 +276,30 @@ public actor MemorySearchService {
                 let fetchCount = Int(Double(topK) * (fetchMultiplier ?? 2.0))
                 let results = try await db.search(query: .text(query), numResults: fetchCount, threshold: 0.3)
 
-                let scoreMap = Dictionary(
-                    results.map { ($0.id, (score: Double($0.score), text: $0.text)) },
-                    uniquingKeysWith: { first, _ in first }
-                )
-
-                let allSummaries = try MemoryDatabase.shared.loadAllSummaries(days: days)
-                let scored: [(item: ConversationSummary, score: Double, content: String)] = allSummaries.compactMap {
-                    summary in
-                    let summaryUUID = deterministicUUID(
-                        from: "summary:\(summary.agentId):\(summary.conversationId):\(summary.conversationAt)"
-                    )
-                    guard let match = scoreMap[summaryUUID],
-                        agentId == nil || summary.agentId == agentId
-                    else { return nil }
-                    return (item: summary, score: match.score, content: summary.summary)
+                var scoreByKey: [String: Double] = [:]
+                var compositeKeys: [(agentId: String, conversationId: String, conversationAt: String)] = []
+                for result in results {
+                    guard let key = summaryKeyMap[result.id.uuidString] else { continue }
+                    let compositeKey = "\(key.agentId):\(key.conversationId):\(key.conversationAt)"
+                    scoreByKey[compositeKey] = Double(result.score)
+                    compositeKeys.append(key)
                 }
 
-                if !scored.isEmpty {
-                    return mmrRerank(results: scored, lambda: lambda ?? 0.7, topK: topK)
+                if !compositeKeys.isEmpty {
+                    let summaries = try MemoryDatabase.shared.loadSummariesByCompositeKeys(
+                        compositeKeys,
+                        filterAgentId: agentId
+                    )
+                    let scored: [(item: ConversationSummary, score: Double, content: String)] =
+                        summaries.compactMap { summary in
+                            let compositeKey = "\(summary.agentId):\(summary.conversationId):\(summary.conversationAt)"
+                            guard let score = scoreByKey[compositeKey] else { return nil }
+                            return (item: summary, score: score, content: summary.summary)
+                        }
+
+                    if !scored.isEmpty {
+                        return mmrRerank(results: scored, lambda: lambda ?? 0.7, topK: topK)
+                    }
                 }
             } catch {
                 MemoryLogger.search.error("Vector search for summaries failed, falling back to text: \(error)")
@@ -299,21 +347,42 @@ public actor MemorySearchService {
 
     // MARK: - Index Management
 
-    /// Rebuild the entire VecturaKit index from SQLite data.
+    /// Rebuild the entire VecturaKit index from SQLite data (entries, summaries, and chunks).
     public func rebuildIndex() async {
         guard let db = vectorDB else { return }
+
+        chunkKeyMap.removeAll()
+        summaryKeyMap.removeAll()
 
         do {
             try await db.reset()
 
             let entries = try MemoryDatabase.shared.loadAllActiveEntries()
-            let texts = entries.map { "[\($0.type.rawValue)] \($0.content)" }
-            let ids = entries.compactMap { UUID(uuidString: $0.id) }
-            if texts.count == ids.count && !texts.isEmpty {
-                _ = try await db.addDocuments(texts: texts, ids: ids)
+            let entryTexts = entries.map { "[\($0.type.rawValue)] \($0.content)" }
+            let entryIds = entries.compactMap { UUID(uuidString: $0.id) }
+            if entryTexts.count == entryIds.count && !entryTexts.isEmpty {
+                _ = try await db.addDocuments(texts: entryTexts, ids: entryIds)
             }
 
-            MemoryLogger.search.info("Index rebuilt with \(entries.count) entries")
+            let summaries = try MemoryDatabase.shared.loadAllSummaries()
+            for summary in summaries {
+                let id = deterministicUUID(
+                    from: "summary:\(summary.agentId):\(summary.conversationId):\(summary.conversationAt)"
+                )
+                _ = try await db.addDocument(text: summary.summary, id: id)
+                summaryKeyMap[id.uuidString] = (summary.agentId, summary.conversationId, summary.conversationAt)
+            }
+
+            let chunks = try MemoryDatabase.shared.loadAllChunks()
+            for chunk in chunks {
+                let id = deterministicUUID(from: "chunk:\(chunk.conversationId):\(chunk.chunkIndex)")
+                _ = try await db.addDocument(text: chunk.content, id: id)
+                chunkKeyMap[id.uuidString] = (chunk.conversationId, chunk.chunkIndex)
+            }
+
+            MemoryLogger.search.info(
+                "Index rebuilt with \(entries.count) entries, \(summaries.count) summaries, \(chunks.count) chunks"
+            )
         } catch {
             MemoryLogger.search.error("Index rebuild failed: \(error)")
         }

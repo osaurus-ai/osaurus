@@ -191,18 +191,17 @@ public struct MemoryConfiguration: Codable, Equatable, Sendable {
 
 // MARK: - Store
 
-@MainActor
-public enum MemoryConfigurationStore {
+public enum MemoryConfigurationStore: Sendable {
     private static let encoder: JSONEncoder = {
         let e = JSONEncoder()
         e.outputFormatting = [.prettyPrinted, .sortedKeys]
         return e
     }()
 
-    private static var cached: MemoryConfiguration?
+    private static let lock = OSAllocatedUnfairLock<MemoryConfiguration?>(initialState: nil)
 
     public static func load() -> MemoryConfiguration {
-        if let cached { return cached }
+        if let cached = lock.withLock({ $0 }) { return cached }
 
         let url = OsaurusPaths.memoryConfigFile()
         guard FileManager.default.fileExists(atPath: url.path) else {
@@ -213,7 +212,7 @@ public enum MemoryConfigurationStore {
         do {
             let data = try Data(contentsOf: url)
             let config = try JSONDecoder().decode(MemoryConfiguration.self, from: data).validated()
-            cached = config
+            lock.withLock { $0 = config }
             return config
         } catch {
             MemoryLogger.config.error("Failed to load config: \(error)")
@@ -228,13 +227,13 @@ public enum MemoryConfigurationStore {
         do {
             let data = try encoder.encode(validated)
             try data.write(to: url, options: .atomic)
-            cached = validated
+            lock.withLock { $0 = validated }
         } catch {
             MemoryLogger.config.error("Failed to save config: \(error)")
         }
     }
 
     public static func invalidateCache() {
-        cached = nil
+        lock.withLock { $0 = nil }
     }
 }

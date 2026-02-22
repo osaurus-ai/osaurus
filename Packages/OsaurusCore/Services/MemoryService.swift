@@ -49,22 +49,25 @@ public actor MemoryService {
             MemoryLogger.service.error("Failed to store conversation turn: \(error)")
         }
 
-        let config = await MainActor.run { MemoryConfigurationStore.load() }
+        let config = MemoryConfigurationStore.load()
         guard config.enabled else { return }
 
         let startTime = Date()
-        let existingEntries: [MemoryEntry]
+        let promptEntries: [MemoryEntry]
         do {
-            existingEntries = try db.loadActiveEntries(agentId: agentId)
+            promptEntries = try db.loadActiveEntries(
+                agentId: agentId,
+                limit: MemoryConfiguration.extractionPromptEntryLimit
+            )
         } catch {
             MemoryLogger.service.error("Failed to load existing entries for agent \(agentId): \(error)")
-            existingEntries = []
+            promptEntries = []
         }
 
         let prompt = buildExtractionPrompt(
             userMessage: userMessage,
             assistantMessage: assistantMessage,
-            existingEntries: existingEntries
+            existingEntries: promptEntries
         )
 
         do {
@@ -77,6 +80,19 @@ public actor MemoryService {
                 conversationId: conversationId,
                 model: config.coreModelIdentifier
             )
+
+            let existingEntries: [MemoryEntry]
+            if !entries.isEmpty {
+                do {
+                    existingEntries = try db.loadActiveEntries(agentId: agentId)
+                } catch {
+                    MemoryLogger.service.error("Failed to load entries for verification: \(error)")
+                    existingEntries = promptEntries
+                }
+            } else {
+                existingEntries = []
+            }
+
             let verifyResult = await verifyAndInsertEntries(
                 entries,
                 agentId: agentId,
@@ -140,6 +156,28 @@ public actor MemoryService {
             guard !Task.isCancelled else { return }
             await self.generateConversationSummary(agentId: agentId, conversationId: conversationId)
         }
+
+        // Retry any stale pending conversations from previous failed summaries
+        Task {
+            await self.retryOrphanedSummaries(excludingConversation: conversationId)
+        }
+    }
+
+    /// Retry summary generation for any conversations that still have pending signals
+    /// (from previous failures), excluding the one currently being debounced.
+    private func retryOrphanedSummaries(excludingConversation: String) async {
+        do {
+            let pending = try db.pendingConversations()
+            let orphaned = pending.filter {
+                $0.conversationId != excludingConversation && summaryTasks[$0.conversationId] == nil
+            }
+            for conv in orphaned {
+                MemoryLogger.service.info("Retrying orphaned summary for conversation \(conv.conversationId)")
+                await generateConversationSummary(agentId: conv.agentId, conversationId: conv.conversationId)
+            }
+        } catch {
+            MemoryLogger.service.warning("Failed to check for orphaned summaries: \(error)")
+        }
     }
 
     // MARK: - Profile Regeneration
@@ -149,7 +187,7 @@ public actor MemoryService {
         if let config {
             cfg = config
         } else {
-            cfg = await MainActor.run { MemoryConfigurationStore.load() }
+            cfg = MemoryConfigurationStore.load()
         }
         guard cfg.enabled else { return }
 
@@ -224,10 +262,36 @@ public actor MemoryService {
         }
     }
 
+    // MARK: - Startup Recovery
+
+    /// Process orphaned pending signals from a previous session that was killed or crashed
+    /// before summaries could be generated. Called once during app initialization.
+    public func recoverOrphanedSignals() async {
+        let config = MemoryConfigurationStore.load()
+        guard config.enabled else { return }
+
+        let conversations: [(agentId: String, conversationId: String)]
+        do {
+            conversations = try db.pendingConversations()
+        } catch {
+            MemoryLogger.service.warning("Startup recovery: failed to check pending signals: \(error)")
+            return
+        }
+
+        guard !conversations.isEmpty else { return }
+        MemoryLogger.service.info(
+            "Startup recovery: processing \(conversations.count) orphaned conversation(s)"
+        )
+        for conv in conversations {
+            await generateConversationSummary(agentId: conv.agentId, conversationId: conv.conversationId)
+        }
+        MemoryLogger.service.info("Startup recovery completed")
+    }
+
     // MARK: - Manual Sync
 
     public func syncNow() async {
-        let config = await MainActor.run { MemoryConfigurationStore.load() }
+        let config = MemoryConfigurationStore.load()
         guard config.enabled else {
             MemoryLogger.service.debug("Sync skipped — memory system is disabled")
             return
@@ -283,7 +347,7 @@ public actor MemoryService {
         """
 
     private func generateConversationSummary(agentId: String, conversationId: String) async {
-        let config = await MainActor.run { MemoryConfigurationStore.load() }
+        let config = MemoryConfigurationStore.load()
         guard config.enabled else { return }
 
         let startTime = Date()
@@ -607,21 +671,94 @@ public actor MemoryService {
             return ExtractionParseResult()
         }
 
-        guard let raw = try? JSONDecoder().decode(RawExtractionJSON.self, from: data) else {
+        if let raw = try? JSONDecoder().decode(RawExtractionJSON.self, from: data) {
+            return ExtractionParseResult(
+                entries: raw.entries ?? [],
+                profileFacts: raw.profile_facts ?? [],
+                graph: GraphExtractionResult(
+                    entities: raw.entities ?? [],
+                    relationships: raw.relationships ?? []
+                )
+            )
+        }
+
+        return parseResponseLenient(data)
+    }
+
+    /// Fallback parser that extracts as much as possible from malformed LLM JSON
+    /// (e.g. confidence as string, tags as a single string, etc.).
+    private func parseResponseLenient(_ data: Data) -> ExtractionParseResult {
+        guard let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             MemoryLogger.service.error(
-                "JSON decoded but doesn't match expected schema: \(String(data: data, encoding: .utf8)?.prefix(200) ?? "nil")"
+                "JSON not a dictionary: \(String(data: data, encoding: .utf8)?.prefix(200) ?? "nil")"
             )
             return ExtractionParseResult()
         }
 
-        return ExtractionParseResult(
-            entries: raw.entries ?? [],
-            profileFacts: raw.profile_facts ?? [],
-            graph: GraphExtractionResult(
-                entities: raw.entities ?? [],
-                relationships: raw.relationships ?? []
-            )
+        var result = ExtractionParseResult()
+
+        if let rawEntries = dict["entries"] as? [[String: Any]] {
+            result.entries = rawEntries.compactMap { obj in
+                guard let type = obj["type"] as? String,
+                    let content = obj["content"] as? String
+                else { return nil }
+                let confidence: Double? =
+                    (obj["confidence"] as? Double)
+                    ?? (obj["confidence"] as? String).flatMap(Double.init)
+                let tags: [String]?
+                if let arr = obj["tags"] as? [String] {
+                    tags = arr
+                } else if let single = obj["tags"] as? String {
+                    tags = [single]
+                } else {
+                    tags = nil
+                }
+                let validFrom = obj["valid_from"] as? String
+                return ExtractionParseResult.EntryData(
+                    type: type,
+                    content: content,
+                    confidence: confidence,
+                    tags: tags,
+                    valid_from: validFrom
+                )
+            }
+        }
+
+        if let facts = dict["profile_facts"] as? [String] {
+            result.profileFacts = facts
+        }
+
+        if let rawEntities = dict["entities"] as? [[String: Any]] {
+            result.graph.entities = rawEntities.compactMap { obj in
+                guard let name = obj["name"] as? String,
+                    let type = obj["type"] as? String
+                else { return nil }
+                return GraphExtractionResult.EntityData(name: name, type: type)
+            }
+        }
+
+        if let rawRels = dict["relationships"] as? [[String: Any]] {
+            result.graph.relationships = rawRels.compactMap { obj in
+                guard let source = obj["source"] as? String,
+                    let relation = obj["relation"] as? String,
+                    let target = obj["target"] as? String
+                else { return nil }
+                let confidence =
+                    (obj["confidence"] as? Double)
+                    ?? (obj["confidence"] as? String).flatMap(Double.init)
+                return GraphExtractionResult.RelationshipData(
+                    source: source,
+                    relation: relation,
+                    target: target,
+                    confidence: confidence
+                )
+            }
+        }
+
+        MemoryLogger.service.info(
+            "Lenient parse recovered \(result.entries.count) entries, \(result.profileFacts.count) facts, \(result.graph.entities.count) entities"
         )
+        return result
     }
 
     private func buildMemoryEntries(
@@ -678,28 +815,41 @@ public actor MemoryService {
 
     /// Insert parsed entries, checking each for contradictions against existing entries.
     /// Returns the number of contradictions resolved.
-    private func insertEntries(_ entries: [MemoryEntry], existing: [MemoryEntry]) async -> Int {
+    private func insertEntries(
+        _ entries: [MemoryEntry],
+        existing: [MemoryEntry],
+        existingTokens: [Set<String>]
+    ) async -> Int {
         var contradictions = 0
         for entry in entries {
-            if let contradiction = findContradiction(entry: entry, existing: existing) {
+            let entryTokens = TextSimilarity.tokenize(entry.content)
+            if let contradiction = findContradiction(
+                entry: entry,
+                entryTokens: entryTokens,
+                existing: existing,
+                existingTokens: existingTokens
+            ) {
                 do {
-                    try db.supersede(
-                        entryId: contradiction.id,
-                        by: entry.id,
+                    try db.supersedeAndInsert(
+                        oldEntryId: contradiction.id,
+                        newEntry: entry,
                         reason: "Contradicted by newer information"
                     )
                     await MemorySearchService.shared.removeDocument(id: contradiction.id)
+                    await MemorySearchService.shared.indexMemoryEntry(entry)
                     contradictions += 1
+                    MemoryLogger.service.debug("Stored entry: [\(entry.type.rawValue)] \(entry.content.prefix(80))")
                 } catch {
                     MemoryLogger.service.error("Failed to supersede entry: \(error)")
                 }
-            }
-            do {
-                try db.insertMemoryEntry(entry)
-                await MemorySearchService.shared.indexMemoryEntry(entry)
-                MemoryLogger.service.debug("Stored entry: [\(entry.type.rawValue)] \(entry.content.prefix(80))")
-            } catch {
-                MemoryLogger.service.error("Failed to insert entry: \(error)")
+            } else {
+                do {
+                    try db.insertMemoryEntry(entry)
+                    await MemorySearchService.shared.indexMemoryEntry(entry)
+                    MemoryLogger.service.debug("Stored entry: [\(entry.type.rawValue)] \(entry.content.prefix(80))")
+                } catch {
+                    MemoryLogger.service.error("Failed to insert entry: \(error)")
+                }
             }
         }
         return contradictions
@@ -782,13 +932,18 @@ public actor MemoryService {
 
     private static let contradictableTypes: Set<MemoryEntryType> = [.fact, .correction, .commitment]
 
-    private func findContradiction(entry: MemoryEntry, existing: [MemoryEntry]) -> MemoryEntry? {
-        for e in existing {
+    private func findContradiction(
+        entry: MemoryEntry,
+        entryTokens: Set<String>,
+        existing: [MemoryEntry],
+        existingTokens: [Set<String>]
+    ) -> MemoryEntry? {
+        for (i, e) in existing.enumerated() {
             let typesCompatible =
                 (e.type == entry.type)
                 || (Self.contradictableTypes.contains(e.type) && Self.contradictableTypes.contains(entry.type))
             guard typesCompatible else { continue }
-            let sim = TextSimilarity.jaccard(entry.content, e.content)
+            let sim = TextSimilarity.jaccardTokenized(entryTokens, existingTokens[i])
             if sim > MemoryConfiguration.contradictionJaccardThreshold && entry.content != e.content {
                 return e
             }
@@ -814,8 +969,14 @@ public actor MemoryService {
         existingEntries: [MemoryEntry],
         config: MemoryConfiguration
     ) async -> (kept: Int, skipped: Int, superseded: Int) {
+        let existingTokens = existingEntries.map { TextSimilarity.tokenize($0.content) }
+
         guard config.verificationEnabled else {
-            let contradictions = await insertEntries(candidates, existing: existingEntries)
+            let contradictions = await insertEntries(
+                candidates,
+                existing: existingEntries,
+                existingTokens: existingTokens
+            )
             return (kept: candidates.count, skipped: 0, superseded: contradictions)
         }
 
@@ -827,10 +988,12 @@ public actor MemoryService {
         var superseded = 0
 
         for candidate in candidates {
+            let candidateTokens = TextSimilarity.tokenize(candidate.content)
+
             // Layer 1: Near-duplicate dedup (word overlap)
-            let isDuplicate = existingEntries.contains {
-                $0.type == candidate.type
-                    && TextSimilarity.jaccard($0.content, candidate.content) > dedupThreshold
+            let isDuplicate = existingEntries.enumerated().contains { (i, e) in
+                e.type == candidate.type
+                    && TextSimilarity.jaccardTokenized(existingTokens[i], candidateTokens) > dedupThreshold
             }
             if isDuplicate {
                 logVerification(candidate, decision: "skip_duplicate", layer: 1, agentId: agentId)
@@ -839,18 +1002,26 @@ public actor MemoryService {
             }
 
             // Layer 2: Contradiction supersede
-            if let contradiction = findContradiction(entry: candidate, existing: existingEntries) {
+            if let contradiction = findContradiction(
+                entry: candidate,
+                entryTokens: candidateTokens,
+                existing: existingEntries,
+                existingTokens: existingTokens
+            ) {
                 do {
-                    try db.supersede(
-                        entryId: contradiction.id,
-                        by: candidate.id,
+                    try db.supersedeAndInsert(
+                        oldEntryId: contradiction.id,
+                        newEntry: candidate,
                         reason: "Contradicted by newer information"
                     )
                     await MemorySearchService.shared.removeDocument(id: contradiction.id)
+                    await MemorySearchService.shared.indexMemoryEntry(candidate)
+                    MemoryLogger.service.debug(
+                        "Stored entry (supersede): [\(candidate.type.rawValue)] \(candidate.content.prefix(80))"
+                    )
                 } catch {
                     MemoryLogger.service.error("Failed to supersede entry: \(error)")
                 }
-                await persistEntry(candidate, tag: "supersede")
                 logVerification(candidate, decision: "supersede", layer: 2, agentId: agentId)
                 superseded += 1
                 continue
@@ -874,16 +1045,19 @@ public actor MemoryService {
                     skipped += 1
                 } else if isContradictable && candidate.content != topMatch.entry.content {
                     do {
-                        try db.supersede(
-                            entryId: topMatch.entry.id,
-                            by: candidate.id,
+                        try db.supersedeAndInsert(
+                            oldEntryId: topMatch.entry.id,
+                            newEntry: candidate,
                             reason: "Semantically contradicted by newer information"
                         )
                         await MemorySearchService.shared.removeDocument(id: topMatch.entry.id)
+                        await MemorySearchService.shared.indexMemoryEntry(candidate)
+                        MemoryLogger.service.debug(
+                            "Stored entry (semantic_supersede): [\(candidate.type.rawValue)] \(candidate.content.prefix(80))"
+                        )
                     } catch {
                         MemoryLogger.service.error("Failed to supersede entry: \(error)")
                     }
-                    await persistEntry(candidate, tag: "semantic_supersede")
                     logVerification(candidate, decision: "supersede_semantic", layer: 3, agentId: agentId)
                     superseded += 1
                 } else {

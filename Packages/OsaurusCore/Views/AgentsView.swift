@@ -11,7 +11,7 @@ import UniformTypeIdentifiers
 // MARK: - Shared Helpers
 
 /// Generate a consistent color based on an agent name
-private func agentColorFor(_ name: String) -> Color {
+func agentColorFor(_ name: String) -> Color {
     let hash = abs(name.hashValue)
     let hue = Double(hash % 360) / 360.0
     return Color(hue: hue, saturation: 0.6, brightness: 0.8)
@@ -593,7 +593,7 @@ private struct AgentCard: View {
 
 // MARK: - Agent Detail View
 
-private struct AgentDetailView: View {
+struct AgentDetailView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
     @ObservedObject private var agentManager = AgentManager.shared
     @ObservedObject private var scheduleManager = ScheduleManager.shared

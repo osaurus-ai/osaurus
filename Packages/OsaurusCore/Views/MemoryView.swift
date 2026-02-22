@@ -2,39 +2,79 @@
 //  MemoryView.swift
 //  osaurus
 //
-//  Memory management UI: user profile, overrides, statistics,
-//  core model configuration, and danger zone.
+//  Memory management UI: user profile, overrides, working memory,
+//  statistics, core model configuration, and danger zone.
 //
 
 import SwiftUI
 
 struct MemoryView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var agentManager = AgentManager.shared
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
     private static let iso8601Formatter = ISO8601DateFormatter()
 
-    @State private var hasAppeared = false
+    // MARK: Data State
+
     @State private var config = MemoryConfiguration.default
     @State private var profile: UserProfile?
     @State private var userEdits: [UserEdit] = []
     @State private var processingStats = ProcessingStats()
     @State private var dbSizeBytes: Int64 = 0
-
-    @State private var showProfileEditor = false
-    @State private var showAddOverride = false
-    @State private var isSyncing = false
+    @State private var agentMemoryCounts: [(agent: Agent, count: Int)] = []
+    @State private var totalActiveEntries: Int = 0
     @State private var modelOptions: [ModelOption] = []
 
-    // Toast & alert
-    @State private var toastMessage: (text: String, isError: Bool)?
-    @State private var showClearConfirmation = false
+    // MARK: UI State
+
+    @State private var selectedAgent: Agent?
+    @State private var hasAppeared = false
     @State private var isLoading = true
+    @State private var isSyncing = false
+    @State private var showProfileEditor = false
+    @State private var showAddOverride = false
     @State private var showContextPreview = false
     @State private var contextPreviewText = ""
+    @State private var showClearConfirmation = false
+    @State private var toastMessage: (text: String, isError: Bool)?
 
     var body: some View {
+        ZStack {
+            if selectedAgent == nil {
+                memoryContent
+                    .transition(.opacity.combined(with: .move(edge: .leading)))
+            }
+
+            if let agent = selectedAgent {
+                AgentDetailView(
+                    agent: agent,
+                    onBack: {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                            selectedAgent = nil
+                        }
+                    },
+                    onExport: { _ in },
+                    onDelete: { _ in
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                            selectedAgent = nil
+                        }
+                        loadData()
+                    },
+                    showSuccess: { msg in
+                        showToast(msg)
+                    }
+                )
+                .transition(.opacity.combined(with: .move(edge: .trailing)))
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(theme.primaryBackground)
+        .environment(\.theme, themeManager.currentTheme)
+    }
+
+    private var memoryContent: some View {
         ZStack {
             VStack(spacing: 0) {
                 headerView
@@ -64,6 +104,7 @@ struct MemoryView: View {
 
                                 profileSection
                                 overridesSection
+                                workingMemorySection
                                 statsSection
                                 configurationSection
                                 dangerZoneSection
@@ -75,8 +116,6 @@ struct MemoryView: View {
                 .opacity(hasAppeared ? 1 : 0)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(theme.primaryBackground)
-            .environment(\.theme, themeManager.currentTheme)
 
             if let toast = toastMessage {
                 VStack {
@@ -303,6 +342,46 @@ struct MemoryView: View {
                             onDelete: {
                                 removeOverride(id: edit.id)
                                 showToast("Override removed")
+                            }
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Working Memory Section
+
+    private var workingMemorySection: some View {
+        MemorySection(
+            title: "Working Memory",
+            icon: "brain",
+            count: totalActiveEntries > 0 ? totalActiveEntries : nil
+        ) {
+            EmptyView()
+        } content: {
+            if agentMemoryCounts.isEmpty {
+                HStack(spacing: 10) {
+                    Image(systemName: "info.circle")
+                        .font(.system(size: 13))
+                        .foregroundColor(theme.tertiaryText)
+                    Text("No working memories yet. Memories are extracted automatically from your conversations.")
+                        .font(.system(size: 13))
+                        .foregroundColor(theme.tertiaryText)
+                }
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(Array(agentMemoryCounts.enumerated()), id: \.element.agent.id) { index, pair in
+                        if index > 0 {
+                            Divider().opacity(0.5)
+                        }
+                        AgentMemoryRow(
+                            agent: pair.agent,
+                            count: pair.count,
+                            onSelect: {
+                                withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                                    selectedAgent = pair.agent
+                                }
                             }
                         )
                     }
@@ -562,11 +641,26 @@ struct MemoryView: View {
                 loadedStats = ProcessingStats()
             }
             loadedSize = db.databaseSizeBytes()
+
+            let loadedTotalEntries = (try? db.activeEntryCount()) ?? 0
+            let agentEntries = (try? db.agentIdsWithEntries()) ?? []
+
+            let agents = await MainActor.run { agentManager.agents }
+            let agentLookup = Dictionary(uniqueKeysWithValues: agents.map { ($0.id, $0) })
+            let resolvedCounts: [(agent: Agent, count: Int)] = agentEntries.compactMap { pair in
+                guard let uuid = UUID(uuidString: pair.agentId),
+                    let agent = agentLookup[uuid]
+                else { return nil }
+                return (agent: agent, count: pair.count)
+            }
+
             await MainActor.run {
                 profile = loadedProfile
                 userEdits = loadedEdits
                 processingStats = loadedStats
                 dbSizeBytes = loadedSize
+                totalActiveEntries = loadedTotalEntries
+                agentMemoryCounts = resolvedCounts
                 isLoading = false
                 if let loadError {
                     showToast(loadError, isError: true)
@@ -851,6 +945,68 @@ private struct OverrideRow: View {
         }
         .padding(.vertical, 8)
         .contentShape(Rectangle())
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.15)) {
+                isHovering = hovering
+            }
+        }
+    }
+}
+
+// MARK: - Agent Memory Row
+
+private struct AgentMemoryRow: View {
+    @Environment(\.theme) private var theme
+
+    let agent: Agent
+    let count: Int
+    let onSelect: () -> Void
+
+    @State private var isHovering = false
+
+    var body: some View {
+        Button(action: onSelect) {
+            HStack(spacing: 10) {
+                Circle()
+                    .fill(agentColorFor(agent.name))
+                    .frame(width: 8, height: 8)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(agent.name)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(theme.primaryText)
+
+                    if !agent.description.isEmpty {
+                        Text(agent.description)
+                            .font(.system(size: 11))
+                            .foregroundColor(theme.tertiaryText)
+                            .lineLimit(1)
+                    }
+                }
+
+                Spacer()
+
+                Text("\(count)")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(theme.secondaryText)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 2)
+                    .background(
+                        Capsule().fill(theme.tertiaryBackground)
+                    )
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(theme.tertiaryText)
+            }
+            .padding(.vertical, 8)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(PlainButtonStyle())
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(isHovering ? theme.accentColor.opacity(0.06) : Color.clear)
+        )
         .onHover { hovering in
             withAnimation(.easeOut(duration: 0.15)) {
                 isHovering = hovering
