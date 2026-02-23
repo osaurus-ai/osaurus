@@ -512,6 +512,106 @@ curl http://127.0.0.1:1337/v1/responses \
 
 ---
 
+## Memory API
+
+Osaurus provides a persistent memory system that can be used via the API. Memory learns from conversations and injects relevant context automatically into future requests.
+
+### Memory Context Injection — `X-Osaurus-Agent-Id` Header
+
+Add the `X-Osaurus-Agent-Id` header to any `POST /chat/completions` request and Osaurus will automatically assemble relevant memory (user profile, working memory, conversation summaries, knowledge graph) and prepend it to the system prompt.
+
+The header value is an arbitrary string that identifies the agent or user session whose memory should be retrieved.
+
+```bash
+curl http://127.0.0.1:1337/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "X-Osaurus-Agent-Id: my-agent" \
+  -d '{
+    "model": "your-model-name",
+    "messages": [
+      {"role": "user", "content": "What did we talk about last time?"}
+    ]
+  }'
+```
+
+With the OpenAI Python SDK:
+
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://127.0.0.1:1337/v1",
+    api_key="osaurus",
+    default_headers={"X-Osaurus-Agent-Id": "my-agent"},
+)
+
+response = client.chat.completions.create(
+    model="your-model-name",
+    messages=[{"role": "user", "content": "What did we talk about last time?"}],
+)
+print(response.choices[0].message.content)
+```
+
+When the header is absent or empty, the request is processed normally without memory injection.
+
+### Memory Ingestion — `POST /memory/ingest`
+
+Bulk-ingest conversation turns into the memory system for a given agent. Osaurus processes ingested turns asynchronously — extracting facts, updating the user profile, and building the knowledge graph in the background.
+
+```bash
+curl http://127.0.0.1:1337/memory/ingest \
+  -H "Content-Type: application/json" \
+  -d '{
+    "agent_id": "my-agent",
+    "conversation_id": "session-1",
+    "turns": [
+      {"user": "Hi, my name is Alice", "assistant": "Hello Alice! Nice to meet you."},
+      {"user": "I work at Acme Corp", "assistant": "Got it, you work at Acme Corp."}
+    ]
+  }'
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `agent_id` | string | Identifier for the agent whose memory is being populated (required) |
+| `conversation_id` | string | Identifier for the conversation session (required) |
+| `turns` | array | Array of turn objects, each with `user` and `assistant` string fields (required) |
+
+Response:
+
+```json
+{"status": "ok", "turns_ingested": 2}
+```
+
+### List Agents — `GET /agents`
+
+Returns all configured agents along with their memory entry counts. Use this to discover agent IDs for the `X-Osaurus-Agent-Id` header.
+
+```bash
+curl http://127.0.0.1:1337/agents
+```
+
+Example response:
+
+```json
+{
+  "agents": [
+    {
+      "id": "00000000-0000-0000-0000-000000000001",
+      "name": "Osaurus",
+      "description": "Default assistant",
+      "default_model": null,
+      "is_built_in": true,
+      "memory_entry_count": 42,
+      "created_at": "2025-01-01T00:00:00Z",
+      "updated_at": "2025-01-01T00:00:00Z"
+    }
+  ]
+}
+```
+
+---
+
 ## Notes
 
 1. **Model Availability**: Only models that have been downloaded through the Osaurus UI will be available via the API.

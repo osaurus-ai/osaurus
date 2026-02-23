@@ -487,8 +487,12 @@ Base URL: `http://127.0.0.1:1337` (or your configured port)
 | `POST /messages`            | Chat completions (Anthropic format) |
 | `POST /v1/responses`        | Responses (Open Responses format)   |
 | `POST /chat`                | Chat (Ollama format, NDJSON)        |
+| `GET /agents`               | List all agents with memory counts         |
+| `POST /memory/ingest`       | Bulk-ingest conversation turns into memory |
 
 All endpoints support `/v1`, `/api`, and `/v1/api` prefixes.
+
+Add the `X-Osaurus-Agent-Id` header to any chat completions request to automatically inject relevant memory context. See the [Memory docs](docs/MEMORY.md#api-integration) and [API Guide](docs/OpenAI_API_GUIDE.md#memory-api) for details.
 
 See the [OpenAI API Guide](docs/OpenAI_API_GUIDE.md) for tool calling, streaming, and SDK examples.
 
