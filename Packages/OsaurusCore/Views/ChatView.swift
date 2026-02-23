@@ -54,6 +54,7 @@ final class ChatSession: ObservableObject {
     private var _lastTokenTurnsCount: Int = 0
     private var _lastTokenAttachmentsCount: Int = 0
     private var _lastTokenComputeTime: Date = .distantPast
+    private var _memoryContextTokens: Int = 0
 
     /// Callback when session needs to be saved (called after streaming completes)
     var onSessionChanged: (() -> Void)?
@@ -159,6 +160,7 @@ final class ChatSession: ObservableObject {
             selectedModel = modelOptions.first?.id
         }
         isLoadingModel = false
+        Task { [weak self] in await self?.refreshMemoryTokens() }
     }
 
     /// Build rich model options from all sources
@@ -338,6 +340,9 @@ final class ChatSession: ObservableObject {
             total += max(1, systemPrompt.count / 4)
         }
 
+        // Memory context (profile, working memory, summaries, graph)
+        total += _memoryContextTokens
+
         // Tool and skill tokens depend on two-phase loading state
         let toolOverrides = AgentManager.shared.effectiveToolOverrides(for: effectiveId)
         let allTools = ToolRegistry.shared.listTools(withOverrides: toolOverrides)
@@ -498,6 +503,7 @@ final class ChatSession: ObservableObject {
     func reset(for newAgentId: UUID?) {
         agentId = newAgentId
         reset()
+        Task { [weak self] in await self?.refreshMemoryTokens() }
     }
 
     /// Invalidate the token cache (called when tools/skills change)
@@ -594,6 +600,26 @@ final class ChatSession: ObservableObject {
         // Clear caches to force a clean block rebuild for the new session
         blockMemoizer.clear()
         _tokenCacheValid = false
+
+        Task { [weak self] in await self?.refreshMemoryTokens() }
+    }
+
+    private func refreshMemoryTokens() async {
+        let effectiveAgentId = agentId ?? Agent.defaultId
+        let config = MemoryConfigurationStore.load()
+        let context = await MemoryContextAssembler.assembleContext(
+            agentId: effectiveAgentId.uuidString,
+            config: config
+        )
+        updateMemoryTokens(fromContext: context)
+    }
+
+    private func updateMemoryTokens(fromContext context: String) {
+        let tokens = context.isEmpty ? 0 : max(1, context.count / MemoryConfiguration.charsPerToken)
+        guard tokens != _memoryContextTokens else { return }
+        _memoryContextTokens = tokens
+        _tokenCacheValid = false
+        objectWillChange.send()
     }
 
     /// Edit a user message and regenerate from that point
@@ -955,6 +981,7 @@ final class ChatSession: ObservableObject {
                     agentId: effectiveAgentId.uuidString,
                     config: memoryConfig
                 )
+                updateMemoryTokens(fromContext: memoryContext)
 
                 // Build system prompt and tool specs based on capability selection state
                 var sys = buildSystemPrompt(
