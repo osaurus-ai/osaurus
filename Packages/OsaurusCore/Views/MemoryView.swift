@@ -39,6 +39,8 @@ struct MemoryView: View {
     @State private var processingStats = ProcessingStats()
     @State private var dbSizeBytes: Int64 = 0
     @State private var agentMemoryCounts: [(agent: Agent, count: Int)] = []
+    @State private var defaultAgentEntries: [MemoryEntry] = []
+    @State private var defaultAgentSummaries: [ConversationSummary] = []
     @State private var modelOptions: [ModelOption] = []
 
     // MARK: UI State
@@ -350,21 +352,166 @@ struct MemoryView: View {
         }
     }
 
+    // MARK: - Default Agent Memory Group
+
+    private var defaultAgentMemoryGroup: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Header
+            HStack(spacing: 10) {
+                Circle()
+                    .fill(theme.accentColor)
+                    .frame(width: 8, height: 8)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Default Agent")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(theme.primaryText)
+
+                    Text("Uses your global chat settings")
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.tertiaryText)
+                        .lineLimit(1)
+                }
+
+                Spacer()
+
+                let totalCount = defaultAgentEntries.count + defaultAgentSummaries.count
+                if totalCount > 0 {
+                    Text(pluralized(totalCount, "memory", "memories"))
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(theme.secondaryText)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 2)
+                        .background(
+                            Capsule().fill(theme.tertiaryBackground)
+                        )
+                }
+
+                Button {
+                    Task {
+                        let cfg = MemoryConfigurationStore.load()
+                        let ctx = await MemoryContextAssembler.assembleContext(
+                            agentId: Agent.defaultId.uuidString,
+                            config: cfg
+                        )
+                        let trimmed = ctx.trimmingCharacters(in: .whitespacesAndNewlines)
+                        let text =
+                            trimmed.isEmpty
+                            ? "(No memory context assembled — memory may be empty or disabled)"
+                            : trimmed
+                        contextPreviewItem = ContextPreviewItem(text: text)
+                    }
+                } label: {
+                    Image(systemName: "eye")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(theme.tertiaryText)
+                        .frame(width: 26, height: 26)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(theme.tertiaryBackground)
+                        )
+                }
+                .buttonStyle(PlainButtonStyle())
+                .help("Preview memory context")
+            }
+            .padding(.vertical, 10)
+            .padding(.horizontal, 4)
+
+            if !defaultAgentEntries.isEmpty || !defaultAgentSummaries.isEmpty {
+                VStack(alignment: .leading, spacing: 12) {
+                    // Working Memory
+                    if !defaultAgentEntries.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack(spacing: 6) {
+                                Image(systemName: "brain.head.profile")
+                                    .font(.system(size: 10, weight: .medium))
+                                    .foregroundColor(theme.tertiaryText)
+                                Text("WORKING MEMORY")
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundColor(theme.tertiaryText)
+                                    .tracking(0.3)
+                                Text("\(defaultAgentEntries.count)")
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundColor(theme.tertiaryText)
+                                    .padding(.horizontal, 5)
+                                    .padding(.vertical, 1)
+                                    .background(Capsule().fill(theme.tertiaryBackground))
+                            }
+
+                            AgentEntriesPanel(
+                                entries: defaultAgentEntries,
+                                onDelete: { entryId in
+                                    try? MemoryDatabase.shared.deleteMemoryEntry(id: entryId)
+                                    defaultAgentEntries.removeAll { $0.id == entryId }
+                                }
+                            )
+                            .frame(maxHeight: 400)
+                        }
+                    }
+
+                    // Conversation History
+                    if !defaultAgentSummaries.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack(spacing: 6) {
+                                Image(systemName: "doc.text")
+                                    .font(.system(size: 10, weight: .medium))
+                                    .foregroundColor(theme.tertiaryText)
+                                Text("CONVERSATION HISTORY")
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundColor(theme.tertiaryText)
+                                    .tracking(0.3)
+                                Text("\(defaultAgentSummaries.count)")
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundColor(theme.tertiaryText)
+                                    .padding(.horizontal, 5)
+                                    .padding(.vertical, 1)
+                                    .background(Capsule().fill(theme.tertiaryBackground))
+                            }
+
+                            ScrollView {
+                                VStack(alignment: .leading, spacing: 0) {
+                                    ForEach(Array(defaultAgentSummaries.enumerated()), id: \.element.id) {
+                                        index,
+                                        summary in
+                                        if index > 0 {
+                                            Divider().opacity(0.5)
+                                        }
+                                        MemorySummaryRow(summary: summary)
+                                    }
+                                }
+                            }
+                            .frame(maxHeight: 300)
+                            .padding(10)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(theme.inputBackground.opacity(0.5))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 8)
+                                            .stroke(theme.inputBorder, lineWidth: 1)
+                                    )
+                            )
+                        }
+                    }
+                }
+                .padding(.top, 4)
+                .padding(.horizontal, 4)
+                .padding(.bottom, 6)
+            }
+        }
+    }
+
     // MARK: - Agents Section
 
     private var agentsSection: some View {
         MemorySection(title: "Agents", icon: "person.2") {
-            if agentMemoryCounts.isEmpty {
-                HStack(spacing: 10) {
-                    Image(systemName: "info.circle")
-                        .font(.system(size: 13))
-                        .foregroundColor(theme.tertiaryText)
-                    Text("No agents with memories yet. Memories are extracted automatically from your conversations.")
-                        .font(.system(size: 13))
-                        .foregroundColor(theme.tertiaryText)
-                }
-            } else {
-                VStack(spacing: 0) {
+            VStack(spacing: 0) {
+                defaultAgentMemoryGroup
+
+                if !agentMemoryCounts.isEmpty {
+                    Divider()
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 4)
+
                     ForEach(Array(agentMemoryCounts.enumerated()), id: \.element.agent.id) { index, pair in
                         if index > 0 {
                             Divider().opacity(0.5)
@@ -662,10 +809,15 @@ struct MemoryView: View {
             let agentLookup = Dictionary(uniqueKeysWithValues: agents.map { ($0.id, $0) })
             let resolvedCounts: [(agent: Agent, count: Int)] = agentEntries.compactMap { pair in
                 guard let uuid = UUID(uuidString: pair.agentId),
+                    !Agent.isDefaultAgentId(pair.agentId),
                     let agent = agentLookup[uuid]
                 else { return nil }
                 return (agent: agent, count: pair.count)
             }
+
+            let defaultId = Agent.defaultId.uuidString
+            let loadedDefaultEntries = (try? db.loadActiveEntries(agentId: defaultId)) ?? []
+            let loadedDefaultSummaries = (try? db.loadSummaries(agentId: defaultId)) ?? []
 
             await MainActor.run {
                 profile = loadedProfile
@@ -673,6 +825,8 @@ struct MemoryView: View {
                 processingStats = loadedStats
                 dbSizeBytes = loadedSize
                 agentMemoryCounts = resolvedCounts
+                defaultAgentEntries = loadedDefaultEntries
+                defaultAgentSummaries = loadedDefaultSummaries
                 isLoading = false
                 onComplete?()
                 if let loadError {

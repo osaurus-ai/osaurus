@@ -35,8 +35,6 @@ public actor MemoryService {
         agentId: String,
         conversationId: String
     ) async {
-        guard !Agent.isDefaultAgentId(agentId) else { return }
-
         do {
             try db.insertPendingSignal(
                 PendingSignal(

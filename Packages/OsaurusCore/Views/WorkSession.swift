@@ -1146,24 +1146,21 @@ extension WorkSession: WorkEngineDelegate {
         Task { [weak self] in await self?.refreshIssues() }
 
         // Memory processing: record conversation turn for post-activity extraction
-        // Default agent is read-only — skip memory writes
         let agentStr = agentId.uuidString
-        if !Agent.isDefaultAgentId(agentStr) {
-            let userMessage = pendingUserMessage ?? ""
-            let assistantContent =
-                liveExecutionTurns
-                .last(where: { $0.role == .assistant })?.content
+        let userMessage = pendingUserMessage ?? ""
+        let assistantContent =
+            liveExecutionTurns
+            .last(where: { $0.role == .assistant })?.content
 
-            if !userMessage.isEmpty {
-                let convId = issue.id
-                Task.detached {
-                    await MemoryService.shared.recordConversationTurn(
-                        userMessage: userMessage,
-                        assistantMessage: assistantContent,
-                        agentId: agentStr,
-                        conversationId: convId
-                    )
-                }
+        if !userMessage.isEmpty {
+            let convId = issue.id
+            Task.detached {
+                await MemoryService.shared.recordConversationTurn(
+                    userMessage: userMessage,
+                    assistantMessage: assistantContent,
+                    agentId: agentStr,
+                    conversationId: convId
+                )
             }
         }
 

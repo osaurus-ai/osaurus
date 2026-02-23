@@ -859,75 +859,72 @@ final class ChatSession: ObservableObject {
                 save()
 
                 // Memory: persist conversation chunk and trigger signal processing
-                // Default agent is read-only — skip all memory writes
-                if !Agent.isDefaultAgentId(memoryAgentId) {
-                    let assistantContent = turns.last(where: { $0.role == .assistant })?.content
-                    let userContent = trimmed
+                let assistantContent = turns.last(where: { $0.role == .assistant })?.content
+                let userContent = trimmed
 
-                    if hasContent, let sid = sessionId {
-                        let convId = sid.uuidString
-                        let aid = memoryAgentId
-                        let chunkIdx = turns.count
-                        let db = MemoryDatabase.shared
-                        do { try db.upsertConversation(id: convId, agentId: aid, title: title) } catch {
-                            MemoryLogger.database.warning("Failed to upsert conversation: \(error)")
-                        }
-                        let userChunkIndex = chunkIdx - 1
-                        do {
-                            try db.insertChunk(
-                                conversationId: convId,
-                                chunkIndex: userChunkIndex,
-                                role: "user",
-                                content: userContent,
-                                tokenCount: max(1, userContent.count / 4)
-                            )
-                        } catch {
-                            MemoryLogger.database.warning("Failed to insert user chunk: \(error)")
-                        }
-                        let userChunk = ConversationChunk(
+                if hasContent, let sid = sessionId {
+                    let convId = sid.uuidString
+                    let aid = memoryAgentId
+                    let chunkIdx = turns.count
+                    let db = MemoryDatabase.shared
+                    do { try db.upsertConversation(id: convId, agentId: aid, title: title) } catch {
+                        MemoryLogger.database.warning("Failed to upsert conversation: \(error)")
+                    }
+                    let userChunkIndex = chunkIdx - 1
+                    do {
+                        try db.insertChunk(
                             conversationId: convId,
                             chunkIndex: userChunkIndex,
                             role: "user",
                             content: userContent,
                             tokenCount: max(1, userContent.count / 4)
                         )
-                        Task.detached { await MemorySearchService.shared.indexConversationChunk(userChunk) }
-                        if let ac = assistantContent, !ac.isEmpty {
-                            do {
-                                try db.insertChunk(
-                                    conversationId: convId,
-                                    chunkIndex: chunkIdx,
-                                    role: "assistant",
-                                    content: ac,
-                                    tokenCount: max(1, ac.count / 4)
-                                )
-                            } catch {
-                                MemoryLogger.database.warning("Failed to insert assistant chunk: \(error)")
-                            }
-                            let assistantChunk = ConversationChunk(
+                    } catch {
+                        MemoryLogger.database.warning("Failed to insert user chunk: \(error)")
+                    }
+                    let userChunk = ConversationChunk(
+                        conversationId: convId,
+                        chunkIndex: userChunkIndex,
+                        role: "user",
+                        content: userContent,
+                        tokenCount: max(1, userContent.count / 4)
+                    )
+                    Task.detached { await MemorySearchService.shared.indexConversationChunk(userChunk) }
+                    if let ac = assistantContent, !ac.isEmpty {
+                        do {
+                            try db.insertChunk(
                                 conversationId: convId,
                                 chunkIndex: chunkIdx,
                                 role: "assistant",
                                 content: ac,
                                 tokenCount: max(1, ac.count / 4)
                             )
-                            Task.detached { await MemorySearchService.shared.indexConversationChunk(assistantChunk) }
+                        } catch {
+                            MemoryLogger.database.warning("Failed to insert assistant chunk: \(error)")
                         }
+                        let assistantChunk = ConversationChunk(
+                            conversationId: convId,
+                            chunkIndex: chunkIdx,
+                            role: "assistant",
+                            content: ac,
+                            tokenCount: max(1, ac.count / 4)
+                        )
+                        Task.detached { await MemorySearchService.shared.indexConversationChunk(assistantChunk) }
                     }
+                }
 
-                    if hasContent {
-                        let userMsg = userContent
-                        let asstMsg = assistantContent
-                        let agentStr = memoryAgentId
-                        let convStr = memoryConversationId
-                        Task.detached {
-                            await MemoryService.shared.recordConversationTurn(
-                                userMessage: userMsg,
-                                assistantMessage: asstMsg,
-                                agentId: agentStr,
-                                conversationId: convStr
-                            )
-                        }
+                if hasContent {
+                    let userMsg = userContent
+                    let asstMsg = assistantContent
+                    let agentStr = memoryAgentId
+                    let convStr = memoryConversationId
+                    Task.detached {
+                        await MemoryService.shared.recordConversationTurn(
+                            userMessage: userMsg,
+                            assistantMessage: asstMsg,
+                            agentId: agentStr,
+                            conversationId: convStr
+                        )
                     }
                 }
 

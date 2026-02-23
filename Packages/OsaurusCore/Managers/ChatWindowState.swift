@@ -221,7 +221,6 @@ final class ChatWindowState: ObservableObject {
     private func flushCurrentSession() {
         guard let sid = session.sessionId else { return }
         let agentStr = (session.agentId ?? Agent.defaultId).uuidString
-        guard !Agent.isDefaultAgentId(agentStr) else { return }
         let convStr = sid.uuidString
         Task {
             await MemoryService.shared.flushSession(agentId: agentStr, conversationId: convStr)
