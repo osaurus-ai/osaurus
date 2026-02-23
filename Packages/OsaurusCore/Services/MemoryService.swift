@@ -55,16 +55,15 @@ public actor MemoryService {
         guard config.enabled else { return }
 
         let startTime = Date()
-        let promptEntries: [MemoryEntry]
+        let allExistingEntries: [MemoryEntry]
         do {
-            promptEntries = try db.loadActiveEntries(
-                agentId: agentId,
-                limit: MemoryConfiguration.extractionPromptEntryLimit
-            )
+            allExistingEntries = try db.loadActiveEntries(agentId: agentId)
         } catch {
             MemoryLogger.service.error("Failed to load existing entries for agent \(agentId): \(error)")
-            promptEntries = []
+            allExistingEntries = []
         }
+
+        let promptEntries = Array(allExistingEntries.prefix(MemoryConfiguration.extractionPromptEntryLimit))
 
         let prompt = buildExtractionPrompt(
             userMessage: userMessage,
@@ -83,22 +82,10 @@ public actor MemoryService {
                 model: config.coreModelIdentifier
             )
 
-            let existingEntries: [MemoryEntry]
-            if !entries.isEmpty {
-                do {
-                    existingEntries = try db.loadActiveEntries(agentId: agentId)
-                } catch {
-                    MemoryLogger.service.error("Failed to load entries for verification: \(error)")
-                    existingEntries = promptEntries
-                }
-            } else {
-                existingEntries = []
-            }
-
             let verifyResult = await verifyAndInsertEntries(
                 entries,
                 agentId: agentId,
-                existingEntries: existingEntries,
+                existingEntries: entries.isEmpty ? [] : allExistingEntries,
                 config: config
             )
 
@@ -125,7 +112,7 @@ public actor MemoryService {
             )
 
             do {
-                try await checkProfileRegeneration(config: config)
+                try checkProfileRegeneration(config: config)
             } catch {
                 MemoryLogger.service.warning("Profile regeneration check failed: \(error)")
             }
@@ -157,28 +144,6 @@ public actor MemoryService {
             try? await Task.sleep(for: .seconds(debounceSeconds))
             guard !Task.isCancelled else { return }
             await self.generateConversationSummary(agentId: agentId, conversationId: conversationId)
-        }
-
-        // Retry any stale pending conversations from previous failed summaries
-        Task {
-            await self.retryOrphanedSummaries(excludingConversation: conversationId)
-        }
-    }
-
-    /// Retry summary generation for any conversations that still have pending signals
-    /// (from previous failures), excluding the one currently being debounced.
-    private func retryOrphanedSummaries(excludingConversation: String) async {
-        do {
-            let pending = try db.pendingConversations()
-            let orphaned = pending.filter {
-                $0.conversationId != excludingConversation && summaryTasks[$0.conversationId] == nil
-            }
-            for conv in orphaned {
-                MemoryLogger.service.info("Retrying orphaned summary for conversation \(conv.conversationId)")
-                await generateConversationSummary(agentId: conv.agentId, conversationId: conv.conversationId)
-            }
-        } catch {
-            MemoryLogger.service.warning("Failed to check for orphaned summaries: \(error)")
         }
     }
 
@@ -338,8 +303,9 @@ public actor MemoryService {
     /// Flush a session's summary immediately. Called from the UI when the user navigates away.
     public func flushSession(agentId: String, conversationId: String) {
         summaryTasks[conversationId]?.cancel()
-        summaryTasks[conversationId] = nil
-        Task { await self.generateConversationSummary(agentId: agentId, conversationId: conversationId) }
+        summaryTasks[conversationId] = Task {
+            await self.generateConversationSummary(agentId: agentId, conversationId: conversationId)
+        }
     }
 
     private let summarySystemPrompt = """
@@ -396,16 +362,12 @@ public actor MemoryService {
                 model: config.coreModelIdentifier,
                 conversationAt: Self.iso8601Formatter.string(from: Date())
             )
-            do { try db.insertSummary(summaryObj) } catch {
-                MemoryLogger.service.error("Failed to insert summary: \(error)")
+            do {
+                try db.insertSummaryAndMarkProcessed(summaryObj)
+            } catch {
+                MemoryLogger.service.error("Failed to insert summary for conversation \(conversationId): \(error)")
             }
             await MemorySearchService.shared.indexSummary(summaryObj)
-
-            do { try db.markSignalsProcessed(conversationId: conversationId) } catch {
-                MemoryLogger.service.error(
-                    "Failed to mark signals processed for conversation \(conversationId): \(error)"
-                )
-            }
 
             let durationMs = Int(Date().timeIntervalSince(startTime) * 1000)
             logProcessing(
@@ -440,6 +402,7 @@ public actor MemoryService {
 
     private static let maxRetries = 3
     private static let baseRetryDelay: UInt64 = 1_000_000_000  // 1 second in nanoseconds
+    private static let modelCallTimeout: TimeInterval = 60
 
     /// Circuit breaker state: tracks consecutive failures to avoid hammering a down service.
     private var consecutiveFailures = 0
@@ -455,23 +418,26 @@ public actor MemoryService {
         }
 
         let model = config.coreModelIdentifier
-        var messages: [ChatMessage] = []
-        if let systemPrompt {
-            messages.append(ChatMessage(role: "system", content: systemPrompt))
-        }
-        messages.append(ChatMessage(role: "user", content: prompt))
+        let messages: [ChatMessage] =
+            if let systemPrompt {
+                [ChatMessage(role: "system", content: systemPrompt), ChatMessage(role: "user", content: prompt)]
+            } else {
+                [ChatMessage(role: "user", content: prompt)]
+            }
         let params = GenerationParameters(temperature: 0.3, maxTokens: 2048)
 
         var lastError: Error?
         for attempt in 0 ..< Self.maxRetries {
             do {
-                let result = try await executeModelCall(model: model, messages: messages, params: params)
+                let result = try await withModelTimeout {
+                    try await self.executeModelCall(model: model, messages: messages, params: params)
+                }
                 consecutiveFailures = 0
                 circuitOpenUntil = nil
                 return result
             } catch {
                 lastError = error
-                let isRetryable = !(error is MemoryServiceError)
+                let isRetryable = !(error is MemoryServiceError) || error as? MemoryServiceError == .modelCallTimedOut
                 if !isRetryable || attempt == Self.maxRetries - 1 { break }
                 let delay = Self.baseRetryDelay * UInt64(1 << attempt)  // exponential: 1s, 2s, 4s
                 MemoryLogger.service.warning(
@@ -524,6 +490,22 @@ public actor MemoryService {
                 "No service found for model '\(model)' — local: \(localIds), remote: \(remoteIds)"
             )
             throw MemoryServiceError.coreModelUnavailable(model)
+        }
+    }
+
+    private func withModelTimeout<T: Sendable>(_ operation: @escaping @Sendable () async throws -> T) async throws -> T
+    {
+        try await withThrowingTaskGroup(of: T.self) { group in
+            group.addTask { try await operation() }
+            group.addTask {
+                try await Task.sleep(for: .seconds(Self.modelCallTimeout))
+                throw MemoryServiceError.modelCallTimedOut
+            }
+            guard let result = try await group.next() else {
+                throw MemoryServiceError.modelCallTimedOut
+            }
+            group.cancelAll()
+            return result
         }
     }
 
@@ -609,7 +591,7 @@ public actor MemoryService {
 
     // MARK: - Response Parsing
 
-    private struct ExtractionParseResult {
+    struct ExtractionParseResult {
         struct EntryData: Decodable {
             let type: String
             let content: String
@@ -623,14 +605,14 @@ public actor MemoryService {
         var graph: GraphExtractionResult = GraphExtractionResult()
     }
 
-    private struct RawExtractionJSON: Decodable {
+    struct RawExtractionJSON: Decodable {
         let entries: [ExtractionParseResult.EntryData]?
         let profile_facts: [String]?
         let entities: [GraphExtractionResult.EntityData]?
         let relationships: [GraphExtractionResult.RelationshipData]?
     }
 
-    private func extractJSON(from response: String) -> Data? {
+    nonisolated func extractJSON(from response: String) -> Data? {
         let trimmed = response.trimmingCharacters(in: .whitespacesAndNewlines)
 
         if let data = trimmed.data(using: .utf8),
@@ -667,7 +649,7 @@ public actor MemoryService {
         return nil
     }
 
-    private func parseResponse(_ response: String) -> ExtractionParseResult {
+    nonisolated func parseResponse(_ response: String) -> ExtractionParseResult {
         guard let data = extractJSON(from: response) else {
             MemoryLogger.service.info("parseResponse: no JSON found in response")
             return ExtractionParseResult()
@@ -689,7 +671,7 @@ public actor MemoryService {
 
     /// Fallback parser that extracts as much as possible from malformed LLM JSON
     /// (e.g. confidence as string, tags as a single string, etc.).
-    private func parseResponseLenient(_ data: Data) -> ExtractionParseResult {
+    nonisolated func parseResponseLenient(_ data: Data) -> ExtractionParseResult {
         guard let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             MemoryLogger.service.error(
                 "JSON not a dictionary: \(String(data: data, encoding: .utf8)?.prefix(200) ?? "nil")"
@@ -793,7 +775,7 @@ public actor MemoryService {
         return entries
     }
 
-    private func stripPreamble(_ response: String) -> String {
+    nonisolated func stripPreamble(_ response: String) -> String {
         var text = response.trimmingCharacters(in: .whitespacesAndNewlines)
 
         let preamblePatterns = [
@@ -934,7 +916,7 @@ public actor MemoryService {
 
     private static let contradictableTypes: Set<MemoryEntryType> = [.fact, .correction, .commitment]
 
-    private func findContradiction(
+    nonisolated func findContradiction(
         entry: MemoryEntry,
         entryTokens: Set<String>,
         existing: [MemoryEntry],
@@ -1147,7 +1129,7 @@ public actor MemoryService {
 
     // MARK: - Profile Threshold Check
 
-    private func checkProfileRegeneration(config: MemoryConfiguration) async throws {
+    private func checkProfileRegeneration(config: MemoryConfiguration) throws {
         let count = try db.contributionCountSinceLastRegeneration()
         let hasProfile: Bool
         do { hasProfile = try db.loadUserProfile() != nil } catch {
@@ -1160,16 +1142,18 @@ public actor MemoryService {
             MemoryLogger.service.info(
                 "Profile regeneration triggered (\(count) contributions since last regen, threshold: \(threshold), existing profile: \(hasProfile))"
             )
-            await regenerateProfile(config: config)
+            let cfg = config
+            Task { await self.regenerateProfile(config: cfg) }
         }
     }
 }
 
 // MARK: - Errors
 
-enum MemoryServiceError: Error, LocalizedError {
+enum MemoryServiceError: Error, LocalizedError, Equatable {
     case coreModelUnavailable(String)
     case circuitBreakerOpen
+    case modelCallTimedOut
 
     var errorDescription: String? {
         switch self {
@@ -1177,6 +1161,8 @@ enum MemoryServiceError: Error, LocalizedError {
             return "Core model '\(model)' is not available for memory processing"
         case .circuitBreakerOpen:
             return "Memory service temporarily unavailable (too many recent failures)"
+        case .modelCallTimedOut:
+            return "Model call timed out"
         }
     }
 }

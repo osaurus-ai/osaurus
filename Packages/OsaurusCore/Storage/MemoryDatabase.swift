@@ -1091,6 +1091,30 @@ public final class MemoryDatabase: @unchecked Sendable {
         }
     }
 
+    /// Atomically insert a summary and mark its pending signals as processed.
+    public func insertSummaryAndMarkProcessed(_ summary: ConversationSummary) throws {
+        try inTransaction { _ in
+            try self.transactionalStep(
+                """
+                INSERT INTO conversation_summaries (agent_id, conversation_id, summary, token_count, model, conversation_at)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                """
+            ) { stmt in
+                Self.bindText(stmt, index: 1, value: summary.agentId)
+                Self.bindText(stmt, index: 2, value: summary.conversationId)
+                Self.bindText(stmt, index: 3, value: summary.summary)
+                sqlite3_bind_int(stmt, 4, Int32(summary.tokenCount))
+                Self.bindText(stmt, index: 5, value: summary.model)
+                Self.bindText(stmt, index: 6, value: summary.conversationAt)
+            }
+            try self.transactionalStep(
+                "UPDATE pending_signals SET status = 'processed' WHERE conversation_id = ?1 AND status = 'pending'"
+            ) { stmt in
+                Self.bindText(stmt, index: 1, value: summary.conversationId)
+            }
+        }
+    }
+
     public func loadSummaries(agentId: String, days: Int = 7) throws -> [ConversationSummary] {
         var summaries: [ConversationSummary] = []
         try prepareAndExecute(

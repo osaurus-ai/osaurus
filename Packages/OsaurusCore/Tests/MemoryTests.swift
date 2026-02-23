@@ -500,4 +500,200 @@ struct MemoryDatabaseTests {
         let e2 = try db.resolveEntity(name: "Alice", type: "person", model: "test")
         #expect(e1.id == e2.id)
     }
+
+    @Test func insertSummaryAndMarkProcessedAtomic() throws {
+        let db = try makeTempDB()
+        try db.insertPendingSignal(
+            PendingSignal(agentId: "a", conversationId: "c1", signalType: "conversation", userMessage: "hi")
+        )
+        let summary = ConversationSummary(
+            agentId: "a",
+            conversationId: "c1",
+            summary: "Test",
+            tokenCount: 5,
+            model: "test",
+            conversationAt: ISO8601DateFormatter().string(from: Date())
+        )
+        try db.insertSummaryAndMarkProcessed(summary)
+
+        let pending = try db.loadPendingSignals(conversationId: "c1")
+        #expect(pending.isEmpty, "Signals should be marked processed")
+        let summaries = try db.loadSummaries(agentId: "a", days: 365)
+        #expect(summaries.count == 1)
+        #expect(summaries[0].summary == "Test")
+    }
+}
+
+struct MemoryServiceParseTests {
+
+    private let service = MemoryService.shared
+
+    @Test func parseResponseValidJSON() {
+        let json = """
+            {
+                "entries": [{"type": "fact", "content": "User likes Swift", "confidence": 0.9, "tags": ["swift"]}],
+                "profile_facts": ["Prefers dark mode"],
+                "entities": [{"name": "Swift", "type": "tool"}],
+                "relationships": [{"source": "User", "relation": "uses", "target": "Swift", "confidence": 0.8}]
+            }
+            """
+        let result = service.parseResponse(json)
+        #expect(result.entries.count == 1)
+        #expect(result.entries[0].content == "User likes Swift")
+        #expect(result.profileFacts == ["Prefers dark mode"])
+        #expect(result.graph.entities.count == 1)
+        #expect(result.graph.relationships.count == 1)
+    }
+
+    @Test func parseResponseCodeFenced() {
+        let response = """
+            Here is the result:
+            ```json
+            {"entries": [{"type": "preference", "content": "Likes tea"}], "profile_facts": [], "entities": [], "relationships": []}
+            ```
+            """
+        let result = service.parseResponse(response)
+        #expect(result.entries.count == 1)
+        #expect(result.entries[0].type == "preference")
+    }
+
+    @Test func parseResponseNoJSON() {
+        let result = service.parseResponse("I'm sorry, I can't do that.")
+        #expect(result.entries.isEmpty)
+        #expect(result.profileFacts.isEmpty)
+    }
+
+    @Test func parseResponseLenientConfidenceAsString() {
+        let json = """
+            {"entries": [{"type": "fact", "content": "Test", "confidence": "0.75", "tags": "single"}], "profile_facts": ["F1"]}
+            """
+        guard let data = json.data(using: .utf8) else { return }
+        let result = service.parseResponseLenient(data)
+        #expect(result.entries.count == 1)
+        #expect(result.entries[0].confidence == 0.75)
+        #expect(result.entries[0].tags == ["single"])
+        #expect(result.profileFacts == ["F1"])
+    }
+
+    @Test func parseResponsePartialJSON() {
+        let json = """
+            {"entries": [{"type": "skill", "content": "Knows Python"}]}
+            """
+        let result = service.parseResponse(json)
+        #expect(result.entries.count == 1)
+        #expect(result.entries[0].type == "skill")
+        #expect(result.profileFacts.isEmpty)
+    }
+}
+
+struct StripPreambleTests {
+
+    private let service = MemoryService.shared
+
+    @Test func removesCertainlyPreamble() {
+        let result = service.stripPreamble("Certainly! The user prefers Swift.")
+        #expect(result == "The user prefers Swift.")
+    }
+
+    @Test func removesOfCoursePreamble() {
+        let result = service.stripPreamble("Of course, the answer is yes.")
+        #expect(result == "the answer is yes.")
+    }
+
+    @Test func removesHeresPreamble() {
+        let result = service.stripPreamble("Here's the result.")
+        #expect(result == "the result.")
+    }
+
+    @Test func preservesCleanText() {
+        let text = "John is a software developer who uses Swift."
+        let result = service.stripPreamble(text)
+        #expect(result == text)
+    }
+
+    @Test func handlesWhitespace() {
+        let result = service.stripPreamble("  \n  Hello world  \n  ")
+        #expect(result == "Hello world")
+    }
+}
+
+struct FindContradictionTests {
+
+    private let service = MemoryService.shared
+
+    @Test func detectsContradictionWithSimilarWording() {
+        let existing = MemoryEntry(agentId: "a", type: .fact, content: "Terence lives in Los Angeles", model: "m")
+        let candidate = MemoryEntry(agentId: "a", type: .fact, content: "Terence lives in Irvine", model: "m")
+        let existingTokens = [TextSimilarity.tokenize(existing.content)]
+        let candidateTokens = TextSimilarity.tokenize(candidate.content)
+
+        let result = service.findContradiction(
+            entry: candidate,
+            entryTokens: candidateTokens,
+            existing: [existing],
+            existingTokens: existingTokens
+        )
+        #expect(result != nil, "Should detect contradiction between similar-phrased location facts")
+        #expect(result?.id == existing.id)
+    }
+
+    @Test func noContradictionForDifferentTypes() {
+        let existing = MemoryEntry(agentId: "a", type: .preference, content: "Terence lives in LA", model: "m")
+        let candidate = MemoryEntry(agentId: "a", type: .fact, content: "Terence lives in Irvine", model: "m")
+        let existingTokens = [TextSimilarity.tokenize(existing.content)]
+        let candidateTokens = TextSimilarity.tokenize(candidate.content)
+
+        let result = service.findContradiction(
+            entry: candidate,
+            entryTokens: candidateTokens,
+            existing: [existing],
+            existingTokens: existingTokens
+        )
+        #expect(result == nil, "Preference vs fact should not contradict")
+    }
+
+    @Test func noContradictionForCompletelyDifferentContent() {
+        let existing = MemoryEntry(agentId: "a", type: .fact, content: "Loves pizza", model: "m")
+        let candidate = MemoryEntry(agentId: "a", type: .fact, content: "Terence lives in Irvine", model: "m")
+        let existingTokens = [TextSimilarity.tokenize(existing.content)]
+        let candidateTokens = TextSimilarity.tokenize(candidate.content)
+
+        let result = service.findContradiction(
+            entry: candidate,
+            entryTokens: candidateTokens,
+            existing: [existing],
+            existingTokens: existingTokens
+        )
+        #expect(result == nil, "Completely different facts should not contradict")
+    }
+
+    @Test func crossTypeContradiction() {
+        let existing = MemoryEntry(agentId: "a", type: .fact, content: "Terence lives in LA", model: "m")
+        let candidate = MemoryEntry(agentId: "a", type: .correction, content: "Terence lives in Irvine", model: "m")
+        let existingTokens = [TextSimilarity.tokenize(existing.content)]
+        let candidateTokens = TextSimilarity.tokenize(candidate.content)
+
+        let result = service.findContradiction(
+            entry: candidate,
+            entryTokens: candidateTokens,
+            existing: [existing],
+            existingTokens: existingTokens
+        )
+        #expect(result != nil, "Correction should contradict a fact with similar wording")
+    }
+
+    @Test func identicalContentNotContradiction() {
+        let existing = MemoryEntry(agentId: "a", type: .fact, content: "Terence lives in LA", model: "m")
+        let candidate = MemoryEntry(agentId: "a", type: .fact, content: "Terence lives in LA", model: "m")
+        let existingTokens = [TextSimilarity.tokenize(existing.content)]
+        let candidateTokens = TextSimilarity.tokenize(candidate.content)
+
+        let result = service.findContradiction(
+            entry: candidate,
+            entryTokens: candidateTokens,
+            existing: [existing],
+            existingTokens: existingTokens
+        )
+        #expect(result == nil, "Identical content should not be flagged as contradiction")
+    }
 }
