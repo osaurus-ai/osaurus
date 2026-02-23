@@ -232,6 +232,7 @@ struct ServerView: View {
         case .core: return "server.rack"
         case .chat: return "bubble.left.and.bubble.right"
         case .audio: return "waveform"
+        case .memory: return "brain.head.profile"
         case .mcp: return "wrench.and.screwdriver"
         }
     }
@@ -241,6 +242,7 @@ struct ServerView: View {
         case .core: return .blue
         case .chat: return .green
         case .audio: return .orange
+        case .memory: return .pink
         case .mcp: return .purple
         }
     }
@@ -479,6 +481,7 @@ struct APIEndpoint {
         case core = "Core"
         case chat = "Chat"
         case audio = "Audio"
+        case memory = "Memory"
         case mcp = "MCP"
     }
 
@@ -619,6 +622,31 @@ struct APIEndpoint {
                 examplePayload: nil,
                 isAudioEndpoint: true
             ),
+            // Memory endpoints
+            APIEndpoint(
+                method: "GET",
+                path: "/agents",
+                description: "List all agents with memory counts",
+                compatibility: "Osaurus",
+                category: .memory,
+                examplePayload: nil
+            ),
+            APIEndpoint(
+                method: "POST",
+                path: "/memory/ingest",
+                description: "Bulk-ingest conversation turns into memory",
+                compatibility: "Osaurus",
+                category: .memory,
+                examplePayload: """
+                    {
+                      "agent_id": "my-agent",
+                      "conversation_id": "session-1",
+                      "turns": [
+                        {"user": "Hi, my name is Alice", "assistant": "Hello Alice!"}
+                      ]
+                    }
+                    """
+            ),
             // MCP endpoints
             APIEndpoint(
                 method: "GET",
@@ -653,7 +681,7 @@ struct APIEndpoint {
     }
 
     static var groupedEndpoints: [(category: EndpointCategory, endpoints: [APIEndpoint])] {
-        let categories: [EndpointCategory] = [.core, .chat, .audio, .mcp]
+        let categories: [EndpointCategory] = [.core, .chat, .audio, .memory, .mcp]
         return categories.map { cat in
             (category: cat, endpoints: allEndpoints.filter { $0.category == cat })
         }

@@ -123,3 +123,6 @@ ggml-*.metal
 
 .env
 Packages/**/Package.resolved
+
+# Benchmarks (cloned repos and outputs)
+benchmarks/

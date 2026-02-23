@@ -336,7 +336,7 @@ extension ChatMessage {
 /// Chat completion request
 struct ChatCompletionRequest: Codable, Sendable {
     let model: String
-    let messages: [ChatMessage]
+    var messages: [ChatMessage]
     let temperature: Float?
     let max_tokens: Int?
     let stream: Bool?

@@ -202,6 +202,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 handleAudioTranscriptions(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .POST, path == "/responses" {
                 handleOpenResponses(head: head, context: context, startTime: startTime, userAgent: userAgent)
+            } else if head.method == .POST, path == "/memory/ingest" {
+                handleMemoryIngest(head: head, context: context, startTime: startTime, userAgent: userAgent)
+            } else if head.method == .GET, path == "/agents" {
+                handleListAgents(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else {
                 var headers = [("Content-Type", "text/plain; charset=utf-8")]
                 headers.append(contentsOf: stateRef.value.corsHeaders)
@@ -375,6 +379,222 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
     // MARK: - Chat handlers
 
+    /// Inject assembled memory context into a chat request when an agent ID is provided
+    /// via the `X-Osaurus-Agent-Id` header.
+    private static func enrichWithMemoryContext(
+        _ request: ChatCompletionRequest,
+        agentId: String?
+    ) async -> ChatCompletionRequest {
+        guard let agentId, !agentId.isEmpty else { return request }
+
+        let config = MemoryConfigurationStore.load()
+        let memoryContext = await MemoryContextAssembler.assembleContext(
+            agentId: agentId,
+            config: config
+        )
+        guard !memoryContext.isEmpty else { return request }
+
+        var enriched = request
+        if let idx = enriched.messages.firstIndex(where: { $0.role == "system" }) {
+            let existing = enriched.messages[idx].content ?? ""
+            enriched.messages[idx] = ChatMessage(role: "system", content: memoryContext + "\n\n" + existing)
+        } else {
+            enriched.messages.insert(ChatMessage(role: "system", content: memoryContext), at: 0)
+        }
+        return enriched
+    }
+
+    // MARK: - Memory Ingestion
+
+    /// Request body for the `/memory/ingest` endpoint.
+    private struct MemoryIngestRequest: Codable {
+        let agent_id: String
+        let conversation_id: String
+        let turns: [MemoryIngestTurn]
+    }
+
+    private struct MemoryIngestTurn: Codable {
+        let user: String
+        let assistant: String
+    }
+
+    /// Bulk-ingest conversation turns into the memory system.
+    private func handleMemoryIngest(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        let data: Data
+        let requestBodyString: String?
+        if let body = stateRef.value.requestBodyBuffer {
+            var bodyCopy = body
+            let bytes = bodyCopy.readBytes(length: bodyCopy.readableBytes) ?? []
+            data = Data(bytes)
+            requestBodyString = String(decoding: data, as: UTF8.self)
+        } else {
+            data = Data()
+            requestBodyString = nil
+        }
+
+        guard let req = try? JSONDecoder().decode(MemoryIngestRequest.self, from: data) else {
+            sendResponse(
+                context: context,
+                version: head.version,
+                status: .badRequest,
+                headers: [("Content-Type", "text/plain; charset=utf-8")],
+                body: "Invalid request format. Expected {agent_id, conversation_id, turns: [{user, assistant}]}"
+            )
+            logRequest(
+                method: "POST",
+                path: "/memory/ingest",
+                userAgent: userAgent,
+                requestBody: requestBodyString,
+                responseStatus: 400,
+                startTime: startTime,
+                errorMessage: "Invalid request format"
+            )
+            return
+        }
+
+        let cors = stateRef.value.corsHeaders
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop: (@escaping @Sendable () -> Void) -> Void = { block in
+            if loop.inEventLoop { block() } else { loop.execute { block() } }
+        }
+        let logSelf = self
+        let logStartTime = startTime
+        let logUserAgent = userAgent
+        let logRequestBody = requestBodyString
+
+        Task(priority: .userInitiated) {
+            for turn in req.turns {
+                await MemoryService.shared.recordConversationTurn(
+                    userMessage: turn.user,
+                    assistantMessage: turn.assistant,
+                    agentId: req.agent_id,
+                    conversationId: req.conversation_id
+                )
+            }
+
+            let responseBody = "{\"status\":\"ok\",\"turns_ingested\":\(req.turns.count)}"
+            var headers: [(String, String)] = [("Content-Type", "application/json")]
+            headers.append(contentsOf: cors)
+            let headersCopy = headers
+            hop {
+                var responseHead = HTTPResponseHead(version: head.version, status: .ok)
+                var buffer = ctx.value.channel.allocator.buffer(capacity: responseBody.utf8.count)
+                buffer.writeString(responseBody)
+                var nioHeaders = HTTPHeaders()
+                for (name, value) in headersCopy { nioHeaders.add(name: name, value: value) }
+                nioHeaders.add(name: "Content-Length", value: String(buffer.readableBytes))
+                nioHeaders.add(name: "Connection", value: "close")
+                responseHead.headers = nioHeaders
+                let c = ctx.value
+                c.write(NIOAny(HTTPServerResponsePart.head(responseHead)), promise: nil)
+                c.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
+                c.writeAndFlush(NIOAny(HTTPServerResponsePart.end(nil as HTTPHeaders?))).whenComplete { _ in
+                    ctx.value.close(promise: nil)
+                }
+            }
+            logSelf.logRequest(
+                method: "POST",
+                path: "/memory/ingest",
+                userAgent: logUserAgent,
+                requestBody: logRequestBody,
+                responseBody: responseBody,
+                responseStatus: 200,
+                startTime: logStartTime
+            )
+        }
+    }
+
+    // MARK: - Agents
+
+    private struct AgentListItem: Codable {
+        let id: String
+        let name: String
+        let description: String
+        let default_model: String?
+        let is_built_in: Bool
+        let memory_entry_count: Int
+        let created_at: String
+        let updated_at: String
+    }
+
+    private struct AgentListResponse: Codable {
+        let agents: [AgentListItem]
+    }
+
+    private func handleListAgents(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let cors = stateRef.value.corsHeaders
+        let hop: (@escaping @Sendable () -> Void) -> Void = { block in
+            if loop.inEventLoop { block() } else { loop.execute { block() } }
+        }
+        let logSelf = self
+        let logStartTime = startTime
+        let logUserAgent = userAgent
+
+        Task(priority: .userInitiated) {
+            let agents = await MainActor.run { AgentManager.shared.agents }
+
+            let db = MemoryDatabase.shared
+            var memoryCounts: [String: Int] = [:]
+            if db.isOpen, let counts = try? db.agentIdsWithEntries() {
+                for (agentId, count) in counts {
+                    memoryCounts[agentId] = count
+                }
+            }
+
+            let formatter = ISO8601DateFormatter()
+            let items = agents.map { agent in
+                AgentListItem(
+                    id: agent.id.uuidString,
+                    name: agent.name,
+                    description: agent.description,
+                    default_model: agent.defaultModel,
+                    is_built_in: agent.isBuiltIn,
+                    memory_entry_count: memoryCounts[agent.id.uuidString] ?? 0,
+                    created_at: formatter.string(from: agent.createdAt),
+                    updated_at: formatter.string(from: agent.updatedAt)
+                )
+            }
+
+            let response = AgentListResponse(agents: items)
+            let json =
+                (try? JSONEncoder().encode(response)).map { String(decoding: $0, as: UTF8.self) } ?? #"{"agents":[]}"#
+
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(
+                    context: ctx.value,
+                    version: head.version,
+                    status: .ok,
+                    headers: headers,
+                    body: json
+                )
+            }
+            logSelf.logRequest(
+                method: "GET",
+                path: "/agents",
+                userAgent: logUserAgent,
+                requestBody: nil,
+                responseBody: json,
+                responseStatus: 200,
+                startTime: logStartTime
+            )
+        }
+    }
+
     private func handleChatCompletions(
         head: HTTPRequestHead,
         context: ChannelHandlerContext,
@@ -421,6 +641,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             "chatcmpl-\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(12))"
         let model = req.model
 
+        let memoryAgentId = head.headers.first(name: "X-Osaurus-Agent-Id")
+
         if wantsSSE {
             let writer = SSEResponseWriter()
             let cors = stateRef.value.corsHeaders
@@ -451,7 +673,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let logSelf = self
             Task(priority: .userInitiated) {
                 do {
-                    let stream = try await chatEngine.streamChat(request: req)
+                    let enrichedReq = await Self.enrichWithMemoryContext(req, agentId: memoryAgentId)
+                    let stream = try await chatEngine.streamChat(request: enrichedReq)
                     for try await delta in stream {
                         hop {
                             writerBound.value.writeContent(
@@ -587,7 +810,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let logSelf = self
             Task(priority: .userInitiated) {
                 do {
-                    let resp = try await chatEngine.completeChat(request: req)
+                    let enrichedReq = await Self.enrichWithMemoryContext(req, agentId: memoryAgentId)
+                    let resp = try await chatEngine.completeChat(request: enrichedReq)
                     let json = try JSONEncoder().encode(resp)
                     var headers: [(String, String)] = [("Content-Type", "application/json")]
                     headers.append(contentsOf: cors)

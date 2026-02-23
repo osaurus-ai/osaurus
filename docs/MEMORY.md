@@ -312,6 +312,128 @@ User overrides are explicit facts that always appear in context. Use these for i
 2. Click **Add Override**
 3. Enter a fact (e.g., "I prefer tabs over spaces" or "My company uses a monorepo")
 
+---
+
+## API Integration
+
+Osaurus exposes its memory system through the HTTP API, enabling any OpenAI-compatible client to benefit from persistent, personalized context.
+
+### Memory Context Injection — `X-Osaurus-Agent-Id`
+
+Add the `X-Osaurus-Agent-Id` header to any `POST /chat/completions` request. Osaurus will automatically assemble relevant memory (user profile, working memory, conversation summaries, knowledge graph) and prepend it to the system prompt before the request reaches the model.
+
+The header value is an arbitrary string that identifies the agent or user session whose memory should be retrieved. When the header is absent or empty, the request is processed normally without memory injection.
+
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://127.0.0.1:1337/v1",
+    api_key="osaurus",
+    default_headers={"X-Osaurus-Agent-Id": "my-agent"},
+)
+
+response = client.chat.completions.create(
+    model="your-model-name",
+    messages=[{"role": "user", "content": "What did we talk about last time?"}],
+)
+```
+
+### Memory Ingestion — `POST /memory/ingest`
+
+Bulk-ingest conversation turns so the memory system can learn from them. This is useful for seeding memory from existing chat logs, migrating from another system, or running benchmarks.
+
+```bash
+curl http://127.0.0.1:1337/memory/ingest \
+  -H "Content-Type: application/json" \
+  -d '{
+    "agent_id": "my-agent",
+    "conversation_id": "session-1",
+    "turns": [
+      {"user": "Hi, my name is Alice", "assistant": "Hello Alice! Nice to meet you."},
+      {"user": "I work at Acme Corp", "assistant": "Got it, you work at Acme Corp."}
+    ]
+  }'
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `agent_id` | string | Identifier for the agent whose memory is being populated |
+| `conversation_id` | string | Identifier for the conversation session |
+| `turns` | array | Array of turn objects, each with `user` and `assistant` fields |
+
+Memory extraction runs asynchronously in the background — ingested turns are processed without blocking the API response.
+
+### List Agents — `GET /agents`
+
+Returns all configured agents with their memory entry counts. Use this to discover valid agent IDs for the `X-Osaurus-Agent-Id` header.
+
+```bash
+curl http://127.0.0.1:1337/agents
+```
+
+See the [API Guide](OpenAI_API_GUIDE.md#memory-api) for additional examples and reference.
+
+---
+
+## Benchmark: LoCoMo (Long-term Conversational Memory)
+
+We evaluate memory quality using the [LoCoMo benchmark](https://arxiv.org/abs/2401.15665) (ACL 2024) via [EasyLocomo](https://github.com/playeriv65/EasyLocomo). LoCoMo tests how well systems recall facts, events, and relationships from multi-session conversations spanning weeks to months.
+
+Our goal is to achieve state-of-the-art on this benchmark. Osaurus uses Apple Foundation Models as the base memory extraction model, making the cost of memory effectively zero for on-device use.
+
+### LoCoMo Leaderboard
+
+| System | F1 Score |
+|--------|----------|
+| MemU | 92.09% |
+| CORE | 88.24% |
+| Human baseline | ~88% |
+| Memobase | 85% (temporal) |
+| Mem0 | 66.9% |
+| OpenAI Memory | 52.9% |
+| **Osaurus (Gemini 2.5 Flash)** | **44.62%** |
+| GPT-3.5-turbo-16K (no memory) | 37.8% |
+| GPT-4-turbo (no memory) | ~32% |
+
+### Osaurus Breakdown by Category
+
+| Category | Count | F1 Score |
+|----------|-------|----------|
+| Open-domain | 563 | 54.72% |
+| Adversarial | 312 | 53.53% |
+| Multi-hop | 192 | 36.76% |
+| Temporal | 214 | 20.85% |
+| Single-hop | 66 | 16.22% |
+| **Overall** | **1,347** | **44.62%** |
+
+### Running the Benchmark
+
+```bash
+# 1. Set up EasyLocomo
+cd benchmarks/EasyLocomo
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+
+# 2. Configure .env
+echo 'OPENAI_API_KEY=osaurus' > .env
+echo 'OPENAI_API_BASE=http://localhost:1337/v1' >> .env
+
+# 3. Run (full-context baseline)
+python run_evaluation.py --model "google/gemini-2.5-flash" --batch-size 5 --max-context 65536
+```
+
+### Memory-Augmented Evaluation
+
+To evaluate memory retrieval quality instead of full-context recall:
+
+1. Ingest LoCoMo conversations via `scripts/ingest_locomo.py` (uses `POST /memory/ingest`)
+2. Run EasyLocomo with `--no-context` and the `X-Osaurus-Agent-Id` header set
+
+See [API Integration](#api-integration) above for details on the header and ingestion endpoint.
+
+---
+
 ### Clearing Memory
 
 The Memory view includes a danger zone for clearing all memory data. This removes all entries, summaries, chunks, profile data, and knowledge graph entities. The action is irreversible.
