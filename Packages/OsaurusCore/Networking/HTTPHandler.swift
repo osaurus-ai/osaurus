@@ -380,7 +380,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     // MARK: - Chat handlers
 
     /// Inject assembled memory context into a chat request when an agent ID is provided
-    /// via the `X-Osaurus-Agent-Id` header.
+    /// via the `X-Osaurus-Agent-Id` header. Uses query-aware retrieval when the last
+    /// user message is available, ensuring semantically relevant memories are included.
     private static func enrichWithMemoryContext(
         _ request: ChatCompletionRequest,
         agentId: String?
@@ -388,9 +389,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         guard let agentId, !agentId.isEmpty else { return request }
 
         let config = MemoryConfigurationStore.load()
+        let query = request.messages.last(where: { $0.role == "user" })?.content ?? ""
         let memoryContext = await MemoryContextAssembler.assembleContext(
             agentId: agentId,
-            config: config
+            config: config,
+            query: query
         )
         guard !memoryContext.isEmpty else { return request }
 
@@ -411,11 +414,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let agent_id: String
         let conversation_id: String
         let turns: [MemoryIngestTurn]
+        let session_date: String?
     }
 
     private struct MemoryIngestTurn: Codable {
         let user: String
         let assistant: String
+        let date: String?
     }
 
     /// Bulk-ingest conversation turns into the memory system.
@@ -470,11 +475,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
         Task(priority: .userInitiated) {
             for turn in req.turns {
+                let turnDate = turn.date ?? req.session_date
                 await MemoryService.shared.recordConversationTurn(
                     userMessage: turn.user,
                     assistantMessage: turn.assistant,
                     agentId: req.agent_id,
-                    conversationId: req.conversation_id
+                    conversationId: req.conversation_id,
+                    sessionDate: turnDate
                 )
             }
 

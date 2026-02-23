@@ -28,6 +28,41 @@ public actor MemoryContextAssembler {
         await shared.assembleContextCached(agentId: agentId, config: config)
     }
 
+    /// Assemble context with query-aware retrieval. Includes a "Relevant Memories" section
+    /// with entries and conversation chunks semantically matched to the user's query.
+    public static func assembleContext(
+        agentId: String,
+        config: MemoryConfiguration,
+        query: String
+    ) async -> String {
+        await shared.assembleContextWithQuery(agentId: agentId, config: config, query: query)
+    }
+
+    private func assembleContextWithQuery(
+        agentId: String,
+        config: MemoryConfiguration,
+        query: String
+    ) async -> String {
+        guard config.enabled else { return "" }
+
+        let baseContext = buildContext(agentId: agentId, config: config)
+
+        guard !query.isEmpty else { return baseContext }
+
+        let relevantSection = await buildQueryRelevantSection(
+            agentId: agentId,
+            query: query,
+            config: config,
+            existingContext: baseContext
+        )
+
+        if relevantSection.isEmpty {
+            return baseContext
+        }
+
+        return baseContext.isEmpty ? relevantSection : baseContext + "\n\n" + relevantSection
+    }
+
     private func assembleContextCached(agentId: String, config: MemoryConfiguration) -> String {
         guard config.enabled else { return "" }
 
@@ -85,8 +120,9 @@ public actor MemoryContextAssembler {
                 let block = buildBudgetSection(
                     header: "# Working Memory",
                     budgetTokens: config.workingMemoryBudgetTokens,
-                    items: entries
-                ) { "- [\($0.type.displayName)] \($0.content)" }
+                    items: entries,
+                    formatLine: Self.formatEntryLine
+                )
 
                 do { try db.touchMemoryEntries(ids: entries.map(\.id)) } catch {
                     MemoryLogger.service.warning("Context assembly: failed to touch entries: \(error)")
@@ -106,7 +142,7 @@ public actor MemoryContextAssembler {
                         header: "# Recent Conversation Summaries",
                         budgetTokens: config.summaryBudgetTokens,
                         items: summaries
-                    ) { "- \($0.conversationAt): \($0.summary)" }
+                    ) { "- [date: \($0.conversationAt)] \($0.summary)" }
                 )
             }
         } catch {
@@ -150,5 +186,87 @@ public actor MemoryContextAssembler {
             usedChars += line.count
         }
         return block
+    }
+
+    /// Format a memory entry as a context line, including type and optional date.
+    private static func formatEntryLine(_ entry: MemoryEntry) -> String {
+        var line = "- [\(entry.type.displayName)] \(entry.content)"
+        if !entry.validFrom.isEmpty {
+            line += " (date: \(entry.validFrom))"
+        }
+        return line
+    }
+
+    // MARK: - Query-Aware Retrieval
+
+    /// Search for memory entries and conversation chunks relevant to the query,
+    /// deduplicating against entries already present in the base context.
+    private func buildQueryRelevantSection(
+        agentId: String,
+        query: String,
+        config: MemoryConfiguration,
+        existingContext: String
+    ) async -> String {
+        let searchService = MemorySearchService.shared
+
+        let topK = config.recallTopK
+        let lambda = config.mmrLambda
+        let fetchMultiplier = config.mmrFetchMultiplier
+
+        async let entriesResult = searchService.searchMemoryEntries(
+            query: query,
+            agentId: agentId,
+            topK: topK,
+            lambda: lambda,
+            fetchMultiplier: fetchMultiplier
+        )
+        async let chunksResult = searchService.searchConversations(
+            query: query,
+            agentId: agentId,
+            days: 365,
+            topK: topK,
+            lambda: lambda,
+            fetchMultiplier: fetchMultiplier
+        )
+
+        let entries = await entriesResult
+        let chunks = await chunksResult
+
+        var sections: [String] = []
+        let budgetTokens = config.workingMemoryBudgetTokens
+
+        if !entries.isEmpty {
+            let deduplicated = entries.filter { entry in
+                !existingContext.contains(entry.content)
+            }
+            if !deduplicated.isEmpty {
+                sections.append(
+                    buildBudgetSection(
+                        header: "# Relevant Memories",
+                        budgetTokens: budgetTokens,
+                        items: deduplicated,
+                        formatLine: Self.formatEntryLine
+                    )
+                )
+            }
+        }
+
+        if !chunks.isEmpty {
+            sections.append(
+                buildBudgetSection(
+                    header: "# Relevant Conversation Excerpts",
+                    budgetTokens: budgetTokens,
+                    items: chunks
+                ) { chunk in
+                    var line = "- \(chunk.content)"
+                    if !chunk.createdAt.isEmpty {
+                        line += " (date: \(chunk.createdAt))"
+                    }
+                    return line
+                }
+            )
+        }
+
+        return sections.joined(separator: "\n\n")
     }
 }

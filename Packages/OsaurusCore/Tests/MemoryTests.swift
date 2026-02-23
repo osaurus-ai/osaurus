@@ -118,8 +118,8 @@ struct MemoryConfigurationTests {
         let config = MemoryConfiguration()
         #expect(config.enabled == true)
         #expect(config.maxEntriesPerAgent == 500)
-        #expect(config.workingMemoryBudgetTokens == 500)
-        #expect(config.summaryBudgetTokens == 1000)
+        #expect(config.workingMemoryBudgetTokens == 2000)
+        #expect(config.summaryBudgetTokens == 2000)
         #expect(config.graphBudgetTokens == 300)
         #expect(config.verificationJaccardDedupThreshold == 0.6)
     }
@@ -224,6 +224,28 @@ struct MemoryContextAssemblerTests {
         let context = await MemoryContextAssembler.assembleContext(agentId: "test", config: config)
         #expect(context.isEmpty)
     }
+
+    @Test func disabledConfigWithQueryReturnsEmpty() async {
+        var config = MemoryConfiguration()
+        config.enabled = false
+        let context = await MemoryContextAssembler.assembleContext(
+            agentId: "test",
+            config: config,
+            query: "What happened yesterday?"
+        )
+        #expect(context.isEmpty)
+    }
+
+    @Test func emptyQueryFallsBackToBaseContext() async {
+        let config = MemoryConfiguration()
+        let baseContext = await MemoryContextAssembler.assembleContext(agentId: "test", config: config)
+        let queryContext = await MemoryContextAssembler.assembleContext(
+            agentId: "test",
+            config: config,
+            query: ""
+        )
+        #expect(baseContext == queryContext)
+    }
 }
 
 struct MemoryDatabaseTests {
@@ -288,6 +310,59 @@ struct MemoryDatabaseTests {
         #expect(active.count == 1)
         #expect(active[0].id == correction.id)
         #expect(active[0].type == .correction)
+    }
+
+    @Test func insertAndLoadEntryWithValidFrom() throws {
+        let db = try makeTempDB()
+        let entry = MemoryEntry(
+            agentId: "agent1",
+            type: .fact,
+            content: "Went to the park",
+            model: "test",
+            validFrom: "2023-05-08"
+        )
+        try db.insertMemoryEntry(entry)
+        let loaded = try db.loadActiveEntries(agentId: "agent1")
+        #expect(loaded.count == 1)
+        #expect(loaded[0].validFrom == "2023-05-08")
+    }
+
+    @Test func insertEntryWithEmptyValidFromDefaultsToNow() throws {
+        let db = try makeTempDB()
+        let entry = MemoryEntry(
+            agentId: "agent1",
+            type: .fact,
+            content: "Timeless fact",
+            model: "test",
+            validFrom: ""
+        )
+        try db.insertMemoryEntry(entry)
+        let loaded = try db.loadActiveEntries(agentId: "agent1")
+        #expect(loaded.count == 1)
+        #expect(!loaded[0].validFrom.isEmpty, "Empty validFrom should default to current timestamp")
+    }
+
+    @Test func loadEntriesAsOfFiltersCorrectly() throws {
+        let db = try makeTempDB()
+        let past = MemoryEntry(
+            agentId: "a",
+            type: .fact,
+            content: "Past fact",
+            model: "m",
+            validFrom: "2023-01-01T00:00:00Z"
+        )
+        let future = MemoryEntry(
+            agentId: "a",
+            type: .fact,
+            content: "Future fact",
+            model: "m",
+            validFrom: "2099-01-01T00:00:00Z"
+        )
+        try db.insertMemoryEntry(past)
+        try db.insertMemoryEntry(future)
+        let asOf = try db.loadEntriesAsOf(agentId: "a", asOf: "2024-06-01T00:00:00Z")
+        #expect(asOf.count == 1)
+        #expect(asOf[0].content == "Past fact")
     }
 
     @Test func touchMemoryEntryUpdatesAccess() throws {
@@ -531,7 +606,7 @@ struct MemoryServiceParseTests {
     @Test func parseResponseValidJSON() {
         let json = """
             {
-                "entries": [{"type": "fact", "content": "User likes Swift", "confidence": 0.9, "tags": ["swift"]}],
+                "entries": [{"type": "fact", "content": "User likes Swift", "confidence": 0.9, "tags": ["swift"], "valid_from": ""}],
                 "profile_facts": ["Prefers dark mode"],
                 "entities": [{"name": "Swift", "type": "tool"}],
                 "relationships": [{"source": "User", "relation": "uses", "target": "Swift", "confidence": 0.8}]
@@ -540,9 +615,28 @@ struct MemoryServiceParseTests {
         let result = service.parseResponse(json)
         #expect(result.entries.count == 1)
         #expect(result.entries[0].content == "User likes Swift")
+        #expect(result.entries[0].valid_from == "")
         #expect(result.profileFacts == ["Prefers dark mode"])
         #expect(result.graph.entities.count == 1)
         #expect(result.graph.relationships.count == 1)
+    }
+
+    @Test func parseResponseWithValidFrom() {
+        let json = """
+            {
+                "entries": [
+                    {"type": "fact", "content": "Went to the park", "confidence": 0.9, "tags": ["activity"], "valid_from": "2023-05-08"},
+                    {"type": "preference", "content": "Likes hiking", "confidence": 0.8, "tags": ["hobby"], "valid_from": ""}
+                ],
+                "profile_facts": [],
+                "entities": [],
+                "relationships": []
+            }
+            """
+        let result = service.parseResponse(json)
+        #expect(result.entries.count == 2)
+        #expect(result.entries[0].valid_from == "2023-05-08")
+        #expect(result.entries[1].valid_from == "")
     }
 
     @Test func parseResponseCodeFenced() {
@@ -573,6 +667,16 @@ struct MemoryServiceParseTests {
         #expect(result.entries[0].confidence == 0.75)
         #expect(result.entries[0].tags == ["single"])
         #expect(result.profileFacts == ["F1"])
+    }
+
+    @Test func parseResponseLenientWithValidFrom() {
+        let json = """
+            {"entries": [{"type": "fact", "content": "Met Alice", "confidence": 0.9, "tags": [], "valid_from": "2023-06-15"}], "profile_facts": []}
+            """
+        guard let data = json.data(using: .utf8) else { return }
+        let result = service.parseResponseLenient(data)
+        #expect(result.entries.count == 1)
+        #expect(result.entries[0].valid_from == "2023-06-15")
     }
 
     @Test func parseResponsePartialJSON() {

@@ -14,14 +14,40 @@ Usage:
 
 import argparse
 import json
+import re
 import uuid
 import time
 import httpx
+from datetime import datetime
 from pathlib import Path
 
 
 def sample_id_to_uuid(sample_id: str) -> str:
     return str(uuid.uuid5(uuid.NAMESPACE_DNS, f"locomo.{sample_id}"))
+
+
+def normalize_locomo_date(date_str: str) -> str:
+    """Convert LoCoMo natural-language dates to ISO 8601 format.
+
+    Examples:
+        "1:56 pm on 8 May, 2023" -> "2023-05-08"
+        "10:30 am on 25 June, 2023" -> "2023-06-25"
+    Falls back to the original string if parsing fails.
+    """
+    match = re.match(
+        r"\d{1,2}:\d{2}\s*(?:am|pm)\s+on\s+(\d{1,2})\s+(\w+),?\s+(\d{4})",
+        date_str.strip(),
+        re.IGNORECASE,
+    )
+    if not match:
+        return date_str
+
+    day, month_name, year = match.group(1), match.group(2), match.group(3)
+    try:
+        dt = datetime.strptime(f"{day} {month_name} {year}", "%d %B %Y")
+        return dt.strftime("%Y-%m-%d")
+    except ValueError:
+        return date_str
 
 
 def pair_turns(turns: list[dict]) -> list[dict]:
@@ -57,6 +83,7 @@ def ingest_sample(client: httpx.Client, base_url: str, sample: dict):
         session_num = sk.split("_")[1]
         conversation_id = f"{sample_id}_session_{session_num}"
         date_str = conv.get(f"{sk}_date_time", "unknown date")
+        iso_date = normalize_locomo_date(date_str)
         turns = conv[sk]
 
         date_header_turn = {
@@ -69,6 +96,7 @@ def ingest_sample(client: httpx.Client, base_url: str, sample: dict):
             "agent_id": agent_id,
             "conversation_id": conversation_id,
             "turns": pairs,
+            "session_date": iso_date,
         }
 
         resp = client.post(f"{base_url}/memory/ingest", json=payload, timeout=60)
@@ -76,7 +104,7 @@ def ingest_sample(client: httpx.Client, base_url: str, sample: dict):
         result = resp.json()
         ingested = result.get("turns_ingested", 0)
         total_turns += ingested
-        print(f"  {sk} ({date_str}): {ingested} turns ingested")
+        print(f"  {sk} ({date_str} -> {iso_date}): {ingested} turns ingested")
 
     return total_turns
 
