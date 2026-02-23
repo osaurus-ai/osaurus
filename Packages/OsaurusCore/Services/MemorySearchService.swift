@@ -392,6 +392,19 @@ public actor MemorySearchService {
         vectorDB != nil
     }
 
+    /// Clear the entire VecturaKit index and reverse maps without rebuilding.
+    public func clearIndex() async {
+        chunkKeyMap.removeAll()
+        summaryKeyMap.removeAll()
+        guard let db = vectorDB else { return }
+        do {
+            try await db.reset()
+            MemoryLogger.search.info("VecturaKit index cleared")
+        } catch {
+            MemoryLogger.search.error("Failed to clear VecturaKit index: \(error)")
+        }
+    }
+
     // MARK: - MMR Reranking
 
     /// Reranks results using Maximal Marginal Relevance.

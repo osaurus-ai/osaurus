@@ -20,6 +20,17 @@ struct MemoryView: View {
 
     private static let iso8601Formatter = ISO8601DateFormatter()
 
+    private static let relativeFormatter: RelativeDateTimeFormatter = {
+        let f = RelativeDateTimeFormatter()
+        f.unitsStyle = .abbreviated
+        return f
+    }()
+
+    private static func formatRelativeDate(_ iso8601: String) -> String {
+        guard let date = iso8601Formatter.date(from: iso8601) else { return iso8601 }
+        return relativeFormatter.localizedString(for: date, relativeTo: Date())
+    }
+
     // MARK: Data State
 
     @State private var config = MemoryConfiguration.default
@@ -272,9 +283,10 @@ struct MemoryView: View {
 
                         Spacer()
 
-                        Text(profile.generatedAt)
+                        Text(Self.formatRelativeDate(profile.generatedAt))
                             .font(.system(size: 11))
                             .foregroundColor(theme.tertiaryText)
+                            .help(profile.generatedAt)
                     }
                 }
             } else {
@@ -770,6 +782,7 @@ struct MemoryView: View {
         let dbFile = OsaurusPaths.memoryDatabaseFile()
         try? FileManager.default.removeItem(at: dbFile)
         try? db.open()
+        Task { await MemorySearchService.shared.clearIndex() }
         loadData()
         showToast("All memory cleared")
     }
