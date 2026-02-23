@@ -60,6 +60,7 @@ Osaurus is the AI edge runtime for macOS. It brings together:
 - **Remote MCP Providers** — Connect to external MCP servers and aggregate their tools
 - **Plugin System** — Extend functionality with community and custom tools
 - **Agents** — Create custom AI assistants with unique prompts, tools, and visual themes
+- **Memory** — 4-layer memory system that learns from conversations with profile, working memory, summaries, and knowledge graph
 - **Skills** — Import reusable AI capabilities from GitHub or files ([Agent Skills](https://agentskills.io/) compatible)
 - **Schedules** — Automate recurring AI tasks with timed execution
 - **Watchers** — Monitor folders for changes and trigger AI tasks automatically
@@ -85,6 +86,7 @@ Osaurus is the AI edge runtime for macOS. It brings together:
 | **Tools & Plugins**      | Browser automation, file system, git, web search, and more             |
 | **Skills**               | Import AI capabilities from GitHub or files, with smart context saving |
 | **Agents**               | Custom AI assistants with unique prompts, tools, and themes            |
+| **Memory**               | Persistent memory with user profile, knowledge graph, and hybrid search|
 | **Schedules**            | Automate AI tasks with daily, weekly, monthly, or yearly runs          |
 | **Watchers**             | Monitor folders and trigger AI tasks on file system changes            |
 | **Work Mode**            | Autonomous multi-step task execution with parallel task support        |
@@ -240,6 +242,36 @@ Use cases:
 - **Creative Writer** — Higher temperature, no tool access for pure generation
 
 Access via Management window (`⌘ Shift M`) → **Agents**.
+
+### Memory
+
+Osaurus remembers what matters across conversations using a 4-layer memory system that runs entirely in the background.
+
+**Layers:**
+
+- **User Profile** — An auto-generated summary of who you are, updated as conversations accumulate. Add explicit overrides for facts the AI should always know.
+- **Working Memory** — Structured entries (facts, preferences, decisions, corrections, commitments, relationships, skills) extracted from every conversation turn.
+- **Conversation Summaries** — Compressed recaps of past sessions, generated automatically after periods of inactivity.
+- **Knowledge Graph** — Entities and relationships extracted from conversations, searchable by name or relation type.
+
+**Features:**
+
+- **Automatic Extraction** — Memories are extracted from each conversation turn using an LLM, with no manual effort required
+- **Hybrid Search** — BM25 + vector embeddings (via VecturaKit) with MMR reranking for relevant, diverse recall
+- **Verification Pipeline** — 3-layer deduplication and contradiction detection prevents redundant or conflicting memories
+- **Per-Agent Isolation** — Each agent maintains its own memory entries and summaries
+- **Configurable Budgets** — Control token allocation for profile, working memory, summaries, and graph in the system prompt
+- **Non-Blocking** — All extraction and indexing runs in the background without slowing down chat
+
+**Use Cases:**
+
+- Remember your coding preferences, project context, and tool choices across sessions
+- Build a personal knowledge base from ongoing research conversations
+- Maintain continuity with multiple agents that each learn your domain-specific needs
+
+Access via Management window (`⌘ Shift M`) → **Memory**.
+
+See [Memory Guide](docs/MEMORY.md) for details.
 
 ### Skills
 
