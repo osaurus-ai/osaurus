@@ -1,5 +1,5 @@
 {
-  "originHash" : "092d437bc985e8d0cd079adf768c085a2adecc8ac29566da4b61f74aea37664b",
+  "originHash" : "6b5a2d6bb8f08fa6408f97623a6dc241b74ef303a7f5a3d025598ed38f2b9e84",
   "pins" : [
     {
       "identity" : "eventsource",
@@ -74,6 +74,15 @@
       }
     },
     {
+      "identity" : "swift-embeddings",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/jkrukowski/swift-embeddings.git",
+      "state" : {
+        "revision" : "66994e3b3ed172a9b691b59d11bd0702c3f5eb33",
+        "version" : "0.0.26"
+      }
+    },
+    {
       "identity" : "swift-jinja",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/huggingface/swift-jinja.git",
@@ -110,12 +119,30 @@
       }
     },
     {
+      "identity" : "swift-safetensors",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/jkrukowski/swift-safetensors.git",
+      "state" : {
+        "revision" : "3852f0bd561071588361c26c49c016d344234c60",
+        "version" : "0.1.1"
+      }
+    },
+    {
       "identity" : "swift-sdk",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/modelcontextprotocol/swift-sdk",
       "state" : {
         "revision" : "c0407a0b52677cb395d824cac2879b963075ba8c",
         "version" : "0.10.2"
+      }
+    },
+    {
+      "identity" : "swift-sentencepiece",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/jkrukowski/swift-sentencepiece",
+      "state" : {
+        "revision" : "36a8b2b45733f6adb3092100f16e4c7d38a10a7c",
+        "version" : "0.0.6"
       }
     },
     {
@@ -134,6 +161,15 @@
       "state" : {
         "revision" : "573e5c9036c2f136b3a8a071da8e8907322403d0",
         "version" : "1.1.6"
+      }
+    },
+    {
+      "identity" : "vecturakit",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/rryam/VecturaKit",
+      "state" : {
+        "revision" : "dbaaca29b67272de924d3dc2d6d56d23335956d9",
+        "version" : "3.0.0"
       }
     },
     {

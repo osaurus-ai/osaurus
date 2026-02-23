@@ -107,6 +107,11 @@ public enum OsaurusPaths {
         appSupportRoot().appendingPathComponent("work", isDirectory: true)
     }
 
+    /// Memory system data directory
+    public static func memory() -> URL {
+        appSupportRoot().appendingPathComponent("memory", isDirectory: true)
+    }
+
     // MARK: - Legacy Paths
 
     /// Legacy Tools directory
@@ -133,6 +138,8 @@ public enum OsaurusPaths {
     public static func activeAgentFile() -> URL { agents().appendingPathComponent("active.txt") }
     public static func activeThemeFile() -> URL { themes().appendingPathComponent("active.json") }
     public static func workDatabaseFile() -> URL { workData().appendingPathComponent("work.db") }
+    public static func memoryDatabaseFile() -> URL { memory().appendingPathComponent("memory.sqlite") }
+    public static func memoryConfigFile() -> URL { config().appendingPathComponent("memory.json") }
 
     // MARK: - File Path Helpers
 
@@ -208,7 +215,7 @@ public enum OsaurusPaths {
         [
             config(), voiceConfig(), providers(), agents(), themes(),
             sessions(), schedules(), watchers(), plugins(), pluginSpecs(), runtime(),
-            legacyTools(), legacyPluginSpecs(), workData(),
+            legacyTools(), legacyPluginSpecs(), workData(), memory(),
         ].forEach { ensureExistsSilent($0) }
     }
 

@@ -16,6 +16,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 | MCP Server                       | Stable    | "MCP Server"       | (in README)                   | Networking/OsaurusServer.swift, Services/MCPServerManager.swift                       |
 | Tools & Plugins                  | Stable    | "Tools & Plugins"  | PLUGIN_AUTHORING.md           | Tools/, Managers/PluginManager.swift                                                  |
 | Skills                           | Stable    | "Skills"           | SKILLS.md                     | Managers/SkillManager.swift, Views/SkillsView.swift, Services/CapabilityService.swift |
+| Memory                           | Stable    | "Key Features"     | MEMORY.md                     | Services/MemoryService.swift, Services/MemorySearchService.swift, Services/MemoryContextAssembler.swift |
 | Agents                         | Stable    | "Agents"         | (in README)                   | Managers/AgentManager.swift, Models/Agent.swift, Views/AgentsView.swift         |
 | Schedules                        | Stable    | "Schedules"        | (in README)                   | Managers/ScheduleManager.swift, Models/Schedule.swift, Views/SchedulesView.swift      |
 | Watchers                         | Stable    | "Watchers"         | WATCHERS.md                   | Managers/WatcherManager.swift, Models/Watcher.swift, Views/WatchersView.swift         |
@@ -55,6 +56,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 │  │   ├── ToolsManagerView (Tools)                                        │
 │  │   ├── AgentsView (Agents)                                         │
 │  │   ├── SkillsView (Skills)                                             │
+│  │   ├── MemoryView (Memory)                                             │
 │  │   ├── SchedulesView (Schedules)                                       │
 │  │   ├── WatchersView (Watchers)                                         │
 │  │   ├── ThemesView (Themes)                                             │
@@ -98,6 +100,11 @@ Canonical reference for all Osaurus features, their status, and documentation.
 │  │   ├── VADService (Voice activity detection, wake-word)                │
 │  │   ├── TranscriptionModeService (Global dictation into any app)        │
 │  │   └── AudioInputManager (Microphone/system audio selection)           │
+│  ├── Memory                                                              │
+│  │   ├── MemoryService (Conversation processing and extraction)          │
+│  │   ├── MemorySearchService (Hybrid BM25 + vector search)              │
+│  │   ├── MemoryContextAssembler (Context injection with budgets)        │
+│  │   └── MemoryDatabase (SQLite storage with migrations)                │
 │  └── Utilities                                                           │
 │      ├── InsightsService (Request logging)                               │
 │      ├── HuggingFaceService (Model downloads)                            │
@@ -757,6 +764,111 @@ A context optimization system that reduces token usage by ~80%:
 
 ---
 
+### Memory
+
+**Purpose:** Persistent, multi-layer memory system that extracts, stores, and retrieves knowledge from conversations to provide personalized, context-aware AI interactions.
+
+**Components:**
+
+- `Services/MemoryService.swift` — Core actor for conversation processing, extraction, and summarization
+- `Services/MemorySearchService.swift` — Hybrid search (BM25 + vector) with MMR reranking
+- `Services/MemoryContextAssembler.swift` — Assembles memory context for system prompt injection
+- `Storage/MemoryDatabase.swift` — SQLite database with WAL mode and schema migrations
+- `Models/MemoryModels.swift` — Data types for all 4 memory layers
+- `Models/MemoryConfiguration.swift` — User-configurable settings with validation
+- `Views/MemoryView.swift` — Memory management UI (profile, overrides, agents, statistics, config)
+
+**4-Layer Architecture:**
+
+| Layer | Type | Purpose | Retention |
+|-------|------|---------|-----------|
+| Layer 1 | User Profile | Auto-generated user summary with version tracking | Permanent |
+| Layer 2 | Working Memory | Structured entries (facts, preferences, decisions, etc.) | Per-agent limit (default 500) |
+| Layer 3 | Conversation Summaries | Compressed session recaps | Configurable (default 7 days) |
+| Layer 4 | Conversation Chunks | Raw conversation turns | Permanent |
+
+**Memory Entry Types:**
+
+| Type | Description |
+|------|-------------|
+| `fact` | Factual information about the user or their environment |
+| `preference` | User preferences and likes/dislikes |
+| `decision` | Decisions made during conversations |
+| `correction` | Corrections to previous information |
+| `commitment` | Promises or plans the user mentioned |
+| `relationship` | Relationships between people, projects, or concepts |
+| `skill` | Skills, expertise, or knowledge areas |
+
+**Knowledge Graph:**
+
+- Entities: person, company, place, project, tool, concept, event
+- Relationships with confidence scores and temporal validity
+- Graph traversal search by entity name or relation type
+
+**Search & Retrieval:**
+
+| Method | Backend | Fallback |
+|--------|---------|----------|
+| Hybrid search | VecturaKit (BM25 + vector embeddings) | SQLite LIKE queries |
+| MMR reranking | Jaccard similarity for diversity | N/A |
+
+- Default MMR lambda: 0.7 (relevance vs. diversity tradeoff)
+- Default fetch multiplier: 2.0x over-fetch before reranking
+
+**Verification Pipeline (3 layers, no LLM calls):**
+
+| Layer | Method | Threshold |
+|-------|--------|-----------|
+| Layer 1 | Jaccard word-overlap deduplication | 0.6 |
+| Layer 2 | Contradiction detection (same type + similarity) | 0.3 |
+| Layer 3 | Semantic similarity via vector search | 0.85 |
+
+**Context Assembly:**
+
+Memory is injected into system prompts in this order with per-section token budgets:
+
+| Section | Default Budget |
+|---------|---------------|
+| User Overrides | (always included) |
+| User Profile | 2,000 tokens |
+| Working Memory | 500 tokens |
+| Conversation Summaries | 1,000 tokens |
+| Key Relationships | 300 tokens |
+
+Results are cached for 10 seconds per agent.
+
+**Resilience:**
+
+- Circuit breaker: opens after 5 consecutive failures, 60-second cooldown
+- Retry logic: exponential backoff (1s, 2s, 4s), max 3 retries, 60-second timeout
+- Actor-based concurrency for thread safety
+- Non-blocking: all extraction runs in the background
+
+**Configuration:**
+
+| Setting | Default | Range |
+|---------|---------|-------|
+| `coreModelProvider` | `anthropic` | Any provider |
+| `coreModelName` | `claude-haiku-4-5` | Any model |
+| `embeddingBackend` | `mlx` | `mlx`, `none` |
+| `embeddingModel` | `nomic-embed-text-v1.5` | Any embedding model |
+| `summaryDebounceSeconds` | 60 | 10 -- 3,600 |
+| `profileMaxTokens` | 2,000 | 100 -- 50,000 |
+| `profileRegenerateThreshold` | 10 | 1 -- 100 |
+| `workingMemoryBudgetTokens` | 500 | 50 -- 10,000 |
+| `summaryRetentionDays` | 7 | 1 -- 365 |
+| `summaryBudgetTokens` | 1,000 | 50 -- 10,000 |
+| `graphBudgetTokens` | 300 | 50 -- 5,000 |
+| `recallTopK` | 10 | 1 -- 100 |
+| `mmrLambda` | 0.7 | 0.0 -- 1.0 |
+| `mmrFetchMultiplier` | 2.0 | 1.0 -- 10.0 |
+| `maxEntriesPerAgent` | 500 | 0 -- 10,000 |
+| `enabled` | true | true/false |
+
+**Storage:** `~/.osaurus/memory/memory.db` (SQLite with WAL mode)
+
+---
+
 ## Documentation Index
 
 | Document                                                       | Purpose                                           |
@@ -770,6 +882,7 @@ A context optimization system that reduces token usage by ~80%:
 | [DEVELOPER_TOOLS.md](DEVELOPER_TOOLS.md)                       | Insights and Server Explorer guide                |
 | [VOICE_INPUT.md](VOICE_INPUT.md)                               | Voice input, WhisperKit, and VAD mode guide       |
 | [SKILLS.md](SKILLS.md)                                         | Skills and capability selection guide             |
+| [MEMORY.md](MEMORY.md)                                         | Memory system and configuration guide            |
 | [PLUGIN_AUTHORING.md](PLUGIN_AUTHORING.md)                     | Creating custom plugins                           |
 | [OpenAI_API_GUIDE.md](OpenAI_API_GUIDE.md)                     | API usage, tool calling, streaming                |
 | [SHARED_CONFIGURATION_GUIDE.md](SHARED_CONFIGURATION_GUIDE.md) | Shared configuration for teams                    |

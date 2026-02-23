@@ -20,6 +20,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable {
     case plugins
     case tools
     case skills
+    case memory
     case schedules
     case watchers
     case voice
@@ -39,6 +40,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable {
         case .plugins: "puzzlepiece.extension.fill"
         case .tools: "wrench.and.screwdriver.fill"
         case .skills: "sparkles"
+        case .memory: "brain.head.profile.fill"
         case .schedules: "calendar.badge.clock"
         case .watchers: "eye.fill"
         case .voice: "waveform"
@@ -58,6 +60,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable {
         case .plugins: "Plugins"
         case .tools: "Tools"
         case .skills: "Skills"
+        case .memory: "Memory"
         case .schedules: "Schedules"
         case .watchers: "Watchers"
         case .voice: "Voice"
@@ -196,6 +199,8 @@ private extension ManagementView {
             ToolsManagerView()
         case .skills:
             SkillsView()
+        case .memory:
+            MemoryView()
         case .schedules:
             SchedulesView()
         case .watchers:
@@ -244,6 +249,8 @@ private extension ManagementView {
             count = ToolRegistry.shared.listTools().count
         case .skills:
             count = skillManager.skills.count
+        case .memory:
+            count = (try? MemoryDatabase.shared.activeEntryCount()) ?? 0
         case .agents:
             count = agentManager.agents.filter { !$0.isBuiltIn }.count
         case .schedules:

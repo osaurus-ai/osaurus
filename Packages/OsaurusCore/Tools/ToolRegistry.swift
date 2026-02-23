@@ -86,6 +86,12 @@ final class ToolRegistry: ObservableObject {
     private func registerBuiltInTools() {
         // Register select_capabilities for two-phase capability loading
         register(SelectCapabilitiesTool())
+
+        // Memory recall tools
+        register(SearchWorkingMemoryTool())
+        register(SearchConversationsTool())
+        register(SearchSummariesTool())
+        register(SearchGraphTool())
     }
 
     func register(_ tool: OsaurusTool) {
