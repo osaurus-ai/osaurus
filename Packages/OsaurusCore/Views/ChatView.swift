@@ -54,6 +54,7 @@ final class ChatSession: ObservableObject {
     private var _lastTokenTurnsCount: Int = 0
     private var _lastTokenAttachmentsCount: Int = 0
     private var _lastTokenComputeTime: Date = .distantPast
+    private var _memoryContextTokens: Int = 0
 
     /// Callback when session needs to be saved (called after streaming completes)
     var onSessionChanged: (() -> Void)?
@@ -159,6 +160,7 @@ final class ChatSession: ObservableObject {
             selectedModel = modelOptions.first?.id
         }
         isLoadingModel = false
+        Task { [weak self] in await self?.refreshMemoryTokens() }
     }
 
     /// Build rich model options from all sources
@@ -338,6 +340,9 @@ final class ChatSession: ObservableObject {
             total += max(1, systemPrompt.count / 4)
         }
 
+        // Memory context (profile, working memory, summaries, graph)
+        total += _memoryContextTokens
+
         // Tool and skill tokens depend on two-phase loading state
         let toolOverrides = AgentManager.shared.effectiveToolOverrides(for: effectiveId)
         let allTools = ToolRegistry.shared.listTools(withOverrides: toolOverrides)
@@ -498,6 +503,7 @@ final class ChatSession: ObservableObject {
     func reset(for newAgentId: UUID?) {
         agentId = newAgentId
         reset()
+        Task { [weak self] in await self?.refreshMemoryTokens() }
     }
 
     /// Invalidate the token cache (called when tools/skills change)
@@ -594,6 +600,26 @@ final class ChatSession: ObservableObject {
         // Clear caches to force a clean block rebuild for the new session
         blockMemoizer.clear()
         _tokenCacheValid = false
+
+        Task { [weak self] in await self?.refreshMemoryTokens() }
+    }
+
+    private func refreshMemoryTokens() async {
+        let effectiveAgentId = agentId ?? Agent.defaultId
+        let config = MemoryConfigurationStore.load()
+        let context = await MemoryContextAssembler.assembleContext(
+            agentId: effectiveAgentId.uuidString,
+            config: config
+        )
+        updateMemoryTokens(fromContext: context)
+    }
+
+    private func updateMemoryTokens(fromContext context: String) {
+        let tokens = context.isEmpty ? 0 : max(1, context.count / MemoryConfiguration.charsPerToken)
+        guard tokens != _memoryContextTokens else { return }
+        _memoryContextTokens = tokens
+        _tokenCacheValid = false
+        objectWillChange.send()
     }
 
     /// Edit a user message and regenerate from that point
@@ -830,6 +856,12 @@ final class ChatSession: ObservableObject {
             }
         }
 
+        let memoryAgentId = (agentId ?? Agent.defaultId).uuidString
+        let memoryConversationId = (sessionId ?? UUID()).uuidString
+        if hasContent {
+            ActivityTracker.shared.recordActivity(agentId: memoryAgentId)
+        }
+
         currentTask = Task { @MainActor [weak self] in
             guard let self else { return }
             isStreaming = true
@@ -851,6 +883,78 @@ final class ChatSession: ObservableObject {
                     turn.consolidateContent()
                 }
                 save()
+
+                // Memory: persist conversation chunk and trigger signal processing
+                let assistantContent = turns.last(where: { $0.role == .assistant })?.content
+                let userContent = trimmed
+
+                if hasContent, let sid = sessionId {
+                    let convId = sid.uuidString
+                    let aid = memoryAgentId
+                    let chunkIdx = turns.count
+                    let db = MemoryDatabase.shared
+                    do { try db.upsertConversation(id: convId, agentId: aid, title: title) } catch {
+                        MemoryLogger.database.warning("Failed to upsert conversation: \(error)")
+                    }
+                    let userChunkIndex = chunkIdx - 1
+                    do {
+                        try db.insertChunk(
+                            conversationId: convId,
+                            chunkIndex: userChunkIndex,
+                            role: "user",
+                            content: userContent,
+                            tokenCount: max(1, userContent.count / 4)
+                        )
+                    } catch {
+                        MemoryLogger.database.warning("Failed to insert user chunk: \(error)")
+                    }
+                    let userChunk = ConversationChunk(
+                        conversationId: convId,
+                        chunkIndex: userChunkIndex,
+                        role: "user",
+                        content: userContent,
+                        tokenCount: max(1, userContent.count / 4)
+                    )
+                    Task.detached { await MemorySearchService.shared.indexConversationChunk(userChunk) }
+                    if let ac = assistantContent, !ac.isEmpty {
+                        do {
+                            try db.insertChunk(
+                                conversationId: convId,
+                                chunkIndex: chunkIdx,
+                                role: "assistant",
+                                content: ac,
+                                tokenCount: max(1, ac.count / 4)
+                            )
+                        } catch {
+                            MemoryLogger.database.warning("Failed to insert assistant chunk: \(error)")
+                        }
+                        let assistantChunk = ConversationChunk(
+                            conversationId: convId,
+                            chunkIndex: chunkIdx,
+                            role: "assistant",
+                            content: ac,
+                            tokenCount: max(1, ac.count / 4)
+                        )
+                        Task.detached { await MemorySearchService.shared.indexConversationChunk(assistantChunk) }
+                    }
+                }
+
+                if hasContent {
+                    let userMsg = userContent
+                    let asstMsg = assistantContent
+                    let agentStr = memoryAgentId
+                    let convStr = memoryConversationId
+                    Task.detached {
+                        await MemoryService.shared.recordConversationTurn(
+                            userMessage: userMsg,
+                            assistantMessage: asstMsg,
+                            agentId: agentStr,
+                            conversationId: convStr
+                        )
+                    }
+                }
+
+                ActivityTracker.shared.recordActivity(agentId: memoryAgentId)
             }
 
             var assistantTurn = ChatTurn(role: .assistant, content: "")
@@ -871,12 +975,24 @@ final class ChatSession: ObservableObject {
                 let baseSystemPrompt = AgentManager.shared.effectiveSystemPrompt(for: effectiveAgentId)
                     .trimmingCharacters(in: .whitespacesAndNewlines)
 
+                // Inject memory context before the system prompt (async to avoid main thread blocking)
+                let memoryConfig = MemoryConfigurationStore.load()
+                let memoryContext = await MemoryContextAssembler.assembleContext(
+                    agentId: effectiveAgentId.uuidString,
+                    config: memoryConfig
+                )
+                updateMemoryTokens(fromContext: memoryContext)
+
                 // Build system prompt and tool specs based on capability selection state
                 var sys = buildSystemPrompt(
                     base: baseSystemPrompt,
                     agentId: effectiveAgentId,
                     needsSelection: needsCapabilitySelection
                 )
+
+                if !memoryContext.isEmpty {
+                    sys = memoryContext + "\n\n" + sys
+                }
                 var toolSpecs = buildToolSpecs(
                     needsSelection: needsCapabilitySelection,
                     hasCapabilities: hasCapabilities,

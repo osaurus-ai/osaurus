@@ -151,6 +151,30 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // Start plugin repository background refresh for update checking
         PluginRepositoryService.shared.startBackgroundRefresh()
 
+        // Initialize memory system with retry
+        Task { @MainActor in
+            var opened = false
+            for attempt in 1 ... 3 {
+                do {
+                    try MemoryDatabase.shared.open()
+                    opened = true
+                    break
+                } catch {
+                    MemoryLogger.database.error("Memory database open attempt \(attempt)/3 failed: \(error)")
+                    if attempt < 3 {
+                        try? await Task.sleep(nanoseconds: UInt64(attempt) * 500_000_000)
+                    }
+                }
+            }
+            if opened {
+                ActivityTracker.shared.start()
+                await MemorySearchService.shared.initialize()
+                await MemoryService.shared.recoverOrphanedSignals()
+            } else {
+                MemoryLogger.database.error("Memory system disabled — database failed to open after 3 attempts")
+            }
+        }
+
         // Auto-start server on app launch
         Task { @MainActor in
             await serverController.startServer()

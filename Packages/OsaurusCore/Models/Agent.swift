@@ -113,6 +113,12 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
     /// Well-known UUID for the default Osaurus agent
     public static let defaultId = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
 
+    /// Check whether an agent ID string refers to the default (built-in) agent.
+    /// The default agent operates in read-only memory mode.
+    public static func isDefaultAgentId(_ id: String) -> Bool {
+        id == defaultId.uuidString
+    }
+
     /// The default agent - uses global settings
     public static var `default`: Agent {
         Agent(

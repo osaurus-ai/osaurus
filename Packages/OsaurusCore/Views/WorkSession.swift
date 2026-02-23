@@ -287,6 +287,11 @@ public final class WorkSession: ObservableObject {
     /// Selected model
     @Published var selectedModel: String?
 
+    // MARK: - Memory State
+
+    /// Raw user message stored for memory extraction after execution completes
+    private var pendingUserMessage: String?
+
     /// Model options
     @Published var modelOptions: [ModelOption] = []
 
@@ -432,6 +437,11 @@ public final class WorkSession: ObservableObject {
         input = ""
         pendingAttachments = []
         errorMessage = nil
+
+        if !rawQuery.isEmpty {
+            pendingUserMessage = rawQuery
+            ActivityTracker.shared.recordActivity(agentId: agentId.uuidString)
+        }
 
         let query = ChatSession.buildUserMessageText(content: rawQuery, attachments: attachments)
         let images = attachments.images
@@ -595,7 +605,7 @@ public final class WorkSession: ObservableObject {
 
         resetExecutionState(for: issue)
 
-        let config = buildExecutionConfig()
+        let config = await buildExecutionConfig()
         let tools = ToolRegistry.shared.specs(withOverrides: config.toolOverrides)
         let skillCatalog = buildSkillCatalog()
 
@@ -648,10 +658,20 @@ public final class WorkSession: ObservableObject {
     }
 
     /// Builds execution configuration from current state
-    private func buildExecutionConfig() -> (model: String, systemPrompt: String, toolOverrides: [String: Bool]?) {
-        let systemPrompt =
+    private func buildExecutionConfig() async -> (model: String, systemPrompt: String, toolOverrides: [String: Bool]?) {
+        let baseSystemPrompt =
             windowState?.cachedSystemPrompt
             ?? AgentManager.shared.effectiveSystemPrompt(for: agentId)
+
+        let memoryConfig = MemoryConfigurationStore.load()
+        let memoryContext = await MemoryContextAssembler.assembleContext(
+            agentId: agentId.uuidString,
+            config: memoryConfig
+        )
+        let systemPrompt =
+            memoryContext.isEmpty
+            ? baseSystemPrompt
+            : memoryContext + "\n\n" + baseSystemPrompt
 
         // Model priority: selectedModel > windowState model > agent default
         let model =
@@ -1003,7 +1023,7 @@ public final class WorkSession: ObservableObject {
         guard canResumeSelectedIssue, let issue = selectedIssue else { return }
 
         resetExecutionState(for: issue)
-        let config = buildExecutionConfig()
+        let config = await buildExecutionConfig()
         let tools = ToolRegistry.shared.specs(withOverrides: config.toolOverrides)
         let skillCatalog = buildSkillCatalog()
 
@@ -1124,6 +1144,28 @@ extension WorkSession: WorkEngineDelegate {
         emitActivity(.completedIssue(success: success))
         notifyIfSelected(issue.id)
         Task { [weak self] in await self?.refreshIssues() }
+
+        // Memory processing: record conversation turn for post-activity extraction
+        let agentStr = agentId.uuidString
+        let userMessage = pendingUserMessage ?? ""
+        let assistantContent =
+            liveExecutionTurns
+            .last(where: { $0.role == .assistant })?.content
+
+        if !userMessage.isEmpty {
+            let convId = issue.id
+            Task.detached {
+                await MemoryService.shared.recordConversationTurn(
+                    userMessage: userMessage,
+                    assistantMessage: assistantContent,
+                    agentId: agentStr,
+                    conversationId: convId
+                )
+            }
+        }
+
+        pendingUserMessage = nil
+        ActivityTracker.shared.recordActivity(agentId: agentStr)
     }
 
     public func workEngine(_ engine: WorkEngine, willRetryIssue issue: Issue, attempt: Int, afterDelay: TimeInterval) {

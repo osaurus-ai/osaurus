@@ -22,9 +22,17 @@ protocol OsaurusTool: Sendable {
 extension OsaurusTool {
     /// Build OpenAI-compatible Tool specification
     func asOpenAITool() -> Tool {
-        return Tool(
+        Tool(
             type: "function",
             function: ToolFunction(name: name, description: description, parameters: parameters)
         )
+    }
+
+    /// Parse JSON arguments string into a dictionary.
+    func parseArguments(_ json: String) -> [String: Any]? {
+        guard let data = json.data(using: .utf8),
+            let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return nil }
+        return dict
     }
 }

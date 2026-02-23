@@ -9,6 +9,9 @@ import Foundation
 
 @MainActor
 enum ToolConfigurationStore {
+    /// When set, configuration reads/writes use this directory instead of the default path.
+    static var overrideDirectory: URL?
+
     static func load() -> ToolConfiguration {
         let url = configurationFileURL()
         if FileManager.default.fileExists(atPath: url.path) {
@@ -36,6 +39,9 @@ enum ToolConfigurationStore {
     }
 
     private static func configurationFileURL() -> URL {
-        OsaurusPaths.resolveFile(new: OsaurusPaths.toolConfigFile(), legacy: "ToolConfiguration.json")
+        if let dir = overrideDirectory {
+            return dir.appendingPathComponent("tools.json")
+        }
+        return OsaurusPaths.resolveFile(new: OsaurusPaths.toolConfigFile(), legacy: "ToolConfiguration.json")
     }
 }

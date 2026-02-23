@@ -11,7 +11,7 @@ import UniformTypeIdentifiers
 // MARK: - Shared Helpers
 
 /// Generate a consistent color based on an agent name
-private func agentColorFor(_ name: String) -> Color {
+func agentColorFor(_ name: String) -> Color {
     let hash = abs(name.hashValue)
     let hue = Double(hash % 360) / 360.0
     return Color(hue: hue, saturation: 0.6, brightness: 0.8)
@@ -593,7 +593,7 @@ private struct AgentCard: View {
 
 // MARK: - Agent Detail View
 
-private struct AgentDetailView: View {
+struct AgentDetailView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
     @ObservedObject private var agentManager = AgentManager.shared
     @ObservedObject private var scheduleManager = ScheduleManager.shared
@@ -634,6 +634,11 @@ private struct AgentDetailView: View {
     // Schedule & Watcher creation
     @State private var showCreateSchedule = false
     @State private var showCreateWatcher = false
+
+    // Memory
+    @State private var memoryEntries: [MemoryEntry] = []
+    @State private var conversationSummaries: [ConversationSummary] = []
+    @State private var showAllSummaries = false
 
     // Guard to prevent save on initial load
     @State private var isInitialLoadComplete = false
@@ -707,6 +712,8 @@ private struct AgentDetailView: View {
                     schedulesSection
                     watchersSection
                     historySection
+                    workingMemorySection
+                    conversationSummariesSection
                 }
                 .padding(24)
             }
@@ -717,6 +724,7 @@ private struct AgentDetailView: View {
         .animation(.easeOut(duration: 0.2), value: hasAppeared)
         .onAppear {
             loadAgentData()
+            loadMemoryData()
             selectedModel = currentAgent.defaultModel
             loadModelOptions()
             // Defer the flag so initial .onChange triggers are ignored
@@ -1796,6 +1804,78 @@ private struct AgentDetailView: View {
         }
     }
 
+    // MARK: - Working Memory Section
+
+    private var workingMemorySection: some View {
+        AgentDetailSection(
+            title: "Working Memory",
+            icon: "brain.head.profile",
+            subtitle: memoryEntries.isEmpty ? "None" : "\(memoryEntries.count)"
+        ) {
+            if memoryEntries.isEmpty {
+                Text("No working memory entries yet. Memories are automatically extracted from conversations.")
+                    .font(.system(size: 12))
+                    .foregroundColor(theme.tertiaryText)
+                    .padding(.vertical, 8)
+            } else {
+                AgentEntriesPanel(
+                    entries: memoryEntries,
+                    onDelete: { entryId in
+                        deleteMemoryEntry(entryId)
+                    }
+                )
+            }
+        }
+    }
+
+    // MARK: - Conversation Summaries Section
+
+    private var conversationSummariesSection: some View {
+        AgentDetailSection(
+            title: "Summaries",
+            icon: "doc.text",
+            subtitle: conversationSummaries.isEmpty ? "None" : "\(conversationSummaries.count)"
+        ) {
+            if conversationSummaries.isEmpty {
+                Text("No conversation summaries yet.")
+                    .font(.system(size: 12))
+                    .foregroundColor(theme.tertiaryText)
+                    .padding(.vertical, 8)
+            } else {
+                VStack(alignment: .leading, spacing: 0) {
+                    let displayed = showAllSummaries ? conversationSummaries : Array(conversationSummaries.prefix(10))
+
+                    ForEach(Array(displayed.enumerated()), id: \.element.id) { index, summary in
+                        if index > 0 {
+                            Divider().opacity(0.5)
+                        }
+                        MemorySummaryRow(summary: summary)
+                    }
+
+                    if conversationSummaries.count > 10 {
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                showAllSummaries.toggle()
+                            }
+                        } label: {
+                            Text(showAllSummaries ? "Show Less" : "View All \(conversationSummaries.count) Summaries")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundColor(theme.accentColor)
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        .padding(.top, 8)
+                    }
+                }
+            }
+        }
+    }
+
+    private func deleteMemoryEntry(_ entryId: String) {
+        try? MemoryDatabase.shared.deleteMemoryEntry(id: entryId)
+        loadMemoryData()
+        showSuccess("Memory entry deleted")
+    }
+
     private func taskStatusColor(_ status: WorkTaskStatus) -> Color {
         switch status {
         case .active: return theme.accentColor
@@ -1815,6 +1895,13 @@ private struct AgentDetailView: View {
         selectedThemeId = agent.themeId
         chatQuickActions = agent.chatQuickActions
         workQuickActions = agent.workQuickActions
+    }
+
+    private func loadMemoryData() {
+        let db = MemoryDatabase.shared
+        if !db.isOpen { try? db.open() }
+        memoryEntries = (try? db.loadActiveEntries(agentId: agent.id.uuidString)) ?? []
+        conversationSummaries = (try? db.loadSummaries(agentId: agent.id.uuidString)) ?? []
     }
 
     private func loadModelOptions() {

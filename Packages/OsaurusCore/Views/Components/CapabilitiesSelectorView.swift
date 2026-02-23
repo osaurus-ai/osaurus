@@ -19,6 +19,7 @@ private struct ToolGroup: Identifiable {
     enum Source: Hashable {
         case plugin(id: String, name: String)
         case mcpProvider(id: UUID, name: String)
+        case memory
         case builtIn
     }
 
@@ -29,6 +30,7 @@ private struct ToolGroup: Identifiable {
         switch source {
         case .plugin(let id, _): return "plugin-\(id)"
         case .mcpProvider(let id, _): return "mcp-\(id.uuidString)"
+        case .memory: return "memory"
         case .builtIn: return "builtin"
         }
     }
@@ -36,6 +38,7 @@ private struct ToolGroup: Identifiable {
     var displayName: String {
         switch source {
         case .plugin(_, let name), .mcpProvider(_, let name): return name
+        case .memory: return "Memory"
         case .builtIn: return "Built-in"
         }
     }
@@ -44,6 +47,7 @@ private struct ToolGroup: Identifiable {
         switch source {
         case .plugin: return "puzzlepiece.extension"
         case .mcpProvider: return "cloud"
+        case .memory: return "brain"
         case .builtIn: return "gearshape"
         }
     }
@@ -139,6 +143,17 @@ struct CapabilitiesSelectorView: View {
                 groups.append(ToolGroup(source: .mcpProvider(id: provider.id, name: provider.name), tools: matched))
                 assignedNames.formUnion(matched.map { $0.name })
             }
+        }
+
+        // Memory recall tools get their own group
+        let memoryToolNames: Set<String> = [
+            "search_working_memory", "search_conversations",
+            "search_summaries", "search_graph",
+        ]
+        let memoryTools = tools.filter { memoryToolNames.contains($0.name) && !assignedNames.contains($0.name) }
+        if !memoryTools.isEmpty {
+            groups.insert(ToolGroup(source: .memory, tools: memoryTools), at: 0)
+            assignedNames.formUnion(memoryTools.map { $0.name })
         }
 
         // Remaining tools go to Built-in

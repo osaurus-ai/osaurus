@@ -35,6 +35,17 @@
             parallelizable = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
+               BlueprintIdentifier = "OsaurusCoreTests"
+               BuildableName = "OsaurusCoreTests"
+               BlueprintName = "OsaurusCoreTests"
+               ReferencedContainer = "container:osaurus.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
+         <TestableReference
+            skipped = "NO"
+            parallelizable = "YES">
+            <BuildableReference
+               BuildableIdentifier = "primary"
                BlueprintIdentifier = "F0BB3C332E51FBCD00895593"
                BuildableName = "osaurusTests.xctest"
                BlueprintName = "osaurusTests"
