@@ -17,17 +17,14 @@ struct ModelPickerView: View {
     @State private var collapsedGroups: Set<String> = []
     @State private var highlightedIndex: Int?
     @State private var keyMonitor: Any?
+    @State private var cachedGroupedOptions: [(source: ModelOption.Source, models: [ModelOption])] = []
     @Environment(\.theme) private var theme
 
     // MARK: - Data
 
-    private var groupedOptions: [(source: ModelOption.Source, models: [ModelOption])] {
-        options.groupedBySource()
-    }
-
     private var filteredGroups: [(source: ModelOption.Source, models: [ModelOption])] {
-        guard !searchText.isEmpty else { return groupedOptions }
-        return groupedOptions.compactMap { group in
+        guard !searchText.isEmpty else { return cachedGroupedOptions }
+        return cachedGroupedOptions.compactMap { group in
             let groupMatches = SearchService.matches(query: searchText, in: group.source.displayName)
             let matchedModels = group.models.filter {
                 SearchService.matches(query: searchText, in: $0.displayName)
@@ -129,8 +126,14 @@ struct ModelPickerView: View {
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(popoverBorder)
         .shadow(color: theme.shadowColor.opacity(0.25), radius: 20, x: 0, y: 10)
-        .onAppear { installKeyMonitor() }
+        .onAppear {
+            cachedGroupedOptions = options.groupedBySource()
+            installKeyMonitor()
+        }
         .onDisappear { removeKeyMonitor() }
+        .onChange(of: options) { _, newOptions in
+            cachedGroupedOptions = newOptions.groupedBySource()
+        }
         .onChange(of: searchText) { _, _ in highlightedIndex = nil }
     }
 
@@ -256,9 +259,7 @@ struct ModelPickerView: View {
                             description: model.description,
                             parameterCount: model.parameterCount,
                             quantization: model.quantization,
-                            isVLM: model.isVLM,
-                            isSelected: selectedModel == model.id,
-                            isHighlighted: model.id == highlightedModelId
+                            isVLM: model.isVLM
                         )
                     )
                 }
@@ -273,6 +274,8 @@ struct ModelPickerView: View {
         ModelPickerTableRepresentable(
             rows: flattenedRows,
             theme: theme,
+            selectedModelId: selectedModel,
+            highlightedModelId: highlightedModelId,
             scrollToModelId: highlightedModelId,
             onToggleGroup: { sourceKey in
                 if let group = filteredGroups.first(where: { $0.source.uniqueKey == sourceKey }) {
