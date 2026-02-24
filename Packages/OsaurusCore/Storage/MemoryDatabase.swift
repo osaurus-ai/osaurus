@@ -1294,18 +1294,6 @@ public final class MemoryDatabase: @unchecked Sendable {
         }
     }
 
-    public func deleteChunksForAgent(_ agentId: String) throws {
-        _ = try executeUpdate(
-            """
-            DELETE FROM conversation_chunks WHERE conversation_id IN (
-                SELECT id FROM conversations WHERE agent_id = ?1
-            )
-            """
-        ) { stmt in
-            Self.bindText(stmt, index: 1, value: agentId)
-        }
-    }
-
     public func loadAllChunks(agentId: String? = nil, days: Int = 30, limit: Int = 5000) throws -> [ConversationChunk] {
         var chunks: [ConversationChunk] = []
         var sql = """

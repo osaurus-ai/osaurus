@@ -69,9 +69,6 @@ public struct MemoryConfiguration: Codable, Equatable, Sendable {
     /// Jaccard threshold for Layer 1 near-duplicate detection (above this = auto-SKIP)
     public var verificationJaccardDedupThreshold: Double
 
-    /// Schema version for migration tracking. Bump when defaults change.
-    public var configVersion: Int
-
     /// Active preset profile. Controls retrieval and budget parameters.
     public var preset: MemoryPreset
 
@@ -118,7 +115,6 @@ public struct MemoryConfiguration: Codable, Equatable, Sendable {
         verificationEnabled: Bool = true,
         verificationSemanticDedupThreshold: Double = 0.85,
         verificationJaccardDedupThreshold: Double = 0.6,
-        configVersion: Int = 3,
         preset: MemoryPreset = .production
     ) {
         self.coreModelProvider = coreModelProvider
@@ -142,7 +138,6 @@ public struct MemoryConfiguration: Codable, Equatable, Sendable {
         self.verificationEnabled = verificationEnabled
         self.verificationSemanticDedupThreshold = verificationSemanticDedupThreshold
         self.verificationJaccardDedupThreshold = verificationJaccardDedupThreshold
-        self.configVersion = configVersion
         self.preset = preset
     }
 
@@ -232,7 +227,6 @@ public struct MemoryConfiguration: Codable, Equatable, Sendable {
         verificationJaccardDedupThreshold =
             try c.decodeIfPresent(Double.self, forKey: .verificationJaccardDedupThreshold)
             ?? defaults.verificationJaccardDedupThreshold
-        configVersion = try c.decodeIfPresent(Int.self, forKey: .configVersion) ?? 0
         preset = try c.decodeIfPresent(MemoryPreset.self, forKey: .preset) ?? defaults.preset
     }
 
@@ -261,8 +255,7 @@ public enum MemoryConfigurationStore: Sendable {
         }
         do {
             let data = try Data(contentsOf: url)
-            var config = try JSONDecoder().decode(MemoryConfiguration.self, from: data)
-            config = migrateDefaults(config)
+            let config = try JSONDecoder().decode(MemoryConfiguration.self, from: data)
             let validated = config.validated()
             lock.withLock { $0 = validated }
             return validated
@@ -270,28 +263,6 @@ public enum MemoryConfigurationStore: Sendable {
             MemoryLogger.config.error("Failed to load config: \(error)")
             return .default
         }
-    }
-
-    private static let currentConfigVersion = 3
-
-    /// Versioned migration: applies incremental upgrades based on configVersion.
-    /// Preset now controls retrieval/budget parameters, so per-field migration
-    /// is only needed for pre-preset configs (v0-v2).
-    private static func migrateDefaults(_ config: MemoryConfiguration) -> MemoryConfiguration {
-        guard config.configVersion < currentConfigVersion else { return config }
-        var c = config
-
-        // v0-v2 -> v3: preset system replaces per-field tuning.
-        // Existing configs get production preset; budget/retrieval fields are
-        // now overridden by the preset in validated(), so no per-field migration needed.
-        if c.configVersion < 3 {
-            c.preset = .production
-        }
-
-        c.configVersion = currentConfigVersion
-        save(c)
-        MemoryLogger.config.info("Migrated memory config from v\(config.configVersion) to v\(currentConfigVersion)")
-        return c
     }
 
     public static func save(_ config: MemoryConfiguration) {

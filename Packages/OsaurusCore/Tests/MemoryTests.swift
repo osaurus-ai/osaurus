@@ -127,7 +127,6 @@ struct MemoryConfigurationTests {
         #expect(config.mmrLambda == 0.7)
         #expect(config.summaryRetentionDays == 180)
         #expect(config.verificationJaccardDedupThreshold == 0.6)
-        #expect(config.configVersion == 3)
     }
 
     @Test func decodesWithMissingKeys() throws {
@@ -609,18 +608,6 @@ struct MemoryDatabaseTests {
         try db.insertChunk(conversationId: "conv1", chunkIndex: 1, role: "assistant", content: "B", tokenCount: 1)
         try db.insertChunk(conversationId: "conv2", chunkIndex: 0, role: "user", content: "C", tokenCount: 1)
         try db.deleteChunksForConversation("conv1")
-        let remaining = try db.loadAllChunks(days: 1)
-        #expect(remaining.count == 1)
-        #expect(remaining[0].conversationId == "conv2")
-    }
-
-    @Test func deleteChunksForAgent() throws {
-        let db = try makeTempDB()
-        try db.upsertConversation(id: "conv1", agentId: "agent1", title: nil)
-        try db.upsertConversation(id: "conv2", agentId: "agent2", title: nil)
-        try db.insertChunk(conversationId: "conv1", chunkIndex: 0, role: "user", content: "A", tokenCount: 1)
-        try db.insertChunk(conversationId: "conv2", chunkIndex: 0, role: "user", content: "B", tokenCount: 1)
-        try db.deleteChunksForAgent("agent1")
         let remaining = try db.loadAllChunks(days: 1)
         #expect(remaining.count == 1)
         #expect(remaining[0].conversationId == "conv2")

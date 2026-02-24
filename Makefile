@@ -8,7 +8,7 @@ CONFIG := Release
 PROJECT := App/osaurus.xcodeproj
 DERIVED := build/DerivedData
 
-.PHONY: help cli app install-cli serve status clean bench-setup bench-ingest bench-ingest-chunks bench-clear-chunks bench-run bench
+.PHONY: help cli app install-cli serve status clean bench-setup bench-ingest bench-ingest-chunks bench-run bench
 
 help:
 	@echo "Targets:"
@@ -20,7 +20,6 @@ help:
 	@echo "  bench-setup         Clone EasyLocomo + apply patches + install deps"
 	@echo "  bench-ingest        Full LOCOMO ingestion (LLM extraction + chunks)"
 	@echo "  bench-ingest-chunks Fast chunk-only backfill (no LLM, ~minutes)"
-	@echo "  bench-clear-chunks  Wipe existing chunks before re-ingesting"
 	@echo "  bench-run           Run LOCOMO benchmark only (skip ingestion)"
 	@echo "  bench               Full ingest + run LOCOMO benchmark"
 	@echo "  clean          Remove DerivedData build output"
@@ -81,10 +80,6 @@ bench-setup:
 bench-ingest:
 	@echo "Ingesting LOCOMO conversations into Osaurus memory…"
 	$(BENCH_PYTHON) scripts/ingest_locomo.py --base-url $(BENCH_BASE_URL)
-
-bench-clear-chunks:
-	@echo "Clearing existing LOCOMO conversation chunks…"
-	$(BENCH_PYTHON) scripts/clear_locomo_chunks.py --base-url $(BENCH_BASE_URL)
 
 bench-ingest-chunks:
 	@echo "Backfilling LOCOMO conversation chunks (no LLM, fast)…"
