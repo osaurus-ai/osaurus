@@ -17,6 +17,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
     private let configuration: ServerConfiguration
     private let chatEngine: ChatEngineProtocol
+    /// The expected bearer token for authenticated endpoints (nil when auth is disabled).
+    private let authToken: String?
     private final class RequestState {
         var requestHead: HTTPRequestHead?
         var requestBodyBuffer: ByteBuffer?
@@ -33,6 +35,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     ) {
         self.configuration = configuration
         self.chatEngine = chatEngine
+        self.authToken = configuration.requireAuthentication ? ServerAuthKeychain.getOrCreateToken() : nil
         self.stateRef = NIOLoopBound(RequestState(), eventLoop: eventLoop)
     }
 
@@ -167,10 +170,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             } else if head.method == .GET, path == "/tags" {
                 handleTagsEndpoint(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .POST, path == "/show" {
+                guard requireAuth(head: head, context: context, path: path) else { break }
                 handleShowEndpoint(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .POST, path == "/chat/completions" || path == "/v1/chat/completions" {
+                guard requireAuth(head: head, context: context, path: path) else { break }
                 handleChatCompletions(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .POST, path == "/chat" {
+                guard requireAuth(head: head, context: context, path: path) else { break }
                 handleChatNDJSON(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .GET, path == "/mcp/health" {
                 var headers = [("Content-Type", "application/json; charset=utf-8")]
@@ -193,18 +199,25 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     startTime: startTime
                 )
             } else if head.method == .GET, path == "/mcp/tools" {
+                guard requireAuth(head: head, context: context, path: path) else { break }
                 handleMCPListTools(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .POST, path == "/mcp/call" {
+                guard requireAuth(head: head, context: context, path: path) else { break }
                 handleMCPCallTool(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .POST, path == "/messages" {
+                guard requireAuth(head: head, context: context, path: path) else { break }
                 handleAnthropicMessages(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .POST, path == "/audio/transcriptions" {
+                guard requireAuth(head: head, context: context, path: path) else { break }
                 handleAudioTranscriptions(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .POST, path == "/responses" {
+                guard requireAuth(head: head, context: context, path: path) else { break }
                 handleOpenResponses(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .POST, path == "/memory/ingest" {
+                guard requireAuth(head: head, context: context, path: path) else { break }
                 handleMemoryIngest(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .GET, path == "/agents" {
+                guard requireAuth(head: head, context: context, path: path) else { break }
                 handleListAgents(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else {
                 var headers = [("Content-Type", "text/plain; charset=utf-8")]
@@ -267,6 +280,51 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             headers: [("Content-Type", "text/plain; charset=utf-8")],
             body: "Bad Request"
         )
+    }
+
+    // MARK: - Authentication
+
+    /// Paths that do not require authentication even when `requireAuthentication` is enabled.
+    private static let unauthenticatedPaths: Set<String> = ["/", "/health", "/models", "/tags", "/mcp/health"]
+
+    /// Check whether the request is authenticated.
+    /// Returns `true` if the request may proceed, `false` if a 401 was already sent.
+    private func requireAuth(head: HTTPRequestHead, context: ChannelHandlerContext, path: String) -> Bool {
+        guard let expectedToken = authToken else { return true }  // auth disabled
+        if Self.unauthenticatedPaths.contains(path) { return true }
+
+        // Constant-time comparison of the bearer token
+        if let authHeader = head.headers.first(name: "Authorization"),
+            authHeader.hasPrefix("Bearer ")
+        {
+            let provided = String(authHeader.dropFirst("Bearer ".count))
+            if constantTimeEqual(provided, expectedToken) {
+                return true
+            }
+        }
+
+        var headers = [("Content-Type", "application/json; charset=utf-8"), ("WWW-Authenticate", "Bearer")]
+        headers.append(contentsOf: stateRef.value.corsHeaders)
+        sendResponse(
+            context: context,
+            version: head.version,
+            status: .unauthorized,
+            headers: headers,
+            body: #"{"error":{"message":"Authentication required. Provide Authorization: Bearer <token> header.","type":"authentication_error"}}"#
+        )
+        return false
+    }
+
+    /// Constant-time string comparison to prevent timing attacks on the auth token.
+    private func constantTimeEqual(_ a: String, _ b: String) -> Bool {
+        let aBytes = Array(a.utf8)
+        let bBytes = Array(b.utf8)
+        guard aBytes.count == bBytes.count else { return false }
+        var result: UInt8 = 0
+        for i in 0 ..< aBytes.count {
+            result |= aBytes[i] ^ bBytes[i]
+        }
+        return result == 0
     }
 
     private func sendResponse(

@@ -65,6 +65,12 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
     /// Memory management policy for loaded models
     public var modelEvictionPolicy: ModelEvictionPolicy
 
+    /// Require bearer token authentication for sensitive HTTP endpoints.
+    /// When enabled, clients must send `Authorization: Bearer <token>` for
+    /// endpoints like /chat/completions, /mcp/call, /memory/ingest, etc.
+    /// Health and model listing endpoints remain unauthenticated.
+    public var requireAuthentication: Bool
+
     private enum CodingKeys: String, CodingKey {
         case port
         case exposeToNetwork
@@ -81,6 +87,7 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
         case genPrefillStepSize
         case allowedOrigins
         case modelEvictionPolicy
+        case requireAuthentication
     }
 
     public init(from decoder: Decoder) throws {
@@ -115,6 +122,9 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
         self.modelEvictionPolicy =
             try container.decodeIfPresent(ModelEvictionPolicy.self, forKey: .modelEvictionPolicy)
             ?? defaults.modelEvictionPolicy
+        self.requireAuthentication =
+            try container.decodeIfPresent(Bool.self, forKey: .requireAuthentication)
+            ?? defaults.requireAuthentication
     }
 
     public init(
@@ -132,7 +142,8 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
         genMaxKVSize: Int?,
         genPrefillStepSize: Int,
         allowedOrigins: [String] = [],
-        modelEvictionPolicy: ModelEvictionPolicy = .strictSingleModel
+        modelEvictionPolicy: ModelEvictionPolicy = .strictSingleModel,
+        requireAuthentication: Bool = false
     ) {
         self.port = port
         self.exposeToNetwork = exposeToNetwork
@@ -149,6 +160,7 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
         self.genPrefillStepSize = genPrefillStepSize
         self.allowedOrigins = allowedOrigins
         self.modelEvictionPolicy = modelEvictionPolicy
+        self.requireAuthentication = requireAuthentication
     }
 
     /// Default configuration
@@ -168,7 +180,8 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
             genMaxKVSize: 8192,
             genPrefillStepSize: 512,
             allowedOrigins: [],
-            modelEvictionPolicy: .strictSingleModel
+            modelEvictionPolicy: .strictSingleModel,
+            requireAuthentication: false
         )
     }
 
