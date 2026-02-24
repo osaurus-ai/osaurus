@@ -726,15 +726,14 @@ struct AgentDetailView: View {
             loadAgentData()
             loadMemoryData()
             selectedModel = currentAgent.defaultModel
-            loadModelOptions()
             // Defer the flag so initial .onChange triggers are ignored
             DispatchQueue.main.async {
                 isInitialLoadComplete = true
             }
             withAnimation { hasAppeared = true }
         }
-        .onReceive(NotificationCenter.default.publisher(for: .localModelsChanged)) { _ in
-            loadModelOptions()
+        .onReceive(ModelOptionsCache.shared.$modelOptions) { options in
+            modelOptions = options
         }
         .themedAlert(
             "Delete Agent",
@@ -1902,42 +1901,6 @@ struct AgentDetailView: View {
         if !db.isOpen { try? db.open() }
         memoryEntries = (try? db.loadActiveEntries(agentId: agent.id.uuidString)) ?? []
         conversationSummaries = (try? db.loadSummaries(agentId: agent.id.uuidString)) ?? []
-    }
-
-    private func loadModelOptions() {
-        Task {
-            var options: [ModelOption] = []
-
-            if AppConfiguration.shared.foundationModelAvailable {
-                options.append(.foundation())
-            }
-
-            let localModels = await Task.detached(priority: .userInitiated) {
-                ModelManager.discoverLocalModels()
-            }.value
-            for model in localModels {
-                options.append(.fromMLXModel(model))
-            }
-
-            let remoteModels = await MainActor.run {
-                RemoteProviderManager.shared.cachedAvailableModels()
-            }
-            for providerInfo in remoteModels {
-                for modelId in providerInfo.models {
-                    options.append(
-                        .fromRemoteModel(
-                            modelId: modelId,
-                            providerName: providerInfo.providerName,
-                            providerId: providerInfo.providerId
-                        )
-                    )
-                }
-            }
-
-            await MainActor.run {
-                modelOptions = options
-            }
-        }
     }
 
     // MARK: - Save

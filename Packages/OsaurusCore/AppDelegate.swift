@@ -126,26 +126,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
 
         // Pre-warm caches immediately for instant first window (no async deps)
         _ = WhisperConfigurationStore.load()
-        ChatSession.prewarmLocalModelsOnly()
-
-        // Invalidate ChatSession model cache whenever remote provider models change,
-        // even if no ChatSession instance currently exists (e.g. during onboarding)
-        NotificationCenter.default.addObserver(
-            forName: .remoteProviderModelsChanged,
-            object: nil,
-            queue: .main
-        ) { _ in
-            Task { @MainActor in
-                ChatSession.invalidateModelCache()
-            }
-        }
+        ModelOptionsCache.shared.prewarmLocalModelsOnly()
 
         // Auto-connect to enabled providers, then update model cache with remote models
         Task { @MainActor in
             await MCPProviderManager.shared.connectEnabledProviders()
             await RemoteProviderManager.shared.connectEnabledProviders()
-            // Update cache with remote models (local models already cached above)
-            await ChatSession.prewarmModelCache()
+            await ModelOptionsCache.shared.prewarmModelCache()
         }
 
         // Start plugin repository background refresh for update checking
@@ -880,7 +867,7 @@ extension AppDelegate {
             Self.onboardingWindow = nil
             // Invalidate model cache so fresh models are discovered
             // This ensures any models downloaded during onboarding are visible
-            ChatSession.invalidateModelCache()
+            ModelOptionsCache.shared.invalidateCache()
             // Open ChatView after onboarding completes
             self?.showChatOverlay()
         }
