@@ -13,6 +13,10 @@ import Foundation
 public enum ScheduleFrequency: Codable, Sendable, Equatable, Hashable {
     /// Run once at a specific date and time
     case once(date: Date)
+    /// Run every N minutes, aligned to the top of the hour (minimum 5)
+    case everyNMinutes(minutes: Int)
+    /// Run every hour at a specific minute offset (0-59)
+    case hourly(minute: Int)
     /// Run daily at a specific time
     case daily(hour: Int, minute: Int)
     /// Run weekly on a specific day at a specific time (1 = Sunday, 7 = Saturday)
@@ -34,6 +38,12 @@ public enum ScheduleFrequency: Codable, Sendable, Equatable, Hashable {
             formatter.dateStyle = .medium
             formatter.timeStyle = .short
             return "Once on \(formatter.string(from: date))"
+
+        case .everyNMinutes(let minutes):
+            return "Every \(minutes) minutes"
+
+        case .hourly(let minute):
+            return "Hourly at :\(String(format: "%02d", minute))"
 
         case .daily(let hour, let minute):
             return "Daily at \(timeString(hour: hour, minute: minute))"
@@ -58,6 +68,10 @@ public enum ScheduleFrequency: Codable, Sendable, Equatable, Hashable {
         switch self {
         case .once:
             return "Once"
+        case .everyNMinutes(let minutes):
+            return "Every \(minutes)m"
+        case .hourly:
+            return "Hourly"
         case .daily:
             return "Daily"
         case .weekly:
@@ -73,6 +87,8 @@ public enum ScheduleFrequency: Codable, Sendable, Equatable, Hashable {
     public var frequencyType: ScheduleFrequencyType {
         switch self {
         case .once: return .once
+        case .everyNMinutes: return .everyNMinutes
+        case .hourly: return .hourly
         case .daily: return .daily
         case .weekly: return .weekly
         case .monthly: return .monthly
@@ -91,6 +107,34 @@ public enum ScheduleFrequency: Codable, Sendable, Equatable, Hashable {
         case .once(let date):
             // Only return if the date is in the future
             return date > referenceDate ? date : nil
+
+        case .everyNMinutes(let minutes):
+            let clamped = max(minutes, 5)
+            var components = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: referenceDate)
+            let currentMinute = components.minute ?? 0
+            let nextSlot = ((currentMinute / clamped) + 1) * clamped
+            if nextSlot >= 60 {
+                components.minute = nextSlot % 60
+                components.second = 0
+                guard let base = calendar.date(from: components) else { return nil }
+                return calendar.date(byAdding: .hour, value: 1, to: base)
+            } else {
+                components.minute = nextSlot
+                components.second = 0
+                return calendar.date(from: components)
+            }
+
+        case .hourly(let minute):
+            var components = calendar.dateComponents([.year, .month, .day, .hour], from: referenceDate)
+            components.minute = minute
+            components.second = 0
+
+            guard let candidate = calendar.date(from: components) else { return nil }
+
+            if candidate <= referenceDate {
+                return calendar.date(byAdding: .hour, value: 1, to: candidate)
+            }
+            return candidate
 
         case .daily(let hour, let minute):
             var components = calendar.dateComponents([.year, .month, .day], from: referenceDate)
@@ -227,6 +271,8 @@ public enum ScheduleFrequency: Codable, Sendable, Equatable, Hashable {
 /// Simple enum for frequency type selection in UI
 public enum ScheduleFrequencyType: String, CaseIterable, Sendable {
     case once = "Once"
+    case everyNMinutes = "Minutes"
+    case hourly = "Hourly"
     case daily = "Daily"
     case weekly = "Weekly"
     case monthly = "Monthly"
@@ -235,6 +281,8 @@ public enum ScheduleFrequencyType: String, CaseIterable, Sendable {
     public var icon: String {
         switch self {
         case .once: return "1.circle"
+        case .everyNMinutes: return "timer"
+        case .hourly: return "clock.arrow.2.circlepath"
         case .daily: return "sun.max"
         case .weekly: return "calendar.badge.clock"
         case .monthly: return "calendar"

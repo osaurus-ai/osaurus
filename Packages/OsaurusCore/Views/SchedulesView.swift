@@ -447,83 +447,122 @@ private struct ScheduleCard: View {
     }
 }
 
-// MARK: - Frequency Tab Selector
+// MARK: - Frequency Dropdown Selector
 
-private struct FrequencyTabSelector: View {
+private struct FrequencySelector: View {
     @Environment(\.theme) private var theme
     @Binding var selection: ScheduleFrequencyType
 
-    @Namespace private var tabNamespace
+    @State private var isHovering = false
+    @State private var showingPopover = false
 
     var body: some View {
-        HStack(spacing: 4) {
-            ForEach(ScheduleFrequencyType.allCases, id: \.self) { type in
-                FrequencyTabButton(
-                    type: type,
-                    isSelected: selection == type,
-                    namespace: tabNamespace
-                ) {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                        selection = type
-                    }
-                }
+        Button(action: { showingPopover.toggle() }) {
+            HStack(spacing: 8) {
+                Image(systemName: selection.icon)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(theme.accentColor)
+
+                Text(selection.rawValue)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(theme.primaryText)
+
+                Spacer()
+
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundColor(theme.secondaryText)
+            }
+            .padding(.horizontal, 12)
+            .frame(maxWidth: .infinity)
+            .frame(height: 38)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(theme.inputBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(
+                                isHovering || showingPopover
+                                    ? theme.accentColor.opacity(0.5)
+                                    : theme.inputBorder,
+                                lineWidth: isHovering || showingPopover ? 1.5 : 1
+                            )
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.15)) {
+                isHovering = hovering
             }
         }
-        .padding(4)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(theme.tertiaryBackground.opacity(0.6))
-        )
+        .popover(isPresented: $showingPopover, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(ScheduleFrequencyType.allCases, id: \.self) { type in
+                    FrequencyOptionRow(
+                        type: type,
+                        isSelected: selection == type,
+                        action: {
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                                selection = type
+                            }
+                            showingPopover = false
+                        }
+                    )
+                }
+            }
+            .padding(6)
+            .frame(width: 200)
+            .background(theme.cardBackground)
+        }
     }
 }
 
-private struct FrequencyTabButton: View {
+private struct FrequencyOptionRow: View {
     @Environment(\.theme) private var theme
 
     let type: ScheduleFrequencyType
     let isSelected: Bool
-    let namespace: Namespace.ID
     let action: () -> Void
 
     @State private var isHovering = false
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 5) {
+            HStack(spacing: 8) {
                 Image(systemName: type.icon)
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(isSelected ? theme.accentColor : theme.secondaryText)
+                    .frame(width: 16)
 
                 Text(type.rawValue)
-                    .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
-            }
-            .foregroundColor(
-                isSelected ? theme.primaryText : theme.secondaryText
-            )
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(
-                ZStack {
-                    if isSelected {
-                        RoundedRectangle(cornerRadius: 7)
-                            .fill(theme.cardBackground)
-                            .shadow(
-                                color: theme.shadowColor.opacity(0.1),
-                                radius: 3,
-                                x: 0,
-                                y: 1
-                            )
-                            .matchedGeometryEffect(id: "frequency_indicator", in: namespace)
-                    } else if isHovering {
-                        RoundedRectangle(cornerRadius: 7)
-                            .fill(theme.secondaryBackground.opacity(0.5))
-                    }
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(theme.primaryText)
+
+                Spacer()
+
+                if isSelected {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(theme.accentColor)
                 }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .frame(maxWidth: .infinity)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(
+                        isHovering
+                            ? theme.tertiaryBackground
+                            : (isSelected ? theme.accentColor.opacity(0.08) : Color.clear)
+                    )
             )
-            .contentShape(RoundedRectangle(cornerRadius: 7))
+            .contentShape(Rectangle())
         }
-        .buttonStyle(PlainButtonStyle())
+        .buttonStyle(.plain)
         .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.12)) {
+            withAnimation(.easeOut(duration: 0.1)) {
                 isHovering = hovering
             }
         }
@@ -661,6 +700,101 @@ private struct ScheduleTimePicker: View {
         } else {
             hour += 12
         }
+    }
+}
+
+// MARK: - Hourly Minute Picker
+
+private struct HourlyMinutePicker: View {
+    @Environment(\.theme) private var theme
+    @Binding var minute: Int
+
+    @State private var minuteText: String = ""
+    @State private var isFocused = false
+    @FocusState private var textFieldFocused: Bool
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "clock")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(theme.accentColor)
+                .padding(.leading, 10)
+
+            Text(":")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(theme.secondaryText)
+
+            TextField("", text: $minuteText)
+                .textFieldStyle(.plain)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(theme.primaryText)
+                .frame(width: 28)
+                .multilineTextAlignment(.center)
+                .focused($textFieldFocused)
+                .onAppear {
+                    minuteText = String(format: "%02d", minute)
+                }
+                .onChange(of: minute) { _, newValue in
+                    if !textFieldFocused {
+                        minuteText = String(format: "%02d", newValue)
+                    }
+                }
+                .onSubmit { validateMinute() }
+                .onChange(of: textFieldFocused) { _, focused in
+                    isFocused = focused
+                    if !focused { validateMinute() }
+                }
+
+            VStack(spacing: 0) {
+                Button(action: { incrementMinute() }) {
+                    Image(systemName: "chevron.up")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundColor(theme.secondaryText)
+                        .frame(width: 20, height: 12)
+                }
+                .buttonStyle(.plain)
+
+                Button(action: { decrementMinute() }) {
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundColor(theme.secondaryText)
+                        .frame(width: 20, height: 12)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.trailing, 8)
+        }
+        .frame(height: 38)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(theme.inputBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(
+                            isFocused
+                                ? theme.accentColor.opacity(0.5)
+                                : theme.inputBorder,
+                            lineWidth: isFocused ? 1.5 : 1
+                        )
+                )
+        )
+    }
+
+    private func validateMinute() {
+        if let value = Int(minuteText), value >= 0, value <= 59 {
+            minute = value
+        }
+        minuteText = String(format: "%02d", minute)
+    }
+
+    private func incrementMinute() {
+        minute = (minute + 1) % 60
+        minuteText = String(format: "%02d", minute)
+    }
+
+    private func decrementMinute() {
+        minute = (minute + 59) % 60
+        minuteText = String(format: "%02d", minute)
     }
 }
 
@@ -1370,6 +1504,7 @@ struct ScheduleEditorSheet: View {
     @State private var isEnabled = true
     @State private var selectedFolderPath: String?
     @State private var selectedFolderBookmark: Data?
+    @State private var selectedIntervalMinutes = 30
     @State private var selectedHour = 9
     @State private var selectedMinute = 0
     @State private var selectedDayOfWeek = 2  // Monday
@@ -1802,7 +1937,7 @@ struct ScheduleEditorSheet: View {
     private var frequencySection: some View {
         ScheduleEditorSection(title: "Frequency", icon: "clock.fill") {
             VStack(spacing: 16) {
-                FrequencyTabSelector(selection: $frequencyType)
+                FrequencySelector(selection: $frequencyType)
                 frequencyOptionsView
                     .animation(.easeInOut(duration: 0.2), value: frequencyType)
             }
@@ -1814,6 +1949,10 @@ struct ScheduleEditorSheet: View {
         switch frequencyType {
         case .once:
             onceOptions
+        case .everyNMinutes:
+            everyNMinutesOptions
+        case .hourly:
+            hourlyOptions
         case .daily:
             dailyOptions
         case .weekly:
@@ -1893,6 +2032,87 @@ struct ScheduleEditorSheet: View {
 
         return formatter.string(from: selectedDate)
     }
+
+    // MARK: - Every N Minutes Options
+
+    private let minuteIntervalChoices = [5, 10, 15, 20, 30, 45]
+
+    private var everyNMinutesOptions: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Interval")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+
+                HStack(spacing: 6) {
+                    ForEach(minuteIntervalChoices, id: \.self) { interval in
+                        Button {
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                                selectedIntervalMinutes = interval
+                            }
+                        } label: {
+                            Text("\(interval)m")
+                                .font(
+                                    .system(size: 12, weight: selectedIntervalMinutes == interval ? .semibold : .medium)
+                                )
+                                .foregroundColor(
+                                    selectedIntervalMinutes == interval
+                                        ? .white
+                                        : theme.secondaryText
+                                )
+                                .frame(minWidth: 40, minHeight: 34)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 7)
+                                        .fill(
+                                            selectedIntervalMinutes == interval
+                                                ? theme.accentColor
+                                                : theme.inputBackground
+                                        )
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 7)
+                                                .stroke(
+                                                    selectedIntervalMinutes == interval
+                                                        ? theme.accentColor
+                                                        : theme.inputBorder,
+                                                    lineWidth: 1
+                                                )
+                                        )
+                                )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+
+            schedulePreview(text: everyNMinutesPreviewText)
+        }
+    }
+
+    private var everyNMinutesPreviewText: String {
+        "Every \(selectedIntervalMinutes) minutes"
+    }
+
+    // MARK: - Hourly Options
+
+    private var hourlyOptions: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Minute of Hour")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+
+                HourlyMinutePicker(minute: $selectedMinute)
+            }
+
+            schedulePreview(text: hourlyPreviewText)
+        }
+    }
+
+    private var hourlyPreviewText: String {
+        "Every hour at :\(String(format: "%02d", selectedMinute))"
+    }
+
+    // MARK: - Daily Options
 
     private var dailyOptions: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -2175,6 +2395,10 @@ struct ScheduleEditorSheet: View {
         switch schedule.frequency {
         case .once(let date):
             selectedDate = date
+        case .everyNMinutes(let minutes):
+            selectedIntervalMinutes = minutes
+        case .hourly(let minute):
+            selectedMinute = minute
         case .daily(let hour, let minute):
             selectedHour = hour
             selectedMinute = minute
@@ -2198,6 +2422,10 @@ struct ScheduleEditorSheet: View {
         switch frequencyType {
         case .once:
             return .once(date: selectedDate)
+        case .everyNMinutes:
+            return .everyNMinutes(minutes: selectedIntervalMinutes)
+        case .hourly:
+            return .hourly(minute: selectedMinute)
         case .daily:
             return .daily(hour: selectedHour, minute: selectedMinute)
         case .weekly:
