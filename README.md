@@ -1,9 +1,9 @@
 # Osaurus
 
-[![Release](https://img.shields.io/github/v/release/dinoki-ai/osaurus?sort=semver)](https://github.com/dinoki-ai/osaurus/releases)
-[![Downloads](https://img.shields.io/github/downloads/dinoki-ai/osaurus/total)](https://github.com/dinoki-ai/osaurus/releases)
-[![License](https://img.shields.io/github/license/dinoki-ai/osaurus)](LICENSE)
-[![Stars](https://img.shields.io/github/stars/dinoki-ai/osaurus?style=social)](https://github.com/dinoki-ai/osaurus/stargazers)
+[![Release](https://img.shields.io/github/v/release/osaurus-ai/osaurus?sort=semver)](https://github.com/osaurus-ai/osaurus/releases)
+[![Downloads](https://img.shields.io/github/downloads/osaurus-ai/osaurus/total)](https://github.com/osaurus-ai/osaurus/releases)
+[![License](https://img.shields.io/github/license/osaurus-ai/osaurus)](LICENSE)
+[![Stars](https://img.shields.io/github/stars/osaurus-ai/osaurus?style=social)](https://github.com/osaurus-ai/osaurus/stargazers)
 ![Platform](<https://img.shields.io/badge/Platform-macOS%20(Apple%20Silicon)-black?logo=apple>)
 ![OpenAI API](https://img.shields.io/badge/OpenAI%20API-compatible-0A7CFF)
 ![Anthropic API](https://img.shields.io/badge/Anthropic%20API-compatible-0A7CFF)
@@ -22,7 +22,7 @@ It runs local and cloud models, exposes shared tools via MCP, and provides a nat
 
 Created by Dinoki Labs ([dinoki.ai](https://dinoki.ai))
 
-**[Documentation](https://docs.osaurus.ai/)** · **[Discord](https://discord.gg/dinoki)** · **[Plugin Registry](https://github.com/dinoki-ai/osaurus-tools)** · **[Contributing](docs/CONTRIBUTING.md)**
+**[Documentation](https://docs.osaurus.ai/)** · **[Discord](https://discord.gg/dinoki)** · **[Plugin Registry](https://github.com/osaurus-ai/osaurus-tools)** · **[Contributing](docs/CONTRIBUTING.md)**
 
 ---
 
@@ -43,7 +43,7 @@ Created by Dinoki Labs ([dinoki.ai](https://dinoki.ai))
 brew install --cask osaurus
 ```
 
-Or download from [Releases](https://github.com/dinoki-ai/osaurus/releases/latest).
+Or download from [Releases](https://github.com/osaurus-ai/osaurus/releases/latest).
 
 After installing, launch from Spotlight (`⌘ Space` → "osaurus") or run `osaurus ui` from the terminal.
 
@@ -74,30 +74,30 @@ Osaurus is the AI edge runtime for macOS. It brings together:
 
 ### Highlights
 
-| Feature                  | Description                                                            |
-| ------------------------ | ---------------------------------------------------------------------- |
-| **Local LLM Server**     | Run Llama, Qwen, Gemma, Mistral, and more locally                      |
-| **Remote Providers**     | Anthropic, OpenAI, OpenRouter, Ollama, LM Studio, or custom            |
-| **OpenAI Compatible**    | `/v1/chat/completions` with streaming and tool calling                 |
-| **Anthropic Compatible** | `/messages` endpoint for Claude Code and Anthropic SDK clients         |
-| **Open Responses**       | `/responses` endpoint for multi-provider interoperability              |
-| **MCP Server**           | Connect to Cursor, Claude Desktop, and other MCP clients               |
-| **Remote MCP Providers** | Aggregate tools from external MCP servers                              |
-| **Tools & Plugins**      | Browser automation, file system, git, web search, and more             |
-| **Skills**               | Import AI capabilities from GitHub or files, with smart context saving |
-| **Agents**               | Custom AI assistants with unique prompts, tools, and themes            |
-| **Memory**               | Persistent memory with user profile, knowledge graph, and hybrid search|
-| **Schedules**            | Automate AI tasks with daily, weekly, monthly, or yearly runs          |
-| **Watchers**             | Monitor folders and trigger AI tasks on file system changes            |
-| **Work Mode**            | Autonomous multi-step task execution with parallel task support        |
-| **Custom Themes**        | Create, import, and export themes with full color customization        |
-| **Developer Tools**      | Request insights, API explorer, and live endpoint testing              |
-| **Multi-Window Chat**    | Multiple independent chat windows with per-window agents               |
-| **Menu Bar Chat**        | Chat overlay with session history, context tracking (`⌘;`)             |
-| **Voice Input**          | Speech-to-text with WhisperKit, real-time transcription                |
-| **VAD Mode**             | Always-on listening with wake-word agent activation                    |
-| **Transcription Mode**   | Global hotkey to dictate into any focused text field                   |
-| **Model Manager**        | Download and manage models from Hugging Face                           |
+| Feature                  | Description                                                             |
+| ------------------------ | ----------------------------------------------------------------------- |
+| **Local LLM Server**     | Run Llama, Qwen, Gemma, Mistral, and more locally                       |
+| **Remote Providers**     | Anthropic, OpenAI, OpenRouter, Ollama, LM Studio, or custom             |
+| **OpenAI Compatible**    | `/v1/chat/completions` with streaming and tool calling                  |
+| **Anthropic Compatible** | `/messages` endpoint for Claude Code and Anthropic SDK clients          |
+| **Open Responses**       | `/responses` endpoint for multi-provider interoperability               |
+| **MCP Server**           | Connect to Cursor, Claude Desktop, and other MCP clients                |
+| **Remote MCP Providers** | Aggregate tools from external MCP servers                               |
+| **Tools & Plugins**      | Browser automation, file system, git, web search, and more              |
+| **Skills**               | Import AI capabilities from GitHub or files, with smart context saving  |
+| **Agents**               | Custom AI assistants with unique prompts, tools, and themes             |
+| **Memory**               | Persistent memory with user profile, knowledge graph, and hybrid search |
+| **Schedules**            | Automate AI tasks with daily, weekly, monthly, or yearly runs           |
+| **Watchers**             | Monitor folders and trigger AI tasks on file system changes             |
+| **Work Mode**            | Autonomous multi-step task execution with parallel task support         |
+| **Custom Themes**        | Create, import, and export themes with full color customization         |
+| **Developer Tools**      | Request insights, API explorer, and live endpoint testing               |
+| **Multi-Window Chat**    | Multiple independent chat windows with per-window agents                |
+| **Menu Bar Chat**        | Chat overlay with session history, context tracking (`⌘;`)              |
+| **Voice Input**          | Speech-to-text with WhisperKit, real-time transcription                 |
+| **VAD Mode**             | Always-on listening with wake-word agent activation                     |
+| **Transcription Mode**   | Global hotkey to dictate into any focused text field                    |
+| **Model Manager**        | Download and manage models from Hugging Face                            |
 
 ---
 
@@ -196,7 +196,7 @@ See [Remote MCP Providers Guide](docs/REMOTE_MCP_PROVIDERS.md) for details.
 
 ### Tools & Plugins
 
-Install tools from the [central registry](https://github.com/dinoki-ai/osaurus-tools) or create your own.
+Install tools from the [central registry](https://github.com/osaurus-ai/osaurus-tools) or create your own.
 
 **Official System Tools:**
 
@@ -478,15 +478,15 @@ See [Voice Input Guide](docs/VOICE_INPUT.md) for details.
 
 Base URL: `http://127.0.0.1:1337` (or your configured port)
 
-| Endpoint                    | Description                         |
-| --------------------------- | ----------------------------------- |
-| `GET /health`               | Server health                       |
-| `GET /v1/models`            | List models (OpenAI format)         |
-| `GET /v1/tags`              | List models (Ollama format)         |
-| `POST /v1/chat/completions` | Chat completions (OpenAI format)    |
-| `POST /messages`            | Chat completions (Anthropic format) |
-| `POST /v1/responses`        | Responses (Open Responses format)   |
-| `POST /chat`                | Chat (Ollama format, NDJSON)        |
+| Endpoint                    | Description                                |
+| --------------------------- | ------------------------------------------ |
+| `GET /health`               | Server health                              |
+| `GET /v1/models`            | List models (OpenAI format)                |
+| `GET /v1/tags`              | List models (Ollama format)                |
+| `POST /v1/chat/completions` | Chat completions (OpenAI format)           |
+| `POST /messages`            | Chat completions (Anthropic format)        |
+| `POST /v1/responses`        | Responses (Open Responses format)          |
+| `POST /chat`                | Chat (Ollama format, NDJSON)               |
 | `GET /agents`               | List all agents with memory counts         |
 | `POST /memory/ingest`       | Bulk-ingest conversation turns into memory |
 
@@ -531,7 +531,7 @@ Whisper models are stored at `~/.osaurus/whisper-models`.
 ## Build from Source
 
 ```bash
-git clone https://github.com/dinoki-ai/osaurus.git
+git clone https://github.com/osaurus-ai/osaurus.git
 cd osaurus
 open osaurus.xcworkspace
 # Build and run the "osaurus" target
@@ -551,7 +551,7 @@ open osaurus.xcworkspace
 
 ### Get Started
 
-1. Check out [Good First Issues](https://github.com/dinoki-ai/osaurus/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
+1. Check out [Good First Issues](https://github.com/osaurus-ai/osaurus/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
 2. Read the [Contributing Guide](docs/CONTRIBUTING.md)
 3. Join our [Discord](https://discord.gg/dinoki) to connect with the team
 
@@ -563,7 +563,7 @@ See [docs/FEATURES.md](docs/FEATURES.md) for a complete feature inventory and ar
 
 - **[Documentation](https://docs.osaurus.ai/)** — Guides and tutorials
 - **[Discord](https://discord.gg/dinoki)** — Chat with the community
-- **[Plugin Registry](https://github.com/dinoki-ai/osaurus-tools)** — Browse and contribute tools
+- **[Plugin Registry](https://github.com/osaurus-ai/osaurus-tools)** — Browse and contribute tools
 - **[Contributing Guide](docs/CONTRIBUTING.md)** — How to contribute
 
 If you find Osaurus useful, please star the repo and share it!

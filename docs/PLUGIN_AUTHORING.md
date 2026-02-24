@@ -378,12 +378,12 @@ Detailed instructions for the AI...
 
 **Frontmatter Fields:**
 
-| Field                | Type   | Required | Description                                                              |
-| -------------------- | ------ | -------- | ------------------------------------------------------------------------ |
-| `name`               | string | Yes      | Lowercase-hyphen identifier (e.g., `my-plugin`). Converted to title case for display. |
-| `description`        | string | Yes      | Tells the AI when this skill applies. Max 1024 characters.               |
-| `metadata.author`    | string | No       | Skill author name.                                                       |
-| `metadata.version`   | string | No       | Skill version (e.g., `"1.0.0"`).                                        |
+| Field              | Type   | Required | Description                                                                           |
+| ------------------ | ------ | -------- | ------------------------------------------------------------------------------------- |
+| `name`             | string | Yes      | Lowercase-hyphen identifier (e.g., `my-plugin`). Converted to title case for display. |
+| `description`      | string | Yes      | Tells the AI when this skill applies. Max 1024 characters.                            |
+| `metadata.author`  | string | No       | Skill author name.                                                                    |
+| `metadata.version` | string | No       | Skill version (e.g., `"1.0.0"`).                                                      |
 
 The body after the frontmatter contains the full instructions in markdown. This is what the AI sees when the skill is active.
 
@@ -411,7 +411,7 @@ You can place `SKILL.md` at the root of the archive or in a subdirectory — the
 
 **Example:**
 
-The [osaurus-pptx](https://github.com/dinoki-ai/osaurus-pptx) plugin includes a SKILL.md that covers the required tool call sequence, slide coordinate system, layout recipes for common slide types, theme selection guidance, and design best practices.
+The [osaurus-pptx](https://github.com/osaurus-ai/osaurus-pptx) plugin includes a SKILL.md that covers the required tool call sequence, slide coordinate system, layout recipes for common slide types, theme selection guidance, and design best practices.
 
 ### Invocation
 
@@ -512,7 +512,7 @@ The registry entry should include publishing metadata (`homepage`, `license`, `a
 
 The `capabilities` block is **informational only** — it is used for the plugin listing in the registry UI. The actual skills are discovered automatically from `SKILL.md` files in the archive at install time (see [Plugin Skills](#plugin-skills-skillmd)).
 
-> **Note:** If you use the shared CI workflow (`dinoki-ai/osaurus-tools/.github/workflows/build-plugin.yml`), the `capabilities` block is generated automatically. Tools are extracted from the dylib manifest, and skills are detected from any `SKILL.md` file at the repository root. You do not need to write this JSON by hand.
+> **Note:** If you use the shared CI workflow (`osaurus-ai/osaurus-tools/.github/workflows/build-plugin.yml`), the `capabilities` block is generated automatically. Tools are extracted from the dylib manifest, and skills are detected from any `SKILL.md` file at the repository root. You do not need to write this JSON by hand.
 
 ## Artifact Signing (Minisign)
 
