@@ -84,20 +84,17 @@ Good documentation is just as important as good code. Here's how to contribute t
 ### When adding a new feature
 
 1. **Update FEATURES.md first** — Add a row to the Feature Matrix with:
-
    - Feature name and status
    - README section (if applicable)
    - Documentation file (if applicable)
    - Code location
 
 2. **Update the README** — If the feature should be highlighted:
-
    - Add to the "Highlights" table
    - Add to "Key Features" section
    - Update "What is Osaurus?" if it's a major feature
 
 3. **Create dedicated documentation** — For significant features:
-
    - Create a new doc in `/docs/` (e.g., `FEATURE_NAME.md`)
    - Add to the Documentation Index in FEATURES.md
    - Link from the README
@@ -156,6 +153,6 @@ This project follows the Contributor Covenant. By participating, you agree to up
 ## Join the community
 
 - **[Discord](https://discord.gg/dinoki)** — Chat with contributors and maintainers
-- **[Good First Issues](https://github.com/dinoki-ai/osaurus/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)** — Great starting points
+- **[Good First Issues](https://github.com/osaurus-ai/osaurus/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)** — Great starting points
 
 Thank you for helping make Osaurus better!

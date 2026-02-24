@@ -66,7 +66,7 @@ template = f"""<!doctype html><html><head><meta charset=\"utf-8\"><title>Osaurus
 <h1>Osaurus <span class="version">{version}</span></h1>
 {body_html}
 <div class="footer">
-  <a href="https://github.com/dinoki-ai/osaurus/releases" target="_blank">View all releases on GitHub &#8594;</a>
+  <a href="https://github.com/osaurus-ai/osaurus/releases" target="_blank">View all releases on GitHub &#8594;</a>
 </div>
 </body></html>"""
 

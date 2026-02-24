@@ -21,7 +21,7 @@ public final class CentralRepositoryManager: @unchecked Sendable {
     private init() {}
 
     public var central: CentralRepository = .init(
-        url: "https://github.com/dinoki-ai/osaurus-tools.git",
+        url: "https://github.com/osaurus-ai/osaurus-tools.git",
         branch: nil
     )
 
