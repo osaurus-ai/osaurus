@@ -24,8 +24,8 @@ jq -n \
   --arg content  "🚀 **New Osaurus Release!**" \
   --arg version  "${VERSION}" \
   --arg desc     "$TRUNCATED" \
-  --arg download "[Download Osaurus.dmg](https://github.com/dinoki-ai/osaurus/releases/latest/download/Osaurus.dmg)" \
-  --arg page     "[View on GitHub](https://github.com/dinoki-ai/osaurus/releases/tag/${VERSION})" \
+  --arg download "[Download Osaurus.dmg](https://github.com/osaurus-ai/osaurus/releases/latest/download/Osaurus.dmg)" \
+  --arg page     "[View on GitHub](https://github.com/osaurus-ai/osaurus/releases/tag/${VERSION})" \
   '{
     content: $content,
     embeds: [

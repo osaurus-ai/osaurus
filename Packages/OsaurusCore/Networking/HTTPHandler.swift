@@ -380,7 +380,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     // MARK: - Chat handlers
 
     /// Inject assembled memory context into a chat request when an agent ID is provided
-    /// via the `X-Osaurus-Agent-Id` header.
+    /// via the `X-Osaurus-Agent-Id` header. Uses query-aware retrieval when the last
+    /// user message is available, ensuring semantically relevant memories are included.
     private static func enrichWithMemoryContext(
         _ request: ChatCompletionRequest,
         agentId: String?
@@ -388,9 +389,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         guard let agentId, !agentId.isEmpty else { return request }
 
         let config = MemoryConfigurationStore.load()
+        let query = request.messages.last(where: { $0.role == "user" })?.content ?? ""
         let memoryContext = await MemoryContextAssembler.assembleContext(
             agentId: agentId,
-            config: config
+            config: config,
+            query: query
         )
         guard !memoryContext.isEmpty else { return request }
 
@@ -411,11 +414,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let agent_id: String
         let conversation_id: String
         let turns: [MemoryIngestTurn]
+        let session_date: String?
+        let skip_extraction: Bool?
     }
 
     private struct MemoryIngestTurn: Codable {
         let user: String
         let assistant: String
+        let date: String?
     }
 
     /// Bulk-ingest conversation turns into the memory system.
@@ -469,13 +475,54 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logRequestBody = requestBodyString
 
         Task(priority: .userInitiated) {
-            for turn in req.turns {
-                await MemoryService.shared.recordConversationTurn(
-                    userMessage: turn.user,
-                    assistantMessage: turn.assistant,
-                    agentId: req.agent_id,
-                    conversationId: req.conversation_id
-                )
+            let db = MemoryDatabase.shared
+            try? db.upsertConversation(
+                id: req.conversation_id,
+                agentId: req.agent_id,
+                title: nil
+            )
+
+            let skipExtraction = req.skip_extraction ?? false
+
+            try? db.deleteChunksForConversation(req.conversation_id)
+
+            for (i, turn) in req.turns.enumerated() {
+                let turnDate = turn.date ?? req.session_date
+
+                let pairs: [(role: String, content: String, index: Int)] = [
+                    ("user", turn.user, i * 2),
+                    ("assistant", turn.assistant, i * 2 + 1),
+                ]
+                for (role, content, chunkIndex) in pairs {
+                    let tokens = max(1, content.count / 4)
+                    let chunk = ConversationChunk(
+                        conversationId: req.conversation_id,
+                        chunkIndex: chunkIndex,
+                        role: role,
+                        content: content,
+                        tokenCount: tokens,
+                        agentId: req.agent_id
+                    )
+                    try? db.insertChunk(
+                        conversationId: req.conversation_id,
+                        chunkIndex: chunkIndex,
+                        role: role,
+                        content: content,
+                        tokenCount: tokens,
+                        createdAt: turnDate
+                    )
+                    await MemorySearchService.shared.indexConversationChunk(chunk)
+                }
+
+                if !skipExtraction {
+                    await MemoryService.shared.recordConversationTurn(
+                        userMessage: turn.user,
+                        assistantMessage: turn.assistant,
+                        agentId: req.agent_id,
+                        conversationId: req.conversation_id,
+                        sessionDate: turnDate
+                    )
+                }
             }
 
             let responseBody = "{\"status\":\"ok\",\"turns_ingested\":\(req.turns.count)}"

@@ -391,8 +391,8 @@ Our goal is to achieve state-of-the-art on this benchmark. Osaurus uses Apple Fo
 | Human baseline | ~88% |
 | Memobase | 85% (temporal) |
 | Mem0 | 66.9% |
+| **Osaurus (Gemini 2.5 Flash)** | **57.08%** |
 | OpenAI Memory | 52.9% |
-| **Osaurus (Gemini 2.5 Flash)** | **44.62%** |
 | GPT-3.5-turbo-16K (no memory) | 37.8% |
 | GPT-4-turbo (no memory) | ~32% |
 
@@ -400,37 +400,38 @@ Our goal is to achieve state-of-the-art on this benchmark. Osaurus uses Apple Fo
 
 | Category | Count | F1 Score |
 |----------|-------|----------|
-| Open-domain | 563 | 54.72% |
-| Adversarial | 312 | 53.53% |
-| Multi-hop | 192 | 36.76% |
-| Temporal | 214 | 20.85% |
-| Single-hop | 66 | 16.22% |
-| **Overall** | **1,347** | **44.62%** |
+| Open-domain | 841 | 61.44% |
+| Adversarial | 446 | 90.36% |
+| Multi-hop | 282 | 41.94% |
+| Temporal | 321 | 23.16% |
+| Single-hop | 96 | 22.10% |
+| **Overall** | **1,986** | **57.08%** |
 
 ### Running the Benchmark
 
 ```bash
-# 1. Set up EasyLocomo
-cd benchmarks/EasyLocomo
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+# 1. Set up EasyLocomo (clones repo, applies patch, creates venv)
+make bench-setup
 
-# 2. Configure .env
-echo 'OPENAI_API_KEY=osaurus' > .env
-echo 'OPENAI_API_BASE=http://localhost:1337/v1' >> .env
+# 2. Configure .env in benchmarks/EasyLocomo/
+echo 'OPENAI_API_KEY=osaurus' > benchmarks/EasyLocomo/.env
+echo 'OPENAI_API_BASE=http://localhost:1337/v1' >> benchmarks/EasyLocomo/.env
 
-# 3. Run (full-context baseline)
-python run_evaluation.py --model "google/gemini-2.5-flash" --batch-size 5 --max-context 65536
+# 3. Ingest LoCoMo data (full extraction — takes several hours, only needed once)
+make bench-ingest
+
+# 4. Fast chunk re-ingestion (no LLM calls — use after code changes)
+make bench-ingest-chunks
+
+# 5. Run evaluation
+make bench-run
 ```
+
+The benchmark preset must be active before running. Set `"preset": "benchmark"` in the memory configuration file (`~/Library/Application Support/com.dinoki.osaurus/config/memory.json`).
 
 ### Memory-Augmented Evaluation
 
-To evaluate memory retrieval quality instead of full-context recall:
-
-1. Ingest LoCoMo conversations via `scripts/ingest_locomo.py` (uses `POST /memory/ingest`)
-2. Run EasyLocomo with `--no-context` and the `X-Osaurus-Agent-Id` header set
-
-See [API Integration](#api-integration) above for details on the header and ingestion endpoint.
+Osaurus uses a no-context evaluation mode where the LLM receives no conversation transcript — only the memory context assembled by the retrieval system. The `X-Osaurus-Agent-Id` header routes each question to the correct agent's memory store. This tests pure memory retrieval quality rather than full-context recall.
 
 ---
 

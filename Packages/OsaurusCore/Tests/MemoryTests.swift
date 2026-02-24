@@ -118,9 +118,14 @@ struct MemoryConfigurationTests {
         let config = MemoryConfiguration()
         #expect(config.enabled == true)
         #expect(config.maxEntriesPerAgent == 500)
-        #expect(config.workingMemoryBudgetTokens == 500)
-        #expect(config.summaryBudgetTokens == 1000)
+        #expect(config.preset == .production)
+        #expect(config.workingMemoryBudgetTokens == 3000)
+        #expect(config.summaryBudgetTokens == 2000)
+        #expect(config.chunkBudgetTokens == 4000)
         #expect(config.graphBudgetTokens == 300)
+        #expect(config.recallTopK == 30)
+        #expect(config.mmrLambda == 0.7)
+        #expect(config.summaryRetentionDays == 180)
         #expect(config.verificationJaccardDedupThreshold == 0.6)
     }
 
@@ -146,40 +151,67 @@ struct MemoryConfigurationTests {
         var config = MemoryConfiguration()
         config.summaryDebounceSeconds = -5
         config.profileMaxTokens = -100
-        config.recallTopK = 0
-        config.mmrLambda = -0.5
-        config.mmrFetchMultiplier = 0.1
         config.maxEntriesPerAgent = -1
+        config.temporalDecayHalfLifeDays = -10
         let validated = config.validated()
         #expect(validated.summaryDebounceSeconds == 10)
         #expect(validated.profileMaxTokens == 100)
-        #expect(validated.recallTopK == 1)
-        #expect(validated.mmrLambda == 0.0)
-        #expect(validated.mmrFetchMultiplier == 1.0)
         #expect(validated.maxEntriesPerAgent == 0)
+        #expect(validated.temporalDecayHalfLifeDays == 1)
     }
 
     @Test func validationClampsExcessiveValues() {
         var config = MemoryConfiguration()
         config.summaryDebounceSeconds = 999_999
         config.profileMaxTokens = 999_999
-        config.recallTopK = 999
-        config.mmrLambda = 5.0
-        config.summaryRetentionDays = 9999
+        config.maxEntriesPerAgent = 999_999
         let validated = config.validated()
         #expect(validated.summaryDebounceSeconds == 3600)
         #expect(validated.profileMaxTokens == 50_000)
-        #expect(validated.recallTopK == 100)
-        #expect(validated.mmrLambda == 1.0)
-        #expect(validated.summaryRetentionDays == 365)
+        #expect(validated.maxEntriesPerAgent == 10_000)
     }
 
     @Test func validationPreservesValidValues() {
         let config = MemoryConfiguration()
         let validated = config.validated()
         #expect(validated.summaryDebounceSeconds == config.summaryDebounceSeconds)
-        #expect(validated.mmrLambda == config.mmrLambda)
         #expect(validated.maxEntriesPerAgent == config.maxEntriesPerAgent)
+        #expect(validated.preset == .production)
+    }
+
+    @Test func productionPresetApplied() {
+        let config = MemoryConfiguration(preset: .production)
+        let validated = config.validated()
+        #expect(validated.recallTopK == 30)
+        #expect(validated.mmrLambda == 0.7)
+        #expect(validated.mmrFetchMultiplier == 2.0)
+        #expect(validated.workingMemoryBudgetTokens == 3000)
+        #expect(validated.summaryBudgetTokens == 2000)
+        #expect(validated.chunkBudgetTokens == 4000)
+        #expect(validated.graphBudgetTokens == 300)
+        #expect(validated.summaryRetentionDays == 180)
+    }
+
+    @Test func benchmarkPresetApplied() {
+        let config = MemoryConfiguration(preset: .benchmark)
+        let validated = config.validated()
+        #expect(validated.recallTopK == 75)
+        #expect(validated.mmrLambda == 0.95)
+        #expect(validated.mmrFetchMultiplier == 4.0)
+        #expect(validated.workingMemoryBudgetTokens == 8000)
+        #expect(validated.summaryBudgetTokens == 6000)
+        #expect(validated.chunkBudgetTokens == 12000)
+        #expect(validated.graphBudgetTokens == 500)
+        #expect(validated.summaryRetentionDays == 0)
+    }
+
+    @Test func presetRoundTrips() throws {
+        var config = MemoryConfiguration(preset: .benchmark)
+        config.maxEntriesPerAgent = 200
+        let data = try JSONEncoder().encode(config)
+        let decoded = try JSONDecoder().decode(MemoryConfiguration.self, from: data)
+        #expect(decoded.preset == .benchmark)
+        #expect(decoded.maxEntriesPerAgent == 200)
     }
 }
 
@@ -215,7 +247,7 @@ struct MemoryContextAssemblerTests {
     @Test func emptyDatabaseReturnsEmptyContext() async throws {
         let config = MemoryConfiguration()
         let context = await MemoryContextAssembler.assembleContext(agentId: "test", config: config)
-        #expect(context.isEmpty || !context.contains("Working Memory"))
+        #expect(context.isEmpty || !context.contains("Remembered Details"))
     }
 
     @Test func disabledConfigReturnsEmpty() async {
@@ -223,6 +255,28 @@ struct MemoryContextAssemblerTests {
         config.enabled = false
         let context = await MemoryContextAssembler.assembleContext(agentId: "test", config: config)
         #expect(context.isEmpty)
+    }
+
+    @Test func disabledConfigWithQueryReturnsEmpty() async {
+        var config = MemoryConfiguration()
+        config.enabled = false
+        let context = await MemoryContextAssembler.assembleContext(
+            agentId: "test",
+            config: config,
+            query: "What happened yesterday?"
+        )
+        #expect(context.isEmpty)
+    }
+
+    @Test func emptyQueryFallsBackToBaseContext() async {
+        let config = MemoryConfiguration()
+        let baseContext = await MemoryContextAssembler.assembleContext(agentId: "test", config: config)
+        let queryContext = await MemoryContextAssembler.assembleContext(
+            agentId: "test",
+            config: config,
+            query: ""
+        )
+        #expect(baseContext == queryContext)
     }
 }
 
@@ -288,6 +342,59 @@ struct MemoryDatabaseTests {
         #expect(active.count == 1)
         #expect(active[0].id == correction.id)
         #expect(active[0].type == .correction)
+    }
+
+    @Test func insertAndLoadEntryWithValidFrom() throws {
+        let db = try makeTempDB()
+        let entry = MemoryEntry(
+            agentId: "agent1",
+            type: .fact,
+            content: "Went to the park",
+            model: "test",
+            validFrom: "2023-05-08"
+        )
+        try db.insertMemoryEntry(entry)
+        let loaded = try db.loadActiveEntries(agentId: "agent1")
+        #expect(loaded.count == 1)
+        #expect(loaded[0].validFrom == "2023-05-08")
+    }
+
+    @Test func insertEntryWithEmptyValidFromDefaultsToNow() throws {
+        let db = try makeTempDB()
+        let entry = MemoryEntry(
+            agentId: "agent1",
+            type: .fact,
+            content: "Timeless fact",
+            model: "test",
+            validFrom: ""
+        )
+        try db.insertMemoryEntry(entry)
+        let loaded = try db.loadActiveEntries(agentId: "agent1")
+        #expect(loaded.count == 1)
+        #expect(!loaded[0].validFrom.isEmpty, "Empty validFrom should default to current timestamp")
+    }
+
+    @Test func loadEntriesAsOfFiltersCorrectly() throws {
+        let db = try makeTempDB()
+        let past = MemoryEntry(
+            agentId: "a",
+            type: .fact,
+            content: "Past fact",
+            model: "m",
+            validFrom: "2023-01-01T00:00:00Z"
+        )
+        let future = MemoryEntry(
+            agentId: "a",
+            type: .fact,
+            content: "Future fact",
+            model: "m",
+            validFrom: "2099-01-01T00:00:00Z"
+        )
+        try db.insertMemoryEntry(past)
+        try db.insertMemoryEntry(future)
+        let asOf = try db.loadEntriesAsOf(agentId: "a", asOf: "2024-06-01T00:00:00Z")
+        #expect(asOf.count == 1)
+        #expect(asOf[0].content == "Past fact")
     }
 
     @Test func touchMemoryEntryUpdatesAccess() throws {
@@ -443,6 +550,69 @@ struct MemoryDatabaseTests {
         #expect(loaded[0].summary == "Test summary")
     }
 
+    @Test func loadSummariesUnlimitedRetention() throws {
+        let db = try makeTempDB()
+        try db.upsertConversation(id: "c1", agentId: "a", title: nil)
+        let summary = ConversationSummary(
+            agentId: "a",
+            conversationId: "c1",
+            summary: "Old summary",
+            tokenCount: 10,
+            model: "test",
+            conversationAt: "2020-01-01"
+        )
+        try db.insertSummary(summary)
+        let withFilter = try db.loadSummaries(agentId: "a", days: 90)
+        #expect(withFilter.isEmpty, "90-day filter should exclude 2020 summary")
+        let unlimited = try db.loadSummaries(agentId: "a", days: 0)
+        #expect(unlimited.count == 1, "days=0 should return all summaries")
+        #expect(unlimited[0].summary == "Old summary")
+    }
+
+    @Test func insertChunkWithCreatedAt() throws {
+        let db = try makeTempDB()
+        try db.upsertConversation(id: "conv1", agentId: "a", title: nil)
+        try db.insertChunk(
+            conversationId: "conv1",
+            chunkIndex: 0,
+            role: "user",
+            content: "Hello from 2023",
+            tokenCount: 5,
+            createdAt: "2023-05-08"
+        )
+        let chunks = try db.loadAllChunks(days: 3650)
+        #expect(chunks.count == 1)
+        #expect(chunks[0].content == "Hello from 2023")
+        #expect(chunks[0].createdAt.hasPrefix("2023-05-08"))
+    }
+
+    @Test func insertChunkDefaultCreatedAt() throws {
+        let db = try makeTempDB()
+        try db.upsertConversation(id: "conv1", agentId: "a", title: nil)
+        try db.insertChunk(
+            conversationId: "conv1",
+            chunkIndex: 0,
+            role: "user",
+            content: "Hello today",
+            tokenCount: 5
+        )
+        let chunks = try db.loadAllChunks(days: 1)
+        #expect(chunks.count == 1, "Chunk with default created_at should be within 1 day")
+    }
+
+    @Test func deleteChunksForConversation() throws {
+        let db = try makeTempDB()
+        try db.upsertConversation(id: "conv1", agentId: "a", title: nil)
+        try db.upsertConversation(id: "conv2", agentId: "a", title: nil)
+        try db.insertChunk(conversationId: "conv1", chunkIndex: 0, role: "user", content: "A", tokenCount: 1)
+        try db.insertChunk(conversationId: "conv1", chunkIndex: 1, role: "assistant", content: "B", tokenCount: 1)
+        try db.insertChunk(conversationId: "conv2", chunkIndex: 0, role: "user", content: "C", tokenCount: 1)
+        try db.deleteChunksForConversation("conv1")
+        let remaining = try db.loadAllChunks(days: 1)
+        #expect(remaining.count == 1)
+        #expect(remaining[0].conversationId == "conv2")
+    }
+
     @Test func profileEventLifecycle() throws {
         let db = try makeTempDB()
         try db.insertProfileEvent(
@@ -531,7 +701,7 @@ struct MemoryServiceParseTests {
     @Test func parseResponseValidJSON() {
         let json = """
             {
-                "entries": [{"type": "fact", "content": "User likes Swift", "confidence": 0.9, "tags": ["swift"]}],
+                "entries": [{"type": "fact", "content": "User likes Swift", "confidence": 0.9, "tags": ["swift"], "valid_from": ""}],
                 "profile_facts": ["Prefers dark mode"],
                 "entities": [{"name": "Swift", "type": "tool"}],
                 "relationships": [{"source": "User", "relation": "uses", "target": "Swift", "confidence": 0.8}]
@@ -540,9 +710,28 @@ struct MemoryServiceParseTests {
         let result = service.parseResponse(json)
         #expect(result.entries.count == 1)
         #expect(result.entries[0].content == "User likes Swift")
+        #expect(result.entries[0].valid_from == "")
         #expect(result.profileFacts == ["Prefers dark mode"])
         #expect(result.graph.entities.count == 1)
         #expect(result.graph.relationships.count == 1)
+    }
+
+    @Test func parseResponseWithValidFrom() {
+        let json = """
+            {
+                "entries": [
+                    {"type": "fact", "content": "Went to the park", "confidence": 0.9, "tags": ["activity"], "valid_from": "2023-05-08"},
+                    {"type": "preference", "content": "Likes hiking", "confidence": 0.8, "tags": ["hobby"], "valid_from": ""}
+                ],
+                "profile_facts": [],
+                "entities": [],
+                "relationships": []
+            }
+            """
+        let result = service.parseResponse(json)
+        #expect(result.entries.count == 2)
+        #expect(result.entries[0].valid_from == "2023-05-08")
+        #expect(result.entries[1].valid_from == "")
     }
 
     @Test func parseResponseCodeFenced() {
@@ -573,6 +762,16 @@ struct MemoryServiceParseTests {
         #expect(result.entries[0].confidence == 0.75)
         #expect(result.entries[0].tags == ["single"])
         #expect(result.profileFacts == ["F1"])
+    }
+
+    @Test func parseResponseLenientWithValidFrom() {
+        let json = """
+            {"entries": [{"type": "fact", "content": "Met Alice", "confidence": 0.9, "tags": [], "valid_from": "2023-06-15"}], "profile_facts": []}
+            """
+        guard let data = json.data(using: .utf8) else { return }
+        let result = service.parseResponseLenient(data)
+        #expect(result.entries.count == 1)
+        #expect(result.entries[0].valid_from == "2023-06-15")
     }
 
     @Test func parseResponsePartialJSON() {
