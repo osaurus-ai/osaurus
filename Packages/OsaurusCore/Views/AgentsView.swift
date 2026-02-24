@@ -485,6 +485,7 @@ private struct AgentCard: View {
                 // Compact stat row
                 compactStats
             }
+            .frame(maxHeight: .infinity, alignment: .top)
             .padding(16)
             .background(cardBackground)
             .overlay(hoverGradient)
