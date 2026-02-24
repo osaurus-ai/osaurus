@@ -68,33 +68,11 @@ final class ChatSession: ObservableObject {
 
     nonisolated(unsafe) private var localModelsObserver: NSObjectProtocol?
 
-    // MARK: - App-level Model Options Cache
-    private static var cachedModelOptions: [ModelOption]?
-    private static var cacheValid = false
-
-    private nonisolated(unsafe) static var staticObserversRegistered = false
-
-    /// Registers class-level observers that invalidate the static cache
-    /// even when no ChatSession instance is alive.
-    private static func registerStaticObservers() {
-        guard !staticObserversRegistered else { return }
-        staticObserversRegistered = true
-        for name: Notification.Name in [.localModelsChanged, .remoteProviderModelsChanged] {
-            NotificationCenter.default.addObserver(
-                forName: name,
-                object: nil,
-                queue: .main
-            ) { _ in
-                Task { @MainActor in invalidateModelCache() }
-            }
-        }
-    }
-
     init() {
-        Self.registerStaticObservers()
-        if let cached = Self.cachedModelOptions, Self.cacheValid {
-            modelOptions = cached
-            hasAnyModel = !cached.isEmpty
+        let cache = ModelOptionsCache.shared
+        if cache.isLoaded {
+            modelOptions = cache.modelOptions
+            hasAnyModel = !cache.modelOptions.isEmpty
             isDiscoveringModels = false
         } else {
             modelOptions = []
@@ -129,8 +107,7 @@ final class ChatSession: ObservableObject {
                 self.activeModelOptions = ModelProfileRegistry.defaults(for: model)
             }
 
-        // Only load models if cache wasn't valid (first window or after invalidation)
-        if !Self.cacheValid {
+        if !cache.isLoaded {
             Task { [weak self] in
                 await self?.refreshModelOptions()
             }
@@ -163,93 +140,8 @@ final class ChatSession: ObservableObject {
         Task { [weak self] in await self?.refreshMemoryTokens() }
     }
 
-    /// Build rich model options from all sources
-    private static func buildModelOptions() async -> [ModelOption] {
-        var options: [ModelOption] = []
-
-        // Add foundation model first if available (use cached value)
-        if AppConfiguration.shared.foundationModelAvailable {
-            options.append(.foundation())
-        }
-
-        // Add local MLX models with rich metadata
-        // Run in detached task to avoid blocking main thread with file I/O
-        let localModels = await Task.detached(priority: .userInitiated) {
-            ModelManager.discoverLocalModels()
-        }.value
-
-        for model in localModels {
-            options.append(.fromMLXModel(model))
-        }
-
-        // Add remote provider models - must access on MainActor
-        let remoteModels = await MainActor.run {
-            RemoteProviderManager.shared.cachedAvailableModels()
-        }
-
-        for providerInfo in remoteModels {
-            for modelId in providerInfo.models {
-                options.append(
-                    .fromRemoteModel(
-                        modelId: modelId,
-                        providerName: providerInfo.providerName,
-                        providerId: providerInfo.providerId
-                    )
-                )
-            }
-        }
-
-        // Cache the result for subsequent windows
-        cachedModelOptions = options
-        cacheValid = true
-
-        return options
-    }
-
-    /// Pre-warm the full model cache (local + remote) at app launch
-    public static func prewarmModelCache() async {
-        registerStaticObservers()
-        _ = await buildModelOptions()
-    }
-
-    /// Quick prewarm with just local models (no network wait)
-    /// Call this early at launch so first window has something to show immediately
-    public static func prewarmLocalModelsOnly() {
-        registerStaticObservers()
-        Task {
-            // Run discovery in background
-            let localModels = await Task.detached(priority: .userInitiated) {
-                ModelManager.discoverLocalModels()
-            }.value
-
-            await MainActor.run {
-                var options: [ModelOption] = []
-
-                // Foundation model (instant check)
-                if AppConfiguration.shared.foundationModelAvailable {
-                    options.append(.foundation())
-                }
-
-                for model in localModels {
-                    options.append(.fromMLXModel(model))
-                }
-
-                // Cache what we have - remote models will be added by prewarmModelCache later
-                cachedModelOptions = options
-                cacheValid = true
-            }
-        }
-    }
-
-    /// Invalidate model cache to force rediscovery
-    /// Call this when models change outside of normal notification flow (e.g., after onboarding)
-    public static func invalidateModelCache() {
-        cacheValid = false
-        cachedModelOptions = nil
-    }
-
     func refreshModelOptions() async {
-        let newOptions = await Self.buildModelOptions()
+        let newOptions = await ModelOptionsCache.shared.buildModelOptions()
         let newOptionIds = newOptions.map { $0.id }
         let optionsChanged = modelOptions.map({ $0.id }) != newOptionIds
 

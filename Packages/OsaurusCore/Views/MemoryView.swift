@@ -145,10 +145,12 @@ struct MemoryView: View {
         }
         .onAppear {
             loadData()
-            loadModelOptions()
             withAnimation(.easeOut(duration: 0.25).delay(0.05)) {
                 hasAppeared = true
             }
+        }
+        .onReceive(ModelOptionsCache.shared.$modelOptions) { options in
+            modelOptions = options
         }
         .sheet(isPresented: $showProfileEditor) {
             ProfileEditSheet(
@@ -832,42 +834,6 @@ struct MemoryView: View {
                 if let loadError {
                     showToast(loadError, isError: true)
                 }
-            }
-        }
-    }
-
-    private func loadModelOptions() {
-        Task {
-            var options: [ModelOption] = []
-
-            if AppConfiguration.shared.foundationModelAvailable {
-                options.append(.foundation())
-            }
-
-            let localModels = await Task.detached(priority: .userInitiated) {
-                ModelManager.discoverLocalModels()
-            }.value
-            for model in localModels {
-                options.append(.fromMLXModel(model))
-            }
-
-            let remoteModels = await MainActor.run {
-                RemoteProviderManager.shared.cachedAvailableModels()
-            }
-            for providerInfo in remoteModels {
-                for modelId in providerInfo.models {
-                    options.append(
-                        .fromRemoteModel(
-                            modelId: modelId,
-                            providerName: providerInfo.providerName,
-                            providerId: providerInfo.providerId
-                        )
-                    )
-                }
-            }
-
-            await MainActor.run {
-                modelOptions = options
             }
         }
     }
