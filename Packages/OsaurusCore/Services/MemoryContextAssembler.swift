@@ -229,10 +229,48 @@ public actor MemoryContextAssembler {
         let l = naturalOutputFormatter.string(from: latest)
         if e == l {
             return
-                "Note: The conversations below took place around \(e). Answer temporal questions using these dates, not today's date."
+                "IMPORTANT: All conversations below occurred around \(e). Today's date is IRRELEVANT — do NOT use it. When asked about when something happened, use ONLY dates from the conversations."
         }
         return
-            "Note: The conversations below took place between \(e) and \(l). Answer temporal questions using these dates, not today's date."
+            "IMPORTANT: All conversations below occurred between \(e) and \(l). Today's date is IRRELEVANT — do NOT use it. When asked about when something happened, use ONLY dates from the conversations."
+    }
+
+    // MARK: - Chunk Window Expansion
+
+    /// Expand retrieved chunks by loading adjacent turns from the same conversation,
+    /// providing conversational context that helps answer cross-turn questions.
+    private static func expandChunkWindow(
+        _ chunks: [ConversationChunk],
+        windowSize: Int
+    ) -> [ConversationChunk] {
+        guard !chunks.isEmpty else { return [] }
+
+        var existingKeys = Set(chunks.map { "\($0.conversationId):\($0.chunkIndex)" })
+        var expandedKeys: [(conversationId: String, chunkIndex: Int)] = []
+
+        for chunk in chunks {
+            for offset in -windowSize ... windowSize where offset != 0 {
+                let adjIndex = chunk.chunkIndex + offset
+                guard adjIndex >= 0 else { continue }
+                let key = "\(chunk.conversationId):\(adjIndex)"
+                if !existingKeys.contains(key) {
+                    existingKeys.insert(key)
+                    expandedKeys.append((chunk.conversationId, adjIndex))
+                }
+            }
+        }
+
+        var allChunks = chunks
+        if !expandedKeys.isEmpty {
+            if let adjacent = try? MemoryDatabase.shared.loadChunksByKeys(expandedKeys) {
+                allChunks.append(contentsOf: adjacent)
+            }
+        }
+
+        return allChunks.sorted {
+            if $0.conversationId != $1.conversationId { return $0.conversationId < $1.conversationId }
+            return $0.chunkIndex < $1.chunkIndex
+        }
     }
 
     // MARK: - Query-Aware Retrieval
@@ -275,8 +313,10 @@ public actor MemoryContextAssembler {
         )
 
         let entries = await entriesResult
-        let chunks = await chunksResult
+        let searchedChunks = await chunksResult
         let summaries = await summariesResult
+
+        let chunks = Self.expandChunkWindow(searchedChunks, windowSize: 2)
 
         var sections: [String] = []
         var allDates: [String] = []
