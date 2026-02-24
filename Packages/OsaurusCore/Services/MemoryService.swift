@@ -21,6 +21,7 @@ public actor MemoryService {
 
     private var summaryTasks: [String: Task<Void, Never>] = [:]
     private var activeConversation: [String: String] = [:]
+    private var conversationSessionDates: [String: String] = [:]
 
     private init() {}
 
@@ -33,7 +34,8 @@ public actor MemoryService {
         userMessage: String,
         assistantMessage: String?,
         agentId: String,
-        conversationId: String
+        conversationId: String,
+        sessionDate: String? = nil
     ) async {
         do {
             try db.insertPendingSignal(
@@ -66,7 +68,8 @@ public actor MemoryService {
         let prompt = buildExtractionPrompt(
             userMessage: userMessage,
             assistantMessage: assistantMessage,
-            existingEntries: promptEntries
+            existingEntries: promptEntries,
+            sessionDate: sessionDate
         )
 
         do {
@@ -125,6 +128,11 @@ public actor MemoryService {
             )
         }
 
+        // Track session date for summary generation
+        if let sessionDate, !sessionDate.isEmpty {
+            conversationSessionDates[conversationId] = sessionDate
+        }
+
         // Session-change detection and summary debounce
         let previousConversation = activeConversation[agentId]
         activeConversation[agentId] = conversationId
@@ -133,15 +141,23 @@ public actor MemoryService {
             summaryTasks[prev]?.cancel()
             summaryTasks[prev] = nil
             let prevAgent = agentId
-            Task { await self.generateConversationSummary(agentId: prevAgent, conversationId: prev) }
+            let prevDate = conversationSessionDates[prev]
+            Task {
+                await self.generateConversationSummary(agentId: prevAgent, conversationId: prev, sessionDate: prevDate)
+            }
         }
 
         summaryTasks[conversationId]?.cancel()
         let debounceSeconds = config.summaryDebounceSeconds
+        let capturedDate = conversationSessionDates[conversationId]
         summaryTasks[conversationId] = Task {
             try? await Task.sleep(for: .seconds(debounceSeconds))
             guard !Task.isCancelled else { return }
-            await self.generateConversationSummary(agentId: agentId, conversationId: conversationId)
+            await self.generateConversationSummary(
+                agentId: agentId,
+                conversationId: conversationId,
+                sessionDate: capturedDate
+            )
         }
     }
 
@@ -312,7 +328,8 @@ public actor MemoryService {
         Do NOT add preamble like "Here is" or "Certainly". Output the summary directly.
         """
 
-    private func generateConversationSummary(agentId: String, conversationId: String) async {
+    private func generateConversationSummary(agentId: String, conversationId: String, sessionDate: String? = nil) async
+    {
         let config = MemoryConfigurationStore.load()
         guard config.enabled else { return }
 
@@ -351,6 +368,13 @@ public actor MemoryService {
                 return
             }
 
+            let conversationAt: String
+            if let date = sessionDate, !date.isEmpty {
+                conversationAt = date
+            } else {
+                conversationAt = Self.iso8601Formatter.string(from: Date())
+            }
+
             let tokenCount = max(1, summaryText.count / MemoryConfiguration.charsPerToken)
             let summaryObj = ConversationSummary(
                 agentId: agentId,
@@ -358,7 +382,7 @@ public actor MemoryService {
                 summary: summaryText,
                 tokenCount: tokenCount,
                 model: config.coreModelIdentifier,
-                conversationAt: Self.iso8601Formatter.string(from: Date())
+                conversationAt: conversationAt
             )
             do {
                 try db.insertSummaryAndMarkProcessed(summaryObj)
@@ -512,7 +536,7 @@ public actor MemoryService {
     private let extractionSystemPrompt = """
         You extract structured memories from conversations. \
         Respond ONLY with a valid JSON object. Never ask questions. Never refuse. \
-        The JSON must have: "entries" (array of objects with "type", "content", "confidence", "tags"), \
+        The JSON must have: "entries" (array of objects with "type", "content", "confidence", "tags", "valid_from"), \
         "profile_facts" (array of strings), \
         "entities" (array of objects with "name" and "type"), \
         "relationships" (array of objects with "source", "relation", "target", "confidence").
@@ -521,9 +545,14 @@ public actor MemoryService {
     private func buildExtractionPrompt(
         userMessage: String,
         assistantMessage: String?,
-        existingEntries: [MemoryEntry]
+        existingEntries: [MemoryEntry],
+        sessionDate: String? = nil
     ) -> String {
         var prompt = ""
+
+        if let date = sessionDate, !date.isEmpty {
+            prompt += "Conversation date: \(date)\n\n"
+        }
 
         if !existingEntries.isEmpty {
             prompt += "Existing memories (avoid duplicates, note contradictions):\n"
@@ -542,10 +571,19 @@ public actor MemoryService {
         prompt += """
 
             Extract memories as JSON with:
-            - "entries": array, each with "type" (fact/preference/decision/correction/commitment/relationship/skill), "content" (concise statement), "confidence" (0.0-1.0), "tags" (keywords array)
+            - "entries": array, each with \
+            "type" (fact/preference/decision/correction/commitment/relationship/skill), \
+            "content" (concise statement), \
+            "confidence" (0.0-1.0), \
+            "tags" (keywords array), \
+            "valid_from" (ISO 8601 date like "2023-05-08" if the memory is tied to a specific date, \
+            or "" for timeless facts. Use the conversation date to resolve relative references \
+            like "yesterday", "last week", "next month" into absolute dates.)
             - "profile_facts": array of strings — global facts about this user for their profile
             - "entities": array, each with "name" (string), "type" (person/company/place/project/tool/concept/event)
-            - "relationships": array, each with "source" (entity name), "relation" (verb like works_on/lives_in/uses/knows/manages/created_by/part_of), "target" (entity name), "confidence" (0.0-1.0)
+            - "relationships": array, each with "source" (entity name), \
+            "relation" (verb like works_on/lives_in/uses/knows/manages/created_by/part_of), \
+            "target" (entity name), "confidence" (0.0-1.0)
             """
 
         return prompt

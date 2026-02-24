@@ -124,5 +124,5 @@ ggml-*.metal
 .env
 Packages/**/Package.resolved
 
-# Benchmarks (cloned repos and outputs)
+# Benchmarks (cloned repos — setup via `make bench-setup`)
 benchmarks/

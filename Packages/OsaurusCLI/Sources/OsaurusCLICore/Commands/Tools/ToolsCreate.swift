@@ -242,7 +242,7 @@ public struct ToolsCreate {
 
             jobs:
               release:
-                uses: dinoki-ai/osaurus-tools/.github/workflows/build-plugin.yml@master
+                uses: osaurus-ai/osaurus-tools/.github/workflows/build-plugin.yml@master
                 secrets: inherit
             """
         try? releaseYml.write(to: workflowsDir.appendingPathComponent("release.yml"), atomically: true, encoding: .utf8)
@@ -1052,7 +1052,7 @@ public struct ToolsCreate {
 
             ### Registry Submission
 
-            1. Fork the [osaurus-tools](https://github.com/dinoki-ai/osaurus-tools) repository
+            1. Fork the [osaurus-tools](https://github.com/osaurus-ai/osaurus-tools) repository
             2. Add `plugins/<your-plugin-id>.json` with metadata
             3. Submit a pull request
 

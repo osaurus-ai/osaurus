@@ -166,7 +166,7 @@ private extension osaurusApp {
             }
 
             Button("Report an Issue…") {
-                openURL("https://github.com/dinoki-ai/osaurus/issues/new")
+                openURL("https://github.com/osaurus-ai/osaurus/issues/new")
             }
 
             Divider()
