@@ -195,12 +195,12 @@ struct MemoryConfigurationTests {
     @Test func benchmarkPresetApplied() {
         let config = MemoryConfiguration(preset: .benchmark)
         let validated = config.validated()
-        #expect(validated.recallTopK == 50)
-        #expect(validated.mmrLambda == 0.85)
-        #expect(validated.mmrFetchMultiplier == 3.0)
-        #expect(validated.workingMemoryBudgetTokens == 6000)
-        #expect(validated.summaryBudgetTokens == 4000)
-        #expect(validated.chunkBudgetTokens == 8000)
+        #expect(validated.recallTopK == 75)
+        #expect(validated.mmrLambda == 0.95)
+        #expect(validated.mmrFetchMultiplier == 4.0)
+        #expect(validated.workingMemoryBudgetTokens == 8000)
+        #expect(validated.summaryBudgetTokens == 6000)
+        #expect(validated.chunkBudgetTokens == 12000)
         #expect(validated.graphBudgetTokens == 500)
         #expect(validated.summaryRetentionDays == 0)
     }

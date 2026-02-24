@@ -176,12 +176,12 @@ public struct MemoryConfiguration: Codable, Equatable, Sendable {
             graphBudgetTokens = 300
             summaryRetentionDays = 180
         case .benchmark:
-            recallTopK = 50
-            mmrLambda = 0.85
-            mmrFetchMultiplier = 3.0
-            workingMemoryBudgetTokens = 6000
-            summaryBudgetTokens = 4000
-            chunkBudgetTokens = 8000
+            recallTopK = 75
+            mmrLambda = 0.95
+            mmrFetchMultiplier = 4.0
+            workingMemoryBudgetTokens = 8000
+            summaryBudgetTokens = 6000
+            chunkBudgetTokens = 12000
             graphBudgetTokens = 500
             summaryRetentionDays = 0
         }

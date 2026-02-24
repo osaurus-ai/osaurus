@@ -16,7 +16,7 @@ public actor MemorySearchService {
     public static let shared = MemorySearchService()
 
     private static let defaultSearchThreshold: Float = 0.10
-    private static let defaultChunkSearchThreshold: Float = 0.05
+    private static let defaultChunkSearchThreshold: Float = 0.01
     private static let dedupSearchThreshold: Float = 0.30
     private static let defaultMMRLambda: Double = 0.85
     private static let defaultFetchMultiplier: Double = 3.0

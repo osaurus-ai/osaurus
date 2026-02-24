@@ -25,7 +25,7 @@ index c64bd31..36221a4 100644
 \ No newline at end of file
 +config = Config()
 diff --git a/locomo/evaluation/gpt_utils.py b/locomo/evaluation/gpt_utils.py
-index 9a4befe..2c61480 100644
+index 9a4befe..6e23708 100644
 --- a/locomo/evaluation/gpt_utils.py
 +++ b/locomo/evaluation/gpt_utils.py
 @@ -1,12 +1,12 @@
@@ -47,12 +47,14 @@ index 9a4befe..2c61480 100644
  
  QA_PROMPT = """
  Based on the above context, write an answer in the form of a short phrase for the following question. Answer with exact words from the context whenever possible.
-@@ -14,13 +14,24 @@ Based on the above context, write an answer in the form of a short phrase for th
+@@ -14,13 +14,26 @@ Based on the above context, write an answer in the form of a short phrase for th
  Question: {} Short answer:
  """
  
 +QA_PROMPT_NO_CONTEXT = """
-+You have access to memories, conversation excerpts, and profile information about two people in your system instructions. Use that information to answer the following question with a short phrase. Use exact words from the provided context. If the answer is a name, place, or specific term, use the exact name or term. Do NOT explain your reasoning or say "the context does not mention". Just give the answer.
++You have access to memories, conversation excerpts, and profile information about two people in your system instructions. Answer the following question with a short phrase.
++
++IMPORTANT: Use the EXACT words, names, places, and numbers from the provided context. Do NOT paraphrase. If asked "how many", give the specific number. If asked "who" or "where", give the exact name or place.
 +
 +Question: {} Short answer:
 +"""
@@ -73,7 +75,7 @@ index 9a4befe..2c61480 100644
  CONV_START_PROMPT = "Below is a conversation between two people: {} and {}. The conversation takes place over multiple days, presented in chronological order.\n\n"
  
  
-@@ -106,8 +117,10 @@ async def process_single_question(qa, include_idx, in_data, start_prompt, start_
+@@ -106,8 +119,10 @@ async def process_single_question(qa, include_idx, in_data, start_prompt, start_
      is_cat_5 = False
      cat_5_options = None
      
@@ -81,11 +83,11 @@ index 9a4befe..2c61480 100644
 +
      if qa.get('category') == 2:
 -        question_text += ' Use DATE of CONVERSATION to answer with an approximate date.'
-+        question_text += ' Answer with a specific date like "7 May 2023", a year like "2023", or a relative time like "4 years". Do NOT use today\'s date or ISO format.'
++        question_text += ' These conversations took place in 2022-2023. Answer with the exact date or time phrase from the conversation (e.g., "7 May 2023", "2022", "10 years ago"). Do NOT use today\'s date. Do NOT say "yesterday", "last year", or "next month".'
      elif qa.get('category') == 5:
          is_cat_5 = True
          ans_text = qa.get('answer', qa.get('adversarial_answer', ''))
-@@ -126,7 +139,10 @@ async def process_single_question(qa, include_idx, in_data, start_prompt, start_
+@@ -126,7 +141,10 @@ async def process_single_question(qa, include_idx, in_data, start_prompt, start_
              cat_5_options = {'b': 'Not mentioned in the conversation', 'a': ans_text}
              
      # 2. Build Prompt Parts
@@ -97,7 +99,7 @@ index 9a4befe..2c61480 100644
      prompt_suffix = final_prompt_template.format(question_text)
      
      # 3. Get Context (Chronological & Deterministic Prefix)
-@@ -134,12 +150,7 @@ async def process_single_question(qa, include_idx, in_data, start_prompt, start_
+@@ -134,12 +152,7 @@ async def process_single_question(qa, include_idx, in_data, start_prompt, start_
      # This ensures that for all questions in the same sample, the 'context' text is identical,
      # enabling bit-for-bit identical prefixes for efficient provider-side prompt caching.
      
