@@ -124,5 +124,13 @@ ggml-*.metal
 .env
 Packages/**/Package.resolved
 
+# Private keys and certificates
+*.pem
+*.key
+*.p12
+*.cer
+*.pfx
+private_key.txt
+
 # Benchmarks (cloned repos — setup via `make bench-setup`)
 benchmarks/
