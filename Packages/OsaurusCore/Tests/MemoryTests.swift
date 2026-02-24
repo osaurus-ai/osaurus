@@ -118,10 +118,16 @@ struct MemoryConfigurationTests {
         let config = MemoryConfiguration()
         #expect(config.enabled == true)
         #expect(config.maxEntriesPerAgent == 500)
-        #expect(config.workingMemoryBudgetTokens == 2000)
+        #expect(config.preset == .production)
+        #expect(config.workingMemoryBudgetTokens == 3000)
         #expect(config.summaryBudgetTokens == 2000)
+        #expect(config.chunkBudgetTokens == 4000)
         #expect(config.graphBudgetTokens == 300)
+        #expect(config.recallTopK == 30)
+        #expect(config.mmrLambda == 0.7)
+        #expect(config.summaryRetentionDays == 180)
         #expect(config.verificationJaccardDedupThreshold == 0.6)
+        #expect(config.configVersion == 3)
     }
 
     @Test func decodesWithMissingKeys() throws {
@@ -146,40 +152,67 @@ struct MemoryConfigurationTests {
         var config = MemoryConfiguration()
         config.summaryDebounceSeconds = -5
         config.profileMaxTokens = -100
-        config.recallTopK = 0
-        config.mmrLambda = -0.5
-        config.mmrFetchMultiplier = 0.1
         config.maxEntriesPerAgent = -1
+        config.temporalDecayHalfLifeDays = -10
         let validated = config.validated()
         #expect(validated.summaryDebounceSeconds == 10)
         #expect(validated.profileMaxTokens == 100)
-        #expect(validated.recallTopK == 1)
-        #expect(validated.mmrLambda == 0.0)
-        #expect(validated.mmrFetchMultiplier == 1.0)
         #expect(validated.maxEntriesPerAgent == 0)
+        #expect(validated.temporalDecayHalfLifeDays == 1)
     }
 
     @Test func validationClampsExcessiveValues() {
         var config = MemoryConfiguration()
         config.summaryDebounceSeconds = 999_999
         config.profileMaxTokens = 999_999
-        config.recallTopK = 999
-        config.mmrLambda = 5.0
-        config.summaryRetentionDays = 9999
+        config.maxEntriesPerAgent = 999_999
         let validated = config.validated()
         #expect(validated.summaryDebounceSeconds == 3600)
         #expect(validated.profileMaxTokens == 50_000)
-        #expect(validated.recallTopK == 100)
-        #expect(validated.mmrLambda == 1.0)
-        #expect(validated.summaryRetentionDays == 365)
+        #expect(validated.maxEntriesPerAgent == 10_000)
     }
 
     @Test func validationPreservesValidValues() {
         let config = MemoryConfiguration()
         let validated = config.validated()
         #expect(validated.summaryDebounceSeconds == config.summaryDebounceSeconds)
-        #expect(validated.mmrLambda == config.mmrLambda)
         #expect(validated.maxEntriesPerAgent == config.maxEntriesPerAgent)
+        #expect(validated.preset == .production)
+    }
+
+    @Test func productionPresetApplied() {
+        let config = MemoryConfiguration(preset: .production)
+        let validated = config.validated()
+        #expect(validated.recallTopK == 30)
+        #expect(validated.mmrLambda == 0.7)
+        #expect(validated.mmrFetchMultiplier == 2.0)
+        #expect(validated.workingMemoryBudgetTokens == 3000)
+        #expect(validated.summaryBudgetTokens == 2000)
+        #expect(validated.chunkBudgetTokens == 4000)
+        #expect(validated.graphBudgetTokens == 300)
+        #expect(validated.summaryRetentionDays == 180)
+    }
+
+    @Test func benchmarkPresetApplied() {
+        let config = MemoryConfiguration(preset: .benchmark)
+        let validated = config.validated()
+        #expect(validated.recallTopK == 50)
+        #expect(validated.mmrLambda == 0.85)
+        #expect(validated.mmrFetchMultiplier == 3.0)
+        #expect(validated.workingMemoryBudgetTokens == 6000)
+        #expect(validated.summaryBudgetTokens == 4000)
+        #expect(validated.chunkBudgetTokens == 8000)
+        #expect(validated.graphBudgetTokens == 500)
+        #expect(validated.summaryRetentionDays == 0)
+    }
+
+    @Test func presetRoundTrips() throws {
+        var config = MemoryConfiguration(preset: .benchmark)
+        config.maxEntriesPerAgent = 200
+        let data = try JSONEncoder().encode(config)
+        let decoded = try JSONDecoder().decode(MemoryConfiguration.self, from: data)
+        #expect(decoded.preset == .benchmark)
+        #expect(decoded.maxEntriesPerAgent == 200)
     }
 }
 
@@ -215,7 +248,7 @@ struct MemoryContextAssemblerTests {
     @Test func emptyDatabaseReturnsEmptyContext() async throws {
         let config = MemoryConfiguration()
         let context = await MemoryContextAssembler.assembleContext(agentId: "test", config: config)
-        #expect(context.isEmpty || !context.contains("Working Memory"))
+        #expect(context.isEmpty || !context.contains("Remembered Details"))
     }
 
     @Test func disabledConfigReturnsEmpty() async {
@@ -516,6 +549,81 @@ struct MemoryDatabaseTests {
         let loaded = try db.loadSummaries(agentId: "a", days: 365)
         #expect(loaded.count == 1)
         #expect(loaded[0].summary == "Test summary")
+    }
+
+    @Test func loadSummariesUnlimitedRetention() throws {
+        let db = try makeTempDB()
+        try db.upsertConversation(id: "c1", agentId: "a", title: nil)
+        let summary = ConversationSummary(
+            agentId: "a",
+            conversationId: "c1",
+            summary: "Old summary",
+            tokenCount: 10,
+            model: "test",
+            conversationAt: "2020-01-01"
+        )
+        try db.insertSummary(summary)
+        let withFilter = try db.loadSummaries(agentId: "a", days: 90)
+        #expect(withFilter.isEmpty, "90-day filter should exclude 2020 summary")
+        let unlimited = try db.loadSummaries(agentId: "a", days: 0)
+        #expect(unlimited.count == 1, "days=0 should return all summaries")
+        #expect(unlimited[0].summary == "Old summary")
+    }
+
+    @Test func insertChunkWithCreatedAt() throws {
+        let db = try makeTempDB()
+        try db.upsertConversation(id: "conv1", agentId: "a", title: nil)
+        try db.insertChunk(
+            conversationId: "conv1",
+            chunkIndex: 0,
+            role: "user",
+            content: "Hello from 2023",
+            tokenCount: 5,
+            createdAt: "2023-05-08"
+        )
+        let chunks = try db.loadAllChunks(days: 3650)
+        #expect(chunks.count == 1)
+        #expect(chunks[0].content == "Hello from 2023")
+        #expect(chunks[0].createdAt.hasPrefix("2023-05-08"))
+    }
+
+    @Test func insertChunkDefaultCreatedAt() throws {
+        let db = try makeTempDB()
+        try db.upsertConversation(id: "conv1", agentId: "a", title: nil)
+        try db.insertChunk(
+            conversationId: "conv1",
+            chunkIndex: 0,
+            role: "user",
+            content: "Hello today",
+            tokenCount: 5
+        )
+        let chunks = try db.loadAllChunks(days: 1)
+        #expect(chunks.count == 1, "Chunk with default created_at should be within 1 day")
+    }
+
+    @Test func deleteChunksForConversation() throws {
+        let db = try makeTempDB()
+        try db.upsertConversation(id: "conv1", agentId: "a", title: nil)
+        try db.upsertConversation(id: "conv2", agentId: "a", title: nil)
+        try db.insertChunk(conversationId: "conv1", chunkIndex: 0, role: "user", content: "A", tokenCount: 1)
+        try db.insertChunk(conversationId: "conv1", chunkIndex: 1, role: "assistant", content: "B", tokenCount: 1)
+        try db.insertChunk(conversationId: "conv2", chunkIndex: 0, role: "user", content: "C", tokenCount: 1)
+        try db.deleteChunksForConversation("conv1")
+        let remaining = try db.loadAllChunks(days: 1)
+        #expect(remaining.count == 1)
+        #expect(remaining[0].conversationId == "conv2")
+    }
+
+    @Test func deleteChunksForAgent() throws {
+        let db = try makeTempDB()
+        try db.upsertConversation(id: "conv1", agentId: "agent1", title: nil)
+        try db.upsertConversation(id: "conv2", agentId: "agent2", title: nil)
+        try db.insertChunk(conversationId: "conv1", chunkIndex: 0, role: "user", content: "A", tokenCount: 1)
+        try db.insertChunk(conversationId: "conv2", chunkIndex: 0, role: "user", content: "B", tokenCount: 1)
+        try db.deleteChunksForAgent("agent1")
+        let remaining = try db.loadAllChunks(days: 1)
+        #expect(remaining.count == 1)
+        #expect(remaining[0].conversationId == "conv2")
     }
 
     @Test func profileEventLifecycle() throws {

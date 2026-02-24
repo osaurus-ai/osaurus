@@ -113,12 +113,12 @@ public actor MemoryContextAssembler {
             MemoryLogger.service.warning("Context assembly: failed to load user profile: \(error)")
         }
 
-        // 3. Working Memory (this agent's active entries)
+        // 3. Remembered Details (this agent's active entries)
         do {
             let entries = try db.loadActiveEntries(agentId: agentId)
             if !entries.isEmpty {
                 let block = buildBudgetSection(
-                    header: "# Working Memory",
+                    header: "# Remembered Details",
                     budgetTokens: config.workingMemoryBudgetTokens,
                     items: entries,
                     formatLine: Self.formatEntryLine
@@ -142,7 +142,7 @@ public actor MemoryContextAssembler {
                         header: "# Recent Conversation Summaries",
                         budgetTokens: config.summaryBudgetTokens,
                         items: summaries
-                    ) { "- [date: \($0.conversationAt)] \($0.summary)" }
+                    ) { "- [date: \(Self.naturalLanguageDate($0.conversationAt))] \($0.summary)" }
                 )
             }
         } catch {
@@ -165,6 +165,7 @@ public actor MemoryContextAssembler {
             MemoryLogger.service.warning("Context assembly: failed to load relationships: \(error)")
         }
 
+        guard !sections.isEmpty else { return "" }
         return sections.joined(separator: "\n\n")
     }
 
@@ -188,13 +189,50 @@ public actor MemoryContextAssembler {
         return block
     }
 
+    /// Convert an ISO 8601 date string (e.g. "2023-05-08") to natural language (e.g. "8 May 2023").
+    /// Returns the original string unchanged if it can't be parsed.
+    private static let isoInputFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        f.locale = Locale(identifier: "en_US_POSIX")
+        return f
+    }()
+
+    private static let naturalOutputFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "d MMMM yyyy"
+        f.locale = Locale(identifier: "en_US")
+        return f
+    }()
+
+    static func naturalLanguageDate(_ iso: String) -> String {
+        let trimmed = String(iso.prefix(10))
+        guard let date = isoInputFormatter.date(from: trimmed) else { return iso }
+        return naturalOutputFormatter.string(from: date)
+    }
+
     /// Format a memory entry as a context line, including type and optional date.
     private static func formatEntryLine(_ entry: MemoryEntry) -> String {
         var line = "- [\(entry.type.displayName)] \(entry.content)"
         if !entry.validFrom.isEmpty {
-            line += " (date: \(entry.validFrom))"
+            line += " (date: \(naturalLanguageDate(entry.validFrom)))"
         }
         return line
+    }
+
+    /// Build a temporal anchor from collected ISO date strings.
+    /// Returns nil if fewer than 1 valid date is found.
+    private static func temporalAnchor(from isoDates: [String]) -> String? {
+        let parsed = isoDates.compactMap { isoInputFormatter.date(from: String($0.prefix(10))) }
+        guard let earliest = parsed.min(), let latest = parsed.max() else { return nil }
+        let e = naturalOutputFormatter.string(from: earliest)
+        let l = naturalOutputFormatter.string(from: latest)
+        if e == l {
+            return
+                "Note: The conversations below took place around \(e). Answer temporal questions using these dates, not today's date."
+        }
+        return
+            "Note: The conversations below took place between \(e) and \(l). Answer temporal questions using these dates, not today's date."
     }
 
     // MARK: - Query-Aware Retrieval
@@ -223,7 +261,14 @@ public actor MemoryContextAssembler {
         async let chunksResult = searchService.searchConversations(
             query: query,
             agentId: agentId,
-            days: 365,
+            days: 3650,
+            topK: topK,
+            lambda: lambda,
+            fetchMultiplier: fetchMultiplier
+        )
+        async let summariesResult = searchService.searchSummaries(
+            query: query,
+            agentId: agentId,
             topK: topK,
             lambda: lambda,
             fetchMultiplier: fetchMultiplier
@@ -231,19 +276,44 @@ public actor MemoryContextAssembler {
 
         let entries = await entriesResult
         let chunks = await chunksResult
+        let summaries = await summariesResult
 
         var sections: [String] = []
-        let budgetTokens = config.workingMemoryBudgetTokens
+        var allDates: [String] = []
+
+        // Chunks first — raw dialogue contains the specific details that
+        // single-hop and temporal questions target.
+        if !chunks.isEmpty {
+            for chunk in chunks where !chunk.createdAt.isEmpty {
+                allDates.append(chunk.createdAt)
+            }
+            sections.append(
+                buildBudgetSection(
+                    header: "# Relevant Conversation Excerpts",
+                    budgetTokens: config.chunkBudgetTokens,
+                    items: chunks
+                ) { chunk in
+                    var line = "- \(chunk.content)"
+                    if !chunk.createdAt.isEmpty {
+                        line += " (date: \(Self.naturalLanguageDate(chunk.createdAt)))"
+                    }
+                    return line
+                }
+            )
+        }
 
         if !entries.isEmpty {
             let deduplicated = entries.filter { entry in
                 !existingContext.contains(entry.content)
             }
             if !deduplicated.isEmpty {
+                for entry in deduplicated where !entry.validFrom.isEmpty {
+                    allDates.append(entry.validFrom)
+                }
                 sections.append(
                     buildBudgetSection(
                         header: "# Relevant Memories",
-                        budgetTokens: budgetTokens,
+                        budgetTokens: config.workingMemoryBudgetTokens,
                         items: deduplicated,
                         formatLine: Self.formatEntryLine
                     )
@@ -251,20 +321,28 @@ public actor MemoryContextAssembler {
             }
         }
 
-        if !chunks.isEmpty {
-            sections.append(
-                buildBudgetSection(
-                    header: "# Relevant Conversation Excerpts",
-                    budgetTokens: budgetTokens,
-                    items: chunks
-                ) { chunk in
-                    var line = "- \(chunk.content)"
-                    if !chunk.createdAt.isEmpty {
-                        line += " (date: \(chunk.createdAt))"
-                    }
-                    return line
+        if !summaries.isEmpty {
+            let deduplicated = summaries.filter { summary in
+                !existingContext.contains(summary.summary)
+            }
+            if !deduplicated.isEmpty {
+                for summary in deduplicated {
+                    allDates.append(summary.conversationAt)
                 }
-            )
+                sections.append(
+                    buildBudgetSection(
+                        header: "# Relevant Summaries",
+                        budgetTokens: config.summaryBudgetTokens,
+                        items: deduplicated
+                    ) { "- [date: \(Self.naturalLanguageDate($0.conversationAt))] \($0.summary)" }
+                )
+            }
+        }
+
+        guard !sections.isEmpty else { return "" }
+
+        if let anchor = Self.temporalAnchor(from: allDates) {
+            sections.insert(anchor, at: 0)
         }
 
         return sections.joined(separator: "\n\n")

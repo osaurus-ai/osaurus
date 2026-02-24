@@ -1115,19 +1115,30 @@ public final class MemoryDatabase: @unchecked Sendable {
         }
     }
 
-    public func loadSummaries(agentId: String, days: Int = 7) throws -> [ConversationSummary] {
+    public func loadSummaries(agentId: String, days: Int = 0) throws -> [ConversationSummary] {
         var summaries: [ConversationSummary] = []
+        let sql: String
+        if days > 0 {
+            sql = """
+                SELECT id, agent_id, conversation_id, summary, token_count, model, conversation_at, status, created_at
+                FROM conversation_summaries
+                WHERE agent_id = ?1 AND status = 'active'
+                  AND conversation_at >= datetime('now', '-' || ?2 || ' days')
+                ORDER BY conversation_at DESC
+                """
+        } else {
+            sql = """
+                SELECT id, agent_id, conversation_id, summary, token_count, model, conversation_at, status, created_at
+                FROM conversation_summaries
+                WHERE agent_id = ?1 AND status = 'active'
+                ORDER BY conversation_at DESC
+                """
+        }
         try prepareAndExecute(
-            """
-            SELECT id, agent_id, conversation_id, summary, token_count, model, conversation_at, status, created_at
-            FROM conversation_summaries
-            WHERE agent_id = ?1 AND status = 'active'
-              AND conversation_at >= datetime('now', '-' || ?2 || ' days')
-            ORDER BY conversation_at DESC
-            """,
+            sql,
             bind: { stmt in
                 Self.bindText(stmt, index: 1, value: agentId)
-                sqlite3_bind_int(stmt, 2, Int32(days))
+                if days > 0 { sqlite3_bind_int(stmt, 2, Int32(days)) }
             },
             process: { stmt in
                 while sqlite3_step(stmt) == SQLITE_ROW {
@@ -1251,13 +1262,19 @@ public final class MemoryDatabase: @unchecked Sendable {
         }
     }
 
-    public func insertChunk(conversationId: String, chunkIndex: Int, role: String, content: String, tokenCount: Int)
-        throws
-    {
+    public func insertChunk(
+        conversationId: String,
+        chunkIndex: Int,
+        role: String,
+        content: String,
+        tokenCount: Int,
+        createdAt: String? = nil
+    ) throws {
+        let effectiveDate = (createdAt?.isEmpty == false) ? createdAt : nil
         _ = try executeUpdate(
             """
-            INSERT INTO conversation_chunks (conversation_id, chunk_index, role, content, token_count)
-            VALUES (?1, ?2, ?3, ?4, ?5)
+            INSERT INTO conversation_chunks (conversation_id, chunk_index, role, content, token_count, created_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, COALESCE(?6, datetime('now')))
             """
         ) { stmt in
             Self.bindText(stmt, index: 1, value: conversationId)
@@ -1265,6 +1282,27 @@ public final class MemoryDatabase: @unchecked Sendable {
             Self.bindText(stmt, index: 3, value: role)
             Self.bindText(stmt, index: 4, value: content)
             sqlite3_bind_int(stmt, 5, Int32(tokenCount))
+            Self.bindText(stmt, index: 6, value: effectiveDate)
+        }
+    }
+
+    public func deleteChunksForConversation(_ conversationId: String) throws {
+        _ = try executeUpdate(
+            "DELETE FROM conversation_chunks WHERE conversation_id = ?1"
+        ) { stmt in
+            Self.bindText(stmt, index: 1, value: conversationId)
+        }
+    }
+
+    public func deleteChunksForAgent(_ agentId: String) throws {
+        _ = try executeUpdate(
+            """
+            DELETE FROM conversation_chunks WHERE conversation_id IN (
+                SELECT id FROM conversations WHERE agent_id = ?1
+            )
+            """
+        ) { stmt in
+            Self.bindText(stmt, index: 1, value: agentId)
         }
     }
 

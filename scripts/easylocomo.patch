@@ -1,0 +1,181 @@
+diff --git a/locomo/config.py b/locomo/config.py
+index c64bd31..36221a4 100644
+--- a/locomo/config.py
++++ b/locomo/config.py
+@@ -26,6 +26,7 @@ class Config:
+         self.no_context = False
+         self.max_questions: Optional[int] = None
+         self.seed: int = 42
++        self.agent_id: Optional[str] = None
+ 
+         self.init_validate()
+ 
+@@ -43,10 +44,11 @@ class Config:
+             raise ValueError("model_name is not set")
+         else:
+             self.out_file_path = self.outs_dir / f"{self.model_name}_qa.json"
++            self.out_file_path.parent.mkdir(parents=True, exist_ok=True)
+         
+         if self.batch_size <= 0:
+             raise ValueError("batch_size must be positive")
+         if self.max_context <= 0:
+             raise ValueError("max_context must be positive")
+         
+-config = Config()
+\ No newline at end of file
++config = Config()
+diff --git a/locomo/evaluation/gpt_utils.py b/locomo/evaluation/gpt_utils.py
+index 9a4befe..2c61480 100644
+--- a/locomo/evaluation/gpt_utils.py
++++ b/locomo/evaluation/gpt_utils.py
+@@ -1,12 +1,12 @@
+-import random
+-import os, json, hashlib
++import hashlib
++import json
++import os
++
+ import asyncio
+-from tqdm.asyncio import tqdm_asyncio
+-import time
+-from locomo.utils.openai_client import run_chatgpt, run_chatgpt_async
+ import tiktoken
++from tqdm.asyncio import tqdm_asyncio
+ 
+-PER_QA_TOKEN_BUDGET = 50
++from locomo.utils.openai_client import run_chatgpt, run_chatgpt_async
+ 
+ QA_PROMPT = """
+ Based on the above context, write an answer in the form of a short phrase for the following question. Answer with exact words from the context whenever possible.
+@@ -14,13 +14,24 @@ Based on the above context, write an answer in the form of a short phrase for th
+ Question: {} Short answer:
+ """
+ 
++QA_PROMPT_NO_CONTEXT = """
++You have access to memories, conversation excerpts, and profile information about two people in your system instructions. Use that information to answer the following question with a short phrase. Use exact words from the provided context. If the answer is a name, place, or specific term, use the exact name or term. Do NOT explain your reasoning or say "the context does not mention". Just give the answer.
++
++Question: {} Short answer:
++"""
++
+ QA_PROMPT_CAT_5 = """
+ Based on the above context, answer the following question.
+ 
+ Question: {} Short answer:
+ """
+ 
+-# CONV_START_PROMPT = "Below is a conversation between two people: {} and {}. The conversation takes place over multiple days and the date of each conversation is wriiten at the beginning of the conversation.\n\n"
++QA_PROMPT_CAT_5_NO_CONTEXT = """
++You have access to memories and conversation excerpts about two people in your system instructions. Based ONLY on that information, answer the following question. If the information is not present in the provided context, select "Not mentioned in the conversation".
++
++Question: {} Short answer:
++"""
++
+ CONV_START_PROMPT = "Below is a conversation between two people: {} and {}. The conversation takes place over multiple days, presented in chronological order.\n\n"
+ 
+ 
+@@ -106,8 +117,10 @@ async def process_single_question(qa, include_idx, in_data, start_prompt, start_
+     is_cat_5 = False
+     cat_5_options = None
+     
++    is_no_context = getattr(args, 'no_context', False)
++
+     if qa.get('category') == 2:
+-        question_text += ' Use DATE of CONVERSATION to answer with an approximate date.'
++        question_text += ' Answer with a specific date like "7 May 2023", a year like "2023", or a relative time like "4 years". Do NOT use today\'s date or ISO format.'
+     elif qa.get('category') == 5:
+         is_cat_5 = True
+         ans_text = qa.get('answer', qa.get('adversarial_answer', ''))
+@@ -126,7 +139,10 @@ async def process_single_question(qa, include_idx, in_data, start_prompt, start_
+             cat_5_options = {'b': 'Not mentioned in the conversation', 'a': ans_text}
+             
+     # 2. Build Prompt Parts
+-    final_prompt_template = QA_PROMPT if not is_cat_5 else QA_PROMPT_CAT_5
++    if is_no_context:
++        final_prompt_template = QA_PROMPT_CAT_5_NO_CONTEXT if is_cat_5 else QA_PROMPT_NO_CONTEXT
++    else:
++        final_prompt_template = QA_PROMPT_CAT_5 if is_cat_5 else QA_PROMPT
+     prompt_suffix = final_prompt_template.format(question_text)
+     
+     # 3. Get Context (Chronological & Deterministic Prefix)
+@@ -134,12 +150,7 @@ async def process_single_question(qa, include_idx, in_data, start_prompt, start_
+     # This ensures that for all questions in the same sample, the 'context' text is identical,
+     # enabling bit-for-bit identical prefixes for efficient provider-side prompt caching.
+     
+-    if getattr(args, 'no_context', False):
+-        context = ""
+-        # If no context, we don't start with CONV_START_PROMPT either, or we need a minimal instruction.
+-        # But 'start_prompt' is passed in.
+-        # Let's just use the start_prompt (which introduces people) but no actual conversation.
+-        # Or better: if no_context, the prompt is just the question.
++    if is_no_context:
+         full_query = prompt_suffix
+     else:
+         context = get_input_context(in_data['conversation'], RESERVED_QA_TOKENS + start_tokens, encoding, args)
+diff --git a/locomo/evaluation/runner.py b/locomo/evaluation/runner.py
+index e1961f5..5a4a042 100644
+--- a/locomo/evaluation/runner.py
++++ b/locomo/evaluation/runner.py
+@@ -1,10 +1,15 @@
+-import os, json
++import os, json, uuid
+ from tqdm import tqdm
+ import argparse
+ from locomo.evaluation.gpt_utils import get_gpt_answers
+ from locomo.evaluation.evaluate_qa import evaluate_and_report
+ from locomo.config import config
+ 
++
++def _sample_agent_id(sample_id: str) -> str:
++    return str(uuid.uuid5(uuid.NAMESPACE_DNS, f"locomo.{sample_id}"))
++
++
+ def run_locomo():
+     # Ensure configuration is valid
+     assert config.out_file_path is not None, "out_file_path must be set before running"
+@@ -42,7 +47,11 @@ def run_locomo():
+             if 'speaker_b' in conv_data and 'person2' not in data:
+                 data['person2'] = conv_data['speaker_b']
+ 
+-        # Always use get_gpt_answers (OpenAI format)
++        if config.no_context:
++            config.agent_id = _sample_agent_id(data["sample_id"])
++        else:
++            config.agent_id = None
++
+         answers = get_gpt_answers(data, out_data, prediction_key, config, out_samples, config.out_file_path)
+ 
+         # Inline evaluation removed. Done in batch at the end.
+@@ -61,4 +70,3 @@ def run_locomo():
+         model_name=model_key,
+         data_file=config.data_path
+     )
+-
+diff --git a/locomo/utils/openai_client.py b/locomo/utils/openai_client.py
+index 24feb39..347eae9 100644
+--- a/locomo/utils/openai_client.py
++++ b/locomo/utils/openai_client.py
+@@ -7,10 +7,16 @@ from openai import OpenAI, AsyncOpenAI, APIError, APIConnectionError, RateLimitE
+ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+ from locomo.config import config
+ 
++def _extra_headers():
++    if config.agent_id:
++        return {"X-Osaurus-Agent-Id": config.agent_id}
++    return None
++
+ def get_openai_client():
+     client = OpenAI(
+         api_key=config.openai_api_key, 
+         base_url=config.openai_api_base,
++        default_headers=_extra_headers(),
+     )
+     return client
+ 
+@@ -18,6 +24,7 @@ def get_async_openai_client():
+     client = AsyncOpenAI(
+         api_key=config.openai_api_key, 
+         base_url=config.openai_api_base,
++        default_headers=_extra_headers(),
+     )
+     return client
+ 

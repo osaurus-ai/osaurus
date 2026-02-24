@@ -204,6 +204,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 handleOpenResponses(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .POST, path == "/memory/ingest" {
                 handleMemoryIngest(head: head, context: context, startTime: startTime, userAgent: userAgent)
+            } else if head.method == .POST, path == "/memory/clear-chunks" {
+                handleClearChunks(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .GET, path == "/agents" {
                 handleListAgents(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else {
@@ -415,6 +417,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let conversation_id: String
         let turns: [MemoryIngestTurn]
         let session_date: String?
+        let skip_extraction: Bool?
     }
 
     private struct MemoryIngestTurn: Codable {
@@ -474,15 +477,54 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logRequestBody = requestBodyString
 
         Task(priority: .userInitiated) {
-            for turn in req.turns {
+            let db = MemoryDatabase.shared
+            try? db.upsertConversation(
+                id: req.conversation_id,
+                agentId: req.agent_id,
+                title: nil
+            )
+
+            let skipExtraction = req.skip_extraction ?? false
+
+            try? db.deleteChunksForConversation(req.conversation_id)
+
+            for (i, turn) in req.turns.enumerated() {
                 let turnDate = turn.date ?? req.session_date
-                await MemoryService.shared.recordConversationTurn(
-                    userMessage: turn.user,
-                    assistantMessage: turn.assistant,
-                    agentId: req.agent_id,
-                    conversationId: req.conversation_id,
-                    sessionDate: turnDate
-                )
+
+                let pairs: [(role: String, content: String, index: Int)] = [
+                    ("user", turn.user, i * 2),
+                    ("assistant", turn.assistant, i * 2 + 1),
+                ]
+                for (role, content, chunkIndex) in pairs {
+                    let tokens = max(1, content.count / 4)
+                    let chunk = ConversationChunk(
+                        conversationId: req.conversation_id,
+                        chunkIndex: chunkIndex,
+                        role: role,
+                        content: content,
+                        tokenCount: tokens,
+                        agentId: req.agent_id
+                    )
+                    try? db.insertChunk(
+                        conversationId: req.conversation_id,
+                        chunkIndex: chunkIndex,
+                        role: role,
+                        content: content,
+                        tokenCount: tokens,
+                        createdAt: turnDate
+                    )
+                    await MemorySearchService.shared.indexConversationChunk(chunk)
+                }
+
+                if !skipExtraction {
+                    await MemoryService.shared.recordConversationTurn(
+                        userMessage: turn.user,
+                        assistantMessage: turn.assistant,
+                        agentId: req.agent_id,
+                        conversationId: req.conversation_id,
+                        sessionDate: turnDate
+                    )
+                }
             }
 
             let responseBody = "{\"status\":\"ok\",\"turns_ingested\":\(req.turns.count)}"
@@ -513,6 +555,84 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 responseBody: responseBody,
                 responseStatus: 200,
                 startTime: logStartTime
+            )
+        }
+    }
+
+    // MARK: - Clear Chunks
+
+    private struct ClearChunksRequest: Codable {
+        let agent_id: String
+    }
+
+    private func handleClearChunks(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        let cors = stateRef.value.corsHeaders
+        let data: Data
+        let requestBodyString: String?
+        if let body = stateRef.value.requestBodyBuffer {
+            var bodyCopy = body
+            let bytes = bodyCopy.readBytes(length: bodyCopy.readableBytes) ?? []
+            data = Data(bytes)
+            requestBodyString = String(decoding: data, as: UTF8.self)
+        } else {
+            data = Data()
+            requestBodyString = nil
+        }
+
+        var headers: [(String, String)] = [("Content-Type", "application/json")]
+        headers.append(contentsOf: cors)
+
+        guard let req = try? JSONDecoder().decode(ClearChunksRequest.self, from: data) else {
+            let body = "{\"error\":\"Invalid request body. Requires: agent_id\"}"
+            sendResponse(context: context, version: head.version, status: .badRequest, headers: headers, body: body)
+            logRequest(
+                method: "POST",
+                path: "/memory/clear-chunks",
+                userAgent: userAgent,
+                requestBody: requestBodyString,
+                responseBody: body,
+                responseStatus: 400,
+                startTime: startTime
+            )
+            return
+        }
+
+        let db = MemoryDatabase.shared
+        do {
+            try db.deleteChunksForAgent(req.agent_id)
+            let body = "{\"status\":\"ok\",\"agent_id\":\"\(req.agent_id)\"}"
+            sendResponse(context: context, version: head.version, status: .ok, headers: headers, body: body)
+            logRequest(
+                method: "POST",
+                path: "/memory/clear-chunks",
+                userAgent: userAgent,
+                requestBody: requestBodyString,
+                responseBody: body,
+                responseStatus: 200,
+                startTime: startTime
+            )
+        } catch {
+            let body = "{\"error\":\"Failed to clear chunks\"}"
+            sendResponse(
+                context: context,
+                version: head.version,
+                status: .internalServerError,
+                headers: headers,
+                body: body
+            )
+            logRequest(
+                method: "POST",
+                path: "/memory/clear-chunks",
+                userAgent: userAgent,
+                requestBody: requestBodyString,
+                responseBody: body,
+                responseStatus: 500,
+                startTime: startTime
             )
         }
     }

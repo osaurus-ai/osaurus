@@ -8,6 +8,11 @@
 import Foundation
 import os
 
+public enum MemoryPreset: String, Codable, CaseIterable, Sendable {
+    case production
+    case benchmark
+}
+
 public struct MemoryConfiguration: Codable, Equatable, Sendable {
     /// Core Model provider (e.g. "anthropic")
     public var coreModelProvider: String
@@ -35,6 +40,9 @@ public struct MemoryConfiguration: Codable, Equatable, Sendable {
     /// Token budget for summaries in context
     public var summaryBudgetTokens: Int
 
+    /// Token budget for conversation chunk excerpts in context
+    public var chunkBudgetTokens: Int
+
     /// Token budget for knowledge graph relationships in context
     public var graphBudgetTokens: Int
 
@@ -60,6 +68,12 @@ public struct MemoryConfiguration: Codable, Equatable, Sendable {
     public var verificationSemanticDedupThreshold: Double
     /// Jaccard threshold for Layer 1 near-duplicate detection (above this = auto-SKIP)
     public var verificationJaccardDedupThreshold: Double
+
+    /// Schema version for migration tracking. Bump when defaults change.
+    public var configVersion: Int
+
+    /// Active preset profile. Controls retrieval and budget parameters.
+    public var preset: MemoryPreset
 
     /// Full model identifier for routing (e.g. "anthropic/claude-haiku-4-5" or "foundation")
     public var coreModelIdentifier: String {
@@ -90,11 +104,12 @@ public struct MemoryConfiguration: Codable, Equatable, Sendable {
         summaryDebounceSeconds: Int = 60,
         profileMaxTokens: Int = 2000,
         profileRegenerateThreshold: Int = 10,
-        workingMemoryBudgetTokens: Int = 2000,
-        summaryRetentionDays: Int = 7,
+        workingMemoryBudgetTokens: Int = 3000,
+        summaryRetentionDays: Int = 180,
         summaryBudgetTokens: Int = 2000,
+        chunkBudgetTokens: Int = 4000,
         graphBudgetTokens: Int = 300,
-        recallTopK: Int = 10,
+        recallTopK: Int = 30,
         temporalDecayHalfLifeDays: Int = 30,
         mmrLambda: Double = 0.7,
         mmrFetchMultiplier: Double = 2.0,
@@ -102,7 +117,9 @@ public struct MemoryConfiguration: Codable, Equatable, Sendable {
         enabled: Bool = true,
         verificationEnabled: Bool = true,
         verificationSemanticDedupThreshold: Double = 0.85,
-        verificationJaccardDedupThreshold: Double = 0.6
+        verificationJaccardDedupThreshold: Double = 0.6,
+        configVersion: Int = 3,
+        preset: MemoryPreset = .production
     ) {
         self.coreModelProvider = coreModelProvider
         self.coreModelName = coreModelName
@@ -114,6 +131,7 @@ public struct MemoryConfiguration: Codable, Equatable, Sendable {
         self.workingMemoryBudgetTokens = workingMemoryBudgetTokens
         self.summaryRetentionDays = summaryRetentionDays
         self.summaryBudgetTokens = summaryBudgetTokens
+        self.chunkBudgetTokens = chunkBudgetTokens
         self.graphBudgetTokens = graphBudgetTokens
         self.recallTopK = recallTopK
         self.temporalDecayHalfLifeDays = temporalDecayHalfLifeDays
@@ -124,17 +142,20 @@ public struct MemoryConfiguration: Codable, Equatable, Sendable {
         self.verificationEnabled = verificationEnabled
         self.verificationSemanticDedupThreshold = verificationSemanticDedupThreshold
         self.verificationJaccardDedupThreshold = verificationJaccardDedupThreshold
+        self.configVersion = configVersion
+        self.preset = preset
     }
 
-    /// Returns a copy with all values clamped to valid ranges.
+    /// Returns a copy with all values clamped to valid ranges, then applies preset overrides.
     public func validated() -> MemoryConfiguration {
         var c = self
         c.summaryDebounceSeconds = max(10, min(c.summaryDebounceSeconds, 3600))
         c.profileMaxTokens = max(100, min(c.profileMaxTokens, 50_000))
         c.profileRegenerateThreshold = max(1, min(c.profileRegenerateThreshold, 100))
         c.workingMemoryBudgetTokens = max(50, min(c.workingMemoryBudgetTokens, 10_000))
-        c.summaryRetentionDays = max(1, min(c.summaryRetentionDays, 365))
+        c.summaryRetentionDays = max(0, min(c.summaryRetentionDays, 3650))
         c.summaryBudgetTokens = max(50, min(c.summaryBudgetTokens, 10_000))
+        c.chunkBudgetTokens = max(50, min(c.chunkBudgetTokens, 20_000))
         c.graphBudgetTokens = max(50, min(c.graphBudgetTokens, 5_000))
         c.recallTopK = max(1, min(c.recallTopK, 100))
         c.temporalDecayHalfLifeDays = max(1, min(c.temporalDecayHalfLifeDays, 365))
@@ -143,7 +164,32 @@ public struct MemoryConfiguration: Codable, Equatable, Sendable {
         c.maxEntriesPerAgent = max(0, min(c.maxEntriesPerAgent, 10_000))
         c.verificationSemanticDedupThreshold = max(0.0, min(c.verificationSemanticDedupThreshold, 1.0))
         c.verificationJaccardDedupThreshold = max(0.0, min(c.verificationJaccardDedupThreshold, 1.0))
+        c.applyPreset()
         return c
+    }
+
+    /// Overwrite retrieval and budget parameters based on the active preset.
+    private mutating func applyPreset() {
+        switch preset {
+        case .production:
+            recallTopK = 30
+            mmrLambda = 0.7
+            mmrFetchMultiplier = 2.0
+            workingMemoryBudgetTokens = 3000
+            summaryBudgetTokens = 2000
+            chunkBudgetTokens = 4000
+            graphBudgetTokens = 300
+            summaryRetentionDays = 180
+        case .benchmark:
+            recallTopK = 50
+            mmrLambda = 0.85
+            mmrFetchMultiplier = 3.0
+            workingMemoryBudgetTokens = 6000
+            summaryBudgetTokens = 4000
+            chunkBudgetTokens = 8000
+            graphBudgetTokens = 500
+            summaryRetentionDays = 0
+        }
     }
 
     public init(from decoder: Decoder) throws {
@@ -165,6 +211,8 @@ public struct MemoryConfiguration: Codable, Equatable, Sendable {
             try c.decodeIfPresent(Int.self, forKey: .summaryRetentionDays) ?? defaults.summaryRetentionDays
         summaryBudgetTokens =
             try c.decodeIfPresent(Int.self, forKey: .summaryBudgetTokens) ?? defaults.summaryBudgetTokens
+        chunkBudgetTokens =
+            try c.decodeIfPresent(Int.self, forKey: .chunkBudgetTokens) ?? defaults.chunkBudgetTokens
         graphBudgetTokens =
             try c.decodeIfPresent(Int.self, forKey: .graphBudgetTokens) ?? defaults.graphBudgetTokens
         recallTopK = try c.decodeIfPresent(Int.self, forKey: .recallTopK) ?? defaults.recallTopK
@@ -184,6 +232,8 @@ public struct MemoryConfiguration: Codable, Equatable, Sendable {
         verificationJaccardDedupThreshold =
             try c.decodeIfPresent(Double.self, forKey: .verificationJaccardDedupThreshold)
             ?? defaults.verificationJaccardDedupThreshold
+        configVersion = try c.decodeIfPresent(Int.self, forKey: .configVersion) ?? 0
+        preset = try c.decodeIfPresent(MemoryPreset.self, forKey: .preset) ?? defaults.preset
     }
 
     public static var `default`: MemoryConfiguration { MemoryConfiguration() }
@@ -211,13 +261,37 @@ public enum MemoryConfigurationStore: Sendable {
         }
         do {
             let data = try Data(contentsOf: url)
-            let config = try JSONDecoder().decode(MemoryConfiguration.self, from: data).validated()
-            lock.withLock { $0 = config }
-            return config
+            var config = try JSONDecoder().decode(MemoryConfiguration.self, from: data)
+            config = migrateDefaults(config)
+            let validated = config.validated()
+            lock.withLock { $0 = validated }
+            return validated
         } catch {
             MemoryLogger.config.error("Failed to load config: \(error)")
             return .default
         }
+    }
+
+    private static let currentConfigVersion = 3
+
+    /// Versioned migration: applies incremental upgrades based on configVersion.
+    /// Preset now controls retrieval/budget parameters, so per-field migration
+    /// is only needed for pre-preset configs (v0-v2).
+    private static func migrateDefaults(_ config: MemoryConfiguration) -> MemoryConfiguration {
+        guard config.configVersion < currentConfigVersion else { return config }
+        var c = config
+
+        // v0-v2 -> v3: preset system replaces per-field tuning.
+        // Existing configs get production preset; budget/retrieval fields are
+        // now overridden by the preset in validated(), so no per-field migration needed.
+        if c.configVersion < 3 {
+            c.preset = .production
+        }
+
+        c.configVersion = currentConfigVersion
+        save(c)
+        MemoryLogger.config.info("Migrated memory config from v\(config.configVersion) to v\(currentConfigVersion)")
+        return c
     }
 
     public static func save(_ config: MemoryConfiguration) {

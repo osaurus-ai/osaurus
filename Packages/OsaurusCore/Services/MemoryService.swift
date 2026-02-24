@@ -21,6 +21,7 @@ public actor MemoryService {
 
     private var summaryTasks: [String: Task<Void, Never>] = [:]
     private var activeConversation: [String: String] = [:]
+    private var conversationSessionDates: [String: String] = [:]
 
     private init() {}
 
@@ -127,6 +128,11 @@ public actor MemoryService {
             )
         }
 
+        // Track session date for summary generation
+        if let sessionDate, !sessionDate.isEmpty {
+            conversationSessionDates[conversationId] = sessionDate
+        }
+
         // Session-change detection and summary debounce
         let previousConversation = activeConversation[agentId]
         activeConversation[agentId] = conversationId
@@ -135,15 +141,23 @@ public actor MemoryService {
             summaryTasks[prev]?.cancel()
             summaryTasks[prev] = nil
             let prevAgent = agentId
-            Task { await self.generateConversationSummary(agentId: prevAgent, conversationId: prev) }
+            let prevDate = conversationSessionDates[prev]
+            Task {
+                await self.generateConversationSummary(agentId: prevAgent, conversationId: prev, sessionDate: prevDate)
+            }
         }
 
         summaryTasks[conversationId]?.cancel()
         let debounceSeconds = config.summaryDebounceSeconds
+        let capturedDate = conversationSessionDates[conversationId]
         summaryTasks[conversationId] = Task {
             try? await Task.sleep(for: .seconds(debounceSeconds))
             guard !Task.isCancelled else { return }
-            await self.generateConversationSummary(agentId: agentId, conversationId: conversationId)
+            await self.generateConversationSummary(
+                agentId: agentId,
+                conversationId: conversationId,
+                sessionDate: capturedDate
+            )
         }
     }
 
@@ -314,7 +328,8 @@ public actor MemoryService {
         Do NOT add preamble like "Here is" or "Certainly". Output the summary directly.
         """
 
-    private func generateConversationSummary(agentId: String, conversationId: String) async {
+    private func generateConversationSummary(agentId: String, conversationId: String, sessionDate: String? = nil) async
+    {
         let config = MemoryConfigurationStore.load()
         guard config.enabled else { return }
 
@@ -353,6 +368,13 @@ public actor MemoryService {
                 return
             }
 
+            let conversationAt: String
+            if let date = sessionDate, !date.isEmpty {
+                conversationAt = date
+            } else {
+                conversationAt = Self.iso8601Formatter.string(from: Date())
+            }
+
             let tokenCount = max(1, summaryText.count / MemoryConfiguration.charsPerToken)
             let summaryObj = ConversationSummary(
                 agentId: agentId,
@@ -360,7 +382,7 @@ public actor MemoryService {
                 summary: summaryText,
                 tokenCount: tokenCount,
                 model: config.coreModelIdentifier,
-                conversationAt: Self.iso8601Formatter.string(from: Date())
+                conversationAt: conversationAt
             )
             do {
                 try db.insertSummaryAndMarkProcessed(summaryObj)

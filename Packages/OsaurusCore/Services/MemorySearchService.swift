@@ -15,6 +15,12 @@ import os
 public actor MemorySearchService {
     public static let shared = MemorySearchService()
 
+    private static let defaultSearchThreshold: Float = 0.10
+    private static let defaultChunkSearchThreshold: Float = 0.05
+    private static let dedupSearchThreshold: Float = 0.30
+    private static let defaultMMRLambda: Double = 0.85
+    private static let defaultFetchMultiplier: Double = 3.0
+
     private var vectorDB: VecturaKit?
     private var isInitialized = false
 
@@ -146,8 +152,12 @@ public actor MemorySearchService {
     ) async -> [MemoryEntry] {
         if let db = vectorDB {
             do {
-                let fetchCount = Int(Double(topK) * (fetchMultiplier ?? 2.0))
-                let results = try await db.search(query: .text(query), numResults: fetchCount, threshold: 0.3)
+                let fetchCount = Int(Double(topK) * (fetchMultiplier ?? Self.defaultFetchMultiplier))
+                let results = try await db.search(
+                    query: .text(query),
+                    numResults: fetchCount,
+                    threshold: Self.defaultSearchThreshold
+                )
 
                 let scoreMap = Dictionary(
                     results.map { ($0.id.uuidString, (score: Double($0.score), text: $0.text)) },
@@ -161,7 +171,7 @@ public actor MemorySearchService {
                     return (item: entry, score: match.score, content: entry.content)
                 }
 
-                return mmrRerank(results: scored, lambda: lambda ?? 0.7, topK: topK)
+                return mmrRerank(results: scored, lambda: lambda ?? Self.defaultMMRLambda, topK: topK)
             } catch {
                 MemoryLogger.search.error("Vector search failed, falling back to text: \(error)")
             }
@@ -184,7 +194,11 @@ public actor MemorySearchService {
     ) async -> [(entry: MemoryEntry, score: Double)] {
         guard let db = vectorDB else { return [] }
         do {
-            let results = try await db.search(query: .text(query), numResults: topK, threshold: 0.3)
+            let results = try await db.search(
+                query: .text(query),
+                numResults: topK,
+                threshold: Self.dedupSearchThreshold
+            )
 
             let scoreMap = Dictionary(
                 results.map { ($0.id.uuidString, Double($0.score)) },
@@ -220,8 +234,12 @@ public actor MemorySearchService {
     ) async -> [ConversationChunk] {
         if let db = vectorDB {
             do {
-                let fetchCount = Int(Double(topK) * (fetchMultiplier ?? 2.0))
-                let results = try await db.search(query: .text(query), numResults: fetchCount, threshold: 0.3)
+                let fetchCount = Int(Double(topK) * (fetchMultiplier ?? Self.defaultFetchMultiplier))
+                let results = try await db.search(
+                    query: .text(query),
+                    numResults: fetchCount,
+                    threshold: Self.defaultChunkSearchThreshold
+                )
 
                 var scoreByKey: [String: Double] = [:]
                 var keys: [(conversationId: String, chunkIndex: Int)] = []
@@ -244,7 +262,7 @@ public actor MemorySearchService {
                     }
 
                     if !scored.isEmpty {
-                        return mmrRerank(results: scored, lambda: lambda ?? 0.7, topK: topK)
+                        return mmrRerank(results: scored, lambda: lambda ?? Self.defaultMMRLambda, topK: topK)
                     }
                 }
             } catch {
@@ -273,8 +291,12 @@ public actor MemorySearchService {
     ) async -> [ConversationSummary] {
         if let db = vectorDB {
             do {
-                let fetchCount = Int(Double(topK) * (fetchMultiplier ?? 2.0))
-                let results = try await db.search(query: .text(query), numResults: fetchCount, threshold: 0.3)
+                let fetchCount = Int(Double(topK) * (fetchMultiplier ?? Self.defaultFetchMultiplier))
+                let results = try await db.search(
+                    query: .text(query),
+                    numResults: fetchCount,
+                    threshold: Self.defaultSearchThreshold
+                )
 
                 var scoreByKey: [String: Double] = [:]
                 var compositeKeys: [(agentId: String, conversationId: String, conversationAt: String)] = []
@@ -298,7 +320,7 @@ public actor MemorySearchService {
                         }
 
                     if !scored.isEmpty {
-                        return mmrRerank(results: scored, lambda: lambda ?? 0.7, topK: topK)
+                        return mmrRerank(results: scored, lambda: lambda ?? Self.defaultMMRLambda, topK: topK)
                     }
                 }
             } catch {
