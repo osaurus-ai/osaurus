@@ -231,6 +231,7 @@ struct ServerView: View {
         switch category {
         case .core: return "server.rack"
         case .chat: return "bubble.left.and.bubble.right"
+        case .embeddings: return "text.viewfinder"
         case .audio: return "waveform"
         case .memory: return "brain.head.profile"
         case .mcp: return "wrench.and.screwdriver"
@@ -241,6 +242,7 @@ struct ServerView: View {
         switch category {
         case .core: return .blue
         case .chat: return .green
+        case .embeddings: return .cyan
         case .audio: return .orange
         case .memory: return .pink
         case .mcp: return .purple
@@ -480,6 +482,7 @@ struct APIEndpoint {
     enum EndpointCategory: String {
         case core = "Core"
         case chat = "Chat"
+        case embeddings = "Embeddings"
         case audio = "Audio"
         case memory = "Memory"
         case mcp = "MCP"
@@ -612,6 +615,33 @@ struct APIEndpoint {
                     }
                     """
             ),
+            // Embeddings endpoints
+            APIEndpoint(
+                method: "POST",
+                path: "/embeddings",
+                description: "Generate text embeddings",
+                compatibility: "OpenAI",
+                category: .embeddings,
+                examplePayload: """
+                    {
+                      "model": "potion-base-4M",
+                      "input": "Hello world"
+                    }
+                    """
+            ),
+            APIEndpoint(
+                method: "POST",
+                path: "/embed",
+                description: "Generate text embeddings",
+                compatibility: "Ollama",
+                category: .embeddings,
+                examplePayload: """
+                    {
+                      "model": "potion-base-4M",
+                      "input": "Hello world"
+                    }
+                    """
+            ),
             // Audio endpoints
             APIEndpoint(
                 method: "POST",
@@ -681,7 +711,7 @@ struct APIEndpoint {
     }
 
     static var groupedEndpoints: [(category: EndpointCategory, endpoints: [APIEndpoint])] {
-        let categories: [EndpointCategory] = [.core, .chat, .audio, .memory, .mcp]
+        let categories: [EndpointCategory] = [.core, .chat, .embeddings, .audio, .memory, .mcp]
         return categories.map { cat in
             (category: cat, endpoints: allEndpoints.filter { $0.category == cat })
         }

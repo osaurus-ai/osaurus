@@ -206,6 +206,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 handleMemoryIngest(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .GET, path == "/agents" {
                 handleListAgents(head: head, context: context, startTime: startTime, userAgent: userAgent)
+            } else if head.method == .POST, path == "/embeddings" || path == "/embed" {
+                handleEmbeddings(
+                    head: head,
+                    context: context,
+                    startTime: startTime,
+                    userAgent: userAgent,
+                    ollamaFormat: path == "/embed"
+                )
             } else {
                 var headers = [("Content-Type", "text/plain; charset=utf-8")]
                 headers.append(contentsOf: stateRef.value.corsHeaders)
@@ -639,6 +647,135 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 responseStatus: 200,
                 startTime: logStartTime
             )
+        }
+    }
+
+    // MARK: - Embeddings
+
+    private func handleEmbeddings(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?,
+        ollamaFormat: Bool
+    ) {
+        let logPath = ollamaFormat ? "/embed" : "/embeddings"
+
+        let data: Data
+        let requestBodyString: String?
+        if let body = stateRef.value.requestBodyBuffer {
+            var bodyCopy = body
+            let bytes = bodyCopy.readBytes(length: bodyCopy.readableBytes) ?? []
+            data = Data(bytes)
+            requestBodyString = String(decoding: data, as: UTF8.self)
+        } else {
+            data = Data()
+            requestBodyString = nil
+        }
+
+        guard let request = try? JSONDecoder().decode(EmbeddingRequest.self, from: data) else {
+            let errorBody =
+                ollamaFormat
+                ? #"{"error":"invalid request body"}"#
+                : #"{"error":{"message":"Invalid request body","type":"invalid_request_error","code":"invalid_body"}}"#
+            sendResponse(
+                context: context,
+                version: head.version,
+                status: .badRequest,
+                headers: [("Content-Type", "application/json; charset=utf-8")],
+                body: errorBody
+            )
+            logRequest(
+                method: "POST",
+                path: logPath,
+                userAgent: userAgent,
+                requestBody: requestBodyString,
+                responseStatus: 400,
+                startTime: startTime,
+                errorMessage: "Invalid request body"
+            )
+            return
+        }
+
+        let texts = request.input.texts
+        let cors = stateRef.value.corsHeaders
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop: (@escaping @Sendable () -> Void) -> Void = { block in
+            if loop.inEventLoop { block() } else { loop.execute { block() } }
+        }
+        let logSelf = self
+        let logStartTime = startTime
+        let logUserAgent = userAgent
+        let logRequestBody = requestBodyString
+
+        Task(priority: .userInitiated) {
+            do {
+                let embeddings = try await EmbeddingService.shared.embed(texts: texts)
+
+                let json: String
+                if ollamaFormat {
+                    let response = OllamaEmbedResponse(model: EmbeddingService.modelName, embeddings: embeddings)
+                    json = (try? JSONEncoder().encode(response)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+                } else {
+                    let objects = embeddings.enumerated().map { OpenAIEmbeddingObject(embedding: $1, index: $0) }
+                    let tokenCount = texts.reduce(0) { $0 + $1.split(separator: " ").count }
+                    let response = OpenAIEmbeddingResponse(
+                        data: objects,
+                        model: EmbeddingService.modelName,
+                        usage: OpenAIEmbeddingUsage(prompt_tokens: tokenCount, total_tokens: tokenCount)
+                    )
+                    json = (try? JSONEncoder().encode(response)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+                }
+
+                hop {
+                    var headers = [("Content-Type", "application/json; charset=utf-8")]
+                    headers.append(contentsOf: cors)
+                    self.sendResponse(
+                        context: ctx.value,
+                        version: head.version,
+                        status: .ok,
+                        headers: headers,
+                        body: json
+                    )
+                }
+                logSelf.logRequest(
+                    method: "POST",
+                    path: logPath,
+                    userAgent: logUserAgent,
+                    requestBody: logRequestBody,
+                    responseBody: json,
+                    responseStatus: 200,
+                    startTime: logStartTime
+                )
+            } catch {
+                let errorJson =
+                    ollamaFormat
+                    ? #"{"error":"\#(error.localizedDescription)"}"#
+                    : #"{"error":{"message":"\#(error.localizedDescription)","type":"server_error","code":"embedding_failed"}}"#
+
+                hop {
+                    var headers = [("Content-Type", "application/json; charset=utf-8")]
+                    headers.append(contentsOf: cors)
+                    self.sendResponse(
+                        context: ctx.value,
+                        version: head.version,
+                        status: .internalServerError,
+                        headers: headers,
+                        body: errorJson
+                    )
+                }
+                logSelf.logRequest(
+                    method: "POST",
+                    path: logPath,
+                    userAgent: logUserAgent,
+                    requestBody: logRequestBody,
+                    responseBody: errorJson,
+                    responseStatus: 500,
+                    startTime: logStartTime,
+                    errorMessage: error.localizedDescription
+                )
+            }
         }
     }
 
