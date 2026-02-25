@@ -54,6 +54,7 @@ private struct AddProviderFlow: View {
     @State private var customProtocol: RemoteProviderProtocol = .https
     @State private var customPort: String = ""
     @State private var customBasePath: String = "/v1"
+    @State private var customAuthType: RemoteProviderAuthType = .none
 
     // Advanced settings
     @State private var showAdvanced = false
@@ -280,7 +281,7 @@ private struct AddProviderFlow: View {
 
                         sectionDivider
 
-                        // API Key section inside card
+                        // Authentication section inside card
                         VStack(alignment: .leading, spacing: 12) {
                             HStack(spacing: 8) {
                                 Image(systemName: "key.fill")
@@ -292,10 +293,23 @@ private struct AddProviderFlow: View {
                                     .tracking(0.5)
                             }
 
-                            ProviderSecureField(placeholder: "sk-...", text: $apiKey)
-                                .onChange(of: apiKey) { _, _ in testResult = nil }
+                            SegmentedToggle {
+                                SegmentedToggleButton("No Auth", isSelected: customAuthType == .none) {
+                                    customAuthType = .none
+                                }
+                                SegmentedToggleButton("API Key", isSelected: customAuthType == .apiKey) {
+                                    customAuthType = .apiKey
+                                }
+                            }
+
+                            if customAuthType == .apiKey {
+                                ProviderSecureField(placeholder: "sk-...", text: $apiKey)
+                                    .onChange(of: apiKey) { _, _ in testResult = nil }
+                                    .transition(.opacity.combined(with: .move(edge: .top)))
+                            }
                         }
                         .padding(16)
+                        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: customAuthType)
                     }
                     .background(
                         RoundedRectangle(cornerRadius: 12)
@@ -336,6 +350,7 @@ private struct AddProviderFlow: View {
                 customPort = ""
                 customBasePath = "/v1"
                 customProtocol = .https
+                customAuthType = .none
                 showAdvanced = false
                 timeout = 60
                 customHeaders = []
@@ -450,18 +465,10 @@ private struct AddProviderFlow: View {
                         .foregroundColor(theme.tertiaryText)
                         .tracking(0.5)
 
-                    HStack(spacing: 0) {
-                        protocolButton("HTTPS", proto: .https)
-                        protocolButton("HTTP", proto: .http)
+                    SegmentedToggle {
+                        SegmentedToggleButton("HTTPS", isSelected: customProtocol == .https) { customProtocol = .https }
+                        SegmentedToggleButton("HTTP", isSelected: customProtocol == .http) { customProtocol = .http }
                     }
-                    .background(
-                        RoundedRectangle(cornerRadius: 10)
-                            .fill(theme.inputBackground)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 10)
-                                    .stroke(theme.inputBorder, lineWidth: 1)
-                            )
-                    )
                 }
                 .frame(width: 140)
 
@@ -490,22 +497,6 @@ private struct AddProviderFlow: View {
             }
         }
         .padding(16)
-    }
-
-    private func protocolButton(_ label: String, proto: RemoteProviderProtocol) -> some View {
-        Button(action: { customProtocol = proto }) {
-            Text(label)
-                .font(.system(size: 11, weight: customProtocol == proto ? .semibold : .medium))
-                .foregroundColor(customProtocol == proto ? theme.primaryText : theme.tertiaryText)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 10)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(customProtocol == proto ? theme.tertiaryBackground : Color.clear)
-                )
-        }
-        .buttonStyle(PlainButtonStyle())
-        .padding(2)
     }
 
     private var endpointPreview: some View {
@@ -808,7 +799,7 @@ private struct AddProviderFlow: View {
         let trimmedHost = customHost.trimmingCharacters(in: .whitespaces)
         let trimmedBasePath = customBasePath.trimmingCharacters(in: .whitespaces)
         let port: Int? = customPort.trimmingCharacters(in: .whitespaces).isEmpty ? nil : Int(customPort)
-        let testApiKey = apiKey.isEmpty ? nil : apiKey
+        let testApiKey = customAuthType == .apiKey && !apiKey.isEmpty ? apiKey : nil
 
         isTesting = true
         testResult = nil
@@ -820,7 +811,7 @@ private struct AddProviderFlow: View {
                     providerProtocol: customProtocol,
                     port: port,
                     basePath: trimmedBasePath.isEmpty ? "/v1" : trimmedBasePath,
-                    authType: testApiKey != nil ? .apiKey : .none,
+                    authType: customAuthType,
                     providerType: .openai,
                     apiKey: testApiKey,
                     headers: HeaderEntry.buildHeaders(from: customHeaders)
@@ -853,7 +844,7 @@ private struct AddProviderFlow: View {
             port: Int(customPort),
             basePath: trimmedBasePath.isEmpty ? "/v1" : trimmedBasePath,
             customHeaders: regularHeaders,
-            authType: apiKey.isEmpty ? .none : .apiKey,
+            authType: customAuthType,
             providerType: .openai,
             enabled: true,
             autoConnect: true,
@@ -862,7 +853,8 @@ private struct AddProviderFlow: View {
         )
 
         saveSecretHeaders(for: remoteProvider.id)
-        onSave(remoteProvider, apiKey.isEmpty ? nil : apiKey)
+        let savedApiKey = customAuthType == .apiKey && !apiKey.isEmpty ? apiKey : nil
+        onSave(remoteProvider, savedApiKey)
         dismiss()
     }
 
@@ -1077,18 +1069,10 @@ private struct EditProviderFlow: View {
                             .tracking(0.5)
                     }
 
-                    HStack(spacing: 0) {
-                        authButton("No Auth", type: .none)
-                        authButton("API Key", type: .apiKey)
+                    SegmentedToggle {
+                        SegmentedToggleButton("No Auth", isSelected: authType == .none) { authType = .none }
+                        SegmentedToggleButton("API Key", isSelected: authType == .apiKey) { authType = .apiKey }
                     }
-                    .background(
-                        RoundedRectangle(cornerRadius: 10)
-                            .fill(theme.inputBackground)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 10)
-                                    .stroke(theme.inputBorder, lineWidth: 1)
-                            )
-                    )
 
                     if authType == .apiKey {
                         ProviderSecureField(placeholder: "Leave blank to keep current", text: $apiKey)
@@ -1135,18 +1119,14 @@ private struct EditProviderFlow: View {
                         .foregroundColor(theme.tertiaryText)
                         .tracking(0.5)
 
-                    HStack(spacing: 0) {
-                        editProtocolButton("HTTPS", proto: .https)
-                        editProtocolButton("HTTP", proto: .http)
+                    SegmentedToggle {
+                        SegmentedToggleButton("HTTPS", isSelected: providerProtocol == .https) {
+                            providerProtocol = .https
+                        }
+                        SegmentedToggleButton("HTTP", isSelected: providerProtocol == .http) {
+                            providerProtocol = .http
+                        }
                     }
-                    .background(
-                        RoundedRectangle(cornerRadius: 10)
-                            .fill(theme.inputBackground)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 10)
-                                    .stroke(theme.inputBorder, lineWidth: 1)
-                            )
-                    )
                 }
                 .frame(width: 140)
 
@@ -1184,38 +1164,6 @@ private struct EditProviderFlow: View {
             }
         }
         .padding(16)
-    }
-
-    private func editProtocolButton(_ label: String, proto: RemoteProviderProtocol) -> some View {
-        Button(action: { providerProtocol = proto }) {
-            Text(label)
-                .font(.system(size: 11, weight: providerProtocol == proto ? .semibold : .medium))
-                .foregroundColor(providerProtocol == proto ? theme.primaryText : theme.tertiaryText)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 10)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(providerProtocol == proto ? theme.tertiaryBackground : Color.clear)
-                )
-        }
-        .buttonStyle(PlainButtonStyle())
-        .padding(2)
-    }
-
-    private func authButton(_ label: String, type: RemoteProviderAuthType) -> some View {
-        Button(action: { authType = type }) {
-            Text(label)
-                .font(.system(size: 11, weight: authType == type ? .semibold : .medium))
-                .foregroundColor(authType == type ? theme.primaryText : theme.tertiaryText)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 10)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(authType == type ? theme.tertiaryBackground : Color.clear)
-                )
-        }
-        .buttonStyle(PlainButtonStyle())
-        .padding(2)
     }
 
     private var sectionDivider: some View {
@@ -1648,6 +1596,63 @@ private struct ProviderSelectionCard: View {
                 isHovered = hovering
             }
         }
+    }
+}
+
+// MARK: - Segmented Toggle
+
+private struct SegmentedToggle<Content: View>: View {
+    @ObservedObject private var themeManager = ThemeManager.shared
+    let content: () -> Content
+
+    init(@ViewBuilder content: @escaping () -> Content) {
+        self.content = content
+    }
+
+    var body: some View {
+        HStack(spacing: 0) {
+            content()
+        }
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(themeManager.currentTheme.inputBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(themeManager.currentTheme.inputBorder, lineWidth: 1)
+                )
+        )
+    }
+}
+
+private struct SegmentedToggleButton: View {
+    @ObservedObject private var themeManager = ThemeManager.shared
+
+    let label: String
+    let isSelected: Bool
+    let action: () -> Void
+
+    init(_ label: String, isSelected: Bool, action: @escaping () -> Void) {
+        self.label = label
+        self.isSelected = isSelected
+        self.action = action
+    }
+
+    var body: some View {
+        Button(action: action) {
+            Text(label)
+                .font(.system(size: 11, weight: isSelected ? .semibold : .medium))
+                .foregroundColor(
+                    isSelected ? themeManager.currentTheme.primaryText : themeManager.currentTheme.tertiaryText
+                )
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 10)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(isSelected ? themeManager.currentTheme.tertiaryBackground : Color.clear)
+                )
+        }
+        .buttonStyle(PlainButtonStyle())
+        .padding(2)
     }
 }
 
