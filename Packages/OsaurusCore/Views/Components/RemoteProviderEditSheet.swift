@@ -55,6 +55,9 @@ private struct AddProviderFlow: View {
     @State private var customPort: String = ""
     @State private var customBasePath: String = "/v1"
 
+    // Authentication type for custom providers
+    @State private var customAuthType: RemoteProviderAuthType = .none
+
     // Advanced settings
     @State private var showAdvanced = false
     @State private var timeout: Double = 60
@@ -280,7 +283,7 @@ private struct AddProviderFlow: View {
 
                         sectionDivider
 
-                        // API Key section inside card
+                        // Authentication section inside card
                         VStack(alignment: .leading, spacing: 12) {
                             HStack(spacing: 8) {
                                 Image(systemName: "key.fill")
@@ -292,10 +295,27 @@ private struct AddProviderFlow: View {
                                     .tracking(0.5)
                             }
 
-                            ProviderSecureField(placeholder: "sk-...", text: $apiKey)
-                                .onChange(of: apiKey) { _, _ in testResult = nil }
+                            HStack(spacing: 0) {
+                                authButton("No Auth", type: .none)
+                                authButton("API Key", type: .apiKey)
+                            }
+                            .background(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .fill(theme.inputBackground)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 10)
+                                            .stroke(theme.inputBorder, lineWidth: 1)
+                                    )
+                            )
+
+                            if customAuthType == .apiKey {
+                                ProviderSecureField(placeholder: "sk-...", text: $apiKey)
+                                    .onChange(of: apiKey) { _, _ in testResult = nil }
+                                    .transition(.opacity.combined(with: .move(edge: .top)))
+                            }
                         }
                         .padding(16)
+                        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: customAuthType)
                     }
                     .background(
                         RoundedRectangle(cornerRadius: 12)
@@ -336,6 +356,7 @@ private struct AddProviderFlow: View {
                 customPort = ""
                 customBasePath = "/v1"
                 customProtocol = .https
+                customAuthType = .none
                 showAdvanced = false
                 timeout = 60
                 customHeaders = []
@@ -502,6 +523,22 @@ private struct AddProviderFlow: View {
                 .background(
                     RoundedRectangle(cornerRadius: 8)
                         .fill(customProtocol == proto ? theme.tertiaryBackground : Color.clear)
+                )
+        }
+        .buttonStyle(PlainButtonStyle())
+        .padding(2)
+    }
+
+    private func authButton(_ label: String, type: RemoteProviderAuthType) -> some View {
+        Button(action: { customAuthType = type }) {
+            Text(label)
+                .font(.system(size: 11, weight: customAuthType == type ? .semibold : .medium))
+                .foregroundColor(customAuthType == type ? theme.primaryText : theme.tertiaryText)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 10)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(customAuthType == type ? theme.tertiaryBackground : Color.clear)
                 )
         }
         .buttonStyle(PlainButtonStyle())
@@ -808,7 +845,7 @@ private struct AddProviderFlow: View {
         let trimmedHost = customHost.trimmingCharacters(in: .whitespaces)
         let trimmedBasePath = customBasePath.trimmingCharacters(in: .whitespaces)
         let port: Int? = customPort.trimmingCharacters(in: .whitespaces).isEmpty ? nil : Int(customPort)
-        let testApiKey = apiKey.isEmpty ? nil : apiKey
+        let testApiKey = customAuthType == .apiKey && !apiKey.isEmpty ? apiKey : nil
 
         isTesting = true
         testResult = nil
@@ -820,7 +857,7 @@ private struct AddProviderFlow: View {
                     providerProtocol: customProtocol,
                     port: port,
                     basePath: trimmedBasePath.isEmpty ? "/v1" : trimmedBasePath,
-                    authType: testApiKey != nil ? .apiKey : .none,
+                    authType: customAuthType,
                     providerType: .openai,
                     apiKey: testApiKey,
                     headers: HeaderEntry.buildHeaders(from: customHeaders)
@@ -853,7 +890,7 @@ private struct AddProviderFlow: View {
             port: Int(customPort),
             basePath: trimmedBasePath.isEmpty ? "/v1" : trimmedBasePath,
             customHeaders: regularHeaders,
-            authType: apiKey.isEmpty ? .none : .apiKey,
+            authType: customAuthType,
             providerType: .openai,
             enabled: true,
             autoConnect: true,
@@ -862,7 +899,8 @@ private struct AddProviderFlow: View {
         )
 
         saveSecretHeaders(for: remoteProvider.id)
-        onSave(remoteProvider, apiKey.isEmpty ? nil : apiKey)
+        let savedApiKey = customAuthType == .apiKey && !apiKey.isEmpty ? apiKey : nil
+        onSave(remoteProvider, savedApiKey)
         dismiss()
     }
 
