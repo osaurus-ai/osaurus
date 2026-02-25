@@ -36,9 +36,6 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // App has launched
         NSLog("Osaurus server app launched")
 
-        // Migrate legacy data paths if needed
-        OsaurusPaths.performMigrationIfNeeded()
-
         // Configure local notifications
         NotificationService.shared.configureOnLaunch()
 

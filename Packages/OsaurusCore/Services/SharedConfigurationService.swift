@@ -15,7 +15,7 @@ final class SharedConfigurationService {
     private init() {}
 
     private func baseDirectoryURL() -> URL {
-        OsaurusPaths.resolveDirectory(new: OsaurusPaths.runtime(), legacy: "SharedConfiguration")
+        OsaurusPaths.resolvePath(new: OsaurusPaths.runtime(), legacy: "SharedConfiguration")
     }
 
     private func instanceDirectoryURL() -> URL {

@@ -371,7 +371,7 @@ public enum RemoteProviderConfigurationStore {
     }
 
     private static func configurationFileURL() -> URL {
-        OsaurusPaths.resolveFile(
+        OsaurusPaths.resolvePath(
             new: OsaurusPaths.remoteProviderConfigFile(),
             legacy: "RemoteProviderConfiguration.json"
         )

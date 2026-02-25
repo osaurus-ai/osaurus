@@ -229,7 +229,7 @@ Custom headers marked as "secret" are also stored in the Keychain.
 Non-secret provider configuration is stored at:
 
 ```
-~/Library/Application Support/Osaurus/remote_providers.json
+~/.osaurus/providers/remote.json
 ```
 
 This file contains connection settings but **not** API keys or secret headers.

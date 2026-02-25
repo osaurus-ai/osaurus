@@ -9,36 +9,36 @@ import Foundation
 import OsaurusRepository
 
 public struct Configuration {
-    /// The canonical bundle identifier for Osaurus
-    public static let bundleId = "com.dinoki.osaurus"
+    /// Root data directory for Osaurus (`~/.osaurus/`)
+    public static func root() -> URL {
+        ToolsPaths.root()
+    }
 
-    /// Application Support root directory for Osaurus
-    public static func appSupportRoot() -> URL {
-        ToolsPaths.appSupportRoot()
+    /// The previous root directory before migration to `~/.osaurus/`.
+    private static func legacyRoot() -> URL {
+        let fm = FileManager.default
+        let supportDir = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        return supportDir.appendingPathComponent("com.dinoki.osaurus", isDirectory: true)
     }
 
     public static func resolveConfiguredPort() -> Int? {
-        // Allow override for testing
         if let env = ProcessInfo.processInfo.environment["OSU_PORT"], let p = Int(env) {
             return p
         }
 
-        // Read the same configuration the app persists
-        // Check new location first: ~/Library/Application Support/com.dinoki.osaurus/config/server.json
-        // Then legacy: ~/Library/Application Support/com.dinoki.osaurus/ServerConfiguration.json
         let fm = FileManager.default
-        let root = appSupportRoot()
-        let newConfigURL = root.appendingPathComponent("config", isDirectory: true)
-            .appendingPathComponent("server.json")
-        let legacyConfigURL = root.appendingPathComponent("ServerConfiguration.json")
+        let root = root()
+        let oldRoot = legacyRoot()
 
-        // Try new location first, then legacy
-        let configURL: URL
-        if fm.fileExists(atPath: newConfigURL.path) {
-            configURL = newConfigURL
-        } else if fm.fileExists(atPath: legacyConfigURL.path) {
-            configURL = legacyConfigURL
-        } else {
+        // Check ~/.osaurus/config/server.json first, then legacy Application Support locations
+        let candidates: [URL] = [
+            root.appendingPathComponent("config/server.json"),
+            root.appendingPathComponent("ServerConfiguration.json"),
+            oldRoot.appendingPathComponent("config/server.json"),
+            oldRoot.appendingPathComponent("ServerConfiguration.json"),
+        ]
+
+        guard let configURL = candidates.first(where: { fm.fileExists(atPath: $0.path) }) else {
             return nil
         }
 

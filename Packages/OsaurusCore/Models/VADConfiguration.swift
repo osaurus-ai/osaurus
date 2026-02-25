@@ -116,6 +116,6 @@ public enum VADConfigurationStore {
     }
 
     private static func configurationFileURL() -> URL {
-        OsaurusPaths.resolveFile(new: OsaurusPaths.vadConfigFile(), legacy: "VADConfiguration.json")
+        OsaurusPaths.resolvePath(new: OsaurusPaths.vadConfigFile(), legacy: "VADConfiguration.json")
     }
 }
