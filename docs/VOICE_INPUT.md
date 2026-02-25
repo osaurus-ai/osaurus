@@ -1,6 +1,6 @@
 # Voice Input Guide
 
-Osaurus includes powerful voice input capabilities powered by [WhisperKit](https://github.com/argmaxinc/WhisperKit) — fully local, private, on-device speech-to-text transcription.
+Osaurus includes powerful voice input capabilities powered by [FluidAudio](https://github.com/FluidInference/FluidAudio) — fully local, private, on-device speech-to-text transcription.
 
 ---
 
@@ -11,7 +11,7 @@ Voice features in Osaurus include:
 - **Voice Input in Chat** — Speak instead of type in the chat overlay
 - **VAD Mode** — Always-on listening with wake-word agent activation
 - **Transcription Mode** — Global hotkey to dictate into any focused text field
-- **Multiple Whisper Models** — From tiny (75 MB) to large (3 GB)
+- **Multiple Parakeet Models** — From tiny (75 MB) to large (3 GB)
 - **Microphone & System Audio** — Transcribe your voice or computer audio
 
 All transcription happens locally on your Mac using Apple's Neural Engine — no audio is sent to the cloud.
@@ -28,7 +28,7 @@ Voice setup is streamlined into a single screen:
 2. Navigate to **Voice** tab
 3. Complete the requirements shown at the top:
    - **Microphone** — Click "Grant" to enable microphone access
-   - **Whisper Model** — Click "Download" to get the recommended model
+   - **Parakeet Model** — Click "Download" to get the recommended model
 4. Once both requirements show checkmarks, tap the microphone button to test
 
 The large centered microphone button becomes active when setup is complete. Tap it to start recording, tap again to stop. Your transcription appears below in real-time.
@@ -54,34 +54,34 @@ If you prefer manual configuration:
 
 ---
 
-## Whisper Models
+## Parakeet Models
 
 ### Recommended Models
 
-| Model                       | Size    | Best For                              |
-| --------------------------- | ------- | ------------------------------------- |
-| **Whisper Large V3 Turbo**  | ~1.5 GB | Best balance of speed and accuracy    |
-| **Whisper Small (English)** | ~500 MB | Fast, efficient English transcription |
-| **Whisper Large V3**        | ~3 GB   | Maximum accuracy for all languages    |
+| Model                        | Size    | Best For                              |
+| ---------------------------- | ------- | ------------------------------------- |
+| **Parakeet Large V3 Turbo**  | ~1.5 GB | Best balance of speed and accuracy    |
+| **Parakeet Small (English)** | ~500 MB | Fast, efficient English transcription |
+| **Parakeet Large V3**        | ~3 GB   | Maximum accuracy for all languages    |
 
 ### All Available Models
 
-| Model                        | Size    | Languages    | Notes                 |
-| ---------------------------- | ------- | ------------ | --------------------- |
-| Whisper Large V3             | ~3 GB   | Multilingual | Best quality          |
-| Whisper Large V3 Turbo       | ~1.5 GB | Multilingual | Fast + accurate       |
-| Whisper Large V3 (Quantized) | ~626 MB | Multilingual | Smaller footprint     |
-| Whisper Large V2             | ~3 GB   | Multilingual | Previous generation   |
-| Whisper Medium               | ~1.5 GB | Multilingual | Balanced              |
-| Whisper Medium (English)     | ~1.5 GB | English only | Optimized for English |
-| Whisper Small                | ~500 MB | Multilingual | Compact               |
-| Whisper Small (English)      | ~500 MB | English only | Fast + efficient      |
-| Whisper Small (Quantized)    | ~216 MB | Multilingual | Very efficient        |
-| Whisper Base                 | ~150 MB | Multilingual | Very fast             |
-| Whisper Base (English)       | ~150 MB | English only | Fastest               |
-| Whisper Tiny                 | ~75 MB  | Multilingual | Ultra-fast            |
-| Whisper Tiny (English)       | ~75 MB  | English only | Instant               |
-| Distil Whisper Large V3      | ~750 MB | Multilingual | Distilled, fast       |
+| Model                         | Size    | Languages    | Notes                 |
+| ----------------------------- | ------- | ------------ | --------------------- |
+| Parakeet Large V3             | ~3 GB   | Multilingual | Best quality          |
+| Parakeet Large V3 Turbo       | ~1.5 GB | Multilingual | Fast + accurate       |
+| Parakeet Large V3 (Quantized) | ~626 MB | Multilingual | Smaller footprint     |
+| Parakeet Large V2             | ~3 GB   | Multilingual | Previous generation   |
+| Parakeet Medium               | ~1.5 GB | Multilingual | Balanced              |
+| Parakeet Medium (English)     | ~1.5 GB | English only | Optimized for English |
+| Parakeet Small                | ~500 MB | Multilingual | Compact               |
+| Parakeet Small (English)      | ~500 MB | English only | Fast + efficient      |
+| Parakeet Small (Quantized)    | ~216 MB | Multilingual | Very efficient        |
+| Parakeet Base                 | ~150 MB | Multilingual | Very fast             |
+| Parakeet Base (English)      | ~150 MB | English only | Fastest               |
+| Parakeet Tiny                 | ~75 MB  | Multilingual | Ultra-fast            |
+| Parakeet Tiny (English)       | ~75 MB  | English only | Instant               |
+| Distil Parakeet Large V3      | ~750 MB | Multilingual | Distilled, fast       |
 
 ### Model Selection Tips
 
@@ -92,7 +92,7 @@ If you prefer manual configuration:
 
 ### Storage Location
 
-Models are stored at: `~/.osaurus/whisper-models/`
+Models are stored at: `~/.osaurus/fluidaudio-models/`
 
 ---
 
@@ -196,7 +196,7 @@ VAD Mode enables hands-free agent activation. Say a agent's name (or a custom wa
 │                      VAD Mode Flow                           │
 ├─────────────────────────────────────────────────────────────┤
 │                                                              │
-│  1. VAD listens in background using WhisperKit              │
+│  1. VAD listens in background using FluidAudio               │
 │           ↓                                                  │
 │  2. Real-time transcription checked for wake-words          │
 │           ↓                                                  │
@@ -274,7 +274,7 @@ Transcription Mode allows you to dictate text directly into any application usin
 │           ↓                                                  │
 │  2. Minimal overlay appears showing recording status        │
 │           ↓                                                  │
-│  3. WhisperKit transcribes your speech in real-time         │
+│  3. FluidAudio transcribes your speech in real-time         │
 │           ↓                                                  │
 │  4. Text is typed into the focused text field               │
 │           ↓                                                  │
@@ -293,7 +293,7 @@ Transcription Mode allows you to dictate text directly into any application usin
 
 **Microphone Permission** — Required for audio capture (same as other voice features)
 
-**Whisper Model** — A model must be downloaded and selected
+**Parakeet Model** — A model must be downloaded and selected
 
 ### Transcription Settings
 
@@ -341,12 +341,12 @@ The overlay stays on top of all windows and follows the app's theme.
 
 ## Configuration Reference
 
-### WhisperConfiguration
+### SpeechConfiguration
 
 Voice input settings stored in app preferences:
 
 ```swift
-struct WhisperConfiguration {
+struct SpeechConfiguration {
     var defaultModel: String?          // Selected model ID
     var languageHint: String?          // ISO 639-1 code (e.g., "en")
     var enabled: Bool                  // Voice features enabled
@@ -529,7 +529,7 @@ Leave empty for auto-detection.
 
 All voice processing happens locally on your Mac:
 
-- **No cloud transcription** — WhisperKit runs entirely on-device
+- **No cloud transcription** — FluidAudio runs entirely on-device
 - **No audio recording** — Audio is processed in memory only
 - **No data collection** — Transcriptions stay on your machine
 - **Neural Engine acceleration** — Fast, efficient processing

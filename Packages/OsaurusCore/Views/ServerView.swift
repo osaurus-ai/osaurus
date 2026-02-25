@@ -375,7 +375,7 @@ struct ServerView: View {
         guard server.isRunning else { return }
 
         // Get the selected model
-        let modelId = WhisperModelManager.shared.selectedModel?.id ?? "whisper-1"
+        let modelId = SpeechModelManager.shared.selectedModel?.id ?? "parakeet-v3"
 
         // Expand and mark as loading
         withAnimation(.easeInOut(duration: 0.2)) {
@@ -1113,7 +1113,7 @@ private struct EndpointRow: View {
 
 private struct TranscriptionTestRow: View {
     @Environment(\.theme) private var theme
-    @ObservedObject private var modelManager = WhisperModelManager.shared
+    @ObservedObject private var speechModelManager = SpeechModelManager.shared
 
     let endpoint: APIEndpoint
     let serverURL: String
@@ -1244,7 +1244,7 @@ private struct TranscriptionTestRow: View {
                                         .font(.system(size: 12))
                                         .foregroundColor(.orange)
 
-                                    if let model = modelManager.selectedModel {
+                                    if let model = speechModelManager.selectedModel {
                                         Text(model.name)
                                             .font(.system(size: 12, weight: .medium))
                                             .foregroundColor(theme.primaryText)

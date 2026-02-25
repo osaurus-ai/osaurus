@@ -33,7 +33,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 | Anthropic API Compatibility      | Stable    | "API Endpoints"    | (in README)                   | Networking/HTTPHandler.swift, Models/AnthropicAPI.swift                               |
 | Open Responses API               | Stable    | "API Endpoints"    | OpenAI_API_GUIDE.md           | Networking/HTTPHandler.swift, Models/OpenResponsesAPI.swift                           |
 | Ollama API Compatibility         | Stable    | "API Endpoints"    | (in README)                   | Networking/HTTPHandler.swift                                                          |
-| Voice Input (WhisperKit)         | Stable    | "Voice Input"      | VOICE_INPUT.md                | Services/WhisperKitService.swift, Managers/WhisperModelManager.swift                  |
+| Voice Input (FluidAudio)         | Stable    | "Voice Input"      | VOICE_INPUT.md                | Services/SpeechService.swift, Managers/SpeechModelManager.swift                  |
 | VAD Mode                         | Stable    | "Voice Input"      | VOICE_INPUT.md                | Services/VADService.swift, Views/ContentView.swift (VAD controls)                     |
 | Transcription Mode               | Stable    | "Voice Input"      | VOICE_INPUT.md                | Services/TranscriptionModeService.swift, Views/TranscriptionOverlayView.swift         |
 | CLI                              | Stable    | "CLI Reference"    | (in README)                   | Packages/OsaurusCLI/                                                                  |
@@ -95,8 +95,8 @@ Canonical reference for all Osaurus features, their status, and documentation.
 │  │   ├── WorkExecutionEngine (Plan generation and execution)            │
 │  │   └── IssueManager (Issue lifecycle management)                       │
 │  ├── Voice/Audio                                                         │
-│  │   ├── WhisperKitService (Speech-to-text transcription)                │
-│  │   ├── WhisperModelManager (Whisper model downloads)                   │
+│  │   ├── SpeechService (Speech-to-text transcription)                    │
+│  │   ├── SpeechModelManager (Parakeet model downloads)                    │
 │  │   ├── VADService (Voice activity detection, wake-word)                │
 │  │   ├── TranscriptionModeService (Global dictation into any app)        │
 │  │   └── AudioInputManager (Microphone/system audio selection)           │
@@ -635,15 +635,15 @@ A context optimization system that reduces token usage by ~80%:
 
 ---
 
-### Voice Input (WhisperKit)
+### Voice Input (FluidAudio)
 
-**Purpose:** Provide speech-to-text transcription using on-device WhisperKit models.
+**Purpose:** Provide speech-to-text transcription using on-device FluidAudio models.
 
 **Components:**
 
-- `Services/WhisperKitService.swift` — Core transcription service with streaming support
-- `Managers/WhisperModelManager.swift` — Model download and selection
-- `Models/WhisperConfiguration.swift` — Voice input settings
+- `Services/SpeechService.swift` — Core transcription service with streaming support
+- `Managers/SpeechModelManager.swift` — Model download and selection
+- `Models/SpeechConfiguration.swift` — Voice input settings
 - `Views/VoiceView.swift` — Voice settings UI
 - `Views/VoiceSetupTab.swift` — Guided setup wizard
 - `Views/Components/VoiceInputOverlay.swift` — Voice input UI in chat
@@ -651,7 +651,7 @@ A context optimization system that reduces token usage by ~80%:
 **Features:**
 
 - **Real-time streaming transcription** — See words as you speak
-- **Multiple Whisper models** — Tiny (75 MB) to Large V3 (3 GB)
+- **Multiple Parakeet models** — Tiny (75 MB) to Large V3 (3 GB)
 - **English-only and multilingual** — Choose based on your needs
 - **Microphone input** — Built-in or external device selection
 - **System audio capture** — Transcribe computer audio (macOS 12.3+)
@@ -663,14 +663,14 @@ A context optimization system that reduces token usage by ~80%:
 
 | Setting               | Description                                   |
 | --------------------- | --------------------------------------------- |
-| `defaultModel`        | Selected Whisper model ID                     |
+| `defaultModel`        | Selected Parakeet model ID                    |
 | `languageHint`        | ISO 639-1 language code (e.g., "en", "es")    |
 | `sensitivity`         | Voice detection sensitivity (low/medium/high) |
 | `pauseDuration`       | Seconds of silence before auto-send           |
 | `confirmationDelay`   | Seconds to show confirmation before sending   |
 | `selectedInputSource` | Microphone or system audio                    |
 
-**Model Storage:** `~/.osaurus/whisper-models/`
+**Model Storage:** `~/.osaurus/fluidaudio-models/`
 
 ---
 
@@ -709,7 +709,7 @@ A context optimization system that reduces token usage by ~80%:
 
 **Workflow:**
 
-1. VAD listens in background using WhisperKit
+1. VAD listens in background using FluidAudio
 2. Transcription is checked for agent names or wake phrase
 3. On match, chat opens with the detected agent
 4. Voice input starts automatically (if enabled)
@@ -751,13 +751,13 @@ A context optimization system that reduces token usage by ~80%:
 
 - Microphone permission (for audio capture)
 - Accessibility permission (for keyboard simulation)
-- Whisper model downloaded
+- Parakeet model downloaded
 
 **Workflow:**
 
 1. User presses the configured hotkey
 2. Overlay appears showing recording status
-3. WhisperKit transcribes speech in real-time
+3. FluidAudio transcribes speech in real-time
 4. Text is typed into the currently focused text field via accessibility APIs
 5. User presses Esc or clicks Done to stop
 6. Overlay disappears and transcription ends
@@ -880,7 +880,7 @@ Results are cached for 10 seconds per agent.
 | [REMOTE_PROVIDERS.md](REMOTE_PROVIDERS.md)                     | Remote provider setup and configuration           |
 | [REMOTE_MCP_PROVIDERS.md](REMOTE_MCP_PROVIDERS.md)             | Remote MCP provider setup                         |
 | [DEVELOPER_TOOLS.md](DEVELOPER_TOOLS.md)                       | Insights and Server Explorer guide                |
-| [VOICE_INPUT.md](VOICE_INPUT.md)                               | Voice input, WhisperKit, and VAD mode guide       |
+| [VOICE_INPUT.md](VOICE_INPUT.md)                               | Voice input, FluidAudio, and VAD mode guide       |
 | [SKILLS.md](SKILLS.md)                                         | Skills and capability selection guide             |
 | [MEMORY.md](MEMORY.md)                                         | Memory system and configuration guide            |
 | [PLUGIN_AUTHORING.md](PLUGIN_AUTHORING.md)                     | Creating custom plugins                           |

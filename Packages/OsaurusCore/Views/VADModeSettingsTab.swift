@@ -14,8 +14,8 @@ struct VADModeSettingsTab: View {
     @Environment(\.theme) private var theme
     @ObservedObject private var vadService = VADService.shared
     @ObservedObject private var agentManager = AgentManager.shared
-    @ObservedObject private var whisperService = WhisperKitService.shared
-    @ObservedObject private var modelManager = WhisperModelManager.shared
+    @ObservedObject private var speechService = SpeechService.shared
+    @ObservedObject private var modelManager = SpeechModelManager.shared
 
     // Configuration state
     @State private var vadEnabled: Bool = false
@@ -51,7 +51,7 @@ struct VADModeSettingsTab: View {
 
     /// Whether VAD can be enabled (requirements met)
     private var canEnableVAD: Bool {
-        whisperService.microphonePermissionGranted && modelManager.downloadedModelsCount > 0
+        speechService.microphonePermissionGranted && modelManager.downloadedModelsCount > 0
             && modelManager.selectedModel != nil
     }
 
@@ -109,7 +109,7 @@ struct VADModeSettingsTab: View {
                     if vadEnabled {
                         try? await vadService.start()
                     } else {
-                        _ = await whisperService.stopStreamingTranscription()
+                        _ = await speechService.stopStreamingTranscription()
                     }
                 }
             }
@@ -246,7 +246,6 @@ struct VADModeSettingsTab: View {
         case .idle: return .idle
         case .starting: return .processing
         case .listening: return .listening
-        case .processing: return .processing
         case .error(let msg): return .error(msg)
         }
     }
@@ -274,16 +273,16 @@ struct VADModeSettingsTab: View {
             VStack(spacing: 12) {
                 RequirementRow(
                     title: "Microphone Access",
-                    isComplete: whisperService.microphonePermissionGranted,
+                    isComplete: speechService.microphonePermissionGranted,
                     action: {
                         Task {
-                            _ = await whisperService.requestMicrophonePermission()
+                            _ = await speechService.requestMicrophonePermission()
                         }
                     }
                 )
 
                 RequirementRow(
-                    title: "Whisper Model Downloaded",
+                    title: "Speech Model Downloaded",
                     isComplete: modelManager.downloadedModelsCount > 0,
                     action: nil
                 )
@@ -505,7 +504,7 @@ struct VADModeSettingsTab: View {
 
             // Waveform
             if isTestingVAD {
-                WaveformView(level: whisperService.audioLevel, style: .bars, barCount: 20)
+                WaveformView(level: speechService.audioLevel, style: .bars, barCount: 20)
                     .frame(height: 48)
             }
 
@@ -622,13 +621,13 @@ struct VADModeSettingsTab: View {
         }
         .padding(20)
         .modifier(SettingsCardStyle(accentColor: isTestingVAD ? theme.errorColor : nil))
-        .onChange(of: whisperService.currentTranscription) { _, newValue in
+        .onChange(of: speechService.currentTranscription) { _, newValue in
             if isTestingVAD {
                 testTranscription = newValue
                 checkForDetection(in: newValue)
             }
         }
-        .onChange(of: whisperService.confirmedTranscription) { _, newValue in
+        .onChange(of: speechService.confirmedTranscription) { _, newValue in
             if isTestingVAD && !newValue.isEmpty {
                 testTranscription = newValue
                 checkForDetection(in: newValue)
@@ -645,7 +644,7 @@ struct VADModeSettingsTab: View {
                 if vadEnabled {
                     try? await vadService.start()
                 } else {
-                    _ = await whisperService.stopStreamingTranscription()
+                    _ = await speechService.stopStreamingTranscription()
                 }
             }
         } else {
@@ -661,7 +660,7 @@ struct VADModeSettingsTab: View {
 
                 do {
                     // Start fresh transcription for testing
-                    try await whisperService.startStreamingTranscription()
+                    try await speechService.startStreamingTranscription()
                     isTestingVAD = true
                 } catch {
                     testError = error.localizedDescription
@@ -678,7 +677,7 @@ struct VADModeSettingsTab: View {
         testTranscription = ""
         testDetection = nil
         testError = nil
-        whisperService.clearTranscription()
+        speechService.clearTranscription()
     }
 
     private func checkForDetection(in text: String) {
@@ -696,7 +695,7 @@ struct VADModeSettingsTab: View {
                 if isTestingVAD {
                     testTranscription = ""
                     testDetection = nil
-                    whisperService.clearTranscription()
+                    speechService.clearTranscription()
                 }
             }
         }

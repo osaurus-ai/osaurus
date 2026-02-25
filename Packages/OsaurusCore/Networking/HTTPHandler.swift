@@ -2225,8 +2225,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     try? FileManager.default.removeItem(at: audioURL)
                 }
 
-                // Get WhisperKitService and transcribe
-                let service = await MainActor.run { WhisperKitService.shared }
+                // Get SpeechService and transcribe
+                let service = await MainActor.run { SpeechService.shared }
                 let result = try await service.transcribe(audioURL: audioURL)
 
                 // Format response based on response_format
@@ -2238,26 +2238,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         "text": result.text,
                         "task": "transcribe",
                     ]
-                    if let lang = result.language {
-                        response["language"] = lang
-                    }
                     if let duration = result.durationSeconds {
                         response["duration"] = duration
                     }
-                    var segments: [[String: Any]] = []
-                    for segment in result.segments {
-                        var seg: [String: Any] = [
-                            "id": segment.id,
-                            "text": segment.text,
-                            "start": segment.start,
-                            "end": segment.end,
-                        ]
-                        if let tokens = segment.tokens {
-                            seg["tokens"] = tokens
-                        }
-                        segments.append(seg)
-                    }
-                    response["segments"] = segments
                     let jsonData = try JSONSerialization.data(withJSONObject: response)
                     responseBody = String(decoding: jsonData, as: UTF8.self)
                 } else {

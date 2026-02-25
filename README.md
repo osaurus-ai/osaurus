@@ -67,7 +67,7 @@ Osaurus is the AI edge runtime for macOS. It brings together:
 - **Work Mode** — Autonomous task execution with issue tracking, parallel tasks, and file operations
 - **Multi-Window Chat** — Multiple independent chat windows with per-window agents
 - **Developer Tools** — Built-in insights and server explorer for debugging
-- **Voice Input** — Speech-to-text using WhisperKit with real-time on-device transcription
+- **Voice Input** — Speech-to-text using FluidAudio with real-time on-device transcription
 - **VAD Mode** — Always-on listening with wake-word activation for hands-free agent access
 - **Transcription Mode** — Global hotkey to transcribe speech directly into any app
 - **Apple Foundation Models** — Use the system model on macOS 26+ (Tahoe)
@@ -94,7 +94,7 @@ Osaurus is the AI edge runtime for macOS. It brings together:
 | **Developer Tools**      | Request insights, API explorer, and live endpoint testing               |
 | **Multi-Window Chat**    | Multiple independent chat windows with per-window agents                |
 | **Menu Bar Chat**        | Chat overlay with session history, context tracking (`⌘;`)              |
-| **Voice Input**          | Speech-to-text with WhisperKit, real-time transcription                 |
+| **Voice Input**          | Speech-to-text with FluidAudio, real-time transcription                 |
 | **VAD Mode**             | Always-on listening with wake-word agent activation                     |
 | **Transcription Mode**   | Global hotkey to dictate into any focused text field                    |
 | **Model Manager**        | Download and manage models from Hugging Face                            |
@@ -411,12 +411,12 @@ See [Developer Tools Guide](docs/DEVELOPER_TOOLS.md) for details.
 
 ### Voice Input
 
-Speech-to-text powered by [WhisperKit](https://github.com/argmaxinc/WhisperKit) — fully local, private, on-device transcription.
+Speech-to-text powered by [FluidAudio](https://github.com/FluidInference/FluidAudio) — fully local, private, on-device transcription.
 
 **Features:**
 
 - **Real-time transcription** — See your words as you speak
-- **Multiple Whisper models** — From Tiny (75 MB) to Large V3 (3 GB)
+- **Multiple Parakeet models** — From Tiny (75 MB) to Large V3 (3 GB)
 - **Microphone or system audio** — Transcribe your voice or computer audio
 - **Configurable sensitivity** — Adjust for quiet or noisy environments
 - **Auto-send with confirmation** — Hands-free message sending
@@ -446,7 +446,7 @@ Perfect for dictating emails, documents, code comments, or any text input withou
 
 1. Open Management window (`⌘ Shift M`) → **Voice**
 2. Grant microphone permission
-3. Download a Whisper model
+3. Download a Parakeet model
 4. For **Transcription Mode**: Grant accessibility permission and configure the hotkey in the Transcription tab
 5. Test your voice input
 
@@ -524,7 +524,7 @@ print(response.choices[0].message.content)
 
 Models are stored at `~/MLXModels` by default. Override with `OSU_MODELS_DIR`.
 
-Whisper models are stored at `~/.osaurus/whisper-models`.
+Speech models are stored at `~/.osaurus/fluidaudio-models`.
 
 ---
 

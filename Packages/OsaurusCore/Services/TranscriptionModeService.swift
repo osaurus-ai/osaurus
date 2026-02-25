@@ -3,7 +3,7 @@
 //  osaurus
 //
 //  Main service for Transcription Mode.
-//  Orchestrates hotkey handling, whisper transcription, keyboard simulation,
+//  Orchestrates hotkey handling, speech transcription, keyboard simulation,
 //  and the floating overlay UI.
 //
 
@@ -38,7 +38,7 @@ public final class TranscriptionModeService: ObservableObject {
 
     // MARK: - Dependencies
 
-    private let whisperService = WhisperKitService.shared
+    private let speechService = SpeechService.shared
     private let keyboardService = KeyboardSimulationService.shared
     private let hotkeyManager = TranscriptionHotKeyManager.shared
     private let overlayService = TranscriptionOverlayWindowService.shared
@@ -94,7 +94,10 @@ public final class TranscriptionModeService: ObservableObject {
 
     /// Start transcription
     public func startTranscription() {
-        guard state == .idle || state == .error("") else {
+        switch state {
+        case .idle: break
+        case .error: break
+        default:
             print("[TranscriptionMode] Cannot start: already in state \(state)")
             return
         }
@@ -108,8 +111,8 @@ public final class TranscriptionModeService: ObservableObject {
         }
 
         // Check if model is available
-        guard whisperService.isModelLoaded || WhisperModelManager.shared.selectedModel != nil else {
-            state = .error("No Whisper model available")
+        guard speechService.isModelLoaded || SpeechModelManager.shared.selectedModel != nil else {
+            state = .error("No speech model available")
             return
         }
 
@@ -122,10 +125,10 @@ public final class TranscriptionModeService: ObservableObject {
         // Start Esc key monitoring
         startEscKeyMonitoring()
 
-        // Start whisper transcription
+        // Start speech transcription
         Task {
             do {
-                try await whisperService.startStreamingTranscription()
+                try await speechService.startStreamingTranscription()
                 state = .transcribing
 
                 // Subscribe to transcription updates
@@ -161,10 +164,10 @@ public final class TranscriptionModeService: ObservableObject {
             }
             .store(in: &cancellables)
 
-        // Stop whisper
+        // Stop speech transcription
         Task {
-            _ = await whisperService.stopStreamingTranscription()
-            whisperService.clearTranscription()
+            _ = await speechService.stopStreamingTranscription()
+            speechService.clearTranscription()
 
             // Hide overlay
             overlayService.hide()
@@ -175,11 +178,6 @@ public final class TranscriptionModeService: ObservableObject {
 
             print("[TranscriptionMode] Stopped transcription")
         }
-    }
-
-    /// Cancel transcription without typing remaining text
-    public func cancelTranscription() {
-        stopTranscription()
     }
 
     // MARK: - Private Helpers
@@ -208,27 +206,27 @@ public final class TranscriptionModeService: ObservableObject {
             self?.stopTranscription()
         }
         overlayService.onCancel = { [weak self] in
-            self?.cancelTranscription()
+            self?.stopTranscription()
         }
     }
 
     private func subscribeToTranscriptionUpdates() {
         // Subscribe to current transcription changes
-        whisperService.$currentTranscription
+        speechService.$currentTranscription
             .sink { [weak self] _ in
                 self?.handleTranscriptionUpdate()
             }
             .store(in: &cancellables)
 
         // Subscribe to confirmed transcription changes
-        whisperService.$confirmedTranscription
+        speechService.$confirmedTranscription
             .sink { [weak self] _ in
                 self?.handleTranscriptionUpdate()
             }
             .store(in: &cancellables)
 
         // Subscribe to audio level for overlay
-        whisperService.$audioLevel
+        speechService.$audioLevel
             .sink { [weak self] level in
                 self?.overlayService.updateAudioLevel(level)
             }
@@ -240,12 +238,12 @@ public final class TranscriptionModeService: ObservableObject {
 
         // Get the full current transcription
         let fullText: String
-        if whisperService.confirmedTranscription.isEmpty {
-            fullText = whisperService.currentTranscription
-        } else if whisperService.currentTranscription.isEmpty {
-            fullText = whisperService.confirmedTranscription
+        if speechService.confirmedTranscription.isEmpty {
+            fullText = speechService.currentTranscription
+        } else if speechService.currentTranscription.isEmpty {
+            fullText = speechService.confirmedTranscription
         } else {
-            fullText = whisperService.confirmedTranscription + " " + whisperService.currentTranscription
+            fullText = speechService.confirmedTranscription + " " + speechService.currentTranscription
         }
 
         // Calculate what needs to be typed
@@ -293,7 +291,7 @@ public final class TranscriptionModeService: ObservableObject {
             // Esc key code is 53
             if event.keyCode == 53 {
                 Task { @MainActor in
-                    self?.cancelTranscription()
+                    self?.stopTranscription()
                 }
             }
         }
