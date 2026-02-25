@@ -33,7 +33,7 @@ jobs:
           xcode-version: latest-stable
 
       - name: Install Metal Toolchain
-        run: sudo xcodebuild -downloadComponent MetalToolchain
+        run: xcodebuild -downloadComponent MetalToolchain
 
       - name: Setup build environment
         run: bash scripts/setup_env.sh
