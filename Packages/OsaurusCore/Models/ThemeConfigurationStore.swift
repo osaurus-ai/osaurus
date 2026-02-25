@@ -165,7 +165,7 @@ public enum ThemeConfigurationStore {
     }
 
     private static func themesDirectoryURL() -> URL {
-        OsaurusPaths.resolveDirectory(new: OsaurusPaths.themes(), legacy: "Themes")
+        OsaurusPaths.resolvePath(new: OsaurusPaths.themes(), legacy: "Themes")
     }
 
     private static func themeFileURL(for id: UUID) -> URL {

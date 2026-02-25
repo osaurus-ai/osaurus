@@ -12,7 +12,7 @@ public enum ScheduleStore {
     // MARK: - Directory Management
 
     private static var schedulesDirectory: URL {
-        let dir = OsaurusPaths.resolveDirectory(new: OsaurusPaths.schedules(), legacy: "Schedules")
+        let dir = OsaurusPaths.resolvePath(new: OsaurusPaths.schedules(), legacy: "Schedules")
         OsaurusPaths.ensureExistsSilent(dir)
         return dir
     }

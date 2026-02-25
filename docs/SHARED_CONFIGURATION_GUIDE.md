@@ -11,7 +11,7 @@ This guide explains how other native apps can discover and connect to the locall
 
 Osaurus writes a per‑process shared configuration file so other processes can discover the server address and status.
 
-- **Base directory**: `~/Library/Application Support/com.dinoki.osaurus/SharedConfiguration/`
+- **Base directory**: `~/.osaurus/runtime/`
 - **Per‑instance directory**: `<Base>/<instanceId>/`
 - **File**: `configuration.json`
 
@@ -59,7 +59,7 @@ When the server is stopping, stopped, or errored, Osaurus removes the instance d
 
 ## Discovery strategy (recommended)
 
-1. Look in `~/Library/Application Support/com.dinoki.osaurus/SharedConfiguration/`.
+1. Look in `~/.osaurus/runtime/`.
 2. Enumerate all `<instanceId>` subdirectories.
 3. For each, read `configuration.json` if it exists.
 4. Filter to entries with `health == "running"`.
@@ -100,15 +100,11 @@ enum OsaurusDiscoveryError: Error {
 }
 
 final class OsaurusDiscoveryService {
-    // Canonical base path used by Osaurus
-    private static let bundleIdentifier = "com.dinoki.osaurus"
-
     static func discoverLatestRunningInstance() throws -> OsaurusInstance {
         let fm = FileManager.default
-        let supportDir = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let base = supportDir
-            .appendingPathComponent(bundleIdentifier, isDirectory: true)
-            .appendingPathComponent("SharedConfiguration", isDirectory: true)
+        let base = fm.homeDirectoryForCurrentUser
+            .appendingPathComponent(".osaurus", isDirectory: true)
+            .appendingPathComponent("runtime", isDirectory: true)
 
         guard let instanceDirs = try? fm.contentsOfDirectory(at: base, includingPropertiesForKeys: [.contentModificationDateKey, .isDirectoryKey], options: [.skipsHiddenFiles]), !instanceDirs.isEmpty else {
             throw OsaurusDiscoveryError.notFound
@@ -192,13 +188,7 @@ const os = require("os");
 
 async function discoverLatestRunningInstance() {
   const home = os.homedir();
-  const base = path.join(
-    home,
-    "Library",
-    "Application Support",
-    "com.dinoki.osaurus",
-    "SharedConfiguration"
-  );
+  const base = path.join(home, ".osaurus", "runtime");
 
   let entries;
   try {
@@ -309,7 +299,7 @@ connectToOsaurus();
 
 Notes:
 
-- The paths assume macOS; Electron must run on macOS to read `~/Library/Application Support/...`.
+- The paths assume macOS; Electron must run on macOS to read `~/.osaurus/...`.
 - Use the main process for filesystem access; avoid direct fs from the renderer.
 - If you need all instances, return the full `candidates` list instead of the newest one.
 
@@ -317,7 +307,7 @@ Notes:
 
 ## Security and sandboxing
 
-- Non‑sandboxed macOS apps can read `~/Library/Application Support/com.dinoki.osaurus/...` directly.
+- Non‑sandboxed macOS apps can read `~/.osaurus/...` directly.
 - Sandboxed apps typically cannot read arbitrary paths. Options:
   - Ask the user to choose the `SharedConfiguration` folder with `NSOpenPanel` and persist a security‑scoped bookmark.
   - Or run a small non‑sandboxed helper that performs discovery and hands you the URL via XPC.
@@ -338,6 +328,6 @@ Osaurus does not write secrets into the shared file; it only publishes connectio
 ## Stable identifiers
 
 - Bundle identifier: `com.dinoki.osaurus`
-- Base path: `~/Library/Application Support/com.dinoki.osaurus/SharedConfiguration/`
+- Base path: `~/.osaurus/runtime/`
 
 These values come from the app’s configuration and are expected to remain stable.

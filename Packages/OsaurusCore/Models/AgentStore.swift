@@ -114,7 +114,7 @@ public enum AgentStore {
     // MARK: - Private
 
     private static func agentsDirectory() -> URL {
-        OsaurusPaths.resolveDirectory(new: OsaurusPaths.agents(), legacy: "Personas")
+        OsaurusPaths.resolvePath(new: OsaurusPaths.agents(), legacy: "Personas")
     }
 
     private static func agentFileURL(for id: UUID) -> URL {

@@ -42,6 +42,6 @@ enum ToolConfigurationStore {
         if let dir = overrideDirectory {
             return dir.appendingPathComponent("tools.json")
         }
-        return OsaurusPaths.resolveFile(new: OsaurusPaths.toolConfigFile(), legacy: "ToolConfiguration.json")
+        return OsaurusPaths.resolvePath(new: OsaurusPaths.toolConfigFile(), legacy: "ToolConfiguration.json")
     }
 }

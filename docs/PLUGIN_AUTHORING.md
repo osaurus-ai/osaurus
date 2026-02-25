@@ -32,7 +32,7 @@ osaurus tools install ./dev.example.MyPlugin-0.1.0.zip
 ```
 
 The plugin will be unpacked into:
-`~/Library/Application Support/com.dinoki.osaurus/Tools/<plugin_id>/<version>/`
+`~/.osaurus/Tools/<plugin_id>/<version>/`
 
 ## Packaging Convention
 

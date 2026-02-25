@@ -455,7 +455,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 | `processing`| Agent task is running                           |
 | `settling`  | Waiting for self-caused FSEvents to flush       |
 
-**Storage:** `~/Library/Application Support/com.dinoki.osaurus/watchers/{uuid}.json`
+**Storage:** `~/.osaurus/watchers/{uuid}.json`
 
 ---
 
@@ -531,7 +531,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 6. When the task is complete, the agent calls `complete_task` with a summary and artifact
 7. Clarification pauses execution when the task is ambiguous
 
-**Storage:** `~/.osaurus/agent/agent.db` (SQLite)
+**Storage:** `~/.osaurus/work/work.db` (SQLite)
 
 ---
 
@@ -865,7 +865,7 @@ Results are cached for 10 seconds per agent.
 | `maxEntriesPerAgent` | 500 | 0 -- 10,000 |
 | `enabled` | true | true/false |
 
-**Storage:** `~/.osaurus/memory/memory.db` (SQLite with WAL mode)
+**Storage:** `~/.osaurus/memory/memory.sqlite` (SQLite with WAL mode)
 
 ---
 

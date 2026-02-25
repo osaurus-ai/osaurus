@@ -284,9 +284,9 @@ Failed extraction and summarization calls use exponential backoff:
 
 All memory data is stored in a local SQLite database with WAL (Write-Ahead Logging) mode for concurrent read performance.
 
-**Location:** `~/.osaurus/memory/memory.db`
+**Location:** `~/.osaurus/memory/memory.sqlite`
 
-**Configuration:** `~/.osaurus/memory/memory-config.json`
+**Configuration:** `~/.osaurus/config/memory.json`
 
 The database schema is versioned with automatic migrations. Indexes are maintained on agent ID, status, temporal fields, and conversation IDs for efficient queries.
 
@@ -427,7 +427,7 @@ make bench-ingest-chunks
 make bench-run
 ```
 
-The benchmark preset must be active before running. Set `"preset": "benchmark"` in the memory configuration file (`~/Library/Application Support/com.dinoki.osaurus/config/memory.json`).
+The benchmark preset must be active before running. Set `"preset": "benchmark"` in the memory configuration file (`~/.osaurus/config/memory.json`).
 
 ### Memory-Augmented Evaluation
 

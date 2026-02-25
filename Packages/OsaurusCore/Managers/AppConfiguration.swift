@@ -76,6 +76,6 @@ public final class AppConfiguration: ObservableObject {
     }
 
     private static func configFileURL() -> URL {
-        OsaurusPaths.resolveFile(new: OsaurusPaths.chatConfigFile(), legacy: "ChatConfiguration.json")
+        OsaurusPaths.resolvePath(new: OsaurusPaths.chatConfigFile(), legacy: "ChatConfiguration.json")
     }
 }

@@ -96,7 +96,7 @@ enum ChatSessionStore {
     // MARK: - Private
 
     private static func sessionsDirectory() -> URL {
-        OsaurusPaths.resolveDirectory(new: OsaurusPaths.sessions(), legacy: "ChatSessions")
+        OsaurusPaths.resolvePath(new: OsaurusPaths.sessions(), legacy: "ChatSessions")
     }
 
     private static func sessionFileURL(for id: UUID) -> URL {

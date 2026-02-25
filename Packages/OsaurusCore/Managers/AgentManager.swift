@@ -146,33 +146,37 @@ public final class AgentManager: ObservableObject {
 
     // MARK: - Active Agent Persistence
 
-    private func loadActiveAgentId() -> UUID? {
-        let url = activeAgentIdFileURL()
-        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+    private static let activeAgentKey = "activeAgentId"
 
-        do {
-            let data = try Data(contentsOf: url)
-            let uuidString = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
-            return uuidString.flatMap { UUID(uuidString: $0) }
-        } catch {
-            print("[Osaurus] Failed to load active agent ID: \(error)")
-            return nil
-        }
+    private func loadActiveAgentId() -> UUID? {
+        migrateActiveAgentFileIfNeeded()
+        guard let string = UserDefaults.standard.string(forKey: Self.activeAgentKey) else { return nil }
+        return UUID(uuidString: string)
     }
 
     private func saveActiveAgentId(_ id: UUID) {
-        let url = activeAgentIdFileURL()
-        do {
-            let data = id.uuidString.data(using: .utf8)!
-            try data.write(to: url, options: [.atomic])
-        } catch {
-            print("[Osaurus] Failed to save active agent ID: \(error)")
-        }
+        UserDefaults.standard.set(id.uuidString, forKey: Self.activeAgentKey)
     }
 
-    private func activeAgentIdFileURL() -> URL {
-        OsaurusPaths.ensureExistsSilent(OsaurusPaths.agents())
-        return OsaurusPaths.resolveFile(new: OsaurusPaths.activeAgentFile(), legacy: "ActivePersonaId.txt")
+    /// One-time migration: read the legacy active.txt file into UserDefaults, then delete it.
+    private func migrateActiveAgentFileIfNeeded() {
+        guard UserDefaults.standard.string(forKey: Self.activeAgentKey) == nil else { return }
+
+        let legacyFiles = [
+            OsaurusPaths.agents().appendingPathComponent("active.txt"),
+            OsaurusPaths.root().appendingPathComponent("ActivePersonaId.txt"),
+        ]
+        let fm = FileManager.default
+        for file in legacyFiles {
+            guard fm.fileExists(atPath: file.path),
+                let data = try? Data(contentsOf: file),
+                let str = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                let uuid = UUID(uuidString: str)
+            else { continue }
+            UserDefaults.standard.set(uuid.uuidString, forKey: Self.activeAgentKey)
+            try? fm.removeItem(at: file)
+            return
+        }
     }
 }
 

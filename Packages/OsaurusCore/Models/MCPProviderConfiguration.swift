@@ -188,6 +188,6 @@ public enum MCPProviderConfigurationStore {
     }
 
     private static func configurationFileURL() -> URL {
-        OsaurusPaths.resolveFile(new: OsaurusPaths.mcpProviderConfigFile(), legacy: "MCPProviderConfiguration.json")
+        OsaurusPaths.resolvePath(new: OsaurusPaths.mcpProviderConfigFile(), legacy: "MCPProviderConfiguration.json")
     }
 }

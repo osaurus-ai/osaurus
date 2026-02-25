@@ -56,7 +56,7 @@ public final class WorkDatabase: @unchecked Sendable {
 
     // MARK: - Lifecycle
 
-    private static let legacyDatabasePath: URL = OsaurusPaths.appSupportRoot()
+    private static let legacyDatabasePath: URL = OsaurusPaths.root()
         .appendingPathComponent("agent", isDirectory: true)
         .appendingPathComponent("agent.db")
 
