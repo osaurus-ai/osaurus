@@ -1,6 +1,6 @@
 # Voice Input Guide
 
-Osaurus includes powerful voice input capabilities powered by [WhisperKit](https://github.com/argmaxinc/WhisperKit) — fully local, private, on-device speech-to-text transcription.
+Osaurus includes powerful voice input capabilities powered by [FluidAudio](https://github.com/FluidInference/FluidAudio) — fully local, private, on-device speech-to-text transcription.
 
 ---
 
@@ -11,7 +11,7 @@ Voice features in Osaurus include:
 - **Voice Input in Chat** — Speak instead of type in the chat overlay
 - **VAD Mode** — Always-on listening with wake-word agent activation
 - **Transcription Mode** — Global hotkey to dictate into any focused text field
-- **Multiple Whisper Models** — From tiny (75 MB) to large (3 GB)
+- **Parakeet TDT Models** — Multilingual (v3) and English-only (v2), each ~600 MB
 - **Microphone & System Audio** — Transcribe your voice or computer audio
 
 All transcription happens locally on your Mac using Apple's Neural Engine — no audio is sent to the cloud.
@@ -28,7 +28,7 @@ Voice setup is streamlined into a single screen:
 2. Navigate to **Voice** tab
 3. Complete the requirements shown at the top:
    - **Microphone** — Click "Grant" to enable microphone access
-   - **Whisper Model** — Click "Download" to get the recommended model
+   - **Parakeet Model** — Click "Download" to get the recommended model
 4. Once both requirements show checkmarks, tap the microphone button to test
 
 The large centered microphone button becomes active when setup is complete. Tap it to start recording, tap again to stop. Your transcription appears below in real-time.
@@ -54,45 +54,25 @@ If you prefer manual configuration:
 
 ---
 
-## Whisper Models
+## Parakeet Models
 
-### Recommended Models
+Osaurus uses [FluidAudio](https://github.com/FluidInference/FluidAudio) Parakeet TDT (Token-and-Duration Transducer) models for on-device speech recognition via CoreML and the Apple Neural Engine.
 
-| Model                       | Size    | Best For                              |
-| --------------------------- | ------- | ------------------------------------- |
-| **Whisper Large V3 Turbo**  | ~1.5 GB | Best balance of speed and accuracy    |
-| **Whisper Small (English)** | ~500 MB | Fast, efficient English transcription |
-| **Whisper Large V3**        | ~3 GB   | Maximum accuracy for all languages    |
+### Available Models
 
-### All Available Models
-
-| Model                        | Size    | Languages    | Notes                 |
-| ---------------------------- | ------- | ------------ | --------------------- |
-| Whisper Large V3             | ~3 GB   | Multilingual | Best quality          |
-| Whisper Large V3 Turbo       | ~1.5 GB | Multilingual | Fast + accurate       |
-| Whisper Large V3 (Quantized) | ~626 MB | Multilingual | Smaller footprint     |
-| Whisper Large V2             | ~3 GB   | Multilingual | Previous generation   |
-| Whisper Medium               | ~1.5 GB | Multilingual | Balanced              |
-| Whisper Medium (English)     | ~1.5 GB | English only | Optimized for English |
-| Whisper Small                | ~500 MB | Multilingual | Compact               |
-| Whisper Small (English)      | ~500 MB | English only | Fast + efficient      |
-| Whisper Small (Quantized)    | ~216 MB | Multilingual | Very efficient        |
-| Whisper Base                 | ~150 MB | Multilingual | Very fast             |
-| Whisper Base (English)       | ~150 MB | English only | Fastest               |
-| Whisper Tiny                 | ~75 MB  | Multilingual | Ultra-fast            |
-| Whisper Tiny (English)       | ~75 MB  | English only | Instant               |
-| Distil Whisper Large V3      | ~750 MB | Multilingual | Distilled, fast       |
+| Model                        | Size    | Languages                        | Notes                          |
+| ---------------------------- | ------- | -------------------------------- | ------------------------------ |
+| **Parakeet TDT v3 (0.6B)**  | ~600 MB | Multilingual (25 European langs) | Recommended for most users     |
+| **Parakeet TDT v2 (0.6B)**  | ~600 MB | English only                     | Highest recall for English     |
 
 ### Model Selection Tips
 
-- **English only?** Use `.en` variants for better accuracy
-- **Limited disk space?** Try quantized or smaller models
-- **Need accuracy?** Use Large V3 or Large V3 Turbo
-- **Need speed?** Use Small, Base, or Tiny models
+- **Multilingual?** Use Parakeet TDT v3 — supports English, German, Spanish, French, Dutch, Italian, and 19 more European languages
+- **English only?** Use Parakeet TDT v2 for slightly better English recall
 
 ### Storage Location
 
-Models are stored at: `~/.osaurus/whisper-models/`
+Models are stored at: `~/Library/Application Support/FluidAudio/Models/`
 
 ---
 
@@ -196,7 +176,7 @@ VAD Mode enables hands-free agent activation. Say a agent's name (or a custom wa
 │                      VAD Mode Flow                           │
 ├─────────────────────────────────────────────────────────────┤
 │                                                              │
-│  1. VAD listens in background using WhisperKit              │
+│  1. VAD listens in background using FluidAudio               │
 │           ↓                                                  │
 │  2. Real-time transcription checked for wake-words          │
 │           ↓                                                  │
@@ -274,7 +254,7 @@ Transcription Mode allows you to dictate text directly into any application usin
 │           ↓                                                  │
 │  2. Minimal overlay appears showing recording status        │
 │           ↓                                                  │
-│  3. WhisperKit transcribes your speech in real-time         │
+│  3. FluidAudio transcribes your speech in real-time         │
 │           ↓                                                  │
 │  4. Text is typed into the focused text field               │
 │           ↓                                                  │
@@ -293,7 +273,7 @@ Transcription Mode allows you to dictate text directly into any application usin
 
 **Microphone Permission** — Required for audio capture (same as other voice features)
 
-**Whisper Model** — A model must be downloaded and selected
+**Parakeet Model** — A model must be downloaded and selected
 
 ### Transcription Settings
 
@@ -334,29 +314,26 @@ The overlay stays on top of all windows and follows the app's theme.
 1. **Speak clearly** — Enunciate words for better accuracy
 2. **Use a good microphone** — External mics often work better than built-in
 3. **Reduce background noise** — Find a quiet environment
-4. **Use a larger model** — Large V3 Turbo offers the best accuracy
-5. **Set the language hint** — If speaking a specific language, set it in Voice settings
+4. **Use Parakeet TDT v3** — The multilingual model offers the best overall accuracy
 
 ---
 
 ## Configuration Reference
 
-### WhisperConfiguration
+### SpeechConfiguration
 
 Voice input settings stored in app preferences:
 
 ```swift
-struct WhisperConfiguration {
-    var defaultModel: String?          // Selected model ID
-    var languageHint: String?          // ISO 639-1 code (e.g., "en")
-    var enabled: Bool                  // Voice features enabled
-    var wordTimestamps: Bool           // Include word timing
-    var selectedInputDeviceId: String? // Audio device UID
+struct SpeechConfiguration {
+    var modelVersion: SpeechModelVersion   // .v2 (English) or .v3 (multilingual)
+    var selectedInputDeviceId: String?     // Audio device UID
     var selectedInputSource: AudioInputSource // Mic or system
-    var sensitivity: VoiceSensitivity  // Low/Medium/High
-    var voiceInputEnabled: Bool        // Voice in chat enabled
-    var pauseDuration: Double          // Silence before auto-send
-    var confirmationDelay: Double      // Confirmation countdown
+    var sensitivity: VoiceSensitivity      // Low/Medium/High
+    var voiceInputEnabled: Bool            // Voice in chat enabled
+    var pauseDuration: Double              // Silence before auto-send
+    var confirmationDelay: Double          // Confirmation countdown
+    var silenceTimeoutSeconds: Double      // Auto-close after silence
 }
 ```
 
@@ -386,24 +363,11 @@ struct TranscriptionConfiguration {
 }
 ```
 
-### Language Hints
+### Language Support
 
-Set a language hint to improve accuracy when you know the input language:
+Parakeet TDT v3 automatically detects and transcribes 25 European languages: English, German, Spanish, French, Dutch, Italian, Danish, Estonian, Finnish, Greek, Hungarian, Latvian, Lithuanian, Maltese, Polish, Portuguese, Romanian, Slovak, Slovenian, Swedish, Russian, Ukrainian, Bulgarian, Croatian, and Czech.
 
-| Code | Language   |
-| ---- | ---------- |
-| `en` | English    |
-| `es` | Spanish    |
-| `fr` | French     |
-| `de` | German     |
-| `ja` | Japanese   |
-| `zh` | Chinese    |
-| `ko` | Korean     |
-| `pt` | Portuguese |
-| `it` | Italian    |
-| `nl` | Dutch      |
-
-Leave empty for auto-detection.
+Parakeet TDT v2 is optimized exclusively for English.
 
 ---
 
@@ -428,15 +392,11 @@ Leave empty for auto-detection.
 
 ### Low Transcription Accuracy
 
-1. **Use a larger model**
+1. **Try the multilingual model**
 
-   - Upgrade from Small to Medium or Large
+   - Switch to Parakeet TDT v3 for broader language support
 
-2. **Set the correct language hint**
-
-   - If speaking a specific language, set the hint
-
-3. **Reduce background noise**
+2. **Reduce background noise**
 
    - Use a closer microphone
    - Reduce ambient noise
@@ -529,7 +489,7 @@ Leave empty for auto-detection.
 
 All voice processing happens locally on your Mac:
 
-- **No cloud transcription** — WhisperKit runs entirely on-device
+- **No cloud transcription** — FluidAudio runs entirely on-device
 - **No audio recording** — Audio is processed in memory only
 - **No data collection** — Transcriptions stay on your machine
 - **Neural Engine acceleration** — Fast, efficient processing

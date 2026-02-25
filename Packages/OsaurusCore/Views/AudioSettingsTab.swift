@@ -3,7 +3,7 @@
 //  osaurus
 //
 //  Shared audio settings for all voice modes (Voice Input, VAD, Transcription).
-//  Configures language hint, sensitivity, and audio input device.
+//  Configures sensitivity and audio input device.
 //
 
 import SwiftUI
@@ -12,13 +12,12 @@ import SwiftUI
 
 struct AudioSettingsTab: View {
     @Environment(\.theme) private var theme
-    @ObservedObject private var whisperService = WhisperKitService.shared
-    @ObservedObject private var modelManager = WhisperModelManager.shared
+    @ObservedObject private var speechService = SpeechService.shared
+    @ObservedObject private var modelManager = SpeechModelManager.shared
     @ObservedObject private var audioInputManager = AudioInputManager.shared
     @ObservedObject private var systemAudioManager = SystemAudioCaptureManager.shared
 
     // Settings state
-    @State private var languageHint: String = ""
     @State private var sensitivity: VoiceSensitivity = .medium
     @State private var hasLoadedSettings = false
 
@@ -27,30 +26,16 @@ struct AudioSettingsTab: View {
     @State private var testError: String?
 
     private func loadSettings() {
-        let config = WhisperConfigurationStore.load()
-        languageHint = config.languageHint ?? ""
+        let config = SpeechConfigurationStore.load()
         sensitivity = config.sensitivity
     }
 
     private func saveSettings() {
-        var config = WhisperConfigurationStore.load()
-        config.languageHint = languageHint.isEmpty ? nil : languageHint
+        var config = SpeechConfigurationStore.load()
         config.sensitivity = sensitivity
-        WhisperConfigurationStore.save(config)
+        SpeechConfigurationStore.save(config)
 
-        // Notify other views of the configuration change
         NotificationCenter.default.post(name: .voiceConfigurationChanged, object: nil)
-    }
-
-    /// Display name for the currently selected language
-    private var selectedLanguageDisplayName: String {
-        if languageHint.isEmpty {
-            return "Auto-detect"
-        }
-        if let lang = SupportedLanguage.allCases.first(where: { $0.code == languageHint }) {
-            return lang.displayName
-        }
-        return languageHint.uppercased()
     }
 
     var body: some View {
@@ -58,9 +43,6 @@ struct AudioSettingsTab: View {
             VStack(spacing: 24) {
                 // Info Card
                 infoCard
-
-                // Language Settings Card
-                languageSettingsCard
 
                 // Sensitivity Settings Card
                 sensitivitySettingsCard
@@ -107,110 +89,6 @@ struct AudioSettingsTab: View {
         .background(
             RoundedRectangle(cornerRadius: 8)
                 .fill(theme.accentColor.opacity(0.1))
-        )
-    }
-
-    // MARK: - Language Settings Card
-
-    private var languageSettingsCard: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(spacing: 12) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(theme.accentColor.opacity(0.15))
-                    Image(systemName: "globe")
-                        .font(.system(size: 20, weight: .medium))
-                        .foregroundColor(theme.accentColor)
-                }
-                .frame(width: 48, height: 48)
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Speaking Language")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
-
-                    Text("Hint for better transcription accuracy")
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.secondaryText)
-                }
-
-                Spacer()
-            }
-
-            // Language Picker
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Language")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
-
-                Menu {
-                    Button(action: {
-                        languageHint = ""; saveSettings()
-                    }) {
-                        HStack {
-                            Text("Auto-detect")
-                            if languageHint.isEmpty {
-                                Image(systemName: "checkmark")
-                            }
-                        }
-                    }
-
-                    Divider()
-
-                    ForEach(SupportedLanguage.allCases, id: \.code) { lang in
-                        Button(action: {
-                            languageHint = lang.code; saveSettings()
-                        }) {
-                            HStack {
-                                Text(lang.displayName)
-                                if languageHint == lang.code {
-                                    Image(systemName: "checkmark")
-                                }
-                            }
-                        }
-                    }
-                } label: {
-                    HStack(spacing: 10) {
-                        Image(systemName: "globe")
-                            .font(.system(size: 14))
-                            .foregroundColor(theme.accentColor)
-
-                        Text(selectedLanguageDisplayName)
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundColor(theme.primaryText)
-
-                        Spacer()
-
-                        Image(systemName: "chevron.up.chevron.down")
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundColor(theme.tertiaryText)
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 10)
-                    .background(
-                        RoundedRectangle(cornerRadius: 10)
-                            .fill(theme.inputBackground)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 10)
-                                    .stroke(theme.inputBorder, lineWidth: 1)
-                            )
-                    )
-                }
-                .menuStyle(.borderlessButton)
-
-                Text("Set a specific language for better accuracy, or use auto-detect for multilingual input")
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
-            }
-        }
-        .padding(20)
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16)
-                        .stroke(theme.cardBorder, lineWidth: 1)
-                )
         )
     }
 
@@ -524,7 +402,7 @@ struct AudioSettingsTab: View {
 
             // Waveform
             if isTestingVoice {
-                WaveformView(level: whisperService.audioLevel, style: .bars, barCount: 24)
+                WaveformView(level: speechService.audioLevel, style: .bars, barCount: 24)
                     .frame(height: 48)
             }
 
@@ -532,9 +410,9 @@ struct AudioSettingsTab: View {
             VStack(alignment: .leading, spacing: 8) {
                 let displayText: String = {
                     guard isTestingVoice else { return "" }
-                    return whisperService.confirmedTranscription.isEmpty
-                        ? whisperService.currentTranscription
-                        : whisperService.confirmedTranscription + " " + whisperService.currentTranscription
+                    return speechService.confirmedTranscription.isEmpty
+                        ? speechService.currentTranscription
+                        : speechService.confirmedTranscription + " " + speechService.currentTranscription
                 }()
 
                 Text(displayText.isEmpty ? "Speak and see your words here..." : displayText)
@@ -589,11 +467,11 @@ struct AudioSettingsTab: View {
                     )
                 }
                 .buttonStyle(.plain)
-                .disabled(!whisperService.isModelLoaded || whisperService.isLoadingModel)
-                .opacity(whisperService.isModelLoaded ? 1 : 0.5)
+                .disabled(!speechService.isModelLoaded || speechService.isLoadingModel)
+                .opacity(speechService.isModelLoaded ? 1 : 0.5)
 
-                if !whisperService.confirmedTranscription.isEmpty || !whisperService.currentTranscription.isEmpty {
-                    Button(action: { whisperService.clearTranscription() }) {
+                if !speechService.confirmedTranscription.isEmpty || !speechService.currentTranscription.isEmpty {
+                    Button(action: { speechService.clearTranscription() }) {
                         HStack(spacing: 6) {
                             Image(systemName: "trash")
                                 .font(.system(size: 12))
@@ -628,14 +506,14 @@ struct AudioSettingsTab: View {
     private func toggleTest() {
         if isTestingVoice {
             Task {
-                _ = await whisperService.stopStreamingTranscription()
+                _ = await speechService.stopStreamingTranscription()
                 isTestingVoice = false
             }
         } else {
             testError = nil
             Task {
                 do {
-                    try await whisperService.startStreamingTranscription()
+                    try await speechService.startStreamingTranscription()
                     isTestingVoice = true
                 } catch {
                     testError = error.localizedDescription

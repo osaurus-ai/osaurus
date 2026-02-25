@@ -21,7 +21,7 @@ struct VoiceInputSettingsTab: View {
     @State private var hasLoadedSettings = false
 
     private func loadSettings() {
-        let config = WhisperConfigurationStore.load()
+        let config = SpeechConfigurationStore.load()
         voiceInputEnabled = config.voiceInputEnabled
         pauseDuration = config.pauseDuration
         confirmationDelay = config.confirmationDelay
@@ -29,12 +29,12 @@ struct VoiceInputSettingsTab: View {
     }
 
     private func saveSettings() {
-        var config = WhisperConfigurationStore.load()
+        var config = SpeechConfigurationStore.load()
         config.voiceInputEnabled = voiceInputEnabled
         config.pauseDuration = pauseDuration
         config.confirmationDelay = confirmationDelay
         config.silenceTimeoutSeconds = silenceTimeoutSeconds
-        WhisperConfigurationStore.save(config)
+        SpeechConfigurationStore.save(config)
 
         // Notify other views of the configuration change
         NotificationCenter.default.post(name: .voiceConfigurationChanged, object: nil)

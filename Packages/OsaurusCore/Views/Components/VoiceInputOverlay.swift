@@ -55,8 +55,6 @@ public struct VoiceInputOverlay: View {
     var onEdit: (() -> Void)?
 
     @Environment(\.theme) private var theme
-    @State private var countdownRemaining: Double = 0
-    @State private var countdownTimer: Timer?
     @State private var showEditHint = false
 
     public init(
@@ -279,11 +277,11 @@ public struct VoiceInputOverlay: View {
                 }
             }
 
-        case .paused:
-            // Clean countdown card - use countdownRemaining which is updated by timer
+        case .paused(let remaining):
+            // Clean countdown card - use state remaining value
             CountdownRingButton(
                 duration: confirmationDelay,
-                remaining: countdownRemaining,
+                remaining: remaining,
                 onTap: { resumeRecording() }
             )
             .transition(.opacity)
@@ -372,47 +370,19 @@ public struct VoiceInputOverlay: View {
     // MARK: - Actions
 
     private func handleStateChange(_ newState: VoiceInputState) {
-        switch newState {
-        case .paused(let remaining):
-            startCountdown(from: remaining)
-        case .recording, .idle:
-            stopCountdown()
-        case .sending:
-            stopCountdown()
-        }
-    }
-
-    private func startCountdown(from duration: Double) {
-        countdownRemaining = duration
-        countdownTimer?.invalidate()
-        countdownTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
-            DispatchQueue.main.async {
-                countdownRemaining -= 0.1
-                if countdownRemaining <= 0 {
-                    sendMessage()
-                }
-            }
-        }
-    }
-
-    private func stopCountdown() {
-        countdownTimer?.invalidate()
-        countdownTimer = nil
+        // Obsolete, countdown handled by parent component now
     }
 
     private func cancelRecording() {
-        stopCountdown()
         state = .idle
         onCancel?()
     }
 
     private func resumeRecording() {
-        stopCountdown()
         state = .recording
     }
 
     private func sendMessage() {
-        stopCountdown()
         state = .sending
         let message = fullText.trimmingCharacters(in: .whitespacesAndNewlines)
         if !message.isEmpty {

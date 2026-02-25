@@ -23,7 +23,7 @@
 	<key>NSLocationUsageDescription</key>
 	<string>Osaurus plugins may access your location to provide location-based services.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Osaurus uses the microphone for voice transcription with WhisperKit.</string>
+	<string>Osaurus uses the microphone for on-device voice transcription with FluidAudio.</string>
 	<key>NSScreenCaptureUsageDescription</key>
 	<string>Osaurus can capture system audio for transcription. Screen content is not recorded.</string>
 	<key>CFBundleURLTypes</key>

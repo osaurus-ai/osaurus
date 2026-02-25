@@ -1717,13 +1717,13 @@ struct ChatView: View {
                 guard let session else { return event }
 
                 // Check if voice input is active AND overlay is visible
-                if WhisperKitService.shared.isRecording && session.showVoiceOverlay {
+                if SpeechService.shared.isRecording && session.showVoiceOverlay {
                     // Stage 1: Cancel voice input
                     print("[ChatView] Esc pressed: Cancelling voice input")
                     Task {
                         // Stop streaming and clear transcription
-                        _ = await WhisperKitService.shared.stopStreamingTranscription()
-                        WhisperKitService.shared.clearTranscription()
+                        _ = await SpeechService.shared.stopStreamingTranscription()
+                        SpeechService.shared.clearTranscription()
                     }
                     return nil  // Swallow event
                 } else {
@@ -1731,11 +1731,11 @@ struct ChatView: View {
                     print("[ChatView] Esc pressed: Closing chat window")
 
                     // Also ensure we cleanup any zombie recording if it exists (hidden but recording)
-                    if WhisperKitService.shared.isRecording {
+                    if SpeechService.shared.isRecording {
                         print("[ChatView] Cleaning up zombie voice recording on window close")
                         Task {
-                            _ = await WhisperKitService.shared.stopStreamingTranscription()
-                            WhisperKitService.shared.clearTranscription()
+                            _ = await SpeechService.shared.stopStreamingTranscription()
+                            SpeechService.shared.clearTranscription()
                         }
                     }
 

@@ -98,7 +98,7 @@ struct ManagementView: View {
     @ObservedObject private var scheduleManager = ScheduleManager.shared
     @ObservedObject private var watcherManager = WatcherManager.shared
     @ObservedObject private var modelManager = ModelManager.shared
-    @ObservedObject private var whisperModelManager = WhisperModelManager.shared
+    @ObservedObject private var speechModelManager = SpeechModelManager.shared
 
     @EnvironmentObject private var updater: UpdaterViewModel
 
@@ -258,7 +258,7 @@ private extension ManagementView {
         case .watchers:
             count = watcherManager.watchers.count
         case .voice:
-            count = whisperModelManager.downloadedModelsCount
+            count = speechModelManager.downloadedModelsCount
         case .themes:
             count = themeManager.installedThemes.filter { !$0.isBuiltIn }.count
         default:

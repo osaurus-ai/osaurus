@@ -12,8 +12,8 @@ import SwiftUI
 
 struct VoiceSetupTab: View {
     @Environment(\.theme) private var theme
-    @ObservedObject private var whisperService = WhisperKitService.shared
-    @ObservedObject private var modelManager = WhisperModelManager.shared
+    @ObservedObject private var speechService = SpeechService.shared
+    @ObservedObject private var modelManager = SpeechModelManager.shared
 
     /// Called when setup is complete
     var onComplete: (() -> Void)?
@@ -27,7 +27,7 @@ struct VoiceSetupTab: View {
 
     /// Whether all requirements are met
     private var isSetupComplete: Bool {
-        whisperService.microphonePermissionGranted
+        speechService.microphonePermissionGranted
             && modelManager.downloadedModelsCount > 0
             && modelManager.selectedModel != nil
     }
@@ -90,12 +90,12 @@ struct VoiceSetupTab: View {
                 hasAppeared = true
             }
         }
-        .onChange(of: whisperService.currentTranscription) { _, newValue in
+        .onChange(of: speechService.currentTranscription) { _, newValue in
             if isTestingVoice {
                 testTranscription = newValue
             }
         }
-        .onChange(of: whisperService.confirmedTranscription) { _, newValue in
+        .onChange(of: speechService.confirmedTranscription) { _, newValue in
             if isTestingVoice && !newValue.isEmpty {
                 testTranscription = newValue
             }
@@ -133,7 +133,7 @@ struct VoiceSetupTab: View {
         HStack(spacing: 8) {
             // Status icon
             ZStack {
-                if whisperService.microphonePermissionGranted {
+                if speechService.microphonePermissionGranted {
                     Image(systemName: "checkmark.circle.fill")
                         .font(.system(size: 16, weight: .medium))
                         .foregroundColor(theme.successColor)
@@ -147,9 +147,9 @@ struct VoiceSetupTab: View {
 
             Text("Microphone")
                 .font(.system(size: 13, weight: .medium))
-                .foregroundColor(whisperService.microphonePermissionGranted ? theme.primaryText : theme.secondaryText)
+                .foregroundColor(speechService.microphonePermissionGranted ? theme.primaryText : theme.secondaryText)
 
-            if !whisperService.microphonePermissionGranted {
+            if !speechService.microphonePermissionGranted {
                 Button(action: requestMicrophonePermission) {
                     Text("Grant")
                         .font(.system(size: 11, weight: .semibold))
@@ -171,7 +171,7 @@ struct VoiceSetupTab: View {
                 .frame(width: 20, height: 20)
 
             // Label
-            Text("Whisper Model")
+            Text("Speech Model")
                 .font(.system(size: 13, weight: .medium))
                 .foregroundColor(hasModel ? theme.primaryText : theme.secondaryText)
 
@@ -265,7 +265,7 @@ struct VoiceSetupTab: View {
             // Outer waveform ring (only when recording)
             if isTestingVoice {
                 WaveformRing(
-                    level: whisperService.audioLevel,
+                    level: speechService.audioLevel,
                     size: ringSize,
                     color: theme.accentColor
                 )
@@ -384,14 +384,14 @@ struct VoiceSetupTab: View {
 
     private func requestMicrophonePermission() {
         Task {
-            _ = await whisperService.requestMicrophonePermission()
+            _ = await speechService.requestMicrophonePermission()
         }
     }
 
     private func toggleVoiceTest() {
         if isTestingVoice {
             Task {
-                _ = await whisperService.stopStreamingTranscription()
+                _ = await speechService.stopStreamingTranscription()
                 await MainActor.run {
                     isTestingVoice = false
                 }
@@ -401,7 +401,7 @@ struct VoiceSetupTab: View {
             testTranscription = ""  // Clear previous transcription
             Task {
                 do {
-                    try await whisperService.startStreamingTranscription()
+                    try await speechService.startStreamingTranscription()
                     await MainActor.run {
                         isTestingVoice = true
                     }

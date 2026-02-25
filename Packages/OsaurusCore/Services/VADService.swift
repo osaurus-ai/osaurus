@@ -3,7 +3,7 @@
 //  osaurus
 //
 //  Always-on Voice Activity Detection service for wake-word agent activation.
-//  Uses WhisperKitService for transcription to avoid audio conflicts.
+//  Uses SpeechService for transcription to avoid audio conflicts.
 //
 
 import AVFoundation
@@ -34,12 +34,11 @@ public enum VADServiceState: Equatable, Sendable {
     case idle
     case starting
     case listening
-    case processing
     case error(String)
 }
 
 /// Always-on listening service for wake-word detection
-/// Uses WhisperKitService's audio infrastructure to avoid conflicts
+/// Uses SpeechService's audio infrastructure to avoid conflicts
 @MainActor
 public final class VADService: ObservableObject {
     public static let shared = VADService()
@@ -55,7 +54,7 @@ public final class VADService: ObservableObject {
     private var configuration: VADConfiguration = .default
     private var agentDetector: AgentNameDetector?
     private var cancellables = Set<AnyCancellable>()
-    private var whisperService: WhisperKitService { WhisperKitService.shared }
+    private var speechService: SpeechService { SpeechService.shared }
 
     // Debounce detection to avoid duplicate triggers
     private var lastDetectionTime: Date = .distantPast
@@ -115,33 +114,33 @@ public final class VADService: ObservableObject {
         state = .starting
 
         // Ensure model is loaded
-        if !whisperService.isModelLoaded {
+        if !speechService.isModelLoaded {
             // Try to load the model
-            guard let selectedModel = WhisperModelManager.shared.selectedModel else {
+            guard let selectedModel = SpeechModelManager.shared.selectedModel else {
                 state = .error("No model selected")
                 throw VADError.noModelSelected
             }
 
             do {
-                try await whisperService.loadModel(selectedModel.id)
+                try await speechService.loadModel(selectedModel.id)
             } catch {
                 state = .error("Failed to load model: \(error.localizedDescription)")
-                throw VADError.modelNotDownloaded
+                throw error
             }
         }
 
         // Start streaming transcription with keep-alive enabled
         do {
             // Enable keep-alive to prevent audio engine teardown during handoffs
-            whisperService.keepAudioEngineAlive = true
+            speechService.keepAudioEngineAlive = true
 
-            try await whisperService.startStreamingTranscription()
+            try await speechService.startStreamingTranscription()
             state = .listening
             isEnabled = true
             accumulatedTranscription = ""
             print("[VADService] Started listening for wake words (keep-alive enabled)")
         } catch {
-            whisperService.keepAudioEngineAlive = false
+            speechService.keepAudioEngineAlive = false
             state = .error(error.localizedDescription)
             throw error
         }
@@ -159,9 +158,9 @@ public final class VADService: ObservableObject {
         accumulatedTranscription = ""
 
         // Disable keep-alive and force stop to tear down audio engine
-        whisperService.keepAudioEngineAlive = false
-        _ = await whisperService.stopStreamingTranscription(force: true)
-        whisperService.clearTranscription()
+        speechService.keepAudioEngineAlive = false
+        _ = await speechService.stopStreamingTranscription(force: true)
+        speechService.clearTranscription()
 
         print("[VADService] Stopped listening (keep-alive disabled)")
     }
@@ -171,18 +170,21 @@ public final class VADService: ObservableObject {
         guard state == .listening || state == .starting else { return }
         print("[VADService] Pausing temporarily")
 
-        // Update state first to prevent auto-restart logic from triggering
+        // Update state and disable auto-restart to prevent the isRecording observer
+        // from restarting VAD while chat voice input is active
         state = .idle
-        // Keep isEnabled = true so we know to resume later
+        isEnabled = false
+        restartTask?.cancel()
+        restartTask = nil
 
         // NOTE: We do NOT set keepAudioEngineAlive = false here.
         // We want the engine to stay alive for handoff.
 
         // Stop streaming (will keep engine alive because keepAudioEngineAlive is true from start())
-        _ = await whisperService.stopStreamingTranscription()
-        whisperService.clearTranscription()
+        _ = await speechService.stopStreamingTranscription()
+        speechService.clearTranscription()
 
-        print("[VADService] Paused - transcription stopped, ready for chat voice input")
+        print("[VADService] Paused - transcription stopped, auto-restart disabled")
     }
 
     // MARK: - Private Methods
@@ -195,21 +197,21 @@ public final class VADService: ObservableObject {
             }
             .store(in: &cancellables)
 
-        // Observe transcription changes from WhisperKitService
-        whisperService.$currentTranscription
+        // Observe transcription changes from SpeechService
+        speechService.$currentTranscription
             .sink { [weak self] transcription in
                 self?.handleTranscription(transcription, isConfirmed: false)
             }
             .store(in: &cancellables)
 
-        whisperService.$confirmedTranscription
+        speechService.$confirmedTranscription
             .sink { [weak self] transcription in
                 self?.handleTranscription(transcription, isConfirmed: true)
             }
             .store(in: &cancellables)
 
         // Observe audio level
-        whisperService.$audioLevel
+        speechService.$audioLevel
             .sink { [weak self] level in
                 guard let self = self, self.state == .listening else { return }
                 self.audioLevel = level
@@ -217,7 +219,7 @@ public final class VADService: ObservableObject {
             .store(in: &cancellables)
 
         // Observe recording state - auto-restart if stopped unexpectedly
-        whisperService.$isRecording
+        speechService.$isRecording
             .dropFirst()  // Ignore initial value
             .sink { [weak self] isRecording in
                 guard let self = self else { return }
@@ -253,13 +255,8 @@ public final class VADService: ObservableObject {
                         try? await Task.sleep(nanoseconds: 1_000_000_000)
                         guard !Task.isCancelled else { return }
                         guard let self else { return }
-                        // Only restart if still supposed to be enabled
                         if self.isEnabled && self.configuration.vadModeEnabled {
                             print("[VADService] Restarting VAD...")
-                            // Ensure state allows start
-                            if self.state == .listening {
-                                self.state = .idle
-                            }
                             try? await self.start()
                         }
                     }
@@ -286,9 +283,9 @@ public final class VADService: ObservableObject {
         } else {
             // Combine confirmed and current
             let fullText =
-                whisperService.confirmedTranscription.isEmpty
+                speechService.confirmedTranscription.isEmpty
                 ? transcription
-                : whisperService.confirmedTranscription + " " + transcription
+                : speechService.confirmedTranscription + " " + transcription
             accumulatedTranscription = fullText
         }
 
@@ -315,7 +312,7 @@ public final class VADService: ObservableObject {
                 await self.pause()
 
                 // Clear transcription to avoid re-detecting same phrase
-                whisperService.clearTranscription()
+                speechService.clearTranscription()
                 accumulatedTranscription = ""
 
                 // Post notification to open chat with voice mode
@@ -352,7 +349,7 @@ public final class VADService: ObservableObject {
         try? await Task.sleep(nanoseconds: 500_000_000)  // 500ms
 
         // Clear any stale transcription before resuming
-        whisperService.clearTranscription()
+        speechService.clearTranscription()
         accumulatedTranscription = ""
 
         do {
@@ -370,8 +367,6 @@ public enum VADError: Error, LocalizedError {
     case notEnabled
     case noAgentsEnabled
     case noModelSelected
-    case modelNotDownloaded
-    case audioSetupFailed(String)
 
     public var errorDescription: String? {
         switch self {
@@ -380,11 +375,7 @@ public enum VADError: Error, LocalizedError {
         case .noAgentsEnabled:
             return "No agents are enabled for VAD activation"
         case .noModelSelected:
-            return "No Whisper model selected"
-        case .modelNotDownloaded:
-            return "Selected Whisper model is not downloaded"
-        case .audioSetupFailed(let reason):
-            return "Audio setup failed: \(reason)"
+            return "No speech model selected"
         }
     }
 }

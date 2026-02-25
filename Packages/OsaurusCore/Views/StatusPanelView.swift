@@ -360,13 +360,13 @@ private struct BottomActionBar: View {
 private struct VADToggleButton: View {
     @Environment(\.theme) private var theme
     @ObservedObject private var vadService = VADService.shared
-    @ObservedObject private var whisperModelManager = WhisperModelManager.shared
+    @ObservedObject private var speechModelManager = SpeechModelManager.shared
 
     @State private var pulseAnimation = false
 
     /// Whether VAD can be toggled (requirements met)
     private var canToggleVAD: Bool {
-        whisperModelManager.selectedModel != nil && whisperModelManager.downloadedModelsCount > 0
+        speechModelManager.selectedModel != nil
     }
 
     /// Whether VAD mode is configured (has enabled agents)
@@ -378,7 +378,7 @@ private struct VADToggleButton: View {
     }
 
     private var isActive: Bool {
-        vadService.state == .listening || vadService.state == .processing
+        vadService.state == .listening
     }
 
     private var isVADEnabledGlobally: Bool {
@@ -400,8 +400,6 @@ private struct VADToggleButton: View {
         switch vadService.state {
         case .listening:
             return theme.successColor
-        case .processing:
-            return theme.warningColor
         case .error:
             return theme.errorColor
         default:
@@ -428,8 +426,6 @@ private struct VADToggleButton: View {
             return "Voice Detection: Starting..."
         case .listening:
             return "Voice Detection: Listening — Click to disable"
-        case .processing:
-            return "Voice Detection: Processing..."
         case .error(let msg):
             return "Voice Detection Error: \(msg)"
         }

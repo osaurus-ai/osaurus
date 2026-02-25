@@ -408,7 +408,7 @@ struct ConfigurationView: View {
                         }
 
                         // MARK: - Voice Section
-                        if matchesSearch("Voice", "Whisper", "Transcription", "Model", "Language", "Speech") {
+                        if matchesSearch("Voice", "Parakeet", "Transcription", "Model", "Speech") {
                             VoiceSettingsSection()
                         }
 
@@ -1620,41 +1620,28 @@ private struct SettingsButtonStyle: ButtonStyle {
 
 private struct VoiceSettingsSection: View {
     @ObservedObject private var themeManager = ThemeManager.shared
-    @ObservedObject private var modelManager = WhisperModelManager.shared
-    @ObservedObject private var whisperService = WhisperKitService.shared
-
-    @State private var tempWordTimestamps: Bool = false
-    @State private var hasLoadedConfig = false
+    @ObservedObject private var modelManager = SpeechModelManager.shared
+    @ObservedObject private var speechService = SpeechService.shared
 
     var body: some View {
         SettingsSection(title: "Voice (Advanced)", icon: "waveform") {
             VStack(alignment: .leading, spacing: 20) {
-                Text("Configure voice settings directly in the Voice tab. Advanced options below.")
+                Text("Configure voice settings directly in the Voice tab.")
                     .font(.system(size: 12))
                     .foregroundColor(themeManager.currentTheme.secondaryText)
-
-                // Advanced Options - Word Timestamps
-                SettingsToggle(
-                    title: "Word Timestamps",
-                    description: "Include word-level timing in transcription results",
-                    isOn: $tempWordTimestamps
-                )
-                .onChange(of: tempWordTimestamps) { _, _ in
-                    saveVoiceConfig()
-                }
 
                 // Status info
                 HStack(spacing: 12) {
                     // Model status
                     HStack(spacing: 6) {
-                        if whisperService.isLoadingModel {
+                        if speechService.isLoadingModel {
                             ProgressView()
                                 .scaleEffect(0.5)
                                 .frame(width: 8, height: 8)
                         } else {
                             Circle()
                                 .fill(
-                                    whisperService.isModelLoaded
+                                    speechService.isModelLoaded
                                         ? themeManager.currentTheme.successColor
                                         : themeManager.currentTheme.tertiaryText
                                 )
@@ -1688,19 +1675,13 @@ private struct VoiceSettingsSection: View {
                 )
             }
         }
-        .onAppear {
-            if !hasLoadedConfig {
-                loadVoiceConfig()
-                hasLoadedConfig = true
-            }
-        }
     }
 
     private var modelStatusText: String {
-        if whisperService.isLoadingModel {
+        if speechService.isLoadingModel {
             return "Loading model..."
-        } else if whisperService.isModelLoaded {
-            if let modelId = whisperService.loadedModelId,
+        } else if speechService.isModelLoaded {
+            if let modelId = speechService.loadedModelId,
                 let model = modelManager.availableModels.first(where: { $0.id == modelId })
             {
                 return model.name
@@ -1713,183 +1694,6 @@ private struct VoiceSettingsSection: View {
         }
     }
 
-    private func loadVoiceConfig() {
-        let config = WhisperConfigurationStore.load()
-        tempWordTimestamps = config.wordTimestamps
-    }
-
-    private func saveVoiceConfig() {
-        var config = WhisperConfigurationStore.load()
-        config.wordTimestamps = tempWordTimestamps
-        WhisperConfigurationStore.save(config)
-    }
-}
-
-// MARK: - Voice Model Picker
-
-private struct VoiceModelPicker: View {
-    @ObservedObject private var themeManager = ThemeManager.shared
-    @Binding var selection: String
-    let models: [WhisperModel]
-
-    @State private var isHovered = false
-
-    private var displayName: String {
-        if let model = models.first(where: { $0.id == selection }) {
-            return model.name
-        }
-        return "Select a model"
-    }
-
-    var body: some View {
-        Menu {
-            if models.isEmpty {
-                Text("No models downloaded")
-                    .foregroundColor(.secondary)
-            } else {
-                ForEach(models) { model in
-                    Button(action: { selection = model.id }) {
-                        HStack {
-                            Text(model.name)
-                            if model.isRecommended {
-                                Text("Recommended")
-                                    .foregroundColor(.secondary)
-                            }
-                            if selection == model.id {
-                                Image(systemName: "checkmark")
-                            }
-                        }
-                    }
-                }
-            }
-        } label: {
-            HStack(spacing: 10) {
-                Image(systemName: "waveform")
-                    .font(.system(size: 16, weight: .medium))
-                    .foregroundColor(themeManager.currentTheme.accentColor)
-
-                Text(displayName)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(themeManager.currentTheme.primaryText)
-
-                Spacer()
-
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(themeManager.currentTheme.tertiaryText)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(themeManager.currentTheme.inputBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(
-                                isHovered
-                                    ? themeManager.currentTheme.accentColor.opacity(0.5)
-                                    : themeManager.currentTheme.inputBorder,
-                                lineWidth: isHovered ? 1.5 : 1
-                            )
-                    )
-            )
-        }
-        .menuStyle(.borderlessButton)
-        .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.15)) {
-                isHovered = hovering
-            }
-        }
-    }
-}
-
-// MARK: - Voice Input Device Picker
-
-private struct VoiceInputDevicePicker: View {
-    @ObservedObject private var themeManager = ThemeManager.shared
-    @Binding var selection: String?
-    let devices: [AudioInputDevice]
-
-    @State private var isHovered = false
-
-    private var displayName: String {
-        if let selectedId = selection,
-            let device = devices.first(where: { $0.id == selectedId })
-        {
-            return device.name
-        }
-        return "System Default"
-    }
-
-    var body: some View {
-        Menu {
-            // System Default option
-            Button(action: { selection = nil }) {
-                HStack {
-                    Text("System Default")
-                    if selection == nil {
-                        Image(systemName: "checkmark")
-                    }
-                }
-            }
-
-            Divider()
-
-            // Available devices
-            ForEach(devices) { device in
-                Button(action: { selection = device.id }) {
-                    HStack {
-                        Text(device.name)
-                        if device.isDefault {
-                            Text("(Default)")
-                                .foregroundColor(.secondary)
-                        }
-                        if selection == device.id {
-                            Image(systemName: "checkmark")
-                        }
-                    }
-                }
-            }
-        } label: {
-            HStack(spacing: 10) {
-                Image(systemName: "mic.fill")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(themeManager.currentTheme.accentColor)
-
-                Text(displayName)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(themeManager.currentTheme.primaryText)
-                    .lineLimit(1)
-
-                Spacer()
-
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(themeManager.currentTheme.tertiaryText)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(themeManager.currentTheme.inputBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(
-                                isHovered
-                                    ? themeManager.currentTheme.accentColor.opacity(0.5)
-                                    : themeManager.currentTheme.inputBorder,
-                                lineWidth: isHovered ? 1.5 : 1
-                            )
-                    )
-            )
-        }
-        .menuStyle(.borderlessButton)
-        .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.15)) {
-                isHovered = hovering
-            }
-        }
-    }
 }
 
 // MARK: - Work Settings Section

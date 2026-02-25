@@ -12,8 +12,8 @@ import SwiftUI
 
 struct TranscriptionModeSettingsTab: View {
     @Environment(\.theme) private var theme
-    @ObservedObject private var whisperService = WhisperKitService.shared
-    @ObservedObject private var modelManager = WhisperModelManager.shared
+    @ObservedObject private var speechService = SpeechService.shared
+    @ObservedObject private var modelManager = SpeechModelManager.shared
     @ObservedObject private var keyboardService = KeyboardSimulationService.shared
     @ObservedObject private var transcriptionService = TranscriptionModeService.shared
 
@@ -39,7 +39,7 @@ struct TranscriptionModeSettingsTab: View {
     /// Whether all requirements are met
     private var canEnableTranscription: Bool {
         keyboardService.hasAccessibilityPermission
-            && whisperService.microphonePermissionGranted
+            && speechService.microphonePermissionGranted
             && modelManager.downloadedModelsCount > 0
             && modelManager.selectedModel != nil
     }
@@ -198,16 +198,16 @@ struct TranscriptionModeSettingsTab: View {
                 RequirementRowView(
                     title: "Microphone Access",
                     description: "Required for voice input",
-                    isComplete: whisperService.microphonePermissionGranted,
+                    isComplete: speechService.microphonePermissionGranted,
                     action: {
                         Task {
-                            _ = await whisperService.requestMicrophonePermission()
+                            _ = await speechService.requestMicrophonePermission()
                         }
                     }
                 )
 
                 RequirementRowView(
-                    title: "Whisper Model Downloaded",
+                    title: "Speech Model Downloaded",
                     description: "Required for transcription",
                     isComplete: modelManager.downloadedModelsCount > 0,
                     action: nil
@@ -376,7 +376,7 @@ struct TranscriptionModeSettingsTab: View {
                     )
                 }
                 .buttonStyle(.plain)
-                .disabled(!whisperService.isModelLoaded || transcriptionService.state == .starting)
+                .disabled(!speechService.isModelLoaded || transcriptionService.state == .starting)
 
                 if let hk = hotkey {
                     Text("or press \(hk.displayString)")

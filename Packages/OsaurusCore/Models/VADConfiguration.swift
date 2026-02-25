@@ -10,7 +10,7 @@
 import Foundation
 
 /// Configuration settings for VAD (Voice Activity Detection) mode
-/// Note: Sensitivity is now shared via WhisperConfiguration in the Audio Settings tab.
+/// Note: Sensitivity is now shared via SpeechConfiguration in the Audio Settings tab.
 public struct VADConfiguration: Codable, Equatable, Sendable {
     /// Whether VAD mode is enabled globally
     public var vadModeEnabled: Bool
@@ -43,7 +43,7 @@ public struct VADConfiguration: Codable, Equatable, Sendable {
             try container.decodeIfPresent([UUID].self, forKey: .enabledAgentIds)
             ?? container.decodeIfPresent([UUID].self, forKey: .enabledPersonaIds)
             ?? defaults.enabledAgentIds
-        // wakeWordSensitivity is ignored - now uses shared sensitivity from WhisperConfiguration
+        // wakeWordSensitivity is ignored - now uses shared sensitivity from SpeechConfiguration
         self.autoStartVoiceInput =
             try container.decodeIfPresent(Bool.self, forKey: .autoStartVoiceInput)
             ?? defaults.autoStartVoiceInput

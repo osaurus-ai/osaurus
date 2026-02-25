@@ -125,7 +125,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         }
 
         // Pre-warm caches immediately for instant first window (no async deps)
-        _ = WhisperConfigurationStore.load()
+        _ = SpeechConfigurationStore.load()
         ModelOptionsCache.shared.prewarmLocalModelsOnly()
 
         // Auto-connect to enabled providers, then update model cache with remote models
@@ -170,9 +170,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // Setup global hotkey for Chat overlay (configured)
         applyChatHotkey()
 
-        // Auto-load whisper model if voice features are enabled
+        // Auto-load speech model if voice features are enabled
         Task { @MainActor in
-            await WhisperKitService.shared.autoLoadIfNeeded()
+            await SpeechService.shared.autoLoadIfNeeded()
         }
 
         // Initialize VAD service if enabled
@@ -213,15 +213,15 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         let vadConfig = VADConfigurationStore.load()
         if vadConfig.vadModeEnabled && !vadConfig.enabledAgentIds.isEmpty {
             Task { @MainActor in
-                // Wait for WhisperKit model to be loaded (up to 30 seconds)
-                let whisperService = WhisperKitService.shared
+                // Wait for speech model to be loaded (up to 30 seconds)
+                let speechService = SpeechService.shared
                 var attempts = 0
-                while !whisperService.isModelLoaded && attempts < 60 {
+                while !speechService.isModelLoaded && attempts < 60 {
                     try? await Task.sleep(nanoseconds: 500_000_000)  // 500ms
                     attempts += 1
                 }
 
-                if whisperService.isModelLoaded {
+                if speechService.isModelLoaded {
                     do {
                         try await VADService.shared.start()
                         print("[AppDelegate] VAD service started successfully on app launch")
@@ -545,14 +545,6 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                         }
                     }
                     tooltip += " — Voice: Listening"
-
-                case .processing:
-                    vDot.isHidden = false
-                    if let layer = vDot.layer {
-                        layer.backgroundColor = NSColor.systemOrange.cgColor
-                        layer.removeAnimation(forKey: "vadPulse")
-                    }
-                    tooltip += " — Voice: Processing"
 
                 case .error:
                     vDot.isHidden = false

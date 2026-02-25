@@ -282,12 +282,12 @@ struct AcknowledgementsView: View {
             licenseUrl: "https://github.com/ml-explore/mlx-swift/blob/main/LICENSE"
         ),
         Acknowledgement(
-            name: "WhisperKit",
-            identity: "whisperkit",
-            version: "0.15",
-            repository: "https://github.com/argmaxinc/WhisperKit",
-            license: "MIT",
-            licenseUrl: "https://github.com/argmaxinc/WhisperKit/blob/main/LICENSE"
+            name: "FluidAudio",
+            identity: "fluidaudio",
+            version: "0.12",
+            repository: "https://github.com/FluidInference/FluidAudio",
+            license: "Apache 2.0",
+            licenseUrl: "https://github.com/FluidInference/FluidAudio/blob/main/LICENSE"
         ),
         Acknowledgement(
             name: "MCP Swift SDK",

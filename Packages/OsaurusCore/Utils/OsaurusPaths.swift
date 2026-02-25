@@ -130,7 +130,7 @@ public enum OsaurusPaths {
     public static func serverConfigFile() -> URL { config().appendingPathComponent("server.json") }
     public static func toolConfigFile() -> URL { config().appendingPathComponent("tools.json") }
     public static func toastConfigFile() -> URL { config().appendingPathComponent("toast.json") }
-    public static func whisperConfigFile() -> URL { voiceConfig().appendingPathComponent("whisper.json") }
+    public static func speechConfigFile() -> URL { voiceConfig().appendingPathComponent("speech.json") }
     public static func vadConfigFile() -> URL { voiceConfig().appendingPathComponent("vad.json") }
     public static func transcriptionConfigFile() -> URL { voiceConfig().appendingPathComponent("transcription.json") }
     public static func remoteProviderConfigFile() -> URL { providers().appendingPathComponent("remote.json") }
@@ -233,7 +233,6 @@ public enum OsaurusPaths {
             ("ServerConfiguration.json", serverConfigFile()),
             ("ToolConfiguration.json", toolConfigFile()),
             ("ToastConfiguration.json", toastConfigFile()),
-            ("WhisperConfiguration.json", whisperConfigFile()),
             ("VADConfiguration.json", vadConfigFile()),
             ("TranscriptionConfiguration.json", transcriptionConfigFile()),
             ("RemoteProviderConfiguration.json", remoteProviderConfigFile()),

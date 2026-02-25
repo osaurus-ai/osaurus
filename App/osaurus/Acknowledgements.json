@@ -121,14 +121,6 @@
       "repository": "https://github.com/huggingface/swift-transformers",
       "license": "Apache 2.0",
       "licenseUrl": "https://github.com/huggingface/swift-transformers/blob/main/LICENSE"
-    },
-    {
-      "name": "WhisperKit",
-      "identity": "whisperkit",
-      "version": "0.15.0",
-      "repository": "https://github.com/argmaxinc/WhisperKit",
-      "license": "MIT",
-      "licenseUrl": "https://github.com/argmaxinc/WhisperKit/blob/main/LICENSE"
     }
   ]
 }
