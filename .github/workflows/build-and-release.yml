@@ -33,7 +33,15 @@ jobs:
           xcode-version: latest-stable
 
       - name: Install Metal Toolchain
-        run: sudo xcodebuild -downloadComponent MetalToolchain
+        run: |
+          if xcodebuild -showComponent metalToolchain 2>&1 | grep -q "Toolchain Identifier"; then
+            echo "Metal toolchain is already installed"
+          else
+            echo "Downloading Metal toolchain..."
+            sudo xcodebuild -downloadComponent metalToolchain -exportPath /tmp/metalToolchainDownload/
+            echo "Importing Metal toolchain..."
+            sudo xcodebuild -importComponent metalToolchain -importPath /tmp/metalToolchainDownload/*.exportedBundle
+          fi
 
       - name: Setup build environment
         run: bash scripts/setup_env.sh
