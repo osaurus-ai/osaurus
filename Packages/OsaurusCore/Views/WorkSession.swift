@@ -287,6 +287,13 @@ public final class WorkSession: ObservableObject {
     /// Selected model
     @Published var selectedModel: String?
 
+    /// When true, voice input auto-restarts after AI responds (continuous conversation mode)
+    @Published var isContinuousVoiceMode: Bool = false
+    /// Active state of the voice input overlay
+    @Published var voiceInputState: VoiceInputState = .idle
+    /// Whether the voice input overlay is currently visible
+    @Published var showVoiceOverlay: Bool = false
+
     // MARK: - Memory State
 
     /// Raw user message stored for memory extraction after execution completes
