@@ -28,6 +28,9 @@ struct ModelRowView: View {
     /// Optional download metrics (speed, ETA, bytes transferred)
     let metrics: ModelManager.DownloadMetrics?
 
+    /// Total system unified memory in GB, used for compatibility assessment
+    var totalMemoryGB: Double = 0
+
     /// Callback when user taps the Details button
     let onViewDetails: () -> Void
 
@@ -136,7 +139,7 @@ struct ModelRowView: View {
 
     // MARK: - Metadata Pills Row
 
-    /// Row of small pills showing model type, parameters, and quantization
+    /// Row of small pills showing model type, parameters, quantization, and compatibility
     private var metadataPillsRow: some View {
         HStack(spacing: 6) {
             // Top suggestion badge
@@ -156,24 +159,33 @@ struct ModelRowView: View {
             if let quant = model.quantization {
                 MetadataPill(text: quant, icon: "gauge.with.dots.needle.bottom.50percent")
             }
+
+            // Estimated memory pill
+            if let mem = model.formattedEstimatedMemory {
+                MetadataPill(text: mem, icon: "memorychip")
+            }
+
+            // Hardware compatibility badge
+            compatibilityBadge
         }
     }
 
-    /// Badge indicating this is a top suggested model
-    private var topSuggestionBadge: some View {
-        HStack(spacing: 3) {
-            Image(systemName: "star.fill")
-                .font(.system(size: 8, weight: .semibold))
-            Text("Top Pick")
-                .font(.system(size: 10, weight: .semibold))
+    @ViewBuilder
+    private var compatibilityBadge: some View {
+        switch model.compatibility(totalMemoryGB: totalMemoryGB) {
+        case .compatible:
+            CompatibilityPill(text: "Runs Well", icon: "checkmark.shield", color: theme.successColor)
+        case .tight:
+            CompatibilityPill(text: "Tight Fit", icon: "exclamationmark.triangle", color: theme.warningColor)
+        case .tooLarge:
+            CompatibilityPill(text: "Too Large", icon: "xmark.circle", color: theme.errorColor)
+        case .unknown:
+            EmptyView()
         }
-        .foregroundColor(.orange)
-        .padding(.horizontal, 6)
-        .padding(.vertical, 3)
-        .background(
-            Capsule()
-                .fill(Color.orange.opacity(0.12))
-        )
+    }
+
+    private var topSuggestionBadge: some View {
+        CompatibilityPill(text: "Top Pick", icon: "star.fill", color: .orange)
     }
 
     /// Badge showing whether model is LLM or VLM
@@ -370,6 +382,31 @@ private struct MetadataPill: View {
         .background(
             Capsule()
                 .fill(theme.tertiaryBackground)
+        )
+    }
+}
+
+// MARK: - Compatibility Pill Component
+
+/// Colored pill indicating hardware compatibility
+private struct CompatibilityPill: View {
+    let text: String
+    let icon: String
+    let color: Color
+
+    var body: some View {
+        HStack(spacing: 3) {
+            Image(systemName: icon)
+                .font(.system(size: 8, weight: .semibold))
+            Text(text)
+                .font(.system(size: 10, weight: .semibold))
+        }
+        .foregroundColor(color)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3)
+        .background(
+            Capsule()
+                .fill(color.opacity(0.12))
         )
     }
 }
