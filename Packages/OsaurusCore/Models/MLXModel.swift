@@ -195,6 +195,75 @@ struct MLXModel: Identifiable, Codable {
     var modelType: ModelType {
         isLikelyVLM ? .vlm : .llm
     }
+
+    // MARK: - Memory Estimation & Hardware Compatibility
+
+    private static let bytesPerGB: Double = 1024 * 1024 * 1024
+    private static let overheadMultiplier: Double = 1.2
+
+    /// Numeric parameter count in billions (e.g. "7B" -> 7.0, "270M" -> 0.27)
+    var parameterCountBillions: Double? {
+        guard let params = parameterCount else { return nil }
+        let text = params.uppercased()
+        guard let num = Double(text.dropLast()) else { return nil }
+        return text.hasSuffix("M") ? num / 1000.0 : num
+    }
+
+    /// Bytes per parameter based on the quantization extracted from the model name.
+    private var bytesPerParameter: Double {
+        guard let quant = quantization?.lowercased() else { return 0.5 }
+
+        let bitWidths: [(String, Double)] = [
+            ("2-bit", 0.25), ("3-bit", 0.375), ("4-bit", 0.5),
+            ("5-bit", 0.625), ("6-bit", 0.75), ("8-bit", 1.0),
+        ]
+        for (label, bytes) in bitWidths {
+            if quant.contains(label) { return bytes }
+        }
+
+        switch quant {
+        case "fp16", "bf16": return 2.0
+        case "fp32": return 4.0
+        default: return 0.5
+        }
+    }
+
+    /// Estimated memory required to run this model (in GB), including overhead
+    /// for KV cache, activations, and runtime buffers.
+    var estimatedMemoryGB: Double? {
+        if let params = parameterCountBillions {
+            return params * bytesPerParameter * 1e9 * Self.overheadMultiplier / Self.bytesPerGB
+        }
+        if let dlBytes = downloadSizeBytes {
+            return Double(dlBytes) * Self.overheadMultiplier / Self.bytesPerGB
+        }
+        return nil
+    }
+
+    /// Formatted estimated memory string (e.g. "~3.5 GB")
+    var formattedEstimatedMemory: String? {
+        guard let gb = estimatedMemoryGB else { return nil }
+        return gb < 1.0
+            ? String(format: "~%.0f MB", gb * 1024)
+            : String(format: "~%.1f GB", gb)
+    }
+
+    /// Assess whether this model can run on the given hardware.
+    func compatibility(totalMemoryGB: Double) -> ModelCompatibility {
+        guard let required = estimatedMemoryGB, totalMemoryGB > 0 else { return .unknown }
+        let ratio = required / totalMemoryGB
+        if ratio < 0.75 { return .compatible }
+        if ratio < 0.95 { return .tight }
+        return .tooLarge
+    }
+}
+
+/// Hardware compatibility assessment for a model.
+enum ModelCompatibility {
+    case compatible
+    case tight
+    case tooLarge
+    case unknown
 }
 
 /// Download state for tracking progress

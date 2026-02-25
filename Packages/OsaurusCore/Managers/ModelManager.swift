@@ -738,21 +738,21 @@ extension ModelManager {
         ),
 
         MLXModel(
-            id: "mlx-community/Qwen3-8B-4bit",
-            name: friendlyName(from: "mlx-community/Qwen3-8B-4bit"),
-            description: "Alibaba's powerful 8B model. Excellent reasoning and conversation.",
-            downloadURL: "https://huggingface.co/mlx-community/Qwen3-8B-4bit",
-            isTopSuggestion: true,
-            downloadSizeBytes: 4_610_000_000
-        ),
-
-        MLXModel(
             id: "mlx-community/Qwen3-VL-4B-Instruct-8bit",
             name: friendlyName(from: "mlx-community/Qwen3-VL-4B-Instruct-8bit"),
             description: "See and understand images. Best vision model for most users.",
             downloadURL: "https://huggingface.co/mlx-community/Qwen3-VL-4B-Instruct-8bit",
             isTopSuggestion: true,
             downloadSizeBytes: 8_500_000_000
+        ),
+
+        MLXModel(
+            id: "LiquidAI/LFM2-24B-A2B-MLX-8bit",
+            name: friendlyName(from: "LiquidAI/LFM2-24B-A2B-MLX-8bit"),
+            description: "Liquid AI's 24B MoE model. Only ~2B active params per token. 128K context.",
+            downloadURL: "https://huggingface.co/LiquidAI/LFM2-24B-A2B-MLX-8bit",
+            isTopSuggestion: true,
+            downloadSizeBytes: 23_600_000_000
         ),
 
         // MARK: Coding Models
@@ -805,13 +805,6 @@ extension ModelManager {
         ),
 
         MLXModel(
-            id: "mlx-community/Kimi-VL-A3B-Thinking-4bit",
-            name: friendlyName(from: "mlx-community/Kimi-VL-A3B-Thinking-4bit"),
-            description: "Vision model with reasoning. Analyzes images with step-by-step thinking.",
-            downloadURL: "https://huggingface.co/mlx-community/Kimi-VL-A3B-Thinking-4bit"
-        ),
-
-        MLXModel(
             id: "mlx-community/LFM2-VL-3B-5bit",
             name: friendlyName(from: "mlx-community/LFM2-VL-3B-5bit"),
             description: "Liquid AI's compact vision model. 3B params with 10 language support.",
@@ -828,53 +821,21 @@ extension ModelManager {
         ),
 
         MLXModel(
-            id: "mlx-community/gemma-3n-E4B-it-lm-4bit",
-            name: friendlyName(from: "mlx-community/gemma-3n-E4B-it-lm-4bit"),
-            description: "Google's latest efficient model. Fast, smart, and runs great on any Mac.",
-            downloadURL: "https://huggingface.co/mlx-community/gemma-3n-E4B-it-lm-4bit"
+            id: "mlx-community/GLM-4.7-Flash-4bit",
+            name: friendlyName(from: "mlx-community/GLM-4.7-Flash-4bit"),
+            description: "Fast and lightweight MoE model. Great for quick responses.",
+            downloadURL: "https://huggingface.co/mlx-community/GLM-4.7-Flash-4bit",
+            downloadSizeBytes: 16_900_000_000
         ),
 
         MLXModel(
-            id: "mlx-community/Qwen3-4B-4bit",
-            name: friendlyName(from: "mlx-community/Qwen3-4B-4bit"),
-            description: "Alibaba's compact powerhouse. Excellent reasoning in a lightweight package.",
-            downloadURL: "https://huggingface.co/mlx-community/Qwen3-4B-4bit"
+            id: "mlx-community/Nanbeige4.1-3B-8bit",
+            name: friendlyName(from: "mlx-community/Nanbeige4.1-3B-8bit"),
+            description: "Compact 3B model with English and Chinese support. Runs on any Mac.",
+            downloadURL: "https://huggingface.co/mlx-community/Nanbeige4.1-3B-8bit",
+            downloadSizeBytes: 4_180_000_000
         ),
 
-        MLXModel(
-            id: "mlx-community/Granite-4.0-H-Tiny-4bit-DWQ",
-            name: friendlyName(from: "mlx-community/Granite-4.0-H-Tiny-4bit-DWQ"),
-            description: "IBM's tiny hybrid MoE. Ultra-efficient at just 1B parameters.",
-            downloadURL: "https://huggingface.co/mlx-community/Granite-4.0-H-Tiny-4bit-DWQ"
-        ),
-
-        MLXModel(
-            id: "mlx-community/gemma-3-4b-it-qat-4bit",
-            name: friendlyName(from: "mlx-community/gemma-3-4b-it-qat-4bit"),
-            description: "Google's efficient 4B model. Great quality-to-size ratio.",
-            downloadURL: "https://huggingface.co/mlx-community/gemma-3-4b-it-qat-4bit"
-        ),
-
-        MLXModel(
-            id: "mlx-community/gemma-3-12b-it-qat-4bit",
-            name: friendlyName(from: "mlx-community/gemma-3-12b-it-qat-4bit"),
-            description: "Mid-size Gemma with strong instruction following. Balanced choice.",
-            downloadURL: "https://huggingface.co/mlx-community/gemma-3-12b-it-qat-4bit"
-        ),
-
-        MLXModel(
-            id: "mlx-community/gemma-3-27b-it-qat-4bit",
-            name: friendlyName(from: "mlx-community/gemma-3-27b-it-qat-4bit"),
-            description: "Largest Gemma 3. Excellent reasoning and nuanced responses.",
-            downloadURL: "https://huggingface.co/mlx-community/gemma-3-27b-it-qat-4bit"
-        ),
-
-        MLXModel(
-            id: "mlx-community/Llama-3.2-3B-Instruct-4bit",
-            name: friendlyName(from: "mlx-community/Llama-3.2-3B-Instruct-4bit"),
-            description: "Compact Llama with solid performance. Low memory, quick responses.",
-            downloadURL: "https://huggingface.co/mlx-community/Llama-3.2-3B-Instruct-4bit"
-        ),
     ]
 
     nonisolated fileprivate static func friendlyName(from repoId: String) -> String {

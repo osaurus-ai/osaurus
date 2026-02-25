@@ -22,6 +22,9 @@ class SystemMonitorService: ObservableObject {
     /// Useful for detecting memory leaks in the app process itself.
     @Published var appMemoryMB: Double = 0.0
 
+    @Published var availableStorageGB: Double = 0.0
+    @Published var totalStorageGB: Double = 0.0
+
     private var timer: Timer?
     private var previousCPUInfo: host_cpu_load_info?
 
@@ -58,6 +61,9 @@ class SystemMonitorService: ObservableObject {
         totalMemoryGB = memInfo.totalGB
         usedMemoryGB = memInfo.usedGB
         appMemoryMB = getAppMemoryMB()
+        let storageInfo = getStorageUsage()
+        availableStorageGB = storageInfo.availableGB
+        totalStorageGB = storageInfo.totalGB
     }
 
     private func getCPUUsage() -> Double {
@@ -168,6 +174,18 @@ class SystemMonitorService: ObservableObject {
 
         guard result == KERN_SUCCESS else { return 0.0 }
         return Double(info.phys_footprint) / (1024 * 1024)
+    }
+
+    private func getStorageUsage() -> (availableGB: Double, totalGB: Double) {
+        let gb = 1024.0 * 1024.0 * 1024.0
+        do {
+            let attrs = try FileManager.default.attributesOfFileSystem(forPath: NSHomeDirectory())
+            let total = (attrs[.systemSize] as? NSNumber)?.doubleValue ?? 0
+            let free = (attrs[.systemFreeSize] as? NSNumber)?.doubleValue ?? 0
+            return (free / gb, total / gb)
+        } catch {
+            return (0.0, 0.0)
+        }
     }
 
 }
