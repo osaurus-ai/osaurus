@@ -16,7 +16,7 @@ struct osaurusApp: SwiftUI.App {
     @ObservedObject private var scheduleManager = ScheduleManager.shared
     @ObservedObject private var watcherManager = WatcherManager.shared
     @ObservedObject private var vadService = VADService.shared
-    @ObservedObject private var whisperModelManager = WhisperModelManager.shared
+    @ObservedObject private var speechModelManager = SpeechModelManager.shared
 
     var body: some SwiftUI.Scene {
         Settings {
@@ -258,7 +258,7 @@ private extension osaurusApp {
 private extension osaurusApp {
 
     var canToggleVAD: Bool {
-        whisperModelManager.selectedModel != nil && whisperModelManager.downloadedModelsCount > 0
+        speechModelManager.selectedModel != nil
     }
 
     var vadToggleLabel: String {

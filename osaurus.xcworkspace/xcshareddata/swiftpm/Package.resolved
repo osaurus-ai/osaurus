@@ -1,5 +1,5 @@
 {
-  "originHash" : "6b5a2d6bb8f08fa6408f97623a6dc241b74ef303a7f5a3d025598ed38f2b9e84",
+  "originHash" : "8f1c7735a52c68af89fa575a6c43e3011b7d72aa46d2f3d3549ac981fb11ab0c",
   "pins" : [
     {
       "identity" : "eventsource",
@@ -8,6 +8,15 @@
       "state" : {
         "revision" : "ca2a9d90cbe49e09b92f4b6ebd922c03ebea51d0",
         "version" : "1.3.0"
+      }
+    },
+    {
+      "identity" : "fluidaudio",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/FluidInference/FluidAudio.git",
+      "state" : {
+        "revision" : "1cf23303df75df13e8dc92a0343c40006fbbe234",
+        "version" : "0.12.1"
       }
     },
     {
@@ -170,15 +179,6 @@
       "state" : {
         "revision" : "dbaaca29b67272de924d3dc2d6d56d23335956d9",
         "version" : "3.0.0"
-      }
-    },
-    {
-      "identity" : "whisperkit",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/argmaxinc/WhisperKit",
-      "state" : {
-        "revision" : "664e1b5a65296cd957dfdf262cd120ca88f3b24b",
-        "version" : "0.15.0"
       }
     }
   ],

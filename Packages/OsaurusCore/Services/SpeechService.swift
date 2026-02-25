@@ -1,84 +1,51 @@
 //
-//  WhisperKitService.swift
+//  SpeechService.swift
 //  osaurus
 //
-//  Core service wrapping WhisperKit for audio transcription.
+//  Core service wrapping FluidAudio for audio transcription.
 //
 
 @preconcurrency import AVFoundation
 import CoreAudio
+@preconcurrency import FluidAudio
 import Foundation
 import os
 @preconcurrency import ScreenCaptureKit
 
-@preconcurrency import WhisperKit
-
 /// Result of a transcription operation
 public struct TranscriptionResult: Sendable {
     public let text: String
-    public let language: String?
-    public let segments: [TranscriptionSegment]
     public let durationSeconds: Double?
 
-    public init(
-        text: String,
-        language: String? = nil,
-        segments: [TranscriptionSegment] = [],
-        durationSeconds: Double? = nil
-    ) {
+    public init(text: String, durationSeconds: Double? = nil) {
         self.text = text
-        self.language = language
-        self.segments = segments
         self.durationSeconds = durationSeconds
     }
 }
 
-/// A segment of transcribed text with timing information
-public struct TranscriptionSegment: Sendable {
-    public let id: Int
-    public let text: String
-    public let start: Double
-    public let end: Double
-    public let tokens: [Int]?
-
-    public init(id: Int, text: String, start: Double, end: Double, tokens: [Int]? = nil) {
-        self.id = id
-        self.text = text
-        self.start = start
-        self.end = end
-        self.tokens = tokens
-    }
-}
-
-/// Error types for WhisperKit operations
-public enum WhisperKitError: Error, LocalizedError {
+/// Error types for speech operations
+public enum SpeechError: Error, LocalizedError {
     case noModelSelected
-    case modelNotDownloaded
     case modelNotLoaded
-    case pipelineNotInitialized
+    case modelNotReady
     case transcriptionFailed(String)
     case microphonePermissionDenied
     case audioFileNotFound
-    case invalidAudioFormat
 
     public var errorDescription: String? {
         switch self {
         case .noModelSelected:
-            return "No WhisperKit model selected. Please download and select a model."
-        case .modelNotDownloaded:
-            return "The selected model is not downloaded."
+            return "No speech model selected. Please download and select a model."
         case .modelNotLoaded:
             return "No model loaded. Please load a model first."
-        case .pipelineNotInitialized:
-            return "WhisperKit pipeline is not initialized."
+        case .modelNotReady:
+            return "Speech model is not ready."
         case .transcriptionFailed(let message):
             return "Transcription failed: \(message)"
         case .microphonePermissionDenied:
             return "Microphone permission denied. Please grant access in System Settings."
         case .audioFileNotFound:
             return "Audio file not found."
-        case .invalidAudioFormat:
-            return "Invalid or unsupported audio format."
         }
     }
 }
@@ -87,7 +54,7 @@ public enum WhisperKitError: Error, LocalizedError {
 
 /// Represents an available audio input device
 public struct AudioInputDevice: Identifiable, Equatable, Hashable, Sendable {
-    public let id: String  // uniqueID from AVCaptureDevice
+    public let id: String
     public let name: String
     public let isDefault: Bool
 
@@ -105,10 +72,8 @@ public struct AudioInputDevice: Identifiable, Equatable, Hashable, Sendable {
 public final class AudioInputManager: ObservableObject {
     public static let shared = AudioInputManager()
 
-    /// Available audio input devices
     @Published public private(set) var availableDevices: [AudioInputDevice] = []
 
-    /// Currently selected device ID (nil = system default)
     @Published public var selectedDeviceId: String? {
         didSet {
             if oldValue != selectedDeviceId {
@@ -117,7 +82,6 @@ public final class AudioInputManager: ObservableObject {
         }
     }
 
-    /// Currently selected input source (microphone or system audio)
     @Published public var selectedInputSource: AudioInputSource = .microphone {
         didSet {
             if oldValue != selectedInputSource {
@@ -126,24 +90,20 @@ public final class AudioInputManager: ObservableObject {
         }
     }
 
-    // MARK: - System Audio Status (delegated from SystemAudioCaptureManager)
+    // MARK: - System Audio Status
 
-    /// Whether system audio capture is available on this system
     public var isSystemAudioAvailable: Bool {
         SystemAudioCaptureManager.shared.isAvailable
     }
 
-    /// Whether we have screen recording permission (required for system audio)
     public var hasSystemAudioPermission: Bool {
         SystemAudioCaptureManager.shared.hasPermission
     }
 
-    /// Request screen recording permission for system audio capture
     public func requestSystemAudioPermission() {
         SystemAudioCaptureManager.shared.requestPermission()
     }
 
-    /// Check/refresh system audio permission status
     public func checkSystemAudioPermission() async {
         await SystemAudioCaptureManager.shared.checkPermission()
     }
@@ -164,15 +124,9 @@ public final class AudioInputManager: ObservableObject {
 
     // MARK: - Public Methods
 
-    /// Refresh the list of available audio input devices
-    /// Note: Only enumerates devices if microphone permission is already granted
-    /// to avoid triggering permission dialogs on device enumeration.
     public func refreshDevices() {
-        // Check if microphone permission is already granted before enumerating devices
-        // This prevents triggering the permission dialog during device enumeration
         let status = AVCaptureDevice.authorizationStatus(for: .audio)
         guard status == .authorized else {
-            // Clear devices if permission not granted
             availableDevices = []
             return
         }
@@ -185,9 +139,7 @@ public final class AudioInputManager: ObservableObject {
 
         let defaultDeviceId = getDefaultInputDeviceId()
 
-        // Filter out internal/aggregate devices that shouldn't be shown to users
         availableDevices = discoverySession.devices.compactMap { device in
-            // Skip devices with suspicious names (internal aggregate devices)
             let name = device.localizedName
             if name.hasPrefix("CADefaultDevice") || name.contains("Aggregate") && name.contains("-") || name.isEmpty {
                 return nil
@@ -200,7 +152,6 @@ public final class AudioInputManager: ObservableObject {
             )
         }
 
-        // If selected device is no longer available, reset to default
         if let selectedId = selectedDeviceId,
             !availableDevices.contains(where: { $0.id == selectedId })
         {
@@ -208,7 +159,6 @@ public final class AudioInputManager: ObservableObject {
         }
     }
 
-    /// Get the currently selected device (or system default if none selected)
     public var selectedDevice: AudioInputDevice? {
         if let selectedId = selectedDeviceId {
             return availableDevices.first { $0.id == selectedId }
@@ -216,7 +166,6 @@ public final class AudioInputManager: ObservableObject {
         return availableDevices.first { $0.isDefault } ?? availableDevices.first
     }
 
-    /// Select an input device by ID
     public func selectDevice(_ deviceId: String?) {
         selectedDeviceId = deviceId
     }
@@ -224,7 +173,6 @@ public final class AudioInputManager: ObservableObject {
     // MARK: - Device Observers
 
     private func setupDeviceObservers() {
-        // Observe device connection
         let connectedObserver = NotificationCenter.default.addObserver(
             forName: AVCaptureDevice.wasConnectedNotification,
             object: nil,
@@ -239,7 +187,6 @@ public final class AudioInputManager: ObservableObject {
         }
         deviceObservers.append(connectedObserver)
 
-        // Observe device disconnection
         let disconnectedObserver = NotificationCenter.default.addObserver(
             forName: AVCaptureDevice.wasDisconnectedNotification,
             object: nil,
@@ -257,7 +204,6 @@ public final class AudioInputManager: ObservableObject {
 
     // MARK: - CoreAudio Helpers
 
-    /// Get the system default input device ID
     private func getDefaultInputDeviceId() -> String? {
         var defaultDeviceId = AudioDeviceID()
         var propertySize = UInt32(MemoryLayout<AudioDeviceID>.size)
@@ -282,7 +228,6 @@ public final class AudioInputManager: ObservableObject {
         return getDeviceUID(for: defaultDeviceId)
     }
 
-    /// Get the UID for an AudioDeviceID
     private func getDeviceUID(for deviceId: AudioDeviceID) -> String? {
         var propertyAddress = AudioObjectPropertyAddress(
             mSelector: kAudioDevicePropertyDeviceUID,
@@ -290,7 +235,6 @@ public final class AudioInputManager: ObservableObject {
             mElement: kAudioObjectPropertyElementMain
         )
 
-        // Use Unmanaged to properly handle the CFString reference
         var uidUnmanaged: Unmanaged<CFString>?
         var propertySize = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
 
@@ -304,14 +248,11 @@ public final class AudioInputManager: ObservableObject {
         )
 
         guard status == noErr, let uidUnmanaged = uidUnmanaged else { return nil }
-        // Take ownership and release after use
         let uid = uidUnmanaged.takeRetainedValue()
         return uid as String
     }
 
-    /// Get AudioDeviceID for a UID by iterating through all audio devices
     public func getAudioDeviceId(for uid: String) -> AudioDeviceID? {
-        // Get all audio devices
         var propertyAddress = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyDevices,
             mScope: kAudioObjectPropertyScopeGlobal,
@@ -343,7 +284,6 @@ public final class AudioInputManager: ObservableObject {
 
         guard status == noErr else { return nil }
 
-        // Find device with matching UID
         for deviceId in deviceIds {
             if let deviceUID = getDeviceUID(for: deviceId), deviceUID == uid {
                 return deviceId
@@ -356,22 +296,21 @@ public final class AudioInputManager: ObservableObject {
     // MARK: - Persistence
 
     private func loadPersistedSelection() {
-        let config = WhisperConfigurationStore.load()
+        let config = SpeechConfigurationStore.load()
         selectedDeviceId = config.selectedInputDeviceId
         selectedInputSource = config.selectedInputSource
     }
 
     private func persistSelection() {
-        var config = WhisperConfigurationStore.load()
+        var config = SpeechConfigurationStore.load()
         config.selectedInputDeviceId = selectedDeviceId
         config.selectedInputSource = selectedInputSource
-        WhisperConfigurationStore.save(config)
+        SpeechConfigurationStore.save(config)
     }
 }
 
 // MARK: - System Audio Sample Buffer
 
-/// Thread-safe buffer for system audio samples
 private final class SystemAudioSampleBuffer: @unchecked Sendable {
     private var samples: [Float] = []
     private let lock = OSAllocatedUnfairLock()
@@ -399,22 +338,14 @@ private final class SystemAudioSampleBuffer: @unchecked Sendable {
 
 // MARK: - System Audio Capture Manager
 
-/// Manages system audio capture using ScreenCaptureKit
-/// This allows capturing audio from the computer (apps, browser, etc.)
 @MainActor
 public final class SystemAudioCaptureManager: NSObject, ObservableObject {
     public static let shared = SystemAudioCaptureManager()
 
-    /// Whether system audio capture is available on this system
-    @Published public private(set) var isAvailable: Bool = false
-
-    /// Whether we have permission to capture screen/audio
+    @Published public private(set) var isAvailable: Bool = true
     @Published public private(set) var hasPermission: Bool = false
-
-    /// Whether system audio capture is currently active
     @Published public private(set) var isCapturing: Bool = false
 
-    /// Thread-safe audio sample buffer
     private let sampleBuffer = SystemAudioSampleBuffer()
 
     private var stream: SCStream?
@@ -422,24 +353,10 @@ public final class SystemAudioCaptureManager: NSObject, ObservableObject {
 
     private override init() {
         super.init()
-        checkAvailability()
     }
 
-    // MARK: - Public Methods
-
-    /// Check if ScreenCaptureKit is available on this system
-    /// Note: Does NOT automatically check permission to avoid triggering permission dialogs on init.
-    /// Call checkPermission() explicitly when the user wants to enable system audio.
-    public func checkAvailability() {
-        isAvailable = true
-        // Don't automatically check permission here - it triggers the screen recording dialog.
-        // Permission will be checked when user explicitly tries to use system audio.
-    }
-
-    /// Check if we have screen recording permission (required for system audio)
     public func checkPermission() async {
         do {
-            // Attempting to get shareable content will check/request permission
             _ = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
             await MainActor.run {
                 self.hasPermission = true
@@ -451,12 +368,10 @@ public final class SystemAudioCaptureManager: NSObject, ObservableObject {
         }
     }
 
-    /// Request permission by triggering the system prompt
     public func requestPermission() {
         Task {
             await checkPermission()
             if !hasPermission {
-                // Open System Settings if permission wasn't granted
                 if let url = URL(
                     string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
                 ) {
@@ -466,78 +381,58 @@ public final class SystemAudioCaptureManager: NSObject, ObservableObject {
         }
     }
 
-    /// Start capturing system audio
     public func startCapture() async throws {
-        guard isAvailable else {
-            throw WhisperKitError.transcriptionFailed("System audio capture not available on this macOS version")
-        }
-
         guard !isCapturing else { return }
 
-        // Clear any previous stream
         if let existingStream = stream {
             try? await existingStream.stopCapture()
             stream = nil
             streamOutput = nil
         }
 
-        // Get shareable content
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
 
-        // Create a filter to capture all audio (no specific window/app)
         guard let display = content.displays.first else {
-            throw WhisperKitError.transcriptionFailed("No display found for audio capture")
+            throw SpeechError.transcriptionFailed("No display found for audio capture")
         }
 
         let filter = SCContentFilter(display: display, excludingWindows: [])
 
-        // Configure stream for audio capture
         let configuration = SCStreamConfiguration()
         configuration.capturesAudio = true
-        configuration.excludesCurrentProcessAudio = true  // Don't capture our own audio
-        configuration.sampleRate = 16000  // WhisperKit's preferred sample rate
-        configuration.channelCount = 1  // Mono for transcription
+        configuration.excludesCurrentProcessAudio = true
+        configuration.sampleRate = 16000
+        configuration.channelCount = 1
 
-        // Video configuration - use display size but minimal frame rate
-        // Using 1x1 can cause stream creation to fail on some systems
         configuration.width = Int(display.width)
         configuration.height = Int(display.height)
-        configuration.minimumFrameInterval = CMTime(value: 1, timescale: 1)  // 1 fps minimal
+        configuration.minimumFrameInterval = CMTime(value: 1, timescale: 1)
         configuration.showsCursor = false
         configuration.pixelFormat = kCVPixelFormatType_32BGRA
 
-        // Create output handler first
         let output = SystemAudioStreamOutput { [weak self] samples in
             self?.appendSamples(samples)
         }
         self.streamOutput = output
 
-        // Create stream with self as delegate for error handling
         let newStream = SCStream(filter: filter, configuration: configuration, delegate: self)
-
-        // Store stream reference before starting (prevent deallocation)
         self.stream = newStream
 
         do {
             try newStream.addStreamOutput(output, type: .audio, sampleHandlerQueue: .global(qos: .userInitiated))
-
-            // Start the stream
             try await newStream.startCapture()
-
             isCapturing = true
             print("[SystemAudioCaptureManager] Started capturing system audio")
         } catch {
-            // Clean up on failure
             self.stream = nil
             self.streamOutput = nil
             print("[SystemAudioCaptureManager] Failed to start capture: \(error)")
-            throw WhisperKitError.transcriptionFailed(
+            throw SpeechError.transcriptionFailed(
                 "Failed to start system audio capture: \(error.localizedDescription)"
             )
         }
     }
 
-    /// Stop capturing system audio
     public func stopCapture() async {
         guard isCapturing, let stream = stream else { return }
 
@@ -554,12 +449,9 @@ public final class SystemAudioCaptureManager: NSObject, ObservableObject {
         print("[SystemAudioCaptureManager] Stopped capturing system audio")
     }
 
-    /// Get and clear captured audio samples
     public nonisolated func getAndClearSamples() -> [Float] {
         sampleBuffer.getAndClear()
     }
-
-    // MARK: - Private Methods
 
     private nonisolated func appendSamples(_ samples: [Float]) {
         sampleBuffer.append(samples)
@@ -591,7 +483,6 @@ private class SystemAudioStreamOutput: NSObject, SCStreamOutput {
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
         guard type == .audio else { return }
 
-        // Extract audio samples from the sample buffer
         guard let blockBuffer = CMSampleBufferGetDataBuffer(sampleBuffer) else { return }
 
         var length = 0
@@ -606,28 +497,23 @@ private class SystemAudioStreamOutput: NSObject, SCStreamOutput {
 
         guard status == noErr, let dataPointer = dataPointer else { return }
 
-        // Get format description
         guard let formatDesc = CMSampleBufferGetFormatDescription(sampleBuffer) else { return }
         guard let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(formatDesc) else { return }
 
-        // Convert based on format
         let samples: [Float]
         if asbd.pointee.mFormatFlags & kAudioFormatFlagIsFloat != 0 {
-            // Already float
             let floatPointer = dataPointer.withMemoryRebound(
                 to: Float.self,
                 capacity: length / MemoryLayout<Float>.size
             ) { $0 }
             samples = Array(UnsafeBufferPointer(start: floatPointer, count: length / MemoryLayout<Float>.size))
         } else if asbd.pointee.mBitsPerChannel == 16 {
-            // 16-bit integer
             let int16Pointer = dataPointer.withMemoryRebound(
                 to: Int16.self,
                 capacity: length / MemoryLayout<Int16>.size
             ) { $0 }
             samples = (0 ..< (length / MemoryLayout<Int16>.size)).map { Float(int16Pointer[$0]) / Float(Int16.max) }
         } else {
-            // Unsupported format
             return
         }
 
@@ -635,10 +521,19 @@ private class SystemAudioStreamOutput: NSObject, SCStreamOutput {
     }
 }
 
-/// Service for audio transcription using WhisperKit
+/// Wrapper to make AsrManager safely transferable across concurrency boundaries.
+/// AsrManager is thread-safe in practice but not marked Sendable by FluidAudio.
+final class SendableAsrManager: @unchecked Sendable {
+    let manager: AsrManager
+    init(_ manager: AsrManager) { self.manager = manager }
+}
+
+// MARK: - Speech Service
+
+/// Service for audio transcription using FluidAudio
 @MainActor
-public final class WhisperKitService: ObservableObject {
-    public static let shared = WhisperKitService()
+public final class SpeechService: ObservableObject {
+    public static let shared = SpeechService()
 
     // MARK: - Published Properties
 
@@ -648,15 +543,26 @@ public final class WhisperKitService: ObservableObject {
     @Published public var loadedModelId: String?
     @Published public var lastError: String?
     @Published public var microphonePermissionGranted: Bool = false
+    @Published public var isRecording: Bool = false
+    @Published public var currentTranscription: String = ""
+    @Published public var confirmedTranscription: String = ""
+    @Published public var audioLevel: Float = 0.0
+    @Published public var isSpeechDetected: Bool = false
 
     // MARK: - Private Properties
 
-    private nonisolated(unsafe) var whisperKit: WhisperKit?
+    private var sendableAsrManager: SendableAsrManager?
+    private nonisolated(unsafe) var vadManager: VadManager?
 
-    // Track current engine configuration for potential reuse
     private var activeInputDeviceId: String?
     private var activeInputSource: AudioInputSource?
     private var activeTapFormat: AVAudioFormat?
+    private var engineConfigObserver: NSObjectProtocol?
+    private var engineHealthTask: Task<Void, Never>?
+    private var lastRecoveryTime: Date?
+    private var recoveryAttempts: Int = 0
+    private let maxRecoveryAttempts = 3
+    private let recoveryCooldown: TimeInterval = 5
 
     // MARK: - Initialization
 
@@ -666,7 +572,6 @@ public final class WhisperKitService: ObservableObject {
 
     // MARK: - Microphone Permission
 
-    /// Check current microphone permission status
     public func checkMicrophonePermission() {
         switch AVCaptureDevice.authorizationStatus(for: .audio) {
         case .authorized:
@@ -678,7 +583,6 @@ public final class WhisperKitService: ObservableObject {
         }
     }
 
-    /// Request microphone permission
     public func requestMicrophonePermission() async -> Bool {
         let status = AVCaptureDevice.authorizationStatus(for: .audio)
 
@@ -686,7 +590,6 @@ public final class WhisperKitService: ObservableObject {
         case .authorized:
             await MainActor.run {
                 microphonePermissionGranted = true
-                // Refresh audio devices now that we have permission
                 AudioInputManager.shared.refreshDevices()
             }
             return true
@@ -695,7 +598,6 @@ public final class WhisperKitService: ObservableObject {
             await MainActor.run {
                 microphonePermissionGranted = granted
                 if granted {
-                    // Refresh audio devices now that we have permission
                     AudioInputManager.shared.refreshDevices()
                 }
             }
@@ -710,121 +612,86 @@ public final class WhisperKitService: ObservableObject {
 
     // MARK: - Model Loading
 
-    /// Load a WhisperKit model
+    /// Load the ASR model for a given version
     public func loadModel(_ modelId: String) async throws {
         guard !isLoadingModel else {
-            print("[WhisperKitService] Already loading a model, skipping")
+            print("[SpeechService] Already loading a model, skipping")
             return
         }
 
-        print("[WhisperKitService] Starting to load model: \(modelId)")
+        print("[SpeechService] Starting to load model: \(modelId)")
         isLoadingModel = true
         lastError = nil
 
-        // Unload previous model
-        whisperKit = nil
+        sendableAsrManager = nil
+        vadManager = nil
         isModelLoaded = false
         loadedModelId = nil
 
-        // WhisperKit stores models at: {baseDir}/models/argmaxinc/whisperkit-coreml/{modelId}/
-        let modelFolder = WhisperModelManager.whisperModelsDirectory
-            .appendingPathComponent("models/argmaxinc/whisperkit-coreml", isDirectory: true)
-            .appendingPathComponent(modelId, isDirectory: true)
-
-        print("[WhisperKitService] Model folder: \(modelFolder.path)")
-
-        guard FileManager.default.fileExists(atPath: modelFolder.path) else {
-            print("[WhisperKitService] Model folder not found")
-            isLoadingModel = false
-            throw WhisperKitError.modelNotDownloaded
-        }
-
         do {
-            // Initialize WhisperKit with the direct model folder path
-            // modelFolder should point to the folder containing the .mlmodelc files
-            print("[WhisperKitService] Initializing WhisperKit...")
-            let config = WhisperKitConfig(
-                modelFolder: modelFolder.path,
-                computeOptions: ModelComputeOptions(
-                    audioEncoderCompute: .cpuAndNeuralEngine,
-                    textDecoderCompute: .cpuAndNeuralEngine
-                ),
-                verbose: true,
-                logLevel: .debug,
-                prewarm: true,
-                load: true,
-                useBackgroundDownloadSession: false
-            )
-
-            // Initialize in background to avoid blocking main thread
-            let newWhisperKit = try await Task.detached(priority: .userInitiated) {
-                return try await WhisperKit(config)
+            let version: AsrModelVersion = modelId == "v2" ? .v2 : .v3
+            let models = try await Task.detached(priority: .userInitiated) {
+                return try await AsrModels.downloadAndLoad(version: version)
             }.value
 
-            whisperKit = newWhisperKit
+            let manager = AsrManager(config: .default)
+            try await manager.initialize(models: models)
+            self.sendableAsrManager = SendableAsrManager(manager)
 
-            print("[WhisperKitService] Model loaded successfully")
+            let vad = try await VadManager(
+                config: VadConfig(defaultThreshold: SpeechConfigurationStore.load().sensitivity.vadThreshold)
+            )
+            self.vadManager = vad
+
+            print("[SpeechService] Model loaded successfully")
             isModelLoaded = true
             loadedModelId = modelId
             isLoadingModel = false
         } catch {
-            print("[WhisperKitService] Failed to load model: \(error)")
+            print("[SpeechService] Failed to load model: \(error)")
             lastError = error.localizedDescription
             isModelLoaded = false
             loadedModelId = nil
             isLoadingModel = false
-            throw WhisperKitError.transcriptionFailed(error.localizedDescription)
+            throw SpeechError.transcriptionFailed(error.localizedDescription)
         }
     }
 
     /// Unload the current model
     public func unloadModel() {
-        whisperKit = nil
+        sendableAsrManager = nil
+        vadManager = nil
         isModelLoaded = false
         loadedModelId = nil
-        print("[WhisperKitService] Model unloaded")
+        print("[SpeechService] Model unloaded")
     }
 
     /// Auto-load the model if a default model is selected
-    /// Call this when voice settings change or on app launch
     public func autoLoadIfNeeded() async {
-        // If no model is selected, nothing to load
-        guard let selectedModel = WhisperModelManager.shared.selectedModel else {
+        guard let selectedModel = SpeechModelManager.shared.selectedModel else {
             return
         }
 
-        // If model is not downloaded, can't load
-        guard selectedModel.isDownloaded else {
-            return
-        }
-
-        // If the selected model is already loaded, nothing to do
         if isModelLoaded && loadedModelId == selectedModel.id {
             return
         }
 
-        // Load the model
         do {
             try await loadModel(selectedModel.id)
-            print("[WhisperKitService] Auto-loaded model: \(selectedModel.id)")
+            print("[SpeechService] Auto-loaded model: \(selectedModel.id)")
         } catch {
-            print("[WhisperKitService] Failed to auto-load model: \(error)")
+            print("[SpeechService] Failed to auto-load model: \(error)")
         }
     }
 
     /// Ensure a model is loaded, using the default if needed
     public func ensureModelLoaded() async throws {
-        if isModelLoaded && whisperKit != nil {
+        if isModelLoaded && sendableAsrManager != nil {
             return
         }
 
-        // Get the selected model from manager
-        guard let selectedModel = WhisperModelManager.shared.selectedModel else {
-            throw WhisperKitError.noModelSelected
-        }
-
-        guard selectedModel.isDownloaded else {
-            throw WhisperKitError.modelNotDownloaded
+        guard let selectedModel = SpeechModelManager.shared.selectedModel else {
+            throw SpeechError.noModelSelected
         }
 
         try await loadModel(selectedModel.id)
@@ -836,111 +703,26 @@ public final class WhisperKitService: ObservableObject {
     public func transcribe(audioURL: URL) async throws -> TranscriptionResult {
         try await ensureModelLoaded()
 
-        guard let whisperKit = whisperKit else {
-            throw WhisperKitError.pipelineNotInitialized
+        guard let wrappedManager = sendableAsrManager else {
+            throw SpeechError.modelNotReady
         }
 
         guard FileManager.default.fileExists(atPath: audioURL.path) else {
-            throw WhisperKitError.audioFileNotFound
+            throw SpeechError.audioFileNotFound
         }
 
         isTranscribing = true
         defer { isTranscribing = false }
 
         do {
-            // Get configuration
-            let config = WhisperConfigurationStore.load()
-
-            // Configure decoding options
-            let options = DecodingOptions(
-                task: .transcribe,
-                language: config.languageHint,
-                wordTimestamps: config.wordTimestamps
-            )
-
-            // Transcribe
-            let results = try await whisperKit.transcribe(audioPath: audioURL.path, decodeOptions: options)
-
-            guard let result = results.first else {
-                throw WhisperKitError.transcriptionFailed("No transcription result")
-            }
-
-            // Convert segments
-            let segments: [TranscriptionSegment] = result.segments.enumerated().map { index, segment in
-                TranscriptionSegment(
-                    id: index,
-                    text: segment.text,
-                    start: Double(segment.start),
-                    end: Double(segment.end),
-                    tokens: segment.tokens
-                )
-            }
-
-            let duration: Double? = result.segments.last.map { Double($0.end) }
+            let result = try await Task.detached { try await wrappedManager.manager.transcribe(audioURL) }.value
 
             return TranscriptionResult(
                 text: result.text,
-                language: result.language,
-                segments: segments,
-                durationSeconds: duration
+                durationSeconds: result.duration
             )
         } catch {
-            throw WhisperKitError.transcriptionFailed(error.localizedDescription)
-        }
-    }
-
-    /// Transcribe raw audio data (for streaming/VAD use cases)
-    public func transcribe(audioData: Data, sampleRate: Int = 16000) async throws -> TranscriptionResult {
-        try await ensureModelLoaded()
-
-        guard let whisperKit = whisperKit else {
-            throw WhisperKitError.pipelineNotInitialized
-        }
-
-        isTranscribing = true
-        defer { isTranscribing = false }
-
-        do {
-            // Convert Data to float array (assuming 16-bit PCM)
-            let floatArray = audioData.withUnsafeBytes { buffer -> [Float] in
-                let int16Buffer = buffer.bindMemory(to: Int16.self)
-                return int16Buffer.map { Float($0) / Float(Int16.max) }
-            }
-
-            let config = WhisperConfigurationStore.load()
-
-            let options = DecodingOptions(
-                task: .transcribe,
-                language: config.languageHint,
-                wordTimestamps: config.wordTimestamps
-            )
-
-            let results = try await whisperKit.transcribe(audioArray: floatArray, decodeOptions: options)
-
-            guard let result = results.first else {
-                throw WhisperKitError.transcriptionFailed("No transcription result")
-            }
-
-            let segments: [TranscriptionSegment] = result.segments.enumerated().map { index, segment in
-                TranscriptionSegment(
-                    id: index,
-                    text: segment.text,
-                    start: Double(segment.start),
-                    end: Double(segment.end),
-                    tokens: segment.tokens
-                )
-            }
-
-            let duration2: Double? = result.segments.last.map { Double($0.end) }
-
-            return TranscriptionResult(
-                text: result.text,
-                language: result.language,
-                segments: segments,
-                durationSeconds: duration2
-            )
-        } catch {
-            throw WhisperKitError.transcriptionFailed(error.localizedDescription)
+            throw SpeechError.transcriptionFailed(error.localizedDescription)
         }
     }
 
@@ -949,105 +731,84 @@ public final class WhisperKitService: ObservableObject {
     private var audioEngine: AVAudioEngine?
     private let audioBuffer = ThreadSafeAudioBuffer()
     private var transcriptionWorker: TranscriptionWorker?
-
-    /// Whether we're currently using system audio capture (vs microphone)
     private var isUsingSystemAudio: Bool = false
-    /// Task for polling system audio samples
     private var systemAudioPollingTask: Task<Void, Never>?
 
-    @Published public var isRecording: Bool = false
-    @Published public var currentTranscription: String = ""
-    @Published public var confirmedTranscription: String = ""
-    @Published public var audioLevel: Float = 0.0  // 0.0 to 1.0 for visualization
-
-    /// When true, prevents the audio engine from being torn down when stopping transcription
-    /// This allows for seamless handoff between VAD and Voice Input
     public var keepAudioEngineAlive: Bool = false
 
     /// Start streaming transcription
     public func startStreamingTranscription() async throws {
-        // If we are recording and engine is healthy, assume it's a redundant call
         if isRecording {
-            print("[WhisperKitService] Already recording, skipping start")
+            print("[SpeechService] Already recording, skipping start")
             return
         }
 
-        // Always stop previous worker before starting a new one to prevent leaks
         if let worker = transcriptionWorker {
-            print("[WhisperKitService] Stopping previous worker before restart")
+            print("[SpeechService] Stopping previous worker before restart")
             await worker.stop()
             transcriptionWorker = nil
         }
 
-        // Get the selected input source
         let inputSource = AudioInputManager.shared.selectedInputSource
         let selectedId = AudioInputManager.shared.selectedDeviceId
 
-        // Check for potential reuse of existing engine (for VAD handoff)
         var reuseEngine = false
         if let engine = audioEngine, engine.isRunning,
             inputSource == activeInputSource,
             selectedId == activeInputDeviceId,
             activeTapFormat != nil
         {
-            print("[WhisperKitService] Reusing active audio engine for handoff")
+            print("[SpeechService] Reusing active audio engine for handoff")
             reuseEngine = true
         } else {
-            // Clean up previous state strictly if not reusing
             await teardownAudioEngine()
         }
 
-        // 2. Check Permissions & Model based on input source
         if inputSource == .microphone {
             if !microphonePermissionGranted {
                 let granted = await requestMicrophonePermission()
                 if !granted {
-                    throw WhisperKitError.microphonePermissionDenied
+                    throw SpeechError.microphonePermissionDenied
                 }
             }
         } else {
-            // System audio requires screen recording permission
             await SystemAudioCaptureManager.shared.checkPermission()
             if !SystemAudioCaptureManager.shared.hasPermission {
-                throw WhisperKitError.transcriptionFailed(
+                throw SpeechError.transcriptionFailed(
                     "Screen recording permission required for system audio capture"
                 )
             }
         }
 
-        // Auto-load model if needed
         try await ensureModelLoaded()
 
-        guard let whisperKit = whisperKit else {
-            throw WhisperKitError.modelNotLoaded
+        guard let wrappedAsrManager = sendableAsrManager, let vadManager = vadManager else {
+            throw SpeechError.modelNotLoaded
         }
 
-        // 3. Reset State
         audioBuffer.clear()
         audioBuffer.setActive(true)
         currentTranscription = ""
         confirmedTranscription = ""
         audioLevel = 0.0
+        isSpeechDetected = false
         isUsingSystemAudio = (inputSource == .systemAudio)
 
-        // Get configuration
-        let config = WhisperConfigurationStore.load()
+        let config = SpeechConfigurationStore.load()
 
-        print("[WhisperKitService] Starting transcription with:")
-        print("[WhisperKitService]   - Language: \(config.languageHint ?? "auto-detect")")
-        print("[WhisperKitService]   - Sensitivity: \(config.sensitivity)")
+        print("[SpeechService] Starting transcription with:")
+        print("[SpeechService]   - Model: \(config.modelVersion.rawValue)")
+        print("[SpeechService]   - Sensitivity: \(config.sensitivity)")
 
         if inputSource == .microphone {
-            // 4a. Microphone path
             var targetDeviceId: AudioDeviceID? = nil
             if let selectedId {
                 targetDeviceId = AudioInputManager.shared.getAudioDeviceId(for: selectedId)
                 if targetDeviceId == nil {
-                    print("[WhisperKitService] WARNING: Could not find AudioDeviceID for UID: \(selectedId)")
+                    print("[SpeechService] WARNING: Could not find AudioDeviceID for UID: \(selectedId)")
                 }
             }
 
-            // 5a. Setup Audio Engine (or reuse)
             do {
                 let tapFormat: AVAudioFormat
                 if reuseEngine, let format = activeTapFormat {
@@ -1064,18 +825,24 @@ public final class WhisperKitService: ObservableObject {
                     tapFormat = format
                 }
 
-                // 6a. Start Worker with microphone format
                 transcriptionWorker = TranscriptionWorker(
-                    whisperKit: whisperKit,
+                    asrManager: wrappedAsrManager,
+                    vadManager: vadManager,
                     audioBuffer: audioBuffer,
                     inputFormat: tapFormat,
-                    languageHint: config.languageHint,
                     sensitivity: config.sensitivity
                 )
 
                 isRecording = true
+                recoveryAttempts = 0
+                lastRecoveryTime = nil
 
-                // 7a. Start Processing
+                Task { @MainActor [weak self] in
+                    try? await Task.sleep(nanoseconds: 1_000_000_000)
+                    guard let self, self.isRecording else { return }
+                    self.observeEngineConfiguration()
+                    self.startEngineHealthMonitoring()
+                }
                 startAudioLevelMonitoring()
                 startWorkerProcessing()
 
@@ -1084,13 +851,11 @@ public final class WhisperKitService: ObservableObject {
                 throw error
             }
         } else {
-            // 4b. System Audio path
             do {
                 if !reuseEngine {
                     try await SystemAudioCaptureManager.shared.startCapture()
                 }
 
-                // System audio is already at 16kHz mono, create format for worker
                 guard
                     let systemAudioFormat = AVAudioFormat(
                         commonFormat: .pcmFormatFloat32,
@@ -1099,26 +864,23 @@ public final class WhisperKitService: ObservableObject {
                         interleaved: false
                     )
                 else {
-                    throw WhisperKitError.transcriptionFailed("Failed to create audio format for system audio")
+                    throw SpeechError.transcriptionFailed("Failed to create audio format for system audio")
                 }
 
-                // Track active state for potential reuse
                 self.activeTapFormat = systemAudioFormat
                 self.activeInputDeviceId = selectedId
                 self.activeInputSource = inputSource
 
-                // 6b. Start Worker with 16kHz format (no conversion needed)
                 transcriptionWorker = TranscriptionWorker(
-                    whisperKit: whisperKit,
+                    asrManager: wrappedAsrManager,
+                    vadManager: vadManager,
                     audioBuffer: audioBuffer,
                     inputFormat: systemAudioFormat,
-                    languageHint: config.languageHint,
                     sensitivity: config.sensitivity
                 )
 
                 isRecording = true
 
-                // 7b. Start polling system audio samples into the buffer
                 startSystemAudioPolling()
                 startAudioLevelMonitoring()
                 startWorkerProcessing()
@@ -1131,63 +893,44 @@ public final class WhisperKitService: ObservableObject {
     }
 
     /// Stop streaming transcription and get final result
-    /// - Parameter force: If true, forces audio engine teardown regardless of keepAudioEngineAlive
     public func stopStreamingTranscription(force: Bool = false) async -> String {
         print(
-            "[WhisperKitService] Stopping streaming transcription (force: \(force), keepAlive: \(keepAudioEngineAlive))"
+            "[SpeechService] Stopping streaming transcription (force: \(force), keepAlive: \(keepAudioEngineAlive))"
         )
 
-        // Stop processing components
         audioBuffer.setActive(false)
         await transcriptionWorker?.stop()
         transcriptionWorker = nil
 
-        // Stop system audio polling if active
         systemAudioPollingTask?.cancel()
         systemAudioPollingTask = nil
 
-        // Only tear down the audio engine if we are NOT keeping it alive, or if forced
         if !keepAudioEngineAlive || force {
-            print("[WhisperKitService] Tearing down audio engine")
+            print("[SpeechService] Tearing down audio engine")
             await teardownAudioEngine()
         } else {
-            print("[WhisperKitService] Keeping audio engine alive for handoff")
+            print("[SpeechService] Keeping audio engine alive for handoff")
         }
 
         isRecording = false
 
-        // Final transcription of complete buffer
         let finalBuffer = audioBuffer.getAndClear()
 
-        // Use hardcoded 16000 since minBufferSamples is gone/private
-        if finalBuffer.count > 16000, let whisperKit = whisperKit {
+        if finalBuffer.count > 16000, let wrappedManager = sendableAsrManager {
             do {
-                // Get configuration for final transcription
-                let config = WhisperConfigurationStore.load()
-
-                let options = DecodingOptions(
-                    task: .transcribe,
-                    language: config.languageHint,
-                    usePrefillPrompt: true,
-                    wordTimestamps: false
-                )
-
-                let results = try await whisperKit.transcribe(audioArray: finalBuffer, decodeOptions: options)
-
-                if let result = results.first {
-                    let finalText = result.text.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
-                    await MainActor.run {
-                        if self.confirmedTranscription.isEmpty {
-                            self.confirmedTranscription = finalText
-                        } else {
-                            self.confirmedTranscription += " " + finalText
-                        }
-                        self.currentTranscription = ""
+                let result = try await wrappedManager.manager.transcribe(finalBuffer)
+                let finalText = result.text.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
+                await MainActor.run {
+                    if self.confirmedTranscription.isEmpty {
+                        self.confirmedTranscription = finalText
+                    } else {
+                        self.confirmedTranscription += " " + finalText
                     }
-                    return finalText
+                    self.currentTranscription = ""
                 }
+                return finalText
             } catch {
-                print("[WhisperKitService] Final transcription error: \(error)")
+                print("[SpeechService] Final transcription error: \(error)")
             }
         }
 
@@ -1196,96 +939,84 @@ public final class WhisperKitService: ObservableObject {
 
     // MARK: - Audio Engine Helpers
 
-    /// Teardown the audio engine and worker to ensure a clean state
     private func teardownAudioEngine() async {
-        // Clear active engine tracking
         activeInputDeviceId = nil
         activeInputSource = nil
         activeTapFormat = nil
 
-        // Stop worker first
+        engineHealthTask?.cancel()
+        engineHealthTask = nil
+
+        if let observer = engineConfigObserver {
+            NotificationCenter.default.removeObserver(observer)
+            engineConfigObserver = nil
+        }
+
         await transcriptionWorker?.stop()
         transcriptionWorker = nil
 
-        // Stop system audio polling if active
         systemAudioPollingTask?.cancel()
         systemAudioPollingTask = nil
 
-        // Stop system audio capture if we were using it
         if isUsingSystemAudio {
             await SystemAudioCaptureManager.shared.stopCapture()
             isUsingSystemAudio = false
         }
 
-        // Stop engine and remove tap
         if let engine = audioEngine {
-            // Release engine reference on main actor immediately
             audioEngine = nil
 
-            // Perform cleanup in background to avoid blocking main thread
             await Task.detached(priority: .userInitiated) {
-                print("[WhisperKitService] Tearing down audio engine...")
                 if engine.isRunning {
                     engine.stop()
                 }
-                // Remove tap if it exists (safe to call even if not)
                 engine.inputNode.removeTap(onBus: 0)
-
-                // Allow Core Audio to cleanup to prevent "thread already exists" errors
-                try? await Task.sleep(nanoseconds: 200_000_000)  // 200ms
+                try? await Task.sleep(nanoseconds: 200_000_000)
             }.value
         }
     }
 
-    /// Start polling system audio samples into the audio buffer
     private func startSystemAudioPolling() {
         let bufferRef = audioBuffer
         systemAudioPollingTask = Task { @MainActor [weak self] in
-            print("[WhisperKitService] Started system audio polling")
+            print("[SpeechService] Started system audio polling")
             while let _ = self, bufferRef.isActive {
-                // Get samples from SystemAudioCaptureManager
                 let samples = SystemAudioCaptureManager.shared.getAndClearSamples()
                 if !samples.isEmpty {
                     bufferRef.append(samples)
 
-                    // Calculate audio level for visualization
                     let sum = samples.reduce(0) { $0 + $1 * $1 }
                     let rms = sqrt(sum / Float(samples.count))
                     bufferRef.setLevel(min(1.0, rms * 10))
                 }
 
-                // Poll every 50ms
                 try? await Task.sleep(nanoseconds: 50_000_000)
             }
-            print("[WhisperKitService] System audio polling stopped")
+            print("[SpeechService] System audio polling stopped")
         }
     }
 
-    /// Setup the audio engine in a detached task
     private func setupAudioEngine(targetDeviceId: AudioDeviceID?, buffer: ThreadSafeAudioBuffer) async throws -> (
         AVAudioEngine, AVAudioFormat
     ) {
-        // Use detached task to avoid blocking main thread with CoreAudio operations
         return try await Task.detached(priority: .userInitiated) { () -> (AVAudioEngine, AVAudioFormat) in
             let engine = AVAudioEngine()
             let inputNode = engine.inputNode
 
-            // 1. Set Input Device if requested
             if let deviceId = targetDeviceId {
-                print("[WhisperKitService] Setting input device to AudioDeviceID: \(deviceId)")
+                print("[SpeechService] Setting input device to AudioDeviceID: \(deviceId)")
                 Self.setInputDevice(deviceId, for: inputNode)
             } else {
-                print("[WhisperKitService] Using system default input device")
+                print("[SpeechService] Using system default input device")
             }
 
-            // 2. Determine and validate format (must be done after setting device)
             let hwFormat = inputNode.inputFormat(forBus: 0)
             print(
-                "[WhisperKitService] Hardware input format: \(hwFormat.sampleRate)Hz, \(hwFormat.channelCount) channels"
+                "[SpeechService] Hardware input format: \(hwFormat.sampleRate)Hz, \(hwFormat.channelCount) channels"
             )
 
             guard hwFormat.sampleRate > 0, hwFormat.channelCount > 0 else {
-                throw WhisperKitError.transcriptionFailed(
+                throw SpeechError.transcriptionFailed(
                     "Audio input device is not available. Please check your microphone settings."
                 )
             }
@@ -1298,20 +1029,17 @@ public final class WhisperKitService: ObservableObject {
                     interleaved: false
                 )
             else {
-                throw WhisperKitError.transcriptionFailed("Failed to create audio format")
+                throw SpeechError.transcriptionFailed("Failed to create audio format")
             }
 
-            // 3. Install tap (remove any existing tap first to prevent crash)
             inputNode.removeTap(onBus: 0)
             inputNode.installTap(onBus: 0, bufferSize: 4096, format: tapFormat) { tapBuffer, _ in
                 guard buffer.isActive else { return }
 
-                // Process audio buffer
                 guard let floatData = tapBuffer.floatChannelData?[0] else { return }
                 let frameCount = Int(tapBuffer.frameLength)
                 guard frameCount > 0 else { return }
 
-                // Calculate RMS for UI
                 var sum: Float = 0
                 for i in 0 ..< frameCount {
                     let sample = floatData[i]
@@ -1320,25 +1048,22 @@ public final class WhisperKitService: ObservableObject {
                 let rms = sqrt(sum / Float(frameCount))
                 buffer.setLevel(min(1.0, rms * 10))
 
-                // Append samples
                 let samples = Array(UnsafeBufferPointer(start: floatData, count: frameCount))
                 buffer.append(samples)
             }
 
-            // 4. Start Engine with Retry Logic
             engine.prepare()
 
             var lastError: Error?
             for attempt in 1 ... 3 {
                 do {
                     try engine.start()
-                    print("[WhisperKitService] Audio engine started successfully on attempt \(attempt)")
+                    print("[SpeechService] Audio engine started successfully on attempt \(attempt)")
                     lastError = nil
                     break
                 } catch {
-                    print("[WhisperKitService] Engine start attempt \(attempt) failed: \(error)")
+                    print("[SpeechService] Engine start attempt \(attempt) failed: \(error)")
                     lastError = error
-                    // Backoff before retry
                     try? await Task.sleep(nanoseconds: UInt64(attempt * 200_000_000))
                     engine.prepare()
                 }
@@ -1357,16 +1082,97 @@ public final class WhisperKitService: ObservableObject {
         Task { @MainActor [weak self] in
             while let self = self, bufferRef.isActive {
                 self.audioLevel = bufferRef.getLevel()
-                try? await Task.sleep(nanoseconds: 50_000_000)  // 50ms
+                try? await Task.sleep(nanoseconds: 50_000_000)
             }
             self?.audioLevel = 0
+        }
+    }
+
+    private func observeEngineConfiguration() {
+        engineConfigObserver.map { NotificationCenter.default.removeObserver($0) }
+        guard let engine = audioEngine else { return }
+
+        engineConfigObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange,
+            object: engine,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+            Task { @MainActor in
+                guard let engine = self.audioEngine, !engine.isRunning else {
+                    print("[SpeechService] Config change notification — engine still running, ignoring")
+                    return
+                }
+                print("[SpeechService] Audio engine stopped after config change — attempting recovery")
+                await self.recoverAudioEngine()
+            }
+        }
+    }
+
+    private func startEngineHealthMonitoring() {
+        engineHealthTask?.cancel()
+        engineHealthTask = Task { @MainActor [weak self] in
+            while let self = self, self.isRecording {
+                if let engine = self.audioEngine, !engine.isRunning {
+                    print("[SpeechService] Engine stopped unexpectedly — attempting recovery")
+                    await self.recoverAudioEngine()
+                    return
+                }
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+            }
+        }
+    }
+
+    private func recoverAudioEngine() async {
+        guard isRecording else { return }
+
+        if let lastTime = lastRecoveryTime, Date().timeIntervalSince(lastTime) < recoveryCooldown {
+            print("[SpeechService] Recovery cooldown active, skipping")
+            return
+        }
+
+        guard recoveryAttempts < maxRecoveryAttempts else {
+            print("[SpeechService] Max recovery attempts (\(maxRecoveryAttempts)) reached")
+            lastError = "Audio device changed. Please restart voice input."
+            audioBuffer.setActive(false)
+            await transcriptionWorker?.stop()
+            transcriptionWorker = nil
+            isRecording = false
+            return
+        }
+
+        recoveryAttempts += 1
+        lastRecoveryTime = Date()
+        print("[SpeechService] Recovering audio engine (attempt \(recoveryAttempts)/\(maxRecoveryAttempts))...")
+
+        audioBuffer.setActive(false)
+        await transcriptionWorker?.stop()
+        transcriptionWorker = nil
+
+        if let engine = audioEngine {
+            audioEngine = nil
+            engine.stop()
+            engine.inputNode.removeTap(onBus: 0)
+        }
+        activeTapFormat = nil
+
+        isRecording = false
+
+        try? await Task.sleep(nanoseconds: 500_000_000)
+
+        do {
+            try await startStreamingTranscription()
+            print("[SpeechService] Audio engine recovered successfully")
+        } catch {
+            print("[SpeechService] Audio engine recovery failed: \(error)")
+            lastError = "Audio device changed. Please restart voice input."
         }
     }
 
     private func startWorkerProcessing() {
         guard let worker = transcriptionWorker else { return }
         Task {
-            print("[WhisperKitService] Starting to consume worker updates")
+            print("[SpeechService] Starting to consume worker updates")
             for await update in await worker.start() {
                 switch update {
                 case .partial(let text):
@@ -1378,9 +1184,11 @@ public final class WhisperKitService: ObservableObject {
                         self.confirmedTranscription += " " + text
                     }
                     self.currentTranscription = ""
+                case .speechActivity(let detected):
+                    self.isSpeechDetected = detected
                 }
             }
-            print("[WhisperKitService] Worker updates stream finished")
+            print("[SpeechService] Worker updates stream finished")
         }
     }
 
@@ -1393,19 +1201,14 @@ public final class WhisperKitService: ObservableObject {
 
     // MARK: - Audio Device Helpers
 
-    /// Set the input device for an AVAudioEngine's input node using CoreAudio
     private nonisolated static func setInputDevice(_ deviceId: AudioDeviceID, for inputNode: AVAudioInputNode) {
-        // Access the input node to ensure the graph is built
-        // This triggers the creation of the underlying AudioUnit
         _ = inputNode.inputFormat(forBus: 0)
 
-        // Get the underlying AudioUnit from the input node
         guard let audioUnit = inputNode.audioUnit else {
-            print("[WhisperKitService] Failed to get audioUnit from inputNode")
+            print("[SpeechService] Failed to get audioUnit from inputNode")
             return
         }
 
-        // Set the input device
         var mutableDeviceId = deviceId
         let status = AudioUnitSetProperty(
             audioUnit,
@@ -1417,31 +1220,12 @@ public final class WhisperKitService: ObservableObject {
         )
 
         if status != noErr {
-            print("[WhisperKitService] Failed to set input device: \(status). Error code: \(status)")
+            print("[SpeechService] Failed to set input device: \(status). Error code: \(status)")
         } else {
-            print("[WhisperKitService] Successfully set input device to AudioDeviceID: \(deviceId)")
+            print("[SpeechService] Successfully set input device to AudioDeviceID: \(deviceId)")
         }
     }
 
-    /// Get the current input device ID from an audio engine's input node
-    private nonisolated static func getCurrentInputDevice(for inputNode: AVAudioInputNode) -> AudioDeviceID? {
-        guard let audioUnit = inputNode.audioUnit else { return nil }
-
-        var deviceId = AudioDeviceID()
-        var propertySize = UInt32(MemoryLayout<AudioDeviceID>.size)
-
-        let status = AudioUnitGetProperty(
-            audioUnit,
-            kAudioOutputUnitProperty_CurrentDevice,
-            kAudioUnitScope_Global,
-            0,
-            &deviceId,
-            &propertySize
-        )
-
-        guard status == noErr else { return nil }
-        return deviceId
-    }
 }
 
 // MARK: - Transcription Worker
@@ -1449,46 +1233,45 @@ public final class WhisperKitService: ObservableObject {
 private enum TranscriptionUpdate: Sendable {
     case partial(String)
     case final(String)
+    case speechActivity(Bool)
 }
 
 private actor TranscriptionWorker {
-    private let whisperKit: WhisperKit
+    private let asrManager: SendableAsrManager
+    private let vadManager: VadManager
     private let audioBuffer: ThreadSafeAudioBuffer
     private var task: Task<Void, Never>?
     private var continuation: AsyncStream<TranscriptionUpdate>.Continuation?
     private let inputFormat: AVAudioFormat
-    private let targetFormat: AVAudioFormat
+    private let targetFormat: AVAudioFormat?
+    private let needsConversion: Bool
     private var converter: AVAudioConverter?
 
-    // Configuration from WhisperConfigurationStore
-    private let languageHint: String?
-
-    // VAD Parameters (configured via sensitivity)
+    private let vadThreshold: Float
     private let silenceThresholdSeconds: Double
     private let maxSegmentDurationSeconds: Double = 30.0
-    private let speechEnergyThreshold: Float
-    private let minSamples = 16000  // 1 second
+    private let minSamples = 16000
 
     init(
-        whisperKit: WhisperKit,
+        asrManager: SendableAsrManager,
+        vadManager: VadManager,
         audioBuffer: ThreadSafeAudioBuffer,
         inputFormat: AVAudioFormat,
-        languageHint: String? = nil,
         sensitivity: VoiceSensitivity = .medium
     ) {
-        self.whisperKit = whisperKit
+        self.asrManager = asrManager
+        self.vadManager = vadManager
         self.audioBuffer = audioBuffer
         self.inputFormat = inputFormat
-        self.languageHint = languageHint
-        self.targetFormat = AVAudioFormat(
-            commonFormat: .pcmFormatFloat32,
-            sampleRate: 16000,
-            channels: 1,
-            interleaved: false
-        )!
 
-        // Apply sensitivity-based VAD thresholds
-        self.speechEnergyThreshold = sensitivity.energyThreshold
+        let inputRate = inputFormat.sampleRate
+        self.needsConversion = inputRate != 16000
+        self.targetFormat =
+            needsConversion
+            ? AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16000, channels: 1, interleaved: false)
+            : nil
+
+        self.vadThreshold = sensitivity.vadThreshold
         self.silenceThresholdSeconds = sensitivity.silenceThresholdSeconds
     }
 
@@ -1512,69 +1295,61 @@ private actor TranscriptionWorker {
     }
 
     private func runLoop() async {
-        print("[TranscriptionWorker] Streaming task started")
-        print("[TranscriptionWorker] Input format: \(inputFormat.sampleRate)Hz, \(inputFormat.channelCount) channels")
-        print(
-            "[TranscriptionWorker] Target format: \(targetFormat.sampleRate)Hz, \(targetFormat.channelCount) channels"
-        )
-
-        self.converter = AVAudioConverter(from: inputFormat, to: targetFormat)
-        if self.converter == nil {
-            print(
-                "[TranscriptionWorker] Failed to create audio converter from \(inputFormat.sampleRate)Hz to \(targetFormat.sampleRate)Hz"
-            )
+        if needsConversion, let targetFormat {
+            print("[TranscriptionWorker] Started (\(inputFormat.sampleRate)Hz -> \(targetFormat.sampleRate)Hz)")
+            self.converter = AVAudioConverter(from: inputFormat, to: targetFormat)
+            if self.converter == nil {
+                print("[TranscriptionWorker] Failed to create audio converter")
+            }
         } else {
-            print("[TranscriptionWorker] Audio converter created successfully")
+            print("[TranscriptionWorker] Started (\(inputFormat.sampleRate)Hz, no conversion needed)")
         }
 
+        var vadState = await vadManager.makeStreamState()
         var lastSpeechTime = Date()
         var isSpeaking = false
+        var lastReportedSpeechActivity = false
         var segmentStartTime = Date()
         var accumulatedSamples: [Float] = []
 
-        while audioBuffer.isActive {
-            // Check for task cancellation explicitly
-            if Task.isCancelled {
-                print("[TranscriptionWorker] Task was cancelled, stopping")
-                break
-            }
-
-            // Sleep with error handling
+        while audioBuffer.isActive && !Task.isCancelled {
             do {
-                try await Task.sleep(nanoseconds: 100_000_000)  // Check every 100ms
-            } catch is CancellationError {
-                print("[TranscriptionWorker] Sleep cancelled, stopping")
-                break
+                try await Task.sleep(nanoseconds: 100_000_000)
             } catch {
-                print("[TranscriptionWorker] Sleep error: \(error)")
-                continue
+                break
             }
 
             guard audioBuffer.isActive else { break }
 
-            // Fetch new raw samples and clear from buffer
             let rawSamples = audioBuffer.getAndClear()
             if !rawSamples.isEmpty {
                 let converted = convertTo16kHz(rawSamples)
                 accumulatedSamples.append(contentsOf: converted)
             }
 
-            // Calculate level from recent samples for VAD (approximate)
-            // We use the last chunk or a window of accumulated samples
-            let vadWindowSize = 1600  // 100ms at 16kHz
-            let vadSamples = accumulatedSamples.suffix(vadWindowSize)
-            let level: Float
-            if !vadSamples.isEmpty {
-                let sum = vadSamples.reduce(0) { $0 + $1 * $1 }
-                level = sqrt(sum / Float(vadSamples.count)) * 10  // Scale roughly like the tap
-            } else {
-                level = 0
+            let vadChunkSize = VadManager.chunkSize  // 4096 samples (~256ms at 16kHz)
+            var speechDetected = false
+
+            if accumulatedSamples.count >= vadChunkSize {
+                let recentSamples = Array(accumulatedSamples.suffix(vadChunkSize))
+                do {
+                    let vadResult = try await vadManager.processStreamingChunk(
+                        recentSamples,
+                        state: vadState,
+                        config: .default
+                    )
+                    vadState = vadResult.state
+                    speechDetected = vadResult.probability > vadThreshold
+                } catch {
+                    let sum = recentSamples.reduce(0) { $0 + $1 * $1 }
+                    let level = sqrt(sum / Float(recentSamples.count)) * 10
+                    speechDetected = level > 0.05
+                }
             }
 
             let now = Date()
 
-            // VAD Logic
-            if level > speechEnergyThreshold {
+            if speechDetected {
                 if !isSpeaking {
                     isSpeaking = true
                     segmentStartTime = now
@@ -1582,30 +1357,31 @@ private actor TranscriptionWorker {
                 lastSpeechTime = now
             }
 
+            if speechDetected != lastReportedSpeechActivity {
+                lastReportedSpeechActivity = speechDetected
+                continuation?.yield(.speechActivity(speechDetected))
+            }
+
             let silenceDuration = now.timeIntervalSince(lastSpeechTime)
             let segmentDuration = now.timeIntervalSince(segmentStartTime)
 
-            // 1. End of Speech Detected (Silence)
-            if isSpeaking && silenceDuration > silenceThresholdSeconds {
+            let shouldFinalize =
+                isSpeaking
+                && (silenceDuration > silenceThresholdSeconds || segmentDuration > maxSegmentDurationSeconds)
+
+            if shouldFinalize {
                 await finalizeSegment(accumulatedSamples)
                 accumulatedSamples = []
                 isSpeaking = false
-            }
-            // 2. Max Duration Reached
-            else if isSpeaking && segmentDuration > maxSegmentDurationSeconds {
-                await finalizeSegment(accumulatedSamples)
-                accumulatedSamples = []
-                isSpeaking = false
-            }
-            // 3. Ongoing Speech - Update Preview (every 1s roughly)
-            else if isSpeaking && accumulatedSamples.count > minSamples {
+                if lastReportedSpeechActivity {
+                    lastReportedSpeechActivity = false
+                    continuation?.yield(.speechActivity(false))
+                }
+            } else if isSpeaking && accumulatedSamples.count > minSamples {
                 if segmentDuration > 1.0 {
                     await updatePreview(accumulatedSamples)
                 }
-            }
-            // 4. Clean up noise if too long without speech
-            else if !isSpeaking && accumulatedSamples.count > 16000 * 5 {
-                // Keep a rolling buffer of silence/noise to allow for pickup, but don't grow forever
+            } else if !isSpeaking && accumulatedSamples.count > 16000 * 5 {
                 accumulatedSamples = Array(accumulatedSamples.suffix(16000))
             }
         }
@@ -1615,7 +1391,8 @@ private actor TranscriptionWorker {
     }
 
     private func convertTo16kHz(_ samples: [Float]) -> [Float] {
-        guard let converter = converter else { return [] }
+        guard needsConversion else { return samples }
+        guard let converter = converter, let targetFormat else { return [] }
 
         let inputFrameCount = AVAudioFrameCount(samples.count)
         guard let inputBuffer = AVAudioPCMBuffer(pcmFormat: inputFormat, frameCapacity: inputFrameCount) else {
@@ -1624,14 +1401,13 @@ private actor TranscriptionWorker {
 
         inputBuffer.frameLength = inputFrameCount
         if let channelData = inputBuffer.floatChannelData?[0] {
-            // Unsafe copy
             samples.withUnsafeBufferPointer { ptr in
                 channelData.update(from: ptr.baseAddress!, count: samples.count)
             }
         }
 
         let ratio = targetFormat.sampleRate / inputFormat.sampleRate
-        let outputFrameCapacity = AVAudioFrameCount(Double(inputFrameCount) * ratio) + 100  // Padding
+        let outputFrameCapacity = AVAudioFrameCount(Double(inputFrameCount) * ratio) + 100
 
         guard let outputBuffer = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: outputFrameCapacity) else {
             return []
@@ -1661,24 +1437,10 @@ private actor TranscriptionWorker {
         guard !buffer.isEmpty else { return }
 
         do {
-            print("[TranscriptionWorker] Finalizing segment with language=\(languageHint ?? "auto")")
-
-            let options = DecodingOptions(
-                task: .transcribe,
-                language: languageHint,
-                usePrefillPrompt: true,
-                wordTimestamps: false
-            )
-
-            let results = try await whisperKit.transcribe(audioArray: buffer, decodeOptions: options)
-            if let result = results.first {
-                print(
-                    "[TranscriptionWorker] Result - language=\(result.language), text=\(result.text.prefix(50))..."
-                )
-                let text = result.text.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
-                if !text.isEmpty {
-                    continuation?.yield(.final(text))
-                }
+            let result = try await asrManager.manager.transcribe(buffer)
+            let text = result.text.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
+            if !text.isEmpty {
+                continuation?.yield(.final(text))
             }
         } catch {
             print("[TranscriptionWorker] Finalize error: \(error)")
@@ -1687,17 +1449,9 @@ private actor TranscriptionWorker {
 
     private func updatePreview(_ buffer: [Float]) async {
         do {
-            let options = DecodingOptions(
-                task: .transcribe,
-                language: languageHint,
-                wordTimestamps: false
-            )
-
-            let results = try await whisperKit.transcribe(audioArray: buffer, decodeOptions: options)
-            if let result = results.first {
-                let text = result.text.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
-                continuation?.yield(.partial(text))
-            }
+            let result = try await asrManager.manager.transcribe(buffer)
+            let text = result.text.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
+            continuation?.yield(.partial(text))
         } catch {
             // Ignore preview errors
         }
@@ -1706,7 +1460,6 @@ private actor TranscriptionWorker {
 
 // MARK: - Thread-Safe Audio Buffer
 
-/// Thread-safe audio buffer for real-time audio capture
 private final class ThreadSafeAudioBuffer: @unchecked Sendable {
     private var samples: [Float] = []
     private var _isActive: Bool = false
@@ -1737,25 +1490,11 @@ private final class ThreadSafeAudioBuffer: @unchecked Sendable {
         }
     }
 
-    func getSamples() -> [Float] {
-        lock.withLock { samples }
-    }
-
     func getAndClear() -> [Float] {
         lock.withLock {
             let current = samples
             samples = []
-            // Do not deactivate on getAndClear for streaming flow,
-            // but for stopStreaming we might want to.
-            // However, caller usually handles state.
-            // Let's just return data and clear buffer.
             return current
-        }
-    }
-
-    func resetBuffer() {
-        lock.withLock {
-            samples = []
         }
     }
 
@@ -1766,40 +1505,4 @@ private final class ThreadSafeAudioBuffer: @unchecked Sendable {
             _level = 0.0
         }
     }
-}
-
-// MARK: - VAD Interface Placeholder
-
-/// Protocol for Voice Activity Detection (VAD) - future implementation
-/// This interface reserves architecture for continuous voice monitoring
-public protocol VADDelegate: AnyObject {
-    /// Called when speech is detected
-    func vadDidDetectSpeech()
-
-    /// Called when speech ends
-    func vadDidEndSpeech()
-
-    /// Called with transcription result after speech ends
-    func vadDidTranscribe(result: TranscriptionResult)
-
-    /// Called when an error occurs
-    func vadDidFail(error: Error)
-}
-
-/// Audio-level VAD settings for speech detection during transcription
-/// (Separate from VADConfiguration which handles agent wake-word activation)
-public struct VADAudioSettings {
-    /// Minimum duration of silence to consider speech ended (seconds)
-    public var silenceThreshold: Double = 0.5
-
-    /// Minimum speech duration to trigger transcription (seconds)
-    public var minSpeechDuration: Double = 0.3
-
-    /// Energy threshold for voice detection
-    public var energyThreshold: Float = 0.01
-
-    /// Whether to auto-transcribe after speech ends
-    public var autoTranscribe: Bool = true
-
-    public init() {}
 }

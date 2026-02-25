@@ -71,12 +71,12 @@ struct FloatingInputCard: View {
     @State private var hasSkills: Bool = false
 
     // MARK: - Voice Input State
-    @ObservedObject private var whisperService = WhisperKitService.shared
-    @State private var voiceConfig = WhisperConfiguration.default
+    @ObservedObject private var speechService = SpeechService.shared
+    @State private var voiceConfig = SpeechConfiguration.default
 
     // Pause detection state
-    @State private var lastSpeechTime: Date = Date()
-    @State private var isPauseDetectionActive: Bool = false
+    @State private var lastSpeechTime: Date = .distantFuture
+    @State private var hasDetectedSpeechThisTurn: Bool = false
 
     /// Tracks last voice activity time for silence timeout
     @State private var lastVoiceActivityTime: Date = Date()
@@ -84,12 +84,11 @@ struct FloatingInputCard: View {
     /// Displayed silence timeout duration (updated by timer for smooth UI updates)
     @State private var displayedSilenceTimeoutDuration: Double = 0
 
-    /// Threshold for considering audio as "speech" vs "silence"
-    private let speechThreshold: Float = 0.05
+    /// Tracks confirmed transcription length to detect actual changes (for silence timeout)
+    @State private var lastConfirmedLength: Int = 0
 
-    /// Timer publisher for pause detection (fires every 100ms, connected only when voice overlay is active)
-    private let pauseDetectionPublisher = Timer.publish(every: 0.1, on: .main, in: .common)
-    @State private var timerConnection: Cancellable?
+    /// Timer publisher for pause detection (fires every 100ms)
+    private let pauseDetectionTimer = Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()
 
     // TextEditor should grow up to ~6 lines before scrolling
     private var inputFontSize: CGFloat { CGFloat(theme.bodySize) }
@@ -148,8 +147,8 @@ struct FloatingInputCard: View {
 
     /// Whether voice input is available (enabled + model loaded + permission granted)
     private var isVoiceAvailable: Bool {
-        voiceConfig.voiceInputEnabled && whisperService.isModelLoaded
-            && whisperService.microphonePermissionGranted
+        voiceConfig.voiceInputEnabled && speechService.isModelLoaded
+            && speechService.microphonePermissionGranted
     }
 
     /// Whether voice is in a recording/active state
@@ -159,7 +158,7 @@ struct FloatingInputCard: View {
 
     /// Current silence duration for pause detection visualization
     private var currentSilenceDuration: Double {
-        guard case .recording = voiceInputState else { return 0 }
+        guard voiceInputState == .recording else { return 0 }
         return Date().timeIntervalSince(lastSpeechTime)
     }
 
@@ -179,9 +178,9 @@ struct FloatingInputCard: View {
                 // Voice input overlay - replaces the input card
                 VoiceInputOverlay(
                     state: $voiceInputState,
-                    audioLevel: whisperService.audioLevel,
-                    transcription: whisperService.currentTranscription,
-                    confirmedText: whisperService.confirmedTranscription,
+                    audioLevel: speechService.audioLevel,
+                    transcription: speechService.currentTranscription,
+                    confirmedText: speechService.confirmedTranscription,
                     pauseDuration: voiceConfig.pauseDuration,
                     confirmationDelay: voiceConfig.confirmationDelay,
                     silenceDuration: currentSilenceDuration,
@@ -229,18 +228,15 @@ struct FloatingInputCard: View {
             // Load voice config (cached after first load)
             loadVoiceConfig()
 
-            // Sync local state with singleton service state on appear
-            if whisperService.isRecording {
+            if speechService.isRecording {
                 if voiceInputState == .idle {
                     voiceInputState = .recording
-                    lastSpeechTime = Date()
                     lastVoiceActivityTime = Date()
-                    isPauseDetectionActive = voiceConfig.pauseDuration > 0
+                    resetPauseDetectionForRecording()
                 }
                 if !showVoiceOverlay {
                     showVoiceOverlay = true
                 }
-                timerConnection = pauseDetectionPublisher.connect()
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .startVoiceInputInChat)) { notification in
@@ -282,19 +278,14 @@ struct FloatingInputCard: View {
             }
         }
         .onDisappear {
-            // Disconnect the pause detection timer
-            timerConnection?.cancel()
-            timerConnection = nil
-
             // Stop any active voice recording, but check if we should keep continuous mode
             if isVoiceActive {
                 print("[FloatingInputCard] onDisappear: Stopping active voice recording")
                 // Don't use cancelVoiceInput() here as it forces continuous mode off.
                 // Instead, just stop recording but preserve the mode.
-                isPauseDetectionActive = false
                 Task {
-                    _ = await whisperService.stopStreamingTranscription()
-                    whisperService.clearTranscription()
+                    _ = await speechService.stopStreamingTranscription()
+                    speechService.clearTranscription()
                 }
                 voiceInputState = .idle
                 showVoiceOverlay = false
@@ -309,35 +300,22 @@ struct FloatingInputCard: View {
         .onChange(of: focusTrigger) { _, _ in
             isFocused = true
         }
-        .onChange(of: whisperService.isRecording) { _, isRecording in
+        .onChange(of: speechService.isRecording) { _, isRecording in
             print(
                 "[FloatingInputCard] isRecording changed to: \(isRecording). voiceInputState: \(voiceInputState), showVoiceOverlay: \(showVoiceOverlay)"
             )
             // Sync voice state with service
             if isRecording {
-                // Recording has started - now we can set recording state and reset timers
-                // This ensures silence timeout doesn't run during audio engine startup
                 if voiceInputState == .idle && showVoiceOverlay {
-                    // Started from startVoiceInput() - set recording state now that audio is ready
                     voiceInputState = .recording
-                    lastSpeechTime = Date()
-                    lastVoiceActivityTime = Date()  // Reset silence timeout NOW when recording actually starts
-                    isPauseDetectionActive = voiceConfig.pauseDuration > 0
+                    lastVoiceActivityTime = Date()
+                    resetPauseDetectionForRecording()
                     print("[FloatingInputCard] Recording confirmed - voice input ready")
                 } else if voiceInputState == .idle {
-                    // Started from external trigger (e.g., VAD)
-                    // Only transition to recording if we have an indication that this is intended for chat
-                    // However, if we don't adopt it, we might be in a zombie state.
-                    // Let's log it but not force state unless we're sure.
-                    // But VAD notification usually sets showVoiceOverlay=true.
-                    // If showVoiceOverlay is false, this might be a phantom recording restart.
-                    // Let's adopt it but keep overlay hidden? No, that breaks UI state.
-                    // For now, keep existing behavior but log warning if overlay is hidden.
                     print("[FloatingInputCard] External recording detected. Overlay: \(showVoiceOverlay)")
                     voiceInputState = .recording
-                    lastSpeechTime = Date()
                     lastVoiceActivityTime = Date()
-                    isPauseDetectionActive = voiceConfig.pauseDuration > 0
+                    resetPauseDetectionForRecording()
                 }
             } else {
                 // If service stopped recording (e.g. via Esc key in ChatView), sync local state
@@ -345,53 +323,38 @@ struct FloatingInputCard: View {
                     voiceInputState = .idle
                     showVoiceOverlay = false
                 }
-                isPauseDetectionActive = false
             }
         }
-        .onChange(of: whisperService.audioLevel) { _, level in
-            // Track when speech is detected
-            if level > speechThreshold && voiceInputState == .recording {
+        .onChange(of: speechService.isSpeechDetected) { _, detected in
+            if detected && voiceInputState == .recording {
+                hasDetectedSpeechThisTurn = true
                 lastSpeechTime = Date()
             }
         }
-        .onChange(of: whisperService.currentTranscription) { _, newValue in
+        .onChange(of: speechService.currentTranscription) { _, newValue in
             // When new transcription arrives, user is speaking
             if voiceInputState == .recording && !newValue.isEmpty {
+                hasDetectedSpeechThisTurn = true
                 lastSpeechTime = Date()
             }
         }
-        .onChange(of: whisperService.confirmedTranscription) { _, newValue in
+        .onChange(of: speechService.confirmedTranscription) { _, newValue in
             // When confirmed transcription changes, user was speaking
             if voiceInputState == .recording && !newValue.isEmpty {
+                hasDetectedSpeechThisTurn = true
                 lastSpeechTime = Date()
             }
         }
         .onChange(of: voiceInputState) { _, newState in
-            print("[FloatingInputCard] voiceInputState changed to: \(newState)")
-            // Handle state changes
-            if case .recording = newState {
-                // Resumed recording, restart detection
-                lastSpeechTime = Date()
-                isPauseDetectionActive = true
-            } else {
-                isPauseDetectionActive = false
+            if newState == .recording {
+                resetPauseDetectionForRecording()
             }
         }
-        .onChange(of: showVoiceOverlay) { _, newValue in
-            print("[FloatingInputCard] showVoiceOverlay changed to: \(newValue)")
-            if newValue {
-                timerConnection = pauseDetectionPublisher.connect()
-            } else {
-                timerConnection?.cancel()
-                timerConnection = nil
-            }
-        }
-        .onChange(of: isContinuousVoiceMode) { _, newValue in
-            print("[FloatingInputCard] isContinuousVoiceMode changed to: \(newValue)")
-        }
-        .onReceive(pauseDetectionPublisher) { _ in
+        .onReceive(pauseDetectionTimer) { _ in
+            guard showVoiceOverlay else { return }
             checkForPause()
             checkForSilenceTimeout()
+            handlePauseCountdown()
         }
         .onReceive(toolRegistry.objectWillChange) { _ in
             DispatchQueue.main.async {
@@ -410,7 +373,7 @@ struct FloatingInputCard: View {
     // MARK: - Voice Input Methods
 
     private func loadVoiceConfig() {
-        voiceConfig = WhisperConfigurationStore.load()
+        voiceConfig = SpeechConfigurationStore.load()
     }
 
     private func startVoiceInput() {
@@ -418,14 +381,13 @@ struct FloatingInputCard: View {
 
         // If continuous mode is active, we should be aggressive about ensuring the UI is shown.
         // If recording is already active (e.g. VAD or zombie state), just attach to it.
-        if whisperService.isRecording {
+        if speechService.isRecording {
             print("[FloatingInputCard] startVoiceInput: Recording already active, ensuring UI is visible")
             showVoiceOverlay = true
             if voiceInputState == .idle {
                 voiceInputState = .recording
-                lastSpeechTime = Date()
                 lastVoiceActivityTime = Date()
-                isPauseDetectionActive = voiceConfig.pauseDuration > 0
+                resetPauseDetectionForRecording()
             }
             return
         }
@@ -434,21 +396,21 @@ struct FloatingInputCard: View {
         guard voiceInputState == .idle else { return }
 
         // Show overlay immediately for visual feedback, but don't set recording state yet.
-        // Recording state will be set when whisperService.isRecording becomes true.
+        // Recording state will be set when speechService.isRecording becomes true.
         showVoiceOverlay = true
 
         Task {
             do {
-                try await whisperService.startStreamingTranscription()
+                try await speechService.startStreamingTranscription()
 
                 // Wait for isRecording to become true (with timeout)
                 let startTime = Date()
                 let maxWait: TimeInterval = 3.0  // Max 3 seconds to start
 
-                while !whisperService.isRecording {
+                while !speechService.isRecording {
                     if Date().timeIntervalSince(startTime) > maxWait {
                         print("[FloatingInputCard] Timeout waiting for recording to start")
-                        throw WhisperKitError.transcriptionFailed("Recording failed to start")
+                        throw SpeechError.transcriptionFailed("Recording failed to start")
                     }
                     try await Task.sleep(nanoseconds: 50_000_000)  // 50ms
                 }
@@ -461,7 +423,6 @@ struct FloatingInputCard: View {
                 await MainActor.run {
                     voiceInputState = .idle
                     showVoiceOverlay = false
-                    isPauseDetectionActive = false
                 }
             }
         }
@@ -469,11 +430,12 @@ struct FloatingInputCard: View {
 
     private func cancelVoiceInput() {
         print("[FloatingInputCard] User cancelled voice input - disabling continuous mode")
-        isPauseDetectionActive = false
-        isContinuousVoiceMode = false  // Exit continuous mode on cancel
+        hasDetectedSpeechThisTurn = false
+        lastConfirmedLength = 0
+        isContinuousVoiceMode = false
         Task {
-            _ = await whisperService.stopStreamingTranscription()
-            whisperService.clearTranscription()
+            _ = await speechService.stopStreamingTranscription()
+            speechService.clearTranscription()
         }
         voiceInputState = .idle
         showVoiceOverlay = false
@@ -481,25 +443,41 @@ struct FloatingInputCard: View {
 
     // MARK: - Pause Detection
 
+    /// Resets pause detection state for a new recording turn.
+    /// Handles the case where `isSpeechDetected` is already true (e.g. VAD-triggered start).
+    private func resetPauseDetectionForRecording() {
+        hasDetectedSpeechThisTurn = false
+        lastSpeechTime = .distantFuture
+        lastConfirmedLength = 0
+
+        if speechService.isSpeechDetected {
+            hasDetectedSpeechThisTurn = true
+            lastSpeechTime = Date()
+        }
+    }
+
     private func checkForPause() {
-        // Only check when detection is active and recording
-        guard isPauseDetectionActive,
-            case .recording = voiceInputState,
+        guard voiceInputState == .recording,
             voiceConfig.pauseDuration > 0
         else { return }
 
-        // Need some transcription before we can auto-send
-        let hasContent = !whisperService.currentTranscription.isEmpty || !whisperService.confirmedTranscription.isEmpty
-        guard hasContent else { return }
-
-        // Check if silence duration exceeds pause threshold
+        let hasContent = !speechService.currentTranscription.isEmpty || !speechService.confirmedTranscription.isEmpty
         let silenceDuration = Date().timeIntervalSince(lastSpeechTime)
 
+        guard hasContent else {
+            if silenceDuration >= voiceConfig.pauseDuration && hasDetectedSpeechThisTurn {
+                print(
+                    "[FloatingInputCard] Pause threshold reached but no content (silence: \(String(format: "%.1f", silenceDuration))s, current: '\(speechService.currentTranscription)', confirmed: '\(speechService.confirmedTranscription)')"
+                )
+            }
+            return
+        }
+
         if silenceDuration >= voiceConfig.pauseDuration {
-            // Pause detected - trigger countdown
-            isPauseDetectionActive = false
             voiceInputState = .paused(remaining: voiceConfig.confirmationDelay)
-            print("[FloatingInputCard] Pause detected after \(silenceDuration)s silence, triggering countdown")
+            print(
+                "[FloatingInputCard] Pause detected after \(String(format: "%.1f", silenceDuration))s silence, triggering countdown"
+            )
         }
     }
 
@@ -508,8 +486,8 @@ struct FloatingInputCard: View {
         guard showVoiceOverlay,
             !isStreaming,
             voiceConfig.silenceTimeoutSeconds > 0,
-            case .recording = voiceInputState,
-            whisperService.isRecording
+            voiceInputState == .recording,
+            speechService.isRecording
         else {
             // Reset display when conditions aren't met
             if displayedSilenceTimeoutDuration != 0 {
@@ -518,10 +496,14 @@ struct FloatingInputCard: View {
             return
         }
 
-        // Reset timer when there's voice activity
-        if whisperService.audioLevel > speechThreshold || !whisperService.currentTranscription.isEmpty
-            || !whisperService.confirmedTranscription.isEmpty
-        {
+        // Reset timer when there's real-time voice activity (not cumulative text)
+        let currentConfirmedLen = speechService.confirmedTranscription.count
+        let hasNewConfirmedText = currentConfirmedLen > lastConfirmedLength
+        if hasNewConfirmedText {
+            lastConfirmedLength = currentConfirmedLen
+        }
+
+        if speechService.isSpeechDetected || hasNewConfirmedText || !speechService.currentTranscription.isEmpty {
             lastVoiceActivityTime = Date()
         }
 
@@ -532,11 +514,10 @@ struct FloatingInputCard: View {
         // Check if timeout exceeded
         if silenceDuration >= voiceConfig.silenceTimeoutSeconds {
             let hasContent =
-                !whisperService.currentTranscription.isEmpty || !whisperService.confirmedTranscription.isEmpty
+                !speechService.currentTranscription.isEmpty || !speechService.confirmedTranscription.isEmpty
 
             if hasContent {
                 print("[FloatingInputCard] Silence timeout with content - triggering auto-send")
-                isPauseDetectionActive = false
                 voiceInputState = .paused(remaining: voiceConfig.confirmationDelay)
             } else {
                 print("[FloatingInputCard] Silence timeout without content - closing voice input")
@@ -545,11 +526,36 @@ struct FloatingInputCard: View {
         }
     }
 
+    private func handlePauseCountdown() {
+        guard case .paused(let remaining) = voiceInputState else { return }
+
+        // Decrement by 0.1s (the timer interval)
+        let newRemaining = remaining - 0.1
+
+        if newRemaining <= 0 {
+            // Countdown finished, send message
+            let transcribedText = [
+                speechService.confirmedTranscription,
+                speechService.currentTranscription,
+            ]
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+
+            if !transcribedText.isEmpty {
+                sendVoiceMessage(transcribedText)
+            } else {
+                stopVoiceInputFromTimeout()
+            }
+        } else {
+            // Update remaining time
+            voiceInputState = .paused(remaining: newRemaining)
+        }
+    }
+
     private func stopVoiceInputFromTimeout() {
-        isPauseDetectionActive = false
         Task {
-            _ = await whisperService.stopStreamingTranscription(force: false)
-            whisperService.clearTranscription()
+            _ = await speechService.stopStreamingTranscription(force: false)
+            speechService.clearTranscription()
         }
         voiceInputState = .idle
         showVoiceOverlay = false
@@ -557,10 +563,14 @@ struct FloatingInputCard: View {
 
     private func sendVoiceMessage(_ message: String) {
         print("[FloatingInputCard] Sending voice message. Continuous mode: \(isContinuousVoiceMode)")
+
+        // Show sending state first
+        voiceInputState = .sending
+
         Task {
-            _ = await whisperService.stopStreamingTranscription()
+            _ = await speechService.stopStreamingTranscription()
             // Clear transcription so next voice input starts fresh
-            whisperService.clearTranscription()
+            speechService.clearTranscription()
             await MainActor.run {
                 voiceInputState = .idle
                 showVoiceOverlay = false
@@ -574,15 +584,15 @@ struct FloatingInputCard: View {
         print("[FloatingInputCard] Transferring to text input - disabling continuous mode")
         // Transfer transcription to text input and close overlay
         let transcribedText = [
-            whisperService.confirmedTranscription,
-            whisperService.currentTranscription,
+            speechService.confirmedTranscription,
+            speechService.currentTranscription,
         ]
         .filter { !$0.isEmpty }
         .joined(separator: " ")
 
         Task {
-            _ = await whisperService.stopStreamingTranscription()
-            whisperService.clearTranscription()
+            _ = await speechService.stopStreamingTranscription()
+            speechService.clearTranscription()
         }
 
         voiceInputState = .idle

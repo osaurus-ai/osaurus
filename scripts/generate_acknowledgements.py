@@ -39,7 +39,7 @@ KNOWN_LICENSES: Dict[str, tuple] = {
     
     # Other packages
     "sparkle": ("MIT", "https://github.com/sparkle-project/Sparkle/blob/2.x/LICENSE", "https://github.com/sparkle-project/Sparkle"),
-    "whisperkit": ("MIT", "https://github.com/argmaxinc/WhisperKit/blob/main/LICENSE", "https://github.com/argmaxinc/WhisperKit"),
+    "fluidaudio": ("Apache 2.0", "https://github.com/FluidInference/FluidAudio/blob/main/LICENSE", "https://github.com/FluidInference/FluidAudio"),
     "swift-sdk": ("MIT", "https://github.com/modelcontextprotocol/swift-sdk/blob/main/LICENSE", "https://github.com/modelcontextprotocol/swift-sdk"),
     "ikigajson": ("MIT", "https://github.com/orlandos-nl/IkigaJSON/blob/master/LICENSE", "https://github.com/orlandos-nl/IkigaJSON"),
     "eventsource": ("MIT", "https://github.com/mattt/EventSource/blob/main/LICENSE", "https://github.com/mattt/EventSource"),
@@ -59,7 +59,7 @@ PACKAGE_NAMES: Dict[str, str] = {
     "mlx-swift": "MLX Swift",
     "mlx-swift-lm": "MLX Swift LM",
     "sparkle": "Sparkle",
-    "whisperkit": "WhisperKit",
+    "fluidaudio": "FluidAudio",
     "swift-sdk": "MCP Swift SDK",
     "ikigajson": "IkigaJSON",
     "eventsource": "EventSource",

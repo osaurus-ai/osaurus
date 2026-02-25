@@ -1,22 +1,38 @@
 //
-//  WhisperConfiguration.swift
+//  SpeechConfiguration.swift
 //  osaurus
 //
-//  Configuration model for WhisperKit voice transcription settings.
+//  Configuration model for FluidAudio voice transcription settings.
 //
 
 import Foundation
 
-/// Configuration settings for WhisperKit voice transcription
-public struct WhisperConfiguration: Codable, Equatable, Sendable {
-    /// Default model to use for transcription (e.g., "openai_whisper-large-v3")
-    public var defaultModel: String?
+/// ASR model version for FluidAudio Parakeet models
+public enum SpeechModelVersion: String, Codable, Equatable, CaseIterable, Sendable {
+    /// Parakeet TDT v2 (0.6B) - English-only, highest recall
+    case v2
+    /// Parakeet TDT v3 (0.6B) - Multilingual, 25 European languages
+    case v3
 
-    /// Language hint for transcription (ISO 639-1 code, e.g., "en", "es", "ja")
-    public var languageHint: String?
+    public var displayName: String {
+        switch self {
+        case .v2: return "Parakeet v2 (English)"
+        case .v3: return "Parakeet v3 (Multilingual)"
+        }
+    }
 
-    /// Whether to use word-level timestamps
-    public var wordTimestamps: Bool
+    public var description: String {
+        switch self {
+        case .v2: return "English-only model with highest recall"
+        case .v3: return "Multilingual model supporting 25 European languages"
+        }
+    }
+}
+
+/// Configuration settings for FluidAudio voice transcription
+public struct SpeechConfiguration: Codable, Equatable, Sendable {
+    /// ASR model version (.v2 English-only or .v3 multilingual)
+    public var modelVersion: SpeechModelVersion
 
     /// Selected audio input device unique ID (nil = system default)
     public var selectedInputDeviceId: String?
@@ -41,26 +57,12 @@ public struct WhisperConfiguration: Codable, Equatable, Sendable {
     /// Seconds of silence before closing voice input (0 = disabled, 10-120 seconds)
     public var silenceTimeoutSeconds: Double
 
-    private enum CodingKeys: String, CodingKey {
-        case defaultModel
-        case languageHint
-        case wordTimestamps
-        case selectedInputDeviceId
-        case selectedInputSource
-        case sensitivity
-        case voiceInputEnabled
-        case pauseDuration
-        case confirmationDelay
-        case silenceTimeoutSeconds
-    }
-
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        let defaults = WhisperConfiguration.default
-        self.defaultModel = try container.decodeIfPresent(String.self, forKey: .defaultModel)
-        self.languageHint = try container.decodeIfPresent(String.self, forKey: .languageHint)
-        self.wordTimestamps =
-            try container.decodeIfPresent(Bool.self, forKey: .wordTimestamps) ?? defaults.wordTimestamps
+        let defaults = SpeechConfiguration.default
+        self.modelVersion =
+            try container.decodeIfPresent(SpeechModelVersion.self, forKey: .modelVersion)
+            ?? defaults.modelVersion
         self.selectedInputDeviceId = try container.decodeIfPresent(String.self, forKey: .selectedInputDeviceId)
         self.selectedInputSource =
             try container.decodeIfPresent(AudioInputSource.self, forKey: .selectedInputSource)
@@ -83,9 +85,7 @@ public struct WhisperConfiguration: Codable, Equatable, Sendable {
     }
 
     public init(
-        defaultModel: String? = nil,
-        languageHint: String? = nil,
-        wordTimestamps: Bool = false,
+        modelVersion: SpeechModelVersion = .v3,
         selectedInputDeviceId: String? = nil,
         selectedInputSource: AudioInputSource = .microphone,
         sensitivity: VoiceSensitivity = .medium,
@@ -94,9 +94,7 @@ public struct WhisperConfiguration: Codable, Equatable, Sendable {
         confirmationDelay: Double = 2.0,
         silenceTimeoutSeconds: Double = 30.0
     ) {
-        self.defaultModel = defaultModel
-        self.languageHint = languageHint
-        self.wordTimestamps = wordTimestamps
+        self.modelVersion = modelVersion
         self.selectedInputDeviceId = selectedInputDeviceId
         self.selectedInputSource = selectedInputSource
         self.sensitivity = sensitivity
@@ -106,28 +104,23 @@ public struct WhisperConfiguration: Codable, Equatable, Sendable {
         self.silenceTimeoutSeconds = silenceTimeoutSeconds
     }
 
-    /// Default configuration
-    public static var `default`: WhisperConfiguration {
-        WhisperConfiguration(
-            defaultModel: nil,
-            languageHint: nil,
-            wordTimestamps: false,
+    public static var `default`: SpeechConfiguration {
+        SpeechConfiguration(
+            modelVersion: .v3,
             selectedInputDeviceId: nil,
             selectedInputSource: .microphone,
             sensitivity: .medium,
             voiceInputEnabled: true,
             pauseDuration: 1.5,
             confirmationDelay: 2.0,
-            silenceTimeoutSeconds: 30.0  // 30 seconds of silence to close voice input
+            silenceTimeoutSeconds: 30.0
         )
     }
 }
 
 /// Audio input source type
 public enum AudioInputSource: String, Codable, Equatable, CaseIterable, Sendable {
-    /// Microphone input (built-in or external)
     case microphone
-    /// System audio capture (audio from apps, browser, etc.)
     case systemAudio
 
     public var displayName: String {
@@ -147,11 +140,8 @@ public enum AudioInputSource: String, Codable, Equatable, CaseIterable, Sendable
 
 /// Voice activity detection sensitivity level
 public enum VoiceSensitivity: String, Codable, CaseIterable, Sendable {
-    /// Less sensitive - requires louder, clearer speech
     case low
-    /// Balanced sensitivity (default)
     case medium
-    /// More sensitive - picks up quieter speech, longer pauses
     case high
 
     public var displayName: String {
@@ -170,12 +160,12 @@ public enum VoiceSensitivity: String, Codable, CaseIterable, Sendable {
         }
     }
 
-    /// Energy threshold for voice detection (lower = more sensitive)
-    public var energyThreshold: Float {
+    /// VAD threshold for FluidAudio's Silero VAD (higher = less sensitive)
+    public var vadThreshold: Float {
         switch self {
-        case .low: return 0.08
-        case .medium: return 0.05
-        case .high: return 0.02
+        case .low: return 0.85
+        case .medium: return 0.75
+        case .high: return 0.55
         }
     }
 
@@ -189,41 +179,37 @@ public enum VoiceSensitivity: String, Codable, CaseIterable, Sendable {
     }
 }
 
-/// Handles persistence of `WhisperConfiguration` with caching
+/// Handles persistence of `SpeechConfiguration` with caching
 @MainActor
-public enum WhisperConfigurationStore {
-    private static var cachedConfig: WhisperConfiguration?
+public enum SpeechConfigurationStore {
+    private static var cachedConfig: SpeechConfiguration?
 
-    public static func load() -> WhisperConfiguration {
+    public static func load() -> SpeechConfiguration {
         if let cached = cachedConfig { return cached }
         let config = loadFromDisk()
         cachedConfig = config
         return config
     }
 
-    public static func save(_ configuration: WhisperConfiguration) {
+    public static func save(_ configuration: SpeechConfiguration) {
         cachedConfig = configuration
         saveToDisk(configuration)
     }
 
-    public static func invalidateCache() {
-        cachedConfig = nil
-    }
-
-    private static func loadFromDisk() -> WhisperConfiguration {
+    private static func loadFromDisk() -> SpeechConfiguration {
         let url = configurationFileURL()
         guard FileManager.default.fileExists(atPath: url.path) else {
-            return WhisperConfiguration.default
+            return SpeechConfiguration.default
         }
         do {
-            return try JSONDecoder().decode(WhisperConfiguration.self, from: Data(contentsOf: url))
+            return try JSONDecoder().decode(SpeechConfiguration.self, from: Data(contentsOf: url))
         } catch {
-            print("[Osaurus] Failed to load WhisperConfiguration: \(error)")
-            return WhisperConfiguration.default
+            print("[Osaurus] Failed to load SpeechConfiguration: \(error)")
+            return SpeechConfiguration.default
         }
     }
 
-    private static func saveToDisk(_ configuration: WhisperConfiguration) {
+    private static func saveToDisk(_ configuration: SpeechConfiguration) {
         let url = configurationFileURL()
         OsaurusPaths.ensureExistsSilent(url.deletingLastPathComponent())
         do {
@@ -231,11 +217,11 @@ public enum WhisperConfigurationStore {
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
             try encoder.encode(configuration).write(to: url, options: [.atomic])
         } catch {
-            print("[Osaurus] Failed to save WhisperConfiguration: \(error)")
+            print("[Osaurus] Failed to save SpeechConfiguration: \(error)")
         }
     }
 
     private static func configurationFileURL() -> URL {
-        OsaurusPaths.resolveFile(new: OsaurusPaths.whisperConfigFile(), legacy: "WhisperConfiguration.json")
+        OsaurusPaths.speechConfigFile()
     }
 }
