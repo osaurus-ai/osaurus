@@ -16,6 +16,9 @@ struct ModelDownloadView: View {
     /// Shared model manager for handling downloads and model state
     @ObservedObject private var modelManager = ModelManager.shared
 
+    /// System resource monitor for hardware info display
+    @ObservedObject private var systemMonitor = SystemMonitorService.shared
+
     /// Theme manager for consistent UI styling
     @ObservedObject private var themeManager = ThemeManager.shared
 
@@ -52,6 +55,15 @@ struct ModelDownloadView: View {
                 .opacity(hasAppeared ? 1 : 0)
                 .offset(y: hasAppeared ? 0 : -10)
                 .animation(.spring(response: 0.4, dampingFraction: 0.8), value: hasAppeared)
+
+            // System status bar
+            SystemStatusBar(
+                totalMemoryGB: systemMonitor.totalMemoryGB,
+                usedMemoryGB: systemMonitor.usedMemoryGB,
+                availableStorageGB: systemMonitor.availableStorageGB,
+                totalStorageGB: systemMonitor.totalStorageGB
+            )
+            .opacity(hasAppeared ? 1 : 0)
 
             // Model list
             modelListView
@@ -152,6 +164,7 @@ struct ModelDownloadView: View {
                                     model: model,
                                     downloadState: modelManager.effectiveDownloadState(for: model),
                                     metrics: modelManager.downloadMetrics[model.id],
+                                    totalMemoryGB: systemMonitor.totalMemoryGB,
                                     onViewDetails: { modelToShowDetails = model },
                                     onCancel: { modelManager.cancelDownload(model.id) },
                                     animationIndex: index
@@ -467,6 +480,98 @@ private struct DownloadStatusIndicator: View {
             }
         }
         .help("Downloading \(activeCount) model\(activeCount == 1 ? "" : "s") – Click to view")
+    }
+}
+
+// MARK: - System Status Bar
+
+/// Compact bar showing available memory and storage with mini gauges.
+private struct SystemStatusBar: View {
+    @Environment(\.theme) private var theme
+
+    let totalMemoryGB: Double
+    let usedMemoryGB: Double
+    let availableStorageGB: Double
+    let totalStorageGB: Double
+
+    var body: some View {
+        HStack(spacing: 20) {
+            ResourceGauge(
+                label: "Memory",
+                icon: "memorychip",
+                usedFraction: totalMemoryGB > 0 ? usedMemoryGB / totalMemoryGB : 0,
+                detail: String(
+                    format: "%.0f GB free / %.0f GB",
+                    max(0, totalMemoryGB - usedMemoryGB),
+                    totalMemoryGB
+                )
+            )
+
+            ResourceGauge(
+                label: "Storage",
+                icon: "internaldrive",
+                usedFraction: totalStorageGB > 0
+                    ? (totalStorageGB - availableStorageGB) / totalStorageGB : 0,
+                detail: String(
+                    format: "%.0f GB free / %.0f GB",
+                    availableStorageGB,
+                    totalStorageGB
+                )
+            )
+        }
+        .padding(.horizontal, 24)
+        .padding(.vertical, 10)
+        .background(theme.secondaryBackground)
+    }
+}
+
+/// Reusable mini gauge showing a label, icon, detail text, and color-coded progress bar.
+private struct ResourceGauge: View {
+    @Environment(\.theme) private var theme
+
+    let label: String
+    let icon: String
+    let usedFraction: Double
+    let detail: String
+
+    private var clampedFraction: Double { min(1.0, max(0, usedFraction)) }
+
+    private var barColor: Color {
+        if clampedFraction < 0.7 { return theme.successColor }
+        if clampedFraction < 0.9 { return theme.warningColor }
+        return theme.errorColor
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(theme.secondaryText)
+
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 4) {
+                    Text(label)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(theme.secondaryText)
+                    Spacer()
+                    Text(detail)
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .foregroundColor(barColor)
+                }
+
+                GeometryReader { geometry in
+                    ZStack(alignment: .leading) {
+                        RoundedRectangle(cornerRadius: 2)
+                            .fill(theme.tertiaryBackground)
+                        RoundedRectangle(cornerRadius: 2)
+                            .fill(barColor)
+                            .frame(width: geometry.size.width * clampedFraction)
+                    }
+                }
+                .frame(height: 4)
+            }
+        }
+        .frame(maxWidth: .infinity)
     }
 }
 
