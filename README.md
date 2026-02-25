@@ -416,7 +416,7 @@ Speech-to-text powered by [FluidAudio](https://github.com/FluidInference/FluidAu
 **Features:**
 
 - **Real-time transcription** — See your words as you speak
-- **Multiple Parakeet models** — From Tiny (75 MB) to Large V3 (3 GB)
+- **Parakeet TDT models** — Multilingual (v3) and English-only (v2), each ~600 MB
 - **Microphone or system audio** — Transcribe your voice or computer audio
 - **Configurable sensitivity** — Adjust for quiet or noisy environments
 - **Auto-send with confirmation** — Hands-free message sending
@@ -446,7 +446,7 @@ Perfect for dictating emails, documents, code comments, or any text input withou
 
 1. Open Management window (`⌘ Shift M`) → **Voice**
 2. Grant microphone permission
-3. Download a Parakeet model
+3. Download a Parakeet TDT model (v3 multilingual recommended)
 4. For **Transcription Mode**: Grant accessibility permission and configure the hotkey in the Transcription tab
 5. Test your voice input
 
@@ -524,7 +524,7 @@ print(response.choices[0].message.content)
 
 Models are stored at `~/MLXModels` by default. Override with `OSU_MODELS_DIR`.
 
-Speech models are stored at `~/.osaurus/fluidaudio-models`.
+Speech models are stored at `~/Library/Application Support/FluidAudio/Models/`.
 
 ---
 

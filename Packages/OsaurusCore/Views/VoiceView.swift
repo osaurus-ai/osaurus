@@ -189,6 +189,12 @@ private struct VoiceModelsTab: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 24) {
+                // Legacy WhisperKit cleanup banner
+                if modelManager.legacyWhisperModelsExist {
+                    LegacyWhisperBanner()
+                        .padding(.horizontal, 24)
+                }
+
                 // Search
                 SearchField(text: $searchText, placeholder: "Search models")
                     .padding(.horizontal, 24)
@@ -233,6 +239,68 @@ private struct VoiceModelsTab: View {
             }
             .padding(.top, 16)
         }
+    }
+}
+
+// MARK: - Legacy WhisperKit Cleanup Banner
+
+private struct LegacyWhisperBanner: View {
+    @Environment(\.theme) private var theme
+    @ObservedObject private var modelManager = SpeechModelManager.shared
+    @State private var isDeleting = false
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 18))
+                .foregroundColor(theme.warningColor)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Legacy WhisperKit models found")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+
+                Text(
+                    "These models are no longer used. Delete to free up \(modelManager.legacyWhisperModelsSizeString ?? "disk space")."
+                )
+                .font(.system(size: 12))
+                .foregroundColor(theme.secondaryText)
+            }
+
+            Spacer()
+
+            Button(action: {
+                isDeleting = true
+                modelManager.deleteLegacyWhisperModels()
+                isDeleting = false
+            }) {
+                if isDeleting {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Text("Delete")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 6)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(theme.errorColor)
+                        )
+                }
+            }
+            .buttonStyle(PlainButtonStyle())
+            .disabled(isDeleting)
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(theme.warningColor.opacity(0.08))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(theme.warningColor.opacity(0.25), lineWidth: 1)
+                )
+        )
     }
 }
 

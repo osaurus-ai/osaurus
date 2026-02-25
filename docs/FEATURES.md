@@ -670,7 +670,7 @@ A context optimization system that reduces token usage by ~80%:
 | `confirmationDelay`   | Seconds to show confirmation before sending   |
 | `selectedInputSource` | Microphone or system audio                    |
 
-**Model Storage:** `~/.osaurus/fluidaudio-models/`
+**Model Storage:** `~/Library/Application Support/FluidAudio/Models/`
 
 ---
 

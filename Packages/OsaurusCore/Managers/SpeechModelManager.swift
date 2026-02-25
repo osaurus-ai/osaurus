@@ -39,10 +39,17 @@ public final class SpeechModelManager: ObservableObject {
     @Published public var availableModels: [SpeechModel] = []
     @Published public var downloadStates: [String: SpeechDownloadState] = [:]
     @Published public var selectedModelId: String?
+    @Published public var legacyWhisperModelsExist: Bool = false
+    @Published public var legacyWhisperModelsSizeString: String?
 
     // MARK: - Private Properties
 
     private var activeDownloadTasks: [String: Task<Void, Never>] = [:]
+
+    private static let legacyWhisperDirectories: [String] = [
+        "models--argmaxinc--whisperkit-coreml",
+        "models--argmaxinc--whisperkit-pro",
+    ]
 
     // MARK: - Initialization
 
@@ -50,6 +57,7 @@ public final class SpeechModelManager: ObservableObject {
         availableModels = Self.curatedModels
         loadSelectedModel()
         refreshDownloadStates()
+        refreshLegacyWhisperState()
     }
 
     // MARK: - Public Methods
@@ -158,6 +166,75 @@ public final class SpeechModelManager: ObservableObject {
     /// Effective download state for a model
     public func effectiveDownloadState(for model: SpeechModel) -> SpeechDownloadState {
         downloadStates[model.id] ?? .notStarted
+    }
+
+    // MARK: - Legacy WhisperKit Cleanup
+
+    /// Refresh whether legacy WhisperKit model directories exist on disk
+    public func refreshLegacyWhisperState() {
+        let directories = Self.findLegacyWhisperDirectories()
+        legacyWhisperModelsExist = !directories.isEmpty
+        if legacyWhisperModelsExist {
+            let totalBytes = directories.reduce(Int64(0)) { $0 + Self.directorySize($1) }
+            legacyWhisperModelsSizeString = Self.formatBytes(totalBytes)
+        } else {
+            legacyWhisperModelsSizeString = nil
+        }
+    }
+
+    /// Delete all legacy WhisperKit model directories from disk
+    public func deleteLegacyWhisperModels() {
+        let fm = FileManager.default
+        for directory in Self.findLegacyWhisperDirectories() {
+            try? fm.removeItem(at: directory)
+        }
+        refreshLegacyWhisperState()
+    }
+
+    private static func findLegacyWhisperDirectories() -> [URL] {
+        let fm = FileManager.default
+        let homeDir = fm.homeDirectoryForCurrentUser
+        let hubCache =
+            homeDir
+            .appendingPathComponent(".cache", isDirectory: true)
+            .appendingPathComponent("huggingface", isDirectory: true)
+            .appendingPathComponent("hub", isDirectory: true)
+
+        return legacyWhisperDirectories.compactMap { dirName in
+            let url = hubCache.appendingPathComponent(dirName, isDirectory: true)
+            var isDir: ObjCBool = false
+            guard fm.fileExists(atPath: url.path, isDirectory: &isDir), isDir.boolValue else {
+                return nil
+            }
+            return url
+        }
+    }
+
+    private static func directorySize(_ url: URL) -> Int64 {
+        let fm = FileManager.default
+        guard
+            let enumerator = fm.enumerator(
+                at: url,
+                includingPropertiesForKeys: [.fileSizeKey],
+                options: [.skipsHiddenFiles]
+            )
+        else {
+            return 0
+        }
+        var total: Int64 = 0
+        for case let fileURL as URL in enumerator {
+            if let size = try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize {
+                total += Int64(size)
+            }
+        }
+        return total
+    }
+
+    private static func formatBytes(_ bytes: Int64) -> String {
+        let formatter = ByteCountFormatter()
+        formatter.allowedUnits = [.useGB, .useMB]
+        formatter.countStyle = .file
+        return formatter.string(fromByteCount: bytes)
     }
 
     // MARK: - Curated Models
