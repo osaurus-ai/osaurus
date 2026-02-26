@@ -58,6 +58,7 @@ public final class NotchWindowController: NSObject, ObservableObject {
     private var notchPanel: NSPanel?
     private var hostingView: NSHostingView<NotchContentView>?
     private var cancellables = Set<AnyCancellable>()
+    private var isExpandedForAlert = false
 
     /// Current screen's notch metrics (published for SwiftUI observation).
     @Published public private(set) var metrics = NotchScreenMetrics(
@@ -137,6 +138,15 @@ public final class NotchWindowController: NSObject, ObservableObject {
             }
             .store(in: &cancellables)
 
+        // Expand panel to full screen while an alert is active so the
+        // dimming overlay covers the entire display instead of just 600x500.
+        ThemedAlertCenter.shared.objectWillChange
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.syncAlertExpansion()
+            }
+            .store(in: &cancellables)
+
         print(
             "[Osaurus] Notch window controller setup on screen: \(screen.localizedName) (notch: \(metrics.hasHardwareNotch), w: \(metrics.notchWidth), h: \(metrics.notchHeight))"
         )
@@ -175,10 +185,25 @@ public final class NotchWindowController: NSObject, ObservableObject {
             metrics = newMetrics
         }
 
+        // Don't shrink back to notch size while an alert is covering the screen.
+        guard !isExpandedForAlert else { return }
+
         let newFrame = panelRect(for: targetScreen)
         if panel.frame != newFrame {
             panel.setFrame(newFrame, display: true)
         }
+    }
+
+    private func syncAlertExpansion() {
+        guard let panel = notchPanel else { return }
+        let alertActive = ThemedAlertCenter.shared.active(for: .notchOverlay) != nil
+
+        guard alertActive != isExpandedForAlert else { return }
+        isExpandedForAlert = alertActive
+
+        let screen = panel.screen ?? NSScreen.main ?? NSScreen.screens.first!
+        let targetFrame = alertActive ? screen.frame : panelRect(for: screen)
+        panel.setFrame(targetFrame, display: true)
     }
 
     /// Panel positioned at the very top of the screen (using full frame, not visibleFrame).

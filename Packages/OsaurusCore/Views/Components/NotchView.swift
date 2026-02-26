@@ -449,6 +449,10 @@ struct NotchView: View {
             }
             expandedProgress(task: task)
             if hasActivityItems { expandedActivityFeed(task: task) }
+
+            notchActionButton(task.mode == .chat ? "Open Chat" : "Open Task") {
+                BackgroundTaskManager.shared.openTaskWindow(task.id)
+            }
         }
     }
 
@@ -462,20 +466,10 @@ struct NotchView: View {
 
             if hasActivityItems { expandedActivityFeed(task: task) }
 
-            Button {
+            notchActionButton(task.mode == .chat ? "View Chat" : "View Details") {
                 BackgroundTaskManager.shared.openTaskWindow(task.id)
                 BackgroundTaskManager.shared.finalizeTask(task.id)
-            } label: {
-                Text(task.mode == .chat ? "View Chat" : "View Details")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(accentColor)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .frame(maxWidth: .infinity)
-                    .background(RoundedRectangle(cornerRadius: 6).fill(accentColor.opacity(0.15)))
-                    .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(accentColor.opacity(0.25), lineWidth: 1))
             }
-            .buttonStyle(.plain)
         }
     }
 
@@ -697,6 +691,20 @@ struct NotchView: View {
         guard let task = activeTask else { return false }
         return task.activityFeed.count > 1
             || (task.activityFeed.count == 1 && task.activityFeed.first?.kind != .info)
+    }
+
+    private func notchActionButton(_ title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(accentColor)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .frame(maxWidth: .infinity)
+                .background(RoundedRectangle(cornerRadius: 6).fill(accentColor.opacity(0.15)))
+                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(accentColor.opacity(0.25), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
     }
 
     private func handleHoverChange() {
