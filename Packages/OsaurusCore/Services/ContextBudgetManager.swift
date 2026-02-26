@@ -9,6 +9,50 @@
 
 import Foundation
 
+/// Per-category token breakdown for the context window, displayed in the
+/// context budget hover popover.
+public struct ContextTokenBreakdown: Equatable, Sendable {
+    public var systemPrompt: Int = 0
+    public var memory: Int = 0
+    public var tools: Int = 0
+    public var skills: Int = 0
+    public var conversation: Int = 0
+    public var input: Int = 0
+
+    public var total: Int {
+        systemPrompt + memory + tools + skills + conversation + input
+    }
+
+    public static let zero = ContextTokenBreakdown()
+
+    /// Non-zero categories with their display metadata.
+    public var categories: [Category] {
+        Category.all(from: self).filter { $0.tokens > 0 }
+    }
+
+    public struct Category: Identifiable {
+        public let label: String
+        public let tokens: Int
+        public let tint: Tint
+        public var id: String { label }
+
+        public enum Tint: String {
+            case purple, blue, orange, green, gray, cyan
+        }
+
+        static func all(from b: ContextTokenBreakdown) -> [Category] {
+            [
+                Category(label: "System Prompt", tokens: b.systemPrompt, tint: .purple),
+                Category(label: "Memory", tokens: b.memory, tint: .blue),
+                Category(label: "Tools", tokens: b.tools, tint: .orange),
+                Category(label: "Skills", tokens: b.skills, tint: .green),
+                Category(label: "Conversation", tokens: b.conversation, tint: .gray),
+                Category(label: "Input", tokens: b.input, tint: .cyan),
+            ]
+        }
+    }
+}
+
 /// Budget categories for context window allocation
 public enum ContextBudgetCategory: String, CaseIterable, Sendable {
     case systemPrompt
