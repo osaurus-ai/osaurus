@@ -24,6 +24,8 @@ struct FloatingInputCard: View {
     let supportsImages: Bool
     /// Current estimated context token count for the session
     let estimatedContextTokens: Int
+    /// Per-category breakdown of context token usage
+    var contextBreakdown: ContextTokenBreakdown = .zero
     let onSend: () -> Void
     let onStop: () -> Void
     /// Trigger to focus the input field (increment to focus)
@@ -64,6 +66,8 @@ struct FloatingInputCard: View {
     @State private var showModelPicker = false
     @State private var showModelOptionsPicker = false
     @State private var showCapabilitiesPicker = false
+    @State private var showContextBreakdown = false
+    @State private var contextHoverTask: Task<Void, Never>?
     // Cache model options to prevent popover refresh during streaming
     @State private var cachedModelOptions: [ModelOption] = []
     // Cache tool/skill availability to avoid calling singleton methods on every body evaluation
@@ -121,13 +125,16 @@ struct FloatingInputCard: View {
 
     /// Context tokens including what's currently being typed (localText may differ from text binding)
     private var displayContextTokens: Int {
-        var total = estimatedContextTokens
-        // Add tokens for text being typed (if not already counted via binding)
-        // The localText is the real-time typing state
+        displayContextBreakdown.total
+    }
+
+    /// Breakdown augmented with real-time typing tokens
+    private var displayContextBreakdown: ContextTokenBreakdown {
+        var bd = contextBreakdown
         if !localText.isEmpty {
-            total += max(1, localText.count / 4)
+            bd.input += max(1, localText.count / 4)
         }
-        return total
+        return bd
     }
 
     /// Max context length for the selected model
@@ -719,11 +726,25 @@ struct FloatingInputCard: View {
                     .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .regular))
                     .foregroundColor(theme.tertiaryText.opacity(0.7))
             }
-            .help(
-                maxContextTokens != nil
-                    ? "Estimated context: ~\(displayContextTokens) / \(maxContextTokens!) tokens"
-                    : "Estimated context: ~\(displayContextTokens) tokens (messages + tools + input)"
-            )
+            .onHover { hovering in
+                contextHoverTask?.cancel()
+                if hovering {
+                    contextHoverTask = Task { @MainActor in
+                        try? await Task.sleep(nanoseconds: 300_000_000)
+                        guard !Task.isCancelled else { return }
+                        showContextBreakdown = true
+                    }
+                } else {
+                    showContextBreakdown = false
+                }
+            }
+            .popover(isPresented: $showContextBreakdown, arrowEdge: .top) {
+                ContextBreakdownPopover(
+                    breakdown: displayContextBreakdown,
+                    maxTokens: maxContextTokens,
+                    formatTokenCount: formatTokenCount
+                )
+            }
         }
     }
 
@@ -1564,6 +1585,160 @@ extension NSImage {
             return nil
         }
         return bitmap.representation(using: .png, properties: [:])
+    }
+}
+
+// MARK: - Context Breakdown Popover
+
+private struct ContextBreakdownPopover: View {
+    let breakdown: ContextTokenBreakdown
+    let maxTokens: Int?
+    let formatTokenCount: (Int) -> String
+
+    @Environment(\.theme) private var theme
+
+    private var budgetCap: Int { maxTokens ?? breakdown.total }
+
+    private func color(for tint: ContextTokenBreakdown.Category.Tint) -> Color {
+        switch tint {
+        case .purple: return theme.isDark ? Color(red: 0.68, green: 0.52, blue: 1.0) : .purple
+        case .blue: return theme.isDark ? Color(red: 0.45, green: 0.68, blue: 1.0) : .blue
+        case .orange: return theme.isDark ? Color(red: 1.0, green: 0.68, blue: 0.35) : .orange
+        case .green: return theme.isDark ? Color(red: 0.45, green: 0.85, blue: 0.55) : .green
+        case .gray: return theme.isDark ? Color(red: 0.58, green: 0.62, blue: 0.68) : Color(white: 0.55)
+        case .cyan: return theme.isDark ? Color(red: 0.35, green: 0.82, blue: 0.9) : .cyan
+        }
+    }
+
+    // MARK: - Body
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Context Budget")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(theme.secondaryText)
+                .padding(.horizontal, 12)
+                .padding(.top, 10)
+                .padding(.bottom, 8)
+
+            barChart
+                .padding(.horizontal, 12)
+                .padding(.bottom, 10)
+
+            divider
+            legend.padding(.horizontal, 12).padding(.vertical, 8)
+            divider
+            totalRow.padding(.horizontal, 12).padding(.vertical, 8)
+        }
+        .frame(width: 240)
+        .background(popoverBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(popoverBorder)
+        .shadow(color: theme.shadowColor.opacity(0.2), radius: 16, x: 0, y: 8)
+    }
+
+    // MARK: - Stacked Bar
+
+    private var barChart: some View {
+        let scale = budgetCap > 0 ? budgetCap : 1
+        return GeometryReader { geo in
+            HStack(spacing: 1) {
+                ForEach(breakdown.categories) { cat in
+                    let fraction = CGFloat(cat.tokens) / CGFloat(scale)
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(color(for: cat.tint).opacity(0.85))
+                        .frame(width: max(fraction * geo.size.width, fraction > 0 ? 3 : 0))
+                }
+                if maxTokens != nil { Spacer(minLength: 0) }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 4))
+        }
+        .frame(height: 6)
+        .background(RoundedRectangle(cornerRadius: 4).fill(theme.tertiaryBackground.opacity(0.4)))
+    }
+
+    // MARK: - Legend
+
+    private var legend: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(breakdown.categories) { cat in
+                HStack(spacing: 0) {
+                    RoundedRectangle(cornerRadius: 1.5)
+                        .fill(color(for: cat.tint).opacity(0.85))
+                        .frame(width: 3, height: 12)
+                        .padding(.trailing, 8)
+
+                    Text(cat.label)
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.secondaryText)
+
+                    Spacer()
+
+                    Text(formatTokenCount(cat.tokens))
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundColor(theme.primaryText)
+
+                    Text(budgetCap > 0 ? "\(cat.tokens * 100 / budgetCap)%" : "0%")
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundColor(theme.tertiaryText)
+                        .frame(width: 32, alignment: .trailing)
+                }
+            }
+        }
+    }
+
+    // MARK: - Total
+
+    private var totalRow: some View {
+        HStack(spacing: 4) {
+            Text("Total")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(theme.secondaryText)
+            Spacer()
+            Text("~\(formatTokenCount(breakdown.total))")
+                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                .foregroundColor(theme.primaryText)
+            if let max = maxTokens {
+                Text("/ \(formatTokenCount(max))")
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(theme.tertiaryText)
+            }
+        }
+    }
+
+    // MARK: - Chrome
+
+    private var divider: some View {
+        Divider().overlay(theme.primaryBorder.opacity(0.15))
+    }
+
+    private var popoverBackground: some View {
+        ZStack {
+            if theme.glassEnabled {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(.ultraThinMaterial)
+            }
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(theme.primaryBackground.opacity(theme.isDark ? 0.85 : 0.92))
+            LinearGradient(
+                colors: [theme.accentColor.opacity(theme.isDark ? 0.04 : 0.03), .clear],
+                startPoint: .top,
+                endPoint: .center
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        }
+    }
+
+    private var popoverBorder: some View {
+        RoundedRectangle(cornerRadius: 10, style: .continuous)
+            .strokeBorder(
+                LinearGradient(
+                    colors: [theme.glassEdgeLight.opacity(0.2), theme.primaryBorder.opacity(0.12)],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                ),
+                lineWidth: 1
+            )
     }
 }
 

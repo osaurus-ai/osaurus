@@ -49,7 +49,7 @@ final class ChatSession: ObservableObject {
 
     // MARK: - Memoization Cache
     private let blockMemoizer = BlockMemoizer()
-    private var _cachedEstimatedTokens: Int = 0
+    private var _cachedBreakdown: ContextTokenBreakdown = .zero
     private var _tokenCacheValid: Bool = false
     private var _lastTokenTurnsCount: Int = 0
     private var _lastTokenAttachmentsCount: Int = 0
@@ -212,103 +212,103 @@ final class ChatSession: ObservableObject {
     /// Estimated token count for current session context (~4 chars per token).
     /// Throttled to at most once per 500ms during streaming.
     var estimatedContextTokens: Int {
+        estimatedContextBreakdown.total
+    }
+
+    /// Per-category breakdown of estimated context tokens.
+    /// Uses the same caching / throttling as the scalar total.
+    var estimatedContextBreakdown: ContextTokenBreakdown {
         if _tokenCacheValid && !isStreaming && turns.count == _lastTokenTurnsCount
             && pendingAttachments.count == _lastTokenAttachmentsCount
         {
-            return _cachedEstimatedTokens
+            return _cachedBreakdown
         }
 
-        // Throttle during streaming to avoid per-frame overhead
         if isStreaming && _tokenCacheValid && Date().timeIntervalSince(_lastTokenComputeTime) < 0.5 {
-            return _cachedEstimatedTokens
+            return _cachedBreakdown
         }
 
-        var total = 0
+        var breakdown = ContextTokenBreakdown()
         let effectiveId = agentId ?? Agent.defaultId
 
         // System prompt
         let systemPrompt = AgentManager.shared.effectiveSystemPrompt(for: effectiveId)
         if !systemPrompt.isEmpty {
-            total += max(1, systemPrompt.count / 4)
+            breakdown.systemPrompt = max(1, systemPrompt.count / 4)
         }
 
         // Memory context (profile, working memory, summaries, graph)
-        total += _memoryContextTokens
+        breakdown.memory = _memoryContextTokens
 
         // Tool and skill tokens depend on two-phase loading state
         let toolOverrides = AgentManager.shared.effectiveToolOverrides(for: effectiveId)
         let allTools = ToolRegistry.shared.listTools(withOverrides: toolOverrides)
 
-        // Check if there are any capabilities to select
         let catalog = CapabilityCatalogBuilder.build(for: effectiveId)
         let hasCapabilities = !catalog.isEmpty
 
-        // Helper to check if tool is enabled
         func isEnabled(_ tool: ToolRegistry.ToolEntry) -> Bool {
             if let override = toolOverrides?[tool.name] { return override }
             return tool.enabled
         }
 
         if !capabilitiesSelected {
-            // Phase 1: Catalog entries + select_capabilities (if catalog not empty)
-            total += allTools.filter(isEnabled).reduce(0) { $0 + $1.catalogEntryTokens }
+            breakdown.tools = allTools.filter(isEnabled).reduce(0) { $0 + $1.catalogEntryTokens }
             if hasCapabilities {
-                total += ToolRegistry.shared.estimatedTokens(for: "select_capabilities")
+                breakdown.tools += ToolRegistry.shared.estimatedTokens(for: "select_capabilities")
             }
-            total += CapabilityService.shared.estimateCatalogSkillTokens(for: effectiveId)
+            breakdown.skills = CapabilityService.shared.estimateCatalogSkillTokens(for: effectiveId)
         } else {
-            // Phase 2: Selected tools + select_capabilities + skill instructions
-            total += selectedToolNames.reduce(0) { $0 + ToolRegistry.shared.estimatedTokens(for: $1) }
+            breakdown.tools = selectedToolNames.reduce(0) { $0 + ToolRegistry.shared.estimatedTokens(for: $1) }
             if hasCapabilities {
-                total += ToolRegistry.shared.estimatedTokens(for: "select_capabilities")
+                breakdown.tools += ToolRegistry.shared.estimatedTokens(for: "select_capabilities")
             }
             if !selectedSkillInstructions.isEmpty {
-                total += max(1, selectedSkillInstructions.count / 4)
+                breakdown.skills = max(1, selectedSkillInstructions.count / 4)
             }
         }
 
-        // All turns - use cached lengths to avoid forcing lazy string joins
+        // All turns
+        var conversationTokens = 0
         for turn in turns {
             if !turn.contentIsEmpty {
-                total += max(1, turn.contentLength / 4)
+                conversationTokens += max(1, turn.contentLength / 4)
             }
-            // Tool calls (serialized as JSON)
             if let toolCalls = turn.toolCalls {
                 for call in toolCalls {
-                    total += max(1, (call.function.name.count + call.function.arguments.count) / 4)
+                    conversationTokens += max(1, (call.function.name.count + call.function.arguments.count) / 4)
                 }
             }
-            // Tool results
             for (_, result) in turn.toolResults {
-                total += max(1, result.count / 4)
+                conversationTokens += max(1, result.count / 4)
             }
-            // Thinking content - use cached length
             if turn.hasThinking {
-                total += max(1, turn.thinkingLength / 4)
+                conversationTokens += max(1, turn.thinkingLength / 4)
             }
             for attachment in turn.attachments {
-                total += attachment.estimatedTokens
+                conversationTokens += attachment.estimatedTokens
             }
         }
+        breakdown.conversation = conversationTokens
 
-        // Current input (what user is typing)
+        // Current input + pending attachments
+        var inputTokens = 0
         if !input.isEmpty {
-            total += max(1, input.count / 4)
+            inputTokens += max(1, input.count / 4)
         }
-
-        // Pending attachments
         for attachment in pendingAttachments {
-            total += attachment.estimatedTokens
+            inputTokens += attachment.estimatedTokens
         }
+        breakdown.input = inputTokens
 
         // Update cache
-        _cachedEstimatedTokens = total
+        _cachedBreakdown = breakdown
         _tokenCacheValid = true
         _lastTokenTurnsCount = turns.count
         _lastTokenAttachmentsCount = pendingAttachments.count
         _lastTokenComputeTime = Date()
 
-        return total
+        return breakdown
     }
 
     /// Builds the full user message text, prepending any attached document contents wrapped in XML tags.
@@ -1309,6 +1309,7 @@ struct ChatView: View {
                                 isStreaming: observedSession.isStreaming,
                                 supportsImages: observedSession.selectedModelSupportsImages,
                                 estimatedContextTokens: observedSession.estimatedContextTokens,
+                                contextBreakdown: observedSession.estimatedContextBreakdown,
                                 onSend: { observedSession.sendCurrent() },
                                 onStop: { observedSession.stop() },
                                 focusTrigger: focusTrigger,
