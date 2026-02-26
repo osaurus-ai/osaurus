@@ -316,6 +316,11 @@ public final class WorkSession: ObservableObject {
         windowState?.session.estimatedContextTokens ?? 0
     }
 
+    /// Per-category context token breakdown (synced from chat session)
+    var estimatedContextBreakdown: ContextTokenBreakdown {
+        windowState?.session.estimatedContextBreakdown ?? .zero
+    }
+
     // MARK: - Cumulative Token Usage
 
     /// Cumulative input tokens consumed across all API calls in this task
