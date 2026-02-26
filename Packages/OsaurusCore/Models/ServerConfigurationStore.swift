@@ -39,6 +39,6 @@ enum ServerConfigurationStore {
         if let dir = overrideDirectory {
             return dir.appendingPathComponent("server.json")
         }
-        return OsaurusPaths.resolveFile(new: OsaurusPaths.serverConfigFile(), legacy: "ServerConfiguration.json")
+        return OsaurusPaths.resolvePath(new: OsaurusPaths.serverConfigFile(), legacy: "ServerConfiguration.json")
     }
 }

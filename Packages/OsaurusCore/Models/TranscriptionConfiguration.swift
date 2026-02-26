@@ -81,7 +81,7 @@ public enum TranscriptionConfigurationStore {
     }
 
     private static func configurationFileURL() -> URL {
-        OsaurusPaths.resolveFile(new: OsaurusPaths.transcriptionConfigFile(), legacy: "TranscriptionConfiguration.json")
+        OsaurusPaths.resolvePath(new: OsaurusPaths.transcriptionConfigFile(), legacy: "TranscriptionConfiguration.json")
     }
 }
 

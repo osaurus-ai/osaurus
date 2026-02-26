@@ -210,7 +210,7 @@ Custom headers marked as "secret" are also stored in the Keychain.
 Non-secret configuration is stored at:
 
 ```
-~/Library/Application Support/Osaurus/mcp_providers.json
+~/.osaurus/providers/mcp.json
 ```
 
 ---

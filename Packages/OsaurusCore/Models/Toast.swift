@@ -162,7 +162,7 @@ public struct ToastConfiguration: Codable, Equatable, Sendable {
 public enum ToastConfigurationStore {
     private static var fileURL: URL {
         OsaurusPaths.ensureExistsSilent(OsaurusPaths.config())
-        return OsaurusPaths.resolveFile(new: OsaurusPaths.toastConfigFile(), legacy: "ToastConfiguration.json")
+        return OsaurusPaths.resolvePath(new: OsaurusPaths.toastConfigFile(), legacy: "ToastConfiguration.json")
     }
 
     public static func load() -> ToastConfiguration {
