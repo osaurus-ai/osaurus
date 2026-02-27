@@ -40,6 +40,8 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
     public var maxToolAttempts: Int?
     /// Default model for new chat sessions (nil uses first available)
     public var defaultModel: String?
+    /// Load capabilities in two phases (catalog, then select_capabilities) to reduce token usage
+    public var phasedContextLoading: Bool
 
     // MARK: - Work Generation Settings
     /// Work-specific temperature override (nil uses default 0.3)
@@ -60,6 +62,7 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         topPOverride: Float? = nil,
         maxToolAttempts: Int? = nil,
         defaultModel: String? = nil,
+        phasedContextLoading: Bool = true,
         workTemperature: Float? = nil,
         workMaxTokens: Int? = nil,
         workTopPOverride: Float? = nil,
@@ -73,10 +76,28 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         self.topPOverride = topPOverride
         self.maxToolAttempts = maxToolAttempts
         self.defaultModel = defaultModel
+        self.phasedContextLoading = phasedContextLoading
         self.workTemperature = workTemperature
         self.workMaxTokens = workMaxTokens
         self.workTopPOverride = workTopPOverride
         self.workMaxIterations = workMaxIterations
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        hotkey = try container.decodeIfPresent(Hotkey.self, forKey: .hotkey)
+        systemPrompt = try container.decode(String.self, forKey: .systemPrompt)
+        temperature = try container.decodeIfPresent(Float.self, forKey: .temperature)
+        maxTokens = try container.decodeIfPresent(Int.self, forKey: .maxTokens)
+        contextLength = try container.decodeIfPresent(Int.self, forKey: .contextLength)
+        topPOverride = try container.decodeIfPresent(Float.self, forKey: .topPOverride)
+        maxToolAttempts = try container.decodeIfPresent(Int.self, forKey: .maxToolAttempts)
+        defaultModel = try container.decodeIfPresent(String.self, forKey: .defaultModel)
+        phasedContextLoading = try container.decodeIfPresent(Bool.self, forKey: .phasedContextLoading) ?? true
+        workTemperature = try container.decodeIfPresent(Float.self, forKey: .workTemperature)
+        workMaxTokens = try container.decodeIfPresent(Int.self, forKey: .workMaxTokens)
+        workTopPOverride = try container.decodeIfPresent(Float.self, forKey: .workTopPOverride)
+        workMaxIterations = try container.decodeIfPresent(Int.self, forKey: .workMaxIterations)
     }
 
     public static var `default`: ChatConfiguration {

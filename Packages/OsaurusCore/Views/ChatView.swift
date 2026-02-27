@@ -246,19 +246,20 @@ final class ChatSession: ObservableObject {
 
         let catalog = CapabilityCatalogBuilder.build(for: effectiveId)
         let hasCapabilities = !catalog.isEmpty
+        let phasedLoading = ChatConfigurationStore.load().phasedContextLoading
 
         func isEnabled(_ tool: ToolRegistry.ToolEntry) -> Bool {
             if let override = toolOverrides?[tool.name] { return override }
             return tool.enabled
         }
 
-        if !capabilitiesSelected {
+        if phasedLoading && !capabilitiesSelected {
             breakdown.tools = allTools.filter(isEnabled).reduce(0) { $0 + $1.catalogEntryTokens }
             if hasCapabilities {
                 breakdown.tools += ToolRegistry.shared.estimatedTokens(for: "select_capabilities")
             }
             breakdown.skills = CapabilityService.shared.estimateCatalogSkillTokens(for: effectiveId)
-        } else {
+        } else if phasedLoading && capabilitiesSelected {
             breakdown.tools = selectedToolNames.reduce(0) { $0 + ToolRegistry.shared.estimatedTokens(for: $1) }
             if hasCapabilities {
                 breakdown.tools += ToolRegistry.shared.estimatedTokens(for: "select_capabilities")
@@ -266,6 +267,9 @@ final class ChatSession: ObservableObject {
             if !selectedSkillInstructions.isEmpty {
                 breakdown.skills = max(1, selectedSkillInstructions.count / 4)
             }
+        } else {
+            breakdown.tools = allTools.filter(isEnabled).reduce(0) { $0 + $1.estimatedTokens }
+            breakdown.skills = CapabilityService.shared.estimateSkillTokens()
         }
 
         // All turns
@@ -862,7 +866,8 @@ final class ChatSession: ObservableObject {
                 // Check if there are any capabilities to select
                 let catalog = CapabilityCatalogBuilder.build(for: effectiveAgentId)
                 let hasCapabilities = !catalog.isEmpty
-                let needsCapabilitySelection = !capabilitiesSelected && hasCapabilities
+                let phasedLoading = chatCfg.phasedContextLoading
+                let needsCapabilitySelection = phasedLoading && !capabilitiesSelected && hasCapabilities
 
                 let baseSystemPrompt = AgentManager.shared.effectiveSystemPrompt(for: effectiveAgentId)
                     .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -887,7 +892,7 @@ final class ChatSession: ObservableObject {
                 }
                 var toolSpecs = buildToolSpecs(
                     needsSelection: needsCapabilitySelection,
-                    hasCapabilities: hasCapabilities,
+                    hasCapabilities: phasedLoading && hasCapabilities,
                     overrides: effectiveToolOverrides
                 )
 

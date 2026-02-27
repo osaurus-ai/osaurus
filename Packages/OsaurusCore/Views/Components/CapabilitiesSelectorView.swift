@@ -254,10 +254,23 @@ struct CapabilitiesSelectorView: View {
     private var totalEnabledCount: Int { enabledToolCount + enabledSkillCount }
     private var totalCount: Int { cachedTools.count + skills.count }
 
+    private var phasedLoading: Bool {
+        ChatConfigurationStore.load().phasedContextLoading
+    }
+
+    private func skillTokenEstimate(_ skill: Skill) -> Int {
+        if phasedLoading {
+            return max(5, (skill.name.count + skill.description.count + 6) / 4)
+        }
+        return max(5, (skill.name.count + skill.description.count + skill.instructions.count + 50) / 4)
+    }
+
     private var totalTokenEstimate: Int {
-        let toolTokens = cachedTools.filter { $0.enabled }.reduce(0) { $0 + $1.catalogEntryTokens }
-        let skillTokens = skills.filter { isSkillEnabled($0.name) }.reduce(0) { sum, skill in
-            sum + max(5, (skill.name.count + skill.description.count + 6) / 4)
+        let toolTokens = cachedTools.filter { $0.enabled }.reduce(0) {
+            $0 + (phasedLoading ? $1.catalogEntryTokens : $1.estimatedTokens)
+        }
+        let skillTokens = skills.filter { isSkillEnabled($0.name) }.reduce(0) {
+            $0 + skillTokenEstimate($1)
         }
         return toolTokens + skillTokens
     }
@@ -660,6 +673,7 @@ struct CapabilitiesSelectorView: View {
                     )
                 )
                 if expanded {
+                    let phased = phasedLoading
                     for tool in group.tools {
                         rows.append(
                             .tool(
@@ -668,7 +682,7 @@ struct CapabilitiesSelectorView: View {
                                 description: tool.description,
                                 enabled: tool.enabled,
                                 isAgentRestricted: restricted.contains(tool.name),
-                                catalogTokens: tool.catalogEntryTokens,
+                                catalogTokens: phased ? tool.catalogEntryTokens : tool.estimatedTokens,
                                 estimatedTokens: tool.estimatedTokens
                             )
                         )
@@ -687,7 +701,7 @@ struct CapabilitiesSelectorView: View {
                         enabled: enabled,
                         isBuiltIn: skill.isBuiltIn,
                         isFromPlugin: skill.isFromPlugin,
-                        estimatedTokens: max(5, (skill.name.count + skill.description.count + 6) / 4)
+                        estimatedTokens: skillTokenEstimate(skill)
                     )
                 )
             }

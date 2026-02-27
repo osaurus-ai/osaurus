@@ -642,7 +642,11 @@ private struct ToolRowCell: View {
 
             if !isAgentRestricted {
                 TokenBadge(count: catalogTokens)
-                    .help("Catalog: ~\(catalogTokens), Full: ~\(estimatedTokens) tokens")
+                    .help(
+                        catalogTokens == estimatedTokens
+                            ? "~\(estimatedTokens) tokens"
+                            : "Catalog: ~\(catalogTokens), Full: ~\(estimatedTokens) tokens"
+                    )
             }
         }
         .padding(.leading, 32)
@@ -703,7 +707,7 @@ private struct SkillRowCell: View {
             Spacer()
 
             TokenBadge(count: estimatedTokens)
-                .help("Catalog entry tokens")
+                .help("~\(estimatedTokens) tokens")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
