@@ -35,7 +35,8 @@ struct ThemesView: View {
     @State private var themeToExport: CustomTheme?
     @State private var showDeleteConfirmation = false
     @State private var themeToDelete: CustomTheme?
-    @State private var successMessage: String?
+    @State private var toastMessage: String?
+    @State private var toastType: SimpleToastType = .success
 
     private var installedThemes: [CustomTheme] {
         themeManager.installedThemes.sorted { $0.metadata.name < $1.metadata.name }
@@ -99,11 +100,10 @@ struct ThemesView: View {
                     }
                 }
 
-                // Success toast
-                if let message = successMessage {
+                if let message = toastMessage {
                     VStack {
                         Spacer()
-                        ThemedToastView(message, type: .success)
+                        ThemedToastView(message, type: toastType)
                             .transition(.move(edge: .bottom).combined(with: .opacity))
                             .padding(.bottom, 20)
                     }
@@ -177,7 +177,7 @@ struct ThemesView: View {
         let success = themeManager.deleteTheme(id: theme.metadata.id)
         if success {
             print("[Osaurus] Successfully deleted theme: \(themeName)")
-            showSuccess("Deleted \"\(themeName)\"")
+            showToast("Deleted \"\(themeName)\"")
         } else {
             print("[Osaurus] Failed to delete theme: \(themeName)")
         }
@@ -283,13 +283,15 @@ struct ThemesView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private func showSuccess(_ message: String) {
+    private func showToast(_ message: String, type: SimpleToastType = .success) {
         withAnimation(theme.springAnimation()) {
-            successMessage = message
+            toastType = type
+            toastMessage = message
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+        let duration: Double = type == .error ? 4.0 : 2.5
+        DispatchQueue.main.asyncAfter(deadline: .now() + duration) {
             withAnimation(theme.animationQuick()) {
-                successMessage = nil
+                toastMessage = nil
             }
         }
     }
@@ -340,7 +342,7 @@ struct ThemesView: View {
 
                 Button(action: {
                     themeManager.clearCustomTheme()
-                    showSuccess("Reset to default theme")
+                    showToast("Reset to default theme")
                 }) {
                     HStack(spacing: 4) {
                         Image(systemName: "arrow.uturn.backward")
@@ -406,7 +408,7 @@ struct ThemesView: View {
                         isActive: isActive,
                         onApply: {
                             themeManager.applyCustomTheme(themeItem)
-                            showSuccess("Applied \"\(themeItem.metadata.name)\"")
+                            showToast("Applied \"\(themeItem.metadata.name)\"")
                         },
                         onEdit: { openEditor(for: themeItem) },
                         onExport: { exportTheme(themeItem) },
@@ -561,7 +563,7 @@ struct ThemesView: View {
 
         let duplicated = ThemeConfigurationStore.duplicateTheme(themeItem, newName: newName)
         themeManager.refreshInstalledThemes()
-        showSuccess("Duplicated as \"\(newName)\"")
+        showToast("Duplicated as \"\(newName)\"")
         openEditor(for: duplicated)
     }
 
@@ -582,12 +584,14 @@ struct ThemesView: View {
             do {
                 let imported = try ThemeConfigurationStore.importTheme(from: url)
                 themeManager.refreshInstalledThemes()
-                showSuccess("Imported \"\(imported.metadata.name)\"")
+                showToast("Imported \"\(imported.metadata.name)\"")
             } catch {
                 print("[Osaurus] Failed to import theme: \(error)")
+                showToast("Import failed: \(error.localizedDescription)", type: .error)
             }
         case .failure(let error):
             print("[Osaurus] Import failed: \(error)")
+            showToast("Import failed: \(error.localizedDescription)", type: .error)
         }
     }
 
@@ -595,7 +599,7 @@ struct ThemesView: View {
         switch result {
         case .success:
             if let exported = themeToExport {
-                showSuccess("Exported \"\(exported.metadata.name)\"")
+                showToast("Exported \"\(exported.metadata.name)\"")
             }
             themeToExport = nil
         case .failure(let error):

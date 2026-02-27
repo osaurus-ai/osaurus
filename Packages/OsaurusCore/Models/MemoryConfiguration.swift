@@ -247,21 +247,16 @@ public enum MemoryConfigurationStore: Sendable {
         lock.withLock { $0 = nil }
     }
 
-    /// Picks the best default core model: first local MLX model, then first remote model,
-    /// falling back to anthropic/claude-haiku-4-5 when nothing else is available.
+    /// Picks the best default core model: first local MLX model,
+    /// falling back to anthropic/claude-haiku-4-5 when no local models are available.
     private static func resolveDefaultCoreModel() -> (provider: String, name: String) {
         if let id = ModelManager.discoverLocalModels().first?.id {
-            return splitModelIdentifier(id)
-        }
-        if let id = RemoteProviderManager.shared.cachedAvailableModels().first?.models.first {
-            return splitModelIdentifier(id)
+            let parts = id.split(separator: "/", maxSplits: 1)
+            if parts.count == 2 {
+                return (provider: String(parts[0]), name: String(parts[1]))
+            }
+            return (provider: "", name: id)
         }
         return (provider: "anthropic", name: "claude-haiku-4-5")
-    }
-
-    private static func splitModelIdentifier(_ id: String) -> (provider: String, name: String) {
-        let parts = id.split(separator: "/", maxSplits: 1)
-        guard parts.count == 2 else { return (provider: "", name: id) }
-        return (provider: String(parts[0]), name: String(parts[1]))
     }
 }
