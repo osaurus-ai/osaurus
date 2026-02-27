@@ -8,11 +8,6 @@
 import Foundation
 import os
 
-public enum MemoryPreset: String, Codable, CaseIterable, Sendable {
-    case production
-    case benchmark
-}
-
 public struct MemoryConfiguration: Codable, Equatable, Sendable {
     /// Core Model provider (e.g. "anthropic")
     public var coreModelProvider: String
@@ -69,9 +64,6 @@ public struct MemoryConfiguration: Codable, Equatable, Sendable {
     /// Jaccard threshold for Layer 1 near-duplicate detection (above this = auto-SKIP)
     public var verificationJaccardDedupThreshold: Double
 
-    /// Active preset profile. Controls retrieval and budget parameters.
-    public var preset: MemoryPreset
-
     /// Full model identifier for routing (e.g. "anthropic/claude-haiku-4-5" or "foundation")
     public var coreModelIdentifier: String {
         coreModelProvider.isEmpty ? coreModelName : "\(coreModelProvider)/\(coreModelName)"
@@ -103,8 +95,8 @@ public struct MemoryConfiguration: Codable, Equatable, Sendable {
         profileRegenerateThreshold: Int = 10,
         workingMemoryBudgetTokens: Int = 3000,
         summaryRetentionDays: Int = 180,
-        summaryBudgetTokens: Int = 2000,
-        chunkBudgetTokens: Int = 4000,
+        summaryBudgetTokens: Int = 3000,
+        chunkBudgetTokens: Int = 3000,
         graphBudgetTokens: Int = 300,
         recallTopK: Int = 30,
         temporalDecayHalfLifeDays: Int = 30,
@@ -114,8 +106,7 @@ public struct MemoryConfiguration: Codable, Equatable, Sendable {
         enabled: Bool = true,
         verificationEnabled: Bool = true,
         verificationSemanticDedupThreshold: Double = 0.85,
-        verificationJaccardDedupThreshold: Double = 0.6,
-        preset: MemoryPreset = .production
+        verificationJaccardDedupThreshold: Double = 0.6
     ) {
         self.coreModelProvider = coreModelProvider
         self.coreModelName = coreModelName
@@ -138,10 +129,9 @@ public struct MemoryConfiguration: Codable, Equatable, Sendable {
         self.verificationEnabled = verificationEnabled
         self.verificationSemanticDedupThreshold = verificationSemanticDedupThreshold
         self.verificationJaccardDedupThreshold = verificationJaccardDedupThreshold
-        self.preset = preset
     }
 
-    /// Returns a copy with all values clamped to valid ranges, then applies preset overrides.
+    /// Returns a copy with all values clamped to valid ranges.
     public func validated() -> MemoryConfiguration {
         var c = self
         c.summaryDebounceSeconds = max(10, min(c.summaryDebounceSeconds, 3600))
@@ -159,32 +149,7 @@ public struct MemoryConfiguration: Codable, Equatable, Sendable {
         c.maxEntriesPerAgent = max(0, min(c.maxEntriesPerAgent, 10_000))
         c.verificationSemanticDedupThreshold = max(0.0, min(c.verificationSemanticDedupThreshold, 1.0))
         c.verificationJaccardDedupThreshold = max(0.0, min(c.verificationJaccardDedupThreshold, 1.0))
-        c.applyPreset()
         return c
-    }
-
-    /// Overwrite retrieval and budget parameters based on the active preset.
-    private mutating func applyPreset() {
-        switch preset {
-        case .production:
-            recallTopK = 30
-            mmrLambda = 0.7
-            mmrFetchMultiplier = 2.0
-            workingMemoryBudgetTokens = 3000
-            summaryBudgetTokens = 2000
-            chunkBudgetTokens = 4000
-            graphBudgetTokens = 300
-            summaryRetentionDays = 180
-        case .benchmark:
-            recallTopK = 75
-            mmrLambda = 0.95
-            mmrFetchMultiplier = 4.0
-            workingMemoryBudgetTokens = 8000
-            summaryBudgetTokens = 6000
-            chunkBudgetTokens = 12000
-            graphBudgetTokens = 500
-            summaryRetentionDays = 0
-        }
     }
 
     public init(from decoder: Decoder) throws {
@@ -227,7 +192,6 @@ public struct MemoryConfiguration: Codable, Equatable, Sendable {
         verificationJaccardDedupThreshold =
             try c.decodeIfPresent(Double.self, forKey: .verificationJaccardDedupThreshold)
             ?? defaults.verificationJaccardDedupThreshold
-        preset = try c.decodeIfPresent(MemoryPreset.self, forKey: .preset) ?? defaults.preset
     }
 
     public static var `default`: MemoryConfiguration { MemoryConfiguration() }

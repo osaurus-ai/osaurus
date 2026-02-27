@@ -840,12 +840,18 @@ final class ChatSession: ObservableObject {
                     let asstMsg = assistantContent
                     let agentStr = memoryAgentId
                     let convStr = memoryConversationId
+                    let today = ISO8601DateFormatter.string(
+                        from: Date(),
+                        timeZone: .current,
+                        formatOptions: [.withFullDate, .withDashSeparatorInDate]
+                    )
                     Task.detached {
                         await MemoryService.shared.recordConversationTurn(
                             userMessage: userMsg,
                             assistantMessage: asstMsg,
                             agentId: agentStr,
-                            conversationId: convStr
+                            conversationId: convStr,
+                            sessionDate: today
                         )
                     }
                 }

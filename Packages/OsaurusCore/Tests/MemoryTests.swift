@@ -118,10 +118,9 @@ struct MemoryConfigurationTests {
         let config = MemoryConfiguration()
         #expect(config.enabled == true)
         #expect(config.maxEntriesPerAgent == 500)
-        #expect(config.preset == .production)
         #expect(config.workingMemoryBudgetTokens == 3000)
-        #expect(config.summaryBudgetTokens == 2000)
-        #expect(config.chunkBudgetTokens == 4000)
+        #expect(config.summaryBudgetTokens == 3000)
+        #expect(config.chunkBudgetTokens == 3000)
         #expect(config.graphBudgetTokens == 300)
         #expect(config.recallTopK == 30)
         #expect(config.mmrLambda == 0.7)
@@ -176,42 +175,8 @@ struct MemoryConfigurationTests {
         let validated = config.validated()
         #expect(validated.summaryDebounceSeconds == config.summaryDebounceSeconds)
         #expect(validated.maxEntriesPerAgent == config.maxEntriesPerAgent)
-        #expect(validated.preset == .production)
-    }
-
-    @Test func productionPresetApplied() {
-        let config = MemoryConfiguration(preset: .production)
-        let validated = config.validated()
-        #expect(validated.recallTopK == 30)
-        #expect(validated.mmrLambda == 0.7)
-        #expect(validated.mmrFetchMultiplier == 2.0)
-        #expect(validated.workingMemoryBudgetTokens == 3000)
-        #expect(validated.summaryBudgetTokens == 2000)
-        #expect(validated.chunkBudgetTokens == 4000)
-        #expect(validated.graphBudgetTokens == 300)
-        #expect(validated.summaryRetentionDays == 180)
-    }
-
-    @Test func benchmarkPresetApplied() {
-        let config = MemoryConfiguration(preset: .benchmark)
-        let validated = config.validated()
-        #expect(validated.recallTopK == 75)
-        #expect(validated.mmrLambda == 0.95)
-        #expect(validated.mmrFetchMultiplier == 4.0)
-        #expect(validated.workingMemoryBudgetTokens == 8000)
-        #expect(validated.summaryBudgetTokens == 6000)
-        #expect(validated.chunkBudgetTokens == 12000)
-        #expect(validated.graphBudgetTokens == 500)
-        #expect(validated.summaryRetentionDays == 0)
-    }
-
-    @Test func presetRoundTrips() throws {
-        var config = MemoryConfiguration(preset: .benchmark)
-        config.maxEntriesPerAgent = 200
-        let data = try JSONEncoder().encode(config)
-        let decoded = try JSONDecoder().decode(MemoryConfiguration.self, from: data)
-        #expect(decoded.preset == .benchmark)
-        #expect(decoded.maxEntriesPerAgent == 200)
+        #expect(validated.summaryBudgetTokens == 3000)
+        #expect(validated.chunkBudgetTokens == 3000)
     }
 }
 

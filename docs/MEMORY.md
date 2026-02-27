@@ -32,11 +32,11 @@ Memory is organized into four layers, each serving a different purpose:
 │  corrections, commitments, relationships, skills.                │
 ├──────────────────────────────────────────────────────────────────┤
 │  Layer 3: Conversation Summaries                                 │
-│  Compressed recaps of past sessions, generated after             │
-│  periods of inactivity (debounced).                              │
+│  Structured recaps of past sessions (topics, decisions,          │
+│  key dates, action items), generated after inactivity.           │
 ├──────────────────────────────────────────────────────────────────┤
 │  Layer 4: Conversation Chunks                                    │
-│  Raw conversation turns stored for detailed retrieval.           │
+│  Raw conversation turns indexed for query-matched retrieval.     │
 └──────────────────────────────────────────────────────────────────┘
 │                                                                   │
 │  Knowledge Graph (cross-cutting)                                  │
@@ -78,23 +78,31 @@ Entries include:
 
 ### Layer 3: Conversation Summaries
 
-Compressed recaps of past conversation sessions. Summaries are generated automatically using a debounced approach:
+Structured recaps of past conversation sessions. Summaries are generated automatically using a debounced approach:
 
 - A timer starts after the last conversation turn (default: 60 seconds)
 - If no new messages arrive within the debounce window, a summary is generated
 - Session changes (switching to a different conversation) also trigger summary generation
 - On startup, any orphaned pending signals from a previous session are recovered and processed
 
+Each summary uses a structured format capturing:
+
+- **Topics** discussed
+- **Decisions** made
+- **Key dates** or deadlines mentioned
+- **Action items** or commitments
+- A brief **overall summary**
+
 ### Layer 4: Conversation Chunks
 
-Raw conversation turns stored individually for fine-grained retrieval. Each chunk records:
+Raw conversation turns stored individually and indexed for query-matched retrieval. Each chunk records:
 
 - The conversation ID and chunk index
 - The role (user or assistant) and full content
 - Token count and timestamp
 - The agent ID and optional conversation title
 
-This layer enables detailed search across past conversations when summaries are too coarse.
+Chunks are not dumped into context wholesale. At query time, only semantically relevant chunks are retrieved via hybrid search (BM25 + vector), reranked with MMR, and included within a token budget. Adjacent turns are loaded via window expansion to preserve conversational flow. This layer acts as a lossless fallback for details the extraction pipeline may have missed.
 
 ---
 
@@ -145,8 +153,8 @@ To avoid returning many near-identical results, search results are reranked usin
 | Scope | What it searches | Time window |
 |-------|-----------------|-------------|
 | Memory entries | Working memory (Layer 2) | All time |
-| Conversations | Conversation chunks (Layer 4) | Last N days (default: 30) |
-| Summaries | Conversation summaries (Layer 3) | Last N days (default: 30) |
+| Conversations | Conversation chunks (Layer 4) | All time (query-aware retrieval) |
+| Summaries | Conversation summaries (Layer 3) | Retention window (default: 180 days) |
 | Graph | Knowledge graph entities and relationships | All time |
 
 ---
@@ -171,15 +179,26 @@ Uses vector search to find semantically similar entries. If the similarity score
 
 ## Context Assembly
 
-Before each AI interaction, the `MemoryContextAssembler` builds a memory block that is injected into the system prompt. Context is assembled in priority order with per-section token budgets:
+Before each AI interaction, the `MemoryContextAssembler` builds a memory block that is injected into the system prompt. The block always begins with the current date so the model can reason about time relative to stored memories.
+
+Context is assembled in priority order with per-section token budgets:
 
 | Priority | Section | Default Budget |
 |----------|---------|---------------|
+| 0 | Current Date | Always included (temporal anchor) |
 | 1 | User Overrides | Always included (no budget limit) |
 | 2 | User Profile | 2,000 tokens |
-| 3 | Working Memory | 500 tokens |
-| 4 | Conversation Summaries | 1,000 tokens |
+| 3 | Working Memory | 3,000 tokens |
+| 4 | Conversation Summaries | 3,000 tokens |
 | 5 | Key Relationships | 300 tokens |
+
+When a user query is provided, an additional **query-aware retrieval** pass runs in parallel, searching entries, summaries, and conversation chunks for semantically relevant results. These are deduplicated against the base context and appended as "Relevant Memories", "Relevant Summaries", and "Relevant Conversation Excerpts" sections with their own budgets:
+
+| Section | Default Budget |
+|---------|---------------|
+| Relevant Conversation Excerpts | 3,000 tokens |
+| Relevant Memories | 3,000 tokens |
+| Relevant Summaries | 3,000 tokens |
 
 - Results are **cached for 10 seconds** per agent to avoid redundant database queries
 - Cache is invalidated when memory content changes
@@ -205,8 +224,9 @@ All settings are configurable via the Memory tab in the Management window. The c
 | Setting | Default | Range | Description |
 |---------|---------|-------|-------------|
 | `profileMaxTokens` | 2,000 | 100 -- 50,000 | Max tokens for user profile |
-| `workingMemoryBudgetTokens` | 500 | 50 -- 10,000 | Token budget for working memory in context |
-| `summaryBudgetTokens` | 1,000 | 50 -- 10,000 | Token budget for summaries in context |
+| `workingMemoryBudgetTokens` | 3,000 | 50 -- 10,000 | Token budget for working memory in context |
+| `summaryBudgetTokens` | 3,000 | 50 -- 10,000 | Token budget for summaries in context |
+| `chunkBudgetTokens` | 3,000 | 50 -- 20,000 | Token budget for conversation chunk excerpts in context |
 | `graphBudgetTokens` | 300 | 50 -- 5,000 | Token budget for knowledge graph in context |
 
 ### Profile
@@ -220,13 +240,13 @@ All settings are configurable via the Memory tab in the Management window. The c
 | Setting | Default | Range | Description |
 |---------|---------|-------|-------------|
 | `summaryDebounceSeconds` | 60 | 10 -- 3,600 | Inactivity period before summary generation |
-| `summaryRetentionDays` | 7 | 1 -- 365 | How long summaries are retained |
+| `summaryRetentionDays` | 180 | 0 -- 3,650 | How long summaries are retained (0 = unlimited) |
 
 ### Search
 
 | Setting | Default | Range | Description |
 |---------|---------|-------|-------------|
-| `recallTopK` | 10 | 1 -- 100 | Number of results for recall searches |
+| `recallTopK` | 30 | 1 -- 100 | Number of results for recall searches |
 | `temporalDecayHalfLifeDays` | 30 | 1 -- 365 | Half-life for temporal decay in ranking |
 | `mmrLambda` | 0.7 | 0.0 -- 1.0 | Relevance vs. diversity tradeoff |
 | `mmrFetchMultiplier` | 2.0 | 1.0 -- 10.0 | Over-fetch multiplier before MMR reranking |
@@ -427,7 +447,7 @@ make bench-ingest-chunks
 make bench-run
 ```
 
-The benchmark preset must be active before running. Set `"preset": "benchmark"` in the memory configuration file (`~/.osaurus/config/memory.json`).
+You may want to temporarily increase token budgets in the memory configuration file (`~/.osaurus/config/memory.json`) before running benchmarks. The default production budgets are tuned for everyday use, not maximal recall.
 
 ### Memory-Augmented Evaluation
 

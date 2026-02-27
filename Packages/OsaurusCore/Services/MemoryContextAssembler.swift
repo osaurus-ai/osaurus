@@ -3,8 +3,8 @@
 //  osaurus
 //
 //  Builds the memory context block for injection into system prompts.
-//  Follows the spec's context assembly order: user edits, profile, working memory, summaries,
-//  key relationships.
+//  Assembly order: current date, user edits, profile, working memory, summaries,
+//  key relationships. Query-aware retrieval adds relevant entries, summaries, and chunks.
 //
 
 import Foundation
@@ -89,6 +89,10 @@ public actor MemoryContextAssembler {
         guard db.isOpen else { return "" }
 
         var sections: [String] = []
+
+        // 0. Temporal anchor — current date for reasoning about time
+        let today = Self.naturalOutputFormatter.string(from: Date())
+        sections.append("Current date: \(today)")
 
         // 1. User Edits (explicit overrides — never trimmed)
         do {
@@ -225,14 +229,15 @@ public actor MemoryContextAssembler {
     private static func temporalAnchor(from isoDates: [String]) -> String? {
         let parsed = isoDates.compactMap { isoInputFormatter.date(from: String($0.prefix(10))) }
         guard let earliest = parsed.min(), let latest = parsed.max() else { return nil }
+        let today = naturalOutputFormatter.string(from: Date())
         let e = naturalOutputFormatter.string(from: earliest)
         let l = naturalOutputFormatter.string(from: latest)
         if e == l {
             return
-                "IMPORTANT: All conversations below occurred around \(e). Today's date is IRRELEVANT — do NOT use it. When asked about when something happened, use ONLY dates from the conversations."
+                "Today is \(today). The conversations below occurred around \(e). Use both the memory dates and today's date to reason about time."
         }
         return
-            "IMPORTANT: All conversations below occurred between \(e) and \(l). Today's date is IRRELEVANT — do NOT use it. When asked about when something happened, use ONLY dates from the conversations."
+            "Today is \(today). The conversations below occurred between \(e) and \(l). Use both the memory dates and today's date to reason about time."
     }
 
     // MARK: - Chunk Window Expansion
