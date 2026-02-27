@@ -213,7 +213,8 @@ public enum MemoryConfigurationStore: Sendable {
 
         let url = OsaurusPaths.memoryConfigFile()
         guard FileManager.default.fileExists(atPath: url.path) else {
-            let defaults = MemoryConfiguration.default
+            let (provider, name) = resolveDefaultCoreModel()
+            let defaults = MemoryConfiguration(coreModelProvider: provider, coreModelName: name)
             save(defaults)
             return defaults
         }
@@ -244,5 +245,23 @@ public enum MemoryConfigurationStore: Sendable {
 
     public static func invalidateCache() {
         lock.withLock { $0 = nil }
+    }
+
+    /// Picks the best default core model: first local MLX model, then first remote model,
+    /// falling back to anthropic/claude-haiku-4-5 when nothing else is available.
+    private static func resolveDefaultCoreModel() -> (provider: String, name: String) {
+        if let id = ModelManager.discoverLocalModels().first?.id {
+            return splitModelIdentifier(id)
+        }
+        if let id = RemoteProviderManager.shared.cachedAvailableModels().first?.models.first {
+            return splitModelIdentifier(id)
+        }
+        return (provider: "anthropic", name: "claude-haiku-4-5")
+    }
+
+    private static func splitModelIdentifier(_ id: String) -> (provider: String, name: String) {
+        let parts = id.split(separator: "/", maxSplits: 1)
+        guard parts.count == 2 else { return (provider: "", name: id) }
+        return (provider: String(parts[0]), name: String(parts[1]))
     }
 }
