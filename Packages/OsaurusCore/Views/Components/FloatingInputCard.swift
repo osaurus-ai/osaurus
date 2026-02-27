@@ -1136,6 +1136,24 @@ struct FloatingInputCard: View {
         .transition(.opacity.combined(with: .scale(scale: 0.96)))
     }
 
+    private func appendAttachment(_ attachment: Attachment) {
+        withAnimation(theme.springAnimation()) {
+            pendingAttachments.append(attachment)
+        }
+    }
+
+    private func parseAndAttach(url: URL) {
+        do {
+            let attachment = try DocumentParser.parse(url: url)
+            appendAttachment(attachment)
+        } catch {
+            ToastManager.shared.error(
+                "Could not attach \(url.lastPathComponent)",
+                message: error.localizedDescription
+            )
+        }
+    }
+
     private func pickAttachment() {
         let panel = NSOpenPanel()
         var allowedTypes: [UTType] = [UTType.image]
@@ -1153,16 +1171,10 @@ struct FloatingInputCard: View {
                         let nsImage = NSImage(data: data),
                         let pngData = nsImage.pngData()
                     {
-                        withAnimation(theme.springAnimation()) {
-                            pendingAttachments.append(.image(pngData))
-                        }
+                        appendAttachment(.image(pngData))
                     }
                 } else if DocumentParser.canParse(url: url) {
-                    if let attachment = try? DocumentParser.parse(url: url) {
-                        withAnimation(theme.springAnimation()) {
-                            pendingAttachments.append(attachment)
-                        }
-                    }
+                    parseAndAttach(url: url)
                 }
             }
         }
@@ -1180,9 +1192,7 @@ struct FloatingInputCard: View {
                         if let nsImage = NSImage(data: data),
                             let pngData = nsImage.pngData()
                         {
-                            withAnimation(theme.springAnimation()) {
-                                pendingAttachments.append(.image(pngData))
-                            }
+                            appendAttachment(.image(pngData))
                         }
                     }
                 }
@@ -1191,13 +1201,10 @@ struct FloatingInputCard: View {
                 provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier) { item, error in
                     guard let data = item as? Data,
                         let url = URL(dataRepresentation: data, relativeTo: nil),
-                        DocumentParser.canParse(url: url),
-                        let attachment = try? DocumentParser.parse(url: url)
+                        DocumentParser.canParse(url: url)
                     else { return }
                     DispatchQueue.main.async {
-                        withAnimation(theme.springAnimation()) {
-                            pendingAttachments.append(attachment)
-                        }
+                        self.parseAndAttach(url: url)
                     }
                 }
             }
