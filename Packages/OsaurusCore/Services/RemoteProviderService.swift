@@ -68,7 +68,8 @@ public actor RemoteProviderService: ToolCapableService {
 
     /// Returns `true` when the model name indicates an image-generation-capable model.
     fileprivate static func isImageCapableModel(_ modelName: String) -> Bool {
-        GeminiProImageProfile.matches(modelId: modelName) || GeminiFlashImageProfile.matches(modelId: modelName)
+        Gemini31FlashImageProfile.matches(modelId: modelName) || GeminiProImageProfile.matches(modelId: modelName)
+            || GeminiFlashImageProfile.matches(modelId: modelName)
     }
 
     /// Inactivity timeout for streaming: if no bytes arrive within this interval,
