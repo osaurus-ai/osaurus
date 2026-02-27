@@ -220,8 +220,8 @@ struct GeminiSafetySetting: Codable, Sendable {
 
 /// Gemini image generation configuration (aspect ratio, resolution)
 struct GeminiImageConfig: Codable, Sendable {
-    let aspectRatio: String?  // "1:1","2:3","3:2","3:4","4:3","4:5","5:4","9:16","16:9","21:9"
-    let imageSize: String?  // "1K", "2K", "4K" (Gemini 3 Pro Image only)
+    let aspectRatio: String?  // "1:1","1:4","1:8","2:3","3:2","3:4","4:1","4:3","4:5","5:4","8:1","9:16","16:9","21:9"
+    let imageSize: String?  // "512px", "1K", "2K", "4K"
 }
 
 /// Gemini generation configuration
