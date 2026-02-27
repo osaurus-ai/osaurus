@@ -323,9 +323,14 @@ public actor MemoryService {
     }
 
     private let summarySystemPrompt = """
-        You summarize conversations concisely. \
-        Output a 2-4 sentence summary capturing the key topics, decisions, and outcomes. \
-        Do NOT add preamble like "Here is" or "Certainly". Output the summary directly.
+        You summarize conversations in a structured format. \
+        Output ONLY the following sections (omit any section with no content): \
+        - Topics: [comma-separated list of topics discussed] \
+        - Decisions: [key decisions made, if any] \
+        - Key dates: [specific dates or deadlines mentioned, with context] \
+        - Action items: [commitments or next steps, if any] \
+        - Summary: [1-2 sentence overall summary] \
+        Do NOT add preamble like "Here is" or "Certainly". Output the structured summary directly.
         """
 
     private func generateConversationSummary(agentId: String, conversationId: String, sessionDate: String? = nil) async
@@ -354,7 +359,7 @@ public actor MemoryService {
                 prompt += "\nAssistant: \(assistant)"
             }
         }
-        prompt += "\n\nSummarize this conversation in 2-4 sentences."
+        prompt += "\n\nSummarize this conversation using the structured format."
 
         do {
             let response = try await callCoreModel(
