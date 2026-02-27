@@ -2,7 +2,7 @@
 //  AccessKeyIntegrationTests.swift
 //  OsaurusCoreTests
 //
-//  End-to-end tests that build osk-v2 tokens the same way
+//  End-to-end tests that build osk-v1 tokens the same way
 //  APIKeyManager.generate() does, then validate them through
 //  APIKeyValidator — exercising the full pipeline without
 //  Keychain or biometric dependencies.
@@ -30,7 +30,7 @@ struct AccessKeyIntegrationTests {
             cnt: 1
         )
 
-        #expect(token.hasPrefix("osk-v2."))
+        #expect(token.hasPrefix("osk-v1."))
         let parts = token.split(separator: ".", maxSplits: 2)
         #expect(parts.count == 3)
 
@@ -214,7 +214,7 @@ struct AccessKeyIntegrationTests {
 
         let parts = token.split(separator: ".", maxSplits: 2)
         #expect(parts.count == 3)
-        #expect(parts[0] == "osk-v2")
+        #expect(parts[0] == "osk-v1")
 
         let payloadData = Data(base64urlEncoded: String(parts[1]))
         #expect(payloadData != nil)

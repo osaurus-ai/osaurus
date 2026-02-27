@@ -162,7 +162,7 @@ struct HTTPAuthGateTests {
         let parts = token.split(separator: ".", maxSplits: 2)
         var sigChars = Array(String(parts[2]))
         sigChars[10] = sigChars[10] == "a" ? "b" : "a"
-        let tampered = "osk-v2.\(parts[1]).\(String(sigChars))"
+        let tampered = "osk-v1.\(parts[1]).\(String(sigChars))"
 
         var request = URLRequest(
             url: URL(string: "http://\(server.host):\(server.port)/v1/models")!

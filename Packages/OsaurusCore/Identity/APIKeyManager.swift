@@ -2,7 +2,7 @@
 //  APIKeyManager.swift
 //  osaurus
 //
-//  Generates, persists, and revokes osk-v2 access keys signed by the
+//  Generates, persists, and revokes osk-v1 access keys signed by the
 //  Master Key or a derived Agent Key.
 //  Stores only metadata — never signatures or hashes.
 //
@@ -86,7 +86,7 @@ public final class APIKeyManager: @unchecked Sendable {
             signature = try signAccessPayload(payloadData, privateKey: masterKeyData)
         }
 
-        let fullKey = "osk-v2.\(payloadData.base64urlEncoded).\(signature.hexEncodedString)"
+        let fullKey = "osk-v1.\(payloadData.base64urlEncoded).\(signature.hexEncodedString)"
 
         let info = AccessKeyInfo(
             id: UUID(),

@@ -80,7 +80,7 @@ public enum AccessKeyExpiration: String, Codable, CaseIterable, Sendable {
     }
 }
 
-/// The signed payload embedded inside an osk-v2 access key.
+/// The signed payload embedded inside an osk-v1 access key.
 /// Keys are sorted alphabetically for canonical JSON encoding.
 public struct AccessKeyPayload: Codable, Sendable {
     public let aud: OsaurusID

@@ -2,7 +2,7 @@
 //  APIKeyValidator.swift
 //  osaurus
 //
-//  Immutable, lock-free osk-v2 access key validator.
+//  Immutable, lock-free osk-v1 access key validator.
 //  Built once at server start; validates tokens via ecrecover,
 //  whitelist, and revocation checks.
 //
@@ -42,7 +42,7 @@ public struct APIKeyValidator: Sendable {
     public func validate(rawKey: String) -> AccessKeyValidationResult {
         let parts = rawKey.split(separator: ".", maxSplits: 2)
         guard parts.count == 3,
-            parts[0] == "osk-v2"
+            parts[0] == "osk-v1"
         else {
             return .invalid(reason: "Unrecognized token format")
         }

@@ -97,7 +97,7 @@ struct AccessKeyValidatorTests {
         var payloadChars = Array(String(parts[1]))
         let idx = payloadChars.count / 2
         payloadChars[idx] = payloadChars[idx] == "A" ? "B" : "A"
-        let tampered = "osk-v2.\(String(payloadChars)).\(parts[2])"
+        let tampered = "osk-v1.\(String(payloadChars)).\(parts[2])"
 
         let validator = APIKeyValidator.forAlice()
         let result = validator.validate(rawKey: tampered)
@@ -120,7 +120,7 @@ struct AccessKeyValidatorTests {
         let original = sigHex[idx]
         let replacement: Character = original == "a" ? "b" : "a"
         sigHex.replaceSubrange(idx ... idx, with: String(replacement))
-        let tampered = "osk-v2.\(parts[1]).\(sigHex)"
+        let tampered = "osk-v1.\(parts[1]).\(sigHex)"
 
         let validator = APIKeyValidator.forAlice()
         let result = validator.validate(rawKey: tampered)
@@ -347,7 +347,7 @@ struct AccessKeyValidatorTests {
 
     @Test func wrongPrefix_rejected() {
         let validator = APIKeyValidator.forAlice()
-        let result = validator.validate(rawKey: "osk-v1.abc.def")
+        let result = validator.validate(rawKey: "osk-v0.abc.def")
         guard case .invalid(let reason) = result else {
             Issue.record("Expected .invalid for wrong prefix, got \(result)")
             return
@@ -357,7 +357,7 @@ struct AccessKeyValidatorTests {
 
     @Test func missingParts_rejected() {
         let validator = APIKeyValidator.forAlice()
-        let result = validator.validate(rawKey: "osk-v2.onlypayload")
+        let result = validator.validate(rawKey: "osk-v1.onlypayload")
         guard case .invalid = result else {
             Issue.record("Expected .invalid for missing parts")
             return
@@ -366,7 +366,7 @@ struct AccessKeyValidatorTests {
 
     @Test func invalidBase64_rejected() {
         let validator = APIKeyValidator.forAlice()
-        let result = validator.validate(rawKey: "osk-v2.!!!invalid!!!.00" + String(repeating: "aa", count: 65))
+        let result = validator.validate(rawKey: "osk-v1.!!!invalid!!!.00" + String(repeating: "aa", count: 65))
         guard case .invalid(let reason) = result else {
             Issue.record("Expected .invalid for bad base64, got \(result)")
             return
@@ -385,7 +385,7 @@ struct AccessKeyValidatorTests {
             nonce: "n"
         )
         let data = try JSONEncoder().encode(payload)
-        let token = "osk-v2.\(data.base64urlEncoded).NOT_HEX_AT_ALL"
+        let token = "osk-v1.\(data.base64urlEncoded).NOT_HEX_AT_ALL"
 
         let validator = APIKeyValidator.forAlice()
         let result = validator.validate(rawKey: token)
@@ -408,7 +408,7 @@ struct AccessKeyValidatorTests {
         )
         let data = try JSONEncoder().encode(payload)
         let shortSigHex = String(repeating: "00", count: 32)
-        let token = "osk-v2.\(data.base64urlEncoded).\(shortSigHex)"
+        let token = "osk-v1.\(data.base64urlEncoded).\(shortSigHex)"
 
         let validator = APIKeyValidator.forAlice()
         let result = validator.validate(rawKey: token)
@@ -422,7 +422,7 @@ struct AccessKeyValidatorTests {
     @Test func malformedPayloadJSON_rejected() {
         let badPayload = Data("not json at all".utf8).base64urlEncoded
         let sigHex = String(repeating: "00", count: 65)
-        let token = "osk-v2.\(badPayload).\(sigHex)"
+        let token = "osk-v1.\(badPayload).\(sigHex)"
 
         let validator = APIKeyValidator.forAlice()
         let result = validator.validate(rawKey: token)
@@ -472,7 +472,7 @@ struct AccessKeyValidatorTests {
 
         // Sign with Message prefix instead of Access prefix
         let wrongSig = try signPayload(payloadData, privateKey: TestKeys.alicePrivateKey)
-        let token = "osk-v2.\(payloadData.base64urlEncoded).\(wrongSig.hexEncodedString)"
+        let token = "osk-v1.\(payloadData.base64urlEncoded).\(wrongSig.hexEncodedString)"
 
         let result = validator.validate(rawKey: token)
         switch result {

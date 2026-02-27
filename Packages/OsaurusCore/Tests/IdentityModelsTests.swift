@@ -245,7 +245,7 @@ struct IdentityModelsTests {
         AccessKeyInfo(
             id: UUID(),
             label: "test key",
-            prefix: "osk-v2.eyJhdWQiOiIw",
+            prefix: "osk-v1.eyJhdWQiOiIw",
             nonce: "abcdef1234567890abcdef1234567890",
             cnt: 1,
             iss: "0xABC",

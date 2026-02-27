@@ -30,7 +30,7 @@ enum TestKeys {
 
 // MARK: - Token Builder
 
-/// Build a well-formed osk-v2 token string from components.
+/// Build a well-formed osk-v1 token string from components.
 /// This bypasses APIKeyManager so tests don't need Keychain.
 enum TokenBuilder {
     static func build(
@@ -67,7 +67,7 @@ enum TokenBuilder {
             fatalError("Unknown prefix in test helper")
         }
 
-        return "osk-v2.\(payloadData.base64urlEncoded).\(signature.hexEncodedString)"
+        return "osk-v1.\(payloadData.base64urlEncoded).\(signature.hexEncodedString)"
     }
 }
 
