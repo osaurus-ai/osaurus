@@ -92,7 +92,7 @@ struct ServerView: View {
             title: "Server",
             subtitle: "Developer tools and API reference"
         ) {
-            if OsaurusAccount.exists() {
+            if OsaurusIdentity.exists() {
                 Button(action: { showingKeyGenerator = true }) {
                     HStack(spacing: 6) {
                         Image(systemName: "key.fill")

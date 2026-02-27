@@ -39,10 +39,10 @@ public struct TokenPayload: Codable, Sendable {
     public let idx: UInt32?
 }
 
-// MARK: - Account
+// MARK: - Identity
 
-/// Returned once after initial account setup.
-public struct AccountInfo: Sendable {
+/// Returned once after initial identity setup.
+public struct IdentityInfo: Sendable {
     public let osaurusId: OsaurusID
     public let deviceId: String
     public let recovery: RecoveryInfo

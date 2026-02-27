@@ -70,7 +70,7 @@ Each agent in Osaurus gets a deterministic child key derived from the master key
 - **Storage:** Agent keys are never stored — they are re-derived on demand from the master key
 - **Association:** Each agent's `agentIndex` and `agentAddress` are persisted on the `Agent` model
 
-Agent addresses enable per-agent scoping: an access key signed by an agent can only authorize actions for that specific agent, not the entire account.
+Agent addresses enable per-agent scoping: an access key signed by an agent can only authorize actions for that specific agent, not the entire identity.
 
 ### Device ID
 
@@ -80,7 +80,7 @@ A hardware-bound identity that proves which physical device is making a request.
 - **Format:** 8-character hex string derived from the attestation key ID
 - **Fallback:** Software-generated random ID when App Attest is unavailable (development builds)
 
-The device ID adds a second authentication factor: even if someone obtains a valid account signature, they cannot forge the device assertion without physical access to the Secure Enclave.
+The device ID adds a second authentication factor: even if someone obtains a valid identity signature, they cannot forge the device assertion without physical access to the Secure Enclave.
 
 ---
 
@@ -123,7 +123,7 @@ Agent keys are **never persisted**. They are re-derived from the master key when
 
 ## Two-Layer Request Signing
 
-Every authenticated API request carries a two-layer signed token. This binds each request to both an account identity and a physical device.
+Every authenticated API request carries a two-layer signed token. This binds each request to both a cryptographic identity and a physical device.
 
 ### Token Structure
 
@@ -137,7 +137,7 @@ Four base64url-encoded segments joined by `.`:
 |---------|----------|---------|
 | Header | base64url(JSON) | Algorithm, type, version |
 | Payload | base64url(JSON) | Claims (see below) |
-| Account Signature | hex | secp256k1 recoverable signature (65 bytes) |
+| Identity Signature | hex | secp256k1 recoverable signature (65 bytes) |
 | Device Assertion | base64url | App Attest assertion (or empty for software fallback) |
 
 ### Header
@@ -167,7 +167,7 @@ Four base64url-encoded segments joined by `.`:
 ### Signing Process
 
 1. **Encode payload** as JSON
-2. **Layer 1 — Account signature:** Domain-separated secp256k1 signing
+2. **Layer 1 — Identity signature:** Domain-separated secp256k1 signing
    - Envelope: `\x19Osaurus Signed Message:\n<length><payload>`
    - Hash: Keccak-256 of the envelope
    - Sign: secp256k1 with recovery (produces 65 bytes: r ‖ s ‖ v)
@@ -293,7 +293,7 @@ Revocation data is persisted in macOS Keychain (`kSecAttrAccessibleWhenUnlockedT
 
 ## Recovery
 
-During initial account setup, a one-time recovery code is generated:
+During initial identity setup, a one-time recovery code is generated:
 
 ```
 OSAURUS-XXXX-XXXX-XXXX-XXXX
@@ -317,7 +317,7 @@ The identity system supports two communication modes:
 
 Agents within the same Osaurus instance authenticate using the full two-layer token system:
 
-- **Layer 1:** secp256k1 account signature (master or agent key)
+- **Layer 1:** secp256k1 identity signature (master or agent key)
 - **Layer 2:** App Attest device assertion
 
 This provides the strongest authentication: both the cryptographic identity and the physical device are verified. Requires biometric access to the master key.
@@ -361,13 +361,13 @@ The address-based design naturally extends to agent-to-agent communication acros
 | `MasterKey.swift` | Generate, store, read, sign with the secp256k1 master key in iCloud Keychain |
 | `AgentKey.swift` | Deterministic child key derivation (HMAC-SHA512) and signing for per-agent identities |
 | `DeviceKey.swift` | App Attest key generation, attestation, assertion, and software fallback |
-| `OsaurusAccount.swift` | Public entry point — orchestrates setup and two-layer request signing |
+| `OsaurusIdentity.swift` | Public entry point — orchestrates setup and two-layer request signing |
 | `IdentityModels.swift` | Data types: `OsaurusID`, `TokenHeader`, `TokenPayload`, `AccessKeyPayload`, `AccessKeyInfo`, `AgentInfo`, `RevocationSnapshot` |
 | `APIKeyManager.swift` | Generate, persist, and revoke `osk-v1` access keys (metadata in Keychain) |
 | `APIKeyValidator.swift` | Immutable, lock-free access key validation via ecrecover + whitelist + revocation |
 | `WhitelistStore.swift` | Master-level and per-agent address whitelist with Keychain persistence |
 | `RevocationStore.swift` | Individual and bulk access key revocation with Keychain persistence |
 | `CounterStore.swift` | Per-device monotonic counter in `UserDefaults` |
-| `RecoveryManager.swift` | One-time recovery code generation at account creation |
+| `RecoveryManager.swift` | One-time recovery code generation at identity creation |
 | `CryptoHelpers.swift` | Keccak-256, domain-separated signing, ecrecover, address derivation, encoding utilities |
 | `OsaurusIdentityError.swift` | Error types for the identity system |

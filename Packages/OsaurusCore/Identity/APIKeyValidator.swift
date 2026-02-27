@@ -16,7 +16,7 @@ public struct APIKeyValidator: Sendable {
     private let revocations: RevocationSnapshot
     public let hasKeys: Bool
 
-    /// A no-op validator with no keys and no identity. Used before account setup.
+    /// A no-op validator with no keys and no identity. Used before identity setup.
     public static let empty = APIKeyValidator(
         agentAddress: "0x0",
         masterAddress: "0x0",

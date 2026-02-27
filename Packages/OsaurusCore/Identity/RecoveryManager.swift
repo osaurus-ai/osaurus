@@ -2,7 +2,7 @@
 //  RecoveryManager.swift
 //  osaurus
 //
-//  Generates a one-time recovery code at account creation.
+//  Generates a one-time recovery code at identity creation.
 //  The plaintext is shown once, then discarded. Server stores bcrypt hash only (Phase 1b).
 //
 

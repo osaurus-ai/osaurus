@@ -16,6 +16,7 @@ public enum OnboardingStep: Int, CaseIterable {
     case localDownload
     case apiSetup
     case complete
+    case identitySetup
     case walkthrough
 }
 
@@ -36,6 +37,7 @@ public struct OnboardingView: View {
     @State private var currentStep: OnboardingStep = .welcome
     @State private var selectedPath: OnboardingSetupPath? = nil
     @State private var navigationDirection: NavigationDirection = .forward
+    @State private var wantsWalkthrough = false
 
     public init(onComplete: @escaping () -> Void) {
         self.onComplete = onComplete
@@ -118,14 +120,25 @@ public struct OnboardingView: View {
         case .complete:
             OnboardingCompleteView(
                 onWalkthrough: {
-                    navigateTo(.walkthrough, direction: .forward)
+                    wantsWalkthrough = true
+                    navigateToIdentityOrNext()
                 },
                 onSkip: {
-                    finishOnboarding()
+                    wantsWalkthrough = false
+                    navigateToIdentityOrNext()
                 },
                 onSettings: {
                     finishOnboarding()
                     NotificationCenter.default.post(name: NSNotification.Name("ShowManagement"), object: nil)
+                }
+            )
+
+        case .identitySetup:
+            OnboardingIdentitySetupView(
+                onComplete: proceedAfterIdentity,
+                onSkip: proceedAfterIdentity,
+                onBack: {
+                    navigateTo(.complete, direction: .backward)
                 }
             )
 
@@ -198,6 +211,22 @@ public struct OnboardingView: View {
         navigationDirection = direction
         withAnimation(theme.springAnimation(responseMultiplier: 0.8)) {
             currentStep = step
+        }
+    }
+
+    private func navigateToIdentityOrNext() {
+        if OsaurusIdentity.exists() {
+            proceedAfterIdentity()
+        } else {
+            navigateTo(.identitySetup, direction: .forward)
+        }
+    }
+
+    private func proceedAfterIdentity() {
+        if wantsWalkthrough {
+            navigateTo(.walkthrough, direction: .forward)
+        } else {
+            finishOnboarding()
         }
     }
 
