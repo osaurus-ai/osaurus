@@ -24,6 +24,7 @@ struct ConfigurationView: View {
     @State private var tempChatContextLength: String = ""
     @State private var tempChatTopP: String = ""
     @State private var tempChatMaxToolAttempts: String = ""
+    @State private var tempPhasedContextLoading: Bool = true
 
     // Work generation settings state
     @State private var tempAgentTemperature: String = ""
@@ -173,7 +174,8 @@ struct ConfigurationView: View {
                             "Context Length",
                             "Top P",
                             "Max Tool Attempts",
-                            "Generation"
+                            "Generation",
+                            "Phased Context Loading"
                         ) {
                             SettingsSection(title: "Chat", icon: "message") {
                                 VStack(alignment: .leading, spacing: 20) {
@@ -236,6 +238,15 @@ struct ConfigurationView: View {
                                             )
                                         }
                                     }
+
+                                    SettingsDivider()
+
+                                    SettingsToggle(
+                                        title: "Phased Context Loading",
+                                        description:
+                                            "Load tools and skills in two phases to reduce token usage. When disabled, all capabilities are loaded upfront.",
+                                        isOn: $tempPhasedContextLoading
+                                    )
 
                                 }
                             }
@@ -571,6 +582,7 @@ struct ConfigurationView: View {
         tempChatContextLength = chat.contextLength.map(String.init) ?? ""
         tempChatTopP = chat.topPOverride.map { String($0) } ?? ""
         tempChatMaxToolAttempts = chat.maxToolAttempts.map(String.init) ?? ""
+        tempPhasedContextLoading = chat.phasedContextLoading
 
         // Work generation settings
         tempAgentTemperature = chat.workTemperature.map { String($0) } ?? ""
@@ -632,6 +644,7 @@ struct ConfigurationView: View {
         tempChatContextLength = ""
         tempChatTopP = ""
         tempChatMaxToolAttempts = ""
+        tempPhasedContextLoading = true
 
         // Work generation settings - clear to use defaults
         tempAgentTemperature = ""
@@ -798,6 +811,7 @@ struct ConfigurationView: View {
             topPOverride: parsedTopP,
             maxToolAttempts: parsedMaxToolAttempts,
             defaultModel: existingDefaultModel,
+            phasedContextLoading: tempPhasedContextLoading,
             workTemperature: parsedAgentTemp,
             workMaxTokens: parsedAgentMax,
             workTopPOverride: parsedAgentTopP,
