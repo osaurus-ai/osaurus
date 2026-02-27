@@ -39,17 +39,20 @@ enum DocumentParser {
         let filename = url.lastPathComponent
 
         let content: String
-        if isPlainText(ext: ext) {
+        switch ext {
+        case _ where isPlainText(ext: ext):
             content = try parsePlainText(url: url)
-        } else if ext == "pdf" {
+        case "pdf":
             content = try parsePDF(url: url)
-        } else if ext == "docx" || ext == "doc" {
+        case "docx":
+            content = try parseRichDocument(url: url)
+        case "doc":
             content = try parseRichDocument(url: url, type: .docFormat)
-        } else if ext == "rtf" || ext == "rtfd" {
+        case "rtf", "rtfd":
             content = try parseRichDocument(url: url, type: .rtf)
-        } else if ext == "html" || ext == "htm" {
+        case "html", "htm":
             content = try parseRichDocument(url: url, type: .html)
-        } else {
+        default:
             throw ParseError.unsupportedFormat(ext)
         }
 
@@ -150,11 +153,15 @@ enum DocumentParser {
 
     // MARK: - Rich Documents (DOCX, RTF, HTML)
 
-    private static func parseRichDocument(url: URL, type: NSAttributedString.DocumentType) throws -> String {
+    private static func parseRichDocument(url: URL, type: NSAttributedString.DocumentType? = nil) throws -> String {
         do {
+            var options: [NSAttributedString.DocumentReadingOptionKey: Any] = [:]
+            if let type = type {
+                options[.documentType] = type
+            }
             let attributed = try NSAttributedString(
                 url: url,
-                options: [.documentType: type],
+                options: options,
                 documentAttributes: nil
             )
             return attributed.string
