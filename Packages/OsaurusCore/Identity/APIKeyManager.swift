@@ -18,13 +18,9 @@ public final class APIKeyManager: @unchecked Sendable {
     private var keys: [AccessKeyInfo] = []
 
     private static let keychainService = "com.osaurus.access-keys"
-    private static let keychainAccount = "key-metadata-v2"
-
-    private static let legacyKeychainService = "com.osaurus.api-keys"
-    private static let legacyKeychainAccount = "key-metadata"
+    private static let keychainAccount = "key-metadata"
 
     private init() {
-        migrateLegacyKeysIfNeeded()
         keys = Self.loadFromKeychain()
     }
 
@@ -205,20 +201,5 @@ public final class APIKeyManager: @unchecked Sendable {
         queue.sync(flags: .barrier) {
             keys = Self.loadFromKeychain()
         }
-    }
-
-    // MARK: - Migration
-
-    /// One-time migration: clear legacy v1 key data (hashes are no longer used).
-    private func migrateLegacyKeysIfNeeded() {
-        let legacyQuery: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: Self.legacyKeychainService,
-            kSecAttrAccount as String: Self.legacyKeychainAccount,
-        ]
-        SecItemDelete(legacyQuery as CFDictionary)
-
-        let legacyPath = OsaurusPaths.config().appendingPathComponent("api-keys.json")
-        try? FileManager.default.removeItem(at: legacyPath)
     }
 }
