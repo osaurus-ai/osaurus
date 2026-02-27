@@ -73,6 +73,10 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
     public let createdAt: Date
     /// When the agent was last modified
     public var updatedAt: Date
+    /// Derivation index for the agent's cryptographic identity (nil = no address yet)
+    public var agentIndex: UInt32?
+    /// Derived cryptographic address for this agent (nil = no address yet)
+    public var agentAddress: String?
 
     public init(
         id: UUID = UUID(),
@@ -89,7 +93,9 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         workQuickActions: [AgentQuickAction]? = nil,
         isBuiltIn: Bool = false,
         createdAt: Date = Date(),
-        updatedAt: Date = Date()
+        updatedAt: Date = Date(),
+        agentIndex: UInt32? = nil,
+        agentAddress: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -106,6 +112,8 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         self.isBuiltIn = isBuiltIn
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+        self.agentIndex = agentIndex
+        self.agentAddress = agentAddress
     }
 
     // MARK: - Built-in Agents
@@ -159,17 +167,15 @@ extension Agent {
 
         public init(agent: Agent) {
             self.version = 1
-            // Create a copy without built-in flag for export
             let exportedAgent = agent
-            // When exporting, we create a new instance that's not built-in
             self.agent = Agent(
-                id: UUID(),  // Generate new ID on export
+                id: UUID(),
                 name: exportedAgent.name,
                 description: exportedAgent.description,
                 systemPrompt: exportedAgent.systemPrompt,
                 enabledTools: exportedAgent.enabledTools,
                 enabledSkills: exportedAgent.enabledSkills,
-                themeId: nil,  // Don't export theme (may not exist on target system)
+                themeId: nil,
                 defaultModel: exportedAgent.defaultModel,
                 temperature: exportedAgent.temperature,
                 maxTokens: exportedAgent.maxTokens,
@@ -177,7 +183,9 @@ extension Agent {
                 workQuickActions: exportedAgent.workQuickActions,
                 isBuiltIn: false,
                 createdAt: Date(),
-                updatedAt: Date()
+                updatedAt: Date(),
+                agentIndex: nil,
+                agentAddress: nil
             )
         }
     }

@@ -42,7 +42,7 @@ public struct OsaurusAccount: Sendable {
         path: String,
         audience: String
     ) async throws -> URLRequest {
-        let context = OsaurusAccountContext.biometricContext()
+        let context = OsaurusIdentityContext.biometric()
         let osaurusId = try MasterKey.getOsaurusId(context: context)
 
         return try await buildSignedRequest(

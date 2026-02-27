@@ -1,23 +1,23 @@
 //
-//  AccountView.swift
+//  IdentityView.swift
 //  osaurus
 //
-//  Osaurus Account management UI: account info, device status,
-//  setup flow, and recovery code handling.
+//  Osaurus Identity management UI: master address, agent addresses,
+//  device status, setup flow, and recovery code handling.
 //
 
 import AppKit
 import LocalAuthentication
 import SwiftUI
 
-// MARK: - Account View
+// MARK: - Identity View
 
-struct AccountView: View {
+struct IdentityView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
     @State private var hasAppeared = false
-    @State private var phase: AccountPhase = .checking
+    @State private var phase: IdentityPhase = .checking
 
     var body: some View {
         VStack(spacing: 0) {
@@ -32,14 +32,14 @@ struct AccountView: View {
                     case .checking:
                         ProgressView()
                             .frame(maxWidth: .infinity, minHeight: 200)
-                    case .noAccount:
-                        AccountSetupCard(onCreated: handleAccountCreated)
+                    case .noIdentity:
+                        IdentitySetupCard(onCreated: handleIdentityCreated)
                     case .recoveryPrompt(let info):
-                        RecoveryPromptCard(info: info, onDismiss: handleRecoverySaved)
+                        RecoveryPromptCard(info: info, onDismiss: handleRecoveryDismissed)
                     case .ready(let osaurusId, let deviceId):
-                        AccountInfoSection(osaurusId: osaurusId, deviceId: deviceId)
+                        MasterAddressSection(osaurusId: osaurusId)
+                        AgentAddressesSection(masterAddress: osaurusId)
                         DeviceSection(deviceId: deviceId)
-                        WhitelistSection(masterAddress: osaurusId)
                     }
                 }
                 .padding(24)
@@ -50,7 +50,7 @@ struct AccountView: View {
         .background(theme.primaryBackground)
         .environment(\.theme, themeManager.currentTheme)
         .onAppear {
-            checkAccountStatus()
+            checkIdentityStatus()
             withAnimation(.easeOut(duration: 0.25).delay(0.05)) {
                 hasAppeared = true
             }
@@ -61,7 +61,7 @@ struct AccountView: View {
 
     private var headerView: some View {
         ManagerHeaderWithActions(
-            title: "Account",
+            title: "Identity",
             subtitle: subtitleText
         ) {
             EmptyView()
@@ -71,9 +71,9 @@ struct AccountView: View {
     private var subtitleText: String {
         switch phase {
         case .checking:
-            "Loading account..."
-        case .noAccount:
-            "Set up your Osaurus Account"
+            "Loading identity..."
+        case .noIdentity:
+            "Set up your Osaurus Identity"
         case .recoveryPrompt:
             "Save your recovery code"
         case .ready:
@@ -83,47 +83,47 @@ struct AccountView: View {
 
     // MARK: - State Machine
 
-    private func checkAccountStatus() {
+    private func checkIdentityStatus() {
         if OsaurusAccount.exists() {
-            loadExistingAccount()
+            loadExistingIdentity()
         } else {
-            phase = .noAccount
+            phase = .noIdentity
         }
     }
 
-    private func loadExistingAccount() {
+    private func loadExistingIdentity() {
         do {
             let deviceId = try DeviceKey.currentDeviceId()
-            let context = OsaurusAccountContext.biometricContext()
+            let context = OsaurusIdentityContext.biometric()
             let osaurusId = try MasterKey.getOsaurusId(context: context)
             phase = .ready(osaurusId: osaurusId, deviceId: deviceId)
         } catch {
-            phase = .noAccount
+            phase = .noIdentity
         }
     }
 
-    private func handleAccountCreated(_ info: AccountInfo) {
+    private func handleIdentityCreated(_ info: AccountInfo) {
         phase = .recoveryPrompt(info: info)
     }
 
-    private func handleRecoverySaved(_ osaurusId: OsaurusID, _ deviceId: String) {
+    private func handleRecoveryDismissed(_ osaurusId: OsaurusID, _ deviceId: String) {
         phase = .ready(osaurusId: osaurusId, deviceId: deviceId)
     }
 }
 
-// MARK: - Account Phase
+// MARK: - Identity Phase
 
-private enum AccountPhase {
+private enum IdentityPhase {
     case checking
-    case noAccount
+    case noIdentity
     case recoveryPrompt(info: AccountInfo)
     case ready(osaurusId: OsaurusID, deviceId: String)
 }
 
 // MARK: - Biometric Context Helper
 
-enum OsaurusAccountContext {
-    static func biometricContext() -> LAContext {
+enum OsaurusIdentityContext {
+    static func biometric() -> LAContext {
         let context = LAContext()
         context.touchIDAuthenticationAllowableReuseDuration = 300
         return context
@@ -132,7 +132,7 @@ enum OsaurusAccountContext {
 
 // MARK: - Setup Card
 
-private struct AccountSetupCard: View {
+private struct IdentitySetupCard: View {
     @ObservedObject private var themeManager = ThemeManager.shared
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
@@ -150,7 +150,7 @@ private struct AccountSetupCard: View {
                 .foregroundStyle(theme.accentColor)
 
             VStack(spacing: 8) {
-                Text("Create Your Osaurus Account")
+                Text("Create Your Osaurus Identity")
                     .font(.system(size: 22, weight: .bold, design: .rounded))
                     .foregroundColor(theme.primaryText)
 
@@ -173,7 +173,7 @@ private struct AccountSetupCard: View {
                     )
             }
 
-            Button(action: createAccount) {
+            Button(action: createIdentity) {
                 HStack(spacing: 8) {
                     if isCreating {
                         ProgressView()
@@ -183,7 +183,7 @@ private struct AccountSetupCard: View {
                         Image(systemName: "key.fill")
                             .font(.system(size: 13, weight: .semibold))
                     }
-                    Text("Generate Account")
+                    Text("Generate Identity")
                         .font(.system(size: 14, weight: .semibold))
                 }
                 .foregroundColor(.white)
@@ -210,7 +210,7 @@ private struct AccountSetupCard: View {
         )
     }
 
-    private func createAccount() {
+    private func createIdentity() {
         isCreating = true
         errorMessage = nil
 
@@ -303,13 +303,13 @@ private struct RecoveryPromptCard: View {
 
     private var recoveryCard: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("OSAURUS ACCOUNT RECOVERY")
+            Text("OSAURUS IDENTITY RECOVERY")
                 .font(.system(size: 12, weight: .bold, design: .monospaced))
                 .foregroundColor(theme.primaryText)
                 .tracking(1)
 
             VStack(alignment: .leading, spacing: 6) {
-                recoveryField(label: "Osaurus ID", value: info.osaurusId)
+                recoveryField(label: "Master Address", value: info.osaurusId)
                 recoveryField(label: "Recovery Code", value: info.recovery.code)
             }
 
@@ -369,9 +369,9 @@ private struct RecoveryPromptCard: View {
 
     private func printRecoveryCode() {
         let printContent = """
-            OSAURUS ACCOUNT RECOVERY
+            OSAURUS IDENTITY RECOVERY
 
-            Osaurus ID:
+            Master Address:
             \(info.osaurusId)
 
             Recovery Code:
@@ -401,23 +401,22 @@ private struct RecoveryPromptCard: View {
     }
 }
 
-// MARK: - Account Info Section
+// MARK: - Master Address Section
 
-private struct AccountInfoSection: View {
+private struct MasterAddressSection: View {
     @ObservedObject private var themeManager = ThemeManager.shared
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
     let osaurusId: OsaurusID
-    let deviceId: String
 
     @State private var copied = false
 
     var body: some View {
-        AccountSection(title: "ACCOUNT", icon: "person.badge.key.fill") {
+        IdentitySection(title: "MASTER ADDRESS", icon: "person.badge.key.fill") {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Osaurus ID")
+                        Text("Master Address")
                             .font(.system(size: 11, weight: .medium))
                             .foregroundColor(theme.secondaryText)
                         Text(osaurusId)
@@ -487,6 +486,161 @@ private struct AccountInfoSection: View {
     }
 }
 
+// MARK: - Agent Addresses Section
+
+private struct AgentAddressesSection: View {
+    @ObservedObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var agentManager = AgentManager.shared
+    private var theme: ThemeProtocol { themeManager.currentTheme }
+
+    let masterAddress: OsaurusID
+
+    @State private var copiedAddress: OsaurusID?
+    @State private var generatingAgentId: UUID?
+    @State private var errorMessage: String?
+
+    private var customAgents: [Agent] {
+        agentManager.agents.filter { !$0.isBuiltIn }
+    }
+
+    var body: some View {
+        IdentitySection(title: "AGENT ADDRESSES", icon: "person.2.badge.key.fill") {
+            VStack(alignment: .leading, spacing: 8) {
+                if customAgents.isEmpty {
+                    Text("No agents yet — create one in the Agents tab")
+                        .font(.system(size: 12))
+                        .foregroundColor(theme.tertiaryText)
+                        .padding(.vertical, 4)
+                } else {
+                    ForEach(customAgents) { agent in
+                        agentRow(agent: agent)
+                    }
+                }
+
+                if let errorMessage {
+                    Text(errorMessage)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(theme.errorColor)
+                }
+            }
+        }
+    }
+
+    private func agentRow(agent: Agent) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "person.fill")
+                .font(.system(size: 10))
+                .foregroundColor(theme.accentColor)
+                .frame(width: 16)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(agent.name)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+
+                if let address = agent.agentAddress {
+                    Text(address)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundColor(theme.primaryText)
+                        .textSelection(.enabled)
+                        .lineLimit(1)
+                } else {
+                    Text("No address")
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.tertiaryText)
+                }
+            }
+
+            Spacer()
+
+            if let address = agent.agentAddress {
+                let isCopied = copiedAddress == address
+                Button(action: { copyAddress(address) }) {
+                    Image(systemName: isCopied ? "checkmark" : "doc.on.doc")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(isCopied ? theme.successColor : theme.secondaryText)
+                        .padding(5)
+                        .background(
+                            RoundedRectangle(cornerRadius: 4)
+                                .fill(theme.tertiaryBackground)
+                        )
+                }
+                .buttonStyle(PlainButtonStyle())
+            } else {
+                Button(action: { generateAddress(for: agent) }) {
+                    HStack(spacing: 4) {
+                        if generatingAgentId == agent.id {
+                            ProgressView()
+                                .scaleEffect(0.5)
+                                .frame(width: 10, height: 10)
+                        } else {
+                            Image(systemName: "key.fill")
+                                .font(.system(size: 9, weight: .semibold))
+                        }
+                        Text("Generate")
+                            .font(.system(size: 11, weight: .semibold))
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(
+                        RoundedRectangle(cornerRadius: 5)
+                            .fill(theme.accentColor)
+                    )
+                }
+                .buttonStyle(PlainButtonStyle())
+                .disabled(generatingAgentId != nil)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(theme.tertiaryBackground.opacity(0.5))
+        )
+    }
+
+    private func generateAddress(for agent: Agent) {
+        generatingAgentId = agent.id
+        errorMessage = nil
+
+        do {
+            let context = OsaurusIdentityContext.biometric()
+            var masterKeyData = try MasterKey.getPrivateKey(context: context)
+            defer {
+                masterKeyData.withUnsafeMutableBytes { ptr in
+                    if let base = ptr.baseAddress { memset(base, 0, ptr.count) }
+                }
+            }
+
+            let usedIndices = Set(agentManager.agents.compactMap(\.agentIndex))
+            var nextIndex: UInt32 = 0
+            while usedIndices.contains(nextIndex) { nextIndex += 1 }
+
+            let address = try AgentKey.deriveAddress(masterKey: masterKeyData, index: nextIndex)
+
+            var updated = agent
+            updated.agentIndex = nextIndex
+            updated.agentAddress = address
+            agentManager.update(updated)
+
+            generatingAgentId = nil
+        } catch {
+            errorMessage = error.localizedDescription
+            generatingAgentId = nil
+        }
+    }
+
+    private func copyAddress(_ address: OsaurusID) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(address, forType: .string)
+        withAnimation { copiedAddress = address }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            withAnimation { copiedAddress = nil }
+        }
+    }
+}
+
 // MARK: - Device Section
 
 private struct DeviceSection: View {
@@ -496,7 +650,7 @@ private struct DeviceSection: View {
     let deviceId: String
 
     var body: some View {
-        AccountSection(title: "DEVICES", icon: "desktopcomputer") {
+        IdentitySection(title: "DEVICES", icon: "desktopcomputer") {
             HStack(spacing: 12) {
                 Image(systemName: "desktopcomputer")
                     .font(.system(size: 20))
@@ -536,138 +690,9 @@ private struct DeviceSection: View {
     }
 }
 
-// MARK: - Whitelist Section
-
-private struct WhitelistSection: View {
-    @ObservedObject private var themeManager = ThemeManager.shared
-    private var theme: ThemeProtocol { themeManager.currentTheme }
-
-    let masterAddress: OsaurusID
-
-    @State private var masterWhitelist: Set<OsaurusID> = []
-    @State private var newAddress = ""
-    @State private var errorMessage: String?
-
-    var body: some View {
-        AccountSection(title: "WHITELIST", icon: "person.badge.shield.checkmark.fill") {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Addresses authorized to issue access keys for your agents.")
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.secondaryText)
-
-                VStack(spacing: 2) {
-                    whitelistRow(address: masterAddress, label: "You (implicit)", isImplicit: true)
-                    ForEach(Array(masterWhitelist).sorted(), id: \.self) { address in
-                        whitelistRow(address: address, label: nil, isImplicit: false)
-                    }
-                }
-
-                HStack(spacing: 8) {
-                    TextField("0x... address", text: $newAddress)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 12, design: .monospaced))
-                        .padding(8)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(theme.inputBackground)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 6)
-                                        .stroke(theme.inputBorder, lineWidth: 1)
-                                )
-                        )
-
-                    Button(action: addAddress) {
-                        Text("Add")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 8)
-                            .background(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .fill(theme.accentColor)
-                            )
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                    .disabled(newAddress.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
-
-                if let errorMessage {
-                    Text(errorMessage)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(theme.errorColor)
-                }
-            }
-        }
-        .onAppear { reload() }
-    }
-
-    private func whitelistRow(address: OsaurusID, label: String?, isImplicit: Bool) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: isImplicit ? "person.fill.checkmark" : "person.fill")
-                .font(.system(size: 10))
-                .foregroundColor(theme.accentColor)
-                .frame(width: 16)
-
-            VStack(alignment: .leading, spacing: 1) {
-                if let label {
-                    Text(label)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
-                }
-                Text(address)
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundColor(theme.primaryText)
-                    .textSelection(.enabled)
-                    .lineLimit(1)
-            }
-
-            Spacer()
-
-            if !isImplicit {
-                Button(action: {
-                    WhitelistStore.shared.removeMaster(address: address)
-                    reload()
-                }) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundColor(theme.errorColor)
-                        .padding(4)
-                        .background(
-                            RoundedRectangle(cornerRadius: 4)
-                                .fill(theme.errorColor.opacity(0.1))
-                        )
-                }
-                .buttonStyle(PlainButtonStyle())
-            }
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 6)
-                .fill(theme.tertiaryBackground.opacity(0.5))
-        )
-    }
-
-    private func addAddress() {
-        let trimmed = newAddress.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.hasPrefix("0x"), trimmed.count >= 42 else {
-            errorMessage = "Invalid address format. Must start with 0x."
-            return
-        }
-        errorMessage = nil
-        WhitelistStore.shared.addMaster(address: trimmed)
-        newAddress = ""
-        reload()
-    }
-
-    private func reload() {
-        masterWhitelist = WhitelistStore.shared.masterWhitelist()
-    }
-}
-
 // MARK: - Reusable Section Container
 
-private struct AccountSection<Content: View>: View {
+private struct IdentitySection<Content: View>: View {
     @ObservedObject private var themeManager = ThemeManager.shared
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
