@@ -84,7 +84,7 @@ struct IdentityView: View {
     // MARK: - State Machine
 
     private func checkIdentityStatus() {
-        if OsaurusAccount.exists() {
+        if OsaurusIdentity.exists() {
             loadExistingIdentity()
         } else {
             phase = .noIdentity
@@ -102,7 +102,7 @@ struct IdentityView: View {
         }
     }
 
-    private func handleIdentityCreated(_ info: AccountInfo) {
+    private func handleIdentityCreated(_ info: IdentityInfo) {
         phase = .recoveryPrompt(info: info)
     }
 
@@ -116,7 +116,7 @@ struct IdentityView: View {
 private enum IdentityPhase {
     case checking
     case noIdentity
-    case recoveryPrompt(info: AccountInfo)
+    case recoveryPrompt(info: IdentityInfo)
     case ready(osaurusId: OsaurusID, deviceId: String)
 }
 
@@ -136,7 +136,7 @@ private struct IdentitySetupCard: View {
     @ObservedObject private var themeManager = ThemeManager.shared
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
-    let onCreated: (AccountInfo) -> Void
+    let onCreated: (IdentityInfo) -> Void
 
     @State private var isCreating = false
     @State private var errorMessage: String?
@@ -216,7 +216,7 @@ private struct IdentitySetupCard: View {
 
         Task {
             do {
-                let info = try await OsaurusAccount.setup()
+                let info = try await OsaurusIdentity.setup()
                 await MainActor.run {
                     isCreating = false
                     onCreated(info)
@@ -237,7 +237,7 @@ private struct RecoveryPromptCard: View {
     @ObservedObject private var themeManager = ThemeManager.shared
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
-    let info: AccountInfo
+    let info: IdentityInfo
     let onDismiss: (OsaurusID, String) -> Void
 
     var body: some View {

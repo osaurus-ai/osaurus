@@ -3,7 +3,7 @@
 //  osaurus
 //
 //  Manages the secp256k1 Master Key in iCloud Keychain.
-//  This is the root of the Osaurus account — syncs across devices via iCloud.
+//  This is the root of the Osaurus identity — syncs across devices via iCloud.
 //
 
 import Foundation

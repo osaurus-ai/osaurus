@@ -1,5 +1,5 @@
 //
-//  OsaurusAccount.swift
+//  OsaurusIdentity.swift
 //  osaurus
 //
 //  Public entry point for the Osaurus Identity system.
@@ -11,31 +11,31 @@ import CryptoKit
 import Foundation
 import LocalAuthentication
 
-public struct OsaurusAccount: Sendable {
+public struct OsaurusIdentity: Sendable {
 
     // MARK: - Setup
 
-    /// Full account setup: generates Master Key, attests device, generates recovery code.
-    public static func setup() async throws -> AccountInfo {
+    /// Full identity setup: generates Master Key, attests device, generates recovery code.
+    public static func setup() async throws -> IdentityInfo {
         let osaurusId = try MasterKey.generate()
         let deviceId = try await DeviceKey.attest()
         let recovery = RecoveryManager.configure(address: osaurusId)
 
-        return AccountInfo(
+        return IdentityInfo(
             osaurusId: osaurusId,
             deviceId: deviceId,
             recovery: recovery
         )
     }
 
-    /// Whether an account already exists (no biometric prompt).
+    /// Whether an identity already exists (no biometric prompt).
     public static func exists() -> Bool {
         MasterKey.exists()
     }
 
     // MARK: - Request Signing
 
-    /// Sign an API request as the user account.
+    /// Sign an API request as the user identity.
     /// Returns a URLRequest with `Authorization: Bearer <token>`.
     public static func signRequest(
         method: String,
@@ -81,8 +81,8 @@ public struct OsaurusAccount: Sendable {
 
         let payloadData = try JSONEncoder().encode(payload)
 
-        // Layer 1: Account signature (secp256k1)
-        let accountSig = try MasterKey.sign(payload: payloadData, context: context)
+        // Layer 1: Identity signature (secp256k1)
+        let identitySig = try MasterKey.sign(payload: payloadData, context: context)
 
         // Layer 2: Device assertion (App Attest)
         let payloadHash = Data(SHA256.hash(data: payloadData))
@@ -93,7 +93,7 @@ public struct OsaurusAccount: Sendable {
         let token = [
             headerData.base64urlEncoded,
             payloadData.base64urlEncoded,
-            accountSig.hexEncodedString,
+            identitySig.hexEncodedString,
             deviceAssertion.base64urlEncoded,
         ].joined(separator: ".")
 
