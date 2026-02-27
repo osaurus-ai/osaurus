@@ -57,6 +57,7 @@ struct SidebarNavigation<Content: View, Footer: View>: View {
     let footer: () -> Footer
 
     @State private var isCollapsed = false
+    @State private var canScrollDown = true
     @Namespace private var sidebarNamespace
 
     private var sidebarWidth: CGFloat {
@@ -100,7 +101,11 @@ private extension SidebarNavigation {
             collapseToggle
             if !isCollapsed { searchField }
             itemList
-            if !isCollapsed { footer() }
+            if !isCollapsed {
+                footer()
+                    .padding(.top, 8)
+                    .overlay(alignment: .top) { footerScrollShadow }
+            }
         }
         .padding(.top, SidebarLayout.topPadding)
         .padding(.bottom, SidebarLayout.bottomPadding)
@@ -157,10 +162,32 @@ private extension SidebarNavigation {
                         }
                     }
                 }
+
+                Color.clear
+                    .frame(height: 1)
+                    .onAppear { canScrollDown = false }
+                    .onDisappear { canScrollDown = true }
             }
             .padding(.bottom, 8)
         }
         .scrollIndicators(.hidden)
+    }
+
+    var footerScrollShadow: some View {
+        LinearGradient(
+            stops: [
+                .init(color: Color.black.opacity(0.18), location: 0),
+                .init(color: Color.black.opacity(0.06), location: 0.5),
+                .init(color: Color.black.opacity(0), location: 1),
+            ],
+            startPoint: .bottom,
+            endPoint: .top
+        )
+        .frame(height: 24)
+        .offset(y: -24)
+        .opacity(canScrollDown ? 1 : 0)
+        .animation(.easeOut(duration: 0.2), value: canScrollDown)
+        .allowsHitTesting(false)
     }
 
     var divider: some View {
