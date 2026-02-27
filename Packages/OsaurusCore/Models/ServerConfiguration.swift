@@ -65,6 +65,9 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
     /// Memory management policy for loaded models
     public var modelEvictionPolicy: ModelEvictionPolicy
 
+    /// Require a valid API key for all non-health endpoints
+    public var requireAPIKey: Bool
+
     private enum CodingKeys: String, CodingKey {
         case port
         case exposeToNetwork
@@ -81,6 +84,7 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
         case genPrefillStepSize
         case allowedOrigins
         case modelEvictionPolicy
+        case requireAPIKey
     }
 
     public init(from decoder: Decoder) throws {
@@ -115,6 +119,9 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
         self.modelEvictionPolicy =
             try container.decodeIfPresent(ModelEvictionPolicy.self, forKey: .modelEvictionPolicy)
             ?? defaults.modelEvictionPolicy
+        self.requireAPIKey =
+            try container.decodeIfPresent(Bool.self, forKey: .requireAPIKey)
+            ?? defaults.requireAPIKey
     }
 
     public init(
@@ -132,7 +139,8 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
         genMaxKVSize: Int?,
         genPrefillStepSize: Int,
         allowedOrigins: [String] = [],
-        modelEvictionPolicy: ModelEvictionPolicy = .strictSingleModel
+        modelEvictionPolicy: ModelEvictionPolicy = .strictSingleModel,
+        requireAPIKey: Bool = true
     ) {
         self.port = port
         self.exposeToNetwork = exposeToNetwork
@@ -149,6 +157,7 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
         self.genPrefillStepSize = genPrefillStepSize
         self.allowedOrigins = allowedOrigins
         self.modelEvictionPolicy = modelEvictionPolicy
+        self.requireAPIKey = requireAPIKey
     }
 
     /// Default configuration

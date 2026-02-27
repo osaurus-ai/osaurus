@@ -26,17 +26,6 @@ Created by Dinoki Labs ([dinoki.ai](https://dinoki.ai))
 
 ---
 
-> ⚠️ **Naming Changes in This Release** ⚠️
->
-> We've renamed two core concepts to better reflect their purpose:
->
-> - **Personas** are now called **Agents** — custom AI assistants with unique prompts, tools, and themes.
-> - **Agent Mode** is now called **Work Mode** — autonomous task execution with issue tracking and file operations.
->
-> All existing data is automatically migrated. This notice will be removed in a future release.
-
----
-
 ## Install
 
 ```bash
@@ -60,6 +49,7 @@ Osaurus is the AI edge runtime for macOS. It brings together:
 - **Remote MCP Providers** — Connect to external MCP servers and aggregate their tools
 - **Plugin System** — Extend functionality with community and custom tools
 - **Agents** — Create custom AI assistants with unique prompts, tools, and visual themes
+- **Identity** — Cryptographic identity system for humans and agents with address-based authentication
 - **Memory** — 4-layer memory system that learns from conversations with profile, working memory, summaries, and knowledge graph
 - **Skills** — Import reusable AI capabilities from GitHub or files ([Agent Skills](https://agentskills.io/) compatible)
 - **Schedules** — Automate recurring AI tasks with timed execution
@@ -86,6 +76,7 @@ Osaurus is the AI edge runtime for macOS. It brings together:
 | **Tools & Plugins**      | Browser automation, file system, git, web search, and more              |
 | **Skills**               | Import AI capabilities from GitHub or files, with smart context saving  |
 | **Agents**               | Custom AI assistants with unique prompts, tools, and themes             |
+| **Identity**             | Cryptographic addresses for humans, agents, and devices                 |
 | **Memory**               | Persistent memory with user profile, knowledge graph, and hybrid search |
 | **Schedules**            | Automate AI tasks with daily, weekly, monthly, or yearly runs           |
 | **Watchers**             | Monitor folders and trigger AI tasks on file system changes             |
@@ -242,6 +233,22 @@ Use cases:
 - **Creative Writer** — Higher temperature, no tool access for pure generation
 
 Access via Management window (`⌘ Shift M`) → **Agents**.
+
+### Identity
+
+Every participant in Osaurus — human, agent, and device — gets a cryptographic address. All actions are signed and verifiable, enabling trust without a central authority at runtime.
+
+**Address hierarchy:**
+
+- **Master Address** — The human's root identity, derived from a secp256k1 key stored in iCloud Keychain. All authority flows from this address.
+- **Agent Addresses** — Deterministic child keys derived from the Master Key (HMAC-SHA512). Each agent gets a unique address that traces back to the master.
+- **Device ID** — Hardware-bound identity via Apple App Attest (Secure Enclave). Proves which physical device is making a request.
+
+**Access Keys (`osk-v1`)** — Portable tokens signed by master or agent keys for API authentication. Used by external tools, MCP clients, and remote agents to authenticate against Osaurus without biometric access.
+
+Access via Management window (`⌘ Shift M`) → **Identity**.
+
+See [Identity Documentation](docs/IDENTITY.md) for the full theory, architecture, and implementation reference.
 
 ### Memory
 

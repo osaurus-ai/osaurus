@@ -28,6 +28,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable {
     case insights
     case server
     case permissions
+    case identity
     case settings
 
     public var id: String { rawValue }
@@ -48,6 +49,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable {
         case .insights: "chart.bar.doc.horizontal"
         case .server: "server.rack"
         case .permissions: "lock.shield.fill"
+        case .identity: "person.badge.key.fill"
         case .settings: "gearshape.fill"
         }
     }
@@ -68,6 +70,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable {
         case .insights: "Insights"
         case .server: "Server"
         case .permissions: "Permissions"
+        case .identity: "Identity"
         case .settings: "Settings"
         }
     }
@@ -215,6 +218,8 @@ private extension ManagementView {
             ServerView()
         case .permissions:
             PermissionsView()
+        case .identity:
+            IdentityView()
         case .settings:
             ConfigurationView(searchText: $searchText)
         case .none:

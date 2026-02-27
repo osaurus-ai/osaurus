@@ -2,10 +2,11 @@
 //  OsaurusServer.swift
 //  osaurus
 //
-//  Introduces an actor-owned NIO server lifecycle (start/stop) to simplify control flow.
+//  Actor-owned NIO server lifecycle (start / stop).
 //
 
 import Foundation
+import LocalAuthentication
 import NIOCore
 import NIOHTTP1
 import NIOPosix
@@ -14,9 +15,11 @@ public actor OsaurusServer: Sendable {
     public struct Config: Sendable {
         public var host: String
         public var port: Int
-        public init(host: String = "127.0.0.1", port: Int = 1337) {
+        public var agentIndex: UInt32?
+        public init(host: String = "127.0.0.1", port: Int = 1337, agentIndex: UInt32? = nil) {
             self.host = host
             self.port = port
+            self.agentIndex = agentIndex
         }
     }
 
@@ -34,14 +37,19 @@ public actor OsaurusServer: Sendable {
         let threads = ProcessInfo.processInfo.activeProcessorCount
         let group = MultiThreadedEventLoopGroup(numberOfThreads: threads)
 
+        let validator = Self.buildValidator(agentIndex: config.agentIndex)
+
         let bootstrap = ServerBootstrap(group: group)
             .serverChannelOption(ChannelOptions.backlog, value: 256)
             .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
             .childChannelInitializer { channel in
                 channel.pipeline.configureHTTPServerPipeline().flatMap {
-                    // Inject configuration; ChatEngine is created per-connection by the handler.
                     channel.pipeline.addHandler(
-                        HTTPHandler(configuration: serverConfiguration, eventLoop: channel.eventLoop)
+                        HTTPHandler(
+                            configuration: serverConfiguration,
+                            apiKeyValidator: validator,
+                            eventLoop: channel.eventLoop
+                        )
                     )
                 }
             }
@@ -62,12 +70,53 @@ public actor OsaurusServer: Sendable {
             self.channel = nil
         }
         if let g = self.group {
-            // Always use non-blocking shutdown in async context; ignore 'gracefully' fast-path for now
             await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
                 g.shutdownGracefully { _ in cont.resume() }
             }
             self.group = nil
         }
         print("[Osaurus] OsaurusServer stopped")
+    }
+
+    // MARK: - Validator Construction
+
+    /// Build a validator from the current identity, whitelist, and revocation state.
+    /// Falls back to `.empty` if the account doesn't exist yet.
+    private static func buildValidator(agentIndex: UInt32?) -> APIKeyValidator {
+        guard MasterKey.exists() else { return .empty }
+
+        let context = LAContext()
+        context.touchIDAuthenticationAllowableReuseDuration = 300
+
+        do {
+            var masterKeyData = try MasterKey.getPrivateKey(context: context)
+            defer {
+                masterKeyData.withUnsafeMutableBytes { ptr in
+                    if let base = ptr.baseAddress { memset(base, 0, ptr.count) }
+                }
+            }
+
+            let masterAddress = try deriveOsaurusId(from: masterKeyData)
+            let agentAddress: OsaurusID =
+                if let idx = agentIndex {
+                    try AgentKey.deriveAddress(masterKey: masterKeyData, index: idx)
+                } else {
+                    masterAddress
+                }
+
+            return APIKeyValidator(
+                agentAddress: agentAddress,
+                masterAddress: masterAddress,
+                effectiveWhitelist: WhitelistStore.shared.effectiveWhitelist(
+                    forAgent: agentAddress,
+                    masterAddress: masterAddress
+                ),
+                revocationSnapshot: RevocationStore.shared.snapshot(),
+                hasKeys: !APIKeyManager.shared.listKeys().isEmpty
+            )
+        } catch {
+            print("[Osaurus] Failed to build validator: \(error). Falling back to empty validator.")
+            return .empty
+        }
     }
 }

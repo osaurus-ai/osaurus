@@ -177,7 +177,7 @@ private func startTestServer() async throws -> TestServer {
         .childChannelInitializer { channel in
             channel.pipeline.configureHTTPServerPipeline().flatMap {
                 channel.pipeline.addHandler(
-                    HTTPHandler(configuration: .default, eventLoop: channel.eventLoop)
+                    HTTPHandler(configuration: .testDefault, eventLoop: channel.eventLoop)
                 )
             }
         }
