@@ -177,7 +177,7 @@ private func startTestServer(with engine: ChatEngineProtocol) async throws -> Te
         .childChannelInitializer { channel in
             channel.pipeline.configureHTTPServerPipeline().flatMap {
                 channel.pipeline.addHandler(
-                    HTTPHandler(configuration: .default, eventLoop: channel.eventLoop, chatEngine: engine)
+                    HTTPHandler(configuration: .testDefault, eventLoop: channel.eventLoop, chatEngine: engine)
                 )
             }
         }

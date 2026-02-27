@@ -94,9 +94,10 @@ struct AccessKeyValidatorTests {
         )
 
         let parts = token.split(separator: ".", maxSplits: 2)
-        var payloadBytes = Array(parts[1].utf8)
-        payloadBytes[payloadBytes.count / 2] ^= 0xff
-        let tampered = "osk-v2.\(String(bytes: payloadBytes, encoding: .utf8)!).\(parts[2])"
+        var payloadChars = Array(String(parts[1]))
+        let idx = payloadChars.count / 2
+        payloadChars[idx] = payloadChars[idx] == "A" ? "B" : "A"
+        let tampered = "osk-v2.\(String(payloadChars)).\(parts[2])"
 
         let validator = APIKeyValidator.forAlice()
         let result = validator.validate(rawKey: tampered)

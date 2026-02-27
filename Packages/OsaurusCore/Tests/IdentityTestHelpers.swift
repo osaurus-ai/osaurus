@@ -71,6 +71,17 @@ enum TokenBuilder {
     }
 }
 
+// MARK: - Test Server Configuration
+
+extension ServerConfiguration {
+    /// A `.default` config with `requireAPIKey` disabled, for tests that aren't exercising auth.
+    static var testDefault: ServerConfiguration {
+        var cfg = ServerConfiguration.default
+        cfg.requireAPIKey = false
+        return cfg
+    }
+}
+
 // MARK: - Validator Builder
 
 extension APIKeyValidator {
