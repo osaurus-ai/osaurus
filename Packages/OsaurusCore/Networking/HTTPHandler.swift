@@ -16,6 +16,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     typealias OutboundOut = HTTPServerResponsePart
 
     private let configuration: ServerConfiguration
+    private let apiKeyValidator: APIKeyValidator
     private let chatEngine: ChatEngineProtocol
     private final class RequestState {
         var requestHead: HTTPRequestHead?
@@ -28,10 +29,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
     init(
         configuration: ServerConfiguration,
+        apiKeyValidator: APIKeyValidator = .empty,
         eventLoop: EventLoop,
         chatEngine: ChatEngineProtocol = ChatEngine()
     ) {
         self.configuration = configuration
+        self.apiKeyValidator = apiKeyValidator
         self.chatEngine = chatEngine
         self.stateRef = NIOLoopBound(RequestState(), eventLoop: eventLoop)
     }
@@ -96,6 +99,58 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 stateRef.value.requestHead = nil
                 stateRef.value.requestBodyBuffer = nil
                 return
+            }
+
+            // Access key authentication gate (all data snapshotted at server start, zero locks)
+            let publicPaths: Set<String> = ["/", "/health"]
+            if configuration.requireAPIKey && !publicPaths.contains(path) {
+                let authHeader = head.headers.first(name: "Authorization") ?? ""
+                let token =
+                    authHeader.hasPrefix("Bearer ")
+                    ? String(authHeader.dropFirst(7))
+                    : ""
+
+                let message: String
+                if !apiKeyValidator.hasKeys {
+                    message = "No access keys configured. Create one in Osaurus settings."
+                } else {
+                    let result = apiKeyValidator.validate(rawKey: token)
+                    switch result {
+                    case .valid:
+                        message = ""
+                    case .expired:
+                        message = "Access key has expired"
+                    case .revoked:
+                        message = "Access key has been revoked"
+                    case .invalid(let reason):
+                        message = "Invalid access key: \(reason)"
+                    }
+                }
+
+                if !message.isEmpty {
+                    var headers = [("Content-Type", "application/json; charset=utf-8")]
+                    headers.append(contentsOf: stateRef.value.corsHeaders)
+                    let errorBody = #"{"error":{"message":"\#(message)","type":"authentication_error"}}"#
+                    sendResponse(
+                        context: context,
+                        version: head.version,
+                        status: .unauthorized,
+                        headers: headers,
+                        body: errorBody
+                    )
+                    logRequest(
+                        method: method,
+                        path: path,
+                        userAgent: userAgent,
+                        requestBody: nil,
+                        responseBody: errorBody,
+                        responseStatus: 401,
+                        startTime: startTime
+                    )
+                    stateRef.value.requestHead = nil
+                    stateRef.value.requestBodyBuffer = nil
+                    return
+                }
             }
 
             // Handle simple HEAD

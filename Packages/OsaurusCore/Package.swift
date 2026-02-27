@@ -17,6 +17,7 @@ let package = Package(
         .package(url: "https://github.com/huggingface/swift-transformers", from: "1.1.6"),
         .package(url: "https://github.com/FluidInference/FluidAudio.git", from: "0.12.1"),
         .package(url: "https://github.com/rryam/VecturaKit", from: "3.0.0"),
+        .package(url: "https://github.com/21-DOT-DEV/swift-secp256k1", exact: "0.21.1"),
         .package(path: "../OsaurusRepository"),
     ],
     targets: [
@@ -37,6 +38,7 @@ let package = Package(
                 .product(name: "FluidAudio", package: "FluidAudio"),
                 .product(name: "VecturaKit", package: "VecturaKit"),
                 .product(name: "OsaurusRepository", package: "OsaurusRepository"),
+                .product(name: "P256K", package: "swift-secp256k1"),
             ],
             path: ".",
             exclude: ["Tests"]

@@ -22,6 +22,15 @@ struct ServerView: View {
     @State private var endpointResponses: [String: EndpointTestResult] = [:]
     @State private var loadingEndpoints: Set<String> = []
 
+    @State private var accessKeys: [AccessKeyInfo] = []
+    @State private var showingKeyGenerator = false
+    @State private var newKeyLabel = ""
+    @State private var newKeyExpiration: AccessKeyExpiration = .days90
+    @State private var generatedKey: String?
+    @State private var isGeneratingKey = false
+    @State private var keyGenError: String?
+    @State private var copiedKeyId: UUID?
+
     var body: some View {
         VStack(spacing: 0) {
             // Header
@@ -35,6 +44,8 @@ struct ServerView: View {
                 VStack(alignment: .leading, spacing: 24) {
                     // Server Status Card
                     serverStatusCard
+
+                    accessKeysSection
 
                     // API Endpoints Section
                     endpointsSection
@@ -51,7 +62,23 @@ struct ServerView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(theme.primaryBackground)
         .environment(\.theme, themeManager.currentTheme)
+        .sheet(isPresented: $showingKeyGenerator) {
+            AccessKeyGeneratorSheet(
+                theme: theme,
+                label: $newKeyLabel,
+                expiration: $newKeyExpiration,
+                isGenerating: $isGeneratingKey,
+                error: $keyGenError,
+                onGenerate: generateAccessKey,
+                onCancel: {
+                    showingKeyGenerator = false
+                    newKeyLabel = ""
+                    keyGenError = nil
+                }
+            )
+        }
         .onAppear {
+            reloadAccessKeys()
             withAnimation(.easeOut(duration: 0.25).delay(0.05)) {
                 hasAppeared = true
             }
@@ -61,10 +88,29 @@ struct ServerView: View {
     // MARK: - Header View
 
     private var headerView: some View {
-        ManagerHeader(
+        ManagerHeaderWithActions(
             title: "Server",
             subtitle: "Developer tools and API reference"
-        )
+        ) {
+            if OsaurusAccount.exists() {
+                Button(action: { showingKeyGenerator = true }) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "key.fill")
+                            .font(.system(size: 11, weight: .semibold))
+                        Text("Generate Access Key")
+                            .font(.system(size: 12, weight: .semibold))
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(theme.accentColor)
+                    )
+                }
+                .buttonStyle(PlainButtonStyle())
+            }
+        }
     }
 
     // MARK: - Server Status Card
@@ -285,6 +331,260 @@ struct ServerView: View {
         )
     }
 
+    // MARK: - Access Keys Section
+
+    private var accessKeysSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Label("Access Keys", systemImage: "key.horizontal")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(theme.primaryText)
+
+            if let generatedKey {
+                generatedKeyBanner(key: generatedKey)
+            }
+
+            if accessKeys.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "lock.shield.fill")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(theme.warningColor)
+                        Text("Server is locked")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(theme.warningColor)
+                    }
+                    Text(
+                        "All API endpoints are restricted until you create an access key. Click \"Generate Access Key\" to get started."
+                    )
+                    .font(.system(size: 12))
+                    .foregroundColor(theme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(theme.warningColor.opacity(0.06))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(theme.warningColor.opacity(0.15), lineWidth: 1)
+                        )
+                )
+            } else {
+                VStack(spacing: 2) {
+                    ForEach(accessKeys) { key in
+                        accessKeyRow(key)
+                    }
+                }
+            }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(theme.secondaryBackground)
+        )
+    }
+
+    private func generatedKeyBanner(key: String) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(theme.warningColor)
+                Text("Copy this key now. It won't be shown again.")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(theme.warningColor)
+            }
+
+            HStack(spacing: 8) {
+                Text(key)
+                    .font(.system(size: 12, weight: .medium, design: .monospaced))
+                    .foregroundColor(theme.primaryText)
+                    .textSelection(.enabled)
+                    .lineLimit(1)
+
+                Spacer()
+
+                Button(action: {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(key, forType: .string)
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "doc.on.doc")
+                            .font(.system(size: 10, weight: .medium))
+                        Text("Copy")
+                            .font(.system(size: 11, weight: .medium))
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(theme.accentColor)
+                    )
+                }
+                .buttonStyle(PlainButtonStyle())
+
+                Button(action: {
+                    withAnimation { generatedKey = nil }
+                }) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(theme.secondaryText)
+                        .padding(5)
+                        .background(
+                            RoundedRectangle(cornerRadius: 4)
+                                .fill(theme.tertiaryBackground)
+                        )
+                }
+                .buttonStyle(PlainButtonStyle())
+            }
+            .padding(10)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(theme.tertiaryBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(theme.warningColor.opacity(0.3), lineWidth: 1)
+                    )
+            )
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(theme.warningColor.opacity(0.06))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(theme.warningColor.opacity(0.15), lineWidth: 1)
+                )
+        )
+    }
+
+    private func accessKeyRow(_ key: AccessKeyInfo) -> some View {
+        let inactive = !key.isActive
+        return HStack(spacing: 12) {
+            Image(systemName: "key.fill")
+                .font(.system(size: 11))
+                .foregroundColor(inactive ? theme.tertiaryText : theme.accentColor)
+                .frame(width: 20)
+
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(key.label)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(inactive ? theme.tertiaryText : theme.primaryText)
+
+                    if key.revoked {
+                        keyBadge("Revoked", color: theme.errorColor)
+                    } else if key.isExpired {
+                        keyBadge("Expired", color: theme.warningColor)
+                    } else {
+                        keyBadge("Active", color: theme.successColor)
+                    }
+
+                    if key.aud == key.iss {
+                        keyBadge("All Agents", color: theme.accentColor)
+                    }
+                }
+
+                HStack(spacing: 8) {
+                    Text(key.prefix + "...")
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundColor(theme.tertiaryText)
+
+                    Text("Created \(formattedDate(key.createdAt))")
+                        .font(.system(size: 10))
+                        .foregroundColor(theme.tertiaryText)
+
+                    if let expiresAt = key.expiresAt {
+                        Text(
+                            key.isExpired
+                                ? "Expired \(formattedDate(expiresAt))" : "Expires \(formattedDate(expiresAt))"
+                        )
+                        .font(.system(size: 10))
+                        .foregroundColor(key.isExpired ? theme.warningColor : theme.tertiaryText)
+                    }
+                }
+            }
+
+            Spacer()
+
+            if !key.revoked {
+                Button(action: {
+                    APIKeyManager.shared.revoke(id: key.id)
+                    reloadAccessKeys()
+                    restartServerForKeyChange()
+                }) {
+                    Text("Revoke")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(theme.errorColor)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(theme.errorColor.opacity(0.1))
+                        )
+                }
+                .buttonStyle(PlainButtonStyle())
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(inactive ? theme.tertiaryBackground.opacity(0.25) : theme.tertiaryBackground.opacity(0.5))
+        )
+    }
+
+    private func keyBadge(_ text: String, color: Color) -> some View {
+        Text(text)
+            .font(.system(size: 9, weight: .bold))
+            .foregroundColor(color)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(
+                Capsule().fill(color.opacity(0.12))
+            )
+    }
+
+    private func formattedDate(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        return formatter.string(from: date)
+    }
+
+    // MARK: - Access Key Actions
+
+    private func reloadAccessKeys() {
+        accessKeys = APIKeyManager.shared.listKeys().sorted { $0.createdAt > $1.createdAt }
+    }
+
+    private func generateAccessKey() {
+        let label = newKeyLabel.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !label.isEmpty else { return }
+
+        isGeneratingKey = true
+        keyGenError = nil
+
+        do {
+            let result = try APIKeyManager.shared.generate(label: label, expiration: newKeyExpiration)
+            generatedKey = result.fullKey
+            showingKeyGenerator = false
+            newKeyLabel = ""
+            reloadAccessKeys()
+            restartServerForKeyChange()
+        } catch {
+            keyGenError = error.localizedDescription
+        }
+
+        isGeneratingKey = false
+    }
+
+    private func restartServerForKeyChange() {
+        guard server.isRunning else { return }
+        Task { await server.restartServer() }
+    }
+
     // MARK: - Computed Properties
 
     private var serverURL: String {
@@ -447,6 +747,141 @@ struct ServerView: View {
                 }
             }
         }
+    }
+}
+
+// MARK: - Access Key Generator Sheet
+
+private struct AccessKeyGeneratorSheet: View {
+    let theme: ThemeProtocol
+    @Binding var label: String
+    @Binding var expiration: AccessKeyExpiration
+    @Binding var isGenerating: Bool
+    @Binding var error: String?
+    let onGenerate: () -> Void
+    let onCancel: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            VStack(spacing: 20) {
+                HStack {
+                    Text("Generate Access Key")
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundColor(theme.primaryText)
+                    Spacer()
+                    Button(action: onCancel) {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 18))
+                            .foregroundColor(theme.tertiaryText)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                }
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Label")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(theme.secondaryText)
+                    TextField("e.g. Cursor, CLI, my-app", text: $label)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 13))
+                        .padding(10)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(theme.inputBackground)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .stroke(theme.inputBorder, lineWidth: 1)
+                                )
+                        )
+                }
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Expiration")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(theme.secondaryText)
+                    HStack(spacing: 8) {
+                        ForEach(AccessKeyExpiration.allCases, id: \.rawValue) { option in
+                            Button(action: { expiration = option }) {
+                                Text(option.displayName)
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundColor(expiration == option ? .white : theme.primaryText)
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 7)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 6)
+                                            .fill(expiration == option ? theme.accentColor : theme.tertiaryBackground)
+                                    )
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                        }
+                    }
+                }
+
+                if let error {
+                    Text(error)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(theme.errorColor)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(theme.errorColor.opacity(0.1))
+                        )
+                }
+
+                HStack(spacing: 12) {
+                    Button(action: onCancel) {
+                        Text("Cancel")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundColor(theme.primaryText)
+                            .padding(.horizontal, 20)
+                            .padding(.vertical, 9)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(theme.tertiaryBackground)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 8)
+                                            .stroke(theme.inputBorder, lineWidth: 1)
+                                    )
+                            )
+                    }
+                    .buttonStyle(PlainButtonStyle())
+
+                    Button(action: onGenerate) {
+                        HStack(spacing: 6) {
+                            if isGenerating {
+                                ProgressView()
+                                    .scaleEffect(0.6)
+                                    .frame(width: 14, height: 14)
+                            } else {
+                                Image(systemName: "key.fill")
+                                    .font(.system(size: 11, weight: .semibold))
+                            }
+                            Text("Generate")
+                                .font(.system(size: 13, weight: .semibold))
+                        }
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 9)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(
+                                    label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                        ? theme.accentColor.opacity(0.4)
+                                        : theme.accentColor
+                                )
+                        )
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .disabled(label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isGenerating)
+                }
+                .frame(maxWidth: .infinity, alignment: .trailing)
+            }
+            .padding(24)
+        }
+        .frame(width: 420)
+        .background(theme.primaryBackground)
     }
 }
 

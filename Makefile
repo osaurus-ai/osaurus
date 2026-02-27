@@ -8,7 +8,7 @@ CONFIG := Release
 PROJECT := App/osaurus.xcodeproj
 DERIVED := build/DerivedData
 
-.PHONY: help cli app install-cli serve status clean bench-setup bench-ingest bench-ingest-chunks bench-run bench
+.PHONY: help cli app install-cli serve status test clean bench-setup bench-ingest bench-ingest-chunks bench-run bench
 
 help:
 	@echo "Targets:"
@@ -22,6 +22,7 @@ help:
 	@echo "  bench-ingest-chunks Fast chunk-only backfill (no LLM, ~minutes)"
 	@echo "  bench-run           Run LOCOMO benchmark only (skip ingestion)"
 	@echo "  bench               Full ingest + run LOCOMO benchmark"
+	@echo "  test           Run OsaurusCore package tests"
 	@echo "  clean          Remove DerivedData build output"
 
 cli:
@@ -53,6 +54,10 @@ serve: install-cli
 
 status:
 	osaurus status
+
+test:
+	@echo "Running OsaurusCore tests…"
+	swift test --package-path Packages/OsaurusCore
 
 ## ── LOCOMO Benchmark ──────────────────────────────────────────────
 
