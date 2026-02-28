@@ -164,6 +164,13 @@ func signAccessPayload(_ payload: Data, privateKey: Data) throws -> Data {
     try signWithPrefix(payload, privateKey: privateKey, prefix: "Osaurus Signed Access")
 }
 
+/// EIP-191 personal_sign compatible signing.
+/// Produces `\x19Ethereum Signed Message:\n<len><message>` hash + secp256k1 recoverable signature.
+func signEIP191Message(_ message: String, privateKey: Data) throws -> Data {
+    let payload = Data(message.utf8)
+    return try signWithPrefix(payload, privateKey: privateKey, prefix: "Ethereum Signed Message")
+}
+
 // MARK: - Address Recovery (ecrecover)
 
 /// Recover the signer's Osaurus address from a payload and its 65-byte recoverable signature.

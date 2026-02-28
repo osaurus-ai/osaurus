@@ -145,6 +145,7 @@ public enum OsaurusPaths {
     public static func workDatabaseFile() -> URL { workData().appendingPathComponent("work.db") }
     public static func memoryDatabaseFile() -> URL { memory().appendingPathComponent("memory.sqlite") }
     public static func memoryConfigFile() -> URL { config().appendingPathComponent("memory.json") }
+    public static func relayConfigFile() -> URL { config().appendingPathComponent("relay.json") }
 
     // MARK: - File Path Helpers
 

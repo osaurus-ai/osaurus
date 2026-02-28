@@ -31,6 +31,12 @@ struct ServerView: View {
     @State private var keyGenError: String?
     @State private var copiedKeyId: UUID?
 
+    @ObservedObject private var relayManager = RelayTunnelManager.shared
+    @ObservedObject private var agentManager = AgentManager.shared
+    @State private var showRelayConfirmation = false
+    @State private var pendingRelayAgentId: UUID?
+    @State private var copiedRelayURL: UUID?
+
     var body: some View {
         VStack(spacing: 0) {
             // Header
@@ -46,6 +52,8 @@ struct ServerView: View {
                     serverStatusCard
 
                     accessKeysSection
+
+                    relaysSection
 
                     // API Endpoints Section
                     endpointsSection
@@ -75,6 +83,21 @@ struct ServerView: View {
                     newKeyLabel = ""
                     keyGenError = nil
                 }
+            )
+        }
+        .alert("Expose Agent to Internet?", isPresented: $showRelayConfirmation) {
+            Button("Enable Tunnel", role: .destructive) {
+                if let id = pendingRelayAgentId {
+                    relayManager.setTunnelEnabled(true, for: id)
+                }
+                pendingRelayAgentId = nil
+            }
+            Button("Cancel", role: .cancel) {
+                pendingRelayAgentId = nil
+            }
+        } message: {
+            Text(
+                "This will create a public URL for this agent via agent.osaurus.ai. Anyone with the URL can send requests to your local server. Your access keys still protect the API endpoints."
             )
         }
         .onAppear {
@@ -175,6 +198,179 @@ struct ServerView: View {
             RoundedRectangle(cornerRadius: 12)
                 .fill(theme.secondaryBackground)
         )
+    }
+
+    // MARK: - Relays Section
+
+    private var relaysSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Label("Relays", systemImage: "globe")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(theme.primaryText)
+
+            Text("Expose agents to the public internet via relay tunnels.")
+                .font(.system(size: 12))
+                .foregroundColor(theme.secondaryText)
+
+            let agents = agentManager.agents
+
+            if agents.isEmpty {
+                HStack(spacing: 8) {
+                    Image(systemName: "person.crop.circle.badge.questionmark")
+                        .font(.system(size: 14))
+                        .foregroundColor(theme.tertiaryText)
+                    Text("No agents configured. Create an agent first.")
+                        .font(.system(size: 12))
+                        .foregroundColor(theme.tertiaryText)
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(theme.tertiaryBackground.opacity(0.5))
+                )
+            } else {
+                VStack(spacing: 2) {
+                    ForEach(agents) { agent in
+                        relayAgentRow(agent)
+                    }
+                }
+            }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(theme.secondaryBackground)
+        )
+    }
+
+    private func relayAgentRow(_ agent: Agent) -> some View {
+        let hasIdentity = agent.agentAddress != nil && agent.agentIndex != nil
+        let status = relayManager.agentStatuses[agent.id] ?? .disconnected
+        let isEnabled = relayManager.isTunnelEnabled(for: agent.id)
+
+        return HStack(spacing: 12) {
+            // Status dot
+            relayStatusDot(status)
+                .frame(width: 20)
+
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(agent.name)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(theme.primaryText)
+
+                    if agent.isBuiltIn {
+                        Text("Built-in")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundColor(theme.tertiaryText)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Capsule().fill(theme.tertiaryText.opacity(0.12)))
+                    }
+                }
+
+                if let address = agent.agentAddress {
+                    let truncated = String(address.prefix(8)) + "..." + String(address.suffix(4))
+                    Text(truncated)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundColor(theme.tertiaryText)
+                } else {
+                    Text("No identity set up")
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.warningColor)
+                }
+
+                if case .connected(let url) = status {
+                    HStack(spacing: 4) {
+                        Text(url)
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundColor(theme.accentColor)
+                            .lineLimit(1)
+
+                        Button(action: {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(url, forType: .string)
+                            copiedRelayURL = agent.id
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                                if copiedRelayURL == agent.id { copiedRelayURL = nil }
+                            }
+                        }) {
+                            Image(systemName: copiedRelayURL == agent.id ? "checkmark" : "doc.on.doc")
+                                .font(.system(size: 9, weight: .medium))
+                                .foregroundColor(copiedRelayURL == agent.id ? theme.successColor : theme.tertiaryText)
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        .help("Copy relay URL")
+                    }
+                }
+
+                if case .error(let msg) = status {
+                    Text(msg)
+                        .font(.system(size: 10))
+                        .foregroundColor(theme.errorColor)
+                }
+            }
+
+            Spacer()
+
+            if hasIdentity {
+                Toggle(
+                    "",
+                    isOn: Binding(
+                        get: { isEnabled },
+                        set: { newValue in
+                            if newValue {
+                                pendingRelayAgentId = agent.id
+                                showRelayConfirmation = true
+                            } else {
+                                relayManager.setTunnelEnabled(false, for: agent.id)
+                            }
+                        }
+                    )
+                )
+                .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
+                .labelsHidden()
+            } else {
+                Text("Identity →")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(theme.tertiaryText)
+                    .help("Set up this agent's identity in the Identity tab")
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(theme.tertiaryBackground.opacity(0.5))
+        )
+    }
+
+    @ViewBuilder
+    private func relayStatusDot(_ status: AgentRelayStatus) -> some View {
+        switch status {
+        case .disconnected:
+            Circle()
+                .fill(theme.tertiaryText.opacity(0.4))
+                .frame(width: 8, height: 8)
+        case .connecting:
+            Circle()
+                .fill(theme.warningColor)
+                .frame(width: 8, height: 8)
+                .overlay(
+                    Circle()
+                        .fill(theme.warningColor.opacity(0.3))
+                        .frame(width: 16, height: 16)
+                )
+        case .connected:
+            Circle()
+                .fill(theme.successColor)
+                .frame(width: 8, height: 8)
+        case .error:
+            Circle()
+                .fill(theme.errorColor)
+                .frame(width: 8, height: 8)
+        }
     }
 
     // MARK: - Endpoints Section

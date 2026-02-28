@@ -117,6 +117,8 @@ final class ServerController: ObservableObject {
             serverHealth = .running
             lastErrorMessage = nil
             print("[Osaurus] NIO server started successfully on port \(configuration.port)")
+
+            RelayTunnelManager.shared.reconnectIfNeeded(port: configuration.port)
         } catch {
             handleServerError(error)
             await cleanupRuntime()
@@ -141,6 +143,7 @@ final class ServerController: ObservableObject {
         if !isRestarting { serverHealth = .stopping }
         print("[Osaurus] Stopping NIO server...")
 
+        RelayTunnelManager.shared.disconnectAll()
         isRunning = false
 
         // Stop the actor-backed server if present
@@ -161,6 +164,7 @@ final class ServerController: ObservableObject {
         guard serverActor != nil || serverChannel != nil || eventLoopGroup != nil else { return }
 
         print("[Osaurus] Ensuring NIO server shutdown before app termination")
+        RelayTunnelManager.shared.disconnectAll()
         isRunning = false
         serverHealth = .stopping
 
