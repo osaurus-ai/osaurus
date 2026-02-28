@@ -24,6 +24,11 @@ Created by Dinoki Labs ([dinoki.ai](https://dinoki.ai))
 
 **[Documentation](https://docs.osaurus.ai/)** · **[Discord](https://discord.gg/dinoki)** · **[Plugin Registry](https://github.com/osaurus-ai/osaurus-tools)** · **[Contributing](docs/CONTRIBUTING.md)**
 
+> [!NOTE]
+> **Community Call #1** — Join us to talk about where Osaurus is at and where it's going. Come share your ideas and help shape the future together.
+>
+> **[RSVP on Luma](https://luma.com/fh22w82b)**
+
 ---
 
 ## Install
