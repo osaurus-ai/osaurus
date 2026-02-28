@@ -64,6 +64,8 @@ public final class RelayTunnelManager: ObservableObject {
     private var authenticatedAgents: Set<String> = []
     /// O(1) lookup from lowercased agent address to agent UUID, built at auth time.
     private var addressToAgentId: [String: UUID] = [:]
+    /// Set before expecting a `challenge` frame; consumed when the nonce arrives.
+    private var pendingNonceHandler: ((String) -> Void)?
 
     private init() {
         configuration = RelayConfigurationStore.load()
@@ -123,6 +125,7 @@ public final class RelayTunnelManager: ObservableObject {
         isConnected = false
         authenticatedAgents.removeAll()
         addressToAgentId.removeAll()
+        pendingNonceHandler = nil
         for id in agentStatuses.keys {
             agentStatuses[id] = .disconnected
         }
@@ -154,37 +157,10 @@ public final class RelayTunnelManager: ObservableObject {
             return
         }
 
-        guard OsaurusIdentity.exists() else {
+        guard let masterKey = obtainMasterKey() else {
             for agent in agents { agentStatuses[agent.id] = .error("No identity") }
             return
         }
-
-        let context = OsaurusIdentityContext.biometric()
-        let masterKey: Data
-        do {
-            masterKey = try MasterKey.getPrivateKey(context: context)
-        } catch {
-            for agent in agents { agentStatuses[agent.id] = .error("Auth failed") }
-            return
-        }
-
-        let timestamp = Int(Date().timeIntervalSince1970)
-        var authAgents: [[String: Any]] = []
-
-        for agent in agents {
-            guard let index = agent.agentIndex, let address = agent.agentAddress else { continue }
-            let message = "osaurus-tunnel:\(address):\(timestamp)"
-            do {
-                let childKey = AgentKey.derive(masterKey: masterKey, index: index)
-                let sig = try signEIP191Message(message, privateKey: childKey)
-                let sigHex = "0x" + sig.hexEncodedString
-                authAgents.append(["address": address, "signature": sigHex])
-            } catch {
-                agentStatuses[agent.id] = .error("Signing failed")
-            }
-        }
-
-        guard !authAgents.isEmpty else { return }
 
         let session = URLSession(configuration: .default)
         let task = session.webSocketTask(with: Self.relayURL)
@@ -192,18 +168,35 @@ public final class RelayTunnelManager: ObservableObject {
         self.webSocketTask = task
         task.resume()
 
-        let authFrame: [String: Any] = [
-            "type": "auth",
-            "agents": authAgents,
-            "timestamp": timestamp,
-        ]
+        pendingNonceHandler = { [weak self] nonce in
+            guard let self else { return }
+            let timestamp = Int(Date().timeIntervalSince1970)
+            var authAgents: [[String: Any]] = []
 
-        do {
-            let data = try JSONSerialization.data(withJSONObject: authFrame)
-            try await task.send(.string(String(data: data, encoding: .utf8)!))
-        } catch {
-            handleDisconnect()
-            return
+            for agent in agents {
+                guard let index = agent.agentIndex, let address = agent.agentAddress else { continue }
+                do {
+                    let sigHex = try Self.signAgentAuth(
+                        address: address,
+                        nonce: nonce,
+                        timestamp: timestamp,
+                        masterKey: masterKey,
+                        agentIndex: index
+                    )
+                    authAgents.append(["address": address, "signature": sigHex])
+                } catch {
+                    self.agentStatuses[agent.id] = .error("Signing failed")
+                }
+            }
+
+            guard !authAgents.isEmpty else { return }
+
+            self.sendJSON([
+                "type": "auth",
+                "agents": authAgents,
+                "nonce": nonce,
+                "timestamp": timestamp,
+            ])
         }
 
         startReceiving()
@@ -236,6 +229,8 @@ public final class RelayTunnelManager: ObservableObject {
         else { return }
 
         switch type {
+        case "challenge":
+            handleChallenge(json)
         case "auth_ok":
             handleAuthOk(json)
         case "auth_error":
@@ -254,6 +249,13 @@ public final class RelayTunnelManager: ObservableObject {
         default:
             break
         }
+    }
+
+    private func handleChallenge(_ json: [String: Any]) {
+        guard let nonce = json["nonce"] as? String else { return }
+        let handler = pendingNonceHandler
+        pendingNonceHandler = nil
+        handler?(nonce)
     }
 
     private func handleAuthOk(_ json: [String: Any]) {
@@ -289,6 +291,7 @@ public final class RelayTunnelManager: ObservableObject {
         isConnected = false
         authenticatedAgents.removeAll()
         addressToAgentId.removeAll()
+        pendingNonceHandler = nil
     }
 
     private func handleAgentAdded(_ json: [String: Any]) {
@@ -424,37 +427,35 @@ public final class RelayTunnelManager: ObservableObject {
             return
         }
 
-        guard OsaurusIdentity.exists() else {
+        guard let masterKey = obtainMasterKey() else {
             agentStatuses[agentId] = .error("No identity")
             return
         }
 
-        let context = OsaurusIdentityContext.biometric()
-        let masterKey: Data
-        do {
-            masterKey = try MasterKey.getPrivateKey(context: context)
-        } catch {
-            agentStatuses[agentId] = .error("Auth failed")
-            return
+        pendingNonceHandler = { [weak self] nonce in
+            guard let self else { return }
+            let timestamp = Int(Date().timeIntervalSince1970)
+            do {
+                let sigHex = try Self.signAgentAuth(
+                    address: address,
+                    nonce: nonce,
+                    timestamp: timestamp,
+                    masterKey: masterKey,
+                    agentIndex: index
+                )
+                self.sendJSON([
+                    "type": "add_agent",
+                    "address": address,
+                    "signature": sigHex,
+                    "nonce": nonce,
+                    "timestamp": timestamp,
+                ])
+            } catch {
+                self.agentStatuses[agentId] = .error("Signing failed")
+            }
         }
 
-        let timestamp = Int(Date().timeIntervalSince1970)
-        let message = "osaurus-tunnel:\(address):\(timestamp)"
-        do {
-            let childKey = AgentKey.derive(masterKey: masterKey, index: index)
-            let sig = try signEIP191Message(message, privateKey: childKey)
-            let sigHex = "0x" + sig.hexEncodedString
-
-            let frame: [String: Any] = [
-                "type": "add_agent",
-                "address": address,
-                "signature": sigHex,
-                "timestamp": timestamp,
-            ]
-            sendJSON(frame)
-        } catch {
-            agentStatuses[agentId] = .error("Signing failed")
-        }
+        sendJSON(["type": "request_challenge"])
     }
 
     private func removeAgentFromTunnel(agentId: UUID) {
@@ -481,6 +482,7 @@ public final class RelayTunnelManager: ObservableObject {
         urlSession = nil
         authenticatedAgents.removeAll()
         addressToAgentId.removeAll()
+        pendingNonceHandler = nil
 
         for id in configuration.enabledAgentIds {
             if agentStatuses[id] != .disconnected {
@@ -502,6 +504,25 @@ public final class RelayTunnelManager: ObservableObject {
     }
 
     // MARK: - Helpers
+
+    private func obtainMasterKey() -> Data? {
+        guard OsaurusIdentity.exists() else { return nil }
+        let context = OsaurusIdentityContext.biometric()
+        return try? MasterKey.getPrivateKey(context: context)
+    }
+
+    private static func signAgentAuth(
+        address: String,
+        nonce: String,
+        timestamp: Int,
+        masterKey: Data,
+        agentIndex: UInt32
+    ) throws -> String {
+        let message = "osaurus-tunnel:\(address):\(nonce):\(timestamp)"
+        let childKey = AgentKey.derive(masterKey: masterKey, index: agentIndex)
+        let sig = try signEIP191Message(message, privateKey: childKey)
+        return "0x" + sig.hexEncodedString
+    }
 
     private func sendJSON(_ object: [String: Any]) {
         guard let data = try? JSONSerialization.data(withJSONObject: object),
