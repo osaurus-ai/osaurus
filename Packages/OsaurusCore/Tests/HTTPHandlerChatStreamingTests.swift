@@ -19,13 +19,13 @@ struct HTTPHandlerChatStreamingTests {
         )
         defer { Task { await server.shutdown() } }
 
-        // Build request to SSE endpoint
         var request = URLRequest(
             url: URL(string: "http://\(server.host):\(server.port)/chat/completions")!
         )
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        request.authenticate()
         let reqBody = ChatCompletionRequest(
             model: "fake",
             messages: [ChatMessage(role: "user", content: "hi")],
@@ -63,6 +63,7 @@ struct HTTPHandlerChatStreamingTests {
         var request = URLRequest(url: URL(string: "http://\(server.host):\(server.port)/chat")!)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.authenticate()
         let reqBody = ChatCompletionRequest(
             model: "fake",
             messages: [ChatMessage(role: "user", content: "hi")],
@@ -116,6 +117,7 @@ struct HTTPHandlerChatStreamingTests {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        request.authenticate()
         let reqBody = ChatCompletionRequest(
             model: "fake",
             messages: [ChatMessage(role: "user", content: "hi")],
@@ -177,7 +179,12 @@ private func startTestServer(with engine: ChatEngineProtocol) async throws -> Te
         .childChannelInitializer { channel in
             channel.pipeline.configureHTTPServerPipeline().flatMap {
                 channel.pipeline.addHandler(
-                    HTTPHandler(configuration: .testDefault, eventLoop: channel.eventLoop, chatEngine: engine)
+                    HTTPHandler(
+                        configuration: .default,
+                        apiKeyValidator: TestAuth.validator,
+                        eventLoop: channel.eventLoop,
+                        chatEngine: engine
+                    )
                 )
             }
         }

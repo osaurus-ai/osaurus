@@ -103,7 +103,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
             // Access key authentication gate (all data snapshotted at server start, zero locks)
             let publicPaths: Set<String> = ["/", "/health"]
-            if configuration.requireAPIKey && !publicPaths.contains(path) {
+            if !publicPaths.contains(path) {
                 let authHeader = head.headers.first(name: "Authorization") ?? ""
                 let token =
                     authHeader.hasPrefix("Bearer ")

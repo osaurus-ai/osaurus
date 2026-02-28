@@ -175,21 +175,6 @@ struct HTTPAuthGateTests {
         #expect(status == 401)
         #expect(body.contains("Invalid access key"))
     }
-
-    // MARK: - requireAPIKey=false Bypasses Gate
-
-    @Test func requireAPIKeyFalse_protectedPath_noToken_returns200() async throws {
-        let server = try await startAuthTestServer(
-            validator: .empty,
-            requireAPIKey: false
-        )
-        defer { Task { await server.shutdown() } }
-
-        let (_, resp) = try await URLSession.shared.data(
-            from: URL(string: "http://\(server.host):\(server.port)/v1/models")!
-        )
-        #expect((resp as? HTTPURLResponse)?.statusCode == 200)
-    }
 }
 
 // MARK: - Test Server Bootstrap
@@ -209,11 +194,9 @@ private struct AuthTestServer {
 }
 
 private func startAuthTestServer(
-    validator: APIKeyValidator,
-    requireAPIKey: Bool = true
+    validator: APIKeyValidator
 ) async throws -> AuthTestServer {
-    var config = ServerConfiguration.default
-    config.requireAPIKey = requireAPIKey
+    let config = ServerConfiguration.default
 
     let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
     let bootstrap = ServerBootstrap(group: group)
