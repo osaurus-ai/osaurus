@@ -55,6 +55,7 @@ Osaurus is the AI edge runtime for macOS. It brings together:
 - **Plugin System** — Extend functionality with community and custom tools
 - **Agents** — Create custom AI assistants with unique prompts, tools, and visual themes
 - **Identity** — Cryptographic identity system for humans and agents with address-based authentication
+- **Relay** — Expose agents to the public internet via secure tunnels through `agent.osaurus.ai`
 - **Memory** — 4-layer memory system that learns from conversations with profile, working memory, summaries, and knowledge graph
 - **Skills** — Import reusable AI capabilities from GitHub or files ([Agent Skills](https://agentskills.io/) compatible)
 - **Schedules** — Automate recurring AI tasks with timed execution
@@ -82,6 +83,7 @@ Osaurus is the AI edge runtime for macOS. It brings together:
 | **Skills**               | Import AI capabilities from GitHub or files, with smart context saving  |
 | **Agents**               | Custom AI assistants with unique prompts, tools, and themes             |
 | **Identity**             | Cryptographic addresses for humans, agents, and devices                 |
+| **Relay**                | Public tunnels for agents via `agent.osaurus.ai` with EIP-191 auth     |
 | **Memory**               | Persistent memory with user profile, knowledge graph, and hybrid search |
 | **Schedules**            | Automate AI tasks with daily, weekly, monthly, or yearly runs           |
 | **Watchers**             | Monitor folders and trigger AI tasks on file system changes             |
@@ -254,6 +256,36 @@ Every participant in Osaurus — human, agent, and device — gets a cryptograph
 Access via Management window (`⌘ Shift M`) → **Identity**.
 
 See [Identity Documentation](docs/IDENTITY.md) for the full theory, architecture, and implementation reference.
+
+### Relay
+
+Expose your agents to the public internet via secure WebSocket tunnels through `agent.osaurus.ai`. Each agent gets a unique public URL based on its cryptographic address — no port forwarding, no ngrok, no configuration.
+
+**How it works:**
+
+1. Enable a tunnel for an agent in the Server tab → Relays section
+2. Osaurus authenticates with the relay service using the agent's EIP-191 signature
+3. The agent gets a public URL: `https://0x<agent-address>.agent.osaurus.ai`
+4. Incoming requests are forwarded to your local server over the WebSocket tunnel
+5. Your access keys still protect all API endpoints
+
+**Features:**
+
+- **Per-Agent Tunnels** — Enable or disable tunneling independently for each agent
+- **Persistent Settings** — Tunnel configuration survives app restarts; tunnels auto-reconnect when the server starts
+- **Concurrent Multiplexing** — Multiple requests are proxied concurrently off the main thread
+- **Auto-Reconnect** — Exponential backoff reconnection on network interruptions
+- **Identity-Based Routing** — The relay uses the agent's crypto address for routing; the local server receives the correct agent UUID for memory context injection
+- **Confirmation Dialog** — Enabling a tunnel requires explicit confirmation that the agent will be publicly accessible
+
+**Use Cases:**
+
+- Share an agent with teammates without exposing your local network
+- Connect remote MCP clients or mobile apps to your local Osaurus instance
+- Demo agents publicly from your development machine
+- Receive webhooks and callbacks to a locally running agent
+
+Access via Management window (`⌘ Shift M`) → **Server** → **Relays**.
 
 ### Memory
 
