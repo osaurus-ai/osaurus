@@ -19,9 +19,9 @@ struct MCPHTTPHandlerTests {
         let server = try await startTestServer()
         defer { Task { await server.shutdown() } }
 
-        let (data, resp) = try await URLSession.shared.data(
-            from: URL(string: "http://\(server.host):\(server.port)/mcp/health")!
-        )
+        var request = URLRequest(url: URL(string: "http://\(server.host):\(server.port)/mcp/health")!)
+        request.authenticate()
+        let (data, resp) = try await URLSession.shared.data(for: request)
         let status = (resp as? HTTPURLResponse)?.statusCode ?? -1
         let body = String(decoding: data, as: UTF8.self)
         #expect(status == 200)
@@ -46,9 +46,9 @@ struct MCPHTTPHandlerTests {
         let server = try await startTestServer()
         defer { Task { await server.shutdown() } }
 
-        let (data, resp) = try await URLSession.shared.data(
-            from: URL(string: "http://\(server.host):\(server.port)/mcp/tools")!
-        )
+        var toolsRequest = URLRequest(url: URL(string: "http://\(server.host):\(server.port)/mcp/tools")!)
+        toolsRequest.authenticate()
+        let (data, resp) = try await URLSession.shared.data(for: toolsRequest)
         let status = (resp as? HTTPURLResponse)?.statusCode ?? -1
         #expect(status == 200)
         let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
@@ -82,6 +82,7 @@ struct MCPHTTPHandlerTests {
         var request = URLRequest(url: URL(string: "http://\(server.host):\(server.port)/mcp/call")!)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.authenticate()
         let bodyObj: [String: Any] = [
             "name": EchoTool.nameStatic,
             "arguments": ["text": "hello"],
@@ -121,6 +122,7 @@ struct MCPHTTPHandlerTests {
         var request = URLRequest(url: URL(string: "http://\(server.host):\(server.port)/mcp/call")!)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.authenticate()
         let bodyObj: [String: Any] = [
             "name": EchoTool.nameStatic,
             "arguments": [:],
@@ -177,7 +179,11 @@ private func startTestServer() async throws -> TestServer {
         .childChannelInitializer { channel in
             channel.pipeline.configureHTTPServerPipeline().flatMap {
                 channel.pipeline.addHandler(
-                    HTTPHandler(configuration: .testDefault, eventLoop: channel.eventLoop)
+                    HTTPHandler(
+                        configuration: .default,
+                        apiKeyValidator: TestAuth.validator,
+                        eventLoop: channel.eventLoop
+                    )
                 )
             }
         }

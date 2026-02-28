@@ -71,14 +71,23 @@ enum TokenBuilder {
     }
 }
 
-// MARK: - Test Server Configuration
+// MARK: - Test Auth Helpers
 
-extension ServerConfiguration {
-    /// A `.default` config with `requireAPIKey` disabled, for tests that aren't exercising auth.
-    static var testDefault: ServerConfiguration {
-        var cfg = ServerConfiguration.default
-        cfg.requireAPIKey = false
-        return cfg
+enum TestAuth {
+    static var validator: APIKeyValidator { .forAlice() }
+
+    static var bearerToken: String {
+        try! TokenBuilder.build(
+            privateKey: TestKeys.alicePrivateKey,
+            iss: TestKeys.aliceAddress,
+            aud: TestKeys.aliceAddress
+        )
+    }
+}
+
+extension URLRequest {
+    mutating func authenticate() {
+        setValue("Bearer \(TestAuth.bearerToken)", forHTTPHeaderField: "Authorization")
     }
 }
 
