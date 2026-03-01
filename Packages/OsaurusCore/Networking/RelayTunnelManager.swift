@@ -38,6 +38,24 @@ private struct RelayResponseFrame: Encodable {
     let body: String
 }
 
+private struct RelayStreamStartFrame: Encodable {
+    let type = "stream_start"
+    let id: String
+    let status: Int
+    let headers: [String: String]
+}
+
+private struct RelayStreamChunkFrame: Encodable {
+    let type = "stream_chunk"
+    let id: String
+    let data: String
+}
+
+private struct RelayStreamEndFrame: Encodable {
+    let type = "stream_end"
+    let id: String
+}
+
 // MARK: - Relay Tunnel Manager
 
 @MainActor
@@ -334,10 +352,7 @@ public final class RelayTunnelManager: ObservableObject {
         let ws = webSocketTask
 
         Task.detached(priority: .userInitiated) {
-            guard let responseStr = await Self.proxyRequest(frame, localPort: port, agentUUID: agentUUID) else {
-                return
-            }
-            ws?.send(.string(responseStr)) { _ in }
+            await Self.proxyRequest(frame, localPort: port, agentUUID: agentUUID, webSocket: ws)
         }
     }
 
@@ -348,27 +363,59 @@ public final class RelayTunnelManager: ObservableObject {
         return uuid.uuidString
     }
 
-    /// Proxy a relay request frame to the local Osaurus server and produce the JSON response string.
-    /// Runs entirely off @MainActor -- no instance state is accessed.
+    /// Proxy a relay request frame to the local Osaurus server and send result frames
+    /// through the WebSocket. Detects streaming responses (SSE / NDJSON) and uses the
+    /// relay streaming protocol (stream_start / stream_chunk / stream_end) so chunks
+    /// are forwarded incrementally instead of buffered.
     private static func proxyRequest(
         _ frame: RelayRequestFrame,
         localPort: Int,
-        agentUUID: String?
-    ) async -> String? {
-        guard let localURL = URL(string: "http://127.0.0.1:\(localPort)\(frame.path)") else {
-            return encodeResponse(
-                RelayResponseFrame(
-                    id: frame.id,
-                    status: 502,
-                    headers: ["content-type": "application/json"],
-                    body: "{\"error\":\"invalid_path\"}"
-                )
-            )
+        agentUUID: String?,
+        webSocket: URLSessionWebSocketTask?
+    ) async {
+        guard let request = buildLocalRequest(from: frame, localPort: localPort, agentUUID: agentUUID) else {
+            sendErrorResponse(id: frame.id, error: "invalid_path", via: webSocket)
+            return
         }
 
-        var request = URLRequest(url: localURL)
-        request.httpMethod = frame.method
+        do {
+            let (bytes, response) = try await URLSession.shared.bytes(for: request)
+            let httpResponse = response as? HTTPURLResponse
+            let status = httpResponse?.statusCode ?? 502
+            let headers = flattenHeaders(httpResponse?.allHeaderFields)
+            let contentType = headers["content-type"] ?? ""
 
+            if contentType.contains("text/event-stream") || contentType.contains("application/x-ndjson") {
+                await relayStreamingResponse(
+                    id: frame.id,
+                    status: status,
+                    headers: headers,
+                    contentType: contentType,
+                    bytes: bytes,
+                    via: webSocket
+                )
+            } else {
+                await relayBufferedResponse(
+                    id: frame.id,
+                    status: status,
+                    headers: headers,
+                    bytes: bytes,
+                    via: webSocket
+                )
+            }
+        } catch {
+            sendErrorResponse(id: frame.id, error: "local_server_error", via: webSocket)
+        }
+    }
+
+    private static func buildLocalRequest(
+        from frame: RelayRequestFrame,
+        localPort: Int,
+        agentUUID: String?
+    ) -> URLRequest? {
+        guard let url = URL(string: "http://127.0.0.1:\(localPort)\(frame.path)") else { return nil }
+        var request = URLRequest(url: url)
+        request.httpMethod = frame.method
         for (key, value) in frame.headers {
             request.setValue(value, forHTTPHeaderField: key)
         }
@@ -378,42 +425,101 @@ public final class RelayTunnelManager: ObservableObject {
         if let body = frame.body, !body.isEmpty {
             request.httpBody = body.data(using: .utf8)
         }
-
-        do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            let httpResponse = response as? HTTPURLResponse
-            let status = httpResponse?.statusCode ?? 502
-
-            var responseHeaders: [String: String] = [:]
-            if let allHeaders = httpResponse?.allHeaderFields {
-                for (key, value) in allHeaders {
-                    responseHeaders[String(describing: key).lowercased()] = String(describing: value)
-                }
-            }
-
-            return encodeResponse(
-                RelayResponseFrame(
-                    id: frame.id,
-                    status: status,
-                    headers: responseHeaders,
-                    body: String(data: data, encoding: .utf8) ?? ""
-                )
-            )
-        } catch {
-            return encodeResponse(
-                RelayResponseFrame(
-                    id: frame.id,
-                    status: 502,
-                    headers: ["content-type": "application/json"],
-                    body: "{\"error\":\"local_server_error\"}"
-                )
-            )
-        }
+        return request
     }
 
-    private static func encodeResponse(_ frame: RelayResponseFrame) -> String? {
-        guard let data = try? JSONEncoder().encode(frame) else { return nil }
-        return String(data: data, encoding: .utf8)
+    private static func flattenHeaders(_ allHeaders: [AnyHashable: Any]?) -> [String: String] {
+        guard let allHeaders else { return [:] }
+        var result: [String: String] = [:]
+        for (key, value) in allHeaders {
+            result[String(describing: key).lowercased()] = String(describing: value)
+        }
+        return result
+    }
+
+    private static func relayStreamingResponse(
+        id: String,
+        status: Int,
+        headers: [String: String],
+        contentType: String,
+        bytes: URLSession.AsyncBytes,
+        via webSocket: URLSessionWebSocketTask?
+    ) async {
+        sendFrame(RelayStreamStartFrame(id: id, status: status, headers: headers), via: webSocket)
+
+        let isSSE = contentType.contains("text/event-stream")
+        var eventBuffer = ""
+
+        do {
+            for try await line in bytes.lines {
+                if isSSE {
+                    if line.isEmpty && !eventBuffer.isEmpty {
+                        sendFrame(
+                            RelayStreamChunkFrame(id: id, data: eventBuffer + "\n"),
+                            via: webSocket
+                        )
+                        eventBuffer = ""
+                    } else if !line.isEmpty {
+                        eventBuffer += line + "\n"
+                    }
+                } else if !line.isEmpty {
+                    sendFrame(RelayStreamChunkFrame(id: id, data: line + "\n"), via: webSocket)
+                }
+            }
+        } catch {
+            // Stream interrupted — flush what we have and close cleanly
+        }
+
+        if !eventBuffer.isEmpty {
+            sendFrame(RelayStreamChunkFrame(id: id, data: eventBuffer), via: webSocket)
+        }
+
+        sendFrame(RelayStreamEndFrame(id: id), via: webSocket)
+    }
+
+    private static func relayBufferedResponse(
+        id: String,
+        status: Int,
+        headers: [String: String],
+        bytes: URLSession.AsyncBytes,
+        via webSocket: URLSessionWebSocketTask?
+    ) async {
+        var allData = Data()
+        do {
+            for try await byte in bytes {
+                allData.append(byte)
+            }
+        } catch {
+            // Partial read — send whatever we collected
+        }
+        sendFrame(
+            RelayResponseFrame(
+                id: id,
+                status: status,
+                headers: headers,
+                body: String(data: allData, encoding: .utf8) ?? ""
+            ),
+            via: webSocket
+        )
+    }
+
+    private static func sendErrorResponse(id: String, error: String, via webSocket: URLSessionWebSocketTask?) {
+        sendFrame(
+            RelayResponseFrame(
+                id: id,
+                status: 502,
+                headers: ["content-type": "application/json"],
+                body: "{\"error\":\"\(error)\"}"
+            ),
+            via: webSocket
+        )
+    }
+
+    private static func sendFrame<T: Encodable>(_ frame: T, via webSocket: URLSessionWebSocketTask?) {
+        guard let data = try? JSONEncoder().encode(frame),
+            let str = String(data: data, encoding: .utf8)
+        else { return }
+        webSocket?.send(.string(str)) { _ in }
     }
 
     // MARK: - Mid-Session Agent Management
