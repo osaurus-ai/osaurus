@@ -754,6 +754,55 @@ private struct InstalledPluginCard: View {
                         .transition(.opacity.combined(with: .move(edge: .top)))
                 }
             }
+
+            // Plugin config UI (rendered from manifest config spec)
+            if isExpanded && !plugin.hasLoadError {
+                if let loaded = PluginManager.shared.plugins.first(where: { $0.plugin.id == plugin.pluginId }),
+                    let configSpec = loaded.plugin.manifest.capabilities.config
+                {
+                    Divider()
+                        .padding(.vertical, 4)
+
+                    PluginConfigView(
+                        pluginId: plugin.pluginId,
+                        configSpec: configSpec,
+                        plugin: loaded.plugin
+                    )
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+                }
+            }
+
+            // Routes summary
+            if isExpanded && !plugin.hasLoadError {
+                if let loaded = PluginManager.shared.loadedPlugin(for: plugin.pluginId),
+                    !loaded.routes.isEmpty
+                {
+                    Divider()
+                        .padding(.vertical, 4)
+
+                    PluginRoutesSummary(pluginId: plugin.pluginId, routes: loaded.routes)
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                }
+            }
+
+            // Documentation (README, links)
+            if isExpanded && !plugin.hasLoadError {
+                if let loaded = PluginManager.shared.loadedPlugin(for: plugin.pluginId) {
+                    let manifest = loaded.plugin.manifest
+
+                    if loaded.readmePath != nil || manifest.docs?.links != nil {
+                        Divider()
+                            .padding(.vertical, 4)
+
+                        PluginDocsSection(
+                            readmePath: loaded.readmePath,
+                            changelogPath: loaded.changelogPath,
+                            docLinks: manifest.docs?.links
+                        )
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                    }
+                }
+            }
         }
         .padding(16)
         .frame(maxWidth: .infinity)
@@ -1221,5 +1270,188 @@ private struct PluginFlowLayout: Layout {
         }
 
         return (CGSize(width: maxWidth, height: currentY + lineHeight), positions)
+    }
+}
+
+// MARK: - Routes Summary
+
+private struct PluginRoutesSummary: View {
+    @Environment(\.theme) private var theme
+
+    let pluginId: String
+    let routes: [PluginManifest.RouteSpec]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("HTTP Routes:")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(theme.secondaryText)
+
+            ForEach(routes, id: \.id) { route in
+                HStack(spacing: 8) {
+                    Text(route.methods.joined(separator: ", "))
+                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                        .foregroundColor(theme.accentColor)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(
+                            RoundedRectangle(cornerRadius: 4)
+                                .fill(theme.accentColor.opacity(0.12))
+                        )
+
+                    Text("/plugins/\(pluginId)\(route.path)")
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundColor(theme.primaryText)
+                        .lineLimit(1)
+
+                    Spacer()
+
+                    Text(route.auth.rawValue)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(authColor(route.auth))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(
+                            Capsule().fill(authColor(route.auth).opacity(0.12))
+                        )
+                }
+            }
+        }
+    }
+
+    private func authColor(_ auth: PluginManifest.RouteAuth) -> Color {
+        switch auth {
+        case .none: return .green
+        case .verify: return .orange
+        case .owner: return .blue
+        }
+    }
+}
+
+// MARK: - Documentation Section
+
+private struct PluginDocsSection: View {
+    @Environment(\.theme) private var theme
+
+    let readmePath: URL?
+    let changelogPath: URL?
+    let docLinks: [PluginManifest.DocLink]?
+
+    @State private var selectedDocTab: DocTab = .readme
+    @State private var readmeContent: String?
+    @State private var changelogContent: String?
+
+    enum DocTab: String, CaseIterable {
+        case readme = "README"
+        case changelog = "Changelog"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 12) {
+                Text("Documentation")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+
+                Spacer()
+
+                if readmePath != nil || changelogPath != nil {
+                    HStack(spacing: 0) {
+                        if readmePath != nil {
+                            docTabButton(.readme)
+                        }
+                        if changelogPath != nil {
+                            docTabButton(.changelog)
+                        }
+                    }
+                }
+            }
+
+            // Content area
+            if selectedDocTab == .readme, let content = readmeContent {
+                ScrollView {
+                    Text(content)
+                        .font(.system(size: 12))
+                        .foregroundColor(theme.primaryText)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
+                }
+                .frame(maxHeight: 300)
+                .padding(10)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(theme.primaryBackground.opacity(0.5))
+                )
+            } else if selectedDocTab == .changelog, let content = changelogContent {
+                ScrollView {
+                    Text(content)
+                        .font(.system(size: 12))
+                        .foregroundColor(theme.primaryText)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
+                }
+                .frame(maxHeight: 300)
+                .padding(10)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(theme.primaryBackground.opacity(0.5))
+                )
+            }
+
+            // External links
+            if let links = docLinks, !links.isEmpty {
+                HStack(spacing: 12) {
+                    ForEach(links, id: \.url) { link in
+                        Button {
+                            if let url = URL(string: link.url) {
+                                NSWorkspace.shared.open(url)
+                            }
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: "link")
+                                    .font(.system(size: 10))
+                                Text(link.label)
+                                    .font(.system(size: 11, weight: .medium))
+                            }
+                            .foregroundColor(theme.accentColor)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+        .onAppear {
+            loadDocs()
+            if readmePath == nil && changelogPath != nil {
+                selectedDocTab = .changelog
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func docTabButton(_ tab: DocTab) -> some View {
+        Button {
+            selectedDocTab = tab
+        } label: {
+            Text(tab.rawValue)
+                .font(.system(size: 11, weight: selectedDocTab == tab ? .semibold : .regular))
+                .foregroundColor(selectedDocTab == tab ? theme.accentColor : theme.tertiaryText)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(selectedDocTab == tab ? theme.accentColor.opacity(0.1) : Color.clear)
+                )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func loadDocs() {
+        if let path = readmePath {
+            readmeContent = try? String(contentsOf: path, encoding: .utf8)
+        }
+        if let path = changelogPath {
+            changelogContent = try? String(contentsOf: path, encoding: .utf8)
+        }
     }
 }

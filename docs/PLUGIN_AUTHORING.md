@@ -50,14 +50,34 @@ Examples:
 
 The plugin_id and version are extracted from the filename during installation. The version must be valid semver.
 
+### Zip Structure
+
+A v2 plugin zip can include optional directories and files alongside the `.dylib`:
+
+```
+com.acme.slack-1.0.0.zip
+├── libSlack.dylib        # Required
+├── SKILL.md              # Optional: AI skill guidance
+├── README.md             # Optional: displayed in plugin detail UI
+├── CHANGELOG.md          # Optional: displayed in Changelog tab
+└── web/                  # Optional: static frontend assets
+    ├── index.html
+    ├── assets/
+    │   ├── app-3f8a2b.js
+    │   └── app-7c1d4e.css
+    └── favicon.ico
+```
+
 ## ABI Overview
 
 The header is available at:
 `Packages/OsaurusCore/Tools/PluginABI/osaurus_plugin.h`
 
-Key points:
+Osaurus supports two ABI versions. Existing v1 plugins continue to work without changes.
 
-- **Entry Point**: Plugin exposes a single symbol `osaurus_plugin_entry` returning a pointer to `osr_plugin_api`.
+### v1 ABI (Tools Only)
+
+- **Entry Point**: Plugin exports `osaurus_plugin_entry` returning a pointer to `osr_plugin_api`.
 - **Lifecycle**:
   - `init()`: Called once on load. Returns an opaque `context` pointer.
   - `destroy(ctx)`: Called on unload.
@@ -65,9 +85,60 @@ Key points:
   - `invoke(ctx, type, id, payload)`: Generic invocation function.
   - `free_string(s)`: Called by host to free strings returned by the plugin.
 
+### v2 ABI (Tools + Routes + Storage + Config)
+
+v2 extends v1 with HTTP route handling, persistent storage, and config change notifications. Osaurus tries the v2 entry point first and falls back to v1 if the symbol is not found.
+
+- **Entry Point**: Plugin exports `osaurus_plugin_entry_v2(const osr_host_api* host)`. The host API struct provides callbacks for config access, database operations, and logging.
+- **New fields on `osr_plugin_api`** (appended after v1 fields for binary compatibility):
+  - `version`: Set to `2` (`OSR_ABI_VERSION_2`).
+  - `handle_route(ctx, request_json)`: Called when an HTTP request hits a plugin route. Returns JSON. May be `NULL` if the plugin has no routes.
+  - `on_config_changed(ctx, key, value)`: Called when a config value changes in the host UI. May be `NULL`.
+- **Host API (`osr_host_api`)** — Injected at init, provides:
+  - `config_get(key)` / `config_set(key, value)` / `config_delete(key)` — Keychain-backed config store.
+  - `db_exec(sql, params_json)` / `db_query(sql, params_json)` — Sandboxed per-plugin SQLite database.
+  - `log(level, message)` — Structured logging to the Osaurus log.
+
+```c
+// v2 entry point — receives host callbacks
+const osr_plugin_api* osaurus_plugin_entry_v2(const osr_host_api* host);
+
+// Host API struct
+typedef struct {
+    uint32_t           version;        // OSR_ABI_VERSION_2
+    osr_config_get_fn  config_get;
+    osr_config_set_fn  config_set;
+    osr_config_delete_fn config_delete;
+    osr_db_exec_fn     db_exec;
+    osr_db_query_fn    db_query;
+    osr_log_fn         log;
+} osr_host_api;
+
+// Extended plugin API struct (v2 fields appended after v1)
+typedef struct {
+    // v1 fields (unchanged)
+    void (*free_string)(const char* s);
+    osr_plugin_ctx_t (*init)(void);
+    void (*destroy)(osr_plugin_ctx_t ctx);
+    const char* (*get_manifest)(osr_plugin_ctx_t ctx);
+    const char* (*invoke)(osr_plugin_ctx_t ctx, const char* type, const char* id, const char* payload);
+
+    // v2 fields
+    uint32_t version;
+    const char* (*handle_route)(osr_plugin_ctx_t ctx, const char* request_json);
+    void (*on_config_changed)(osr_plugin_ctx_t ctx, const char* key, const char* value);
+} osr_plugin_api;
+```
+
+### Migration from v1 to v2
+
+Upgrading is additive. Change your entry point from `osaurus_plugin_entry` to `osaurus_plugin_entry_v2`, store the host API pointer, set `api.version = 2`, and populate the new function pointers (or leave them `NULL` if unused). Osaurus detects the ABI version from `api->version` and enables features accordingly.
+
 ### Manifest Format
 
-The manifest JSON returned by `get_manifest` describes the plugin's capabilities. This is the source of truth for plugin metadata at runtime:
+The manifest JSON returned by `get_manifest` describes the plugin's capabilities. This is the source of truth for plugin metadata at runtime.
+
+**Minimal v1 manifest (tools only):**
 
 ```json
 {
@@ -87,6 +158,59 @@ The manifest JSON returned by `get_manifest` describes the plugin's capabilities
   }
 }
 ```
+
+**Full v2 manifest (tools + routes + config + web + docs):**
+
+```json
+{
+  "plugin_id": "com.acme.slack",
+  "version": "1.0.0",
+  "description": "Slack integration",
+  "capabilities": {
+    "tools": [ ... ],
+    "routes": [
+      {
+        "id": "oauth_callback",
+        "path": "/callback",
+        "methods": ["GET"],
+        "description": "OAuth 2.0 callback handler",
+        "auth": "none"
+      },
+      {
+        "id": "webhook",
+        "path": "/events",
+        "methods": ["POST"],
+        "auth": "verify"
+      },
+      {
+        "id": "app",
+        "path": "/app/*",
+        "methods": ["GET"],
+        "auth": "owner"
+      }
+    ],
+    "config": {
+      "title": "Slack Integration",
+      "sections": [ ... ]
+    },
+    "web": {
+      "static_dir": "web",
+      "entry": "index.html",
+      "mount": "/app",
+      "auth": "owner"
+    }
+  },
+  "docs": {
+    "readme": "README.md",
+    "changelog": "CHANGELOG.md",
+    "links": [
+      { "label": "Documentation", "url": "https://docs.acme.com/slack" }
+    ]
+  }
+}
+```
+
+All v2 capabilities (`routes`, `config`, `web`, `docs`) are optional. A v2 plugin can declare any combination of them.
 
 #### Tool Requirements
 
@@ -425,6 +549,486 @@ When Osaurus needs to execute a capability, it calls `invoke`:
 
 The plugin returns a JSON string response (allocated; host frees it).
 
+## HTTP Routes
+
+v2 plugins can register HTTP route handlers exposed through the Osaurus server and relay tunnel. This enables OAuth flows, webhook endpoints, and plugin-hosted web apps.
+
+### Route Declaration
+
+Declare routes in the manifest under `capabilities.routes`:
+
+```json
+{
+  "capabilities": {
+    "routes": [
+      {
+        "id": "oauth_callback",
+        "path": "/callback",
+        "methods": ["GET"],
+        "description": "OAuth 2.0 callback handler",
+        "auth": "none"
+      },
+      {
+        "id": "webhook",
+        "path": "/events",
+        "methods": ["POST"],
+        "description": "Slack Events API webhook",
+        "auth": "verify"
+      },
+      {
+        "id": "dashboard",
+        "path": "/app/*",
+        "methods": ["GET"],
+        "description": "Web dashboard",
+        "auth": "owner"
+      }
+    ]
+  }
+}
+```
+
+**Route Spec Fields:**
+
+| Field         | Type     | Required | Description                                          |
+| ------------- | -------- | -------- | ---------------------------------------------------- |
+| `id`          | string   | Yes      | Unique identifier for the route                      |
+| `path`        | string   | Yes      | Path relative to the plugin namespace                |
+| `methods`     | string[] | Yes      | HTTP methods (`GET`, `POST`, `PUT`, `DELETE`, etc.)  |
+| `description` | string   | No       | Human-readable description                           |
+| `auth`        | string   | No       | Auth level: `none`, `verify`, or `owner` (default)   |
+
+Paths support wildcards: `/app/*` matches `/app/`, `/app/index.html`, `/app/assets/style.css`, etc.
+
+### Resulting URLs
+
+Routes are namespaced under `/plugins/<plugin_id>/` to prevent collisions. Two plugins can both declare `path: "/callback"` with zero conflict.
+
+```
+Local:   http://127.0.0.1:1337/plugins/com.acme.slack/callback
+Tunnel:  https://0x<agent-address>.agent.osaurus.ai/plugins/com.acme.slack/callback
+```
+
+### Auth Levels
+
+| Level    | Meaning                                                                                    |
+| -------- | ------------------------------------------------------------------------------------------ |
+| `none`   | Public. No auth required. Used for OAuth callbacks and webhook verification.               |
+| `verify` | Plugin handles its own verification (e.g., Slack signing secret). Raw request passed through. |
+| `owner`  | Requires a valid Osaurus access key (`osk-v1`). For plugin web UIs and admin endpoints.    |
+
+Rate limiting is applied to `none` and `verify` routes at 100 requests/minute per plugin. `owner` routes are unlimited.
+
+### Agent-Scoped Routing
+
+Plugin routes are scoped per agent. When a plugin is enabled for an agent, its routes are accessible on that agent's tunnel. When disabled, the routes are removed.
+
+- All plugin route requests require an `X-Osaurus-Agent-Id` header identifying the requesting agent.
+- Osaurus checks the agent's `enabledPlugins` map to verify the plugin is active for that agent.
+- Agents manage plugin enablement in the Management window under Agents → Capabilities.
+
+### Request / Response Schema
+
+When a request hits a plugin route, Osaurus builds a JSON request, calls `handle_route`, and translates the JSON response back to HTTP.
+
+**OsaurusHTTPRequest (sent to plugin):**
+
+```json
+{
+  "route_id": "oauth_callback",
+  "method": "GET",
+  "path": "/callback",
+  "query": { "code": "abc123", "state": "xyz" },
+  "headers": { "content-type": "application/json" },
+  "body": "",
+  "body_encoding": "utf8",
+  "remote_addr": "203.0.113.42",
+  "plugin_id": "com.acme.slack",
+  "osaurus": {
+    "base_url": "https://0x1234.agent.osaurus.ai",
+    "plugin_url": "https://0x1234.agent.osaurus.ai/plugins/com.acme.slack"
+  }
+}
+```
+
+**OsaurusHTTPResponse (returned by plugin):**
+
+```json
+{
+  "status": 200,
+  "headers": {
+    "content-type": "text/html",
+    "set-cookie": "session=abc; HttpOnly; Secure"
+  },
+  "body": "<html>...</html>",
+  "body_encoding": "utf8"
+}
+```
+
+For binary responses, set `body_encoding` to `"base64"` and base64-encode the body.
+
+---
+
+## Storage
+
+v2 plugins have access to two storage tiers, both provided through the `osr_host_api` callbacks injected at init.
+
+### Config Store (Secure, Small)
+
+For secrets, tokens, and settings. Backed by the macOS Keychain. Accessed via the host API:
+
+```c
+const char* value = host->config_get("access_token");
+host->config_set("access_token", "xoxb-...");
+host->config_delete("access_token");
+```
+
+Config values are also used by the [Configuration UI](#configuration-ui) — fields of type `secret` are stored here automatically.
+
+### Data Store (Structured, Larger)
+
+Each plugin gets a sandboxed SQLite database at:
+
+```
+~/Library/Application Support/com.dinoki.osaurus/Tools/<plugin_id>/data.db
+```
+
+Accessed via the host API with raw SQL and JSON parameter binding:
+
+```c
+// Create a table
+host->db_exec(
+    "CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, type TEXT, payload TEXT, received_at INTEGER DEFAULT (unixepoch()))",
+    NULL
+);
+
+// Parameterized insert
+host->db_exec(
+    "INSERT INTO events (id, type, payload) VALUES (?1, ?2, ?3)",
+    "[\"evt-1\", \"message\", \"{...}\"]"
+);
+
+// Query
+const char* result = host->db_query(
+    "SELECT * FROM events WHERE type = ?1 ORDER BY received_at DESC LIMIT 50",
+    "[\"message\"]"
+);
+```
+
+**`db_exec` return format (writes):**
+
+```json
+{ "changes": 1, "last_insert_rowid": 42 }
+```
+
+**`db_query` return format (reads):**
+
+```json
+{
+  "columns": ["id", "type", "payload", "received_at"],
+  "rows": [["\"evt-1\"", "\"message\"", "\"{...}\"", "1709312400"]]
+}
+```
+
+On error, both return `{"error": "..."}`.
+
+**SQL Sandboxing:**
+
+- Each plugin's database is isolated. No cross-plugin access.
+- `ATTACH DATABASE` and `DETACH DATABASE` are blocked.
+- `LOAD_EXTENSION` is blocked.
+- WAL mode and foreign keys are enabled by default.
+- Plugins manage their own schema with `CREATE TABLE IF NOT EXISTS` and `ALTER TABLE ... ADD COLUMN`.
+
+### Logging
+
+The host API provides structured logging:
+
+```c
+host->log(0, "Processing webhook event");  // 0 = info
+host->log(1, "Missing signing secret");    // 1 = warning
+host->log(2, "Database write failed");     // 2 = error
+```
+
+---
+
+## Configuration UI
+
+Plugins can declare a settings schema in the manifest that Osaurus renders natively in the Management window under the plugin's detail view.
+
+### Manifest Declaration
+
+```json
+{
+  "capabilities": {
+    "config": {
+      "title": "Slack Integration",
+      "sections": [
+        {
+          "title": "Authentication",
+          "fields": [
+            {
+              "key": "oauth_status",
+              "type": "status",
+              "label": "Connection",
+              "connected_when": "access_token",
+              "connect_action": { "type": "oauth", "url_route": "oauth_start" },
+              "disconnect_action": { "clear_keys": ["access_token", "refresh_token"] }
+            }
+          ]
+        },
+        {
+          "title": "Webhook",
+          "fields": [
+            {
+              "key": "webhook_url",
+              "type": "readonly",
+              "label": "Webhook URL",
+              "value_template": "{{plugin_url}}/events",
+              "copyable": true
+            },
+            {
+              "key": "signing_secret",
+              "type": "secret",
+              "label": "Signing Secret",
+              "placeholder": "xoxb-...",
+              "validation": { "required": true }
+            }
+          ]
+        },
+        {
+          "title": "Preferences",
+          "fields": [
+            {
+              "key": "default_channel",
+              "type": "text",
+              "label": "Default Channel",
+              "placeholder": "#general"
+            },
+            {
+              "key": "notify_on_mention",
+              "type": "toggle",
+              "label": "Notify on @mention",
+              "default": true
+            },
+            {
+              "key": "event_types",
+              "type": "multiselect",
+              "label": "Listen for events",
+              "options": [
+                { "value": "message", "label": "Messages" },
+                { "value": "reaction", "label": "Reactions" },
+                { "value": "file", "label": "File uploads" }
+              ],
+              "default": ["message"]
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
+```
+
+### Supported Field Types
+
+| Type          | Renders as                        | Storage                  |
+| ------------- | --------------------------------- | ------------------------ |
+| `text`        | Text field                        | Config store (plaintext) |
+| `secret`      | Password field (masked)           | Config store (Keychain)  |
+| `toggle`      | Switch                            | Config store             |
+| `select`      | Dropdown                          | Config store             |
+| `multiselect` | Multi-checkbox                    | Config store (JSON array)|
+| `number`      | Number field                      | Config store             |
+| `readonly`    | Non-editable display + copy button| Not stored               |
+| `status`      | Connected/disconnected badge      | Derived from config key  |
+
+### Field Properties
+
+| Property            | Type   | Description                                                    |
+| ------------------- | ------ | -------------------------------------------------------------- |
+| `key`               | string | Unique key for storage and lookup                              |
+| `type`              | string | One of the supported field types above                         |
+| `label`             | string | Display label                                                  |
+| `placeholder`       | string | Placeholder text for input fields                              |
+| `default`           | any    | Default value (string, bool, number, or string array)          |
+| `options`           | array  | Options for `select` and `multiselect` fields                  |
+| `validation`        | object | Validation rules (see below)                                   |
+| `value_template`    | string | Template string for `readonly` fields                          |
+| `copyable`          | bool   | Show a copy button for `readonly` fields                       |
+| `connected_when`    | string | Config key that determines connected state for `status` fields |
+| `connect_action`    | object | Action to perform on connect for `status` fields               |
+| `disconnect_action` | object | Action to perform on disconnect for `status` fields            |
+
+### Validation
+
+| Field          | Applies to    | Description                             |
+| -------------- | ------------- | --------------------------------------- |
+| `required`     | all           | Must be non-empty                       |
+| `pattern`      | text, secret  | Regex the value must match              |
+| `pattern_hint` | text, secret  | Human-readable error shown on mismatch  |
+| `min` / `max`  | number        | Numeric bounds                          |
+| `min_length` / `max_length` | text, secret | String length bounds       |
+
+### Template Variables
+
+Readonly and computed fields can reference dynamic values:
+
+| Variable           | Value                                            |
+| ------------------ | ------------------------------------------------ |
+| `{{plugin_url}}`   | Full URL to plugin route prefix                  |
+| `{{plugin_id}}`    | Plugin ID                                        |
+| `{{config.KEY}}`   | Current value of another config key              |
+
+### Config Change Notification
+
+When the user updates a config value in the UI, the plugin's `on_config_changed` callback is invoked:
+
+```c
+void on_config_changed(osr_plugin_ctx_t ctx, const char* key, const char* value);
+```
+
+This lets the plugin react immediately to config changes (e.g., reconnect a WebSocket when a token changes).
+
+---
+
+## Static Web Serving
+
+Plugins can ship a full frontend (React, Svelte, Vue, vanilla JS — anything that builds to static files). Osaurus serves the `web/` directory directly, without calling the dylib for static assets.
+
+### Manifest Declaration
+
+```json
+{
+  "capabilities": {
+    "web": {
+      "static_dir": "web",
+      "entry": "index.html",
+      "mount": "/app",
+      "auth": "owner"
+    }
+  }
+}
+```
+
+**Web Spec Fields:**
+
+| Field        | Type   | Description                                  |
+| ------------ | ------ | -------------------------------------------- |
+| `static_dir` | string | Directory in the plugin bundle to serve      |
+| `entry`      | string | Entry HTML file (served for the mount root)  |
+| `mount`      | string | URL mount point under the plugin namespace   |
+| `auth`       | string | Auth level: `none`, `verify`, or `owner`     |
+
+**Resulting layout:**
+
+```
+/plugins/com.acme.dashboard/app/           → web/index.html
+/plugins/com.acme.dashboard/app/assets/*   → web/assets/*
+/plugins/com.acme.dashboard/api/*          → handled by dylib via handle_route
+```
+
+### Context Injection
+
+Osaurus automatically injects a `window.__osaurus` context object into HTML responses before `</head>`:
+
+```html
+<script>
+window.__osaurus = {
+  pluginId: "com.acme.dashboard",
+  baseUrl: "/plugins/com.acme.dashboard",
+  apiUrl: "/plugins/com.acme.dashboard/api"
+};
+</script>
+```
+
+The frontend can use these values for API calls:
+
+```javascript
+const res = await fetch(`${window.__osaurus.baseUrl}/api/widgets`);
+```
+
+---
+
+## Plugin Documentation
+
+Plugins can include a `README.md` and `CHANGELOG.md` that are displayed in the Osaurus Management window when viewing the plugin's detail page.
+
+### Manifest Declaration
+
+```json
+{
+  "docs": {
+    "readme": "README.md",
+    "changelog": "CHANGELOG.md",
+    "links": [
+      { "label": "Documentation", "url": "https://docs.acme.com/slack" },
+      { "label": "Report Issue", "url": "https://github.com/acme/osaurus-slack/issues" }
+    ]
+  }
+}
+```
+
+**Docs Spec Fields:**
+
+| Field       | Type   | Description                                     |
+| ----------- | ------ | ----------------------------------------------- |
+| `readme`    | string | Path to README file in the plugin bundle        |
+| `changelog` | string | Path to CHANGELOG file in the plugin bundle     |
+| `links`     | array  | External doc links shown below the README       |
+
+Each link object has `label` (string) and `url` (string). Links open in the user's default browser.
+
+### UI Rendering
+
+The plugin detail view shows tabbed content:
+
+- **README** — Rendered as Markdown.
+- **Settings** — The config UI from [Configuration UI](#configuration-ui).
+- **Changelog** — Rendered as Markdown if `CHANGELOG.md` is present.
+- **Doc Links** — External links displayed below the content.
+
+---
+
+## Developer Workflow
+
+### Hot Reload
+
+The `osaurus tools dev` command watches for `.dylib` changes and sends a reload signal to the Osaurus app:
+
+```bash
+osaurus tools dev com.acme.slack
+```
+
+Recompile your plugin and it reloads without restarting the server:
+
+```bash
+swift build -c release && cp .build/release/libSlack.dylib ~/.osaurus/Tools/com.acme.slack/1.0.0/
+```
+
+### Frontend Dev Proxy
+
+For plugins with a `web/` frontend, use `--web-proxy` to proxy static file requests to a local dev server (e.g., Vite) instead of serving from disk:
+
+```bash
+# Terminal 1: Frontend dev server
+cd my-plugin/frontend
+npm run dev   # → http://localhost:5173
+
+# Terminal 2: Plugin dev mode with proxy
+osaurus tools dev com.acme.dashboard --web-proxy http://localhost:5173
+```
+
+When the proxy is active:
+
+- Requests to `/plugins/com.acme.dashboard/app/*` are proxied to `http://localhost:5173/*`
+- Requests to `/plugins/com.acme.dashboard/api/*` still hit the dylib
+- Osaurus injects `window.__osaurus` context into the proxied HTML
+- CORS headers are handled automatically
+
+This gives you hot module replacement (HMR) and instant feedback during frontend development. The proxy configuration is stored in a `dev-proxy.json` file in the plugin directory.
+
+---
+
 ## Permissions
 
 ### Permission Policies
@@ -527,4 +1131,4 @@ This step ensures the integrity and authenticity of the distributed ZIP file. It
 
 ## Rust Authors
 
-Create a `cdylib` exposing `osaurus_plugin_entry` that returns the generic function table. Implement `init`, `destroy`, `get_manifest`, and `invoke`.
+Create a `cdylib` exposing `osaurus_plugin_entry` (v1) or `osaurus_plugin_entry_v2` (v2) that returns the generic function table. For v1, implement `init`, `destroy`, `get_manifest`, `invoke`, and `free_string`. For v2, also set `version = 2` and optionally implement `handle_route` and `on_config_changed`. Store the `osr_host_api` pointer passed to the v2 entry point for access to config, database, and logging callbacks.

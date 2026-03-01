@@ -17,8 +17,12 @@ final class PluginManager {
     struct LoadedPlugin: @unchecked Sendable {
         let plugin: ExternalPlugin
         let handle: UnsafeMutableRawPointer
-        let tools: [ExternalTool]  // Keep track of tools to unregister later
-        let skills: [Skill]  // Skills bundled with this plugin
+        let tools: [ExternalTool]
+        let skills: [Skill]
+        let routes: [PluginManifest.RouteSpec]
+        let webConfig: PluginManifest.WebSpec?
+        let readmePath: URL?
+        let changelogPath: URL?
     }
 
     /// Represents a plugin that failed to load
@@ -44,6 +48,11 @@ final class PluginManager {
     /// Returns the load error for a specific plugin, if any
     func loadError(for pluginId: String) -> String? {
         return failedPlugins[pluginId]?.error
+    }
+
+    /// Look up a loaded plugin by its ID (used by HTTP route dispatch)
+    func loadedPlugin(for pluginId: String) -> LoadedPlugin? {
+        return plugins.first { $0.plugin.id == pluginId }
     }
 
     // MARK: - Loading
@@ -95,6 +104,9 @@ final class PluginManager {
                 if !loaded.skills.isEmpty {
                     SkillManager.shared.unregisterPluginSkills(pluginId: loaded.plugin.id)
                 }
+
+                // Tear down v2 host context (closes DB, removes from registry)
+                PluginHostContext.contexts[loaded.plugin.id]?.teardown()
 
                 // dlclose happens here
                 dlclose(loaded.handle)
@@ -170,6 +182,7 @@ final class PluginManager {
     }
 
     /// Loads a single plugin from a dylib URL via dlopen + C ABI handshake.
+    /// Tries v2 entry point first (with host API injection), then falls back to v1.
     nonisolated private static func loadPluginWithError(at url: URL) -> Result<LoadedPlugin, PluginLoadError> {
         let flags = RTLD_NOW | RTLD_LOCAL
         guard let handle = dlopen(url.path, Int32(flags)) else {
@@ -183,29 +196,75 @@ final class PluginManager {
             return .failure(PluginLoadError(message: errorMsg))
         }
 
-        // Look for the entry point
-        guard let sym = dlsym(handle, "osaurus_plugin_entry") else {
-            let errorMsg = "Missing plugin entry point (osaurus_plugin_entry)"
+        // Try v2 entry point first, then fall back to v1
+        let api: osr_plugin_api
+        let abiVersion: UInt32
+        var hostContext: PluginHostContext?
+
+        if let v2sym = dlsym(handle, "osaurus_plugin_entry_v2") {
+            // v2 path: create host context and pass to plugin
+            // We need the plugin ID to scope the host context. We'll use the
+            // directory name as a preliminary ID, then confirm from the manifest.
+            let preliminaryId = extractPluginId(from: url)
+
+            let ctx: PluginHostContext
+            do {
+                ctx = try PluginHostContext(pluginId: preliminaryId)
+            } catch {
+                let errorMsg = "Failed to create host context: \(error.localizedDescription)"
+                print("[Osaurus] \(errorMsg) for \(url.lastPathComponent)")
+                dlclose(handle)
+                return .failure(PluginLoadError(message: errorMsg))
+            }
+
+            PluginHostContext.currentContext = ctx
+            var hostAPI = ctx.buildHostAPI()
+            let entryFn = unsafeBitCast(v2sym, to: osr_plugin_entry_v2_t.self)
+            let apiRawPtr = withUnsafePointer(to: &hostAPI) { hostPtr in
+                entryFn(UnsafeRawPointer(hostPtr))
+            }
+            PluginHostContext.currentContext = nil
+
+            guard let apiRawPtr else {
+                let errorMsg = "Plugin v2 entry returned null API"
+                print("[Osaurus] \(errorMsg) in \(url.lastPathComponent)")
+                ctx.teardown()
+                dlclose(handle)
+                return .failure(PluginLoadError(message: errorMsg))
+            }
+
+            let apiPtr = apiRawPtr.assumingMemoryBound(to: osr_plugin_api.self)
+            api = apiPtr.pointee
+            abiVersion = max(api.version, 2)
+            hostContext = ctx
+
+            PluginHostContext.contexts[preliminaryId] = ctx
+            print("[Osaurus] Loaded v2 plugin from \(url.lastPathComponent)")
+        } else if let v1sym = dlsym(handle, "osaurus_plugin_entry") {
+            // v1 path: no host API
+            let entryFn = unsafeBitCast(v1sym, to: osr_plugin_entry_t.self)
+            guard let apiRawPtr = entryFn() else {
+                let errorMsg = "Plugin entry returned null API"
+                print("[Osaurus] \(errorMsg) in \(url.lastPathComponent)")
+                dlclose(handle)
+                return .failure(PluginLoadError(message: errorMsg))
+            }
+
+            let apiPtr = apiRawPtr.assumingMemoryBound(to: osr_plugin_api.self)
+            api = apiPtr.pointee
+            abiVersion = 1
+        } else {
+            let errorMsg = "Missing plugin entry point (osaurus_plugin_entry or osaurus_plugin_entry_v2)"
             print("[Osaurus] \(errorMsg) in \(url.lastPathComponent)")
             dlclose(handle)
             return .failure(PluginLoadError(message: errorMsg))
         }
-
-        let entryFn = unsafeBitCast(sym, to: osr_plugin_entry_t.self)
-        guard let apiRawPtr = entryFn() else {
-            let errorMsg = "Plugin entry returned null API"
-            print("[Osaurus] \(errorMsg) in \(url.lastPathComponent)")
-            dlclose(handle)
-            return .failure(PluginLoadError(message: errorMsg))
-        }
-
-        let apiPtr = apiRawPtr.assumingMemoryBound(to: osr_plugin_api.self)
-        let api = apiPtr.pointee
 
         // Initialize Plugin
         guard let initFn = api.`init` else {
             let errorMsg = "Plugin missing init function"
             print("[Osaurus] \(errorMsg) in \(url.lastPathComponent)")
+            hostContext?.teardown()
             dlclose(handle)
             return .failure(PluginLoadError(message: errorMsg))
         }
@@ -213,6 +272,7 @@ final class PluginManager {
         guard let ctx = initFn() else {
             let errorMsg = "Plugin initialization failed"
             print("[Osaurus] \(errorMsg) in \(url.lastPathComponent)")
+            hostContext?.teardown()
             dlclose(handle)
             return .failure(PluginLoadError(message: errorMsg))
         }
@@ -222,6 +282,7 @@ final class PluginManager {
             let errorMsg = "Plugin failed to return manifest"
             print("[Osaurus] \(errorMsg) in \(url.lastPathComponent)")
             api.destroy?(ctx)
+            hostContext?.teardown()
             dlclose(handle)
             return .failure(PluginLoadError(message: errorMsg))
         }
@@ -235,15 +296,60 @@ final class PluginManager {
             let errorMsg = "Failed to parse plugin manifest"
             print("[Osaurus] \(errorMsg) in \(url.lastPathComponent)")
             api.destroy?(ctx)
+            hostContext?.teardown()
             dlclose(handle)
             return .failure(PluginLoadError(message: errorMsg))
         }
 
-        let plugin = ExternalPlugin(handle: handle, api: api, ctx: ctx, manifest: manifest, path: url.path)
+        // If the manifest plugin_id differs from the directory-derived ID,
+        // re-register the host context under the canonical ID.
+        if let hc = hostContext, manifest.plugin_id != hc.pluginId {
+            PluginHostContext.contexts.removeValue(forKey: hc.pluginId)
+            PluginHostContext.contexts[manifest.plugin_id] = hc
+        }
+
+        let plugin = ExternalPlugin(
+            handle: handle,
+            api: api,
+            ctx: ctx,
+            manifest: manifest,
+            path: url.path,
+            abiVersion: abiVersion
+        )
         let tools = (manifest.capabilities.tools ?? []).map { ExternalTool(plugin: plugin, spec: $0) }
         let skills = loadPluginSkills(from: url, pluginId: manifest.plugin_id)
+        let routes = manifest.capabilities.routes ?? []
+        let webConfig = manifest.capabilities.web
 
-        return .success(LoadedPlugin(plugin: plugin, handle: handle, tools: tools, skills: skills))
+        let versionDir = url.deletingLastPathComponent()
+        let readmePath = resolveDocFile(named: "README.md", in: versionDir)
+        let changelogPath = resolveDocFile(named: "CHANGELOG.md", in: versionDir)
+
+        return .success(
+            LoadedPlugin(
+                plugin: plugin,
+                handle: handle,
+                tools: tools,
+                skills: skills,
+                routes: routes,
+                webConfig: webConfig,
+                readmePath: readmePath,
+                changelogPath: changelogPath
+            )
+        )
+    }
+
+    /// Finds a documentation file (case-insensitive) in the plugin's version directory.
+    nonisolated private static func resolveDocFile(named filename: String, in directory: URL) -> URL? {
+        let path = directory.appendingPathComponent(filename)
+        if FileManager.default.fileExists(atPath: path.path) {
+            return path
+        }
+        let lower = directory.appendingPathComponent(filename.lowercased())
+        if FileManager.default.fileExists(atPath: lower.path) {
+            return lower
+        }
+        return nil
     }
 
     /// Scans the plugin install directory for SKILL.md files and parses them into Skills

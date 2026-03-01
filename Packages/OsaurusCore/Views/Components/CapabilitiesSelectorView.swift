@@ -55,12 +55,13 @@ private struct ToolGroup: Identifiable {
     var enabledCount: Int { tools.filter { $0.enabled }.count }
 }
 
-/// A compound plugin that provides both tools and skills.
+/// An installed plugin that can be toggled per-agent.
 private struct CompoundPluginGroup: Identifiable {
     let pluginId: String
     let name: String
     let toolNames: [String]
     let skillNames: [String]
+    let hasRoutes: Bool
 
     var id: String { "compound-\(pluginId)" }
 }
@@ -113,15 +114,19 @@ struct CapabilitiesSelectorView: View {
                 assignedNames.formUnion(matched.map { $0.name })
             }
 
-            // Compound plugin: has both tools and skills
             let pluginSkills = skillManager.pluginSkills(for: pluginId)
-            if !specToolNames.isEmpty && !pluginSkills.isEmpty {
+            let loadedPlugin = PluginManager.shared.loadedPlugin(for: pluginId)
+            let hasRoutes = !(loadedPlugin?.routes.isEmpty ?? true) || loadedPlugin?.webConfig != nil
+
+            // Show plugin in the Plugins tab if it has tools, skills, or routes
+            if !specToolNames.isEmpty || !pluginSkills.isEmpty || hasRoutes {
                 compoundPlugins.append(
                     CompoundPluginGroup(
                         pluginId: pluginId,
                         name: displayName,
                         toolNames: specToolNames,
-                        skillNames: pluginSkills.map { $0.name }
+                        skillNames: pluginSkills.map { $0.name },
+                        hasRoutes: hasRoutes
                     )
                 )
             }
@@ -178,18 +183,25 @@ struct CapabilitiesSelectorView: View {
     }
 
     private func isCompoundPluginActive(_ group: CompoundPluginGroup) -> Bool {
-        group.toolNames.allSatisfy { name in
+        let pluginEnabled = agentManager.isPluginEnabled(group.pluginId, for: agentId)
+        let toolsOk = group.toolNames.allSatisfy { name in
             cachedTools.first(where: { $0.name == name })?.enabled ?? false
         }
-            && group.skillNames.allSatisfy { isSkillEnabled($0) }
+        let skillsOk = group.skillNames.allSatisfy { isSkillEnabled($0) }
+        if group.toolNames.isEmpty && group.skillNames.isEmpty {
+            return pluginEnabled
+        }
+        return pluginEnabled && toolsOk && skillsOk
     }
 
     private func toggleCompoundPlugin(_ group: CompoundPluginGroup) {
         let isActive = isCompoundPluginActive(group)
         if isActive {
+            agentManager.setPluginEnabled(false, plugin: group.pluginId, for: agentId)
             agentManager.disableAllTools(for: agentId, tools: group.toolNames)
             agentManager.disableAllSkills(for: agentId, skills: group.skillNames)
         } else {
+            agentManager.setPluginEnabled(true, plugin: group.pluginId, for: agentId)
             let restricted = agentRestrictedTools
             agentManager.enableAllTools(for: agentId, tools: group.toolNames.filter { !restricted.contains($0) })
             agentManager.enableAllSkills(for: agentId, skills: group.skillNames)
@@ -303,6 +315,7 @@ struct CapabilitiesSelectorView: View {
         switch selectedTab {
         case .plugins:
             for group in cachedCompoundPlugins {
+                agentManager.setPluginEnabled(true, plugin: group.pluginId, for: agentId)
                 agentManager.enableAllTools(
                     for: agentId,
                     tools: group.toolNames.filter { !restricted.contains($0) }
@@ -323,6 +336,7 @@ struct CapabilitiesSelectorView: View {
         switch selectedTab {
         case .plugins:
             for group in cachedCompoundPlugins {
+                agentManager.setPluginEnabled(false, plugin: group.pluginId, for: agentId)
                 agentManager.disableAllTools(for: agentId, tools: group.toolNames)
                 agentManager.disableAllSkills(for: agentId, skills: group.skillNames)
             }
@@ -362,9 +376,9 @@ struct CapabilitiesSelectorView: View {
         guard var agent = agentManager.agent(for: agentId) else { return }
         switch selectedTab {
         case .plugins:
-            // Reset both tools and skills for compound plugins
             agent.enabledTools = nil
             agent.enabledSkills = nil
+            agent.enabledPlugins = nil
         case .tools:
             agent.enabledTools = nil
         case .skills:
@@ -380,6 +394,7 @@ struct CapabilitiesSelectorView: View {
         switch selectedTab {
         case .plugins:
             return (agent?.enabledTools?.isEmpty == false) || (agent?.enabledSkills?.isEmpty == false)
+                || (agent?.enabledPlugins?.isEmpty == false)
         case .tools:
             return agent?.enabledTools?.isEmpty == false
         case .skills:
@@ -653,6 +668,7 @@ struct CapabilitiesSelectorView: View {
                         name: group.name,
                         toolCount: group.toolNames.count,
                         skillCount: group.skillNames.count,
+                        hasRoutes: group.hasRoutes,
                         isActive: isCompoundPluginActive(group)
                     )
                 )

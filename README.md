@@ -52,7 +52,7 @@ Osaurus is the AI edge runtime for macOS. It brings together:
 - **OpenAI, Anthropic & Ollama APIs** — Drop-in compatible endpoints for existing tools
 - **MCP Server** — Expose tools to AI agents via Model Context Protocol
 - **Remote MCP Providers** — Connect to external MCP servers and aggregate their tools
-- **Plugin System** — Extend functionality with community and custom tools
+- **Plugin System** — Extend functionality with community and custom tools, HTTP routes, persistent storage, and native configuration UI
 - **Agents** — Create custom AI assistants with unique prompts, tools, and visual themes
 - **Identity** — Cryptographic identity system for humans and agents with address-based authentication
 - **Relay** — Expose agents to the public internet via secure tunnels through `agent.osaurus.ai`
@@ -207,6 +207,10 @@ Install tools from the [central registry](https://github.com/osaurus-ai/osaurus-
 | `osaurus.fetch`      | `fetch`, `fetch_json`, `fetch_html`, `download`                           |
 | `osaurus.time`       | `current_time`, `format_date`                                             |
 
+**Plugin Capabilities (v2 ABI):**
+
+Plugins can go beyond tools — they can register HTTP route handlers (for OAuth flows, webhooks, and APIs), serve static web apps, persist data in a sandboxed SQLite database, and declare a native configuration UI rendered in Osaurus settings.
+
 ```bash
 # Install from registry
 osaurus tools install osaurus.browser
@@ -216,6 +220,9 @@ osaurus tools list
 
 # Create your own plugin
 osaurus tools create MyPlugin --language swift
+
+# Dev mode with hot reload
+osaurus tools dev com.acme.my-plugin
 ```
 
 See the [Plugin Authoring Guide](docs/PLUGIN_AUTHORING.md) for details.
@@ -512,6 +519,7 @@ See [Voice Input Guide](docs/VOICE_INPUT.md) for details.
 | `osaurus run <model>`    | Interactive chat with a model                |
 | `osaurus mcp`            | Start MCP stdio transport                    |
 | `osaurus tools <cmd>`    | Manage plugins (install, list, search, etc.) |
+| `osaurus tools dev`      | Dev mode with hot reload and web proxy       |
 | `osaurus version`        | Show version                                 |
 
 **Tip:** Set `OSU_PORT` to override the default port.

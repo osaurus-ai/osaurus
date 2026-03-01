@@ -14,7 +14,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 | Remote Providers                 | Stable    | "Key Features"     | REMOTE_PROVIDERS.md           | Services/RemoteProviderManager.swift, Services/RemoteProviderService.swift            |
 | Remote MCP Providers             | Stable    | "Key Features"     | REMOTE_MCP_PROVIDERS.md       | Services/MCPProviderManager.swift, Tools/MCPProviderTool.swift                        |
 | MCP Server                       | Stable    | "MCP Server"       | (in README)                   | Networking/OsaurusServer.swift, Services/MCPServerManager.swift                       |
-| Tools & Plugins                  | Stable    | "Tools & Plugins"  | PLUGIN_AUTHORING.md           | Tools/, Managers/PluginManager.swift                                                  |
+| Tools & Plugins                  | Stable    | "Tools & Plugins"  | PLUGIN_AUTHORING.md           | Tools/, Managers/PluginManager.swift, Services/PluginHostAPI.swift, Storage/PluginDatabase.swift, Models/PluginHTTP.swift, Views/PluginConfigView.swift |
 | Skills                           | Stable    | "Skills"           | SKILLS.md                     | Managers/SkillManager.swift, Views/SkillsView.swift, Services/CapabilityService.swift |
 | Memory                           | Stable    | "Key Features"     | MEMORY.md                     | Services/MemoryService.swift, Services/MemorySearchService.swift, Services/MemoryContextAssembler.swift |
 | Agents                         | Stable    | "Agents"         | (in README)                   | Managers/AgentManager.swift, Models/Agent.swift, Views/AgentsView.swift         |
@@ -53,7 +53,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 │  ├── ManagementView                                                      │
 │  │   ├── ModelDownloadView (Models)                                      │
 │  │   ├── RemoteProvidersView (Providers)                                 │
-│  │   ├── ToolsManagerView (Tools)                                        │
+│  │   ├── ToolsManagerView (Tools & Plugin Config)                        │
 │  │   ├── AgentsView (Agents)                                         │
 │  │   ├── SkillsView (Skills)                                             │
 │  │   ├── MemoryView (Memory)                                             │
@@ -77,6 +77,8 @@ Canonical reference for all Osaurus features, their status, and documentation.
 │  ├── Tools                                                               │
 │  │   ├── ToolRegistry                                                    │
 │  │   ├── PluginManager                                                   │
+│  │   ├── PluginHostAPI (v2 host callbacks: config, db, log)              │
+│  │   ├── PluginDatabase (Sandboxed per-plugin SQLite)                    │
 │  │   └── MCPProviderTool (Wrapped remote MCP tools)                      │
 │  ├── Agents                                                            │
 │  │   └── AgentManager (Agent lifecycle and active agent)           │
@@ -116,7 +118,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 │  └── HTTPHandler (OpenAI/Anthropic/Ollama API handlers)                  │
 ├─────────────────────────────────────────────────────────────────────────┤
 │  CLI (OsaurusCLI Package)                                                │
-│  └── Commands: serve, stop, status, ui, list, show, run, mcp, tools, version │
+│  └── Commands: serve, stop, status, ui, list, show, run, mcp, tools (install, dev, ...), version │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -341,6 +343,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 | `description` | Brief description of the agent |
 | `systemPrompt` | Instructions prepended to all chats |
 | `enabledTools` | Map of tool name → enabled/disabled |
+| `enabledPlugins` | Map of plugin ID → enabled/disabled |
 | `themeId` | Optional custom theme to apply |
 | `defaultModel` | Optional model ID for this agent |
 | `temperature` | Optional temperature override |
@@ -559,7 +562,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 
 ### Tools & Plugins
 
-**Purpose:** Extend Osaurus with custom functionality.
+**Purpose:** Extend Osaurus with custom functionality including tools, HTTP routes, storage, configuration UI, and web apps.
 
 **Components:**
 
@@ -567,13 +570,32 @@ Canonical reference for all Osaurus features, their status, and documentation.
 - `Tools/ExternalTool.swift` — External plugin wrapper
 - `Tools/ToolRegistry.swift` — Tool registration
 - `Tools/SchemaValidator.swift` — JSON schema validation
-- `Managers/PluginManager.swift` — Plugin lifecycle
+- `Managers/PluginManager.swift` — Plugin discovery, loading, unloading
+- `Services/PluginHostAPI.swift` — v2 host API callbacks (config, db, log)
+- `Storage/PluginDatabase.swift` — Sandboxed per-plugin SQLite database
+- `Models/PluginHTTP.swift` — HTTP request/response models, rate limiter, MIME types
+- `Models/ExternalPlugin.swift` — C ABI wrapper with v1/v2 support
+- `Views/PluginConfigView.swift` — Native SwiftUI config UI renderer
+- `Views/PluginsView.swift` — Plugin detail view (README, Settings, Changelog, Routes)
 
 **Plugin Types:**
 
+- **v1 plugins** — Tools only, via `osaurus_plugin_entry`
+- **v2 plugins** — Tools + routes + storage + config, via `osaurus_plugin_entry_v2`
 - **System plugins** — Built-in tools (filesystem, browser, git, etc.)
-- **External plugins** — Compiled binaries communicating via stdin/stdout
 - **MCP provider tools** — Tools from remote MCP servers
+
+**Plugin Capabilities (v2):**
+
+| Capability | Manifest Key          | Description                                          |
+| ---------- | --------------------- | ---------------------------------------------------- |
+| Tools      | `capabilities.tools`  | AI-callable functions                                |
+| Routes     | `capabilities.routes` | HTTP endpoints (OAuth, webhooks, APIs)               |
+| Config     | `capabilities.config` | Native settings UI with validation                   |
+| Web        | `capabilities.web`    | Static frontend serving with context injection       |
+| Docs       | `docs`                | README, changelog, and external links                |
+
+Routes are agent-scoped via the `enabledPlugins` map on each agent. See [PLUGIN_AUTHORING.md](PLUGIN_AUTHORING.md) for the full reference.
 
 ---
 

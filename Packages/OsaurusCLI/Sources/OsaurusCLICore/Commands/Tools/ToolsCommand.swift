@@ -13,7 +13,7 @@ public struct ToolsCommand: Command {
     public static func execute(args: [String]) async {
         guard let sub = args.first else {
             fputs(
-                "Missing tools subcommand. Use one of: create, package, install, list, uninstall, reload, search, outdated, upgrade, rollback, verify\n",
+                "Missing tools subcommand. Use one of: create, package, install, list, uninstall, reload, search, outdated, upgrade, rollback, verify, dev\n",
                 stderr
             )
             exit(EXIT_FAILURE)
@@ -42,6 +42,8 @@ public struct ToolsCommand: Command {
             ToolsRollback.execute(args: rest)
         case "verify":
             ToolsVerify.execute(args: rest)
+        case "dev":
+            await ToolsDev.execute(args: rest)
         default:
             fputs("Unknown tools subcommand: \(sub)\n", stderr)
             exit(EXIT_FAILURE)
