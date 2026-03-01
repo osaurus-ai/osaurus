@@ -18,29 +18,87 @@ public struct ToolsCreate {
             let lang = args[idx + 1].lowercased()
             if lang == "rust" { language = "rust" }
         }
-        switch language {
-        case "swift":
-            createSwiftPlugin(name: name)
-        case "rust":
-            createRustPlugin(name: name)
-        default:
-            createSwiftPlugin(name: name)
-        }
+        let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        scaffoldPlugin(name: name, language: language, rootDirectory: root)
         print("Created plugin scaffold at ./\(name)")
         exit(EXIT_SUCCESS)
     }
 
-    private static func createSwiftPlugin(name: String) {
-        let fm = FileManager.default
-        let root = URL(fileURLWithPath: fm.currentDirectoryPath)
-        let dir = root.appendingPathComponent(name, isDirectory: true)
-        let sources = dir.appendingPathComponent("Sources", isDirectory: true)
-        // Use plugin name as module name to avoid duplicate Objective-C class names across plugins
-        let moduleName = name.replacingOccurrences(of: "-", with: "_")
-        // Generate display name from plugin name (capitalize words, replace hyphens with spaces)
-        let displayName = name.split(separator: "-").map { $0.prefix(1).uppercased() + $0.dropFirst() }.joined(
-            separator: " "
+    // MARK: - Testable Entry Point
+
+    static func scaffoldPlugin(name: String, language: String, rootDirectory: URL) {
+        switch language {
+        case "rust":
+            createRustPlugin(name: name, rootDirectory: rootDirectory)
+        default:
+            createSwiftPlugin(name: name, rootDirectory: rootDirectory)
+        }
+    }
+
+    // MARK: - Shared Helpers
+
+    static func moduleName(from name: String) -> String {
+        name.replacingOccurrences(of: "-", with: "_")
+    }
+
+    static func displayName(from name: String) -> String {
+        name.split(separator: "-").map { $0.prefix(1).uppercased() + $0.dropFirst() }.joined(separator: " ")
+    }
+
+    private static func createWebPlaceholder(dir: URL, displayName: String) {
+        let webDir = dir.appendingPathComponent("web", isDirectory: true)
+        try? FileManager.default.createDirectory(at: webDir, withIntermediateDirectories: true)
+        let indexHtml = """
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+                <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <title>\(displayName)</title>
+            </head>
+            <body>
+                <h1>\(displayName)</h1>
+                <p>Plugin web UI placeholder.</p>
+            </body>
+            </html>
+            """
+        try? indexHtml.write(to: webDir.appendingPathComponent("index.html"), atomically: true, encoding: .utf8)
+    }
+
+    private static func createReleaseWorkflow(dir: URL) {
+        let workflowsDir =
+            dir
+            .appendingPathComponent(".github", isDirectory: true)
+            .appendingPathComponent("workflows", isDirectory: true)
+        try? FileManager.default.createDirectory(at: workflowsDir, withIntermediateDirectories: true)
+        let releaseYml = """
+            name: Release
+
+            on:
+              push:
+                tags: ['v*', '[0-9]+.[0-9]+.[0-9]+']
+
+            permissions:
+              contents: write
+
+            jobs:
+              release:
+                uses: osaurus-ai/osaurus-tools/.github/workflows/build-plugin.yml@master
+                secrets: inherit
+            """
+        try? releaseYml.write(
+            to: workflowsDir.appendingPathComponent("release.yml"),
+            atomically: true,
+            encoding: .utf8
         )
+    }
+
+    private static func createSwiftPlugin(name: String, rootDirectory: URL) {
+        let fm = FileManager.default
+        let dir = rootDirectory.appendingPathComponent(name, isDirectory: true)
+        let sources = dir.appendingPathComponent("Sources", isDirectory: true)
+        let moduleName = moduleName(from: name)
+        let displayName = displayName(from: name)
         let pluginDir = sources.appendingPathComponent(moduleName, isDirectory: true)
         try? fm.createDirectory(at: pluginDir, withIntermediateDirectories: true)
 
@@ -65,14 +123,12 @@ public struct ToolsCreate {
             """
         try? packageSwift.write(to: dir.appendingPathComponent("Package.swift"), atomically: true, encoding: .utf8)
 
-        // Plugin.swift
+        // Plugin.swift (v2 ABI)
         let pluginSwift = """
             import Foundation
 
             // MARK: - Osaurus Injected Context
 
-            /// Folder context injected by Osaurus when a working directory is selected.
-            /// Use this to resolve relative file paths in your tools.
             private struct FolderContext: Decodable {
                 let working_directory: String
             }
@@ -82,48 +138,55 @@ public struct ToolsCreate {
             private struct HelloTool {
                 let name = "hello_world"
                 let description = "Return a friendly greeting"
-                let parameters = "{\\"type\\":\\"object\\",\\"properties\\":{\\"name\\":{\\"type\\":\\"string\\"}},\\"required\\":[\\"name\\"]}"
                 
                 func run(args: String) -> String {
                     struct Args: Decodable {
                         let name: String
-                        let _secrets: [String: String]?   // Secrets injected by Osaurus
-                        let _context: FolderContext?      // Folder context injected by Osaurus
+                        let _secrets: [String: String]?
+                        let _context: FolderContext?
                     }
                     guard let data = args.data(using: .utf8),
                           let input = try? JSONDecoder().decode(Args.self, from: data)
                     else {
                         return "{\\"error\\": \\"Invalid arguments\\"}"
                     }
-                    
-                    // Example: Access a configured secret (if your plugin declares secrets in manifest)
-                    // let apiKey = input._secrets?["api_key"] ?? "no-key"
-                    
-                    // Example: Resolve a relative path using the working directory
-                    // if let workingDir = input._context?.working_directory {
-                    //     let absolutePath = "\\(workingDir)/\\(relativePath)"
-                    // }
-                    
                     return "{\\"message\\": \\"Hello, \\(input.name)!\\"}"
                 }
             }
 
-            // MARK: - C ABI surface
+            // MARK: - C ABI Surface (v2)
 
-            // Opaque context
             private typealias osr_plugin_ctx_t = UnsafeMutableRawPointer
 
-            // Function pointers
+            private typealias osr_config_get_fn = @convention(c) (UnsafePointer<CChar>?) -> UnsafePointer<CChar>?
+            private typealias osr_config_set_fn = @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> Void
+            private typealias osr_config_delete_fn = @convention(c) (UnsafePointer<CChar>?) -> Void
+            private typealias osr_db_exec_fn = @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> UnsafePointer<CChar>?
+            private typealias osr_db_query_fn = @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> UnsafePointer<CChar>?
+            private typealias osr_log_fn = @convention(c) (Int32, UnsafePointer<CChar>?) -> Void
+
+            private struct osr_host_api {
+                var version: UInt32
+                var config_get: osr_config_get_fn?
+                var config_set: osr_config_set_fn?
+                var config_delete: osr_config_delete_fn?
+                var db_exec: osr_db_exec_fn?
+                var db_query: osr_db_query_fn?
+                var log: osr_log_fn?
+            }
+
             private typealias osr_free_string_t = @convention(c) (UnsafePointer<CChar>?) -> Void
             private typealias osr_init_t = @convention(c) () -> osr_plugin_ctx_t?
             private typealias osr_destroy_t = @convention(c) (osr_plugin_ctx_t?) -> Void
             private typealias osr_get_manifest_t = @convention(c) (osr_plugin_ctx_t?) -> UnsafePointer<CChar>?
             private typealias osr_invoke_t = @convention(c) (
                 osr_plugin_ctx_t?,
-                UnsafePointer<CChar>?,  // type
-                UnsafePointer<CChar>?,  // id
-                UnsafePointer<CChar>?   // payload
+                UnsafePointer<CChar>?,
+                UnsafePointer<CChar>?,
+                UnsafePointer<CChar>?
             ) -> UnsafePointer<CChar>?
+            private typealias osr_handle_route_t = @convention(c) (osr_plugin_ctx_t?, UnsafePointer<CChar>?) -> UnsafePointer<CChar>?
+            private typealias osr_on_config_changed_t = @convention(c) (osr_plugin_ctx_t?, UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> Void
 
             private struct osr_plugin_api {
                 var free_string: osr_free_string_t?
@@ -131,19 +194,21 @@ public struct ToolsCreate {
                 var destroy: osr_destroy_t?
                 var get_manifest: osr_get_manifest_t?
                 var invoke: osr_invoke_t?
+                var version: UInt32
+                var handle_route: osr_handle_route_t?
+                var on_config_changed: osr_on_config_changed_t?
             }
 
-            // Context state (simple wrapper class to hold state)
+            private var hostAPI: UnsafePointer<osr_host_api>?
+
             private class PluginContext {
                 let tool = HelloTool()
             }
 
-            // Helper to return C strings
             private func makeCString(_ s: String) -> UnsafePointer<CChar>? {
                 return strdup(s)
             }
 
-            // API Implementation
             private var api: osr_plugin_api = {
                 var api = osr_plugin_api()
                 
@@ -162,15 +227,7 @@ public struct ToolsCreate {
                 }
                 
                 api.get_manifest = { ctxPtr in
-                    // Manifest JSON matching new spec
-                    // NOTE: To require API keys or other secrets, add a "secrets" array at the top level.
-                    // Example:
-                    //   "secrets": [
-                    //     {"id": "api_key", "label": "API Key", "description": "Your API key", "required": true, "url": "https://example.com/api"}
-                    //   ],
-                    // Secrets are injected into tool payloads under the "_secrets" key.
-                    // Folder context (working_directory) is injected under the "_context" key when active.
-                    let manifest = \"\"\"
+                    let manifest = \\"\\"\\"
                     {
                       "plugin_id": "dev.example.\(name)",
                       "name": "\(displayName)",
@@ -189,10 +246,19 @@ public struct ToolsCreate {
                             "requirements": [],
                             "permission_policy": "ask"
                           }
+                        ],
+                        "routes": [
+                          {
+                            "id": "health",
+                            "path": "/health",
+                            "methods": ["GET"],
+                            "description": "Health check endpoint",
+                            "auth": "none"
+                          }
                         ]
                       }
                     }
-                    \"\"\"
+                    \\"\\"\\"
                     return makeCString(manifest)
                 }
                 
@@ -215,8 +281,49 @@ public struct ToolsCreate {
                     return makeCString("{\\"error\\": \\"Unknown capability\\"}")
                 }
                 
+                api.version = 2
+                
+                api.handle_route = { ctxPtr, requestJsonPtr in
+                    guard let requestJsonPtr = requestJsonPtr else { return nil }
+                    let requestJson = String(cString: requestJsonPtr)
+                    
+                    struct RouteRequest: Decodable { let route_id: String }
+                    guard let data = requestJson.data(using: .utf8),
+                          let req = try? JSONDecoder().decode(RouteRequest.self, from: data)
+                    else {
+                        return makeCString("{\\"status\\":400}")
+                    }
+                    
+                    switch req.route_id {
+                    case "health":
+                        let body: [String: Any] = ["ok": true]
+                        let bodyData = try? JSONSerialization.data(withJSONObject: body)
+                        let bodyStr = bodyData.flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+                        let resp: [String: Any] = [
+                            "status": 200,
+                            "headers": ["Content-Type": "application/json"],
+                            "body": bodyStr,
+                        ]
+                        if let respData = try? JSONSerialization.data(withJSONObject: resp),
+                           let respStr = String(data: respData, encoding: .utf8) {
+                            return makeCString(respStr)
+                        }
+                        return makeCString("{\\"status\\":500}")
+                    default:
+                        return makeCString("{\\"status\\":404}")
+                    }
+                }
+                
+                api.on_config_changed = { _, _, _ in }
+                
                 return api
             }()
+
+            @_cdecl("osaurus_plugin_entry_v2")
+            public func osaurus_plugin_entry_v2(_ host: UnsafePointer<osr_host_api>?) -> UnsafeRawPointer? {
+                hostAPI = host
+                return UnsafeRawPointer(&api)
+            }
 
             @_cdecl("osaurus_plugin_entry")
             public func osaurus_plugin_entry() -> UnsafeRawPointer? {
@@ -225,33 +332,13 @@ public struct ToolsCreate {
             """
         try? pluginSwift.write(to: pluginDir.appendingPathComponent("Plugin.swift"), atomically: true, encoding: .utf8)
 
-        // .github/workflows/release.yml
-        let githubDir = dir.appendingPathComponent(".github", isDirectory: true)
-        let workflowsDir = githubDir.appendingPathComponent("workflows", isDirectory: true)
-        try? fm.createDirectory(at: workflowsDir, withIntermediateDirectories: true)
+        createWebPlaceholder(dir: dir, displayName: displayName)
+        createReleaseWorkflow(dir: dir)
 
-        let releaseYml = """
-            name: Release
-
-            on:
-              push:
-                tags: ['v*', '[0-9]+.[0-9]+.[0-9]+']
-
-            permissions:
-              contents: write
-
-            jobs:
-              release:
-                uses: osaurus-ai/osaurus-tools/.github/workflows/build-plugin.yml@master
-                secrets: inherit
-            """
-        try? releaseYml.write(to: workflowsDir.appendingPathComponent("release.yml"), atomically: true, encoding: .utf8)
-
-        // README.md (with publishing instructions)
         let readme = """
             # \(name)
 
-            An Osaurus plugin.
+            An Osaurus plugin (v2 ABI).
 
             ## Development
 
@@ -270,11 +357,19 @@ public struct ToolsCreate {
                ```bash
                osaurus tools package dev.example.\(name) 0.1.0
                ```
-               This creates `dev.example.\(name)-0.1.0.zip`.
+               This creates `dev.example.\(name)-0.1.0.zip` including the dylib,
+               `web/` directory, `README.md`, and any other companion files.
                
             4. Install locally:
                ```bash
                osaurus tools install ./dev.example.\(name)-0.1.0.zip
+               ```
+
+            5. Dev mode (hot reload):
+               ```bash
+               osaurus tools dev dev.example.\(name)
+               # With web proxy for frontend HMR:
+               osaurus tools dev dev.example.\(name) --web-proxy http://localhost:5173
                ```
                
             ## Publishing
@@ -300,43 +395,325 @@ public struct ToolsCreate {
 
             3. Create a registry entry JSON file for the central repository.
 
+            ## Plugin Structure
+
+            This plugin uses the **v2 ABI** which supports:
+            - **Tools** - AI-callable functions
+            - **Routes** - HTTP endpoints (OAuth, webhooks, APIs)
+            - **Config** - Persistent key-value storage via `host.config_get/set/delete`
+            - **Database** - Per-plugin SQLite via `host.db_exec/db_query`
+            - **Web** - Static frontend assets served from `web/`
+            - **Logging** - Structured logging via `host.log`
+
             ## Important Notes
 
-            - Plugin metadata (id, version, capabilities) is defined in `get_manifest()` in Plugin.swift
+            - Plugin metadata is defined in `get_manifest()` in Plugin.swift
             - The zip filename determines the plugin_id and version during installation
             - Ensure the version in `get_manifest()` matches your zip filename
             - CI extracts the manifest from the built dylib automatically
             """
         try? readme.write(to: dir.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
 
-        // CLAUDE.md (AI agent guidance)
         createClaudeMd(name: name, displayName: displayName, dir: dir, language: "swift")
     }
 
-    private static func createRustPlugin(name: String) {
+    private static func createRustPlugin(name: String, rootDirectory: URL) {
         let fm = FileManager.default
-        let root = URL(fileURLWithPath: fm.currentDirectoryPath)
-        let dir = root.appendingPathComponent(name, isDirectory: true)
-        try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        let dir = rootDirectory.appendingPathComponent(name, isDirectory: true)
+        let moduleName = moduleName(from: name)
+        let displayName = displayName(from: name)
+
+        // src/ directory
+        let srcDir = dir.appendingPathComponent("src", isDirectory: true)
+        try? fm.createDirectory(at: srcDir, withIntermediateDirectories: true)
+
+        // Cargo.toml
+        let cargoToml = """
+            [package]
+            name = "\(moduleName)"
+            version = "0.1.0"
+            edition = "2021"
+
+            [lib]
+            crate-type = ["cdylib"]
+
+            [dependencies]
+            serde = { version = "1", features = ["derive"] }
+            serde_json = "1"
+            """
+        try? cargoToml.write(to: dir.appendingPathComponent("Cargo.toml"), atomically: true, encoding: .utf8)
+
+        // src/lib.rs (v2 ABI)
+        let libRs = """
+            use serde::Deserialize;
+            use std::ffi::{c_char, c_void, CStr, CString};
+            use std::ptr;
+
+            // ── Host API (provided by Osaurus at init) ──
+
+            type OsrConfigGetFn = unsafe extern "C" fn(*const c_char) -> *const c_char;
+            type OsrConfigSetFn = unsafe extern "C" fn(*const c_char, *const c_char);
+            type OsrConfigDeleteFn = unsafe extern "C" fn(*const c_char);
+            type OsrDbExecFn = unsafe extern "C" fn(*const c_char, *const c_char) -> *const c_char;
+            type OsrDbQueryFn = unsafe extern "C" fn(*const c_char, *const c_char) -> *const c_char;
+            type OsrLogFn = unsafe extern "C" fn(i32, *const c_char);
+
+            #[repr(C)]
+            struct OsrHostApi {
+                version: u32,
+                config_get: Option<OsrConfigGetFn>,
+                config_set: Option<OsrConfigSetFn>,
+                config_delete: Option<OsrConfigDeleteFn>,
+                db_exec: Option<OsrDbExecFn>,
+                db_query: Option<OsrDbQueryFn>,
+                log: Option<OsrLogFn>,
+            }
+
+            // ── Plugin API (returned to Osaurus) ──
+
+            #[repr(C)]
+            struct OsrPluginApi {
+                free_string: Option<unsafe extern "C" fn(*const c_char)>,
+                init: Option<unsafe extern "C" fn() -> *mut c_void>,
+                destroy: Option<unsafe extern "C" fn(*mut c_void)>,
+                get_manifest: Option<unsafe extern "C" fn(*mut c_void) -> *const c_char>,
+                invoke: Option<unsafe extern "C" fn(*mut c_void, *const c_char, *const c_char, *const c_char) -> *const c_char>,
+                version: u32,
+                handle_route: Option<unsafe extern "C" fn(*mut c_void, *const c_char) -> *const c_char>,
+                on_config_changed: Option<unsafe extern "C" fn(*mut c_void, *const c_char, *const c_char)>,
+            }
+
+            unsafe impl Sync for OsrPluginApi {}
+
+            static mut HOST_API: *const OsrHostApi = ptr::null();
+
+            static mut PLUGIN_API: OsrPluginApi = OsrPluginApi {
+                free_string: Some(plugin_free_string),
+                init: Some(plugin_init),
+                destroy: Some(plugin_destroy),
+                get_manifest: Some(plugin_get_manifest),
+                invoke: Some(plugin_invoke),
+                version: 2,
+                handle_route: Some(plugin_handle_route),
+                on_config_changed: Some(plugin_on_config_changed),
+            };
+
+            struct PluginContext;
+
+            fn make_c_string(s: &str) -> *const c_char {
+                CString::new(s)
+                    .map(|cs| cs.into_raw() as *const c_char)
+                    .unwrap_or(ptr::null())
+            }
+
+            unsafe fn read_c_str(ptr: *const c_char) -> String {
+                if ptr.is_null() {
+                    return String::new();
+                }
+                CStr::from_ptr(ptr).to_string_lossy().into_owned()
+            }
+
+            // ── Plugin API Implementation ──
+
+            unsafe extern "C" fn plugin_free_string(s: *const c_char) {
+                if !s.is_null() {
+                    drop(CString::from_raw(s as *mut c_char));
+                }
+            }
+
+            unsafe extern "C" fn plugin_init() -> *mut c_void {
+                let ctx = Box::new(PluginContext);
+                Box::into_raw(ctx) as *mut c_void
+            }
+
+            unsafe extern "C" fn plugin_destroy(ctx: *mut c_void) {
+                if !ctx.is_null() {
+                    drop(Box::from_raw(ctx as *mut PluginContext));
+                }
+            }
+
+            unsafe extern "C" fn plugin_get_manifest(_ctx: *mut c_void) -> *const c_char {
+                let manifest = r#"{
+              "plugin_id": "dev.example.\(name)",
+              "name": "\(displayName)",
+              "version": "0.1.0",
+              "description": "An example plugin",
+              "license": "MIT",
+              "authors": [],
+              "min_macos": "15.0",
+              "min_osaurus": "0.5.0",
+              "capabilities": {
+                "tools": [
+                  {
+                    "id": "hello_world",
+                    "description": "Return a friendly greeting",
+                    "parameters": {"type":"object","properties":{"name":{"type":"string"}},"required":["name"]},
+                    "requirements": [],
+                    "permission_policy": "ask"
+                  }
+                ],
+                "routes": [
+                  {
+                    "id": "health",
+                    "path": "/health",
+                    "methods": ["GET"],
+                    "description": "Health check endpoint",
+                    "auth": "none"
+                  }
+                ]
+              }
+            }"#;
+                make_c_string(manifest)
+            }
+
+            unsafe extern "C" fn plugin_invoke(
+                _ctx: *mut c_void,
+                type_ptr: *const c_char,
+                id_ptr: *const c_char,
+                payload_ptr: *const c_char,
+            ) -> *const c_char {
+                let type_str = read_c_str(type_ptr);
+                let id_str = read_c_str(id_ptr);
+                let payload = read_c_str(payload_ptr);
+
+                if type_str == "tool" && id_str == "hello_world" {
+                    #[derive(Deserialize)]
+                    struct Args {
+                        name: String,
+                    }
+                    match serde_json::from_str::<Args>(&payload) {
+                        Ok(args) => {
+                            let resp = serde_json::json!({ "message": format!("Hello, {}!", args.name) });
+                            return make_c_string(&resp.to_string());
+                        }
+                        Err(_) => return make_c_string(r#"{"error":"Invalid arguments"}"#),
+                    }
+                }
+
+                make_c_string(r#"{"error":"Unknown capability"}"#)
+            }
+
+            unsafe extern "C" fn plugin_handle_route(
+                _ctx: *mut c_void,
+                request_json: *const c_char,
+            ) -> *const c_char {
+                let json_str = read_c_str(request_json);
+
+                #[derive(Deserialize)]
+                struct RouteRequest {
+                    route_id: String,
+                }
+
+                let req: RouteRequest = match serde_json::from_str(&json_str) {
+                    Ok(r) => r,
+                    Err(_) => return make_c_string(r#"{"status":400}"#),
+                };
+
+                match req.route_id.as_str() {
+                    "health" => {
+                        let resp = serde_json::json!({
+                            "status": 200,
+                            "headers": { "Content-Type": "application/json" },
+                            "body": r#"{"ok":true}"#,
+                        });
+                        make_c_string(&resp.to_string())
+                    }
+                    _ => make_c_string(r#"{"status":404}"#),
+                }
+            }
+
+            unsafe extern "C" fn plugin_on_config_changed(
+                _ctx: *mut c_void,
+                _key: *const c_char,
+                _value: *const c_char,
+            ) {
+            }
+
+            // ── Entry Points ──
+
+            #[no_mangle]
+            pub unsafe extern "C" fn osaurus_plugin_entry_v2(
+                host: *const OsrHostApi,
+            ) -> *const OsrPluginApi {
+                HOST_API = host;
+                &raw const PLUGIN_API
+            }
+
+            #[no_mangle]
+            pub unsafe extern "C" fn osaurus_plugin_entry() -> *const OsrPluginApi {
+                &raw const PLUGIN_API
+            }
+            """
+        try? libRs.write(to: srcDir.appendingPathComponent("lib.rs"), atomically: true, encoding: .utf8)
+
+        createWebPlaceholder(dir: dir, displayName: displayName)
+        createReleaseWorkflow(dir: dir)
+
         let readme = """
             # \(name)
 
-            This is a placeholder for a Rust-based Osaurus plugin. Build a cdylib exposing
-            `osaurus_plugin_entry` that returns the generic ABI table.
+            An Osaurus plugin (v2 ABI) written in Rust.
+
+            ## Development
+
+            1. Build:
+               ```bash
+               cargo build --release
+               cp target/release/lib\(moduleName).dylib ./lib\(moduleName).dylib
+               ```
+
+            2. Extract manifest (to verify):
+               ```bash
+               osaurus manifest extract target/release/lib\(moduleName).dylib
+               ```
+
+            3. Package (for distribution):
+               ```bash
+               osaurus tools package dev.example.\(name) 0.1.0
+               ```
+               This creates `dev.example.\(name)-0.1.0.zip` including the dylib,
+               `web/` directory, `README.md`, and any other companion files.
+
+            4. Install locally:
+               ```bash
+               osaurus tools install ./dev.example.\(name)-0.1.0.zip
+               ```
+
+            5. Dev mode (hot reload):
+               ```bash
+               osaurus tools dev dev.example.\(name)
+               ```
+
+            ## Publishing
+
+            This project includes a GitHub Actions workflow (`.github/workflows/release.yml`) that
+            automatically builds and releases the plugin when you push a version tag.
+
+            To release:
+            ```bash
+            git tag v0.1.0
+            git push origin v0.1.0
+            ```
+
+            ## Plugin Structure
+
+            This plugin uses the **v2 ABI** which supports:
+            - **Tools** - AI-callable functions
+            - **Routes** - HTTP endpoints (OAuth, webhooks, APIs)
+            - **Config** - Persistent key-value storage via `host.config_get/set/delete`
+            - **Database** - Per-plugin SQLite via `host.db_exec/db_query`
+            - **Web** - Static frontend assets served from `web/`
+            - **Logging** - Structured logging via `host.log`
             """
         try? readme.write(to: dir.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
 
-        // Generate display name for CLAUDE.md
-        let displayName = name.split(separator: "-").map { $0.prefix(1).uppercased() + $0.dropFirst() }.joined(
-            separator: " "
-        )
         createClaudeMd(name: name, displayName: displayName, dir: dir, language: "rust")
     }
 
     // MARK: - AI Agent Guidance
 
     private static func createClaudeMd(name: String, displayName: String, dir: URL, language: String) {
-        let moduleName = name.replacingOccurrences(of: "-", with: "_")
+        let moduleName = moduleName(from: name)
         let isSwift = language == "swift"
 
         let claudeMd = """
@@ -358,6 +735,8 @@ public struct ToolsCreate {
             ├── src/
             │   └── lib.rs                 # Main plugin implementation
             """)
+            ├── web/                       # Static frontend assets (v2)
+            │   └── index.html
             ├── README.md                  # User-facing documentation
             ├── CLAUDE.md                  # This file (AI guidance)
             └── .github/
@@ -367,13 +746,116 @@ public struct ToolsCreate {
 
             ## Architecture Overview
 
-            Osaurus plugins use a C ABI interface. The plugin exports a single entry point (`osaurus_plugin_entry`) that returns a function table with:
+            Osaurus plugins use a C ABI interface (v2). The plugin exports `osaurus_plugin_entry_v2(host)` which receives
+            host callbacks and returns a function table. A v1 fallback (`osaurus_plugin_entry`) is also exported for
+            compatibility with older Osaurus versions.
 
+            **Plugin API (returned to host):**
             - `init()` - Initialize plugin, return context pointer
             - `destroy(ctx)` - Clean up resources
             - `get_manifest(ctx)` - Return JSON describing plugin capabilities
             - `invoke(ctx, type, id, payload)` - Execute a tool with JSON payload
+            - `handle_route(ctx, request_json)` - Handle HTTP route requests (v2)
+            - `on_config_changed(ctx, key, value)` - React to config changes (v2)
             - `free_string(s)` - Free strings returned to host
+            - `version` - Set to `2` for v2 plugins
+
+            **Host API (provided to plugin at init):**
+            - `config_get(key)` / `config_set(key, value)` / `config_delete(key)` - Keychain-backed config
+            - `db_exec(sql, params_json)` / `db_query(sql, params_json)` - Per-plugin SQLite
+            - `log(level, message)` - Structured logging
+
+            ## Adding HTTP Routes
+
+            v2 plugins can handle HTTP requests at `/plugins/<plugin_id>/<subpath>`.
+
+            ### Step 1: Declare Routes in Manifest
+
+            Add routes to `capabilities.routes` in `get_manifest()`:
+
+            ```json
+            "routes": [
+              {
+                "id": "webhook",
+                "path": "/events",
+                "methods": ["POST"],
+                "description": "Incoming webhook handler",
+                "auth": "verify"
+              },
+              {
+                "id": "app",
+                "path": "/app/*",
+                "methods": ["GET"],
+                "description": "Web UI",
+                "auth": "owner"
+              }
+            ]
+            ```
+
+            Route auth levels: `none` (public), `verify` (rate-limited), `owner` (requires logged-in user).
+
+            ### Step 2: Handle in handle_route()
+
+            The host calls `handle_route(ctx, request_json)` with a JSON-encoded request containing
+            `route_id`, `method`, `path`, `query`, `headers`, `body`, and `plugin_id`.
+
+            Return a JSON-encoded response with `status`, `headers`, and `body`.
+
+            ## Using Host Storage
+
+            v2 plugins receive host callbacks for persistent storage:
+
+            \(isSwift ? """
+            ```swift
+            // Read config (Keychain-backed)
+            if let getValue = hostAPI?.pointee.config_get {
+                let result = getValue(makeCString("my_setting"))
+                // result is a C string or nil
+            }
+
+            // Write config
+            if let setValue = hostAPI?.pointee.config_set {
+                setValue(makeCString("my_setting"), makeCString("value"))
+            }
+
+            // Query per-plugin SQLite database
+            if let dbQuery = hostAPI?.pointee.db_query {
+                let result = dbQuery(makeCString("SELECT * FROM items"), makeCString("[]"))
+                // result is JSON string
+            }
+
+            // Structured logging
+            if let log = hostAPI?.pointee.log {
+                log(0, makeCString("Plugin initialized"))  // 0=debug, 1=info, 2=warn, 3=error
+            }
+            ```
+            """ : """
+            ```rust
+            unsafe {
+                // Read config (Keychain-backed)
+                if let Some(config_get) = (*HOST_API).config_get {
+                    let result = config_get(make_c_string("my_setting"));
+                    // result is a C string or null
+                }
+
+                // Write config
+                if let Some(config_set) = (*HOST_API).config_set {
+                    config_set(make_c_string("my_setting"), make_c_string("value"));
+                }
+
+                // Query per-plugin SQLite database
+                if let Some(db_query) = (*HOST_API).db_query {
+                    let result = db_query(make_c_string("SELECT * FROM items"), make_c_string("[]"));
+                    // result is JSON string
+                }
+
+                // Structured logging
+                if let Some(log) = (*HOST_API).log {
+                    log(0, make_c_string("Plugin initialized"));  // 0=debug, 1=info, 2=warn, 3=error
+                }
+            }
+            ```
+            """)
 
             ## Adding New Tools
 

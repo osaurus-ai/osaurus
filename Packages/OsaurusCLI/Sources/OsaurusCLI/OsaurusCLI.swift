@@ -111,11 +111,16 @@ struct OsaurusCLI {
               osaurus tools upgrade   Upgrade installed tools
               osaurus tools uninstall <tool_name>
                                       Uninstall a tool
-              osaurus tools verify    Verify installed tools
+              osaurus tools verify    Verify dylib integrity of installed tools
               osaurus tools create <name> [--language swift|rust]
-                                      Scaffold a tool project
-              osaurus tools package   Build and zip the current tool
+                                      Scaffold a v2 plugin project
+              osaurus tools package <plugin_id> <version> [dylib_path]
+                                      Package plugin into a zip (includes web/, docs)
               osaurus tools reload    Ask the app to rescan tools
+              osaurus tools rollback <plugin_id>
+                                      Roll back a tool to its previous version
+              osaurus tools dev <plugin_id> [--web-proxy <url>]
+                                      Dev mode with hot reload and optional web proxy
               osaurus manifest extract <dylib>
                                       Extract manifest JSON from built plugin
               osaurus help            Show this help
