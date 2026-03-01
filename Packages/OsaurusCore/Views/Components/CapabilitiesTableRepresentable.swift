@@ -61,6 +61,7 @@ enum CapabilityRow: Equatable, Identifiable {
         name: String,
         toolCount: Int,
         skillCount: Int,
+        hasRoutes: Bool,
         isActive: Bool
     )
 
@@ -69,7 +70,7 @@ enum CapabilityRow: Equatable, Identifiable {
         case .groupHeader(let id, _, _, _, _, _): return "gh-\(id)"
         case .tool(let id, _, _, _, _, _, _): return "tool-\(id)"
         case .skill(let id, _, _, _, _, _, _): return "skill-\(id)"
-        case .compoundPlugin(let id, _, _, _, _): return "cp-\(id)"
+        case .compoundPlugin(let id, _, _, _, _, _): return "cp-\(id)"
         }
     }
 }
@@ -431,7 +432,7 @@ extension CapabilitiesTableRepresentable {
                         .environment(\.theme, theme)
                 )
 
-            case .compoundPlugin(let id, let name, let toolCount, let skillCount, let isActive):
+            case .compoundPlugin(let id, let name, let toolCount, let skillCount, let hasRoutes, let isActive):
                 cell.configure(
                     id: row.id,
                     content:
@@ -439,6 +440,7 @@ extension CapabilitiesTableRepresentable {
                             name: name,
                             toolCount: toolCount,
                             skillCount: skillCount,
+                            hasRoutes: hasRoutes,
                             isActive: isActive,
                             isHovered: isHovered,
                             onToggle: { [weak self] in self?.ctx.onToggleCompoundPlugin?(id) }
@@ -722,6 +724,7 @@ private struct CompoundPluginRowCell: View {
     let name: String
     let toolCount: Int
     let skillCount: Int
+    let hasRoutes: Bool
     let isActive: Bool
     let isHovered: Bool
     let onToggle: () -> Void
@@ -755,25 +758,47 @@ private struct CompoundPluginRowCell: View {
                     .lineLimit(1)
 
                 HStack(spacing: 4) {
-                    HStack(spacing: 2) {
-                        Image(systemName: "wrench.and.screwdriver")
-                            .font(.system(size: 8))
-                        Text("\(toolCount)")
-                            .font(.system(size: 9, weight: .medium))
-                    }
-                    .foregroundColor(theme.tertiaryText)
-
-                    Text("+")
-                        .font(.system(size: 8))
+                    if toolCount > 0 {
+                        HStack(spacing: 2) {
+                            Image(systemName: "wrench.and.screwdriver")
+                                .font(.system(size: 8))
+                            Text("\(toolCount)")
+                                .font(.system(size: 9, weight: .medium))
+                        }
                         .foregroundColor(theme.tertiaryText)
-
-                    HStack(spacing: 2) {
-                        Image(systemName: "lightbulb")
-                            .font(.system(size: 8))
-                        Text("\(skillCount)")
-                            .font(.system(size: 9, weight: .medium))
                     }
-                    .foregroundColor(theme.tertiaryText)
+
+                    if toolCount > 0 && (skillCount > 0 || hasRoutes) {
+                        Text("+")
+                            .font(.system(size: 8))
+                            .foregroundColor(theme.tertiaryText)
+                    }
+
+                    if skillCount > 0 {
+                        HStack(spacing: 2) {
+                            Image(systemName: "lightbulb")
+                                .font(.system(size: 8))
+                            Text("\(skillCount)")
+                                .font(.system(size: 9, weight: .medium))
+                        }
+                        .foregroundColor(theme.tertiaryText)
+                    }
+
+                    if hasRoutes {
+                        if skillCount > 0 {
+                            Text("+")
+                                .font(.system(size: 8))
+                                .foregroundColor(theme.tertiaryText)
+                        }
+
+                        HStack(spacing: 2) {
+                            Image(systemName: "network")
+                                .font(.system(size: 8))
+                            Text("Routes")
+                                .font(.system(size: 9, weight: .medium))
+                        }
+                        .foregroundColor(theme.tertiaryText)
+                    }
                 }
             }
 

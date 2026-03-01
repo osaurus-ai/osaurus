@@ -102,8 +102,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             }
 
             // Access key authentication gate (all data snapshotted at server start, zero locks)
+            // Plugin routes handle their own auth per-route, so skip the global gate.
             let publicPaths: Set<String> = ["/", "/health"]
-            if !publicPaths.contains(path) {
+            let isPluginRoute = path.hasPrefix("/plugins/")
+            if !publicPaths.contains(path) && !isPluginRoute {
                 let authHeader = head.headers.first(name: "Authorization") ?? ""
                 let token =
                     authHeader.hasPrefix("Bearer ")
@@ -269,6 +271,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     userAgent: userAgent,
                     ollamaFormat: path == "/embed"
                 )
+            } else if path.hasPrefix("/plugins/") {
+                handlePluginRoute(
+                    head: head,
+                    context: context,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
             } else {
                 var headers = [("Content-Type", "text/plain; charset=utf-8")]
                 headers.append(contentsOf: stateRef.value.corsHeaders)
@@ -294,6 +303,780 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             stateRef.value.requestHead = nil
             stateRef.value.requestBodyBuffer = nil
         }
+    }
+
+    // MARK: - Plugin Route Handler
+
+    private func handlePluginRoute(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        let path = stateRef.value.normalizedPath
+        let method = head.method.rawValue
+        let corsHeaders = stateRef.value.corsHeaders
+
+        // Parse: /plugins/<pluginId>/<subpath>
+        let segments = path.dropFirst("/plugins/".count)
+        guard let slashIdx = segments.firstIndex(of: "/") else {
+            sendPluginError(
+                context: context,
+                head: head,
+                status: .notFound,
+                message: "Invalid plugin route",
+                corsHeaders: corsHeaders,
+                startTime: startTime,
+                method: method,
+                path: path,
+                userAgent: userAgent
+            )
+            return
+        }
+        let pluginId = String(segments[..<slashIdx])
+        let subpath = String(segments[slashIdx...])
+
+        // Reject path traversal
+        if pluginId.contains("..") || subpath.contains("..") {
+            sendPluginError(
+                context: context,
+                head: head,
+                status: .badRequest,
+                message: "Invalid path",
+                corsHeaders: corsHeaders,
+                startTime: startTime,
+                method: method,
+                path: path,
+                userAgent: userAgent
+            )
+            return
+        }
+
+        let loop = context.eventLoop
+        let ctxBound = NIOLoopBound(context, eventLoop: loop)
+        let bodyBuffer = stateRef.value.requestBodyBuffer
+        let uri = head.uri
+        let headersDict = Dictionary(
+            head.headers.map { ($0.name.lowercased(), $0.value) },
+            uniquingKeysWith: { $1 }
+        )
+        let version = head.version
+
+        // All plugin route access requires an agent context
+        let agentIdStr = headersDict["x-osaurus-agent-id"]
+        guard let agentIdStr, let agentUUID = UUID(uuidString: agentIdStr) else {
+            sendPluginError(
+                context: context,
+                head: head,
+                status: .unauthorized,
+                message: "Plugin routes require an agent context (X-Osaurus-Agent-Id header)",
+                corsHeaders: corsHeaders,
+                startTime: startTime,
+                method: method,
+                path: path,
+                userAgent: userAgent
+            )
+            return
+        }
+
+        // Move to background for PluginManager access and plugin invocation
+        let task = Task { @MainActor in
+            guard let loaded = PluginManager.shared.loadedPlugin(for: pluginId) else {
+                return self.sendPluginErrorFromTask(
+                    loop: loop,
+                    ctxBound: ctxBound,
+                    version: version,
+                    status: .notFound,
+                    message: "Plugin not found: \(pluginId)",
+                    corsHeaders: corsHeaders,
+                    startTime: startTime,
+                    method: method,
+                    path: path,
+                    userAgent: userAgent
+                )
+            }
+
+            // Check if this plugin is enabled for the requesting agent
+            guard AgentManager.shared.isPluginEnabled(pluginId, for: agentUUID) else {
+                return self.sendPluginErrorFromTask(
+                    loop: loop,
+                    ctxBound: ctxBound,
+                    version: version,
+                    status: .notFound,
+                    message: "Plugin not available for this agent",
+                    corsHeaders: corsHeaders,
+                    startTime: startTime,
+                    method: method,
+                    path: path,
+                    userAgent: userAgent
+                )
+            }
+
+            let manifest = loaded.plugin.manifest
+
+            // Check for static web serving first
+            if let webSpec = loaded.webConfig {
+                let mountPrefix = webSpec.mount.hasPrefix("/") ? webSpec.mount : "/\(webSpec.mount)"
+                if subpath.hasPrefix(mountPrefix) {
+                    if webSpec.auth == .owner && !self.isValidOwnerAuth(headers: headersDict) {
+                        return self.sendPluginErrorFromTask(
+                            loop: loop,
+                            ctxBound: ctxBound,
+                            version: version,
+                            status: .unauthorized,
+                            message: "Authentication required",
+                            corsHeaders: corsHeaders,
+                            startTime: startTime,
+                            method: method,
+                            path: path,
+                            userAgent: userAgent
+                        )
+                    }
+
+                    // Check for dev proxy configuration
+                    if let proxyURL = Self.loadDevProxyURL(for: pluginId) {
+                        let relPath = String(subpath.dropFirst(mountPrefix.count))
+                        let targetPath = relPath.isEmpty ? "/" : relPath
+                        return await self.proxyToDevServer(
+                            proxyBaseURL: proxyURL,
+                            targetPath: targetPath,
+                            pluginId: pluginId,
+                            loop: loop,
+                            ctxBound: ctxBound,
+                            version: version,
+                            corsHeaders: corsHeaders,
+                            startTime: startTime,
+                            method: method,
+                            path: path,
+                            userAgent: userAgent
+                        )
+                    }
+
+                    let relPath = String(subpath.dropFirst(mountPrefix.count))
+                    let filePath: String
+                    if relPath.isEmpty || relPath == "/" {
+                        filePath = webSpec.entry
+                    } else {
+                        filePath = relPath.hasPrefix("/") ? String(relPath.dropFirst()) : relPath
+                    }
+
+                    let versionDir = URL(fileURLWithPath: loaded.plugin.bundlePath).deletingLastPathComponent()
+                    let webDir = versionDir.appendingPathComponent(webSpec.static_dir, isDirectory: true)
+                    let fileURL = webDir.appendingPathComponent(filePath)
+
+                    // Prevent escaping the web directory
+                    let resolvedPath = fileURL.standardizedFileURL.path
+                    let webDirPath = webDir.standardizedFileURL.path
+                    guard resolvedPath.hasPrefix(webDirPath) else {
+                        return self.sendPluginErrorFromTask(
+                            loop: loop,
+                            ctxBound: ctxBound,
+                            version: version,
+                            status: .forbidden,
+                            message: "Access denied",
+                            corsHeaders: corsHeaders,
+                            startTime: startTime,
+                            method: method,
+                            path: path,
+                            userAgent: userAgent
+                        )
+                    }
+
+                    if FileManager.default.fileExists(atPath: resolvedPath) {
+                        return self.serveStaticFile(
+                            loop: loop,
+                            ctxBound: ctxBound,
+                            version: version,
+                            filePath: resolvedPath,
+                            pluginId: pluginId,
+                            corsHeaders: corsHeaders,
+                            startTime: startTime,
+                            method: method,
+                            path: path,
+                            userAgent: userAgent
+                        )
+                    }
+
+                    // SPA fallback: serve entry point for non-file paths
+                    let entryPath = webDir.appendingPathComponent(webSpec.entry).path
+                    if FileManager.default.fileExists(atPath: entryPath) {
+                        return self.serveStaticFile(
+                            loop: loop,
+                            ctxBound: ctxBound,
+                            version: version,
+                            filePath: entryPath,
+                            pluginId: pluginId,
+                            corsHeaders: corsHeaders,
+                            startTime: startTime,
+                            method: method,
+                            path: path,
+                            userAgent: userAgent
+                        )
+                    }
+
+                    return self.sendPluginErrorFromTask(
+                        loop: loop,
+                        ctxBound: ctxBound,
+                        version: version,
+                        status: .notFound,
+                        message: "File not found",
+                        corsHeaders: corsHeaders,
+                        startTime: startTime,
+                        method: method,
+                        path: path,
+                        userAgent: userAgent
+                    )
+                }
+            }
+
+            // Dynamic route matching
+            guard let route = manifest.matchRoute(method: method, subpath: subpath) else {
+                return self.sendPluginErrorFromTask(
+                    loop: loop,
+                    ctxBound: ctxBound,
+                    version: version,
+                    status: .notFound,
+                    message: "No matching route",
+                    corsHeaders: corsHeaders,
+                    startTime: startTime,
+                    method: method,
+                    path: path,
+                    userAgent: userAgent
+                )
+            }
+
+            switch route.auth {
+            case .owner:
+                if !self.isValidOwnerAuth(headers: headersDict) {
+                    return self.sendPluginErrorFromTask(
+                        loop: loop,
+                        ctxBound: ctxBound,
+                        version: version,
+                        status: .unauthorized,
+                        message: "Authentication required",
+                        corsHeaders: corsHeaders,
+                        startTime: startTime,
+                        method: method,
+                        path: path,
+                        userAgent: userAgent
+                    )
+                }
+            case .none, .verify:
+                // Rate limit public/verify routes
+                if !PluginRateLimiter.shared.allow(pluginId: pluginId) {
+                    return self.sendPluginErrorFromTask(
+                        loop: loop,
+                        ctxBound: ctxBound,
+                        version: version,
+                        status: .tooManyRequests,
+                        message: "Rate limit exceeded",
+                        corsHeaders: corsHeaders,
+                        startTime: startTime,
+                        method: method,
+                        path: path,
+                        userAgent: userAgent
+                    )
+                }
+            }
+
+            // Check plugin supports route handling
+            guard loaded.plugin.hasRouteHandler else {
+                return self.sendPluginErrorFromTask(
+                    loop: loop,
+                    ctxBound: ctxBound,
+                    version: version,
+                    status: .notImplemented,
+                    message: "Plugin does not support route handling",
+                    corsHeaders: corsHeaders,
+                    startTime: startTime,
+                    method: method,
+                    path: path,
+                    userAgent: userAgent
+                )
+            }
+
+            let queryParams = OsaurusHTTPRequest.parseQueryParams(from: uri)
+
+            var bodyString = ""
+            var bodyEncoding = "utf8"
+            if let buf = bodyBuffer, buf.readableBytes > 0 {
+                var readBuf = buf
+                if let str = readBuf.readString(length: readBuf.readableBytes) {
+                    bodyString = str
+                } else {
+                    let data = Data(buffer: buf)
+                    bodyString = data.base64EncodedString()
+                    bodyEncoding = "base64"
+                }
+            }
+
+            let serverPort = self.configuration.port
+            let localBaseURL = "http://127.0.0.1:\(serverPort)"
+
+            let tunnelURL = Self.resolveTunnelBaseURL(for: agentUUID)
+            let baseURL = tunnelURL ?? localBaseURL
+            let pluginURL = "\(baseURL)/plugins/\(pluginId)"
+
+            let request = OsaurusHTTPRequest(
+                route_id: route.id,
+                method: method,
+                path: subpath,
+                query: queryParams,
+                headers: headersDict,
+                body: bodyString,
+                body_encoding: bodyEncoding,
+                remote_addr: "",
+                plugin_id: pluginId,
+                osaurus: .init(base_url: baseURL, plugin_url: pluginURL)
+            )
+
+            let encoder = JSONEncoder()
+            guard let requestData = try? encoder.encode(request),
+                let requestJSON = String(data: requestData, encoding: .utf8)
+            else {
+                return self.sendPluginErrorFromTask(
+                    loop: loop,
+                    ctxBound: ctxBound,
+                    version: version,
+                    status: .internalServerError,
+                    message: "Failed to encode request",
+                    corsHeaders: corsHeaders,
+                    startTime: startTime,
+                    method: method,
+                    path: path,
+                    userAgent: userAgent
+                )
+            }
+
+            do {
+                let responseJSON = try await loaded.plugin.handleRoute(requestJSON: requestJSON)
+
+                guard let responseData = responseJSON.data(using: .utf8),
+                    let response = try? JSONDecoder().decode(OsaurusHTTPResponse.self, from: responseData)
+                else {
+                    return self.sendPluginErrorFromTask(
+                        loop: loop,
+                        ctxBound: ctxBound,
+                        version: version,
+                        status: .internalServerError,
+                        message: "Invalid plugin response",
+                        corsHeaders: corsHeaders,
+                        startTime: startTime,
+                        method: method,
+                        path: path,
+                        userAgent: userAgent
+                    )
+                }
+
+                // Build NIO response
+                let httpStatus = HTTPResponseStatus(statusCode: response.status)
+                var responseHeaders: [(String, String)] = corsHeaders
+                if let hdrs = response.headers {
+                    for (k, v) in hdrs {
+                        responseHeaders.append((k, v))
+                    }
+                }
+
+                var responseBody = ""
+                if let body = response.body {
+                    if response.body_encoding == "base64" {
+                        if let decoded = Data(base64Encoded: body) {
+                            self.sendBinaryPluginResponse(
+                                loop: loop,
+                                ctxBound: ctxBound,
+                                version: version,
+                                status: httpStatus,
+                                headers: responseHeaders,
+                                body: decoded,
+                                startTime: startTime,
+                                method: method,
+                                path: path,
+                                userAgent: userAgent
+                            )
+                            return
+                        }
+                    }
+                    responseBody = body
+                }
+
+                self.sendPluginResponse(
+                    loop: loop,
+                    ctxBound: ctxBound,
+                    version: version,
+                    status: httpStatus,
+                    headers: responseHeaders,
+                    body: responseBody,
+                    startTime: startTime,
+                    method: method,
+                    path: path,
+                    userAgent: userAgent
+                )
+            } catch {
+                self.sendPluginErrorFromTask(
+                    loop: loop,
+                    ctxBound: ctxBound,
+                    version: version,
+                    status: .internalServerError,
+                    message: "Plugin error: \(error.localizedDescription)",
+                    corsHeaders: corsHeaders,
+                    startTime: startTime,
+                    method: method,
+                    path: path,
+                    userAgent: userAgent
+                )
+            }
+        }
+        _ = task
+    }
+
+    private func sendPluginError(
+        context: ChannelHandlerContext,
+        head: HTTPRequestHead,
+        status: HTTPResponseStatus,
+        message: String,
+        corsHeaders: [(String, String)],
+        startTime: Date,
+        method: String,
+        path: String,
+        userAgent: String?
+    ) {
+        var headers = [("Content-Type", "application/json; charset=utf-8")]
+        headers.append(contentsOf: corsHeaders)
+        let body = #"{"error":{"message":"\#(message)"}}"#
+        sendResponse(context: context, version: head.version, status: status, headers: headers, body: body)
+        logRequest(
+            method: method,
+            path: path,
+            userAgent: userAgent,
+            requestBody: nil,
+            responseBody: body,
+            responseStatus: Int(status.code),
+            startTime: startTime
+        )
+    }
+
+    /// Core NIO response writer for plugin routes. All plugin response helpers funnel through this.
+    private func writePluginResponse(
+        loop: EventLoop,
+        ctxBound: NIOLoopBound<ChannelHandlerContext>,
+        version: HTTPVersion,
+        status: HTTPResponseStatus,
+        headers: [(String, String)],
+        bodyWriter: @Sendable @escaping (ChannelHandlerContext) -> ByteBuffer
+    ) {
+        executeOnLoop(loop) {
+            let context = ctxBound.value
+            var responseHead = HTTPResponseHead(version: version, status: status)
+            var nioHeaders = HTTPHeaders()
+            for (name, value) in headers { nioHeaders.add(name: name, value: value) }
+            let buffer = bodyWriter(context)
+            nioHeaders.add(name: "Content-Length", value: String(buffer.readableBytes))
+            nioHeaders.add(name: "Connection", value: "close")
+            responseHead.headers = nioHeaders
+            context.write(NIOAny(HTTPServerResponsePart.head(responseHead)), promise: nil)
+            context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
+            context.writeAndFlush(NIOAny(HTTPServerResponsePart.end(nil as HTTPHeaders?))).whenComplete { _ in
+                ctxBound.value.close(promise: nil)
+            }
+        }
+    }
+
+    private func sendPluginErrorFromTask(
+        loop: EventLoop,
+        ctxBound: NIOLoopBound<ChannelHandlerContext>,
+        version: HTTPVersion,
+        status: HTTPResponseStatus,
+        message: String,
+        corsHeaders: [(String, String)],
+        startTime: Date,
+        method: String,
+        path: String,
+        userAgent: String?
+    ) {
+        let headers: [(String, String)] = [("Content-Type", "application/json; charset=utf-8")] + corsHeaders
+        let body = #"{"error":{"message":"\#(message)"}}"#
+        writePluginResponse(loop: loop, ctxBound: ctxBound, version: version, status: status, headers: headers) { ctx in
+            var buffer = ctx.channel.allocator.buffer(capacity: body.utf8.count)
+            buffer.writeString(body)
+            return buffer
+        }
+        logRequest(
+            method: method,
+            path: path,
+            userAgent: userAgent,
+            requestBody: nil,
+            responseBody: body,
+            responseStatus: Int(status.code),
+            startTime: startTime
+        )
+    }
+
+    private func sendPluginResponse(
+        loop: EventLoop,
+        ctxBound: NIOLoopBound<ChannelHandlerContext>,
+        version: HTTPVersion,
+        status: HTTPResponseStatus,
+        headers: [(String, String)],
+        body: String,
+        startTime: Date,
+        method: String,
+        path: String,
+        userAgent: String?
+    ) {
+        writePluginResponse(loop: loop, ctxBound: ctxBound, version: version, status: status, headers: headers) { ctx in
+            var buffer = ctx.channel.allocator.buffer(capacity: body.utf8.count)
+            buffer.writeString(body)
+            return buffer
+        }
+        logRequest(
+            method: method,
+            path: path,
+            userAgent: userAgent,
+            requestBody: nil,
+            responseBody: body,
+            responseStatus: Int(status.code),
+            startTime: startTime
+        )
+    }
+
+    private func sendBinaryPluginResponse(
+        loop: EventLoop,
+        ctxBound: NIOLoopBound<ChannelHandlerContext>,
+        version: HTTPVersion,
+        status: HTTPResponseStatus,
+        headers: [(String, String)],
+        body: Data,
+        startTime: Date,
+        method: String,
+        path: String,
+        userAgent: String?
+    ) {
+        writePluginResponse(loop: loop, ctxBound: ctxBound, version: version, status: status, headers: headers) { ctx in
+            var buffer = ctx.channel.allocator.buffer(capacity: body.count)
+            buffer.writeBytes(body)
+            return buffer
+        }
+        logRequest(
+            method: method,
+            path: path,
+            userAgent: userAgent,
+            requestBody: nil,
+            responseBody: nil,
+            responseStatus: Int(status.code),
+            startTime: startTime
+        )
+    }
+
+    private func serveStaticFile(
+        loop: EventLoop,
+        ctxBound: NIOLoopBound<ChannelHandlerContext>,
+        version: HTTPVersion,
+        filePath: String,
+        pluginId: String,
+        corsHeaders: [(String, String)],
+        startTime: Date,
+        method: String,
+        path: String,
+        userAgent: String?
+    ) {
+        guard let fileData = FileManager.default.contents(atPath: filePath) else {
+            sendPluginErrorFromTask(
+                loop: loop,
+                ctxBound: ctxBound,
+                version: version,
+                status: .notFound,
+                message: "File not found",
+                corsHeaders: corsHeaders,
+                startTime: startTime,
+                method: method,
+                path: path,
+                userAgent: userAgent
+            )
+            return
+        }
+
+        let ext = (filePath as NSString).pathExtension
+        let mimeType = MIMEType.forExtension(ext)
+        var headers: [(String, String)] = corsHeaders
+        headers.append(("Content-Type", mimeType))
+        headers.append(("Cache-Control", "public, max-age=3600"))
+
+        if ext == "html" || ext == "htm", var html = String(data: fileData, encoding: .utf8) {
+            Self.injectOsaurusContext(into: &html, pluginId: pluginId)
+            sendPluginResponse(
+                loop: loop,
+                ctxBound: ctxBound,
+                version: version,
+                status: .ok,
+                headers: headers,
+                body: html,
+                startTime: startTime,
+                method: method,
+                path: path,
+                userAgent: userAgent
+            )
+        } else {
+            sendBinaryPluginResponse(
+                loop: loop,
+                ctxBound: ctxBound,
+                version: version,
+                status: .ok,
+                headers: headers,
+                body: fileData,
+                startTime: startTime,
+                method: method,
+                path: path,
+                userAgent: userAgent
+            )
+        }
+    }
+
+    /// Validates a Bearer token from the Authorization header.
+    /// Returns true if the token is a valid `osk-v1` access key.
+    private func isValidOwnerAuth(headers: [String: String]) -> Bool {
+        let authHeader = headers["authorization"] ?? ""
+        let token = authHeader.hasPrefix("Bearer ") ? String(authHeader.dropFirst(7)) : ""
+        if case .valid = apiKeyValidator.validate(rawKey: token) { return true }
+        return false
+    }
+
+    /// Injects the `window.__osaurus` context object into an HTML string before `</head>`.
+    private static func injectOsaurusContext(into html: inout String, pluginId: String) {
+        let script = """
+            <script>
+            window.__osaurus = {
+              pluginId: "\(pluginId)",
+              baseUrl: "/plugins/\(pluginId)",
+              apiUrl: "/plugins/\(pluginId)/api"
+            };
+            </script>
+            """
+        if let headEnd = html.range(of: "</head>", options: .caseInsensitive) {
+            html.insert(contentsOf: "\n\(script)\n", at: headEnd.lowerBound)
+        }
+    }
+
+    /// Loads the dev proxy URL for a plugin from the dev-proxy.json config file.
+    private static func loadDevProxyURL(for pluginId: String) -> String? {
+        let configFile = OsaurusPaths.config().appendingPathComponent("dev-proxy.json")
+        guard let data = try? Data(contentsOf: configFile),
+            let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let configPluginId = obj["plugin_id"] as? String,
+            configPluginId == pluginId,
+            let proxyURL = obj["web_proxy"] as? String
+        else { return nil }
+        return proxyURL
+    }
+
+    /// Proxies a web request to a local dev server for HMR support.
+    private func proxyToDevServer(
+        proxyBaseURL: String,
+        targetPath: String,
+        pluginId: String,
+        loop: EventLoop,
+        ctxBound: NIOLoopBound<ChannelHandlerContext>,
+        version: HTTPVersion,
+        corsHeaders: [(String, String)],
+        startTime: Date,
+        method: String,
+        path: String,
+        userAgent: String?
+    ) async {
+        let targetURL = proxyBaseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + targetPath
+        guard let url = URL(string: targetURL) else {
+            sendPluginErrorFromTask(
+                loop: loop,
+                ctxBound: ctxBound,
+                version: version,
+                status: .badGateway,
+                message: "Invalid proxy URL",
+                corsHeaders: corsHeaders,
+                startTime: startTime,
+                method: method,
+                path: path,
+                userAgent: userAgent
+            )
+            return
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 10
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse else {
+                sendPluginErrorFromTask(
+                    loop: loop,
+                    ctxBound: ctxBound,
+                    version: version,
+                    status: .badGateway,
+                    message: "Invalid response from dev server",
+                    corsHeaders: corsHeaders,
+                    startTime: startTime,
+                    method: method,
+                    path: path,
+                    userAgent: userAgent
+                )
+                return
+            }
+
+            let contentType = httpResponse.value(forHTTPHeaderField: "Content-Type") ?? "application/octet-stream"
+            var headers: [(String, String)] = corsHeaders
+            headers.append(("Content-Type", contentType))
+            headers.append(("Access-Control-Allow-Origin", "*"))
+
+            if contentType.contains("text/html"), var html = String(data: data, encoding: .utf8) {
+                Self.injectOsaurusContext(into: &html, pluginId: pluginId)
+                sendPluginResponse(
+                    loop: loop,
+                    ctxBound: ctxBound,
+                    version: version,
+                    status: HTTPResponseStatus(statusCode: httpResponse.statusCode),
+                    headers: headers,
+                    body: html,
+                    startTime: startTime,
+                    method: method,
+                    path: path,
+                    userAgent: userAgent
+                )
+            } else {
+                sendBinaryPluginResponse(
+                    loop: loop,
+                    ctxBound: ctxBound,
+                    version: version,
+                    status: HTTPResponseStatus(statusCode: httpResponse.statusCode),
+                    headers: headers,
+                    body: data,
+                    startTime: startTime,
+                    method: method,
+                    path: path,
+                    userAgent: userAgent
+                )
+            }
+        } catch {
+            sendPluginErrorFromTask(
+                loop: loop,
+                ctxBound: ctxBound,
+                version: version,
+                status: .badGateway,
+                message: "Dev server unreachable: \(error.localizedDescription)",
+                corsHeaders: corsHeaders,
+                startTime: startTime,
+                method: method,
+                path: path,
+                userAgent: userAgent
+            )
+        }
+    }
+
+    /// Resolves the tunnel base URL for a specific agent from RelayTunnelManager.
+    @MainActor
+    private static func resolveTunnelBaseURL(for agentId: UUID) -> String? {
+        if case .connected(let url) = RelayTunnelManager.shared.agentStatuses[agentId] {
+            return url
+        }
+        return nil
     }
 
     // MARK: - Private Helpers

@@ -55,6 +55,8 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
     public var enabledTools: [String: Bool]?
     /// Per-agent skill overrides. nil = use global config, otherwise map of skill name -> enabled
     public var enabledSkills: [String: Bool]?
+    /// Per-agent plugin overrides. nil = all plugins enabled, otherwise map of plugin_id -> enabled
+    public var enabledPlugins: [String: Bool]?
     /// Optional custom theme ID to apply when this agent is active
     public var themeId: UUID?
     /// Optional default model for this agent
@@ -85,6 +87,7 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         systemPrompt: String = "",
         enabledTools: [String: Bool]? = nil,
         enabledSkills: [String: Bool]? = nil,
+        enabledPlugins: [String: Bool]? = nil,
         themeId: UUID? = nil,
         defaultModel: String? = nil,
         temperature: Float? = nil,
@@ -103,6 +106,7 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         self.systemPrompt = systemPrompt
         self.enabledTools = enabledTools
         self.enabledSkills = enabledSkills
+        self.enabledPlugins = enabledPlugins
         self.themeId = themeId
         self.defaultModel = defaultModel
         self.temperature = temperature
@@ -136,6 +140,7 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
             systemPrompt: "",  // Uses global system prompt from settings
             enabledTools: nil,
             enabledSkills: nil,
+            enabledPlugins: nil,
             themeId: nil,
             defaultModel: nil,
             temperature: nil,
@@ -175,6 +180,7 @@ extension Agent {
                 systemPrompt: exportedAgent.systemPrompt,
                 enabledTools: exportedAgent.enabledTools,
                 enabledSkills: exportedAgent.enabledSkills,
+                enabledPlugins: exportedAgent.enabledPlugins,
                 themeId: nil,
                 defaultModel: exportedAgent.defaultModel,
                 temperature: exportedAgent.temperature,
@@ -220,6 +226,13 @@ extension Agent {
             let availableSkillNames = Set(SkillManager.shared.skills.map { $0.name })
             let filteredSkills = skills.filter { availableSkillNames.contains($0.key) }
             imported.enabledSkills = filteredSkills.isEmpty ? nil : filteredSkills
+        }
+
+        // Filter out plugins that aren't installed
+        if let plugins = imported.enabledPlugins {
+            let installedPluginIds = Set(PluginManager.shared.plugins.map { $0.plugin.id })
+            let filteredPlugins = plugins.filter { installedPluginIds.contains($0.key) }
+            imported.enabledPlugins = filteredPlugins.isEmpty ? nil : filteredPlugins
         }
 
         return imported

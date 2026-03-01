@@ -173,6 +173,16 @@ public enum OsaurusPaths {
         tools().appendingPathComponent(pluginId, isDirectory: true)
     }
 
+    /// Per-plugin data directory for sandboxed SQLite storage
+    public static func pluginDataDirectory(for pluginId: String) -> URL {
+        pluginDirectory(for: pluginId).appendingPathComponent("data", isDirectory: true)
+    }
+
+    /// Per-plugin SQLite database file
+    public static func pluginDatabaseFile(for pluginId: String) -> URL {
+        pluginDataDirectory(for: pluginId).appendingPathComponent("data.db")
+    }
+
     public static func runtimeInstance(_ instanceId: String) -> URL {
         runtime().appendingPathComponent(instanceId, isDirectory: true)
     }

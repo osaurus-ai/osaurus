@@ -226,6 +226,20 @@ extension AgentManager {
         return agent.enabledSkills
     }
 
+    /// Get the effective plugin overrides for an agent
+    public func effectivePluginOverrides(for agentId: UUID) -> [String: Bool]? {
+        guard let agent = agent(for: agentId) else { return nil }
+        if agent.id == Agent.defaultId { return nil }
+        return agent.enabledPlugins
+    }
+
+    /// Check if a plugin is enabled for a given agent.
+    /// nil overrides (default agent) means all plugins are enabled.
+    public func isPluginEnabled(_ pluginId: String, for agentId: UUID) -> Bool {
+        guard let overrides = effectivePluginOverrides(for: agentId) else { return true }
+        return overrides[pluginId] ?? true
+    }
+
     /// Get the effective model for an agent
     /// For custom agents without a model set, falls back to Default agent's model
     public func effectiveModel(for agentId: UUID) -> String? {
@@ -356,6 +370,21 @@ extension AgentManager {
         NotificationCenter.default.post(name: .skillsListChanged, object: nil)
     }
 
+    /// Update a single plugin override for an agent
+    /// Default agent has all plugins enabled (no per-plugin global config).
+    public func setPluginEnabled(_ enabled: Bool, plugin pluginId: String, for agentId: UUID) {
+        if agentId == Agent.defaultId { return }
+
+        guard var agent = agent(for: agentId) else { return }
+        var overrides = agent.enabledPlugins ?? [:]
+        overrides[pluginId] = enabled
+        agent.enabledPlugins = overrides
+        agent.updatedAt = Date()
+        AgentStore.save(agent)
+        refresh()
+        NotificationCenter.default.post(name: .toolsListChanged, object: nil)
+    }
+
     /// Enable all tools for an agent (batched for efficiency)
     public func enableAllTools(for agentId: UUID, tools: [String]) {
         setAllTools(enabled: true, for: agentId, tools: tools)
@@ -374,6 +403,16 @@ extension AgentManager {
     /// Disable all skills for an agent (batched for efficiency)
     public func disableAllSkills(for agentId: UUID, skills: [String]) {
         setAllSkills(enabled: false, for: agentId, skills: skills)
+    }
+
+    /// Enable all plugins for an agent (batched for efficiency)
+    public func enableAllPlugins(for agentId: UUID, plugins: [String]) {
+        setAllPlugins(enabled: true, for: agentId, plugins: plugins)
+    }
+
+    /// Disable all plugins for an agent (batched for efficiency)
+    public func disableAllPlugins(for agentId: UUID, plugins: [String]) {
+        setAllPlugins(enabled: false, for: agentId, plugins: plugins)
     }
 
     // MARK: - Private Batch Helpers
@@ -422,5 +461,20 @@ extension AgentManager {
         AgentStore.save(agent)
         refresh()
         NotificationCenter.default.post(name: .skillsListChanged, object: nil)
+    }
+
+    private func setAllPlugins(enabled: Bool, for agentId: UUID, plugins: [String]) {
+        if agentId == Agent.defaultId { return }
+
+        guard var agent = agent(for: agentId) else { return }
+        var overrides = agent.enabledPlugins ?? [:]
+        for pluginId in plugins {
+            overrides[pluginId] = enabled
+        }
+        agent.enabledPlugins = overrides
+        agent.updatedAt = Date()
+        AgentStore.save(agent)
+        refresh()
+        NotificationCenter.default.post(name: .toolsListChanged, object: nil)
     }
 }
