@@ -92,14 +92,13 @@ enum ModelProfileRegistry {
 struct OpenAIReasoningProfile: ModelProfile {
     static let displayName = "Reasoning"
 
+    private static let reasoningModelPrefixes = ["o1", "o3", "o4", "gpt-5"]
+
     static func matches(modelId: String) -> Bool {
         let bare =
             modelId.lowercased().split(separator: "/").last.map(String.init)
             ?? modelId.lowercased()
-        let reasoningPrefixes = ["o1", "o3", "o4"]
-        let gpt5Prefixes = ["gpt-5"]
-        return reasoningPrefixes.contains(where: { bare.hasPrefix($0) })
-            || gpt5Prefixes.contains(where: { bare.hasPrefix($0) })
+        return reasoningModelPrefixes.contains { bare.hasPrefix($0) }
     }
 
     static let options: [ModelOptionDefinition] = [

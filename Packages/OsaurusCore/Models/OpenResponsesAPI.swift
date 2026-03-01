@@ -10,12 +10,12 @@ import Foundation
 
 // MARK: - Request Models
 
-/// Open Responses API create request
-/// Reasoning configuration for the Open Responses API.
+/// Reasoning configuration for reasoning models.
 public struct OpenResponsesReasoningConfig: Codable, Sendable {
     public let effort: String
 }
 
+/// Open Responses API create request
 public struct OpenResponsesRequest: Codable, Sendable {
     /// Model identifier
     public let model: String

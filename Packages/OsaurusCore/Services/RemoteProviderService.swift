@@ -2212,7 +2212,7 @@ private struct RemoteChatRequest: Encodable {
             input = .items(inputItems)
         }
 
-        let openResponsesReasoning = modelOptions["reasoningEffort"]?.stringValue
+        let reasoning = modelOptions["reasoningEffort"]?.stringValue
             .map { OpenResponsesReasoningConfig(effort: $0) }
 
         return OpenResponsesRequest(
@@ -2227,7 +2227,7 @@ private struct RemoteChatRequest: Encodable {
             instructions: instructions,
             previous_response_id: nil,
             metadata: nil,
-            reasoning: openResponsesReasoning
+            reasoning: reasoning
         )
     }
 }
