@@ -10,6 +10,11 @@ import Foundation
 
 // MARK: - Request Models
 
+/// Reasoning configuration for reasoning models.
+public struct OpenResponsesReasoningConfig: Codable, Sendable {
+    public let effort: String
+}
+
 /// Open Responses API create request
 public struct OpenResponsesRequest: Codable, Sendable {
     /// Model identifier
@@ -34,6 +39,8 @@ public struct OpenResponsesRequest: Codable, Sendable {
     public let previous_response_id: String?
     /// Optional metadata
     public let metadata: [String: String]?
+    /// Reasoning configuration for reasoning models
+    public let reasoning: OpenResponsesReasoningConfig?
 }
 
 /// Input can be a string or array of input items
