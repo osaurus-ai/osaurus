@@ -1341,6 +1341,9 @@ public actor RemoteProviderService: ToolCapableService {
         tools: [Tool]?,
         toolChoice: ToolChoiceOption?
     ) -> RemoteChatRequest {
+        let reasoning = parameters.modelOptions["reasoningEffort"]?.stringValue
+            .map { ReasoningConfig(effort: $0) }
+
         return RemoteChatRequest(
             model: model,
             messages: messages,
@@ -1353,6 +1356,7 @@ public actor RemoteProviderService: ToolCapableService {
             stop: nil,
             tools: tools,
             tool_choice: toolChoice,
+            reasoning: reasoning,
             modelOptions: parameters.modelOptions
         )
     }
@@ -1735,6 +1739,11 @@ private struct OpenResponsesSSEEvent: Decodable {
 
 // MARK: - Request/Response Models for Remote Provider
 
+/// Reasoning configuration for OpenAI reasoning models (o-series, gpt-5+).
+private struct ReasoningConfig: Encodable {
+    let effort: String
+}
+
 /// Chat request structure for remote providers (matches OpenAI format)
 private struct RemoteChatRequest: Encodable {
     let model: String
@@ -1748,11 +1757,13 @@ private struct RemoteChatRequest: Encodable {
     var stop: [String]?
     let tools: [Tool]?
     let tool_choice: ToolChoiceOption?
+    let reasoning: ReasoningConfig?
     let modelOptions: [String: ModelOptionValue]
 
     private enum CodingKeys: String, CodingKey {
         case model, messages, temperature, max_completion_tokens, stream
         case top_p, frequency_penalty, presence_penalty, stop, tools, tool_choice
+        case reasoning
     }
 
     /// Convert to Anthropic Messages API request format
@@ -2201,6 +2212,9 @@ private struct RemoteChatRequest: Encodable {
             input = .items(inputItems)
         }
 
+        let openResponsesReasoning = modelOptions["reasoningEffort"]?.stringValue
+            .map { OpenResponsesReasoningConfig(effort: $0) }
+
         return OpenResponsesRequest(
             model: model,
             input: input,
@@ -2212,7 +2226,8 @@ private struct RemoteChatRequest: Encodable {
             top_p: top_p,
             instructions: instructions,
             previous_response_id: nil,
-            metadata: nil
+            metadata: nil,
+            reasoning: openResponsesReasoning
         )
     }
 }

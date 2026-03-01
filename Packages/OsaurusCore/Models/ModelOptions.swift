@@ -67,6 +67,7 @@ protocol ModelProfile: Sendable {
 
 enum ModelProfileRegistry {
     static let profiles: [any ModelProfile.Type] = [
+        OpenAIReasoningProfile.self,
         Gemini31FlashImageProfile.self,
         GeminiProImageProfile.self,
         GeminiFlashImageProfile.self,
@@ -83,6 +84,40 @@ enum ModelProfileRegistry {
     static func options(for modelId: String) -> [ModelOptionDefinition] {
         profile(for: modelId)?.options ?? []
     }
+}
+
+// MARK: - OpenAI Reasoning Profile
+
+/// OpenAI reasoning models (o-series, gpt-5+) — supports reasoning effort control.
+struct OpenAIReasoningProfile: ModelProfile {
+    static let displayName = "Reasoning"
+
+    static func matches(modelId: String) -> Bool {
+        let bare =
+            modelId.lowercased().split(separator: "/").last.map(String.init)
+            ?? modelId.lowercased()
+        let reasoningPrefixes = ["o1", "o3", "o4"]
+        let gpt5Prefixes = ["gpt-5"]
+        return reasoningPrefixes.contains(where: { bare.hasPrefix($0) })
+            || gpt5Prefixes.contains(where: { bare.hasPrefix($0) })
+    }
+
+    static let options: [ModelOptionDefinition] = [
+        ModelOptionDefinition(
+            id: "reasoningEffort",
+            label: "Reasoning Effort",
+            icon: "brain",
+            kind: .segmented([
+                ModelOptionSegment(id: "low", label: "Low"),
+                ModelOptionSegment(id: "medium", label: "Medium"),
+                ModelOptionSegment(id: "high", label: "High"),
+            ])
+        )
+    ]
+
+    static let defaults: [String: ModelOptionValue] = [
+        "reasoningEffort": .string("medium")
+    ]
 }
 
 // MARK: - Shared Segments
