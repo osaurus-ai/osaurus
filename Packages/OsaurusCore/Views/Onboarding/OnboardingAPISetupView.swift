@@ -33,7 +33,7 @@ struct OnboardingAPISetupView: View {
 
     /// Presets shown in onboarding (subset of all presets - excludes OpenRouter for simplicity)
     private static let onboardingPresets: [ProviderPreset] = [
-        .anthropic, .openai, .google, .xai, .custom,
+        .anthropic, .openai, .google, .xai, .venice, .custom,
     ]
 
     private enum TestResult {
@@ -372,26 +372,16 @@ struct OnboardingAPISetupView: View {
                     .foregroundColor(theme.secondaryText)
 
                 VStack(alignment: .leading, spacing: 8) {
-                    HelpStep(number: 1, text: "Go to \(preset.name) console")
-                    HelpStep(number: 2, text: "Sign in or create an account")
-                    HelpStep(number: 3, text: "Click \"API Keys\" \u{2192} \"Create Key\"")
-                    HelpStep(number: 4, text: "Copy and paste it here")
+                    ForEach(Array(preset.helpSteps.enumerated()), id: \.offset) { index, text in
+                        HelpStep(number: index + 1, text: text)
+                    }
                 }
 
-                Button {
-                    if let url = URL(string: preset.consoleURL) {
-                        NSWorkspace.shared.open(url)
-                    }
-                } label: {
-                    HStack(spacing: 6) {
-                        Text("Open \(preset.name) Console")
-                            .font(theme.font(size: 13, weight: .medium))
-                        Image(systemName: "arrow.up.right")
-                            .font(.system(size: 11, weight: .semibold))
-                    }
-                    .foregroundColor(theme.accentColor)
-                }
-                .buttonStyle(.plain)
+                ProviderHelpLinks(
+                    preset: preset,
+                    accentColor: theme.accentColor,
+                    secondaryTextColor: theme.secondaryText
+                )
                 .padding(.top, 4)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -584,16 +574,20 @@ private struct OnboardingProviderCard: View {
                             .fill(theme.cardBackground)
                             .frame(width: 44, height: 44)
 
-                        Image(systemName: preset.icon)
-                            .font(.system(size: 18, weight: .medium))
-                            .foregroundColor(isHovered ? theme.accentColor : theme.secondaryText)
+                        ProviderIcon(preset: preset, size: 18, color: isHovered ? theme.accentColor : theme.secondaryText)
                     }
 
                     // Text
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(displayName)
-                            .font(theme.font(size: 15, weight: .semibold))
-                            .foregroundColor(theme.primaryText)
+                        HStack(spacing: 8) {
+                            Text(displayName)
+                                .font(theme.font(size: 15, weight: .semibold))
+                                .foregroundColor(theme.primaryText)
+
+                            if let badge = preset.badge {
+                                ProviderBadge(badge, gradient: preset.gradient, fontSize: 10)
+                            }
+                        }
 
                         Text(displayDescription)
                             .font(theme.font(size: 13))

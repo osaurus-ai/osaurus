@@ -14,10 +14,14 @@ struct RemoteProvidersView: View {
     /// Use computed property to always get the current theme from ThemeManager
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
-    @State private var showAddSheet = false
-    @State private var addSheetPreset: ProviderPreset?
+    @State private var addSheetConfig: AddSheetConfig?
     @State private var editingProvider: RemoteProvider?
     @State private var hasAppeared = false
+
+    private struct AddSheetConfig: Identifiable {
+        let id = UUID()
+        let preset: ProviderPreset?
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -48,8 +52,8 @@ struct RemoteProvidersView: View {
                 hasAppeared = true
             }
         }
-        .sheet(isPresented: $showAddSheet, onDismiss: { addSheetPreset = nil }) {
-            RemoteProviderEditSheet(provider: nil, initialPreset: addSheetPreset) { provider, apiKey in
+        .sheet(item: $addSheetConfig) { config in
+            RemoteProviderEditSheet(provider: nil, initialPreset: config.preset) { provider, apiKey in
                 manager.addProvider(provider, apiKey: apiKey)
             }
         }
@@ -68,7 +72,7 @@ struct RemoteProvidersView: View {
             subtitle: subtitleText
         ) {
             HeaderPrimaryButton("Add Provider", icon: "plus") {
-                showAddSheet = true
+                addSheetConfig = AddSheetConfig(preset: nil)
             }
         }
     }
@@ -90,8 +94,7 @@ struct RemoteProvidersView: View {
     // MARK: - Empty State
 
     private func presentAddSheet(for preset: ProviderPreset) {
-        addSheetPreset = preset
-        showAddSheet = true
+        addSheetConfig = AddSheetConfig(preset: preset)
     }
 
     private var emptyStateView: some View {
@@ -189,15 +192,19 @@ private struct EmptyStateProviderCard: View {
                         )
                         .frame(width: 36, height: 36)
 
-                    Image(systemName: preset.icon)
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(isHovered ? .white : theme.secondaryText)
+                    ProviderIcon(preset: preset, size: 14, color: isHovered ? .white : theme.secondaryText)
                 }
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(preset.name)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
+                    HStack(spacing: 6) {
+                        Text(preset.name)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(theme.primaryText)
+
+                        if let badge = preset.badge {
+                            ProviderBadge(badge, gradient: preset.gradient)
+                        }
+                    }
                     Text(preset.description)
                         .font(.system(size: 11))
                         .foregroundColor(theme.secondaryText)
@@ -253,10 +260,6 @@ private struct ProviderCardView: View {
         ProviderPreset.matching(provider: provider)
     }
 
-    private var providerIcon: String {
-        matchedPreset?.icon ?? "cloud.fill"
-    }
-
     private var statusColor: Color {
         if !provider.enabled {
             return theme.tertiaryText
@@ -279,9 +282,13 @@ private struct ProviderCardView: View {
                 ZStack {
                     iconBackground
                         .clipShape(RoundedRectangle(cornerRadius: 12))
-                    Image(systemName: providerIcon)
-                        .font(.system(size: 22))
-                        .foregroundColor(iconForeground)
+                    if let preset = matchedPreset {
+                        ProviderIcon(preset: preset, size: 22, color: iconForeground)
+                    } else {
+                        Image(systemName: "cloud.fill")
+                            .font(.system(size: 22))
+                            .foregroundColor(iconForeground)
+                    }
                 }
                 .frame(width: 52, height: 52)
 
