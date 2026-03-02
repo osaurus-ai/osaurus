@@ -134,9 +134,9 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
     /// Whether this is a known provider (not custom)
     var isKnown: Bool { self != .custom }
 
-    /// Known presets only (excludes custom)
+    /// Known presets sorted alphabetically by display name (excludes custom)
     static var knownPresets: [ProviderPreset] {
-        allCases.filter { $0.isKnown }
+        allCases.filter { $0.isKnown }.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
     // MARK: - Configuration

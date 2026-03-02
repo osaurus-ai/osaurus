@@ -1371,7 +1371,8 @@ public actor RemoteProviderService: ToolCapableService {
         let disableThinking = options["disableThinking"]?.boolValue
         let includeSystemPrompt = options["includeVeniceSystemPrompt"]?.boolValue
 
-        let hasNonDefaults = (webSearch != nil && webSearch != "off")
+        let hasNonDefaults =
+            (webSearch != nil && webSearch != "off")
             || disableThinking == true
             || includeSystemPrompt == false
         guard hasNonDefaults else { return nil }

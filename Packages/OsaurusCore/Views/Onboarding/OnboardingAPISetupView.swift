@@ -31,9 +31,9 @@ struct OnboardingAPISetupView: View {
     @State private var customPort: String = ""
     @State private var customBasePath: String = "/v1"
 
-    /// Presets shown in onboarding (subset of all presets - excludes OpenRouter for simplicity)
+    /// Presets shown in onboarding (subset of all presets - excludes OpenRouter for simplicity), sorted alphabetically with Custom last.
     private static let onboardingPresets: [ProviderPreset] = [
-        .anthropic, .openai, .google, .xai, .venice, .custom,
+        .anthropic, .google, .openai, .venice, .xai, .custom,
     ]
 
     private enum TestResult {
@@ -574,7 +574,11 @@ private struct OnboardingProviderCard: View {
                             .fill(theme.cardBackground)
                             .frame(width: 44, height: 44)
 
-                        ProviderIcon(preset: preset, size: 18, color: isHovered ? theme.accentColor : theme.secondaryText)
+                        ProviderIcon(
+                            preset: preset,
+                            size: 18,
+                            color: isHovered ? theme.accentColor : theme.secondaryText
+                        )
                     }
 
                     // Text

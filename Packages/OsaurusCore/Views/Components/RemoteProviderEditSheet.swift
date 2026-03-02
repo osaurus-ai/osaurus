@@ -183,7 +183,7 @@ private struct AddProviderFlow: View {
                     .padding(.horizontal, 4)
 
                 VStack(spacing: 10) {
-                    ForEach(ProviderPreset.allCases) { preset in
+                    ForEach(ProviderPreset.knownPresets + [.custom]) { preset in
                         ProviderSelectionCard(preset: preset) {
                             withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
                                 selectedPreset = preset
