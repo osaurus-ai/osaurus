@@ -426,12 +426,25 @@ private struct RequestLogRow: View {
                     MethodBadge(method: log.method)
                         .frame(width: 55, alignment: .leading)
 
-                    // Path
-                    Text(log.path)
-                        .font(.system(size: 12, weight: .medium, design: .monospaced))
-                        .foregroundColor(theme.primaryText)
-                        .lineLimit(1)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    // Path + plugin badge
+                    HStack(spacing: 6) {
+                        if let pluginId = log.pluginId {
+                            Text(pluginId)
+                                .font(.system(size: 8, weight: .bold))
+                                .foregroundColor(.teal.opacity(0.9))
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 2)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 3)
+                                        .fill(Color.teal.opacity(0.12))
+                                )
+                        }
+                        Text(log.path)
+                            .font(.system(size: 12, weight: .medium, design: .monospaced))
+                            .foregroundColor(log.isPluginLog ? logLevelColor(log.statusCode) : theme.primaryText)
+                            .lineLimit(1)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
                     // Status code
                     HTTPStatusBadge(statusCode: log.statusCode)
@@ -466,100 +479,138 @@ private struct RequestLogRow: View {
 
     private var expandedDetails: some View {
         VStack(alignment: .leading, spacing: 16) {
-            HStack(alignment: .top, spacing: 24) {
-                // Request panel
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Label("Request", systemImage: "arrow.up.circle.fill")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundColor(theme.secondaryText)
-                        Spacer()
-                    }
+            // Plugin attribution
+            if let pluginId = log.pluginId {
+                HStack(spacing: 6) {
+                    Image(systemName: "puzzlepiece.extension.fill")
+                        .font(.system(size: 10))
+                        .foregroundColor(.teal.opacity(0.8))
+                    Text("Plugin: \(pluginId)")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(.teal)
+                }
+            }
 
-                    if let body = log.formattedRequestBody {
-                        ScrollView {
-                            Text(body)
-                                .font(.system(size: 11, design: .monospaced))
-                                .foregroundColor(theme.primaryText)
-                                .textSelection(.enabled)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                        .frame(maxHeight: 150)
-                        .padding(10)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(theme.codeBlockBackground)
-                        )
-                    } else {
-                        Text("No request body")
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.tertiaryText)
-                            .padding(10)
+            if log.isPluginLog {
+                // Plugin console log -- show message only
+                HStack(spacing: 8) {
+                    Image(systemName: logLevelIcon(log.statusCode))
+                        .font(.system(size: 12))
+                        .foregroundColor(logLevelColor(log.statusCode))
+
+                    if let body = log.requestBody {
+                        Text(body)
+                            .font(.system(size: 12, design: .monospaced))
+                            .foregroundColor(logLevelColor(log.statusCode))
+                            .textSelection(.enabled)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .fill(theme.codeBlockBackground)
-                            )
                     }
                 }
-                .frame(maxWidth: .infinity)
+                .padding(12)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(logLevelColor(log.statusCode).opacity(0.06))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6)
+                                .stroke(logLevelColor(log.statusCode).opacity(0.2), lineWidth: 1)
+                        )
+                )
+            } else {
+                HStack(alignment: .top, spacing: 24) {
+                    // Request panel
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Label("Request", systemImage: "arrow.up.circle.fill")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundColor(theme.secondaryText)
+                            Spacer()
+                        }
 
-                // Response panel
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Label("Response", systemImage: "arrow.down.circle.fill")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundColor(theme.secondaryText)
-                        Spacer()
-
-                        if let body = log.responseBody {
-                            Button(action: {
-                                NSPasteboard.general.clearContents()
-                                NSPasteboard.general.setString(body, forType: .string)
-                            }) {
-                                Image(systemName: "doc.on.doc")
-                                    .font(.system(size: 10))
-                                    .foregroundColor(theme.tertiaryText)
+                        if let body = log.formattedRequestBody {
+                            ScrollView {
+                                Text(body)
+                                    .font(.system(size: 11, design: .monospaced))
+                                    .foregroundColor(theme.primaryText)
+                                    .textSelection(.enabled)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
                             }
-                            .buttonStyle(PlainButtonStyle())
-                            .help("Copy response")
-                        }
-                    }
-
-                    if let body = log.formattedResponseBody {
-                        ScrollView {
-                            Text(body)
-                                .font(.system(size: 11, design: .monospaced))
-                                .foregroundColor(log.isSuccess ? theme.primaryText : theme.errorColor)
-                                .textSelection(.enabled)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                        .frame(maxHeight: 150)
-                        .padding(10)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(theme.codeBlockBackground)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 6)
-                                        .stroke(
-                                            log.isSuccess ? Color.green.opacity(0.2) : Color.red.opacity(0.2),
-                                            lineWidth: 1
-                                        )
-                                )
-                        )
-                    } else {
-                        Text("No response body")
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.tertiaryText)
+                            .frame(maxHeight: 150)
                             .padding(10)
-                            .frame(maxWidth: .infinity, alignment: .leading)
                             .background(
                                 RoundedRectangle(cornerRadius: 6)
                                     .fill(theme.codeBlockBackground)
                             )
+                        } else {
+                            Text("No request body")
+                                .font(.system(size: 11))
+                                .foregroundColor(theme.tertiaryText)
+                                .padding(10)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .fill(theme.codeBlockBackground)
+                                )
+                        }
                     }
+                    .frame(maxWidth: .infinity)
+
+                    // Response panel
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Label("Response", systemImage: "arrow.down.circle.fill")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundColor(theme.secondaryText)
+                            Spacer()
+
+                            if let body = log.responseBody {
+                                Button(action: {
+                                    NSPasteboard.general.clearContents()
+                                    NSPasteboard.general.setString(body, forType: .string)
+                                }) {
+                                    Image(systemName: "doc.on.doc")
+                                        .font(.system(size: 10))
+                                        .foregroundColor(theme.tertiaryText)
+                                }
+                                .buttonStyle(PlainButtonStyle())
+                                .help("Copy response")
+                            }
+                        }
+
+                        if let body = log.formattedResponseBody {
+                            ScrollView {
+                                Text(body)
+                                    .font(.system(size: 11, design: .monospaced))
+                                    .foregroundColor(log.isSuccess ? theme.primaryText : theme.errorColor)
+                                    .textSelection(.enabled)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .frame(maxHeight: 150)
+                            .padding(10)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(theme.codeBlockBackground)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 6)
+                                            .stroke(
+                                                log.isSuccess ? Color.green.opacity(0.2) : Color.red.opacity(0.2),
+                                                lineWidth: 1
+                                            )
+                                    )
+                            )
+                        } else {
+                            Text("No response body")
+                                .font(.system(size: 11))
+                                .foregroundColor(theme.tertiaryText)
+                                .padding(10)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .fill(theme.codeBlockBackground)
+                                )
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
                 }
-                .frame(maxWidth: .infinity)
             }
 
             // Inference data (only for chat endpoints)
@@ -657,6 +708,22 @@ private struct RequestLogRow: View {
         if speed >= 15 { return .orange }
         return theme.secondaryText
     }
+
+    private func logLevelColor(_ statusCode: Int) -> Color {
+        switch statusCode {
+        case 500: return .red
+        case 299: return .orange
+        default: return theme.primaryText
+        }
+    }
+
+    private func logLevelIcon(_ statusCode: Int) -> String {
+        switch statusCode {
+        case 500: return "exclamationmark.circle.fill"
+        case 299: return "exclamationmark.triangle.fill"
+        default: return "info.circle.fill"
+        }
+    }
 }
 
 // MARK: - Detail Pill
@@ -703,6 +770,7 @@ private struct MethodBadge: View {
         case "POST": return .blue
         case "PUT": return .orange
         case "DELETE": return .red
+        case "LOG": return .teal
         default: return .gray
         }
     }
@@ -758,6 +826,7 @@ private struct SourceBadge: View {
         switch source {
         case .chatUI: return .pink
         case .httpAPI: return .blue
+        case .plugin: return .teal
         }
     }
 }
@@ -767,6 +836,7 @@ extension RequestSource {
         switch self {
         case .chatUI: return "Chat"
         case .httpAPI: return "HTTP"
+        case .plugin: return "Plugin"
         }
     }
 }

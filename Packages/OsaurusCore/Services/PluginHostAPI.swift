@@ -756,6 +756,54 @@ extension PluginHostContext {
         return UnsafePointer(cStr)
     }
 
+    // MARK: - Insights Logging Helpers
+
+    private static func logPluginCall(
+        pluginId: String,
+        method: String,
+        path: String,
+        statusCode: Int,
+        durationMs: Double,
+        requestBody: String? = nil,
+        responseBody: String? = nil,
+        model: String? = nil,
+        inputTokens: Int? = nil,
+        outputTokens: Int? = nil
+    ) {
+        InsightsService.logRequest(
+            source: .plugin,
+            method: method,
+            path: path,
+            statusCode: statusCode,
+            durationMs: durationMs,
+            requestBody: requestBody,
+            responseBody: responseBody,
+            pluginId: pluginId,
+            model: model,
+            inputTokens: inputTokens,
+            outputTokens: outputTokens
+        )
+    }
+
+    private static func measureMs(_ block: () -> Void) -> Double {
+        let start = CFAbsoluteTimeGetCurrent()
+        block()
+        return (CFAbsoluteTimeGetCurrent() - start) * 1000
+    }
+
+    /// Extract a top-level string value from JSON without full deserialization.
+    private static func extractJSONStringValue(from json: String, key: String) -> String? {
+        let pattern = "\"\(key)\"\\s*:\\s*\"([^\"]*)\""
+        guard let range = json.range(of: pattern, options: .regularExpression) else { return nil }
+        let match = json[range]
+        guard let colonQuote = match.range(of: ":\\s*\"", options: .regularExpression)?.upperBound else { return nil }
+        return String(match[colonQuote ..< match.index(before: match.endIndex)])
+    }
+
+    private static func responseContainsError(_ json: String) -> Bool {
+        json.contains("\"error\"")
+    }
+
     // MARK: Config Trampolines
 
     static let trampolineConfigGet: osr_config_get_t = { keyPtr in
@@ -802,14 +850,23 @@ extension PluginHostContext {
         guard let msgPtr, let ctx = activeContext() else { return }
         let message = String(cString: msgPtr)
         let levelName: String
+        let statusCode: Int
         switch level {
-        case 0: levelName = "DEBUG"
-        case 1: levelName = "INFO"
-        case 2: levelName = "WARN"
-        case 3: levelName = "ERROR"
-        default: levelName = "LOG"
+        case 0: levelName = "DEBUG"; statusCode = 200
+        case 1: levelName = "INFO"; statusCode = 200
+        case 2: levelName = "WARN"; statusCode = 299
+        case 3: levelName = "ERROR"; statusCode = 500
+        default: levelName = "LOG"; statusCode = 200
         }
         NSLog("[Plugin:%@] [%@] %@", ctx.pluginId, levelName, message)
+        logPluginCall(
+            pluginId: ctx.pluginId,
+            method: "LOG",
+            path: "[\(levelName)] \(message)",
+            statusCode: statusCode,
+            durationMs: 0,
+            requestBody: message
+        )
     }
 
     // MARK: Dispatch Trampolines
@@ -817,28 +874,62 @@ extension PluginHostContext {
     static let trampolineDispatch: osr_dispatch_t = { requestPtr in
         guard let requestPtr, let ctx = activeContext() else { return nil }
         let json = String(cString: requestPtr)
-        let result = ctx.dispatch(requestJSON: json)
+        var result = ""
+        let ms = measureMs { result = ctx.dispatch(requestJSON: json) }
+        logPluginCall(
+            pluginId: ctx.pluginId,
+            method: "POST",
+            path: "/host-api/dispatch",
+            statusCode: responseContainsError(result) ? 429 : 202,
+            durationMs: ms,
+            requestBody: json,
+            responseBody: result
+        )
         return makeCString(result)
     }
 
     static let trampolineTaskStatus: osr_task_status_t = { taskIdPtr in
         guard let taskIdPtr, let ctx = activeContext() else { return nil }
         let taskId = String(cString: taskIdPtr)
-        let result = ctx.taskStatus(taskId: taskId)
+        var result = ""
+        let ms = measureMs { result = ctx.taskStatus(taskId: taskId) }
+        logPluginCall(
+            pluginId: ctx.pluginId,
+            method: "GET",
+            path: "/host-api/tasks/\(taskId)",
+            statusCode: 200,
+            durationMs: ms,
+            responseBody: result
+        )
         return makeCString(result)
     }
 
     static let trampolineDispatchCancel: osr_dispatch_cancel_t = { taskIdPtr in
         guard let taskIdPtr, let ctx = activeContext() else { return }
         let taskId = String(cString: taskIdPtr)
-        ctx.dispatchCancel(taskId: taskId)
+        let ms = measureMs { ctx.dispatchCancel(taskId: taskId) }
+        logPluginCall(
+            pluginId: ctx.pluginId,
+            method: "DELETE",
+            path: "/host-api/tasks/\(taskId)",
+            statusCode: 204,
+            durationMs: ms
+        )
     }
 
     static let trampolineDispatchClarify: osr_dispatch_clarify_t = { taskIdPtr, responsePtr in
         guard let taskIdPtr, let responsePtr, let ctx = activeContext() else { return }
         let taskId = String(cString: taskIdPtr)
         let response = String(cString: responsePtr)
-        ctx.dispatchClarify(taskId: taskId, response: response)
+        let ms = measureMs { ctx.dispatchClarify(taskId: taskId, response: response) }
+        logPluginCall(
+            pluginId: ctx.pluginId,
+            method: "POST",
+            path: "/host-api/tasks/\(taskId)/clarify",
+            statusCode: 200,
+            durationMs: ms,
+            requestBody: response
+        )
     }
 
     // MARK: Inference Trampolines
@@ -846,21 +937,55 @@ extension PluginHostContext {
     static let trampolineComplete: osr_complete_t = { requestPtr in
         guard let requestPtr, let ctx = activeContext() else { return nil }
         let json = String(cString: requestPtr)
-        let result = ctx.complete(requestJSON: json)
+        var result = ""
+        let ms = measureMs { result = ctx.complete(requestJSON: json) }
+        let model = extractJSONStringValue(from: json, key: "model")
+        logPluginCall(
+            pluginId: ctx.pluginId,
+            method: "POST",
+            path: "/host-api/chat/completions",
+            statusCode: responseContainsError(result) ? 500 : 200,
+            durationMs: ms,
+            requestBody: json,
+            responseBody: result,
+            model: model
+        )
         return makeCString(result)
     }
 
     static let trampolineCompleteStream: osr_complete_stream_t = { requestPtr, onChunk, userData in
         guard let requestPtr, let ctx = activeContext() else { return nil }
         let json = String(cString: requestPtr)
-        let result = ctx.completeStream(requestJSON: json, onChunk: onChunk, userData: userData)
+        var result = ""
+        let ms = measureMs { result = ctx.completeStream(requestJSON: json, onChunk: onChunk, userData: userData) }
+        let model = extractJSONStringValue(from: json, key: "model")
+        logPluginCall(
+            pluginId: ctx.pluginId,
+            method: "POST",
+            path: "/host-api/chat/completions",
+            statusCode: responseContainsError(result) ? 500 : 200,
+            durationMs: ms,
+            requestBody: json,
+            responseBody: result,
+            model: model
+        )
         return makeCString(result)
     }
 
     static let trampolineEmbed: osr_embed_t = { requestPtr in
         guard let requestPtr, let ctx = activeContext() else { return nil }
         let json = String(cString: requestPtr)
-        let result = ctx.embed(requestJSON: json)
+        var result = ""
+        let ms = measureMs { result = ctx.embed(requestJSON: json) }
+        logPluginCall(
+            pluginId: ctx.pluginId,
+            method: "POST",
+            path: "/host-api/embeddings",
+            statusCode: responseContainsError(result) ? 500 : 200,
+            durationMs: ms,
+            requestBody: json,
+            responseBody: result
+        )
         return makeCString(result)
     }
 
@@ -868,7 +993,16 @@ extension PluginHostContext {
 
     static let trampolineListModels: osr_list_models_t = {
         guard let ctx = activeContext() else { return nil }
-        let result = ctx.listModels()
+        var result = ""
+        let ms = measureMs { result = ctx.listModels() }
+        logPluginCall(
+            pluginId: ctx.pluginId,
+            method: "GET",
+            path: "/host-api/models",
+            statusCode: 200,
+            durationMs: ms,
+            responseBody: result
+        )
         return makeCString(result)
     }
 
@@ -877,7 +1011,21 @@ extension PluginHostContext {
     static let trampolineHttpRequest: osr_http_request_t = { requestPtr in
         guard let requestPtr, let ctx = activeContext() else { return nil }
         let json = String(cString: requestPtr)
-        let result = ctx.httpRequest(requestJSON: json)
+        var result = ""
+        let ms = measureMs { result = ctx.httpRequest(requestJSON: json) }
+        let method = extractJSONStringValue(from: json, key: "method") ?? "GET"
+        let url = extractJSONStringValue(from: json, key: "url") ?? "?"
+        let statusStr = extractJSONStringValue(from: result, key: "status")
+        let statusCode = statusStr.flatMap { Int($0) } ?? (responseContainsError(result) ? 500 : 200)
+        logPluginCall(
+            pluginId: ctx.pluginId,
+            method: method,
+            path: "/host-api/http \u{2192} \(url)",
+            statusCode: statusCode,
+            durationMs: ms,
+            requestBody: json,
+            responseBody: result
+        )
         return makeCString(result)
     }
 }

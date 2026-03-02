@@ -98,7 +98,7 @@ v2 extends v1 with seven capability groups covering the full surface area availa
 - **Host API (`osr_host_api`)** — Injected at init, provides:
   - **Config Store**: `config_get` / `config_set` / `config_delete` — Keychain-backed secrets and settings.
   - **Data Store**: `db_exec` / `db_query` — Sandboxed per-plugin SQLite database.
-  - **Logging**: `log` — Structured logging to the Osaurus Developer Tools.
+  - **Logging**: `log` — Structured logging to the Insights tab.
   - **Agent Dispatch**: `dispatch` / `task_status` / `dispatch_cancel` / `dispatch_clarify` — Background agent work with full tool access.
   - **Inference**: `complete` / `complete_stream` / `embed` — Chat completion and embeddings through any configured provider.
   - **Models**: `list_models` — Enumerate available models (local MLX, Apple Foundation, remote).
@@ -798,7 +798,7 @@ Log levels:
 | 2     | Warning | Non-fatal issues             |
 | 3     | Error   | Failures requiring attention |
 
-Logs appear in the Osaurus Developer Tools console, filterable by plugin and level.
+Logs appear in the **Insights** tab in the Management window with plugin attribution. Filter by the "Plugin" source to see only plugin activity. All Host API calls (dispatch, inference, models, HTTP) also appear in Insights with the originating plugin ID.
 
 ---
 
