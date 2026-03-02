@@ -13,7 +13,9 @@ public enum PluginInstallError: Error, CustomStringConvertible {
     case resolutionFailed(String)
     case downloadFailed(String)
     case checksumMismatch
+    case signatureRequired
     case signatureInvalid
+    case authorKeyMismatch
     case unzipFailed(String)
     case layoutInvalid(String)
 
@@ -23,7 +25,9 @@ public enum PluginInstallError: Error, CustomStringConvertible {
         case .resolutionFailed(let msg): return "Resolution failed: \(msg)"
         case .downloadFailed(let msg): return "Download failed: \(msg)"
         case .checksumMismatch: return "Checksum mismatch"
+        case .signatureRequired: return "Plugin requires a minisign signature for installation"
         case .signatureInvalid: return "Signature verification failed"
+        case .authorKeyMismatch: return "Plugin author key has changed - possible supply chain attack"
         case .unzipFailed(let msg): return "Unzip failed: \(msg)"
         case .layoutInvalid(let msg): return "Invalid artifact layout: \(msg)"
         }
@@ -47,6 +51,16 @@ public final class PluginInstallManager: @unchecked Sendable {
         CentralRepositoryManager.shared.refresh()
         guard let spec = CentralRepositoryManager.shared.spec(for: pluginId) else {
             throw PluginInstallError.specNotFound(pluginId)
+        }
+
+        // TOFU: reject updates that change the author's minisign public key.
+        if let latest = InstalledPluginsStore.shared.latestInstalledVersion(pluginId: spec.plugin_id),
+            let existing = InstalledPluginsStore.shared.receipt(pluginId: spec.plugin_id, version: latest),
+            let existingKey = existing.public_keys?["minisign"],
+            let newKey = spec.public_keys?["minisign"],
+            existingKey != newKey
+        {
+            throw PluginInstallError.authorKeyMismatch
         }
 
         let targetPlatform: Platform = .macos
@@ -84,19 +98,16 @@ public final class PluginInstallManager: @unchecked Sendable {
             throw PluginInstallError.checksumMismatch
         }
 
-        // Verify minisign signature if provided (ensures plugin is from trusted author)
-        if let ms = artifact.minisign, let pubKey = spec.public_keys?["minisign"] {
-            do {
-                let ok = try MinisignVerifier.verify(publicKey: pubKey, signature: ms.signature, data: bytes)
-                if !ok {
-                    throw PluginInstallError.signatureInvalid
-                }
-                NSLog("[Osaurus] Minisign signature verified for \(pluginId)")
-            } catch let error as MinisignVerifyError {
-                NSLog("[Osaurus] Minisign verification failed for \(pluginId): \(error)")
-                throw PluginInstallError.signatureInvalid
-            }
+        guard let ms = artifact.minisign, let pubKey = spec.public_keys?["minisign"] else {
+            throw PluginInstallError.signatureRequired
         }
+        do {
+            _ = try MinisignVerifier.verify(publicKey: pubKey, signature: ms.signature, data: bytes)
+        } catch {
+            NSLog("[Osaurus] Minisign verification failed for \(pluginId): \(error)")
+            throw PluginInstallError.signatureInvalid
+        }
+        NSLog("[Osaurus] Minisign signature verified for \(pluginId)")
 
         let tmpDir = try makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: tmpDir) }
@@ -116,9 +127,6 @@ public final class PluginInstallManager: @unchecked Sendable {
             try FileManager.default.removeItem(at: finalDylibURL)
         }
         try FileManager.default.copyItem(at: dylibURL, to: finalDylibURL)
-
-        // Remove quarantine attribute so macOS allows loading the dylib
-        Self.removeQuarantineAttribute(from: finalDylibURL)
 
         // Copy any SKILL.md files found in the artifact
         let skillFileURLs = findSkillFiles(in: tmpDir)
@@ -168,6 +176,10 @@ public final class PluginInstallManager: @unchecked Sendable {
         let receiptURL = installDir.appendingPathComponent("receipt.json", isDirectory: false)
         let receiptData = try JSONEncoder().encode(receipt)
         try receiptData.write(to: receiptURL)
+
+        // Auto-grant user consent for plugins installed through the verified flow
+        let consentURL = installDir.appendingPathComponent(".user_consent", isDirectory: false)
+        try Data().write(to: consentURL)
 
         try Self.updateCurrentSymlink(pluginId: spec.plugin_id, version: resolution.version.version)
 
@@ -291,26 +303,4 @@ public final class PluginInstallManager: @unchecked Sendable {
         return nil
     }
 
-    // MARK: - Quarantine removal
-
-    /// Removes the com.apple.quarantine extended attribute from a file.
-    /// This is necessary because downloaded files are quarantined by macOS,
-    /// and dlopen() may fail to load quarantined dylibs even with disable-library-validation.
-    private static func removeQuarantineAttribute(from url: URL) {
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/usr/bin/xattr")
-        task.arguments = ["-d", "com.apple.quarantine", url.path]
-        task.standardOutput = FileHandle.nullDevice
-        task.standardError = FileHandle.nullDevice
-        do {
-            try task.run()
-            task.waitUntilExit()
-            if task.terminationStatus == 0 {
-                NSLog("[Osaurus] Removed quarantine attribute from \(url.lastPathComponent)")
-            }
-            // Exit status non-zero is fine - means attribute wasn't present
-        } catch {
-            // Silently ignore - quarantine removal is best-effort
-        }
-    }
 }

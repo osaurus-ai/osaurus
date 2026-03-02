@@ -17,8 +17,12 @@ cd MyPlugin
 swift build -c release
 cp .build/release/libMyPlugin.dylib ./libMyPlugin.dylib
 
-# Sign the dylib (REQUIRED for downloaded plugins)
-codesign -s "Developer ID Application: Your Name (TEAMID)" ./libMyPlugin.dylib
+# Sign the dylib (required for distribution)
+codesign --force --options runtime --timestamp \
+  --sign "Developer ID Application: Your Name (TEAMID)" ./libMyPlugin.dylib
+
+# Sign the zip with minisign (required for distribution)
+minisign -S -s minisign.key -m dev.example.MyPlugin-0.1.0.zip
 
 # Package with the naming convention: <plugin_id>-<version>.zip
 osaurus tools package dev.example.MyPlugin 0.1.0
@@ -1646,28 +1650,29 @@ Some tools require macOS system permissions that must be granted at the app leve
 
 ## Code Signing
 
-**Crucial:** macOS plugins (`.dylib`) must be code-signed with a valid **Developer ID Application** certificate. If they are not signed, macOS Gatekeeper will block them from loading when downloaded from the internet, and users will see an error.
+**Required:** All distributed macOS plugins (`.dylib`) must be code-signed with a valid **Developer ID Application** certificate. Osaurus verifies the Apple code signature at load time and will refuse to load unsigned or invalidly signed plugins.
 
 To sign your plugin:
 
-1.  Obtain a "Developer ID Application" certificate from the [Apple Developer](https://developer.apple.com) portal.
+1.  Obtain a "Developer ID Application" certificate from the [Apple Developer](https://developer.apple.com) portal ($99/year).
 2.  Run the `codesign` tool on your `.dylib` before packaging:
 
 ```bash
 codesign --force --options runtime --timestamp --sign "Developer ID Application: Your Name (TEAMID)" libMyPlugin.dylib
 ```
 
-> **Note:** For local development/testing, ad-hoc signing (or no signing) might work if you haven't quarantined the file, but for distribution, a real certificate is required.
+> **Note:** In DEBUG builds, code signature verification is relaxed to allow unsigned plugins during development. For distribution, a valid Developer ID signature is mandatory.
 
 ## Distribution via Central Registry
 
 Osaurus uses a single, git-backed central plugin index maintained by the Osaurus team.
 
 1. Package your plugin with the correct naming convention: `<plugin_id>-<version>.zip`
-2. Publish release artifacts (.zip containing your `.dylib`) on GitHub Releases.
-3. Generate a SHA256 checksum of the zip.
-4. Sign the zip with Minisign (recommended).
-5. Submit a PR to the central index repo adding `plugins/<your.plugin.id>.json` with your metadata.
+2. Code-sign your `.dylib` with a valid Developer ID Application certificate.
+3. Publish release artifacts (.zip containing your signed `.dylib`) on GitHub Releases.
+4. Generate a SHA256 checksum of the zip.
+5. Sign the zip with Minisign (**required** — installation will fail without a valid signature).
+6. Submit a PR to the central index repo adding `plugins/<your.plugin.id>.json` with your metadata.
 
 The registry entry should include publishing metadata (`homepage`, `license`, `authors`) and artifact information. You can also declare a `capabilities` summary listing your plugin's tools and skills:
 
@@ -1692,9 +1697,9 @@ The `capabilities` block is **informational only** — it is used for the plugin
 
 > **Note:** If you use the shared CI workflow (`osaurus-ai/osaurus-tools/.github/workflows/build-plugin.yml`), the `capabilities` block is generated automatically. Tools are extracted from the dylib manifest, and skills are detected from any `SKILL.md` file at the repository root. You do not need to write this JSON by hand.
 
-## Artifact Signing (Minisign)
+## Artifact Signing (Minisign) — Required
 
-This step ensures the integrity and authenticity of the distributed ZIP file. It is distinct from the **Code Signing** step above (which authenticates the binary for macOS).
+Minisign signature verification is **mandatory** for all plugins installed through the central registry. This ensures the integrity and authenticity of the distributed ZIP file and provides author binding (only the holder of the private key can publish updates).
 
 - Install Minisign: `brew install minisign`
 - Generate a key pair (once): `minisign -G -p minisign.pub -s minisign.key`
@@ -1702,6 +1707,12 @@ This step ensures the integrity and authenticity of the distributed ZIP file. It
 - Publish:
   - The public key (contents of `minisign.pub`) in your spec under `public_keys.minisign`
   - The signature (contents of `.minisig`) in the spec under `versions[].artifacts[].minisign.signature`
+
+### Author Key Binding (Trust on First Use)
+
+Once a plugin is first installed with a minisign public key, Osaurus records that key in the install receipt. On subsequent updates, the new spec's public key is compared against the stored key. If the key has changed, the update is rejected to prevent supply chain attacks.
+
+**Important:** Keep your minisign private key secure. If you lose it, existing users will not be able to update your plugin without manual intervention. There is no key rotation mechanism — a key change is treated as a potential compromise.
 
 ## Rust Authors
 
