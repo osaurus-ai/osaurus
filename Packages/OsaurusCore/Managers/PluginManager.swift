@@ -8,6 +8,7 @@
 import Foundation
 import Darwin
 import CryptoKit
+import Security
 import OsaurusRepository
 
 @MainActor
@@ -35,6 +36,8 @@ final class PluginManager {
     struct PluginLoadError: Error, CustomStringConvertible, Sendable {
         let message: String
         var description: String { message }
+
+        static let consentRequiredPrefix = "consent_required:"
     }
 
     private(set) var plugins: [LoadedPlugin] = []
@@ -409,7 +412,56 @@ final class PluginManager {
         return results
     }
 
+    // MARK: - Consent management
+
+    /// Plugin IDs that failed to load because the user has not yet consented.
+    var pluginsAwaitingConsent: [String] {
+        failedPlugins.values
+            .filter { $0.error.hasPrefix(PluginLoadError.consentRequiredPrefix) }
+            .map { $0.pluginId }
+    }
+
+    /// Grants user consent for a plugin, allowing it to load on the next scan.
+    /// Writes a `.user_consent` marker to the plugin's current version directory.
+    func grantConsent(pluginId: String) throws {
+        guard let versionDir = Self.resolveCurrentVersionDir(pluginId: pluginId) else {
+            throw PluginLoadError(message: "No version directory found for \(pluginId)")
+        }
+        let consentURL = versionDir.appendingPathComponent(".user_consent", isDirectory: false)
+        try Data().write(to: consentURL)
+    }
+
     // MARK: - Tools directory helpers
+
+    /// Resolves the current version directory for a plugin via the "current" symlink
+    /// or by picking the highest installed semver.
+    nonisolated private static func resolveCurrentVersionDir(pluginId: String) -> URL? {
+        let fm = FileManager.default
+        let pluginDir = toolsRootDirectory().appendingPathComponent(pluginId, isDirectory: true)
+        let currentLink = pluginDir.appendingPathComponent("current", isDirectory: false)
+
+        if let dest = try? fm.destinationOfSymbolicLink(atPath: currentLink.path) {
+            return pluginDir.appendingPathComponent(dest, isDirectory: true)
+        }
+        guard
+            let entries = try? fm.contentsOfDirectory(
+                at: pluginDir,
+                includingPropertiesForKeys: nil,
+                options: [.skipsHiddenFiles]
+            )
+        else {
+            return nil
+        }
+        return
+            entries
+            .compactMap { url -> (SemanticVersion, URL)? in
+                guard url.hasDirectoryPath, let v = SemanticVersion.parse(url.lastPathComponent) else { return nil }
+                return (v, url)
+            }
+            .sorted { $0.0 > $1.0 }
+            .first?.1
+    }
+
     nonisolated static func toolsRootDirectory() -> URL {
         return ToolsPaths.toolsRootDirectory()
     }
@@ -498,13 +550,20 @@ final class PluginManager {
         return (dylibURLs, failures)
     }
 
-    /// Verifies a dylib before loading, returning success or an error message
+    /// Verifies a dylib's integrity, code signature (release only), and user consent
+    /// before allowing it to load. DEBUG builds skip receipt requirement for dev plugins.
     nonisolated private static func verifyDylibBeforeLoadWithError(_ dylibURL: URL) -> Result<Void, PluginLoadError> {
         let fm = FileManager.default
-        let receiptURL = dylibURL.deletingLastPathComponent().appendingPathComponent("receipt.json", isDirectory: false)
+        let versionDir = dylibURL.deletingLastPathComponent()
+        let receiptURL = versionDir.appendingPathComponent("receipt.json", isDirectory: false)
 
-        // Development mode: if no receipt, allow it
-        guard fm.fileExists(atPath: receiptURL.path) else { return .success(()) }
+        #if DEBUG
+            guard fm.fileExists(atPath: receiptURL.path) else { return .success(()) }
+        #else
+            guard fm.fileExists(atPath: receiptURL.path) else {
+                return .failure(PluginLoadError(message: "Missing receipt.json - plugin cannot be verified"))
+            }
+        #endif
 
         guard let data = try? Data(contentsOf: receiptURL) else {
             return .failure(PluginLoadError(message: "Failed to read receipt.json"))
@@ -527,6 +586,44 @@ final class PluginManager {
             )
         }
 
+        #if !DEBUG
+            // Verify Apple code signature to detect on-disk tampering
+            if let codesignError = verifyCodeSignature(of: dylibURL) {
+                return .failure(codesignError)
+            }
+
+            let consentURL = versionDir.appendingPathComponent(".user_consent", isDirectory: false)
+            guard fm.fileExists(atPath: consentURL.path) else {
+                return .failure(
+                    PluginLoadError(
+                        message: "\(PluginLoadError.consentRequiredPrefix) Plugin has not been approved for loading"
+                    )
+                )
+            }
+        #endif
+
         return .success(())
+    }
+
+    /// Checks the Apple code signature of a dylib using the Security framework.
+    /// Returns nil on success or a PluginLoadError describing the failure.
+    nonisolated private static func verifyCodeSignature(of url: URL) -> PluginLoadError? {
+        var staticCode: SecStaticCode?
+        let createStatus = SecStaticCodeCreateWithPath(url as CFURL, SecCSFlags(), &staticCode)
+        guard createStatus == errSecSuccess, let code = staticCode else {
+            return PluginLoadError(
+                message: "Failed to create code reference for signature verification (OSStatus \(createStatus))"
+            )
+        }
+
+        let checkStatus = SecStaticCodeCheckValidity(code, SecCSFlags(), nil)
+        guard checkStatus == errSecSuccess else {
+            return PluginLoadError(
+                message:
+                    "Plugin code signature is invalid or missing - plugins must be signed with a Developer ID (OSStatus \(checkStatus))"
+            )
+        }
+
+        return nil
     }
 }
