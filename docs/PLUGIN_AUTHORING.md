@@ -1605,6 +1605,19 @@ When the proxy is active:
 
 This gives you hot module replacement (HMR) and instant feedback during frontend development. The proxy configuration is stored in a `dev-proxy.json` file in the plugin directory.
 
+### Manual Install (Development Only)
+
+Installing from a local path or URL is intended for development and testing:
+
+```bash
+osaurus tools install ./my-plugin-1.0.0.zip
+osaurus tools install https://example.com/my-plugin-1.0.0.zip
+```
+
+These paths skip minisign signature verification, TOFU author key checks, and do not grant user consent. They work in DEBUG builds of Osaurus; in release builds, plugins installed this way will fail to load because they cannot pass code signature and consent verification.
+
+For distribution, always publish to the central registry and install with `osaurus tools install <plugin-id>`, which enforces the full verification chain (minisign, code signing, consent).
+
 ---
 
 ## Permissions
