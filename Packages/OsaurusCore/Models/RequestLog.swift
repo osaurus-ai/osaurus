@@ -37,6 +37,7 @@ struct ToolCallLog: Identifiable, Sendable {
 enum RequestSource: String, Sendable, CaseIterable {
     case chatUI = "Chat UI"
     case httpAPI = "HTTP API"
+    case plugin = "Plugin"
 }
 
 /// Represents a single request log entry with optional inference data
@@ -53,6 +54,9 @@ struct RequestLog: Identifiable, Sendable {
     let requestBody: String?
     let responseBody: String?
     let userAgent: String?
+
+    // Plugin attribution (nil for non-plugin requests)
+    let pluginId: String?
 
     // Optional inference fields (only for chat endpoints)
     let model: String?
@@ -76,6 +80,7 @@ struct RequestLog: Identifiable, Sendable {
         requestBody: String? = nil,
         responseBody: String? = nil,
         userAgent: String? = nil,
+        pluginId: String? = nil,
         model: String? = nil,
         inputTokens: Int? = nil,
         outputTokens: Int? = nil,
@@ -95,6 +100,7 @@ struct RequestLog: Identifiable, Sendable {
         self.requestBody = requestBody
         self.responseBody = responseBody
         self.userAgent = userAgent
+        self.pluginId = pluginId
         self.model = model
         self.inputTokens = inputTokens
         self.outputTokens = outputTokens
@@ -121,6 +127,11 @@ struct RequestLog: Identifiable, Sendable {
     }
 
     // MARK: - Computed Properties
+
+    /// Whether this is a plugin console log entry (not an API call)
+    var isPluginLog: Bool {
+        method == "LOG"
+    }
 
     /// Whether this is an inference request (chat endpoint)
     var isInference: Bool {

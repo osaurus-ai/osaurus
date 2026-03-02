@@ -40,12 +40,13 @@ final class InsightsService: ObservableObject {
     /// Filtered logs based on current filter settings
     var filteredLogs: [RequestLog] {
         logs.filter { log in
-            // Search filter (path or model) using fuzzy matching
+            // Search filter (path, model, or pluginId) using fuzzy matching
             if !searchFilter.isEmpty {
                 let matchesPath = SearchService.matches(query: searchFilter, in: log.path)
                 let matchesModel = log.model.map { SearchService.matches(query: searchFilter, in: $0) } ?? false
                 let matchesShortModel = SearchService.matches(query: searchFilter, in: log.shortModelName)
-                if !matchesPath && !matchesModel && !matchesShortModel {
+                let matchesPlugin = log.pluginId.map { SearchService.matches(query: searchFilter, in: $0) } ?? false
+                if !matchesPath && !matchesModel && !matchesShortModel && !matchesPlugin {
                     return false
                 }
             }
@@ -58,6 +59,8 @@ final class InsightsService: ObservableObject {
                 if log.source != .chatUI { return false }
             case .httpAPI:
                 if log.source != .httpAPI { return false }
+            case .plugin:
+                if log.source != .plugin { return false }
             }
 
             // Method filter
@@ -141,6 +144,7 @@ enum SourceFilter: String, CaseIterable {
     case all = "All"
     case chatUI = "Chat"
     case httpAPI = "HTTP"
+    case plugin = "Plugin"
 }
 
 enum MethodFilter: String, CaseIterable {
@@ -202,6 +206,7 @@ extension InsightsService {
         requestBody: String? = nil,
         responseBody: String? = nil,
         userAgent: String? = nil,
+        pluginId: String? = nil,
         model: String? = nil,
         inputTokens: Int? = nil,
         outputTokens: Int? = nil,
@@ -211,7 +216,6 @@ extension InsightsService {
         finishReason: RequestLog.FinishReason? = nil,
         errorMessage: String? = nil
     ) {
-        // Truncate bodies before crossing actor boundary to limit memory
         let trimmedRequest = truncateBody(requestBody)
         let trimmedResponse = truncateBody(responseBody)
 
@@ -225,6 +229,7 @@ extension InsightsService {
                 requestBody: trimmedRequest,
                 responseBody: trimmedResponse,
                 userAgent: userAgent,
+                pluginId: pluginId,
                 model: model,
                 inputTokens: inputTokens,
                 outputTokens: outputTokens,

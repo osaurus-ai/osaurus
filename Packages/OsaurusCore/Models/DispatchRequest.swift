@@ -23,6 +23,8 @@ public struct DispatchRequest: Sendable {
     public let folderBookmark: Data?
     /// Set to `false` for headless execution (e.g. webhooks).
     public let showToast: Bool
+    /// Plugin that originated this dispatch (for on_task_event callback routing).
+    public let sourcePluginId: String?
 
     public init(
         id: UUID = UUID(),
@@ -33,7 +35,8 @@ public struct DispatchRequest: Sendable {
         parameters: [String: String] = [:],
         folderPath: String? = nil,
         folderBookmark: Data? = nil,
-        showToast: Bool = true
+        showToast: Bool = true,
+        sourcePluginId: String? = nil
     ) {
         self.id = id
         self.mode = mode
@@ -44,6 +47,7 @@ public struct DispatchRequest: Sendable {
         self.folderPath = folderPath
         self.folderBookmark = folderBookmark
         self.showToast = showToast
+        self.sourcePluginId = sourcePluginId
     }
 }
 

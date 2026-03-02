@@ -130,6 +130,21 @@ public final class AgentManager: ObservableObject {
         agents.first { $0.id == id }
     }
 
+    /// Get an agent by its crypto address (case-insensitive)
+    public func agent(byAddress address: String) -> Agent? {
+        let lower = address.lowercased()
+        return agents.first { $0.agentAddress?.lowercased() == lower }
+    }
+
+    /// Resolve a string identifier to an agent UUID.
+    /// Tries UUID parsing first, then falls back to crypto address lookup.
+    public func resolveAgentId(_ identifier: String) -> UUID? {
+        if let uuid = UUID(uuidString: identifier) {
+            return agents.contains(where: { $0.id == uuid }) ? uuid : nil
+        }
+        return agent(byAddress: identifier)?.id
+    }
+
     /// Import an agent from JSON data
     @discardableResult
     public func importAgent(from data: Data) throws -> Agent {
