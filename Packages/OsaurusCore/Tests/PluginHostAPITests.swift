@@ -3,7 +3,8 @@
 //  OsaurusCoreTests
 //
 //  Tests for the Host API v2 implementation: SSRF protection, JSON helpers,
-//  rate limiting, ABI struct layout, dispatch models, and agent resolution.
+//  rate limiting, ABI struct layout, dispatch models, agent resolution,
+//  task event types, and event serialization.
 //
 
 import Foundation
@@ -407,18 +408,18 @@ struct PluginAPIStructTests {
             version: 0,
             handle_route: nil,
             on_config_changed: nil,
-            on_task_completed: nil
+            on_task_event: nil
         )
         #expect(api.version == 0)
         #expect(api.handle_route == nil)
         #expect(api.on_config_changed == nil)
-        #expect(api.on_task_completed == nil)
+        #expect(api.on_task_event == nil)
     }
 
     @Test func v2PluginFieldsPopulated() {
         let dummyRoute: osr_handle_route_t = { _, _ in nil }
         let dummyConfig: osr_on_config_changed_t = { _, _, _ in }
-        let dummyCompleted: osr_on_task_completed_t = { _, _, _ in }
+        let dummyEvent: osr_on_task_event_t = { _, _, _, _ in }
 
         let api = osr_plugin_api(
             free_string: nil,
@@ -429,12 +430,162 @@ struct PluginAPIStructTests {
             version: 2,
             handle_route: dummyRoute,
             on_config_changed: dummyConfig,
-            on_task_completed: dummyCompleted
+            on_task_event: dummyEvent
         )
         #expect(api.version == 2)
         #expect(api.handle_route != nil)
         #expect(api.on_config_changed != nil)
-        #expect(api.on_task_completed != nil)
+        #expect(api.on_task_event != nil)
+    }
+}
+
+// MARK: - TaskEventType
+
+struct TaskEventTypeTests {
+
+    @Test func rawValues() {
+        #expect(TaskEventType.started.rawValue == 0)
+        #expect(TaskEventType.activity.rawValue == 1)
+        #expect(TaskEventType.progress.rawValue == 2)
+        #expect(TaskEventType.clarification.rawValue == 3)
+        #expect(TaskEventType.completed.rawValue == 4)
+        #expect(TaskEventType.failed.rawValue == 5)
+        #expect(TaskEventType.cancelled.rawValue == 6)
+    }
+
+    @Test func initFromRawValue() {
+        #expect(TaskEventType(rawValue: 0) == .started)
+        #expect(TaskEventType(rawValue: 4) == .completed)
+        #expect(TaskEventType(rawValue: 99) == nil)
+    }
+}
+
+// MARK: - Event Serialization
+
+@MainActor
+struct EventSerializationTests {
+
+    private func parse(_ json: String) -> [String: Any]? {
+        try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any]
+    }
+
+    @Test func startedEventWorkMode() {
+        let session = WorkSession(agentId: Agent.defaultId)
+        let state = BackgroundTaskState(
+            id: UUID(),
+            taskId: "t1",
+            taskTitle: "Build feature",
+            agentId: Agent.defaultId,
+            session: session
+        )
+        let json = PluginHostContext.serializeStartedEvent(state: state)
+        let dict = parse(json)
+        #expect(dict?["status"] as? String == "running")
+        #expect(dict?["mode"] as? String == "work")
+        let title = dict?["title"] as? String
+        #expect(title == "Build feature")
+    }
+
+    @Test func activityEventWithDetail() {
+        let json = PluginHostContext.serializeActivityEvent(
+            kind: .tool,
+            title: "Tool",
+            detail: "grep"
+        )
+        let dict = parse(json)
+        #expect(dict?["kind"] as? String == "tool")
+        #expect(dict?["title"] as? String == "Tool")
+        #expect(dict?["detail"] as? String == "grep")
+        let ts = dict?["timestamp"] as? String
+        #expect(ts != nil)
+    }
+
+    @Test func activityEventWithoutDetail() {
+        let json = PluginHostContext.serializeActivityEvent(
+            kind: .info,
+            title: "Issue completed",
+            detail: nil
+        )
+        let dict = parse(json)
+        #expect(dict?["kind"] as? String == "info")
+        let detail = dict?["detail"]
+        #expect(detail == nil)
+    }
+
+    @Test func progressEvent() {
+        let json = PluginHostContext.serializeProgressEvent(
+            progress: 0.75,
+            currentStep: "Running tests"
+        )
+        let dict = parse(json)
+        #expect(dict?["progress"] as? Double == 0.75)
+        #expect(dict?["current_step"] as? String == "Running tests")
+    }
+
+    @Test func progressEventWithoutStep() {
+        let json = PluginHostContext.serializeProgressEvent(
+            progress: 0.5,
+            currentStep: nil
+        )
+        let dict = parse(json)
+        #expect(dict?["progress"] as? Double == 0.5)
+        let step = dict?["current_step"]
+        #expect(step == nil)
+    }
+
+    @Test func clarificationEvent() {
+        let clarification = ClarificationRequest(
+            question: "Which branch?",
+            options: ["main", "develop"]
+        )
+        let json = PluginHostContext.serializeClarificationEvent(clarification: clarification)
+        let dict = parse(json)
+        #expect(dict?["question"] as? String == "Which branch?")
+        let opts = dict?["options"] as? [String]
+        #expect(opts?.count == 2)
+    }
+
+    @Test func clarificationEventWithoutOptions() {
+        let clarification = ClarificationRequest(
+            question: "Please provide more info",
+            options: nil
+        )
+        let json = PluginHostContext.serializeClarificationEvent(clarification: clarification)
+        let dict = parse(json)
+        #expect(dict?["question"] as? String == "Please provide more info")
+        let opts = dict?["options"]
+        #expect(opts == nil)
+    }
+
+    @Test func completedEventSuccess() {
+        let sessionId = UUID()
+        let json = PluginHostContext.serializeCompletedEvent(
+            success: true,
+            summary: "All done",
+            sessionId: sessionId
+        )
+        let dict = parse(json)
+        #expect(dict?["success"] as? Bool == true)
+        #expect(dict?["summary"] as? String == "All done")
+        #expect(dict?["session_id"] as? String == sessionId.uuidString)
+    }
+
+    @Test func completedEventFailure() {
+        let json = PluginHostContext.serializeCompletedEvent(
+            success: false,
+            summary: "Build failed",
+            sessionId: nil
+        )
+        let dict = parse(json)
+        #expect(dict?["success"] as? Bool == false)
+        #expect(dict?["summary"] as? String == "Build failed")
+        let sid = dict?["session_id"]
+        #expect(sid == nil)
+    }
+
+    @Test func cancelledEvent() {
+        let json = PluginHostContext.serializeCancelledEvent()
+        #expect(json == "{}")
     }
 }
 

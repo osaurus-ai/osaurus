@@ -37,6 +37,10 @@ public final class BackgroundTaskManager: ObservableObject {
     /// Scheduled auto-finalize timers for completed/cancelled tasks
     private var autoFinalizeTasks: [UUID: Task<Void, Never>] = [:]
 
+    /// Throttle timestamps for progress events (max 1 per 500ms per task).
+    private var lastProgressEmit: [UUID: Date] = [:]
+    private static let progressThrottleInterval: TimeInterval = 0.5
+
     /// Subject for batching view updates with throttling
     private let viewUpdateSubject = PassthroughSubject<Void, Never>()
     private var viewUpdateCancellable: AnyCancellable?
@@ -128,6 +132,7 @@ public final class BackgroundTaskManager: ObservableObject {
         taskObservers[backgroundId]?.forEach { $0.cancel() }
         taskObservers.removeValue(forKey: backgroundId)
         chatTurnCounts.removeValue(forKey: backgroundId)
+        lastProgressEmit.removeValue(forKey: backgroundId)
 
         state.releaseReferences()
 
@@ -152,7 +157,8 @@ public final class BackgroundTaskManager: ObservableObject {
 
         state.status = .cancelled
         resumeCompletion(for: backgroundId, result: .cancelled)
-        notifyPluginIfNeeded(state)
+        emitPluginEvent(state, type: .cancelled, json: PluginHostContext.serializeCancelledEvent())
+        lastProgressEmit.removeValue(forKey: backgroundId)
         scheduleAutoFinalize(backgroundId)
     }
 
@@ -285,6 +291,7 @@ public final class BackgroundTaskManager: ObservableObject {
     private func registerTask(_ state: BackgroundTaskState) {
         backgroundTasks[state.id] = state
         state.appendActivity(kind: .info, title: "Running in background")
+        emitPluginEvent(state, type: .started, json: PluginHostContext.serializeStartedEvent(state: state))
     }
 
     private func createContext(for request: DispatchRequest) -> ExecutionContext {
@@ -320,22 +327,32 @@ public final class BackgroundTaskManager: ObservableObject {
         state.currentStep = nil
         state.executionContext?.chatSession.save()
         resumeCompletion(for: state.id, result: resultFromState(state))
-        notifyPluginIfNeeded(state)
+
+        let eventType: TaskEventType = success ? .completed : .failed
+        let json = PluginHostContext.serializeCompletedEvent(
+            success: success,
+            summary: summary,
+            sessionId: state.executionContext?.id
+        )
+        emitPluginEvent(state, type: eventType, json: json)
+        lastProgressEmit.removeValue(forKey: state.id)
+
         scheduleAutoFinalize(state.id)
     }
 
-    // MARK: - Private: Plugin Completion Callback
+    // MARK: - Private: Plugin Event Emission
 
-    /// Notify the originating plugin when a dispatched task reaches a terminal state.
-    private func notifyPluginIfNeeded(_ state: BackgroundTaskState) {
+    /// Emit a unified task lifecycle event to the originating plugin.
+    private func emitPluginEvent(_ state: BackgroundTaskState, type: TaskEventType, json: String) {
         guard let pluginId = state.sourcePluginId else { return }
-        let taskId = state.id.uuidString
-        let resultJSON = PluginHostContext.serializeTaskState(id: state.id, state: state)
-
         if let loaded = PluginManager.shared.loadedPlugin(for: pluginId),
-            loaded.plugin.hasTaskCompletedHandler
+            loaded.plugin.hasTaskEventHandler
         {
-            loaded.plugin.notifyTaskCompleted(taskId: taskId, resultJSON: resultJSON)
+            loaded.plugin.notifyTaskEvent(
+                taskId: state.id.uuidString,
+                eventType: type,
+                eventJSON: json
+            )
         }
     }
 
@@ -478,11 +495,20 @@ public final class BackgroundTaskManager: ObservableObject {
         guard newCount > previousCount else { return }
 
         let turns = session.turns
-        let scanStart = max(0, previousCount - 1)  // re-check the last previously-seen turn
+        let scanStart = max(0, previousCount - 1)
         for turn in turns[scanStart ..< min(newCount, turns.count)] {
             if let toolCalls = turn.toolCalls {
                 for call in toolCalls {
                     state.appendActivity(kind: .tool, title: "Tool", detail: call.function.name)
+                    emitPluginEvent(
+                        state,
+                        type: .activity,
+                        json: PluginHostContext.serializeActivityEvent(
+                            kind: .tool,
+                            title: "Tool",
+                            detail: call.function.name
+                        )
+                    )
                 }
             }
         }
@@ -493,21 +519,56 @@ public final class BackgroundTaskManager: ObservableObject {
     // MARK: - Private: Work Activity Event Mapping
 
     private func recordActivityEvent(_ event: WorkActivityEvent, into state: BackgroundTaskState) {
+        var emitKind: BackgroundTaskActivityItem.Kind?
+        var emitTitle: String?
+        var emitDetail: String?
+
         switch event {
         case .startedIssue(let title):
             state.appendActivity(kind: .info, title: "Issue", detail: title)
+            emitKind = .info
+            emitTitle = "Issue"
+            emitDetail = title
+
         case .willExecuteStep, .completedStep:
-            break  // Reflected via progress bar; skip mini-log entry
+            break
+
         case .toolExecuted(let name):
             state.appendActivity(kind: .tool, title: "Tool", detail: name)
+            emitKind = .tool
+            emitTitle = "Tool"
+            emitDetail = name
+
         case .needsClarification:
             state.appendActivity(kind: .warning, title: "Needs input")
+
         case .retrying(let attempt, let waitSeconds):
-            state.appendActivity(kind: .warning, title: "Retrying", detail: "Attempt \(attempt), wait \(waitSeconds)s")
+            let detail = "Attempt \(attempt), wait \(waitSeconds)s"
+            state.appendActivity(kind: .warning, title: "Retrying", detail: detail)
+            emitKind = .warning
+            emitTitle = "Retrying"
+            emitDetail = detail
+
         case .generatedArtifact(let filename, let isFinal):
-            state.appendActivity(kind: .info, title: isFinal ? "Final artifact" : "Artifact", detail: filename)
+            let title = isFinal ? "Final artifact" : "Artifact"
+            state.appendActivity(kind: .info, title: title, detail: filename)
+            emitKind = .info
+            emitTitle = title
+            emitDetail = filename
+
         case .completedIssue(let success):
-            state.appendActivity(kind: success ? .success : .error, title: success ? "Issue completed" : "Issue failed")
+            let title = success ? "Issue completed" : "Issue failed"
+            state.appendActivity(kind: success ? .success : .error, title: title)
+            emitKind = success ? .success : .error
+            emitTitle = title
+        }
+
+        if let kind = emitKind, let title = emitTitle {
+            emitPluginEvent(
+                state,
+                type: .activity,
+                json: PluginHostContext.serializeActivityEvent(kind: kind, title: title, detail: emitDetail)
+            )
         }
     }
 
@@ -522,12 +583,20 @@ public final class BackgroundTaskManager: ObservableObject {
     ) {
         guard let state = backgroundTasks[taskId] else { return }
 
+        let wasClarifying = state.status == .awaitingClarification
         state.pendingClarification = clarification
 
         if task?.status == .cancelled {
             state.status = .cancelled
-        } else if clarification != nil {
+        } else if let clarification {
             state.status = .awaitingClarification
+            if !wasClarifying {
+                emitPluginEvent(
+                    state,
+                    type: .clarification,
+                    json: PluginHostContext.serializeClarificationEvent(clarification: clarification)
+                )
+            }
         } else if isExecuting {
             state.status = .running
             if state.currentStep == nil { state.currentStep = "Working..." }
@@ -553,16 +622,36 @@ public final class BackgroundTaskManager: ObservableObject {
             isExecuting: session.isExecuting
         )
 
-        // Only update if progress changed significantly (reduces re-renders)
-        if abs(state.progress - newProgress) > 0.01 || (state.progress < 0) != (newProgress < 0) {
+        let progressChanged =
+            abs(state.progress - newProgress) > 0.01
+            || (state.progress < 0) != (newProgress < 0)
+        if progressChanged {
             state.progress = newProgress
         }
 
-        state.currentStep = getCurrentStep(
+        let newStep = getCurrentStep(
             loopState: loopState,
             issues: issues,
             isExecuting: session.isExecuting
         )
+        let stepChanged = state.currentStep != newStep
+        state.currentStep = newStep
+
+        if (progressChanged || stepChanged) && state.sourcePluginId != nil {
+            let now = Date()
+            let lastEmit = lastProgressEmit[taskId]
+            if lastEmit == nil || now.timeIntervalSince(lastEmit!) >= Self.progressThrottleInterval {
+                lastProgressEmit[taskId] = now
+                emitPluginEvent(
+                    state,
+                    type: .progress,
+                    json: PluginHostContext.serializeProgressEvent(
+                        progress: state.progress,
+                        currentStep: state.currentStep
+                    )
+                )
+            }
+        }
 
         // Retry completion check — isExecuting may fire before issues update
         if !session.isExecuting && state.status.isActive {

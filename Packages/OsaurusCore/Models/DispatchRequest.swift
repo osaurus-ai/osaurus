@@ -23,7 +23,7 @@ public struct DispatchRequest: Sendable {
     public let folderBookmark: Data?
     /// Set to `false` for headless execution (e.g. webhooks).
     public let showToast: Bool
-    /// Plugin that originated this dispatch (for on_task_completed callback routing).
+    /// Plugin that originated this dispatch (for on_task_event callback routing).
     public let sourcePluginId: String?
 
     public init(

@@ -823,40 +823,40 @@ private struct APIReferenceTabContent: View {
             .padding(.leading, 4)
 
             VStack(spacing: 2) {
-                ForEach(group.endpoints, id: \.path) { endpoint in
+                ForEach(group.endpoints, id: \.id) { endpoint in
                     if endpoint.isAudioEndpoint {
                         TranscriptionTestRow(
                             endpoint: endpoint,
                             serverURL: serverURL,
                             isServerRunning: server.isRunning,
-                            isExpanded: expandedEndpoint == endpoint.path,
-                            isLoading: loadingEndpoints.contains(endpoint.path),
-                            response: endpointResponses[endpoint.path],
-                            onToggleExpand: { toggleEndpoint(endpoint.path) },
+                            isExpanded: expandedEndpoint == endpoint.id,
+                            isLoading: loadingEndpoints.contains(endpoint.id),
+                            response: endpointResponses[endpoint.id],
+                            onToggleExpand: { toggleEndpoint(endpoint.id) },
                             onTest: { audioData in
                                 runAudioTranscriptionTest(endpoint, audioData: audioData)
                             },
-                            onClearResponse: { endpointResponses[endpoint.path] = nil }
+                            onClearResponse: { endpointResponses[endpoint.id] = nil }
                         )
                     } else {
                         EndpointRow(
                             endpoint: endpoint,
                             serverURL: serverURL,
                             isServerRunning: server.isRunning,
-                            isExpanded: expandedEndpoint == endpoint.path,
-                            isLoading: loadingEndpoints.contains(endpoint.path),
+                            isExpanded: expandedEndpoint == endpoint.id,
+                            isLoading: loadingEndpoints.contains(endpoint.id),
                             editablePayload: binding(for: endpoint),
-                            response: endpointResponses[endpoint.path],
+                            response: endpointResponses[endpoint.id],
                             onToggleExpand: {
-                                toggleEndpoint(endpoint.path)
-                                if expandedEndpoint == endpoint.path,
-                                    editablePayloads[endpoint.path] == nil
+                                toggleEndpoint(endpoint.id)
+                                if expandedEndpoint == endpoint.id,
+                                    editablePayloads[endpoint.id] == nil
                                 {
-                                    editablePayloads[endpoint.path] = endpoint.examplePayload ?? "{}"
+                                    editablePayloads[endpoint.id] = endpoint.examplePayload ?? "{}"
                                 }
                             },
                             onTest: { runEndpointTest(endpoint) },
-                            onClearResponse: { endpointResponses[endpoint.path] = nil }
+                            onClearResponse: { endpointResponses[endpoint.id] = nil }
                         )
                     }
                 }
@@ -912,49 +912,49 @@ private struct APIReferenceTabContent: View {
 
     private func binding(for endpoint: APIEndpoint) -> Binding<String> {
         Binding(
-            get: { editablePayloads[endpoint.path] ?? endpoint.examplePayload ?? "{}" },
-            set: { editablePayloads[endpoint.path] = $0 }
+            get: { editablePayloads[endpoint.id] ?? endpoint.examplePayload ?? "{}" },
+            set: { editablePayloads[endpoint.id] = $0 }
         )
     }
 
     private func recordResult(_ endpoint: APIEndpoint, startTime: Date, data: Data, response: URLResponse) {
         let durationMs = Date().timeIntervalSince(startTime) * 1000
         let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
-        endpointResponses[endpoint.path] = EndpointTestResult(
+        endpointResponses[endpoint.id] = EndpointTestResult(
             endpoint: endpoint,
             statusCode: statusCode,
             body: data,
             duration: durationMs / 1000,
             error: nil
         )
-        loadingEndpoints.remove(endpoint.path)
+        loadingEndpoints.remove(endpoint.id)
     }
 
     private func recordError(_ endpoint: APIEndpoint, startTime: Date, error: Error) {
         let durationMs = Date().timeIntervalSince(startTime) * 1000
-        endpointResponses[endpoint.path] = EndpointTestResult(
+        endpointResponses[endpoint.id] = EndpointTestResult(
             endpoint: endpoint,
             statusCode: 0,
             body: Data(),
             duration: durationMs / 1000,
             error: error.localizedDescription
         )
-        loadingEndpoints.remove(endpoint.path)
+        loadingEndpoints.remove(endpoint.id)
     }
 
     private func runEndpointTest(_ endpoint: APIEndpoint) {
-        guard server.isRunning else { return }
+        guard server.isRunning, !endpoint.hasPathParameters else { return }
 
         withAnimation(.easeInOut(duration: 0.2)) {
-            expandedEndpoint = endpoint.path
-            loadingEndpoints.insert(endpoint.path)
+            expandedEndpoint = endpoint.id
+            loadingEndpoints.insert(endpoint.id)
         }
 
-        if editablePayloads[endpoint.path] == nil {
-            editablePayloads[endpoint.path] = endpoint.examplePayload ?? "{}"
+        if editablePayloads[endpoint.id] == nil {
+            editablePayloads[endpoint.id] = endpoint.examplePayload ?? "{}"
         }
 
-        let payload = editablePayloads[endpoint.path] ?? endpoint.examplePayload ?? "{}"
+        let payload = editablePayloads[endpoint.id] ?? endpoint.examplePayload ?? "{}"
 
         Task {
             let startTime = Date()
@@ -968,6 +968,10 @@ private struct APIReferenceTabContent: View {
                     request.httpMethod = "POST"
                     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
                     request.httpBody = payload.data(using: .utf8)
+                    (data, response) = try await URLSession.shared.data(for: request)
+                } else if endpoint.method == "DELETE" {
+                    var request = URLRequest(url: url)
+                    request.httpMethod = "DELETE"
                     (data, response) = try await URLSession.shared.data(for: request)
                 } else {
                     (data, response) = try await URLSession.shared.data(from: url)
@@ -1166,6 +1170,9 @@ struct APIEndpoint {
     let examplePayload: String?
     let isAudioEndpoint: Bool
 
+    var id: String { "\(method) \(path)" }
+    var hasPathParameters: Bool { path.contains("{") }
+
     init(
         method: String,
         path: String,
@@ -1190,6 +1197,7 @@ struct APIEndpoint {
         case embeddings = "Embeddings"
         case audio = "Audio"
         case memory = "Memory"
+        case agents = "Agents"
         case mcp = "MCP"
 
         var icon: String {
@@ -1199,6 +1207,7 @@ struct APIEndpoint {
             case .embeddings: return "text.viewfinder"
             case .audio: return "waveform"
             case .memory: return "brain.head.profile"
+            case .agents: return "person.2"
             case .mcp: return "wrench.and.screwdriver"
             }
         }
@@ -1210,6 +1219,7 @@ struct APIEndpoint {
             case .embeddings: return .cyan
             case .audio: return .orange
             case .memory: return .pink
+            case .agents: return .indigo
             case .mcp: return .purple
             }
         }
@@ -1403,11 +1413,49 @@ struct APIEndpoint {
                 category: .mcp,
                 examplePayload: "{\n  \"name\": \"example_tool\",\n  \"arguments\": {}\n}"
             ),
+            APIEndpoint(
+                method: "POST",
+                path: "/agents/{identifier}/dispatch",
+                description: "Dispatch a work or chat task to an agent",
+                compatibility: "Osaurus",
+                category: .agents,
+                examplePayload: """
+                    {
+                      "prompt": "Summarize the latest changes",
+                      "mode": "work",
+                      "title": "Summary task"
+                    }
+                    """
+            ),
+            APIEndpoint(
+                method: "GET",
+                path: "/tasks/{task_id}",
+                description: "Poll task status and activity",
+                compatibility: "Osaurus",
+                category: .agents,
+                examplePayload: nil
+            ),
+            APIEndpoint(
+                method: "DELETE",
+                path: "/tasks/{task_id}",
+                description: "Cancel a running task",
+                compatibility: "Osaurus",
+                category: .agents,
+                examplePayload: nil
+            ),
+            APIEndpoint(
+                method: "POST",
+                path: "/tasks/{task_id}/clarify",
+                description: "Submit a clarification response to a waiting task",
+                compatibility: "Osaurus",
+                category: .agents,
+                examplePayload: "{\n  \"response\": \"Yes, proceed with the changes\"\n}"
+            ),
         ]
     }()
 
     static let groupedEndpoints: [(category: EndpointCategory, endpoints: [APIEndpoint])] = {
-        let categories: [EndpointCategory] = [.core, .chat, .embeddings, .audio, .memory, .mcp]
+        let categories: [EndpointCategory] = [.core, .chat, .embeddings, .audio, .memory, .agents, .mcp]
         return categories.map { cat in
             (category: cat, endpoints: allEndpoints.filter { $0.category == cat })
         }
@@ -1530,7 +1578,7 @@ private struct EndpointRowHeader: View {
                         RoundedRectangle(cornerRadius: 4)
                             .fill(methodColor.opacity(0.15))
                     )
-                    .frame(width: 50)
+                    .frame(width: 58)
 
                 Text(endpoint.path)
                     .font(.system(size: 13, weight: .medium, design: .monospaced))
@@ -1743,7 +1791,9 @@ private struct EndpointRow: View {
                         ResponsePanel(
                             isLoading: isLoading,
                             response: response,
-                            emptyMessage: "Click 'Send Request' to test",
+                            emptyMessage: endpoint.hasPathParameters
+                                ? "Test with curl or your HTTP client"
+                                : "Click 'Send Request' to test",
                             onClearResponse: onClearResponse
                         )
                     }
@@ -1772,7 +1822,7 @@ private struct EndpointRow: View {
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundColor(theme.secondaryText)
                 Spacer()
-                if endpoint.method == "POST" {
+                if endpoint.examplePayload != nil, !endpoint.hasPathParameters {
                     Button(action: { editablePayload = endpoint.examplePayload ?? "{}" }) {
                         Text("Reset")
                             .font(.system(size: 10, weight: .medium))
@@ -1782,7 +1832,34 @@ private struct EndpointRow: View {
                 }
             }
 
-            if endpoint.method == "POST" {
+            if endpoint.hasPathParameters {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("\(endpoint.method) \(serverURL)\(endpoint.path)")
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundColor(theme.primaryText)
+                        .textSelection(.enabled)
+
+                    if let payload = endpoint.examplePayload {
+                        Text(payload)
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundColor(theme.secondaryText)
+                            .textSelection(.enabled)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(12)
+                .background(
+                    RoundedRectangle(cornerRadius: 6).fill(theme.codeBlockBackground)
+                )
+
+                HStack(spacing: 6) {
+                    Image(systemName: "info.circle")
+                        .font(.system(size: 10))
+                    Text("Replace path parameters with real values. Test via curl or your HTTP client.")
+                        .font(.system(size: 10))
+                }
+                .foregroundColor(theme.tertiaryText)
+            } else if endpoint.examplePayload != nil {
                 TextEditor(text: $editablePayload)
                     .font(.system(size: 11, design: .monospaced))
                     .frame(minHeight: 120, maxHeight: 200)
@@ -1798,7 +1875,7 @@ private struct EndpointRow: View {
                     )
                     .foregroundColor(theme.primaryText)
             } else {
-                Text("GET \(serverURL)\(endpoint.path)")
+                Text("\(endpoint.method) \(serverURL)\(endpoint.path)")
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundColor(theme.primaryText)
                     .textSelection(.enabled)
@@ -1809,26 +1886,28 @@ private struct EndpointRow: View {
                     )
             }
 
-            Button(action: onTest) {
-                HStack(spacing: 6) {
-                    if isLoading {
-                        ProgressView().scaleEffect(0.7)
-                    } else {
-                        Image(systemName: "paperplane.fill").font(.system(size: 10))
+            if !endpoint.hasPathParameters {
+                Button(action: onTest) {
+                    HStack(spacing: 6) {
+                        if isLoading {
+                            ProgressView().scaleEffect(0.7)
+                        } else {
+                            Image(systemName: "paperplane.fill").font(.system(size: 10))
+                        }
+                        Text(isLoading ? "Sending..." : "Send Request")
+                            .font(.system(size: 11, weight: .semibold))
                     }
-                    Text(isLoading ? "Sending..." : "Send Request")
-                        .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(isLoading ? theme.tertiaryText : theme.accentColor)
+                    )
                 }
-                .foregroundColor(.white)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 8)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(isLoading ? theme.tertiaryText : theme.accentColor)
-                )
+                .buttonStyle(PlainButtonStyle())
+                .disabled(isLoading)
             }
-            .buttonStyle(PlainButtonStyle())
-            .disabled(isLoading)
         }
         .frame(maxWidth: .infinity)
     }

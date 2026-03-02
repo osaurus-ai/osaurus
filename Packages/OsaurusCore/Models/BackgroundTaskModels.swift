@@ -162,7 +162,7 @@ public final class BackgroundTaskState: ObservableObject, Identifiable {
     /// When the background task was created
     public let createdAt: Date
 
-    /// Plugin that originated this dispatch (for on_task_completed callback routing).
+    /// Plugin that originated this dispatch (for on_task_event callback routing).
     public var sourcePluginId: String?
 
     private let maxActivityItems: Int = 40

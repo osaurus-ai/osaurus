@@ -628,6 +628,56 @@ extension PluginHostContext {
         case .error: "error"
         }
     }
+
+    // MARK: - Task Event Serialization
+
+    @MainActor
+    static func serializeStartedEvent(state: BackgroundTaskState) -> String {
+        jsonString([
+            "status": "running",
+            "mode": state.mode == .work ? "work" : "chat",
+            "title": state.taskTitle,
+        ])
+    }
+
+    @MainActor
+    static func serializeActivityEvent(kind: BackgroundTaskActivityItem.Kind, title: String, detail: String?) -> String
+    {
+        var dict: [String: Any] = [
+            "kind": activityKindString(kind),
+            "title": title,
+            "timestamp": isoFormatter.string(from: Date()),
+        ]
+        if let detail { dict["detail"] = detail }
+        return jsonString(dict)
+    }
+
+    @MainActor
+    static func serializeProgressEvent(progress: Double, currentStep: String?) -> String {
+        var dict: [String: Any] = ["progress": progress]
+        if let step = currentStep { dict["current_step"] = step }
+        return jsonString(dict)
+    }
+
+    @MainActor
+    static func serializeClarificationEvent(clarification: ClarificationRequest) -> String {
+        var dict: [String: Any] = ["question": clarification.question]
+        if let options = clarification.options, !options.isEmpty {
+            dict["options"] = options
+        }
+        return jsonString(dict)
+    }
+
+    @MainActor
+    static func serializeCompletedEvent(success: Bool, summary: String, sessionId: UUID?) -> String {
+        var dict: [String: Any] = ["success": success, "summary": summary]
+        if let sid = sessionId { dict["session_id"] = sid.uuidString }
+        return jsonString(dict)
+    }
+
+    static func serializeCancelledEvent() -> String {
+        jsonString([:])
+    }
 }
 
 // MARK: - Async Bridging Helpers

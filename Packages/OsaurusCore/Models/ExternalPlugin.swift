@@ -39,12 +39,24 @@ typealias osr_on_config_changed_t =
         UnsafePointer<CChar>?  // value
     ) -> Void
 
-typealias osr_on_task_completed_t =
+typealias osr_on_task_event_t =
     @convention(c) (
         osr_plugin_ctx_t?,  // ctx
         UnsafePointer<CChar>?,  // task_id
-        UnsafePointer<CChar>?  // result_json
+        Int32,  // event_type (OSR_TASK_EVENT_*)
+        UnsafePointer<CChar>?  // event_json
     ) -> Void
+
+/// Swift-side mirror of the OSR_TASK_EVENT_* constants.
+enum TaskEventType: Int32 {
+    case started = 0
+    case activity = 1
+    case progress = 2
+    case clarification = 3
+    case completed = 4
+    case failed = 5
+    case cancelled = 6
+}
 
 // Host API callback types (host → plugin, injected at init for v2)
 typealias osr_config_get_t = @convention(c) (UnsafePointer<CChar>?) -> UnsafePointer<CChar>?
@@ -115,7 +127,7 @@ struct osr_plugin_api {
     var version: UInt32
     var handle_route: osr_handle_route_t?
     var on_config_changed: osr_on_config_changed_t?
-    var on_task_completed: osr_on_task_completed_t?
+    var on_task_event: osr_on_task_event_t?
 }
 
 // Entry point types
@@ -380,7 +392,7 @@ final class ExternalPlugin: @unchecked Sendable {
     }
 
     var hasRouteHandler: Bool { abiVersion >= 2 && api.handle_route != nil }
-    var hasTaskCompletedHandler: Bool { abiVersion >= 2 && api.on_task_completed != nil }
+    var hasTaskEventHandler: Bool { abiVersion >= 2 && api.on_task_event != nil }
 
     deinit {
         api.destroy?(ctx)
@@ -487,18 +499,19 @@ final class ExternalPlugin: @unchecked Sendable {
         }
     }
 
-    func notifyTaskCompleted(taskId: String, resultJSON: String) {
-        guard abiVersion >= 2, let completedFn = api.on_task_completed else { return }
+    func notifyTaskEvent(taskId: String, eventType: TaskEventType, eventJSON: String) {
+        guard abiVersion >= 2, let eventFn = api.on_task_event else { return }
         nonisolated(unsafe) let ctx = self.ctx
         let pluginId = self.id
+        let rawType = eventType.rawValue
 
         ExternalPlugin.invokeQueue.async {
             PluginHostContext.setActivePlugin(pluginId)
             defer { PluginHostContext.clearActivePlugin() }
 
             taskId.withCString { taskIdPtr in
-                resultJSON.withCString { resultPtr in
-                    completedFn(ctx, taskIdPtr, resultPtr)
+                eventJSON.withCString { jsonPtr in
+                    eventFn(ctx, taskIdPtr, rawType, jsonPtr)
                 }
             }
         }

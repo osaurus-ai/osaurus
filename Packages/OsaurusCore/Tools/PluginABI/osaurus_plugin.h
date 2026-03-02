@@ -80,6 +80,24 @@ typedef struct {
     osr_http_request_fn     http_request;
 } osr_host_api;
 
+// ── Task lifecycle event types ──
+
+#define OSR_TASK_EVENT_STARTED          0
+#define OSR_TASK_EVENT_ACTIVITY         1
+#define OSR_TASK_EVENT_PROGRESS         2
+#define OSR_TASK_EVENT_CLARIFICATION    3
+#define OSR_TASK_EVENT_COMPLETED        4
+#define OSR_TASK_EVENT_FAILED           5
+#define OSR_TASK_EVENT_CANCELLED        6
+
+// Unified task lifecycle callback.
+// event_type: one of the OSR_TASK_EVENT_* constants above.
+// event_json: JSON payload whose shape depends on event_type.
+typedef void (*osr_on_task_event_fn)(osr_plugin_ctx_t ctx,
+                                     const char* task_id,
+                                     int event_type,
+                                     const char* event_json);
+
 // ── Host → Plugin API struct ──
 
 typedef struct {
@@ -120,11 +138,11 @@ typedef struct {
     // May be NULL if the plugin doesn't need config change notifications.
     void (*on_config_changed)(osr_plugin_ctx_t ctx, const char* key, const char* value);
 
-    // Called when a task dispatched by this plugin reaches a terminal state.
-    // result_json contains status, success, summary, error, etc.
-    // May be NULL if the plugin doesn't need completion callbacks.
-    void (*on_task_completed)(osr_plugin_ctx_t ctx, const char* task_id,
-                              const char* result_json);
+    // Unified task lifecycle callback. Called for every dispatched-task event:
+    // started, activity, progress, clarification, completed, failed, cancelled.
+    // May be NULL if the plugin doesn't need task lifecycle notifications.
+    void (*on_task_event)(osr_plugin_ctx_t ctx, const char* task_id,
+                          int event_type, const char* event_json);
 
 } osr_plugin_api;
 
