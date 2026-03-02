@@ -587,29 +587,75 @@ private struct InstalledPluginCard: View {
                 Divider()
                     .padding(.vertical, 4)
 
-                HStack(spacing: 10) {
-                    Image(systemName: "exclamationmark.circle.fill")
-                        .font(.system(size: 14))
-                        .foregroundColor(.red)
+                if loadError.hasPrefix(PluginManager.PluginLoadError.consentRequiredPrefix) {
+                    HStack(spacing: 12) {
+                        Image(systemName: "lock.shield.fill")
+                            .font(.system(size: 16))
+                            .foregroundColor(theme.warningColor)
 
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Failed to load plugin")
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundColor(.red)
-                        Text(loadError)
-                            .font(.system(size: 12))
-                            .foregroundColor(theme.secondaryText)
-                            .lineLimit(3)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Approval Required")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundColor(theme.primaryText)
+                            Text("This plugin needs your approval before it can load.")
+                                .font(.system(size: 11))
+                                .foregroundColor(theme.secondaryText)
+                        }
+
+                        Spacer()
+
+                        Button(action: { approveConsent() }) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "checkmark.shield.fill")
+                                    .font(.system(size: 10))
+                                Text("Approve")
+                                    .font(.system(size: 12, weight: .semibold))
+                            }
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(theme.accentColor)
+                            )
+                        }
+                        .buttonStyle(PlainButtonStyle())
                     }
+                    .padding(12)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10)
+                            .fill(theme.warningColor.opacity(0.08))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .stroke(theme.warningColor.opacity(0.2), lineWidth: 1)
+                            )
+                    )
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+                } else {
+                    HStack(spacing: 10) {
+                        Image(systemName: "exclamationmark.circle.fill")
+                            .font(.system(size: 14))
+                            .foregroundColor(.red)
 
-                    Spacer()
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Failed to load plugin")
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundColor(.red)
+                            Text(loadError)
+                                .font(.system(size: 12))
+                                .foregroundColor(theme.secondaryText)
+                                .lineLimit(3)
+                        }
+
+                        Spacer()
+                    }
+                    .padding(12)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color.red.opacity(0.08))
+                    )
+                    .transition(.opacity.combined(with: .move(edge: .top)))
                 }
-                .padding(12)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(Color.red.opacity(0.08))
-                )
-                .transition(.opacity.combined(with: .move(edge: .top)))
             }
 
             if isExpanded && hasMissingSecrets && !plugin.hasLoadError {
@@ -838,6 +884,19 @@ private struct InstalledPluginCard: View {
         hasMissingSecrets =
             !cachedSecrets.isEmpty
             && !ToolSecretsKeychain.hasAllRequiredSecrets(specs: cachedSecrets, for: plugin.pluginId)
+    }
+
+    private func approveConsent() {
+        Task {
+            do {
+                try PluginManager.shared.grantConsent(pluginId: plugin.pluginId)
+                await PluginManager.shared.loadAll()
+                onChange()
+            } catch {
+                errorMessage = error.localizedDescription
+                showError = true
+            }
+        }
     }
 
     private func retryLoad() {
