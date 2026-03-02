@@ -29,6 +29,9 @@ typedef const char* (*osr_db_query_fn)(const char* sql, const char* params_json)
 typedef void        (*osr_log_fn)(int level, const char* message);
 
 // Agent dispatch (via BackgroundTaskManager)
+// request_json accepts: "prompt" (required), "mode", "title", "id",
+// "agent_address" (crypto address) or "agent_id" (UUID), "folder_bookmark".
+// No authentication required — the host trusts in-process plugin calls.
 typedef const char* (*osr_dispatch_fn)(const char* request_json);
 typedef const char* (*osr_task_status_fn)(const char* task_id);
 typedef void        (*osr_dispatch_cancel_fn)(const char* task_id);

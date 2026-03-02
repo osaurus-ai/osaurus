@@ -3,7 +3,7 @@
 //  OsaurusCoreTests
 //
 //  Tests for the Host API v2 implementation: SSRF protection, JSON helpers,
-//  rate limiting, ABI struct layout, dispatch request model, and task models.
+//  rate limiting, ABI struct layout, dispatch models, and agent resolution.
 //
 
 import Foundation
@@ -496,5 +496,50 @@ struct PluginContextTLSTests {
         PluginHostContext.clearActivePlugin()
         let cleared = Thread.current.threadDictionary[key] as? String
         #expect(cleared == nil)
+    }
+}
+
+// MARK: - Agent Resolution
+
+@MainActor
+struct AgentResolutionTests {
+
+    @Test func resolveDefaultAgentByUUID() {
+        let manager = AgentManager.shared
+        let result = manager.resolveAgentId(Agent.defaultId.uuidString)
+        #expect(result == Agent.defaultId)
+    }
+
+    @Test func resolveUnknownUUID_returnsNil() {
+        let manager = AgentManager.shared
+        let fakeId = UUID().uuidString
+        #expect(manager.resolveAgentId(fakeId) == nil)
+    }
+
+    @Test func resolveGarbageString_returnsNil() {
+        let manager = AgentManager.shared
+        #expect(manager.resolveAgentId("not-a-uuid-or-address") == nil)
+        #expect(manager.resolveAgentId("") == nil)
+    }
+
+    @Test func agentByAddress_noMatch_returnsNil() {
+        let manager = AgentManager.shared
+        #expect(manager.agent(byAddress: "0xdeadbeef0000000000000000000000000000cafe") == nil)
+    }
+
+    @Test func agentByAddress_caseInsensitive() {
+        let manager = AgentManager.shared
+        let agents = manager.agents.filter { $0.agentAddress != nil }
+        guard let agent = agents.first, let address = agent.agentAddress else { return }
+        #expect(manager.agent(byAddress: address.uppercased())?.id == agent.id)
+        #expect(manager.agent(byAddress: address.lowercased())?.id == agent.id)
+    }
+
+    @Test func resolveAgentId_addressFallback() {
+        let manager = AgentManager.shared
+        let agents = manager.agents.filter { $0.agentAddress != nil }
+        guard let agent = agents.first, let address = agent.agentAddress else { return }
+        let result = manager.resolveAgentId(address)
+        #expect(result == agent.id)
     }
 }

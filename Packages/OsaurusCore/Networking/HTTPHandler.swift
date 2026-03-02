@@ -1522,7 +1522,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
     // MARK: - Dispatch & Task Endpoints
 
-    /// POST /agents/{agent_id}/dispatch — dispatch work/chat task
+    /// POST /agents/{identifier}/dispatch — dispatch work/chat task
+    /// The identifier can be an agent UUID or a crypto address (0x...).
     private func handleDispatchEndpoint(
         head: HTTPRequestHead,
         context: ChannelHandlerContext,
@@ -1552,11 +1553,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             requestBodyString = nil
         }
 
-        // Extract agent_id from path: /agents/{agent_id}/dispatch
+        // Extract identifier from path: /agents/{identifier}/dispatch
         let components = path.split(separator: "/")
-        guard components.count >= 3,
-            let agentId = UUID(uuidString: String(components[1]))
-        else {
+        guard components.count >= 3 else {
             hop {
                 var headers = [("Content-Type", "application/json; charset=utf-8")]
                 headers.append(contentsOf: cors)
@@ -1565,13 +1564,31 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     version: head.version,
                     status: .badRequest,
                     headers: headers,
-                    body: #"{"error":"invalid_agent_id","message":"Invalid agent UUID in path"}"#
+                    body: #"{"error":"invalid_agent","message":"Missing agent identifier in path"}"#
                 )
             }
             return
         }
+        let agentIdentifier = String(components[1])
 
         Task(priority: .userInitiated) {
+            // Resolve identifier: try UUID first, then crypto address
+            guard let agentId = await MainActor.run(body: { AgentManager.shared.resolveAgentId(agentIdentifier) })
+            else {
+                hop {
+                    var headers = [("Content-Type", "application/json; charset=utf-8")]
+                    headers.append(contentsOf: cors)
+                    self.sendResponse(
+                        context: ctx.value,
+                        version: head.version,
+                        status: .notFound,
+                        headers: headers,
+                        body: #"{"error":"agent_not_found","message":"No agent found for the given identifier"}"#
+                    )
+                }
+                return
+            }
+
             guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                 let prompt = json["prompt"] as? String
             else {

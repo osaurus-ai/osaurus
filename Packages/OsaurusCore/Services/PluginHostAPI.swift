@@ -103,8 +103,10 @@ final class PluginHostContext: @unchecked Sendable {
             }
 
             var agentId: UUID?
-            if let agentStr = json["agent_id"] as? String {
-                agentId = UUID(uuidString: agentStr)
+            if let address = json["agent_address"] as? String {
+                agentId = await MainActor.run { AgentManager.shared.agent(byAddress: address)?.id }
+            } else if let idStr = json["agent_id"] as? String {
+                agentId = UUID(uuidString: idStr)
             }
 
             let title = json["title"] as? String
