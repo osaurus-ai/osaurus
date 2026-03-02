@@ -152,6 +152,7 @@ public final class BackgroundTaskManager: ObservableObject {
 
         state.status = .cancelled
         resumeCompletion(for: backgroundId, result: .cancelled)
+        notifyPluginIfNeeded(state)
         scheduleAutoFinalize(backgroundId)
     }
 
@@ -186,6 +187,7 @@ public final class BackgroundTaskManager: ObservableObject {
             currentStep: "Starting..."
         )
 
+        state.sourcePluginId = request.sourcePluginId
         registerTask(state)
         observeWorkTask(state, session: workSession)
 
@@ -228,6 +230,7 @@ public final class BackgroundTaskManager: ObservableObject {
             currentStep: "Running..."
         )
 
+        state.sourcePluginId = request.sourcePluginId
         registerTask(state)
         observeChatTask(state, session: context.chatSession)
 
@@ -317,7 +320,23 @@ public final class BackgroundTaskManager: ObservableObject {
         state.currentStep = nil
         state.executionContext?.chatSession.save()
         resumeCompletion(for: state.id, result: resultFromState(state))
+        notifyPluginIfNeeded(state)
         scheduleAutoFinalize(state.id)
+    }
+
+    // MARK: - Private: Plugin Completion Callback
+
+    /// Notify the originating plugin when a dispatched task reaches a terminal state.
+    private func notifyPluginIfNeeded(_ state: BackgroundTaskState) {
+        guard let pluginId = state.sourcePluginId else { return }
+        let taskId = state.id.uuidString
+        let resultJSON = PluginHostContext.serializeTaskState(id: state.id, state: state)
+
+        if let loaded = PluginManager.shared.loadedPlugin(for: pluginId),
+            loaded.plugin.hasTaskCompletedHandler
+        {
+            loaded.plugin.notifyTaskCompleted(taskId: taskId, resultJSON: resultJSON)
+        }
     }
 
     // MARK: - Private: Auto-Finalize

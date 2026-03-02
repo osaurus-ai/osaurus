@@ -263,6 +263,38 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 handleMemoryIngest(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .GET, path == "/agents" {
                 handleListAgents(head: head, context: context, startTime: startTime, userAgent: userAgent)
+            } else if head.method == .POST, path.hasPrefix("/agents/"), path.hasSuffix("/dispatch") {
+                handleDispatchEndpoint(
+                    head: head,
+                    context: context,
+                    path: path,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
+            } else if head.method == .GET, path.hasPrefix("/tasks/"), !path.hasSuffix("/clarify") {
+                handleTaskStatusEndpoint(
+                    head: head,
+                    context: context,
+                    path: path,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
+            } else if head.method == .DELETE, path.hasPrefix("/tasks/") {
+                handleTaskCancelEndpoint(
+                    head: head,
+                    context: context,
+                    path: path,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
+            } else if head.method == .POST, path.hasPrefix("/tasks/"), path.hasSuffix("/clarify") {
+                handleTaskClarifyEndpoint(
+                    head: head,
+                    context: context,
+                    path: path,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
             } else if head.method == .POST, path == "/embeddings" || path == "/embed" {
                 handleEmbeddings(
                     head: head,
@@ -1482,6 +1514,355 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 userAgent: logUserAgent,
                 requestBody: nil,
                 responseBody: json,
+                responseStatus: 200,
+                startTime: logStartTime
+            )
+        }
+    }
+
+    // MARK: - Dispatch & Task Endpoints
+
+    /// POST /agents/{agent_id}/dispatch — dispatch work/chat task
+    private func handleDispatchEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let cors = stateRef.value.corsHeaders
+        let hop: (@escaping @Sendable () -> Void) -> Void = { block in
+            if loop.inEventLoop { block() } else { loop.execute { block() } }
+        }
+        let logSelf = self
+        let logStartTime = startTime
+        let logUserAgent = userAgent
+
+        let data: Data
+        let requestBodyString: String?
+        if let body = stateRef.value.requestBodyBuffer {
+            var bodyCopy = body
+            let bytes = bodyCopy.readBytes(length: bodyCopy.readableBytes) ?? []
+            data = Data(bytes)
+            requestBodyString = String(decoding: data, as: UTF8.self)
+        } else {
+            data = Data()
+            requestBodyString = nil
+        }
+
+        // Extract agent_id from path: /agents/{agent_id}/dispatch
+        let components = path.split(separator: "/")
+        guard components.count >= 3,
+            let agentId = UUID(uuidString: String(components[1]))
+        else {
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(
+                    context: ctx.value,
+                    version: head.version,
+                    status: .badRequest,
+                    headers: headers,
+                    body: #"{"error":"invalid_agent_id","message":"Invalid agent UUID in path"}"#
+                )
+            }
+            return
+        }
+
+        Task(priority: .userInitiated) {
+            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                let prompt = json["prompt"] as? String
+            else {
+                hop {
+                    var headers = [("Content-Type", "application/json; charset=utf-8")]
+                    headers.append(contentsOf: cors)
+                    self.sendResponse(
+                        context: ctx.value,
+                        version: head.version,
+                        status: .badRequest,
+                        headers: headers,
+                        body: #"{"error":"invalid_request","message":"Missing required field: prompt"}"#
+                    )
+                }
+                return
+            }
+
+            let modeStr = json["mode"] as? String ?? "work"
+            let mode: ChatMode = modeStr == "chat" ? .chat : .work
+            let title = json["title"] as? String
+            let requestId = UUID()
+
+            let request = DispatchRequest(
+                id: requestId,
+                mode: mode,
+                prompt: prompt,
+                agentId: agentId,
+                title: title,
+                showToast: true
+            )
+
+            let handle = await TaskDispatcher.shared.dispatch(request)
+            let responseBody: String
+            let status: HTTPResponseStatus
+
+            if handle != nil {
+                let pollUrl = "/v1/tasks/\(requestId.uuidString)"
+                let resp: [String: Any] = ["id": requestId.uuidString, "status": "running", "poll_url": pollUrl]
+                responseBody =
+                    (try? JSONSerialization.data(withJSONObject: resp)).flatMap { String(decoding: $0, as: UTF8.self) }
+                    ?? "{}"
+                status = .accepted
+            } else {
+                responseBody =
+                    #"{"error":"task_limit_reached","message":"Maximum concurrent background tasks reached"}"#
+                status = .tooManyRequests
+            }
+
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(
+                    context: ctx.value,
+                    version: head.version,
+                    status: status,
+                    headers: headers,
+                    body: responseBody
+                )
+            }
+            logSelf.logRequest(
+                method: "POST",
+                path: path,
+                userAgent: logUserAgent,
+                requestBody: requestBodyString,
+                responseBody: responseBody,
+                responseStatus: Int(status.code),
+                startTime: logStartTime
+            )
+        }
+    }
+
+    /// GET /tasks/{task_id} — poll task status
+    private func handleTaskStatusEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let cors = stateRef.value.corsHeaders
+        let hop: (@escaping @Sendable () -> Void) -> Void = { block in
+            if loop.inEventLoop { block() } else { loop.execute { block() } }
+        }
+        let logSelf = self
+        let logStartTime = startTime
+        let logUserAgent = userAgent
+
+        // Extract task_id from path: /tasks/{task_id}
+        let components = path.split(separator: "/")
+        guard components.count >= 2,
+            let taskId = UUID(uuidString: String(components[1]))
+        else {
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(
+                    context: ctx.value,
+                    version: head.version,
+                    status: .badRequest,
+                    headers: headers,
+                    body: #"{"error":"invalid_task_id","message":"Invalid task UUID in path"}"#
+                )
+            }
+            return
+        }
+
+        Task(priority: .userInitiated) {
+            let (responseBody, found) = await MainActor.run {
+                guard let state = BackgroundTaskManager.shared.taskState(for: taskId) else {
+                    return (#"{"error":"not_found","message":"Task not found"}"#, false)
+                }
+                return (PluginHostContext.serializeTaskState(id: taskId, state: state), true)
+            }
+
+            let status: HTTPResponseStatus = found ? .ok : .notFound
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(
+                    context: ctx.value,
+                    version: head.version,
+                    status: status,
+                    headers: headers,
+                    body: responseBody
+                )
+            }
+            logSelf.logRequest(
+                method: "GET",
+                path: path,
+                userAgent: logUserAgent,
+                requestBody: nil,
+                responseBody: responseBody,
+                responseStatus: Int(status.code),
+                startTime: logStartTime
+            )
+        }
+    }
+
+    /// DELETE /tasks/{task_id} — cancel task
+    private func handleTaskCancelEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let cors = stateRef.value.corsHeaders
+        let hop: (@escaping @Sendable () -> Void) -> Void = { block in
+            if loop.inEventLoop { block() } else { loop.execute { block() } }
+        }
+        let logSelf = self
+        let logStartTime = startTime
+        let logUserAgent = userAgent
+
+        let components = path.split(separator: "/")
+        guard components.count >= 2,
+            let taskId = UUID(uuidString: String(components[1]))
+        else {
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(
+                    context: ctx.value,
+                    version: head.version,
+                    status: .badRequest,
+                    headers: headers,
+                    body: #"{"error":"invalid_task_id","message":"Invalid task UUID in path"}"#
+                )
+            }
+            return
+        }
+
+        Task(priority: .userInitiated) {
+            await MainActor.run {
+                BackgroundTaskManager.shared.cancelTask(taskId)
+            }
+
+            hop {
+                self.sendResponse(
+                    context: ctx.value,
+                    version: head.version,
+                    status: .noContent,
+                    headers: cors,
+                    body: ""
+                )
+            }
+            logSelf.logRequest(
+                method: "DELETE",
+                path: path,
+                userAgent: logUserAgent,
+                requestBody: nil,
+                responseBody: nil,
+                responseStatus: 204,
+                startTime: logStartTime
+            )
+        }
+    }
+
+    /// POST /tasks/{task_id}/clarify — answer clarification
+    private func handleTaskClarifyEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let cors = stateRef.value.corsHeaders
+        let hop: (@escaping @Sendable () -> Void) -> Void = { block in
+            if loop.inEventLoop { block() } else { loop.execute { block() } }
+        }
+        let logSelf = self
+        let logStartTime = startTime
+        let logUserAgent = userAgent
+
+        let data: Data
+        let requestBodyString: String?
+        if let body = stateRef.value.requestBodyBuffer {
+            var bodyCopy = body
+            let bytes = bodyCopy.readBytes(length: bodyCopy.readableBytes) ?? []
+            data = Data(bytes)
+            requestBodyString = String(decoding: data, as: UTF8.self)
+        } else {
+            data = Data()
+            requestBodyString = nil
+        }
+
+        // Extract task_id from path: /tasks/{task_id}/clarify
+        let components = path.split(separator: "/")
+        guard components.count >= 3,
+            let taskId = UUID(uuidString: String(components[1]))
+        else {
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(
+                    context: ctx.value,
+                    version: head.version,
+                    status: .badRequest,
+                    headers: headers,
+                    body: #"{"error":"invalid_task_id","message":"Invalid task UUID in path"}"#
+                )
+            }
+            return
+        }
+
+        Task(priority: .userInitiated) {
+            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                let response = json["response"] as? String
+            else {
+                hop {
+                    var headers = [("Content-Type", "application/json; charset=utf-8")]
+                    headers.append(contentsOf: cors)
+                    self.sendResponse(
+                        context: ctx.value,
+                        version: head.version,
+                        status: .badRequest,
+                        headers: headers,
+                        body: #"{"error":"invalid_request","message":"Missing required field: response"}"#
+                    )
+                }
+                return
+            }
+
+            await MainActor.run {
+                BackgroundTaskManager.shared.submitClarification(taskId, response: response)
+            }
+
+            let responseBody = #"{"status":"ok"}"#
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(
+                    context: ctx.value,
+                    version: head.version,
+                    status: .ok,
+                    headers: headers,
+                    body: responseBody
+                )
+            }
+            logSelf.logRequest(
+                method: "POST",
+                path: path,
+                userAgent: logUserAgent,
+                requestBody: requestBodyString,
+                responseBody: responseBody,
                 responseStatus: 200,
                 startTime: logStartTime
             )

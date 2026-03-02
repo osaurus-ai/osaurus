@@ -16,21 +16,65 @@ typedef void* osr_plugin_ctx_t;
 
 // ── Plugin → Host callbacks (injected at init for v2 plugins) ──
 
+// Config store (Keychain-backed)
 typedef const char* (*osr_config_get_fn)(const char* key);
 typedef void        (*osr_config_set_fn)(const char* key, const char* value);
 typedef void        (*osr_config_delete_fn)(const char* key);
+
+// Data store (sandboxed SQLite)
 typedef const char* (*osr_db_exec_fn)(const char* sql, const char* params_json);
 typedef const char* (*osr_db_query_fn)(const char* sql, const char* params_json);
+
+// Logging
 typedef void        (*osr_log_fn)(int level, const char* message);
+
+// Agent dispatch (via BackgroundTaskManager)
+typedef const char* (*osr_dispatch_fn)(const char* request_json);
+typedef const char* (*osr_task_status_fn)(const char* task_id);
+typedef void        (*osr_dispatch_cancel_fn)(const char* task_id);
+typedef void        (*osr_dispatch_clarify_fn)(const char* task_id,
+                                               const char* response);
+
+// Inference
+typedef const char* (*osr_complete_fn)(const char* request_json);
+typedef const char* (*osr_complete_stream_fn)(
+    const char* request_json,
+    void (*on_chunk)(const char* chunk_json, void* user_data),
+    void* user_data
+);
+typedef const char* (*osr_embed_fn)(const char* request_json);
+
+// Models
+typedef const char* (*osr_list_models_fn)(void);
+
+// HTTP client
+typedef const char* (*osr_http_request_fn)(const char* request_json);
 
 typedef struct {
     uint32_t           version;       // OSR_ABI_VERSION_2
-    osr_config_get_fn  config_get;
-    osr_config_set_fn  config_set;
-    osr_config_delete_fn config_delete;
-    osr_db_exec_fn     db_exec;
-    osr_db_query_fn    db_query;
-    osr_log_fn         log;
+
+    // Config + Storage + Logging
+    osr_config_get_fn       config_get;
+    osr_config_set_fn       config_set;
+    osr_config_delete_fn    config_delete;
+    osr_db_exec_fn          db_exec;
+    osr_db_query_fn         db_query;
+    osr_log_fn              log;
+
+    // Agent Dispatch
+    osr_dispatch_fn         dispatch;
+    osr_task_status_fn      task_status;
+    osr_dispatch_cancel_fn  dispatch_cancel;
+    osr_dispatch_clarify_fn dispatch_clarify;
+
+    // Inference
+    osr_complete_fn         complete;
+    osr_complete_stream_fn  complete_stream;
+    osr_embed_fn            embed;
+    osr_list_models_fn      list_models;
+
+    // HTTP Client
+    osr_http_request_fn     http_request;
 } osr_host_api;
 
 // ── Host → Plugin API struct ──
@@ -72,6 +116,12 @@ typedef struct {
     // Called when a config value changes in the host UI.
     // May be NULL if the plugin doesn't need config change notifications.
     void (*on_config_changed)(osr_plugin_ctx_t ctx, const char* key, const char* value);
+
+    // Called when a task dispatched by this plugin reaches a terminal state.
+    // result_json contains status, success, summary, error, etc.
+    // May be NULL if the plugin doesn't need completion callbacks.
+    void (*on_task_completed)(osr_plugin_ctx_t ctx, const char* task_id,
+                              const char* result_json);
 
 } osr_plugin_api;
 

@@ -39,6 +39,13 @@ typealias osr_on_config_changed_t =
         UnsafePointer<CChar>?  // value
     ) -> Void
 
+typealias osr_on_task_completed_t =
+    @convention(c) (
+        osr_plugin_ctx_t?,  // ctx
+        UnsafePointer<CChar>?,  // task_id
+        UnsafePointer<CChar>?  // result_json
+    ) -> Void
+
 // Host API callback types (host → plugin, injected at init for v2)
 typealias osr_config_get_t = @convention(c) (UnsafePointer<CChar>?) -> UnsafePointer<CChar>?
 typealias osr_config_set_t = @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> Void
@@ -47,14 +54,54 @@ typealias osr_db_exec_t = @convention(c) (UnsafePointer<CChar>?, UnsafePointer<C
 typealias osr_db_query_t = @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> UnsafePointer<CChar>?
 typealias osr_log_t = @convention(c) (Int32, UnsafePointer<CChar>?) -> Void
 
+// Agent dispatch
+typealias osr_dispatch_t = @convention(c) (UnsafePointer<CChar>?) -> UnsafePointer<CChar>?
+typealias osr_task_status_t = @convention(c) (UnsafePointer<CChar>?) -> UnsafePointer<CChar>?
+typealias osr_dispatch_cancel_t = @convention(c) (UnsafePointer<CChar>?) -> Void
+typealias osr_dispatch_clarify_t = @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> Void
+
+// Inference
+typealias osr_complete_t = @convention(c) (UnsafePointer<CChar>?) -> UnsafePointer<CChar>?
+typealias osr_on_chunk_t = @convention(c) (UnsafePointer<CChar>?, UnsafeMutableRawPointer?) -> Void
+typealias osr_complete_stream_t =
+    @convention(c) (
+        UnsafePointer<CChar>?,  // request_json
+        osr_on_chunk_t?,  // on_chunk callback
+        UnsafeMutableRawPointer?  // user_data
+    ) -> UnsafePointer<CChar>?
+typealias osr_embed_t = @convention(c) (UnsafePointer<CChar>?) -> UnsafePointer<CChar>?
+
+// Models
+typealias osr_list_models_t = @convention(c) () -> UnsafePointer<CChar>?
+
+// HTTP client
+typealias osr_http_request_t = @convention(c) (UnsafePointer<CChar>?) -> UnsafePointer<CChar>?
+
 struct osr_host_api {
     var version: UInt32
+
+    // Config + Storage + Logging
     var config_get: osr_config_get_t?
     var config_set: osr_config_set_t?
     var config_delete: osr_config_delete_t?
     var db_exec: osr_db_exec_t?
     var db_query: osr_db_query_t?
     var log: osr_log_t?
+
+    // Agent Dispatch
+    var dispatch: osr_dispatch_t?
+    var task_status: osr_task_status_t?
+    var dispatch_cancel: osr_dispatch_cancel_t?
+    var dispatch_clarify: osr_dispatch_clarify_t?
+
+    // Inference
+    var complete: osr_complete_t?
+    var complete_stream: osr_complete_stream_t?
+    var embed: osr_embed_t?
+    var list_models: osr_list_models_t?
+
+    // HTTP Client
+    var http_request: osr_http_request_t?
 }
 
 struct osr_plugin_api {
@@ -68,6 +115,7 @@ struct osr_plugin_api {
     var version: UInt32
     var handle_route: osr_handle_route_t?
     var on_config_changed: osr_on_config_changed_t?
+    var on_task_completed: osr_on_task_completed_t?
 }
 
 // Entry point types
@@ -332,6 +380,7 @@ final class ExternalPlugin: @unchecked Sendable {
     }
 
     var hasRouteHandler: Bool { abiVersion >= 2 && api.handle_route != nil }
+    var hasTaskCompletedHandler: Bool { abiVersion >= 2 && api.on_task_completed != nil }
 
     deinit {
         api.destroy?(ctx)
@@ -433,6 +482,23 @@ final class ExternalPlugin: @unchecked Sendable {
             key.withCString { keyPtr in
                 value.withCString { valuePtr in
                     configFn(ctx, keyPtr, valuePtr)
+                }
+            }
+        }
+    }
+
+    func notifyTaskCompleted(taskId: String, resultJSON: String) {
+        guard abiVersion >= 2, let completedFn = api.on_task_completed else { return }
+        nonisolated(unsafe) let ctx = self.ctx
+        let pluginId = self.id
+
+        ExternalPlugin.invokeQueue.async {
+            PluginHostContext.setActivePlugin(pluginId)
+            defer { PluginHostContext.clearActivePlugin() }
+
+            taskId.withCString { taskIdPtr in
+                resultJSON.withCString { resultPtr in
+                    completedFn(ctx, taskIdPtr, resultPtr)
                 }
             }
         }
