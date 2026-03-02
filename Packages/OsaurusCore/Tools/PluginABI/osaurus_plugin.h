@@ -29,28 +29,53 @@ typedef const char* (*osr_db_query_fn)(const char* sql, const char* params_json)
 typedef void        (*osr_log_fn)(int level, const char* message);
 
 // Agent dispatch (via BackgroundTaskManager)
-// request_json accepts: "prompt" (required), "mode", "title", "id",
-// "agent_address" (crypto address) or "agent_id" (UUID), "folder_bookmark".
+// dispatch: Non-blocking. request_json accepts "prompt" (required), "mode",
+// "title", "id", "agent_address" (crypto address) or "agent_id" (UUID),
+// "folder_bookmark". Returns JSON with task id and status, or error.
 // No authentication required — the host trusts in-process plugin calls.
+// Rate limited to 10 dispatches per minute per plugin.
 typedef const char* (*osr_dispatch_fn)(const char* request_json);
+
+// Returns JSON with task status, progress, activity feed, and clarification
+// state. Terminal statuses: "completed", "failed", "cancelled".
 typedef const char* (*osr_task_status_fn)(const char* task_id);
+
+// Cancel a running or awaiting-clarification task.
 typedef void        (*osr_dispatch_cancel_fn)(const char* task_id);
+
+// Submit a clarification response (work mode only). Resumes the task.
 typedef void        (*osr_dispatch_clarify_fn)(const char* task_id,
                                                const char* response);
 
-// Inference
+// Inference — routes through the Osaurus unified inference layer.
+// Model resolution: specific name, null/"" for default, "local" for MLX,
+// "foundation" for Apple Foundation Model.
+
+// Synchronous chat completion. request_json follows OpenAI chat format
+// (model, messages, max_tokens, temperature). Returns full response JSON.
 typedef const char* (*osr_complete_fn)(const char* request_json);
+
+// Streaming chat completion. Calls on_chunk for each token delta.
+// user_data is passed through to on_chunk. Returns aggregated response.
 typedef const char* (*osr_complete_stream_fn)(
     const char* request_json,
     void (*on_chunk)(const char* chunk_json, void* user_data),
     void* user_data
 );
+
+// Generate embeddings. request_json has "model" and "input" (string or
+// string array). Returns JSON with embedding vectors and usage stats.
 typedef const char* (*osr_embed_fn)(const char* request_json);
 
-// Models
+// Models — enumerate available models (local MLX, Apple Foundation, remote).
+// Returns JSON with "models" array containing id, name, provider, type,
+// context_window, dimensions, and capabilities for each model.
 typedef const char* (*osr_list_models_fn)(void);
 
-// HTTP client
+// HTTP client — outbound HTTP requests with SSRF protection.
+// request_json has "method", "url", "headers", "body", "body_encoding",
+// "timeout_ms", "follow_redirects". Private IP ranges blocked by default.
+// Returns JSON with "status", "headers", "body", "body_encoding", "elapsed_ms".
 typedef const char* (*osr_http_request_fn)(const char* request_json);
 
 typedef struct {

@@ -85,34 +85,65 @@ Osaurus supports two ABI versions. Existing v1 plugins continue to work without 
   - `invoke(ctx, type, id, payload)`: Generic invocation function.
   - `free_string(s)`: Called by host to free strings returned by the plugin.
 
-### v2 ABI (Tools + Routes + Storage + Config)
+### v2 ABI (Full Host API)
 
-v2 extends v1 with HTTP route handling, persistent storage, and config change notifications. Osaurus tries the v2 entry point first and falls back to v1 if the symbol is not found.
+v2 extends v1 with seven capability groups covering the full surface area available to plugins. Osaurus tries the v2 entry point first and falls back to v1 if the symbol is not found.
 
-- **Entry Point**: Plugin exports `osaurus_plugin_entry_v2(const osr_host_api* host)`. The host API struct provides callbacks for config access, database operations, and logging.
+- **Entry Point**: Plugin exports `osaurus_plugin_entry_v2(const osr_host_api* host)`. The host API struct provides 15 callbacks across seven groups.
 - **New fields on `osr_plugin_api`** (appended after v1 fields for binary compatibility):
   - `version`: Set to `2` (`OSR_ABI_VERSION_2`).
   - `handle_route(ctx, request_json)`: Called when an HTTP request hits a plugin route. Returns JSON. May be `NULL` if the plugin has no routes.
   - `on_config_changed(ctx, key, value)`: Called when a config value changes in the host UI. May be `NULL`.
+  - `on_task_event(ctx, task_id, event_type, event_json)`: Unified task lifecycle callback. Called for dispatched-task events (started, activity, progress, clarification, completed, failed, cancelled). May be `NULL`.
 - **Host API (`osr_host_api`)** — Injected at init, provides:
-  - `config_get(key)` / `config_set(key, value)` / `config_delete(key)` — Keychain-backed config store.
-  - `db_exec(sql, params_json)` / `db_query(sql, params_json)` — Sandboxed per-plugin SQLite database.
-  - `log(level, message)` — Structured logging to the Osaurus log.
+  - **Config Store**: `config_get` / `config_set` / `config_delete` — Keychain-backed secrets and settings.
+  - **Data Store**: `db_exec` / `db_query` — Sandboxed per-plugin SQLite database.
+  - **Logging**: `log` — Structured logging to the Osaurus Developer Tools.
+  - **Agent Dispatch**: `dispatch` / `task_status` / `dispatch_cancel` / `dispatch_clarify` — Background agent work with full tool access.
+  - **Inference**: `complete` / `complete_stream` / `embed` — Chat completion and embeddings through any configured provider.
+  - **Models**: `list_models` — Enumerate available models (local MLX, Apple Foundation, remote).
+  - **HTTP Client**: `http_request` — Outbound HTTP with SSRF protection.
 
 ```c
 // v2 entry point — receives host callbacks
 const osr_plugin_api* osaurus_plugin_entry_v2(const osr_host_api* host);
 
-// Host API struct
+// Host API struct (15 callbacks across 7 capability groups)
 typedef struct {
-    uint32_t           version;        // OSR_ABI_VERSION_2
-    osr_config_get_fn  config_get;
-    osr_config_set_fn  config_set;
-    osr_config_delete_fn config_delete;
-    osr_db_exec_fn     db_exec;
-    osr_db_query_fn    db_query;
-    osr_log_fn         log;
+    uint32_t           version;           // OSR_ABI_VERSION_2
+
+    // Config + Storage + Logging
+    osr_config_get_fn       config_get;
+    osr_config_set_fn       config_set;
+    osr_config_delete_fn    config_delete;
+    osr_db_exec_fn          db_exec;
+    osr_db_query_fn         db_query;
+    osr_log_fn              log;
+
+    // Agent Dispatch
+    osr_dispatch_fn         dispatch;
+    osr_task_status_fn      task_status;
+    osr_dispatch_cancel_fn  dispatch_cancel;
+    osr_dispatch_clarify_fn dispatch_clarify;
+
+    // Inference
+    osr_complete_fn         complete;
+    osr_complete_stream_fn  complete_stream;
+    osr_embed_fn            embed;
+    osr_list_models_fn      list_models;
+
+    // HTTP Client
+    osr_http_request_fn     http_request;
 } osr_host_api;
+
+// Task lifecycle event types (for on_task_event callback)
+#define OSR_TASK_EVENT_STARTED          0
+#define OSR_TASK_EVENT_ACTIVITY         1
+#define OSR_TASK_EVENT_PROGRESS         2
+#define OSR_TASK_EVENT_CLARIFICATION    3
+#define OSR_TASK_EVENT_COMPLETED        4
+#define OSR_TASK_EVENT_FAILED           5
+#define OSR_TASK_EVENT_CANCELLED        6
 
 // Extended plugin API struct (v2 fields appended after v1)
 typedef struct {
@@ -121,18 +152,26 @@ typedef struct {
     osr_plugin_ctx_t (*init)(void);
     void (*destroy)(osr_plugin_ctx_t ctx);
     const char* (*get_manifest)(osr_plugin_ctx_t ctx);
-    const char* (*invoke)(osr_plugin_ctx_t ctx, const char* type, const char* id, const char* payload);
+    const char* (*invoke)(osr_plugin_ctx_t ctx, const char* type,
+                          const char* id, const char* payload);
 
     // v2 fields
     uint32_t version;
     const char* (*handle_route)(osr_plugin_ctx_t ctx, const char* request_json);
-    void (*on_config_changed)(osr_plugin_ctx_t ctx, const char* key, const char* value);
+    void (*on_config_changed)(osr_plugin_ctx_t ctx, const char* key,
+                              const char* value);
+    void (*on_task_event)(osr_plugin_ctx_t ctx, const char* task_id,
+                          int event_type, const char* event_json);
 } osr_plugin_api;
 ```
 
 ### Migration from v1 to v2
 
 Upgrading is additive. Change your entry point from `osaurus_plugin_entry` to `osaurus_plugin_entry_v2`, store the host API pointer, set `api.version = 2`, and populate the new function pointers (or leave them `NULL` if unused). Osaurus detects the ABI version from `api->version` and enables features accordingly.
+
+New in v2:
+- **`on_task_event`**: Set this on `osr_plugin_api` to receive lifecycle events for dispatched tasks. Set to `NULL` to opt out.
+- **Host API callbacks**: The `osr_host_api` now provides 15 callbacks across 7 capability groups — config, data store, logging, agent dispatch, inference, models, and HTTP client. All are available from the moment `osaurus_plugin_entry_v2` returns.
 
 ### Manifest Format
 
@@ -744,10 +783,545 @@ On error, both return `{"error": "..."}`.
 The host API provides structured logging:
 
 ```c
-host->log(0, "Processing webhook event");  // 0 = info
-host->log(1, "Missing signing secret");    // 1 = warning
-host->log(2, "Database write failed");     // 2 = error
+host->log(0, "Loaded 42 events from cache");   // 0 = debug
+host->log(1, "Processing webhook event");      // 1 = info
+host->log(2, "Missing signing secret");        // 2 = warning
+host->log(3, "Database write failed");         // 3 = error
 ```
+
+Log levels:
+
+| Level | Name    | Description                  |
+| ----- | ------- | ---------------------------- |
+| 0     | Debug   | Verbose diagnostic output    |
+| 1     | Info    | Normal operational messages  |
+| 2     | Warning | Non-fatal issues             |
+| 3     | Error   | Failures requiring attention |
+
+Logs appear in the Osaurus Developer Tools console, filterable by plugin and level.
+
+---
+
+## Agent Dispatch
+
+v2 plugins can dispatch background agent tasks — autonomous work sessions that run with full tool access. This is useful for plugins that receive external events (webhooks, schedules) and need the agent to perform multi-step work.
+
+### Dispatching a Task
+
+```c
+const char* request = "{"
+    "\"prompt\": \"Summarize the latest commit and post to Slack\","
+    "\"mode\": \"work\","
+    "\"title\": \"Commit Summary\","
+    "\"agent_address\": \"0x1a2b3c...\""
+"}";
+const char* result = host->dispatch(request);
+// result: {"task_id":"<uuid>","status":"running"}
+// or:     {"error":"rate_limit_exceeded","message":"..."}
+```
+
+**Request fields:**
+
+| Field            | Type   | Required | Description                                               |
+| ---------------- | ------ | -------- | --------------------------------------------------------- |
+| `prompt`         | string | Yes      | The task prompt for the agent                             |
+| `mode`           | string | No       | `"work"` (default) or `"chat"`                            |
+| `title`          | string | No       | Display title for the task                                |
+| `agent_address`  | string | No       | Crypto address of the target agent                        |
+| `agent_id`       | string | No       | UUID of the target agent (alternative to `agent_address`) |
+| `folder_bookmark`| string | No       | Base64-encoded security-scoped bookmark for folder access |
+
+If neither `agent_address` nor `agent_id` is provided, the task dispatches to the default agent.
+
+**Agent addressing:** Prefer `agent_address` over `agent_id` — plugins typically know an agent's crypto address but not its internal UUID. Both are accepted and resolved automatically.
+
+**Rate limiting:** Dispatch is limited to 10 requests per minute per plugin. Exceeding this returns an error with `"error": "rate_limit_exceeded"`.
+
+### Polling Task Status
+
+```c
+const char* status = host->task_status("<task_id>");
+// Returns JSON with task state, progress, and activity feed
+```
+
+**Response fields:**
+
+| Field          | Type   | Description                                                   |
+| -------------- | ------ | ------------------------------------------------------------- |
+| `status`       | string | `"running"`, `"completed"`, `"failed"`, `"cancelled"`, `"awaiting_clarification"` |
+| `progress`     | number | 0.0 – 1.0 progress estimate                                  |
+| `current_step` | string | Description of current activity (if running)                  |
+
+### Cancelling a Task
+
+```c
+host->dispatch_cancel("<task_id>");
+```
+
+Cancels a running or awaiting-clarification task. No return value.
+
+### Submitting Clarification
+
+When a task enters the `"awaiting_clarification"` state, the plugin can respond:
+
+```c
+host->dispatch_clarify("<task_id>", "Use the staging environment");
+```
+
+This resumes the task with the provided response. Clarification is only available in `"work"` mode.
+
+### Example: Webhook-Triggered Dispatch
+
+```c
+const char* handle_route(osr_plugin_ctx_t ctx, const char* request_json) {
+    MyPlugin* plugin = (MyPlugin*)ctx;
+
+    // Parse the webhook event
+    // ... extract event_type, event_data ...
+
+    // Store the event
+    plugin->host->db_exec(
+        "INSERT INTO events (id, type, payload) VALUES (?1, ?2, ?3)",
+        "[\"evt-42\", \"push\", \"{...}\"]"
+    );
+
+    // Dispatch agent work
+    const char* result = plugin->host->dispatch(
+        "{\"prompt\": \"Review the latest push event and create a summary\","
+        " \"mode\": \"work\","
+        " \"title\": \"Push Event Review\"}"
+    );
+
+    plugin->host->log(1, "Dispatched task for push event");
+
+    return "{\"status\": 200, \"body\": \"ok\"}";
+}
+```
+
+---
+
+## Task Event Hooks
+
+Instead of polling `task_status`, plugins can receive push notifications for task lifecycle events by setting the `on_task_event` callback on `osr_plugin_api`.
+
+### Registering the Callback
+
+```c
+static void my_task_event(osr_plugin_ctx_t ctx, const char* task_id,
+                          int event_type, const char* event_json) {
+    // Handle event based on event_type
+}
+
+// In your entry point:
+api->on_task_event = my_task_event;
+```
+
+Set `on_task_event` to `NULL` to opt out — the host will not call it.
+
+### Event Types
+
+| Constant                       | Value | Fired When                        | Payload Fields                              |
+| ------------------------------ | ----- | --------------------------------- | ------------------------------------------- |
+| `OSR_TASK_EVENT_STARTED`       | 0     | Task begins execution             | `status`, `mode`, `title`                   |
+| `OSR_TASK_EVENT_ACTIVITY`      | 1     | Meaningful action occurs          | `kind`, `title`, `detail`, `timestamp`      |
+| `OSR_TASK_EVENT_PROGRESS`      | 2     | Progress or step changes          | `progress`, `current_step`                  |
+| `OSR_TASK_EVENT_CLARIFICATION` | 3     | Agent needs human input           | `question`, `options`                       |
+| `OSR_TASK_EVENT_COMPLETED`     | 4     | Task finishes successfully        | `success` (true), `summary`, `session_id`   |
+| `OSR_TASK_EVENT_FAILED`        | 5     | Task finishes with failure        | `success` (false), `summary`                |
+| `OSR_TASK_EVENT_CANCELLED`     | 6     | Task is cancelled                 | `{}`                                        |
+
+### Event Payloads
+
+All payloads are JSON strings. Examples:
+
+**Started:**
+```json
+{"status": "running", "mode": "work", "title": "Commit Summary"}
+```
+
+**Activity:**
+```json
+{"kind": "tool_call", "title": "read_file", "detail": "Reading main.swift", "timestamp": "2025-06-15T10:30:00Z"}
+```
+
+Activity events fire for meaningful actions: tool calls, issue starts/completes, and artifacts. Step-level noise (`willExecuteStep`, `completedStep`) is filtered out.
+
+**Progress:**
+```json
+{"progress": 0.45, "current_step": "Analyzing code structure"}
+```
+
+Progress events are throttled to one per 500ms per task to avoid flooding the plugin.
+
+**Clarification:**
+```json
+{"question": "Which branch should I target?", "options": ["main", "develop", "staging"]}
+```
+
+When this event fires, the task is paused. Call `host->dispatch_clarify(task_id, response)` to resume.
+
+**Completed:**
+```json
+{"success": true, "summary": "Created PR #42 with commit summary", "session_id": "abc-123"}
+```
+
+**Failed:**
+```json
+{"success": false, "summary": "Could not access repository"}
+```
+
+**Cancelled:**
+```json
+{}
+```
+
+### Example: Handling Events
+
+```c
+static void my_task_event(osr_plugin_ctx_t ctx, const char* task_id,
+                          int event_type, const char* event_json) {
+    MyPlugin* plugin = (MyPlugin*)ctx;
+
+    switch (event_type) {
+        case OSR_TASK_EVENT_COMPLETED:
+            plugin->host->log(1, "Task completed");
+            // Parse event_json for summary, post to Slack, etc.
+            break;
+
+        case OSR_TASK_EVENT_FAILED:
+            plugin->host->log(3, "Task failed");
+            // Alert the user or retry
+            break;
+
+        case OSR_TASK_EVENT_CLARIFICATION:
+            // Auto-respond or forward to a human
+            plugin->host->dispatch_clarify(task_id,
+                "Use the default settings");
+            break;
+
+        case OSR_TASK_EVENT_PROGRESS:
+            // Update a progress bar or status display
+            break;
+
+        default:
+            break;
+    }
+}
+```
+
+---
+
+## Inference
+
+v2 plugins can run chat completions and generate embeddings through any model configured in Osaurus — local MLX models, Apple Foundation Models, or remote providers.
+
+### Chat Completion
+
+```c
+const char* request = "{"
+    "\"model\": null,"
+    "\"messages\": [{\"role\": \"user\", \"content\": \"Classify this: bug report\"}],"
+    "\"max_tokens\": 50,"
+    "\"temperature\": 0.0"
+"}";
+const char* response = host->complete(request);
+```
+
+**Request format** follows the OpenAI chat completion schema:
+
+| Field         | Type   | Required | Description                                    |
+| ------------- | ------ | -------- | ---------------------------------------------- |
+| `model`       | string | No       | Model name, or `null`/`""` for default         |
+| `messages`    | array  | Yes      | Array of `{role, content}` message objects      |
+| `max_tokens`  | int    | No       | Maximum tokens to generate                     |
+| `temperature` | number | No       | Sampling temperature (0.0 – 2.0)               |
+
+**Model resolution order:**
+
+| Value         | Resolves To                              |
+| ------------- | ---------------------------------------- |
+| `null` or `""`| Default model configured in Osaurus      |
+| `"local"`     | Local MLX model                          |
+| `"foundation"`| Apple Foundation Model                   |
+| specific name | Exact model by ID (e.g., `"gpt-4o"`)    |
+
+**Response:** Standard OpenAI-compatible chat completion JSON with `choices`, `usage`, etc.
+
+### Streaming Completion
+
+For longer outputs, use the streaming variant to process tokens as they arrive:
+
+```c
+static void on_chunk(const char* chunk_json, void* user_data) {
+    // chunk_json: {"choices":[{"delta":{"content":"Hello"}}]}
+    // Process each token delta
+}
+
+const char* response = host->complete_stream(request, on_chunk, my_context);
+// `response` contains the aggregated final result
+// `on_chunk` was called for each intermediate token
+```
+
+The `on_chunk` callback is called on the same background thread — avoid blocking. The `user_data` pointer is passed through unchanged.
+
+### Embeddings
+
+```c
+const char* request = "{"
+    "\"model\": \"local\","
+    "\"input\": [\"How to reset password\", \"Account locked out\"]"
+"}";
+const char* response = host->embed(request);
+```
+
+**Request fields:**
+
+| Field   | Type            | Required | Description                         |
+| ------- | --------------- | -------- | ----------------------------------- |
+| `model` | string          | No       | Embedding model (or `null`/`"local"`)|
+| `input` | string or array | Yes      | Text(s) to embed                    |
+
+**Response:** JSON with `data` (array of embedding objects with `embedding` vector), `model`, and `usage`.
+
+### Example: Local Classification
+
+```c
+const char* classify_event(const osr_host_api* host, const char* event_text) {
+    char request[4096];
+    snprintf(request, sizeof(request),
+        "{\"model\": \"local\","
+        " \"messages\": [{\"role\": \"system\", \"content\": \"Classify the event as: bug, feature, question. Reply with one word.\"},"
+        "               {\"role\": \"user\", \"content\": \"%s\"}],"
+        " \"max_tokens\": 5,"
+        " \"temperature\": 0.0}",
+        event_text);
+
+    return host->complete(request);
+}
+```
+
+---
+
+## Models
+
+Plugins can enumerate all available models to present choices to users or make dynamic routing decisions.
+
+```c
+const char* models_json = host->list_models();
+```
+
+**Response format:**
+
+```json
+{
+  "models": [
+    {
+      "id": "mlx-community/Llama-3.2-3B-Instruct",
+      "name": "Llama 3.2 3B Instruct",
+      "provider": "mlx",
+      "type": "chat",
+      "context_window": 8192,
+      "capabilities": ["chat", "completion"]
+    },
+    {
+      "id": "text-embedding-3-small",
+      "name": "Text Embedding 3 Small",
+      "provider": "openai",
+      "type": "embedding",
+      "dimensions": 1536,
+      "capabilities": ["embedding"]
+    }
+  ]
+}
+```
+
+**Model fields:**
+
+| Field            | Type   | Description                                          |
+| ---------------- | ------ | ---------------------------------------------------- |
+| `id`             | string | Unique model identifier (used in `model` field)      |
+| `name`           | string | Human-readable display name                          |
+| `provider`       | string | Source: `"mlx"`, `"foundation"`, `"openai"`, etc.    |
+| `type`           | string | `"chat"` or `"embedding"`                            |
+| `context_window` | int    | Max context length in tokens (chat models)           |
+| `dimensions`     | int    | Embedding vector dimensions (embedding models)       |
+| `capabilities`   | array  | List of supported capabilities                       |
+
+**Sources:** Models are aggregated from local MLX downloads, Apple Foundation Models (on supported hardware), and any remote providers configured in Osaurus settings.
+
+---
+
+## HTTP Client
+
+v2 plugins can make outbound HTTP requests through the host, with built-in SSRF protection and resource limits.
+
+### Making a Request
+
+```c
+const char* request = "{"
+    "\"method\": \"POST\","
+    "\"url\": \"https://api.notion.com/v1/pages\","
+    "\"headers\": {"
+    "    \"Authorization\": \"Bearer ntn_...\","
+    "    \"Notion-Version\": \"2022-06-28\","
+    "    \"Content-Type\": \"application/json\""
+    "},"
+    "\"body\": \"{\\\"parent\\\":{\\\"database_id\\\":\\\"abc\\\"}}\","
+    "\"timeout_ms\": 30000"
+"}";
+const char* response = host->http_request(request);
+```
+
+**Request fields:**
+
+| Field              | Type   | Required | Description                                      |
+| ------------------ | ------ | -------- | ------------------------------------------------ |
+| `method`           | string | Yes      | HTTP method (`GET`, `POST`, `PUT`, `DELETE`, etc.)|
+| `url`              | string | Yes      | Full URL (must be HTTPS for external hosts)       |
+| `headers`          | object | No       | Request headers as key-value pairs                |
+| `body`             | string | No       | Request body                                      |
+| `body_encoding`    | string | No       | `"utf8"` (default) or `"base64"`                  |
+| `timeout_ms`       | int    | No       | Request timeout in milliseconds (default: 30000)  |
+| `follow_redirects` | bool   | No       | Follow HTTP redirects (default: `true`)           |
+
+**Response fields:**
+
+| Field           | Type   | Description                              |
+| --------------- | ------ | ---------------------------------------- |
+| `status`        | int    | HTTP status code                         |
+| `headers`       | object | Response headers                         |
+| `body`          | string | Response body                            |
+| `body_encoding` | string | `"utf8"` or `"base64"`                   |
+| `elapsed_ms`    | int    | Request duration in milliseconds         |
+
+**Error response** (on connection failure):
+
+```json
+{
+  "error": "connection_timeout",
+  "message": "Request timed out after 30000ms"
+}
+```
+
+### Error Types
+
+| Error                | Description                                    |
+| -------------------- | ---------------------------------------------- |
+| `connection_timeout` | Request exceeded `timeout_ms`                  |
+| `dns_failure`        | Could not resolve hostname                     |
+| `tls_error`          | TLS handshake or certificate error             |
+| `ssrf_blocked`       | Request to private/reserved IP range blocked   |
+| `body_too_large`     | Response body exceeds 50 MB limit              |
+| `too_many_requests`  | Exceeded 10 concurrent requests per plugin     |
+
+### SSRF Protection
+
+Requests to private and reserved IP ranges are blocked by default to prevent server-side request forgery:
+
+- `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16` (RFC 1918)
+- `127.0.0.0/8` (loopback)
+- `169.254.0.0/16` (link-local)
+- `::1`, `fc00::/7`, `fe80::/10` (IPv6 equivalents)
+
+Attempts to reach these ranges return `{"error": "ssrf_blocked"}`.
+
+### Limits
+
+| Limit                   | Value  |
+| ----------------------- | ------ |
+| Max response body       | 50 MB  |
+| Concurrent requests     | 10 per plugin |
+| Max timeout             | 5 minutes (300,000 ms) |
+
+### Example: Fetching from Notion API
+
+```c
+const char* fetch_notion_page(const osr_host_api* host, const char* page_id,
+                              const char* api_key) {
+    char request[2048];
+    snprintf(request, sizeof(request),
+        "{\"method\": \"GET\","
+        " \"url\": \"https://api.notion.com/v1/pages/%s\","
+        " \"headers\": {"
+        "   \"Authorization\": \"Bearer %s\","
+        "   \"Notion-Version\": \"2022-06-28\""
+        " },"
+        " \"timeout_ms\": 10000}",
+        page_id, api_key);
+
+    return host->http_request(request);
+}
+```
+
+---
+
+## Tunnel Endpoints
+
+Osaurus exposes four authenticated HTTP endpoints for managing agent tasks from external callers — scripts, MCP clients, CI pipelines, or any HTTP-capable tool. These are distinct from the in-process C callbacks; use the C callbacks from within plugin dylibs and the tunnel endpoints from outside the process.
+
+All tunnel endpoints require `osk-v1` Bearer authentication:
+
+```
+Authorization: Bearer osk-v1-<your-access-key>
+```
+
+### POST /v1/agents/{identifier}/dispatch
+
+Dispatch a new task to an agent. The `{identifier}` can be a UUID or an `agent_address` (crypto address).
+
+```bash
+curl -X POST https://127.0.0.1:1337/v1/agents/0x1a2b3c.../dispatch \
+  -H "Authorization: Bearer osk-v1-..." \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "Summarize recent commits", "mode": "work"}'
+```
+
+**Request body:** Same fields as the C `dispatch()` function (`prompt`, `mode`, `title`, `folder_bookmark`). The `agent_id`/`agent_address` is inferred from the URL path.
+
+**Response:** `{"task_id": "<uuid>", "status": "running"}`
+
+### GET /v1/tasks/{task_id}
+
+Poll the status of a dispatched task.
+
+```bash
+curl https://127.0.0.1:1337/v1/tasks/<task_id> \
+  -H "Authorization: Bearer osk-v1-..."
+```
+
+**Response:** JSON with `status`, `progress`, `current_step`, and other task state fields.
+
+### DELETE /v1/tasks/{task_id}
+
+Cancel a running or awaiting-clarification task.
+
+```bash
+curl -X DELETE https://127.0.0.1:1337/v1/tasks/<task_id> \
+  -H "Authorization: Bearer osk-v1-..."
+```
+
+**Response:** `{"status": "cancelled"}`
+
+### POST /v1/tasks/{task_id}/clarify
+
+Submit a clarification response for a task in `"awaiting_clarification"` state.
+
+```bash
+curl -X POST https://127.0.0.1:1337/v1/tasks/<task_id>/clarify \
+  -H "Authorization: Bearer osk-v1-..." \
+  -H "Content-Type: application/json" \
+  -d '{"response": "Use the staging environment"}'
+```
+
+**Response:** `{"status": "running"}`
+
+### When to Use Tunnel vs C Callbacks
+
+| Caller                   | Use                    |
+| ------------------------ | ---------------------- |
+| Plugin dylib (in-process)| C callbacks on `osr_host_api` — no auth needed |
+| External script / CI     | Tunnel HTTP endpoints — requires `osk-v1` auth |
+| MCP client               | Tunnel HTTP endpoints — requires `osk-v1` auth |
 
 ---
 
@@ -1131,4 +1705,4 @@ This step ensures the integrity and authenticity of the distributed ZIP file. It
 
 ## Rust Authors
 
-Create a `cdylib` exposing `osaurus_plugin_entry` (v1) or `osaurus_plugin_entry_v2` (v2) that returns the generic function table. For v1, implement `init`, `destroy`, `get_manifest`, `invoke`, and `free_string`. For v2, also set `version = 2` and optionally implement `handle_route` and `on_config_changed`. Store the `osr_host_api` pointer passed to the v2 entry point for access to config, database, and logging callbacks.
+Create a `cdylib` exposing `osaurus_plugin_entry` (v1) or `osaurus_plugin_entry_v2` (v2) that returns the generic function table. For v1, implement `init`, `destroy`, `get_manifest`, `invoke`, and `free_string`. For v2, also set `version = 2` and optionally implement `handle_route`, `on_config_changed`, and `on_task_event`. Store the `osr_host_api` pointer passed to the v2 entry point for access to all 15 host callbacks — config, data store, logging, agent dispatch (`dispatch`, `task_status`, `dispatch_cancel`, `dispatch_clarify`), inference (`complete`, `complete_stream`, `embed`), model enumeration (`list_models`), and outbound HTTP (`http_request`). All callbacks use C strings (null-terminated UTF-8) with JSON payloads; wrap them in safe Rust abstractions using `CStr`/`CString`.
