@@ -150,6 +150,7 @@ public struct ToolsCreate {
                     else {
                         return "{\\"error\\": \\"Invalid arguments\\"}"
                     }
+                    hostAPI?.pointee.log?(1, makeCString("hello_world invoked for \\(input.name)"))
                     return "{\\"message\\": \\"Hello, \\(input.name)!\\"}"
                 }
             }
@@ -158,6 +159,7 @@ public struct ToolsCreate {
 
             private typealias osr_plugin_ctx_t = UnsafeMutableRawPointer
 
+            // Config + Storage + Logging
             private typealias osr_config_get_fn = @convention(c) (UnsafePointer<CChar>?) -> UnsafePointer<CChar>?
             private typealias osr_config_set_fn = @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> Void
             private typealias osr_config_delete_fn = @convention(c) (UnsafePointer<CChar>?) -> Void
@@ -165,14 +167,50 @@ public struct ToolsCreate {
             private typealias osr_db_query_fn = @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> UnsafePointer<CChar>?
             private typealias osr_log_fn = @convention(c) (Int32, UnsafePointer<CChar>?) -> Void
 
+            // Agent Dispatch
+            private typealias osr_dispatch_fn = @convention(c) (UnsafePointer<CChar>?) -> UnsafePointer<CChar>?
+            private typealias osr_task_status_fn = @convention(c) (UnsafePointer<CChar>?) -> UnsafePointer<CChar>?
+            private typealias osr_dispatch_cancel_fn = @convention(c) (UnsafePointer<CChar>?) -> Void
+            private typealias osr_dispatch_clarify_fn = @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> Void
+
+            // Inference
+            private typealias osr_complete_fn = @convention(c) (UnsafePointer<CChar>?) -> UnsafePointer<CChar>?
+            private typealias osr_complete_stream_fn = @convention(c) (
+                UnsafePointer<CChar>?,
+                (@convention(c) (UnsafePointer<CChar>?, UnsafeMutableRawPointer?) -> Void)?,
+                UnsafeMutableRawPointer?
+            ) -> UnsafePointer<CChar>?
+            private typealias osr_embed_fn = @convention(c) (UnsafePointer<CChar>?) -> UnsafePointer<CChar>?
+            private typealias osr_list_models_fn = @convention(c) () -> UnsafePointer<CChar>?
+
+            // HTTP Client
+            private typealias osr_http_request_fn = @convention(c) (UnsafePointer<CChar>?) -> UnsafePointer<CChar>?
+
             private struct osr_host_api {
                 var version: UInt32
+
+                // Config + Storage + Logging
                 var config_get: osr_config_get_fn?
                 var config_set: osr_config_set_fn?
                 var config_delete: osr_config_delete_fn?
                 var db_exec: osr_db_exec_fn?
                 var db_query: osr_db_query_fn?
                 var log: osr_log_fn?
+
+                // Agent Dispatch
+                var dispatch: osr_dispatch_fn?
+                var task_status: osr_task_status_fn?
+                var dispatch_cancel: osr_dispatch_cancel_fn?
+                var dispatch_clarify: osr_dispatch_clarify_fn?
+
+                // Inference
+                var complete: osr_complete_fn?
+                var complete_stream: osr_complete_stream_fn?
+                var embed: osr_embed_fn?
+                var list_models: osr_list_models_fn?
+
+                // HTTP Client
+                var http_request: osr_http_request_fn?
             }
 
             private typealias osr_free_string_t = @convention(c) (UnsafePointer<CChar>?) -> Void
@@ -188,6 +226,8 @@ public struct ToolsCreate {
             private typealias osr_handle_route_t = @convention(c) (osr_plugin_ctx_t?, UnsafePointer<CChar>?) -> UnsafePointer<CChar>?
             private typealias osr_on_config_changed_t = @convention(c) (osr_plugin_ctx_t?, UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> Void
 
+            private typealias osr_on_task_event_t = @convention(c) (osr_plugin_ctx_t?, UnsafePointer<CChar>?, Int32, UnsafePointer<CChar>?) -> Void
+
             private struct osr_plugin_api {
                 var free_string: osr_free_string_t?
                 var `init`: osr_init_t?
@@ -197,6 +237,7 @@ public struct ToolsCreate {
                 var version: UInt32
                 var handle_route: osr_handle_route_t?
                 var on_config_changed: osr_on_config_changed_t?
+                var on_task_event: osr_on_task_event_t?
             }
 
             private var hostAPI: UnsafePointer<osr_host_api>?
@@ -316,6 +357,8 @@ public struct ToolsCreate {
                 
                 api.on_config_changed = { _, _, _ in }
                 
+                api.on_task_event = { _, _, _, _ in }
+                
                 return api
             }()
 
@@ -404,6 +447,10 @@ public struct ToolsCreate {
             - **Database** - Per-plugin SQLite via `host.db_exec/db_query`
             - **Web** - Static frontend assets served from `web/`
             - **Logging** - Structured logging via `host.log`
+            - **Agent Dispatch** - Background agent tasks via `host.dispatch`
+            - **Inference** - LLM completions and embeddings via `host.complete/embed`
+            - **HTTP Client** - Outbound HTTP requests via `host.http_request`
+            - **Task Events** - Lifecycle callbacks via `on_task_event`
 
             ## Important Notes
 
@@ -451,6 +498,7 @@ public struct ToolsCreate {
 
             // ── Host API (provided by Osaurus at init) ──
 
+            // Config + Storage + Logging
             type OsrConfigGetFn = unsafe extern "C" fn(*const c_char) -> *const c_char;
             type OsrConfigSetFn = unsafe extern "C" fn(*const c_char, *const c_char);
             type OsrConfigDeleteFn = unsafe extern "C" fn(*const c_char);
@@ -458,15 +506,51 @@ public struct ToolsCreate {
             type OsrDbQueryFn = unsafe extern "C" fn(*const c_char, *const c_char) -> *const c_char;
             type OsrLogFn = unsafe extern "C" fn(i32, *const c_char);
 
+            // Agent Dispatch
+            type OsrDispatchFn = unsafe extern "C" fn(*const c_char) -> *const c_char;
+            type OsrTaskStatusFn = unsafe extern "C" fn(*const c_char) -> *const c_char;
+            type OsrDispatchCancelFn = unsafe extern "C" fn(*const c_char);
+            type OsrDispatchClarifyFn = unsafe extern "C" fn(*const c_char, *const c_char);
+
+            // Inference
+            type OsrCompleteFn = unsafe extern "C" fn(*const c_char) -> *const c_char;
+            type OsrCompleteStreamFn = unsafe extern "C" fn(
+                *const c_char,
+                Option<unsafe extern "C" fn(*const c_char, *mut c_void)>,
+                *mut c_void,
+            ) -> *const c_char;
+            type OsrEmbedFn = unsafe extern "C" fn(*const c_char) -> *const c_char;
+            type OsrListModelsFn = unsafe extern "C" fn() -> *const c_char;
+
+            // HTTP Client
+            type OsrHttpRequestFn = unsafe extern "C" fn(*const c_char) -> *const c_char;
+
             #[repr(C)]
             struct OsrHostApi {
                 version: u32,
+
+                // Config + Storage + Logging
                 config_get: Option<OsrConfigGetFn>,
                 config_set: Option<OsrConfigSetFn>,
                 config_delete: Option<OsrConfigDeleteFn>,
                 db_exec: Option<OsrDbExecFn>,
                 db_query: Option<OsrDbQueryFn>,
                 log: Option<OsrLogFn>,
+
+                // Agent Dispatch
+                dispatch: Option<OsrDispatchFn>,
+                task_status: Option<OsrTaskStatusFn>,
+                dispatch_cancel: Option<OsrDispatchCancelFn>,
+                dispatch_clarify: Option<OsrDispatchClarifyFn>,
+
+                // Inference
+                complete: Option<OsrCompleteFn>,
+                complete_stream: Option<OsrCompleteStreamFn>,
+                embed: Option<OsrEmbedFn>,
+                list_models: Option<OsrListModelsFn>,
+
+                // HTTP Client
+                http_request: Option<OsrHttpRequestFn>,
             }
 
             // ── Plugin API (returned to Osaurus) ──
@@ -481,6 +565,7 @@ public struct ToolsCreate {
                 version: u32,
                 handle_route: Option<unsafe extern "C" fn(*mut c_void, *const c_char) -> *const c_char>,
                 on_config_changed: Option<unsafe extern "C" fn(*mut c_void, *const c_char, *const c_char)>,
+                on_task_event: Option<unsafe extern "C" fn(*mut c_void, *const c_char, i32, *const c_char)>,
             }
 
             unsafe impl Sync for OsrPluginApi {}
@@ -496,6 +581,7 @@ public struct ToolsCreate {
                 version: 2,
                 handle_route: Some(plugin_handle_route),
                 on_config_changed: Some(plugin_on_config_changed),
+                on_task_event: Some(plugin_on_task_event),
             };
 
             struct PluginContext;
@@ -583,6 +669,11 @@ public struct ToolsCreate {
                     }
                     match serde_json::from_str::<Args>(&payload) {
                         Ok(args) => {
+                            if let Some(log) = (*HOST_API).log {
+                                let msg = make_c_string(&format!("hello_world invoked for {}", args.name));
+                                log(1, msg);
+                                plugin_free_string(msg);
+                            }
                             let resp = serde_json::json!({ "message": format!("Hello, {}!", args.name) });
                             return make_c_string(&resp.to_string());
                         }
@@ -626,6 +717,14 @@ public struct ToolsCreate {
                 _ctx: *mut c_void,
                 _key: *const c_char,
                 _value: *const c_char,
+            ) {
+            }
+
+            unsafe extern "C" fn plugin_on_task_event(
+                _ctx: *mut c_void,
+                _task_id: *const c_char,
+                _event_type: i32,
+                _event_json: *const c_char,
             ) {
             }
 
@@ -704,6 +803,10 @@ public struct ToolsCreate {
             - **Database** - Per-plugin SQLite via `host.db_exec/db_query`
             - **Web** - Static frontend assets served from `web/`
             - **Logging** - Structured logging via `host.log`
+            - **Agent Dispatch** - Background agent tasks via `host.dispatch`
+            - **Inference** - LLM completions and embeddings via `host.complete/embed`
+            - **HTTP Client** - Outbound HTTP requests via `host.http_request`
+            - **Task Events** - Lifecycle callbacks via `on_task_event`
             """
         try? readme.write(to: dir.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
 
@@ -757,13 +860,17 @@ public struct ToolsCreate {
             - `invoke(ctx, type, id, payload)` - Execute a tool with JSON payload
             - `handle_route(ctx, request_json)` - Handle HTTP route requests (v2)
             - `on_config_changed(ctx, key, value)` - React to config changes (v2)
+            - `on_task_event(ctx, task_id, event_type, event_json)` - Task lifecycle events (v2)
             - `free_string(s)` - Free strings returned to host
             - `version` - Set to `2` for v2 plugins
 
             **Host API (provided to plugin at init):**
-            - `config_get(key)` / `config_set(key, value)` / `config_delete(key)` - Keychain-backed config
-            - `db_exec(sql, params_json)` / `db_query(sql, params_json)` - Per-plugin SQLite
-            - `log(level, message)` - Structured logging
+            - **Config**: `config_get(key)` / `config_set(key, value)` / `config_delete(key)` - Keychain-backed config
+            - **Database**: `db_exec(sql, params_json)` / `db_query(sql, params_json)` - Per-plugin SQLite
+            - **Logging**: `log(level, message)` - Structured logging (visible in Insights tab)
+            - **Agent Dispatch**: `dispatch(request_json)` / `task_status(task_id)` / `dispatch_cancel(task_id)` / `dispatch_clarify(task_id, response)` - Background agent tasks
+            - **Inference**: `complete(request_json)` / `complete_stream(request_json, on_chunk, user_data)` / `embed(request_json)` / `list_models()` - LLM inference
+            - **HTTP Client**: `http_request(request_json)` - Outbound HTTP with SSRF protection
 
             ## Adding HTTP Routes
 
@@ -852,6 +959,212 @@ public struct ToolsCreate {
                 // Structured logging
                 if let Some(log) = (*HOST_API).log {
                     log(0, make_c_string("Plugin initialized"));  // 0=debug, 1=info, 2=warn, 3=error
+                }
+            }
+            ```
+            """)
+
+            ## Agent Dispatch
+
+            v2 plugins can dispatch background agent tasks and monitor their lifecycle:
+
+            \(isSwift ? """
+            ```swift
+            // Dispatch a background task
+            if let dispatch = hostAPI?.pointee.dispatch {
+                let request = #"{"prompt":"Summarize the latest news","title":"News Summary"}"#
+                let result = dispatch(makeCString(request))
+                // result is JSON: {"id":"<task-uuid>","status":"running"}
+                if let result { defer { api.free_string?(result) } }
+            }
+
+            // Poll task status
+            if let taskStatus = hostAPI?.pointee.task_status {
+                let status = taskStatus(makeCString("<task-uuid>"))
+                // JSON with status, progress, activity feed, clarification state
+                if let status { defer { api.free_string?(status) } }
+            }
+
+            // Cancel a task
+            hostAPI?.pointee.dispatch_cancel?(makeCString("<task-uuid>"))
+
+            // Submit clarification response
+            hostAPI?.pointee.dispatch_clarify?(makeCString("<task-uuid>"), makeCString("Yes, proceed"))
+            ```
+            """ : """
+            ```rust
+            unsafe {
+                // Dispatch a background task
+                if let Some(dispatch) = (*HOST_API).dispatch {
+                    let req = make_c_string(r#"{"prompt":"Summarize the latest news","title":"News Summary"}"#);
+                    let result = dispatch(req);
+                    // result is JSON: {"id":"<task-uuid>","status":"running"}
+                    plugin_free_string(req);
+                    if !result.is_null() { plugin_free_string(result); }
+                }
+
+                // Poll task status
+                if let Some(task_status) = (*HOST_API).task_status {
+                    let status = task_status(make_c_string("<task-uuid>"));
+                    if !status.is_null() { plugin_free_string(status); }
+                }
+
+                // Cancel a task
+                if let Some(cancel) = (*HOST_API).dispatch_cancel {
+                    cancel(make_c_string("<task-uuid>"));
+                }
+
+                // Submit clarification response
+                if let Some(clarify) = (*HOST_API).dispatch_clarify {
+                    clarify(make_c_string("<task-uuid>"), make_c_string("Yes, proceed"));
+                }
+            }
+            ```
+            """)
+
+            Rate limit: 10 dispatches per minute per plugin.
+
+            ## Inference
+
+            v2 plugins can use the host's unified inference layer for chat completions, streaming, embeddings, and model listing:
+
+            \(isSwift ? """
+            ```swift
+            // Synchronous chat completion (OpenAI-compatible format)
+            if let complete = hostAPI?.pointee.complete {
+                let request = #"{"model":"","messages":[{"role":"user","content":"Hello"}],"max_tokens":100}"#
+                let response = complete(makeCString(request))
+                // response is full completion JSON
+                if let response { defer { api.free_string?(response) } }
+            }
+
+            // Generate embeddings
+            if let embed = hostAPI?.pointee.embed {
+                let request = #"{"model":"","input":"Hello world"}"#
+                let response = embed(makeCString(request))
+                if let response { defer { api.free_string?(response) } }
+            }
+
+            // List available models
+            if let listModels = hostAPI?.pointee.list_models {
+                let models = listModels()
+                // JSON with "models" array (id, name, provider, context_window, etc.)
+                if let models { defer { api.free_string?(models) } }
+            }
+            ```
+            """ : """
+            ```rust
+            unsafe {
+                // Synchronous chat completion (OpenAI-compatible format)
+                if let Some(complete) = (*HOST_API).complete {
+                    let req = make_c_string(r#"{"model":"","messages":[{"role":"user","content":"Hello"}],"max_tokens":100}"#);
+                    let response = complete(req);
+                    plugin_free_string(req);
+                    if !response.is_null() { plugin_free_string(response); }
+                }
+
+                // Generate embeddings
+                if let Some(embed) = (*HOST_API).embed {
+                    let req = make_c_string(r#"{"model":"","input":"Hello world"}"#);
+                    let response = embed(req);
+                    plugin_free_string(req);
+                    if !response.is_null() { plugin_free_string(response); }
+                }
+
+                // List available models
+                if let Some(list_models) = (*HOST_API).list_models {
+                    let models = list_models();
+                    if !models.is_null() { plugin_free_string(models); }
+                }
+            }
+            ```
+            """)
+
+            Model resolution: pass `""` or `null` for the default model, `"local"` for MLX, `"foundation"` for Apple Foundation Model, or a specific model name.
+
+            ## HTTP Client
+
+            v2 plugins can make outbound HTTP requests through the host (with SSRF protection against private IP ranges):
+
+            \(isSwift ? """
+            ```swift
+            if let httpRequest = hostAPI?.pointee.http_request {
+                let request = #"{"method":"GET","url":"https://api.example.com/data","headers":{"Authorization":"Bearer token"},"timeout_ms":5000}"#
+                let response = httpRequest(makeCString(request))
+                // JSON: {"status":200,"headers":{...},"body":"...","elapsed_ms":123}
+                if let response { defer { api.free_string?(response) } }
+            }
+            ```
+            """ : """
+            ```rust
+            unsafe {
+                if let Some(http_request) = (*HOST_API).http_request {
+                    let req = make_c_string(r#"{"method":"GET","url":"https://api.example.com/data","headers":{"Authorization":"Bearer token"},"timeout_ms":5000}"#);
+                    let response = http_request(req);
+                    plugin_free_string(req);
+                    if !response.is_null() { plugin_free_string(response); }
+                }
+            }
+            ```
+            """)
+
+            Request fields: `method`, `url`, `headers`, `body`, `body_encoding`, `timeout_ms`, `follow_redirects`.
+            Response fields: `status`, `headers`, `body`, `body_encoding`, `elapsed_ms`.
+
+            ## Task Events
+
+            v2 plugins can receive lifecycle events for tasks they dispatch by implementing `on_task_event`:
+
+            | Event Type | Value | Payload |
+            |------------|-------|---------|
+            | `STARTED` | 0 | `{"status":"running","mode":"...","title":"..."}` |
+            | `ACTIVITY` | 1 | `{"kind":"...","title":"...","detail":"...","timestamp":"..."}` |
+            | `PROGRESS` | 2 | `{"progress":0.5,"current_step":"..."}` |
+            | `CLARIFICATION` | 3 | `{"question":"...","options":[...]}` |
+            | `COMPLETED` | 4 | `{"success":true,"summary":"...","session_id":"..."}` |
+            | `FAILED` | 5 | `{"success":false,"summary":"..."}` |
+            | `CANCELLED` | 6 | `{}` |
+
+            \(isSwift ? """
+            ```swift
+            api.on_task_event = { ctxPtr, taskIdPtr, eventType, eventJsonPtr in
+                guard let taskIdPtr, let eventJsonPtr else { return }
+                let taskId = String(cString: taskIdPtr)
+                let eventJson = String(cString: eventJsonPtr)
+                
+                switch eventType {
+                case 4: // COMPLETED
+                    hostAPI?.pointee.log?(1, makeCString("Task \\(taskId) completed: \\(eventJson)"))
+                case 5: // FAILED
+                    hostAPI?.pointee.log?(3, makeCString("Task \\(taskId) failed: \\(eventJson)"))
+                default:
+                    break
+                }
+            }
+            ```
+            """ : """
+            ```rust
+            unsafe extern "C" fn plugin_on_task_event(
+                _ctx: *mut c_void,
+                task_id: *const c_char,
+                event_type: i32,
+                event_json: *const c_char,
+            ) {
+                let task_id = read_c_str(task_id);
+                let event_json = read_c_str(event_json);
+                
+                match event_type {
+                    4 => { // COMPLETED
+                        if let Some(log) = (*HOST_API).log {
+                            log(1, make_c_string(&format!("Task {} completed: {}", task_id, event_json)));
+                        }
+                    }
+                    5 => { // FAILED
+                        if let Some(log) = (*HOST_API).log {
+                            log(3, make_c_string(&format!("Task {} failed: {}", task_id, event_json)));
+                        }
+                    }
+                    _ => {}
                 }
             }
             ```
@@ -1320,7 +1633,7 @@ public struct ToolsCreate {
 
             ### From Web APIs
 
-            Make HTTP requests to wrap external APIs:
+            Use `host.http_request` to make outbound HTTP calls (preferred over native HTTP libraries):
 
             \(isSwift ? """
             ```swift
@@ -1329,27 +1642,16 @@ public struct ToolsCreate {
                     return "{\\"error\\": \\"Invalid arguments\\"}"
                 }
                 
-                // Use synchronous URLSession for plugin context
-                let semaphore = DispatchSemaphore(value: 0)
-                var result = "{\\"error\\": \\"Request failed\\"}"
+                guard let httpRequest = hostAPI?.pointee.http_request else {
+                    return "{\\"error\\": \\"HTTP client not available\\"}"
+                }
                 
-                let url = URL(string: "https://api.example.com/endpoint")!
-                var request = URLRequest(url: url)
-                request.httpMethod = "POST"
-                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                request.httpBody = try? JSONEncoder().encode(input)
-                
-                URLSession.shared.dataTask(with: request) { data, response, error in
-                    defer { semaphore.signal() }
-                    
-                    if let data = data,
-                       let json = try? JSONSerialization.jsonObject(with: data) {
-                        result = String(data: try! JSONSerialization.data(withJSONObject: json), encoding: .utf8)!
-                    }
-                }.resume()
-                
-                semaphore.wait()
-                return result
+                let body = (try? JSONEncoder().encode(input)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+                let request = "{\\"method\\":\\"POST\\",\\"url\\":\\"https://api.example.com/endpoint\\",\\"headers\\":{\\"Content-Type\\":\\"application/json\\"},\\"body\\":\\"\\(body.replacingOccurrences(of: "\\"", with: "\\\\\\""))\\",\\"timeout_ms\\":10000}"
+                let response = httpRequest(makeCString(request))
+                guard let response else { return "{\\"error\\": \\"Request failed\\"}" }
+                defer { api.free_string?(response) }
+                return String(cString: response)
             }
             ```
             """ : """
@@ -1360,19 +1662,29 @@ public struct ToolsCreate {
                     Err(_) => return r#"{"error": "Invalid arguments"}"#.to_string(),
                 };
                 
-                // Use blocking HTTP client (reqwest with blocking feature)
-                let client = reqwest::blocking::Client::new();
-                let response = client
-                    .post("https://api.example.com/endpoint")
-                    .json(&input)
-                    .send();
-                
-                match response {
-                    Ok(resp) => match resp.json::<serde_json::Value>() {
-                        Ok(json) => json.to_string(),
-                        Err(e) => format!(r#"{{"error": "{}"}}"#, e),
-                    },
-                    Err(e) => format!(r#"{{"error": "{}"}}"#, e),
+                unsafe {
+                    let http_request = match (*HOST_API).http_request {
+                        Some(f) => f,
+                        None => return r#"{"error": "HTTP client not available"}"#.to_string(),
+                    };
+                    
+                    let body = serde_json::to_string(&input).unwrap_or_default();
+                    let req = serde_json::json!({
+                        "method": "POST",
+                        "url": "https://api.example.com/endpoint",
+                        "headers": {"Content-Type": "application/json"},
+                        "body": body,
+                        "timeout_ms": 10000
+                    });
+                    let req_ptr = make_c_string(&req.to_string());
+                    let response = http_request(req_ptr);
+                    plugin_free_string(req_ptr);
+                    if response.is_null() {
+                        return r#"{"error": "Request failed"}"#.to_string();
+                    }
+                    let result = read_c_str(response);
+                    plugin_free_string(response);
+                    result
                 }
             }
             ```
