@@ -9,7 +9,16 @@
 import Foundation
 import OsaurusRepository
 
+private nonisolated(unsafe) var devProxyConfigFile: URL?
+
 public struct ToolsDev {
+    private static func cleanupAndExit() {
+        if let file = devProxyConfigFile {
+            try? FileManager.default.removeItem(at: file)
+        }
+        _Exit(0)
+    }
+
     public static func execute(args: [String]) async {
         guard let pluginId = args.first, !pluginId.isEmpty else {
             fputs("Usage: osaurus tools dev <plugin_id> [--web-proxy <url>]\n", stderr)
@@ -51,7 +60,13 @@ public struct ToolsDev {
             let data = try? JSONSerialization.data(withJSONObject: devConfig, options: .prettyPrinted)
             let configFile = configDir.appendingPathComponent("dev-proxy.json")
             try? data?.write(to: configFile)
+            devProxyConfigFile = configFile
         }
+
+        signal(SIGINT, SIG_IGN)
+        let sigSrc = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
+        sigSrc.setEventHandler { cleanupAndExit() }
+        sigSrc.resume()
 
         // Watch for dylib changes using a simple polling loop
         var lastModified: Date?
