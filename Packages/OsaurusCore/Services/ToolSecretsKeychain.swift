@@ -8,25 +8,19 @@
 import Foundation
 import Security
 
-/// Keychain wrapper for secure plugin secret storage
+/// Keychain wrapper for secure plugin secret storage.
+/// All config is agent-scoped: account format is `"{agentId}.{pluginId}.{key}"`.
 public enum ToolSecretsKeychain {
     private static let service = "ai.osaurus.tools"
 
-    // MARK: - Secret Management
+    // MARK: - Agent-Scoped Secret Management
 
-    /// Save a secret value for a plugin
-    /// - Parameters:
-    ///   - value: The secret value to store
-    ///   - id: The secret identifier (e.g., "api_key")
-    ///   - pluginId: The plugin identifier (e.g., "dev.example.weather")
-    /// - Returns: True if the secret was saved successfully
     @discardableResult
-    public static func saveSecret(_ value: String, id: String, for pluginId: String) -> Bool {
-        let account = "\(pluginId).\(id)"
+    public static func saveSecret(_ value: String, id: String, for pluginId: String, agentId: UUID) -> Bool {
+        let account = agentAccount(agentId: agentId, pluginId: pluginId, key: id)
         guard let valueData = value.data(using: .utf8) else { return false }
 
-        // Delete any existing secret first
-        deleteSecret(id: id, for: pluginId)
+        deleteSecret(id: id, for: pluginId, agentId: agentId)
 
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -40,13 +34,8 @@ public enum ToolSecretsKeychain {
         return status == errSecSuccess
     }
 
-    /// Retrieve a secret value for a plugin
-    /// - Parameters:
-    ///   - id: The secret identifier (e.g., "api_key")
-    ///   - pluginId: The plugin identifier (e.g., "dev.example.weather")
-    /// - Returns: The secret value if found, nil otherwise
-    public static func getSecret(id: String, for pluginId: String) -> String? {
-        let account = "\(pluginId).\(id)"
+    public static func getSecret(id: String, for pluginId: String, agentId: UUID) -> String? {
+        let account = agentAccount(agentId: agentId, pluginId: pluginId, key: id)
 
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -69,23 +58,13 @@ public enum ToolSecretsKeychain {
         return value
     }
 
-    /// Check if a secret exists for a plugin
-    /// - Parameters:
-    ///   - id: The secret identifier (e.g., "api_key")
-    ///   - pluginId: The plugin identifier (e.g., "dev.example.weather")
-    /// - Returns: True if the secret exists
-    public static func hasSecret(id: String, for pluginId: String) -> Bool {
-        return getSecret(id: id, for: pluginId) != nil
+    public static func hasSecret(id: String, for pluginId: String, agentId: UUID) -> Bool {
+        return getSecret(id: id, for: pluginId, agentId: agentId) != nil
     }
 
-    /// Delete a secret for a plugin
-    /// - Parameters:
-    ///   - id: The secret identifier (e.g., "api_key")
-    ///   - pluginId: The plugin identifier (e.g., "dev.example.weather")
-    /// - Returns: True if the secret was deleted or didn't exist
     @discardableResult
-    public static func deleteSecret(id: String, for pluginId: String) -> Bool {
-        let account = "\(pluginId).\(id)"
+    public static func deleteSecret(id: String, for pluginId: String, agentId: UUID) -> Bool {
+        let account = agentAccount(agentId: agentId, pluginId: pluginId, key: id)
 
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -97,72 +76,39 @@ public enum ToolSecretsKeychain {
         return status == errSecSuccess || status == errSecItemNotFound
     }
 
-    /// Delete all secrets for a plugin
-    /// - Parameter pluginId: The plugin identifier
-    public static func deleteAllSecrets(for pluginId: String) {
-        let accountPrefix = "\(pluginId)."
+    public static func deleteAllSecrets(for pluginId: String, agentId: UUID) {
+        let accountPrefix = agentAccountPrefix(agentId: agentId, pluginId: pluginId)
+        deleteAllMatchingPrefix(accountPrefix)
+    }
 
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecMatchLimit as String: kSecMatchLimitAll,
-            kSecReturnAttributes as String: true,
-        ]
-
-        var result: AnyObject?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-
-        guard status == errSecSuccess,
-            let items = result as? [[String: Any]]
-        else {
-            return
-        }
-
-        for item in items {
-            if let account = item[kSecAttrAccount as String] as? String,
-                account.hasPrefix(accountPrefix)
-            {
-                let deleteQuery: [String: Any] = [
-                    kSecClass as String: kSecClassGenericPassword,
-                    kSecAttrService as String: service,
-                    kSecAttrAccount as String: account,
-                ]
-                SecItemDelete(deleteQuery as CFDictionary)
-            }
+    /// Delete all agent-scoped secrets for a plugin across every agent.
+    public static func deleteAllSecretsAllAgents(for pluginId: String) {
+        let allItems = fetchAllItems(attributesOnly: true)
+        let suffix = ".\(pluginId)."
+        for item in allItems {
+            guard let account = item[kSecAttrAccount as String] as? String,
+                account.contains(suffix)
+            else { continue }
+            let deleteQuery: [String: Any] = [
+                kSecClass as String: kSecClassGenericPassword,
+                kSecAttrService as String: service,
+                kSecAttrAccount as String: account,
+            ]
+            SecItemDelete(deleteQuery as CFDictionary)
         }
     }
 
-    /// Get all secrets for a plugin as a dictionary
-    /// - Parameter pluginId: The plugin identifier
-    /// - Returns: Dictionary mapping secret IDs to their values
-    public static func getAllSecrets(for pluginId: String) -> [String: String] {
-        let accountPrefix = "\(pluginId)."
+    public static func getAllSecrets(for pluginId: String, agentId: UUID) -> [String: String] {
+        let accountPrefix = agentAccountPrefix(agentId: agentId, pluginId: pluginId)
 
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecMatchLimit as String: kSecMatchLimitAll,
-            kSecReturnAttributes as String: true,
-            kSecReturnData as String: true,
-        ]
-
-        var result: AnyObject?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-
-        guard status == errSecSuccess,
-            let items = result as? [[String: Any]]
-        else {
-            return [:]
-        }
-
+        let allItems = fetchAllItems(attributesOnly: false)
         var secrets: [String: String] = [:]
-        for item in items {
+        for item in allItems {
             if let account = item[kSecAttrAccount as String] as? String,
                 account.hasPrefix(accountPrefix),
                 let data = item[kSecValueData as String] as? Data,
                 let value = String(data: data, encoding: .utf8)
             {
-                // Extract the secret ID from the account (remove plugin prefix)
                 let secretId = String(account.dropFirst(accountPrefix.count))
                 secrets[secretId] = value
             }
@@ -171,31 +117,129 @@ public enum ToolSecretsKeychain {
         return secrets
     }
 
-    /// Check if all required secrets are configured for a plugin
-    /// - Parameters:
-    ///   - specs: Array of secret specifications
-    ///   - pluginId: The plugin identifier
-    /// - Returns: True if all required secrets have values
-    public static func hasAllRequiredSecrets(specs: [PluginManifest.SecretSpec], for pluginId: String) -> Bool {
+    public static func hasAllRequiredSecrets(specs: [PluginManifest.SecretSpec], for pluginId: String, agentId: UUID)
+        -> Bool
+    {
         for spec in specs where spec.required {
-            if !hasSecret(id: spec.id, for: pluginId) {
+            if !hasSecret(id: spec.id, for: pluginId, agentId: agentId) {
                 return false
             }
         }
         return true
     }
 
-    /// Get the list of missing required secrets
-    /// - Parameters:
-    ///   - specs: Array of secret specifications
-    ///   - pluginId: The plugin identifier
-    /// - Returns: Array of missing required secret specs
     public static func getMissingRequiredSecrets(
         specs: [PluginManifest.SecretSpec],
-        for pluginId: String
+        for pluginId: String,
+        agentId: UUID
     ) -> [PluginManifest.SecretSpec] {
         return specs.filter { spec in
-            spec.required && !hasSecret(id: spec.id, for: pluginId)
+            spec.required && !hasSecret(id: spec.id, for: pluginId, agentId: agentId)
+        }
+    }
+
+    // MARK: - Legacy Cleanup (non-agent-scoped entries)
+
+    /// Delete all legacy (non-agent-scoped) entries matching `"{pluginId}.*"`.
+    /// Used during plugin uninstall to clean up any remaining pre-migration data.
+    public static func deleteAllSecrets(for pluginId: String) {
+        deleteAllMatchingPrefix("\(pluginId).")
+    }
+
+    // MARK: - Migration Support
+
+    /// Returns all legacy (non-agent-scoped) keychain entries for a given plugin.
+    /// Legacy accounts match `"{pluginId}.{key}"` but NOT `"{uuid}.{pluginId}.{key}"`.
+    public static func legacySecrets(for pluginId: String) -> [String: String] {
+        let legacyPrefix = "\(pluginId)."
+        let allItems = fetchAllItems(attributesOnly: false)
+
+        var secrets: [String: String] = [:]
+        for item in allItems {
+            guard let account = item[kSecAttrAccount as String] as? String,
+                account.hasPrefix(legacyPrefix),
+                !isAgentScopedAccount(account),
+                let data = item[kSecValueData as String] as? Data,
+                let value = String(data: data, encoding: .utf8)
+            else { continue }
+
+            secrets[String(account.dropFirst(legacyPrefix.count))] = value
+        }
+        return secrets
+    }
+
+    /// Delete all legacy (non-agent-scoped) entries for a plugin.
+    public static func deleteLegacySecrets(for pluginId: String) {
+        let legacyPrefix = "\(pluginId)."
+        let allItems = fetchAllItems(attributesOnly: true)
+
+        for item in allItems {
+            guard let account = item[kSecAttrAccount as String] as? String,
+                account.hasPrefix(legacyPrefix),
+                !isAgentScopedAccount(account)
+            else { continue }
+
+            let deleteQuery: [String: Any] = [
+                kSecClass as String: kSecClassGenericPassword,
+                kSecAttrService as String: service,
+                kSecAttrAccount as String: account,
+            ]
+            SecItemDelete(deleteQuery as CFDictionary)
+        }
+    }
+
+    // MARK: - Internal Helpers
+
+    private static func agentAccount(agentId: UUID, pluginId: String, key: String) -> String {
+        "\(agentId.uuidString).\(pluginId).\(key)"
+    }
+
+    private static func agentAccountPrefix(agentId: UUID, pluginId: String) -> String {
+        "\(agentId.uuidString).\(pluginId)."
+    }
+
+    /// UUID pattern: 8-4-4-4-12 hex at the start of the account string.
+    private static func isAgentScopedAccount(_ account: String) -> Bool {
+        let uuidLength = 36  // "XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX"
+        guard account.count > uuidLength,
+            account[account.index(account.startIndex, offsetBy: uuidLength)] == "."
+        else { return false }
+        let prefix = String(account.prefix(uuidLength))
+        return UUID(uuidString: prefix) != nil
+    }
+
+    private static func fetchAllItems(attributesOnly: Bool) -> [[String: Any]] {
+        var query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecMatchLimit as String: kSecMatchLimitAll,
+            kSecReturnAttributes as String: true,
+        ]
+        if !attributesOnly {
+            query[kSecReturnData as String] = true
+        }
+
+        var result: AnyObject?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+
+        guard status == errSecSuccess, let items = result as? [[String: Any]] else {
+            return []
+        }
+        return items
+    }
+
+    private static func deleteAllMatchingPrefix(_ prefix: String) {
+        let allItems = fetchAllItems(attributesOnly: true)
+        for item in allItems {
+            guard let account = item[kSecAttrAccount as String] as? String,
+                account.hasPrefix(prefix)
+            else { continue }
+            let deleteQuery: [String: Any] = [
+                kSecClass as String: kSecClassGenericPassword,
+                kSecAttrService as String: service,
+                kSecAttrAccount as String: account,
+            ]
+            SecItemDelete(deleteQuery as CFDictionary)
         }
     }
 }

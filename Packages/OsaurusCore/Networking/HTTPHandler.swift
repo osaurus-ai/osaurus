@@ -444,6 +444,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 )
             }
 
+            // Set the agent context so config_get/set resolve to this agent's config
+            PluginHostContext.getContext(for: pluginId)?.currentAgentId = agentUUID
+
             let manifest = loaded.plugin.manifest
 
             // Check for static web serving first

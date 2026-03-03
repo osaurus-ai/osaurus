@@ -53,7 +53,8 @@ final class ExternalTool: OsaurusTool, PermissionedTool, @unchecked Sendable {
     /// - Parameter payload: Original JSON payload
     /// - Returns: Payload with secrets injected, or original payload if no secrets or parsing fails
     private func injectSecrets(into payload: String) -> String {
-        let secrets = plugin.resolvedSecrets()
+        let agentId = PluginHostContext.getContext(for: pluginId)?.resolvedAgentId ?? Agent.defaultId
+        let secrets = plugin.resolvedSecrets(agentId: agentId)
         guard !secrets.isEmpty else { return payload }
 
         // Parse the original payload

@@ -78,6 +78,37 @@ final class PluginHostContext: @unchecked Sendable {
     private static let dispatchRateLimit = 10
     private static let dispatchRateWindow: TimeInterval = 60
 
+    // MARK: - Per-Request Agent Context
+
+    private let agentLock = NSLock()
+    private var _currentAgentId: UUID?
+
+    /// The agent whose config should be used for config_get/config_set.
+    /// Set by HTTP handler, dispatch, and tunnel propagation before invoking plugin code.
+    var currentAgentId: UUID? {
+        get { agentLock.withLock { _currentAgentId } }
+        set { agentLock.withLock { _currentAgentId = newValue } }
+    }
+
+    /// Resolved agent ID: explicit `currentAgentId`, or `Agent.defaultId` as fallback.
+    var resolvedAgentId: UUID {
+        currentAgentId ?? Agent.defaultId
+    }
+
+    func withAgentContext<T>(_ agentId: UUID, block: () throws -> T) rethrows -> T {
+        let previous = currentAgentId
+        currentAgentId = agentId
+        defer { currentAgentId = previous }
+        return try block()
+    }
+
+    func withAgentContext<T>(_ agentId: UUID, block: () async throws -> T) async rethrows -> T {
+        let previous = currentAgentId
+        currentAgentId = agentId
+        defer { currentAgentId = previous }
+        return try await block()
+    }
+
     init(pluginId: String) throws {
         self.pluginId = pluginId
         self.database = PluginDatabase(pluginId: pluginId)
@@ -93,16 +124,16 @@ final class PluginHostContext: @unchecked Sendable {
     // MARK: - Config Callbacks
 
     func configGet(key: String) -> String? {
-        return ToolSecretsKeychain.getSecret(id: key, for: pluginId)
+        return ToolSecretsKeychain.getSecret(id: key, for: pluginId, agentId: resolvedAgentId)
     }
 
     func configSet(key: String, value: String) {
-        ToolSecretsKeychain.saveSecret(value, id: key, for: pluginId)
+        ToolSecretsKeychain.saveSecret(value, id: key, for: pluginId, agentId: resolvedAgentId)
         postConfigChange(key: key, value: value)
     }
 
     func configDelete(key: String) {
-        ToolSecretsKeychain.deleteSecret(id: key, for: pluginId)
+        ToolSecretsKeychain.deleteSecret(id: key, for: pluginId, agentId: resolvedAgentId)
         postConfigChange(key: key, value: nil)
     }
 
@@ -168,6 +199,10 @@ final class PluginHostContext: @unchecked Sendable {
                 agentId = await MainActor.run {
                     AgentManager.shared.primaryAgent(forPlugin: pluginId)
                 }
+            }
+
+            if let resolved = agentId {
+                PluginHostContext.getContext(for: pluginId)?.currentAgentId = resolved
             }
 
             let title = json["title"] as? String
