@@ -7,6 +7,7 @@
 
 import Combine
 import Foundation
+import LocalAuthentication
 import SwiftUI
 
 /// Notification posted when the active agent changes or an agent is updated
@@ -33,6 +34,7 @@ public final class AgentManager: ObservableObject {
 
     private init() {
         refresh()
+        migrateAgentAddressesIfNeeded()
 
         // Load saved active agent
         if let savedId = loadActiveAgentId() {
@@ -90,9 +92,15 @@ public final class AgentManager: ObservableObject {
             createdAt: Date(),
             updatedAt: Date()
         )
+        add(agent)
+        return agent
+    }
+
+    /// Save a pre-built agent, refresh the list, and assign a cryptographic address.
+    public func add(_ agent: Agent) {
         AgentStore.save(agent)
         refresh()
-        return agent
+        try? assignAddress(to: agent)
     }
 
     /// Update an existing agent
@@ -106,6 +114,32 @@ public final class AgentManager: ObservableObject {
         AgentStore.save(updated)
         refresh()
         NotificationCenter.default.post(name: .agentUpdated, object: agent.id)
+    }
+
+    /// Derive and assign a cryptographic address for an agent.
+    /// No-ops for built-in agents, agents that already have an address, or when no master key exists.
+    public func assignAddress(to agent: Agent) throws {
+        guard !agent.isBuiltIn, agent.agentAddress == nil else { return }
+        guard MasterKey.exists() else { return }
+
+        let context = OsaurusIdentityContext.biometric()
+        var masterKeyData = try MasterKey.getPrivateKey(context: context)
+        defer {
+            masterKeyData.withUnsafeMutableBytes { ptr in
+                if let base = ptr.baseAddress { memset(base, 0, ptr.count) }
+            }
+        }
+
+        let usedIndices = Set(agents.compactMap(\.agentIndex))
+        var nextIndex: UInt32 = 0
+        while usedIndices.contains(nextIndex) { nextIndex += 1 }
+
+        let address = try AgentKey.deriveAddress(masterKey: masterKeyData, index: nextIndex)
+
+        var updated = agent
+        updated.agentIndex = nextIndex
+        updated.agentAddress = address
+        update(updated)
     }
 
     /// Delete an agent by ID
@@ -162,6 +196,7 @@ public final class AgentManager: ObservableObject {
     // MARK: - Active Agent Persistence
 
     private static let activeAgentKey = "activeAgentId"
+    private static let agentAddressesMigratedKey = "agentAddressesMigrated"
 
     private func loadActiveAgentId() -> UUID? {
         migrateActiveAgentFileIfNeeded()
@@ -171,6 +206,19 @@ public final class AgentManager: ObservableObject {
 
     private func saveActiveAgentId(_ id: UUID) {
         UserDefaults.standard.set(id.uuidString, forKey: Self.activeAgentKey)
+    }
+
+    /// One-time migration: assign cryptographic addresses to existing agents that don't have one.
+    /// Retries on each launch until a master key is available.
+    private func migrateAgentAddressesIfNeeded() {
+        guard !UserDefaults.standard.bool(forKey: Self.agentAddressesMigratedKey) else { return }
+        guard MasterKey.exists() else { return }
+
+        for agent in agents where !agent.isBuiltIn && agent.agentAddress == nil {
+            try? assignAddress(to: agent)
+        }
+
+        UserDefaults.standard.set(true, forKey: Self.agentAddressesMigratedKey)
     }
 
     /// One-time migration: read the legacy active.txt file into UserDefaults, then delete it.

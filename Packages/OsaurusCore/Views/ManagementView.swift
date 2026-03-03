@@ -266,6 +266,8 @@ private extension ManagementView {
             count = speechModelManager.downloadedModelsCount
         case .themes:
             count = themeManager.installedThemes.filter { !$0.isBuiltIn }.count
+        case .identity:
+            count = MasterKey.exists() ? 0 : 1
         default:
             return nil
         }
@@ -276,6 +278,8 @@ private extension ManagementView {
         switch tab {
         case .plugins:
             return repoService.updatesAvailableCount > 0
+        case .identity:
+            return !MasterKey.exists()
         default:
             return false
         }

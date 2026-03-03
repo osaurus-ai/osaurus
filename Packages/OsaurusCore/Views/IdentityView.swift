@@ -496,7 +496,6 @@ private struct AgentAddressesSection: View {
     let masterAddress: OsaurusID
 
     @State private var copiedAddress: OsaurusID?
-    @State private var generatingAgentId: UUID?
     @State private var errorMessage: String?
 
     private var customAgents: [Agent] {
@@ -569,14 +568,8 @@ private struct AgentAddressesSection: View {
             } else {
                 Button(action: { generateAddress(for: agent) }) {
                     HStack(spacing: 4) {
-                        if generatingAgentId == agent.id {
-                            ProgressView()
-                                .scaleEffect(0.5)
-                                .frame(width: 10, height: 10)
-                        } else {
-                            Image(systemName: "key.fill")
-                                .font(.system(size: 9, weight: .semibold))
-                        }
+                        Image(systemName: "key.fill")
+                            .font(.system(size: 9, weight: .semibold))
                         Text("Generate")
                             .font(.system(size: 11, weight: .semibold))
                     }
@@ -589,7 +582,6 @@ private struct AgentAddressesSection: View {
                     )
                 }
                 .buttonStyle(PlainButtonStyle())
-                .disabled(generatingAgentId != nil)
             }
         }
         .padding(.horizontal, 10)
@@ -601,33 +593,11 @@ private struct AgentAddressesSection: View {
     }
 
     private func generateAddress(for agent: Agent) {
-        generatingAgentId = agent.id
         errorMessage = nil
-
         do {
-            let context = OsaurusIdentityContext.biometric()
-            var masterKeyData = try MasterKey.getPrivateKey(context: context)
-            defer {
-                masterKeyData.withUnsafeMutableBytes { ptr in
-                    if let base = ptr.baseAddress { memset(base, 0, ptr.count) }
-                }
-            }
-
-            let usedIndices = Set(agentManager.agents.compactMap(\.agentIndex))
-            var nextIndex: UInt32 = 0
-            while usedIndices.contains(nextIndex) { nextIndex += 1 }
-
-            let address = try AgentKey.deriveAddress(masterKey: masterKeyData, index: nextIndex)
-
-            var updated = agent
-            updated.agentIndex = nextIndex
-            updated.agentAddress = address
-            agentManager.update(updated)
-
-            generatingAgentId = nil
+            try agentManager.assignAddress(to: agent)
         } catch {
             errorMessage = error.localizedDescription
-            generatingAgentId = nil
         }
     }
 

@@ -101,8 +101,7 @@ struct AgentsView: View {
         .sheet(isPresented: $isCreating) {
             AgentEditorSheet(
                 onSave: { agent in
-                    AgentStore.save(agent)
-                    agentManager.refresh()
+                    agentManager.add(agent)
                     isCreating = false
                     showSuccess("Created \"\(agent.name)\"")
                 },
