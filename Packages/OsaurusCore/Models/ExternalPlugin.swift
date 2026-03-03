@@ -401,7 +401,9 @@ final class ExternalPlugin: @unchecked Sendable {
     func shutdown() {
         guard !isShutDown else { return }
         isShutDown = true
-        api.destroy?(ctx)
+        ExternalPlugin.invokeQueue.sync {
+            self.api.destroy?(self.ctx)
+        }
     }
 
     /// Dispatches a blocking C ABI call on `invokeQueue` and returns the resulting string.
@@ -417,6 +419,16 @@ final class ExternalPlugin: @unchecked Sendable {
 
         return try await withCheckedThrowingContinuation { continuation in
             ExternalPlugin.invokeQueue.async { [self] in
+                guard !self.isShutDown else {
+                    continuation.resume(
+                        throwing: NSError(
+                            domain: "ExternalPlugin",
+                            code: errorCode,
+                            userInfo: [NSLocalizedDescriptionKey: "Plugin has been shut down"]
+                        )
+                    )
+                    return
+                }
                 PluginHostContext.setActivePlugin(pluginId)
                 defer { PluginHostContext.clearActivePlugin() }
 
@@ -485,6 +497,7 @@ final class ExternalPlugin: @unchecked Sendable {
         let pluginId = self.id
 
         ExternalPlugin.invokeQueue.async { [self] in
+            guard !self.isShutDown else { return }
             PluginHostContext.setActivePlugin(pluginId)
             defer { PluginHostContext.clearActivePlugin() }
 
@@ -506,6 +519,7 @@ final class ExternalPlugin: @unchecked Sendable {
         let rawType = eventType.rawValue
 
         ExternalPlugin.invokeQueue.async { [self] in
+            guard !self.isShutDown else { return }
             PluginHostContext.setActivePlugin(pluginId)
             defer { PluginHostContext.clearActivePlugin() }
 

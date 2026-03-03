@@ -130,14 +130,38 @@ public final class BackgroundTaskManager: ObservableObject {
             )
         }
 
-        finalizeTask(backgroundId)
+        if !state.status.isActive {
+            finalizeTask(backgroundId)
+        }
     }
 
     /// Remove a background task from management, cancelling all observers and timers.
     public func finalizeTask(_ backgroundId: UUID) {
         guard let state = backgroundTasks[backgroundId] else { return }
 
-        // Flush any held plugin events before removing the task.
+        // Ensure plugins always receive a terminal event before cleanup.
+        if state.status.isActive, state.sourcePluginId != nil {
+            let issues = state.session?.issues ?? []
+            let allClosed = !issues.isEmpty && issues.allSatisfy { $0.status == .closed }
+
+            if allClosed {
+                let summary = buildCompletionSummary(from: issues)
+                state.status = .completed(success: true, summary: summary)
+                emitPluginEvent(
+                    state,
+                    type: .completed,
+                    json: PluginHostContext.serializeCompletedEvent(
+                        success: true,
+                        summary: summary,
+                        sessionId: state.executionContext?.id
+                    )
+                )
+            } else {
+                state.status = .cancelled
+                emitPluginEvent(state, type: .cancelled, json: PluginHostContext.serializeCancelledEvent())
+            }
+        }
+
         dispatchHoldTasks.remove(backgroundId)
         if let events = heldTaskEvents.removeValue(forKey: backgroundId) {
             for event in events {
@@ -145,7 +169,7 @@ public final class BackgroundTaskManager: ObservableObject {
             }
         }
 
-        resumeCompletion(for: backgroundId, result: .cancelled)
+        resumeCompletion(for: backgroundId, result: resultFromState(state))
         cancelAutoFinalize(backgroundId)
 
         taskObservers[backgroundId]?.forEach { $0.cancel() }
@@ -605,9 +629,9 @@ public final class BackgroundTaskManager: ObservableObject {
 
         switch event {
         case .startedIssue(let title):
-            state.appendActivity(kind: .info, title: "Issue", detail: title)
+            state.appendActivity(kind: .info, title: "Task", detail: title)
             emitKind = .info
-            emitTitle = "Issue"
+            emitTitle = "Task"
             emitDetail = title
 
         case .willExecuteStep, .completedStep:
@@ -637,7 +661,7 @@ public final class BackgroundTaskManager: ObservableObject {
             emitDetail = filename
 
         case .completedIssue(let success):
-            let title = success ? "Issue completed" : "Issue failed"
+            let title = success ? "Task completed" : "Task failed"
             state.appendActivity(kind: success ? .success : .error, title: title)
             emitKind = success ? .success : .error
             emitTitle = title
