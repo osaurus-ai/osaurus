@@ -9,6 +9,10 @@
 
 import Foundation
 
+extension Notification.Name {
+    static let pluginConfigDidChange = Notification.Name("PluginConfigDidChange")
+}
+
 // MARK: - Per-Plugin Host Context
 
 /// Holds per-plugin state needed by host API callbacks.
@@ -70,10 +74,24 @@ final class PluginHostContext: @unchecked Sendable {
 
     func configSet(key: String, value: String) {
         ToolSecretsKeychain.saveSecret(value, id: key, for: pluginId)
+        postConfigChange(key: key, value: value)
     }
 
     func configDelete(key: String) {
         ToolSecretsKeychain.deleteSecret(id: key, for: pluginId)
+        postConfigChange(key: key, value: nil)
+    }
+
+    private func postConfigChange(key: String, value: String?) {
+        DispatchQueue.main.async { [pluginId] in
+            var userInfo: [String: String] = ["pluginId": pluginId, "key": key]
+            if let value { userInfo["value"] = value }
+            NotificationCenter.default.post(
+                name: .pluginConfigDidChange,
+                object: nil,
+                userInfo: userInfo
+            )
+        }
     }
 
     // MARK: - Database Callbacks
@@ -114,6 +132,12 @@ final class PluginHostContext: @unchecked Sendable {
                 agentId = await MainActor.run { AgentManager.shared.agent(byAddress: address)?.id }
             } else if let idStr = json["agent_id"] as? String {
                 agentId = UUID(uuidString: idStr)
+            }
+
+            if agentId == nil {
+                agentId = await MainActor.run {
+                    AgentManager.shared.primaryAgent(forPlugin: pluginId)
+                }
             }
 
             let title = json["title"] as? String
@@ -177,11 +201,13 @@ final class PluginHostContext: @unchecked Sendable {
     func complete(requestJSON: String) -> String {
         Self.blockingAsync {
             let data = Data(requestJSON.utf8)
-            guard let request = try? JSONDecoder().decode(ChatCompletionRequest.self, from: data) else {
+            guard var request = try? JSONDecoder().decode(ChatCompletionRequest.self, from: data) else {
                 return Self.jsonString([
                     "error": "invalid_request", "message": "Failed to parse chat completion request",
                 ])
             }
+
+            request = await Self.resolveAgentModel(request: request, data: data)
 
             let engine = ChatEngine(source: .httpAPI)
             do {
@@ -204,11 +230,13 @@ final class PluginHostContext: @unchecked Sendable {
         nonisolated(unsafe) let userData = userData
         return Self.blockingAsync {
             let data = Data(requestJSON.utf8)
-            guard let request = try? JSONDecoder().decode(ChatCompletionRequest.self, from: data) else {
+            guard var request = try? JSONDecoder().decode(ChatCompletionRequest.self, from: data) else {
                 return Self.jsonString([
                     "error": "invalid_request", "message": "Failed to parse chat completion request",
                 ])
             }
+
+            request = await Self.resolveAgentModel(request: request, data: data)
 
             let engine = ChatEngine(source: .httpAPI)
             do {
@@ -245,6 +273,28 @@ final class PluginHostContext: @unchecked Sendable {
                 return Self.jsonString(["error": "inference_error", "message": error.localizedDescription])
             }
         }
+    }
+
+    /// When the requested model is empty/default and an `agent_address` is present in the
+    /// raw JSON, resolve the agent's configured model and substitute it into the request.
+    private static func resolveAgentModel(
+        request: ChatCompletionRequest,
+        data: Data
+    ) async -> ChatCompletionRequest {
+        let trimmed = request.model.trimmingCharacters(in: .whitespacesAndNewlines)
+        let isDefault = trimmed.isEmpty || trimmed.caseInsensitiveCompare("default") == .orderedSame
+        guard isDefault else { return request }
+
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let address = json["agent_address"] as? String
+        else { return request }
+
+        let resolved = await MainActor.run {
+            guard let agent = AgentManager.shared.agent(byAddress: address) else { return nil as String? }
+            return AgentManager.shared.effectiveModel(for: agent.id)
+        }
+        guard let resolved, !resolved.isEmpty else { return request }
+        return request.withModel(resolved)
     }
 
     private static func emitChunk(

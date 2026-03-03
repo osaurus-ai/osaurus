@@ -20,6 +20,7 @@ struct PluginConfigView: View {
     @State private var errors: [String: String] = [:]
     @State private var isDirty = false
     @State private var focusedField: String?
+    @State private var editedSecrets: Set<String> = []
 
     @State private var saveIndicator: String?
 
@@ -67,6 +68,13 @@ struct PluginConfigView: View {
             }
         }
         .onAppear { loadConfig() }
+        .onReceive(NotificationCenter.default.publisher(for: .pluginConfigDidChange)) { note in
+            guard let info = note.userInfo,
+                let id = info["pluginId"] as? String, id == pluginId,
+                let key = info["key"] as? String
+            else { return }
+            values[key] = info["value"] as? String
+        }
     }
 
     // MARK: - Section
@@ -195,6 +203,11 @@ struct PluginConfigView: View {
     @ViewBuilder
     private func secretField(_ field: PluginManifest.ConfigField) -> some View {
         let isFocused = focusedField == field.key
+        let placeholder =
+            hasStoredSecret(field.key)
+            ? "Configured (saved in Keychain)"
+            : (field.placeholder ?? "")
+
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 Image(systemName: "key.fill")
@@ -208,14 +221,14 @@ struct PluginConfigView: View {
             HStack(spacing: 10) {
                 ZStack(alignment: .leading) {
                     if (values[field.key] ?? "").isEmpty {
-                        Text(field.placeholder ?? "")
+                        Text(placeholder)
                             .font(.system(size: 13))
                             .foregroundColor(theme.placeholderText)
                             .allowsHitTesting(false)
                     }
                     SecureField(
                         "",
-                        text: binding(for: field.key, default: "")
+                        text: binding(for: field.key, trackSecretEdit: true)
                     )
                     .textFieldStyle(.plain)
                     .font(.system(size: 13))
@@ -503,8 +516,8 @@ struct PluginConfigView: View {
                     let routeId = connectAction.url_route
                 {
                     Button {
-                        let port = Self.loadServerPort()
-                        let url = URL(string: "http://127.0.0.1:\(port)/plugins/\(pluginId)/\(routeId)")!
+                        let base = Self.resolveBaseURL(for: pluginId)
+                        let url = URL(string: "\(base)/plugins/\(pluginId)/\(routeId)")!
                         NSWorkspace.shared.open(url)
                     } label: {
                         Text("Connect")
@@ -525,15 +538,31 @@ struct PluginConfigView: View {
 
     // MARK: - Helpers
 
-    private func binding(for key: String, default defaultValue: String) -> Binding<String> {
+    private func binding(
+        for key: String,
+        default defaultValue: String = "",
+        trackSecretEdit: Bool = false
+    ) -> Binding<String> {
         Binding(
             get: { values[key] ?? defaultValue },
             set: { newValue in
                 values[key] = newValue
+                if trackSecretEdit {
+                    guard !newValue.isEmpty else {
+                        validateField(key: key)
+                        return
+                    }
+                    editedSecrets.insert(key)
+                }
                 isDirty = true
                 validateField(key: key)
             }
         )
+    }
+
+    private func hasStoredSecret(_ key: String) -> Bool {
+        !editedSecrets.contains(key)
+            && ToolSecretsKeychain.hasSecret(id: key, for: pluginId)
     }
 
     private func loadConfig() {
@@ -562,9 +591,17 @@ struct PluginConfigView: View {
         guard !hasErrors else { return }
 
         for (key, value) in values {
+            if findField(key: key)?.type == .secret && hasStoredSecret(key) {
+                plugin?.notifyConfigChanged(
+                    key: key,
+                    value: ToolSecretsKeychain.getSecret(id: key, for: pluginId) ?? ""
+                )
+                continue
+            }
             ToolSecretsKeychain.saveSecret(value, id: key, for: pluginId)
             plugin?.notifyConfigChanged(key: key, value: value)
         }
+        editedSecrets.removeAll()
         isDirty = false
     }
 
@@ -579,6 +616,10 @@ struct PluginConfigView: View {
         let value = values[key] ?? ""
 
         if validation.required == true && value.isEmpty {
+            guard !(field.type == .secret && hasStoredSecret(key)) else {
+                errors.removeValue(forKey: key)
+                return true
+            }
             errors[key] = "\(field.label) is required"
             return false
         }
@@ -625,13 +666,19 @@ struct PluginConfigView: View {
         return nil
     }
 
-    private func resolveTemplate(_ template: String, pluginId: String) -> String {
-        let port = Self.loadServerPort()
-        var result = template
-        result = result.replacingOccurrences(of: "{{plugin_url}}", with: "http://127.0.0.1:\(port)/plugins/\(pluginId)")
-        result = result.replacingOccurrences(of: "{{plugin_id}}", with: pluginId)
-
+    private static func resolveBaseURL(for pluginId: String) -> String {
         let tunnelURL = ToolSecretsKeychain.getSecret(id: "tunnel_url", for: pluginId) ?? ""
+        if !tunnelURL.isEmpty { return tunnelURL }
+        return "http://127.0.0.1:\(loadServerPort())"
+    }
+
+    private func resolveTemplate(_ template: String, pluginId: String) -> String {
+        let tunnelURL = ToolSecretsKeychain.getSecret(id: "tunnel_url", for: pluginId) ?? ""
+        let baseURL = tunnelURL.isEmpty ? "http://127.0.0.1:\(Self.loadServerPort())" : tunnelURL
+
+        var result = template
+        result = result.replacingOccurrences(of: "{{plugin_url}}", with: "\(baseURL)/plugins/\(pluginId)")
+        result = result.replacingOccurrences(of: "{{plugin_id}}", with: pluginId)
         result = result.replacingOccurrences(of: "{{tunnel_url}}", with: tunnelURL)
 
         let configPattern = try? NSRegularExpression(pattern: #"\{\{config\.(\w+)\}\}"#)

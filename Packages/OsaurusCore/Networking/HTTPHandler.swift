@@ -659,7 +659,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 body_encoding: bodyEncoding,
                 remote_addr: "",
                 plugin_id: pluginId,
-                osaurus: .init(base_url: baseURL, plugin_url: pluginURL)
+                osaurus: .init(
+                    base_url: baseURL,
+                    plugin_url: pluginURL,
+                    agent_address: AgentManager.shared.agent(for: agentUUID)?.agentAddress ?? ""
+                )
             )
 
             let encoder = JSONEncoder()

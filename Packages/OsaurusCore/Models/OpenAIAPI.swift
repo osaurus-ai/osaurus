@@ -359,6 +359,26 @@ struct ChatCompletionRequest: Codable, Sendable {
         case frequency_penalty, presence_penalty, stop, n
         case tools, tool_choice, session_id
     }
+
+    func withModel(_ newModel: String) -> ChatCompletionRequest {
+        var copy = ChatCompletionRequest(
+            model: newModel,
+            messages: messages,
+            temperature: temperature,
+            max_tokens: max_tokens,
+            stream: stream,
+            top_p: top_p,
+            frequency_penalty: frequency_penalty,
+            presence_penalty: presence_penalty,
+            stop: stop,
+            n: n,
+            tools: tools,
+            tool_choice: tool_choice,
+            session_id: session_id
+        )
+        copy.modelOptions = modelOptions
+        return copy
+    }
 }
 
 /// Chat completion choice
