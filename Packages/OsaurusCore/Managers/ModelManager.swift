@@ -811,6 +811,38 @@ extension ModelManager {
             downloadURL: "https://huggingface.co/mlx-community/LFM2-VL-3B-5bit"
         ),
 
+        MLXModel(
+            id: "mlx-community/Qwen3.5-9B-MLX-4bit",
+            name: friendlyName(from: "mlx-community/Qwen3.5-9B-MLX-4bit"),
+            description: "Most capable Qwen3.5 vision model. Strong multimodal understanding.",
+            downloadURL: "https://huggingface.co/mlx-community/Qwen3.5-9B-MLX-4bit",
+            downloadSizeBytes: 5_950_000_000
+        ),
+
+        MLXModel(
+            id: "mlx-community/Qwen3.5-4B-MLX-4bit",
+            name: friendlyName(from: "mlx-community/Qwen3.5-4B-MLX-4bit"),
+            description: "Balanced Qwen3.5 vision model. Good multimodal capabilities with modest resources.",
+            downloadURL: "https://huggingface.co/mlx-community/Qwen3.5-4B-MLX-4bit",
+            downloadSizeBytes: 3_030_000_000
+        ),
+
+        MLXModel(
+            id: "mlx-community/Qwen3.5-2B-MLX-4bit",
+            name: friendlyName(from: "mlx-community/Qwen3.5-2B-MLX-4bit"),
+            description: "Lightweight Qwen3.5 vision model. Fast and runs on any Mac.",
+            downloadURL: "https://huggingface.co/mlx-community/Qwen3.5-2B-MLX-4bit",
+            downloadSizeBytes: 1_720_000_000
+        ),
+
+        MLXModel(
+            id: "mlx-community/Qwen3.5-0.8B-MLX-4bit",
+            name: friendlyName(from: "mlx-community/Qwen3.5-0.8B-MLX-4bit"),
+            description: "Ultra-compact Qwen3.5 vision model. Smallest footprint, runs anywhere.",
+            downloadURL: "https://huggingface.co/mlx-community/Qwen3.5-0.8B-MLX-4bit",
+            downloadSizeBytes: 625_000_000
+        ),
+
         // MARK: Compact Models
 
         MLXModel(
