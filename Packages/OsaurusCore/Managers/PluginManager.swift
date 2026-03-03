@@ -273,9 +273,11 @@ final class PluginManager {
             }
 
             PluginHostContext.currentContext = ctx
+            PluginHostContext.setActivePlugin(preliminaryId)
             let hostAPIPtr = ctx.buildHostAPI()
             let entryFn = unsafeBitCast(v2sym, to: osr_plugin_entry_v2_t.self)
             let apiRawPtr = entryFn(UnsafeRawPointer(hostAPIPtr))
+            PluginHostContext.clearActivePlugin()
             PluginHostContext.currentContext = nil
 
             guard let apiRawPtr else {
@@ -322,8 +324,14 @@ final class PluginManager {
             return .failure(PluginLoadError(message: errorMsg))
         }
 
-        PluginHostContext.currentContext = hostContext
-        defer { PluginHostContext.currentContext = nil }
+        if let hostContext {
+            PluginHostContext.currentContext = hostContext
+            PluginHostContext.setActivePlugin(hostContext.pluginId)
+        }
+        defer {
+            PluginHostContext.clearActivePlugin()
+            PluginHostContext.currentContext = nil
+        }
         let ctx = initFn()
 
         guard let ctx else {

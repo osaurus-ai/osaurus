@@ -1037,6 +1037,8 @@ static void my_task_event(osr_plugin_ctx_t ctx, const char* task_id,
 
 v2 plugins can run chat completions and generate embeddings through any model configured in Osaurus — local MLX models, Apple Foundation Models, or remote providers.
 
+When an `agent_address` is provided, inference resolves the **full agent context** — system prompt, memory, model, temperature, max tokens, and available tools — so the model behaves exactly as the configured agent would.
+
 ### Chat Completion
 
 ```c
@@ -1051,13 +1053,25 @@ const char* response = host->complete(request);
 
 **Request format** follows the OpenAI chat completion schema:
 
-| Field         | Type   | Required | Description                                    |
-| ------------- | ------ | -------- | ---------------------------------------------- |
-| `model`       | string | No       | Model name, or `null`/`""` for default         |
-| `messages`    | array  | Yes      | Array of `{role, content}` message objects      |
-| `max_tokens`  | int    | No       | Maximum tokens to generate                     |
-| `temperature` | number | No       | Sampling temperature (0.0 – 2.0)               |
-| `agent_address` | string | No     | Agent crypto address — used to resolve model when `model` is empty/default |
+| Field            | Type          | Required | Description                                                                 |
+| ---------------- | ------------- | -------- | --------------------------------------------------------------------------- |
+| `model`          | string        | No       | Model name, or `null`/`""` for default                                      |
+| `messages`       | array         | Yes      | Array of `{role, content}` message objects                                  |
+| `max_tokens`     | int           | No       | Maximum tokens to generate                                                  |
+| `temperature`    | number        | No       | Sampling temperature (0.0 – 2.0)                                            |
+| `agent_address`  | string        | No       | Agent crypto address — resolves full agent context (model, system prompt, memory, tools) |
+| `tools`          | array or bool | No       | Tool definitions (OpenAI format), or `true` to use the agent's configured tools |
+| `tool_choice`    | string/object | No       | Tool selection strategy (`"auto"`, `"none"`, or `{"type":"function","function":{"name":"..."}}`) |
+| `max_iterations` | int           | No       | Maximum agentic loop iterations (default: `1`). Set higher to enable automatic tool execution |
+
+**Agent context resolution:** When `agent_address` is present, the following are resolved from the agent's configuration and applied to the request (unless the request provides explicit values):
+
+- **System prompt** — prepended to `messages` if no system message is present
+- **Memory context** — working memory and conversation history prepended to the system prompt
+- **Model** — used when `model` is `null`/`""`/`"default"`
+- **Temperature** — used when `temperature` is not set
+- **Max tokens** — used when `max_tokens` is not set
+- **Tools** — available when `"tools": true` is set in the request
 
 **Model resolution order:**
 
@@ -1068,7 +1082,7 @@ const char* response = host->complete(request);
 | `"foundation"`| Apple Foundation Model                   |
 | specific name | Exact model by ID (e.g., `"gpt-4o"`)    |
 
-**Response:** Standard OpenAI-compatible chat completion JSON with `choices`, `usage`, etc.
+**Response:** Standard OpenAI-compatible chat completion JSON with `choices`, `usage`, etc. When tools were executed during the agentic loop, the response includes a `tool_calls_executed` array listing each tool call that was made.
 
 ### Streaming Completion
 
@@ -1086,6 +1100,47 @@ const char* response = host->complete_stream(request, on_chunk, my_context);
 ```
 
 The `on_chunk` callback is called on the same background thread — avoid blocking. The `user_data` pointer is passed through unchanged.
+
+### Agentic Inference (Tool Execution)
+
+When `max_iterations` is greater than 1 and tools are available, inference runs an **agentic loop**: the model can call tools, which are automatically executed, and the results are fed back into the conversation for the next iteration. This continues until the model produces a final text response or the iteration cap is reached.
+
+```c
+// Agentic inference: model can read files, search, etc.
+const char* request = "{"
+    "\"agent_address\": \"0xABC...\","
+    "\"messages\": [{\"role\": \"user\", \"content\": \"Read main.py and summarize it\"}],"
+    "\"tools\": true,"
+    "\"max_iterations\": 10"
+"}";
+const char* response = host->complete(request);
+// response includes "tool_calls_executed" with each tool that ran
+```
+
+For streaming, tool activity is emitted as chunks alongside content deltas:
+
+```c
+static void on_chunk(const char* chunk_json, void* user_data) {
+    // Content delta:
+    //   {"choices":[{"delta":{"content":"The file contains..."}}]}
+    //
+    // Tool call (model requesting a tool):
+    //   {"choices":[{"delta":{"tool_calls":[{"id":"call_xxx",
+    //     "function":{"name":"file_read","arguments":"{...}"}}]},
+    //     "finish_reason":"tool_calls"}]}
+    //
+    // Tool result (after execution):
+    //   {"choices":[{"delta":{"role":"tool","tool_call_id":"call_xxx",
+    //     "content":"file contents..."}}]}
+    //
+    // Final stop:
+    //   {"choices":[{"delta":{},"finish_reason":"stop"}]}
+}
+
+const char* response = host->complete_stream(request, on_chunk, ctx);
+```
+
+The agentic loop runs for at most `max_iterations` iterations (capped at 30). Each iteration is one LLM call that may or may not produce a tool call. If the model produces a text response without requesting a tool, the loop ends.
 
 ### Embeddings
 
@@ -1120,6 +1175,24 @@ const char* classify_event(const osr_host_api* host, const char* event_text) {
         event_text);
 
     return host->complete(request);
+}
+```
+
+### Example: Agentic File Analysis
+
+```c
+const char* analyze_project(const osr_host_api* host, const char* agent_addr) {
+    char request[4096];
+    snprintf(request, sizeof(request),
+        "{\"agent_address\": \"%s\","
+        " \"messages\": [{\"role\": \"user\", \"content\": \"List all TODO comments in the project\"}],"
+        " \"tools\": true,"
+        " \"max_iterations\": 15}",
+        agent_addr);
+
+    return host->complete(request);
+    // The model will use file_search, file_read, etc. autonomously
+    // and return a final summary with tool_calls_executed metadata
 }
 ```
 
