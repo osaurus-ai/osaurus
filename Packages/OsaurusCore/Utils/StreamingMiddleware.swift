@@ -40,6 +40,10 @@ enum StreamingMiddlewareResolver {
             return PrependThinkTagMiddleware()
         }
 
+        if lower.contains("qwen") && lower.contains("3.5") {
+            return PrependThinkTagMiddleware()
+        }
+
         return nil
     }
 }
