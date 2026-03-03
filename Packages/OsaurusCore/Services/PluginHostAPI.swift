@@ -241,7 +241,7 @@ final class PluginHostContext: @unchecked Sendable {
     private static let defaultMaxIterations = 1
     private static let maxIterationsCap = 30
 
-    // MARK: Agent Context
+    // MARK: Inference Types
 
     private struct AgentContext {
         let agentId: UUID
@@ -253,79 +253,105 @@ final class PluginHostContext: @unchecked Sendable {
         let toolOverrides: [String: Bool]?
     }
 
-    /// Extra fields parsed from the raw request JSON that live outside the
-    /// standard `ChatCompletionRequest` Codable surface.
     private struct InferenceOptions {
         let maxIterations: Int
         let wantsAgentTools: Bool
 
-        init(from data: Data) {
-            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                self.maxIterations = defaultMaxIterations
-                self.wantsAgentTools = false
-                return
-            }
+        init(from json: [String: Any]) {
             let raw = json["max_iterations"] as? Int ?? defaultMaxIterations
             self.maxIterations = max(1, min(raw, maxIterationsCap))
             self.wantsAgentTools = json["tools"] as? Bool == true
         }
     }
 
-    /// Resolves full agent context from `agent_address`.
-    /// Returns nil when the field is absent or the agent cannot be found.
-    private static func resolveAgentContext(data: Data) async -> AgentContext? {
-        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let address = json["agent_address"] as? String
-        else { return nil }
-
-        let agentInfo:
-            (
-                id: UUID, basePrompt: String, model: String?, temp: Float?,
-                maxTok: Int?, tools: [Tool], overrides: [String: Bool]?
-            )? = await MainActor.run {
-                guard let agent = AgentManager.shared.agent(byAddress: address) else { return nil }
-                let mgr = AgentManager.shared
-                let aid = agent.id
-                let overrides = mgr.effectiveToolOverrides(for: aid)
-                return (
-                    id: aid,
-                    basePrompt: mgr.effectiveSystemPrompt(for: aid),
-                    model: mgr.effectiveModel(for: aid),
-                    temp: mgr.effectiveTemperature(for: aid),
-                    maxTok: mgr.effectiveMaxTokens(for: aid),
-                    tools: ToolRegistry.shared.specs(withOverrides: overrides),
-                    overrides: overrides
-                )
-            }
-        guard let info = agentInfo else { return nil }
-
-        let memoryConfig = MemoryConfigurationStore.load()
-        let memoryCtx = await MemoryContextAssembler.assembleContext(
-            agentId: info.id.uuidString,
-            config: memoryConfig
-        )
-        let systemPrompt = memoryCtx.isEmpty ? info.basePrompt : memoryCtx + "\n\n" + info.basePrompt
-
-        return AgentContext(
-            agentId: info.id,
-            systemPrompt: systemPrompt,
-            model: info.model,
-            temperature: info.temp,
-            maxTokens: info.maxTok,
-            tools: info.tools.isEmpty ? nil : info.tools,
-            toolOverrides: info.overrides
-        )
-    }
-
-    // MARK: Request Enrichment
-
-    /// Enriched request with the effective tool list and overrides resolved separately
-    /// so the tool list can be injected per-iteration without re-enriching.
     private struct EnrichedInference {
         let request: ChatCompletionRequest
         let tools: [Tool]?
         let toolOverrides: [String: Bool]?
     }
+
+    /// Fully prepared inference state ready for the agentic loop.
+    private struct PreparedInference {
+        let enriched: EnrichedInference
+        let options: InferenceOptions
+        let engine: ChatEngine
+        let budgetManager: ContextBudgetManager?
+    }
+
+    // MARK: Request Parsing
+
+    /// Strips extension fields (`agent_address`, `max_iterations`, `"tools": true`)
+    /// that would break the Codable decoder, returning both the raw dict and clean Data.
+    private static func parseRawRequest(_ requestJSON: String) -> (json: [String: Any], sanitized: Data)? {
+        let data = Data(requestJSON.utf8)
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+
+        var clean = json
+        clean.removeValue(forKey: "agent_address")
+        clean.removeValue(forKey: "max_iterations")
+        if json["tools"] is Bool { clean.removeValue(forKey: "tools") }
+
+        guard let cleanData = try? JSONSerialization.data(withJSONObject: clean) else { return nil }
+        return (json, cleanData)
+    }
+
+    /// Shared setup for both `complete` and `completeStream`: resolves agent context,
+    /// enriches the request, creates the engine and budget manager.
+    private static func prepareInference(
+        request: ChatCompletionRequest,
+        rawJSON: [String: Any]
+    ) async -> PreparedInference {
+        let options = InferenceOptions(from: rawJSON)
+        let agentCtx = await resolveAgentContext(json: rawJSON)
+        let enriched = enrichRequest(request, context: agentCtx, options: options)
+        let engine = ChatEngine(source: .plugin)
+        let budgetMgr = await createBudgetManager(for: enriched, maxIterations: options.maxIterations)
+        return PreparedInference(enriched: enriched, options: options, engine: engine, budgetManager: budgetMgr)
+    }
+
+    // MARK: Agent Context Resolution
+
+    private static func resolveAgentContext(json: [String: Any]) async -> AgentContext? {
+        guard let address = json["agent_address"] as? String else { return nil }
+
+        let info: AgentContext? = await MainActor.run {
+            guard let agent = AgentManager.shared.agent(byAddress: address) else { return nil }
+            let mgr = AgentManager.shared
+            let id = agent.id
+            let overrides = mgr.effectiveToolOverrides(for: id)
+            let tools = ToolRegistry.shared.specs(withOverrides: overrides)
+            return AgentContext(
+                agentId: id,
+                systemPrompt: mgr.effectiveSystemPrompt(for: id),
+                model: mgr.effectiveModel(for: id),
+                temperature: mgr.effectiveTemperature(for: id),
+                maxTokens: mgr.effectiveMaxTokens(for: id),
+                tools: tools.isEmpty ? nil : tools,
+                toolOverrides: overrides
+            )
+        }
+        guard var ctx = info else { return nil }
+
+        let memoryConfig = MemoryConfigurationStore.load()
+        let memoryCtx = await MemoryContextAssembler.assembleContext(
+            agentId: ctx.agentId.uuidString,
+            config: memoryConfig
+        )
+        if !memoryCtx.isEmpty {
+            ctx = AgentContext(
+                agentId: ctx.agentId,
+                systemPrompt: memoryCtx + "\n\n" + ctx.systemPrompt,
+                model: ctx.model,
+                temperature: ctx.temperature,
+                maxTokens: ctx.maxTokens,
+                tools: ctx.tools,
+                toolOverrides: ctx.toolOverrides
+            )
+        }
+        return ctx
+    }
+
+    // MARK: Request Enrichment
 
     private static func enrichRequest(
         _ request: ChatCompletionRequest,
@@ -345,8 +371,17 @@ final class PluginHostContext: @unchecked Sendable {
         }
 
         var messages = request.messages
-        if !messages.contains(where: { $0.role == "system" }) && !ctx.systemPrompt.isEmpty {
-            messages.insert(ChatMessage(role: "system", content: ctx.systemPrompt), at: 0)
+        if !ctx.systemPrompt.isEmpty {
+            if let idx = messages.firstIndex(where: { $0.role == "system" }),
+                let existing = messages[idx].content, !existing.isEmpty
+            {
+                messages[idx] = ChatMessage(
+                    role: "system",
+                    content: ctx.systemPrompt + "\n\n" + existing
+                )
+            } else {
+                messages.insert(ChatMessage(role: "system", content: ctx.systemPrompt), at: 0)
+            }
         }
 
         let effectiveTools: [Tool]?
@@ -376,8 +411,6 @@ final class PluginHostContext: @unchecked Sendable {
         return EnrichedInference(request: enriched, tools: effectiveTools, toolOverrides: ctx.toolOverrides)
     }
 
-    /// Builds a per-iteration request by replacing the messages and tool list
-    /// while keeping all other parameters from the enriched base request.
     private static func iterationRequest(
         from base: ChatCompletionRequest,
         messages: [ChatMessage],
@@ -398,6 +431,32 @@ final class PluginHostContext: @unchecked Sendable {
             tool_choice: base.tool_choice,
             session_id: base.session_id
         )
+    }
+
+    // MARK: Context Budget
+
+    private static func createBudgetManager(
+        for inf: EnrichedInference,
+        maxIterations: Int
+    ) async -> ContextBudgetManager? {
+        guard maxIterations > 1 else { return nil }
+
+        let contextLength: Int
+        if let info = ModelInfo.load(modelId: inf.request.model), let ctx = info.model.contextLength {
+            contextLength = ctx
+        } else {
+            contextLength = await MainActor.run { ChatConfigurationStore.load().contextLength ?? 128_000 }
+        }
+        let toolTokens = await MainActor.run {
+            ToolRegistry.shared.totalEstimatedTokens(withOverrides: inf.toolOverrides)
+        }
+        let sysChars = inf.request.messages.first(where: { $0.role == "system" })?.content?.count ?? 0
+
+        var mgr = ContextBudgetManager(contextLength: contextLength)
+        mgr.reserveByCharCount(.systemPrompt, characters: sysChars)
+        mgr.reserve(.tools, tokens: toolTokens)
+        mgr.reserve(.response, tokens: inf.request.max_tokens ?? 4096)
+        return mgr
     }
 
     // MARK: Tool Execution
@@ -433,41 +492,42 @@ final class PluginHostContext: @unchecked Sendable {
 
     func complete(requestJSON: String) -> String {
         Self.blockingAsync {
-            let data = Data(requestJSON.utf8)
-            guard let request = try? JSONDecoder().decode(ChatCompletionRequest.self, from: data) else {
+            guard let (rawJSON, sanitized) = Self.parseRawRequest(requestJSON),
+                let request = try? JSONDecoder().decode(ChatCompletionRequest.self, from: sanitized)
+            else {
                 return Self.jsonString([
                     "error": "invalid_request", "message": "Failed to parse chat completion request",
                 ])
             }
 
-            let options = InferenceOptions(from: data)
-            let agentCtx = await Self.resolveAgentContext(data: data)
-            let inf = Self.enrichRequest(request, context: agentCtx, options: options)
-
-            let engine = ChatEngine(source: .plugin)
-            var messages = inf.request.messages
+            let prep = await Self.prepareInference(request: request, rawJSON: rawJSON)
+            var messages = prep.enriched.request.messages
             var toolCallsExecuted: [[String: String]] = []
 
-            for iteration in 1 ... options.maxIterations {
-                let iterReq = Self.iterationRequest(from: inf.request, messages: messages, tools: inf.tools)
+            for iteration in 1 ... prep.options.maxIterations {
+                let effective = prep.budgetManager?.trimMessages(messages) ?? messages
+                let iterReq = Self.iterationRequest(
+                    from: prep.enriched.request,
+                    messages: effective,
+                    tools: prep.enriched.tools
+                )
 
                 do {
-                    let response = try await engine.completeChat(request: iterReq)
-
+                    let response = try await prep.engine.completeChat(request: iterReq)
                     guard let choice = response.choices.first else {
                         return Self.jsonString(["error": "inference_error", "message": "No choices returned"])
                     }
 
                     if let calls = choice.message.tool_calls, !calls.isEmpty,
                         choice.finish_reason == "tool_calls",
-                        iteration < options.maxIterations
+                        iteration < prep.options.maxIterations
                     {
                         messages.append(choice.message)
                         for tc in calls {
                             let result = await Self.executeToolCall(
                                 name: tc.function.name,
                                 argumentsJSON: tc.function.arguments,
-                                overrides: inf.toolOverrides
+                                overrides: prep.enriched.toolOverrides
                             )
                             messages.append(
                                 ChatMessage(
@@ -499,7 +559,7 @@ final class PluginHostContext: @unchecked Sendable {
 
             return Self.jsonString([
                 "error": "max_iterations_reached",
-                "message": "Reached max iterations (\(options.maxIterations)) without a final response",
+                "message": "Reached max iterations (\(prep.options.maxIterations)) without a final response",
             ])
         }
     }
@@ -513,20 +573,17 @@ final class PluginHostContext: @unchecked Sendable {
     ) -> String {
         nonisolated(unsafe) let userData = userData
         return Self.blockingAsync {
-            let data = Data(requestJSON.utf8)
-            guard let request = try? JSONDecoder().decode(ChatCompletionRequest.self, from: data) else {
+            guard let (rawJSON, sanitized) = Self.parseRawRequest(requestJSON),
+                let request = try? JSONDecoder().decode(ChatCompletionRequest.self, from: sanitized)
+            else {
                 return Self.jsonString([
                     "error": "invalid_request", "message": "Failed to parse chat completion request",
                 ])
             }
 
-            let options = InferenceOptions(from: data)
-            let agentCtx = await Self.resolveAgentContext(data: data)
-            let inf = Self.enrichRequest(request, context: agentCtx, options: options)
-
-            let engine = ChatEngine(source: .plugin)
-            let completionId = "cmpl-\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(12))"
-            var messages = inf.request.messages
+            let prep = await Self.prepareInference(request: request, rawJSON: rawJSON)
+            let cid = "cmpl-\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(12))"
+            var messages = prep.enriched.request.messages
             var lastContent = ""
             var toolCallsExecuted: [[String: String]] = []
 
@@ -534,34 +591,38 @@ final class PluginHostContext: @unchecked Sendable {
                 Self.emitChunk(payload, callback: onChunk, userData: userData)
             }
 
-            for iteration in 1 ... options.maxIterations {
-                let iterReq = Self.iterationRequest(from: inf.request, messages: messages, tools: inf.tools)
+            for iteration in 1 ... prep.options.maxIterations {
+                let effective = prep.budgetManager?.trimMessages(messages) ?? messages
+                let iterReq = Self.iterationRequest(
+                    from: prep.enriched.request,
+                    messages: effective,
+                    tools: prep.enriched.tools
+                )
 
                 do {
-                    let stream = try await engine.streamChat(request: iterReq)
+                    let stream = try await prep.engine.streamChat(request: iterReq)
                     var iterContent = ""
 
                     for try await delta in stream {
                         iterContent += delta
                         lastContent += delta
-                        emit(["id": completionId, "choices": [["index": 0, "delta": ["content": delta]]]])
+                        emit(Self.chunkPayload(id: cid, delta: ["content": delta]))
                     }
 
                     if !iterContent.isEmpty {
                         messages.append(ChatMessage(role: "assistant", content: iterContent))
                     }
-                    emit(["id": completionId, "choices": [["index": 0, "delta": [:], "finish_reason": "stop"]]])
-
+                    emit(Self.chunkPayload(id: cid, delta: [:], finishReason: "stop"))
                     return Self.buildStreamResult(
-                        id: completionId,
-                        model: inf.request.model,
+                        id: cid,
+                        model: prep.enriched.request.model,
                         content: lastContent,
                         toolCallsExecuted: toolCallsExecuted
                     )
 
                 } catch let inv as ServiceToolInvocation {
-                    guard iteration < options.maxIterations else {
-                        emit(["id": completionId, "choices": [["index": 0, "delta": [:], "finish_reason": "stop"]]])
+                    guard iteration < prep.options.maxIterations else {
+                        emit(Self.chunkPayload(id: cid, delta: [:], finishReason: "stop"))
                         break
                     }
 
@@ -569,39 +630,26 @@ final class PluginHostContext: @unchecked Sendable {
                         inv.toolCallId
                         ?? "call_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(24))"
 
-                    emit([
-                        "id": completionId,
-                        "choices": [
-                            [
-                                "index": 0,
-                                "delta": [
-                                    "tool_calls": [
-                                        [
-                                            "id": callId,
-                                            "function": ["name": inv.toolName, "arguments": inv.jsonArguments],
-                                        ]
-                                    ]
-                                ],
-                                "finish_reason": "tool_calls",
-                            ]
-                        ],
-                    ])
+                    let tcDelta: [String: Any] = [
+                        "tool_calls": [
+                            ["id": callId, "function": ["name": inv.toolName, "arguments": inv.jsonArguments]]
+                        ]
+                    ]
+                    emit(Self.chunkPayload(id: cid, delta: tcDelta, finishReason: "tool_calls"))
 
                     let result = await Self.executeToolCall(
                         name: inv.toolName,
                         argumentsJSON: inv.jsonArguments,
-                        overrides: inf.toolOverrides
+                        overrides: prep.enriched.toolOverrides
                     )
-
-                    emit([
-                        "id": completionId,
-                        "choices": [
-                            [
-                                "index": 0,
-                                "delta": ["role": "tool", "tool_call_id": callId, "content": result],
+                    emit(
+                        Self.chunkPayload(
+                            id: cid,
+                            delta: [
+                                "role": "tool", "tool_call_id": callId, "content": result,
                             ]
-                        ],
-                    ])
+                        )
+                    )
 
                     toolCallsExecuted.append(["name": inv.toolName, "tool_call_id": callId])
 
@@ -636,8 +684,8 @@ final class PluginHostContext: @unchecked Sendable {
             }
 
             return Self.buildStreamResult(
-                id: completionId,
-                model: inf.request.model,
+                id: cid,
+                model: prep.enriched.request.model,
                 content: lastContent,
                 toolCallsExecuted: toolCallsExecuted
             )
@@ -658,6 +706,16 @@ final class PluginHostContext: @unchecked Sendable {
         ]
         if !toolCallsExecuted.isEmpty { result["tool_calls_executed"] = toolCallsExecuted }
         return jsonString(result)
+    }
+
+    private static func chunkPayload(
+        id: String,
+        delta: [String: Any],
+        finishReason: String? = nil
+    ) -> [String: Any] {
+        var choice: [String: Any] = ["index": 0, "delta": delta]
+        if let reason = finishReason { choice["finish_reason"] = reason }
+        return ["id": id, "choices": [choice]]
     }
 
     private static func emitChunk(
@@ -1157,21 +1215,26 @@ extension PluginHostContext {
 // MARK: - C Trampoline Functions
 
 /// These are @convention(c) functions that look up the active PluginHostContext
-/// via thread-local storage (primary), a global fallback (for plugin-spawned
-/// background threads), or `currentContext` (during init).
+/// via thread-local storage (primary), a best-effort global fallback, or
+/// `currentContext` (during init).
 ///
 /// Context resolution order in `activeContext()`:
-/// 1. Thread-local storage — set on the invokeQueue thread around each plugin call.
-/// 2. `lastDispatchedPluginId` — global fallback for background threads that
-///    plugins spawn (e.g. DispatchQueue.global().async). Safe because
-///    invokeQueue is serial, so at most one plugin handler is active at a time.
+/// 1. Thread-local storage — set per-thread around each plugin call. This is
+///    the primary and fully concurrent-safe mechanism.
+/// 2. `lastDispatchedPluginId` — best-effort global fallback for background
+///    threads that plugins spawn (e.g. DispatchQueue.global().async). Because
+///    invoke queues are per-plugin and concurrent, this value is racy when
+///    multiple plugins or handlers run simultaneously. It exists only as a
+///    convenience for simple single-plugin setups; plugins that spawn their
+///    own threads should not rely on it.
 /// 3. `currentContext` — temporary fallback used only during plugin init.
 extension PluginHostContext {
     /// Thread-local storage for the active plugin ID during C callback dispatch
     private static let tlsKey: String = "ai.osaurus.plugin.active"
 
-    /// Fallback for plugin-spawned background threads that don't have TLS set.
-    /// Safe because invokeQueue is serial — at most one plugin handler runs at a time.
+    /// Best-effort fallback for plugin-spawned background threads that don't
+    /// have TLS set. Racy under concurrent execution — TLS (option 1) is the
+    /// authoritative mechanism.
     nonisolated(unsafe) static var lastDispatchedPluginId: String?
 
     static func setActivePlugin(_ pluginId: String) {

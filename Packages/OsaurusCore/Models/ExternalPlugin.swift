@@ -368,13 +368,11 @@ final class ExternalPlugin: @unchecked Sendable {
     private let ctx: osr_plugin_ctx_t
     private var isShutDown = false
 
-    /// Dedicated queue for plugin C ABI calls. Uses `.userInitiated` QoS to
-    /// match the caller's priority and avoid priority inversions when the
-    /// cooperative thread pool waits on the blocking C invocation.
-    private static let invokeQueue = DispatchQueue(
-        label: "com.osaurus.plugin.invoke",
-        qos: .userInitiated
-    )
+    /// Per-plugin concurrent queue for C ABI calls. Each plugin gets its own
+    /// queue so that long-running operations (e.g. agentic inference) in one
+    /// plugin don't block other plugins or additional requests to the same plugin.
+    /// Concurrent (not serial) so multiple route handlers can run in parallel.
+    private let invokeQueue: DispatchQueue
 
     init(
         handle: UnsafeMutableRawPointer,
@@ -391,6 +389,11 @@ final class ExternalPlugin: @unchecked Sendable {
         self.bundlePath = path
         self.id = manifest.plugin_id
         self.abiVersion = abiVersion
+        self.invokeQueue = DispatchQueue(
+            label: "com.osaurus.plugin.invoke.\(manifest.plugin_id)",
+            qos: .userInitiated,
+            attributes: .concurrent
+        )
     }
 
     var hasRouteHandler: Bool { abiVersion >= 2 && api.handle_route != nil }
@@ -398,10 +401,11 @@ final class ExternalPlugin: @unchecked Sendable {
 
     /// Tears down the plugin context. Must be called before `dlclose`
     /// since the function pointer is invalid once the dylib is unloaded.
+    /// Uses a barrier to drain all in-flight concurrent work before destroying.
     func shutdown() {
         guard !isShutDown else { return }
         isShutDown = true
-        ExternalPlugin.invokeQueue.sync {
+        invokeQueue.sync(flags: .barrier) {
             self.api.destroy?(self.ctx)
         }
     }
@@ -418,7 +422,7 @@ final class ExternalPlugin: @unchecked Sendable {
         let pluginId = self.id
 
         return try await withCheckedThrowingContinuation { continuation in
-            ExternalPlugin.invokeQueue.async { [self] in
+            self.invokeQueue.async { [self] in
                 guard !self.isShutDown else {
                     continuation.resume(
                         throwing: NSError(
@@ -496,7 +500,7 @@ final class ExternalPlugin: @unchecked Sendable {
         nonisolated(unsafe) let ctx = self.ctx
         let pluginId = self.id
 
-        ExternalPlugin.invokeQueue.async { [self] in
+        invokeQueue.async { [self] in
             guard !self.isShutDown else { return }
             PluginHostContext.setActivePlugin(pluginId)
             defer { PluginHostContext.clearActivePlugin() }
@@ -518,7 +522,7 @@ final class ExternalPlugin: @unchecked Sendable {
         let pluginId = self.id
         let rawType = eventType.rawValue
 
-        ExternalPlugin.invokeQueue.async { [self] in
+        invokeQueue.async { [self] in
             guard !self.isShutDown else { return }
             PluginHostContext.setActivePlugin(pluginId)
             defer { PluginHostContext.clearActivePlugin() }
