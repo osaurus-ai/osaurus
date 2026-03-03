@@ -737,7 +737,6 @@ public final class WorkSession: ObservableObject {
             failedIssue = result.issue
         }
 
-        // Store artifact if present
         if let artifact = result.artifact {
             addArtifact(artifact, isFinal: true)
         }

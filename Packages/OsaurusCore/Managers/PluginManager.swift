@@ -112,9 +112,11 @@ final class PluginManager {
                 }
 
                 // Tear down v2 host context (closes DB, removes from registry)
-                PluginHostContext.contexts[loaded.plugin.id]?.teardown()
+                PluginHostContext.getContext(for: loaded.plugin.id)?.teardown()
 
-                // dlclose happens here
+                // Destroy plugin context before unloading dylib
+                loaded.plugin.shutdown()
+
                 dlclose(loaded.handle)
                 loadedPluginPaths.remove(loaded.plugin.bundlePath)
                 removedSomething = true
@@ -271,9 +273,11 @@ final class PluginManager {
             }
 
             PluginHostContext.currentContext = ctx
+            PluginHostContext.setActivePlugin(preliminaryId)
             let hostAPIPtr = ctx.buildHostAPI()
             let entryFn = unsafeBitCast(v2sym, to: osr_plugin_entry_v2_t.self)
             let apiRawPtr = entryFn(UnsafeRawPointer(hostAPIPtr))
+            PluginHostContext.clearActivePlugin()
             PluginHostContext.currentContext = nil
 
             guard let apiRawPtr else {
@@ -289,7 +293,7 @@ final class PluginManager {
             abiVersion = max(api.version, 2)
             hostContext = ctx
 
-            PluginHostContext.contexts[preliminaryId] = ctx
+            PluginHostContext.setContext(ctx, for: preliminaryId)
             print("[Osaurus] Loaded v2 plugin from \(url.lastPathComponent)")
         } else if let v1sym = dlsym(handle, "osaurus_plugin_entry") {
             // v1 path: no host API
@@ -320,8 +324,14 @@ final class PluginManager {
             return .failure(PluginLoadError(message: errorMsg))
         }
 
-        PluginHostContext.currentContext = hostContext
-        defer { PluginHostContext.currentContext = nil }
+        if let hostContext {
+            PluginHostContext.currentContext = hostContext
+            PluginHostContext.setActivePlugin(hostContext.pluginId)
+        }
+        defer {
+            PluginHostContext.clearActivePlugin()
+            PluginHostContext.currentContext = nil
+        }
         let ctx = initFn()
 
         guard let ctx else {
@@ -359,8 +369,7 @@ final class PluginManager {
         // If the manifest plugin_id differs from the directory-derived ID,
         // re-register the host context under the canonical ID.
         if let hc = hostContext, manifest.plugin_id != hc.pluginId {
-            PluginHostContext.contexts.removeValue(forKey: hc.pluginId)
-            PluginHostContext.contexts[manifest.plugin_id] = hc
+            PluginHostContext.rekeyContext(from: hc.pluginId, to: manifest.plugin_id)
         }
 
         let plugin = ExternalPlugin(

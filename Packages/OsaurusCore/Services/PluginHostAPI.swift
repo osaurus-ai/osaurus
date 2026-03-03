@@ -19,12 +19,36 @@ extension Notification.Name {
 /// Registered in a global dictionary keyed by plugin ID so that
 /// @convention(c) trampolines can look up the right context.
 final class PluginHostContext: @unchecked Sendable {
-    /// Global registry of active host contexts. Accessed only from PluginManager's loading path.
-    nonisolated(unsafe) static var contexts: [String: PluginHostContext] = [:]
 
-    /// The currently active context for C trampoline dispatch.
-    /// Set before calling the plugin entry point and cleared after.
+    // MARK: - Context Registry (thread-safe)
+
+    private nonisolated(unsafe) static var contexts: [String: PluginHostContext] = [:]
+    private static let contextsLock = NSLock()
+
+    static func getContext(for pluginId: String) -> PluginHostContext? {
+        contextsLock.withLock { contexts[pluginId] }
+    }
+
+    static func setContext(_ ctx: PluginHostContext, for pluginId: String) {
+        contextsLock.withLock { contexts[pluginId] = ctx }
+    }
+
+    static func removeContext(for pluginId: String) {
+        contextsLock.withLock { _ = contexts.removeValue(forKey: pluginId) }
+    }
+
+    static func rekeyContext(from oldId: String, to newId: String) {
+        contextsLock.withLock {
+            if let ctx = contexts.removeValue(forKey: oldId) {
+                contexts[newId] = ctx
+            }
+        }
+    }
+
+    /// Temporary fallback used only during plugin init.
     nonisolated(unsafe) static var currentContext: PluginHostContext?
+
+    // MARK: - Instance Properties
 
     let pluginId: String
     let database: PluginDatabase
@@ -213,29 +237,274 @@ final class PluginHostContext: @unchecked Sendable {
 
     // MARK: - Inference Callbacks
 
+    private static let toolExecutionTimeout: UInt64 = 120
+    private static let defaultMaxIterations = 1
+    private static let maxIterationsCap = 30
+
+    // MARK: Agent Context
+
+    private struct AgentContext {
+        let agentId: UUID
+        let systemPrompt: String
+        let model: String?
+        let temperature: Float?
+        let maxTokens: Int?
+        let tools: [Tool]?
+        let toolOverrides: [String: Bool]?
+    }
+
+    /// Extra fields parsed from the raw request JSON that live outside the
+    /// standard `ChatCompletionRequest` Codable surface.
+    private struct InferenceOptions {
+        let maxIterations: Int
+        let wantsAgentTools: Bool
+
+        init(from data: Data) {
+            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                self.maxIterations = defaultMaxIterations
+                self.wantsAgentTools = false
+                return
+            }
+            let raw = json["max_iterations"] as? Int ?? defaultMaxIterations
+            self.maxIterations = max(1, min(raw, maxIterationsCap))
+            self.wantsAgentTools = json["tools"] as? Bool == true
+        }
+    }
+
+    /// Resolves full agent context from `agent_address`.
+    /// Returns nil when the field is absent or the agent cannot be found.
+    private static func resolveAgentContext(data: Data) async -> AgentContext? {
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let address = json["agent_address"] as? String
+        else { return nil }
+
+        let agentInfo:
+            (
+                id: UUID, basePrompt: String, model: String?, temp: Float?,
+                maxTok: Int?, tools: [Tool], overrides: [String: Bool]?
+            )? = await MainActor.run {
+                guard let agent = AgentManager.shared.agent(byAddress: address) else { return nil }
+                let mgr = AgentManager.shared
+                let aid = agent.id
+                let overrides = mgr.effectiveToolOverrides(for: aid)
+                return (
+                    id: aid,
+                    basePrompt: mgr.effectiveSystemPrompt(for: aid),
+                    model: mgr.effectiveModel(for: aid),
+                    temp: mgr.effectiveTemperature(for: aid),
+                    maxTok: mgr.effectiveMaxTokens(for: aid),
+                    tools: ToolRegistry.shared.specs(withOverrides: overrides),
+                    overrides: overrides
+                )
+            }
+        guard let info = agentInfo else { return nil }
+
+        let memoryConfig = MemoryConfigurationStore.load()
+        let memoryCtx = await MemoryContextAssembler.assembleContext(
+            agentId: info.id.uuidString,
+            config: memoryConfig
+        )
+        let systemPrompt = memoryCtx.isEmpty ? info.basePrompt : memoryCtx + "\n\n" + info.basePrompt
+
+        return AgentContext(
+            agentId: info.id,
+            systemPrompt: systemPrompt,
+            model: info.model,
+            temperature: info.temp,
+            maxTokens: info.maxTok,
+            tools: info.tools.isEmpty ? nil : info.tools,
+            toolOverrides: info.overrides
+        )
+    }
+
+    // MARK: Request Enrichment
+
+    /// Enriched request with the effective tool list and overrides resolved separately
+    /// so the tool list can be injected per-iteration without re-enriching.
+    private struct EnrichedInference {
+        let request: ChatCompletionRequest
+        let tools: [Tool]?
+        let toolOverrides: [String: Bool]?
+    }
+
+    private static func enrichRequest(
+        _ request: ChatCompletionRequest,
+        context: AgentContext?,
+        options: InferenceOptions
+    ) -> EnrichedInference {
+        guard let ctx = context else {
+            return EnrichedInference(request: request, tools: request.tools, toolOverrides: nil)
+        }
+
+        var model = request.model
+        let trimmed = model.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty || trimmed.caseInsensitiveCompare("default") == .orderedSame,
+            let agentModel = ctx.model, !agentModel.isEmpty
+        {
+            model = agentModel
+        }
+
+        var messages = request.messages
+        if !messages.contains(where: { $0.role == "system" }) && !ctx.systemPrompt.isEmpty {
+            messages.insert(ChatMessage(role: "system", content: ctx.systemPrompt), at: 0)
+        }
+
+        let effectiveTools: [Tool]?
+        if let explicit = request.tools, !explicit.isEmpty {
+            effectiveTools = explicit
+        } else if options.wantsAgentTools {
+            effectiveTools = ctx.tools
+        } else {
+            effectiveTools = nil
+        }
+
+        let enriched = ChatCompletionRequest(
+            model: model,
+            messages: messages,
+            temperature: request.temperature ?? ctx.temperature,
+            max_tokens: request.max_tokens ?? ctx.maxTokens,
+            stream: request.stream,
+            top_p: request.top_p,
+            frequency_penalty: request.frequency_penalty,
+            presence_penalty: request.presence_penalty,
+            stop: request.stop,
+            n: request.n,
+            tools: effectiveTools,
+            tool_choice: request.tool_choice,
+            session_id: request.session_id
+        )
+        return EnrichedInference(request: enriched, tools: effectiveTools, toolOverrides: ctx.toolOverrides)
+    }
+
+    /// Builds a per-iteration request by replacing the messages and tool list
+    /// while keeping all other parameters from the enriched base request.
+    private static func iterationRequest(
+        from base: ChatCompletionRequest,
+        messages: [ChatMessage],
+        tools: [Tool]?
+    ) -> ChatCompletionRequest {
+        ChatCompletionRequest(
+            model: base.model,
+            messages: messages,
+            temperature: base.temperature,
+            max_tokens: base.max_tokens,
+            stream: nil,
+            top_p: base.top_p,
+            frequency_penalty: base.frequency_penalty,
+            presence_penalty: base.presence_penalty,
+            stop: base.stop,
+            n: base.n,
+            tools: tools,
+            tool_choice: base.tool_choice,
+            session_id: base.session_id
+        )
+    }
+
+    // MARK: Tool Execution
+
+    private static func executeToolCall(
+        name: String,
+        argumentsJSON: String,
+        overrides: [String: Bool]?
+    ) async -> String {
+        await withTaskGroup(of: String?.self) { group in
+            group.addTask {
+                do {
+                    return try await ToolRegistry.shared.execute(
+                        name: name,
+                        argumentsJSON: argumentsJSON,
+                        overrides: overrides
+                    )
+                } catch {
+                    return "[REJECTED] \(error.localizedDescription)"
+                }
+            }
+            group.addTask {
+                try? await Task.sleep(nanoseconds: toolExecutionTimeout * 1_000_000_000)
+                return nil
+            }
+            let first = await group.next()!
+            group.cancelAll()
+            return first ?? "[TIMEOUT] Tool '\(name)' did not complete within \(toolExecutionTimeout)s."
+        }
+    }
+
+    // MARK: complete (non-streaming)
+
     func complete(requestJSON: String) -> String {
         Self.blockingAsync {
             let data = Data(requestJSON.utf8)
-            guard var request = try? JSONDecoder().decode(ChatCompletionRequest.self, from: data) else {
+            guard let request = try? JSONDecoder().decode(ChatCompletionRequest.self, from: data) else {
                 return Self.jsonString([
                     "error": "invalid_request", "message": "Failed to parse chat completion request",
                 ])
             }
 
-            request = await Self.resolveAgentModel(request: request, data: data)
+            let options = InferenceOptions(from: data)
+            let agentCtx = await Self.resolveAgentContext(data: data)
+            let inf = Self.enrichRequest(request, context: agentCtx, options: options)
 
-            let engine = ChatEngine(source: .httpAPI)
-            do {
-                let response = try await engine.completeChat(request: request)
-                guard let encoded = try? JSONEncoder().encode(response) else {
-                    return Self.jsonString(["error": "serialization_error", "message": "Failed to serialize response"])
+            let engine = ChatEngine(source: .plugin)
+            var messages = inf.request.messages
+            var toolCallsExecuted: [[String: String]] = []
+
+            for iteration in 1 ... options.maxIterations {
+                let iterReq = Self.iterationRequest(from: inf.request, messages: messages, tools: inf.tools)
+
+                do {
+                    let response = try await engine.completeChat(request: iterReq)
+
+                    guard let choice = response.choices.first else {
+                        return Self.jsonString(["error": "inference_error", "message": "No choices returned"])
+                    }
+
+                    if let calls = choice.message.tool_calls, !calls.isEmpty,
+                        choice.finish_reason == "tool_calls",
+                        iteration < options.maxIterations
+                    {
+                        messages.append(choice.message)
+                        for tc in calls {
+                            let result = await Self.executeToolCall(
+                                name: tc.function.name,
+                                argumentsJSON: tc.function.arguments,
+                                overrides: inf.toolOverrides
+                            )
+                            messages.append(
+                                ChatMessage(
+                                    role: "tool",
+                                    content: result,
+                                    tool_calls: nil,
+                                    tool_call_id: tc.id
+                                )
+                            )
+                            toolCallsExecuted.append(["name": tc.function.name, "tool_call_id": tc.id])
+                        }
+                        continue
+                    }
+
+                    guard let encoded = try? JSONEncoder().encode(response),
+                        var json = (try? JSONSerialization.jsonObject(with: encoded)) as? [String: Any]
+                    else {
+                        return Self.jsonString([
+                            "error": "serialization_error", "message": "Failed to serialize response",
+                        ])
+                    }
+                    if !toolCallsExecuted.isEmpty { json["tool_calls_executed"] = toolCallsExecuted }
+                    return Self.jsonString(json)
+
+                } catch {
+                    return Self.jsonString(["error": "inference_error", "message": error.localizedDescription])
                 }
-                return String(decoding: encoded, as: UTF8.self)
-            } catch {
-                return Self.jsonString(["error": "inference_error", "message": error.localizedDescription])
             }
+
+            return Self.jsonString([
+                "error": "max_iterations_reached",
+                "message": "Reached max iterations (\(options.maxIterations)) without a final response",
+            ])
         }
     }
+
+    // MARK: complete_stream (streaming)
 
     func completeStream(
         requestJSON: String,
@@ -245,71 +514,150 @@ final class PluginHostContext: @unchecked Sendable {
         nonisolated(unsafe) let userData = userData
         return Self.blockingAsync {
             let data = Data(requestJSON.utf8)
-            guard var request = try? JSONDecoder().decode(ChatCompletionRequest.self, from: data) else {
+            guard let request = try? JSONDecoder().decode(ChatCompletionRequest.self, from: data) else {
                 return Self.jsonString([
                     "error": "invalid_request", "message": "Failed to parse chat completion request",
                 ])
             }
 
-            request = await Self.resolveAgentModel(request: request, data: data)
+            let options = InferenceOptions(from: data)
+            let agentCtx = await Self.resolveAgentContext(data: data)
+            let inf = Self.enrichRequest(request, context: agentCtx, options: options)
 
-            let engine = ChatEngine(source: .httpAPI)
-            do {
-                let stream = try await engine.streamChat(request: request)
-                let completionId = "cmpl-\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(12))"
-                var fullContent = ""
+            let engine = ChatEngine(source: .plugin)
+            let completionId = "cmpl-\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(12))"
+            var messages = inf.request.messages
+            var lastContent = ""
+            var toolCallsExecuted: [[String: String]] = []
 
-                for try await delta in stream {
-                    fullContent += delta
-                    Self.emitChunk(
-                        ["id": completionId, "choices": [["index": 0, "delta": ["content": delta]]]],
-                        callback: onChunk,
-                        userData: userData
-                    )
-                }
-
-                Self.emitChunk(
-                    ["id": completionId, "choices": [["index": 0, "delta": [:], "finish_reason": "stop"]]],
-                    callback: onChunk,
-                    userData: userData
-                )
-
-                return Self.jsonString([
-                    "id": completionId,
-                    "model": request.model,
-                    "choices": [
-                        [
-                            "index": 0, "message": ["role": "assistant", "content": fullContent],
-                            "finish_reason": "stop",
-                        ]
-                    ],
-                ])
-            } catch {
-                return Self.jsonString(["error": "inference_error", "message": error.localizedDescription])
+            let emit: ([String: Any]) -> Void = { payload in
+                Self.emitChunk(payload, callback: onChunk, userData: userData)
             }
+
+            for iteration in 1 ... options.maxIterations {
+                let iterReq = Self.iterationRequest(from: inf.request, messages: messages, tools: inf.tools)
+
+                do {
+                    let stream = try await engine.streamChat(request: iterReq)
+                    var iterContent = ""
+
+                    for try await delta in stream {
+                        iterContent += delta
+                        lastContent += delta
+                        emit(["id": completionId, "choices": [["index": 0, "delta": ["content": delta]]]])
+                    }
+
+                    if !iterContent.isEmpty {
+                        messages.append(ChatMessage(role: "assistant", content: iterContent))
+                    }
+                    emit(["id": completionId, "choices": [["index": 0, "delta": [:], "finish_reason": "stop"]]])
+
+                    return Self.buildStreamResult(
+                        id: completionId,
+                        model: inf.request.model,
+                        content: lastContent,
+                        toolCallsExecuted: toolCallsExecuted
+                    )
+
+                } catch let inv as ServiceToolInvocation {
+                    guard iteration < options.maxIterations else {
+                        emit(["id": completionId, "choices": [["index": 0, "delta": [:], "finish_reason": "stop"]]])
+                        break
+                    }
+
+                    let callId =
+                        inv.toolCallId
+                        ?? "call_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(24))"
+
+                    emit([
+                        "id": completionId,
+                        "choices": [
+                            [
+                                "index": 0,
+                                "delta": [
+                                    "tool_calls": [
+                                        [
+                                            "id": callId,
+                                            "function": ["name": inv.toolName, "arguments": inv.jsonArguments],
+                                        ]
+                                    ]
+                                ],
+                                "finish_reason": "tool_calls",
+                            ]
+                        ],
+                    ])
+
+                    let result = await Self.executeToolCall(
+                        name: inv.toolName,
+                        argumentsJSON: inv.jsonArguments,
+                        overrides: inf.toolOverrides
+                    )
+
+                    emit([
+                        "id": completionId,
+                        "choices": [
+                            [
+                                "index": 0,
+                                "delta": ["role": "tool", "tool_call_id": callId, "content": result],
+                            ]
+                        ],
+                    ])
+
+                    toolCallsExecuted.append(["name": inv.toolName, "tool_call_id": callId])
+
+                    let toolCall = ToolCall(
+                        id: callId,
+                        type: "function",
+                        function: ToolCallFunction(name: inv.toolName, arguments: inv.jsonArguments),
+                        geminiThoughtSignature: inv.geminiThoughtSignature
+                    )
+                    messages.append(
+                        ChatMessage(
+                            role: "assistant",
+                            content: lastContent.isEmpty ? nil : lastContent,
+                            tool_calls: [toolCall],
+                            tool_call_id: nil
+                        )
+                    )
+                    messages.append(
+                        ChatMessage(
+                            role: "tool",
+                            content: result,
+                            tool_calls: nil,
+                            tool_call_id: callId
+                        )
+                    )
+                    lastContent = ""
+                    continue
+
+                } catch {
+                    return Self.jsonString(["error": "inference_error", "message": error.localizedDescription])
+                }
+            }
+
+            return Self.buildStreamResult(
+                id: completionId,
+                model: inf.request.model,
+                content: lastContent,
+                toolCallsExecuted: toolCallsExecuted
+            )
         }
     }
 
-    /// When the requested model is empty/default and an `agent_address` is present in the
-    /// raw JSON, resolve the agent's configured model and substitute it into the request.
-    private static func resolveAgentModel(
-        request: ChatCompletionRequest,
-        data: Data
-    ) async -> ChatCompletionRequest {
-        let trimmed = request.model.trimmingCharacters(in: .whitespacesAndNewlines)
-        let isDefault = trimmed.isEmpty || trimmed.caseInsensitiveCompare("default") == .orderedSame
-        guard isDefault else { return request }
+    // MARK: Inference Helpers
 
-        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let address = json["agent_address"] as? String
-        else { return request }
-
-        let resolved = await MainActor.run {
-            guard let agent = AgentManager.shared.agent(byAddress: address) else { return nil as String? }
-            return AgentManager.shared.effectiveModel(for: agent.id)
-        }
-        guard let resolved, !resolved.isEmpty else { return request }
-        return request.withModel(resolved)
+    private static func buildStreamResult(
+        id: String,
+        model: String,
+        content: String,
+        toolCallsExecuted: [[String: String]]
+    ) -> String {
+        var result: [String: Any] = [
+            "id": id, "model": model,
+            "choices": [["index": 0, "message": ["role": "assistant", "content": content], "finish_reason": "stop"]],
+        ]
+        if !toolCallsExecuted.isEmpty { result["tool_calls_executed"] = toolCallsExecuted }
+        return jsonString(result)
     }
 
     private static func emitChunk(
@@ -568,7 +916,7 @@ final class PluginHostContext: @unchecked Sendable {
 
     /// Removes this context from the global registry and closes the database.
     func teardown() {
-        PluginHostContext.contexts.removeValue(forKey: pluginId)
+        PluginHostContext.removeContext(for: pluginId)
         database.close()
     }
 }
@@ -837,10 +1185,10 @@ extension PluginHostContext {
 
     private static func activeContext() -> PluginHostContext? {
         if let pluginId = Thread.current.threadDictionary[tlsKey] as? String {
-            return contexts[pluginId]
+            return getContext(for: pluginId)
         }
         if let pluginId = lastDispatchedPluginId {
-            return contexts[pluginId]
+            return getContext(for: pluginId)
         }
         return currentContext
     }

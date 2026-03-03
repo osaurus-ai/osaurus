@@ -366,6 +366,7 @@ final class ExternalPlugin: @unchecked Sendable {
     private let handle: UnsafeMutableRawPointer
     private let api: osr_plugin_api
     private let ctx: osr_plugin_ctx_t
+    private var isShutDown = false
 
     /// Dedicated queue for plugin C ABI calls. Uses `.userInitiated` QoS to
     /// match the caller's priority and avoid priority inversions when the
@@ -395,8 +396,14 @@ final class ExternalPlugin: @unchecked Sendable {
     var hasRouteHandler: Bool { abiVersion >= 2 && api.handle_route != nil }
     var hasTaskEventHandler: Bool { abiVersion >= 2 && api.on_task_event != nil }
 
-    deinit {
-        api.destroy?(ctx)
+    /// Tears down the plugin context. Must be called before `dlclose`
+    /// since the function pointer is invalid once the dylib is unloaded.
+    func shutdown() {
+        guard !isShutDown else { return }
+        isShutDown = true
+        ExternalPlugin.invokeQueue.sync {
+            self.api.destroy?(self.ctx)
+        }
     }
 
     /// Dispatches a blocking C ABI call on `invokeQueue` and returns the resulting string.
@@ -412,6 +419,16 @@ final class ExternalPlugin: @unchecked Sendable {
 
         return try await withCheckedThrowingContinuation { continuation in
             ExternalPlugin.invokeQueue.async { [self] in
+                guard !self.isShutDown else {
+                    continuation.resume(
+                        throwing: NSError(
+                            domain: "ExternalPlugin",
+                            code: errorCode,
+                            userInfo: [NSLocalizedDescriptionKey: "Plugin has been shut down"]
+                        )
+                    )
+                    return
+                }
                 PluginHostContext.setActivePlugin(pluginId)
                 defer { PluginHostContext.clearActivePlugin() }
 
@@ -471,17 +488,24 @@ final class ExternalPlugin: @unchecked Sendable {
     }
 
     func notifyConfigChanged(key: String, value: String) {
-        guard abiVersion >= 2, let configFn = api.on_config_changed else { return }
+        notifyConfigBatch([(key: key, value: value)])
+    }
+
+    func notifyConfigBatch(_ changes: [(key: String, value: String)]) {
+        guard abiVersion >= 2, let configFn = api.on_config_changed, !changes.isEmpty else { return }
         nonisolated(unsafe) let ctx = self.ctx
         let pluginId = self.id
 
         ExternalPlugin.invokeQueue.async { [self] in
+            guard !self.isShutDown else { return }
             PluginHostContext.setActivePlugin(pluginId)
             defer { PluginHostContext.clearActivePlugin() }
 
-            key.withCString { keyPtr in
-                value.withCString { valuePtr in
-                    configFn(ctx, keyPtr, valuePtr)
+            for (key, value) in changes {
+                key.withCString { keyPtr in
+                    value.withCString { valuePtr in
+                        configFn(ctx, keyPtr, valuePtr)
+                    }
                 }
             }
             withExtendedLifetime(self) {}
@@ -495,6 +519,7 @@ final class ExternalPlugin: @unchecked Sendable {
         let rawType = eventType.rawValue
 
         ExternalPlugin.invokeQueue.async { [self] in
+            guard !self.isShutDown else { return }
             PluginHostContext.setActivePlugin(pluginId)
             defer { PluginHostContext.clearActivePlugin() }
 

@@ -468,7 +468,6 @@ struct NotchView: View {
 
             notchActionButton(task.mode == .chat ? "View Chat" : "View Details") {
                 BackgroundTaskManager.shared.openTaskWindow(task.id)
-                BackgroundTaskManager.shared.finalizeTask(task.id)
             }
         }
     }
