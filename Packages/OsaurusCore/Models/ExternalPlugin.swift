@@ -366,6 +366,7 @@ final class ExternalPlugin: @unchecked Sendable {
     private let handle: UnsafeMutableRawPointer
     private let api: osr_plugin_api
     private let ctx: osr_plugin_ctx_t
+    private var isShutDown = false
 
     /// Dedicated queue for plugin C ABI calls. Uses `.userInitiated` QoS to
     /// match the caller's priority and avoid priority inversions when the
@@ -395,7 +396,11 @@ final class ExternalPlugin: @unchecked Sendable {
     var hasRouteHandler: Bool { abiVersion >= 2 && api.handle_route != nil }
     var hasTaskEventHandler: Bool { abiVersion >= 2 && api.on_task_event != nil }
 
-    deinit {
+    /// Tears down the plugin context. Must be called before `dlclose`
+    /// since the function pointer is invalid once the dylib is unloaded.
+    func shutdown() {
+        guard !isShutDown else { return }
+        isShutDown = true
         api.destroy?(ctx)
     }
 

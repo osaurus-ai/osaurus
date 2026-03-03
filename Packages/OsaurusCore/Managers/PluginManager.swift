@@ -114,7 +114,9 @@ final class PluginManager {
                 // Tear down v2 host context (closes DB, removes from registry)
                 PluginHostContext.getContext(for: loaded.plugin.id)?.teardown()
 
-                // dlclose happens here
+                // Destroy plugin context before unloading dylib
+                loaded.plugin.shutdown()
+
                 dlclose(loaded.handle)
                 loadedPluginPaths.remove(loaded.plugin.bundlePath)
                 removedSomething = true
