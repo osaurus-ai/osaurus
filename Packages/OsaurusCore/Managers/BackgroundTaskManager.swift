@@ -131,6 +131,14 @@ public final class BackgroundTaskManager: ObservableObject {
     public func finalizeTask(_ backgroundId: UUID) {
         guard let state = backgroundTasks[backgroundId] else { return }
 
+        // Flush any held plugin events before removing the task.
+        dispatchHoldTasks.remove(backgroundId)
+        if let events = heldTaskEvents.removeValue(forKey: backgroundId) {
+            for event in events {
+                emitPluginEvent(state, type: event.type, json: event.json)
+            }
+        }
+
         resumeCompletion(for: backgroundId, result: .cancelled)
         cancelAutoFinalize(backgroundId)
 
@@ -380,6 +388,8 @@ public final class BackgroundTaskManager: ObservableObject {
 
     /// Release held events after the dispatch() C call has returned to the
     /// plugin. Flushes all buffered events in order via `emitPluginEvent`.
+    /// If the task already completed while events were held, schedule
+    /// auto-finalize so the toast is eventually cleaned up.
     func releaseEventsForDispatch(taskId: UUID) {
         dispatchHoldTasks.remove(taskId)
         if let events = heldTaskEvents.removeValue(forKey: taskId),
@@ -387,6 +397,9 @@ public final class BackgroundTaskManager: ObservableObject {
         {
             for event in events {
                 emitPluginEvent(state, type: event.type, json: event.json)
+            }
+            if !state.status.isActive {
+                scheduleAutoFinalize(taskId)
             }
         }
     }
@@ -402,6 +415,7 @@ public final class BackgroundTaskManager: ObservableObject {
             try? await Task.sleep(nanoseconds: 15_000_000_000)
             guard !Task.isCancelled else { return }
             guard let state = backgroundTasks[taskId], !state.status.isActive else { return }
+            guard !dispatchHoldTasks.contains(taskId) else { return }
             finalizeTask(taskId)
         }
     }
@@ -485,12 +499,15 @@ public final class BackgroundTaskManager: ObservableObject {
             .sink { [weak self] _ in self?.viewUpdateSubject.send() }
             .store(in: &cancellables)
 
-        // Streaming state drives running/completed transitions
-        session.$isStreaming
-            .sink { [weak self] isStreaming in
-                self?.handleChatStreamingChange(taskId: taskId, isStreaming: isStreaming)
-            }
-            .store(in: &cancellables)
+        // Streaming state + error drive running/completed/failed transitions.
+        Publishers.CombineLatest(
+            session.$isStreaming,
+            session.$lastStreamError
+        )
+        .sink { [weak self] isStreaming, lastError in
+            self?.handleChatStreamingChange(taskId: taskId, isStreaming: isStreaming, lastError: lastError)
+        }
+        .store(in: &cancellables)
 
         // Observe turn count changes for tool call activity.
         // Map to count + removeDuplicates avoids processing when only content within
@@ -506,14 +523,18 @@ public final class BackgroundTaskManager: ObservableObject {
         taskObservers[taskId] = cancellables
     }
 
-    private func handleChatStreamingChange(taskId: UUID, isStreaming: Bool) {
+    private func handleChatStreamingChange(taskId: UUID, isStreaming: Bool, lastError: String?) {
         guard let state = backgroundTasks[taskId] else { return }
 
         if isStreaming {
             state.status = .running
             state.currentStep = "Running..."
         } else if state.status == .running {
-            markCompleted(state, success: true, summary: "Chat completed")
+            if let lastError {
+                markCompleted(state, success: false, summary: lastError)
+            } else {
+                markCompleted(state, success: true, summary: "Chat completed")
+            }
         }
     }
 
@@ -621,8 +642,12 @@ public final class BackgroundTaskManager: ObservableObject {
         let wasClarifying = state.status == .awaitingClarification
         state.pendingClarification = clarification
 
-        if task?.status == .cancelled {
+        if task?.status == .cancelled, state.status != .cancelled {
             state.status = .cancelled
+            resumeCompletion(for: taskId, result: .cancelled)
+            emitPluginEvent(state, type: .cancelled, json: PluginHostContext.serializeCancelledEvent())
+            lastProgressEmit.removeValue(forKey: taskId)
+            scheduleAutoFinalize(taskId)
         } else if let clarification {
             state.status = .awaitingClarification
             if !wasClarifying {

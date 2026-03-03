@@ -741,6 +741,9 @@ extension PluginHostContext {
         if let options = clarification.options, !options.isEmpty {
             dict["options"] = options
         }
+        if let context = clarification.context, !context.isEmpty {
+            dict["context"] = context
+        }
         return jsonString(dict)
     }
 
@@ -802,18 +805,26 @@ extension PluginHostContext {
 // MARK: - C Trampoline Functions
 
 /// These are @convention(c) functions that look up the active PluginHostContext
-/// via the global `currentContext` (during init) or per-plugin registry (at runtime).
+/// via thread-local storage (primary), a global fallback (for plugin-spawned
+/// background threads), or `currentContext` (during init).
 ///
-/// Since the osr_host_api callbacks are called from the plugin within its own
-/// execution context, we use a thread-local to identify which plugin is calling.
-/// The plugin ID is stored in thread-local storage when the plugin's invoke/route
-/// handler is dispatched.
+/// Context resolution order in `activeContext()`:
+/// 1. Thread-local storage — set on the invokeQueue thread around each plugin call.
+/// 2. `lastDispatchedPluginId` — global fallback for background threads that
+///    plugins spawn (e.g. DispatchQueue.global().async). Safe because
+///    invokeQueue is serial, so at most one plugin handler is active at a time.
+/// 3. `currentContext` — temporary fallback used only during plugin init.
 extension PluginHostContext {
     /// Thread-local storage for the active plugin ID during C callback dispatch
     private static let tlsKey: String = "ai.osaurus.plugin.active"
 
+    /// Fallback for plugin-spawned background threads that don't have TLS set.
+    /// Safe because invokeQueue is serial — at most one plugin handler runs at a time.
+    nonisolated(unsafe) static var lastDispatchedPluginId: String?
+
     static func setActivePlugin(_ pluginId: String) {
         Thread.current.threadDictionary[tlsKey] = pluginId
+        lastDispatchedPluginId = pluginId
     }
 
     static func clearActivePlugin() {
@@ -822,6 +833,9 @@ extension PluginHostContext {
 
     private static func activeContext() -> PluginHostContext? {
         if let pluginId = Thread.current.threadDictionary[tlsKey] as? String {
+            return contexts[pluginId]
+        }
+        if let pluginId = lastDispatchedPluginId {
             return contexts[pluginId]
         }
         return currentContext
