@@ -41,6 +41,11 @@ public final class BackgroundTaskManager: ObservableObject {
     private var lastProgressEmit: [UUID: Date] = [:]
     private static let progressThrottleInterval: TimeInterval = 0.5
 
+    /// Tasks whose dispatch() hasn't returned to the plugin yet; events are
+    /// buffered in `heldTaskEvents` until `releaseEventsForDispatch` flushes them.
+    private var dispatchHoldTasks: Set<UUID> = []
+    private var heldTaskEvents: [UUID: [(type: TaskEventType, json: String)]] = [:]
+
     /// Subject for batching view updates with throttling
     private let viewUpdateSubject = PassthroughSubject<Void, Never>()
     private var viewUpdateCancellable: AnyCancellable?
@@ -343,8 +348,16 @@ public final class BackgroundTaskManager: ObservableObject {
     // MARK: - Private: Plugin Event Emission
 
     /// Emit a unified task lifecycle event to the originating plugin.
+    /// If the task's dispatch() call hasn't returned yet, the event is
+    /// buffered and will be flushed by `releaseEventsForDispatch`.
     private func emitPluginEvent(_ state: BackgroundTaskState, type: TaskEventType, json: String) {
         guard let pluginId = state.sourcePluginId else { return }
+
+        if dispatchHoldTasks.contains(state.id) {
+            heldTaskEvents[state.id, default: []].append((type: type, json: json))
+            return
+        }
+
         if let loaded = PluginManager.shared.loadedPlugin(for: pluginId),
             loaded.plugin.hasTaskEventHandler
         {
@@ -353,6 +366,28 @@ public final class BackgroundTaskManager: ObservableObject {
                 eventType: type,
                 eventJSON: json
             )
+        }
+    }
+
+    // MARK: - Dispatch Event Gating
+
+    /// Begin holding task events for a dispatch in flight. Call on the main
+    /// actor *before* `TaskDispatcher.dispatch` so the hold is in place before
+    /// `registerTask` emits the `.started` event.
+    func holdEventsForDispatch(taskId: UUID) {
+        dispatchHoldTasks.insert(taskId)
+    }
+
+    /// Release held events after the dispatch() C call has returned to the
+    /// plugin. Flushes all buffered events in order via `emitPluginEvent`.
+    func releaseEventsForDispatch(taskId: UUID) {
+        dispatchHoldTasks.remove(taskId)
+        if let events = heldTaskEvents.removeValue(forKey: taskId),
+            let state = backgroundTasks[taskId]
+        {
+            for event in events {
+                emitPluginEvent(state, type: event.type, json: event.json)
+            }
         }
     }
 

@@ -9,6 +9,10 @@
 
 import Foundation
 
+extension Notification.Name {
+    static let pluginConfigDidChange = Notification.Name("PluginConfigDidChange")
+}
+
 // MARK: - Per-Plugin Host Context
 
 /// Holds per-plugin state needed by host API callbacks.
@@ -24,6 +28,11 @@ final class PluginHostContext: @unchecked Sendable {
 
     let pluginId: String
     let database: PluginDatabase
+
+    /// Heap-allocated host API struct whose pointer is handed to the plugin at
+    /// init. Must outlive the plugin because it may store the pointer rather
+    /// than copying the struct.
+    private(set) var hostAPIPtr: UnsafeMutablePointer<osr_host_api>?
 
     /// Shared URLSession for plugin HTTP requests (thread-safe).
     private static let httpSession: URLSession = {
@@ -52,6 +61,8 @@ final class PluginHostContext: @unchecked Sendable {
     }
 
     deinit {
+        hostAPIPtr?.deinitialize(count: 1)
+        hostAPIPtr?.deallocate()
         database.close()
     }
 
@@ -63,10 +74,24 @@ final class PluginHostContext: @unchecked Sendable {
 
     func configSet(key: String, value: String) {
         ToolSecretsKeychain.saveSecret(value, id: key, for: pluginId)
+        postConfigChange(key: key, value: value)
     }
 
     func configDelete(key: String) {
         ToolSecretsKeychain.deleteSecret(id: key, for: pluginId)
+        postConfigChange(key: key, value: nil)
+    }
+
+    private func postConfigChange(key: String, value: String?) {
+        DispatchQueue.main.async { [pluginId] in
+            var userInfo: [String: String] = ["pluginId": pluginId, "key": key]
+            if let value { userInfo["value"] = value }
+            NotificationCenter.default.post(
+                name: .pluginConfigDidChange,
+                object: nil,
+                userInfo: userInfo
+            )
+        }
     }
 
     // MARK: - Database Callbacks
@@ -81,9 +106,12 @@ final class PluginHostContext: @unchecked Sendable {
 
     // MARK: - Dispatch Callbacks
 
-    func dispatch(requestJSON: String) -> String {
+    func dispatch(requestJSON: String) -> (result: String, taskId: UUID?) {
         guard checkDispatchRateLimit() else {
-            return Self.jsonString(["error": "rate_limit_exceeded", "message": "Dispatch rate limit (10/min) exceeded"])
+            return (
+                Self.jsonString(["error": "rate_limit_exceeded", "message": "Dispatch rate limit (10/min) exceeded"]),
+                nil
+            )
         }
 
         return Self.blockingAsync { [pluginId] in
@@ -91,7 +119,10 @@ final class PluginHostContext: @unchecked Sendable {
             guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                 let prompt = json["prompt"] as? String
             else {
-                return Self.jsonString(["error": "invalid_request", "message": "Missing required field: prompt"])
+                return (
+                    Self.jsonString(["error": "invalid_request", "message": "Missing required field: prompt"]),
+                    UUID?.none
+                )
             }
 
             let modeStr = json["mode"] as? String ?? "work"
@@ -107,6 +138,12 @@ final class PluginHostContext: @unchecked Sendable {
                 agentId = await MainActor.run { AgentManager.shared.agent(byAddress: address)?.id }
             } else if let idStr = json["agent_id"] as? String {
                 agentId = UUID(uuidString: idStr)
+            }
+
+            if agentId == nil {
+                agentId = await MainActor.run {
+                    AgentManager.shared.primaryAgent(forPlugin: pluginId)
+                }
             }
 
             let title = json["title"] as? String
@@ -127,14 +164,23 @@ final class PluginHostContext: @unchecked Sendable {
                 sourcePluginId: pluginId
             )
 
-            let handle = await TaskDispatcher.shared.dispatch(request)
-            guard handle != nil else {
-                return Self.jsonString([
-                    "error": "task_limit_reached", "message": "Maximum concurrent background tasks reached",
-                ])
+            await MainActor.run {
+                BackgroundTaskManager.shared.holdEventsForDispatch(taskId: requestId)
             }
 
-            return Self.jsonString(["id": requestId.uuidString, "status": "running"])
+            let handle = await TaskDispatcher.shared.dispatch(request)
+            guard handle != nil else {
+                await MainActor.run {
+                    BackgroundTaskManager.shared.releaseEventsForDispatch(taskId: requestId)
+                }
+                return (
+                    Self.jsonString([
+                        "error": "task_limit_reached", "message": "Maximum concurrent background tasks reached",
+                    ]), UUID?.none
+                )
+            }
+
+            return (Self.jsonString(["id": requestId.uuidString, "status": "running"]), requestId)
         }
     }
 
@@ -170,11 +216,13 @@ final class PluginHostContext: @unchecked Sendable {
     func complete(requestJSON: String) -> String {
         Self.blockingAsync {
             let data = Data(requestJSON.utf8)
-            guard let request = try? JSONDecoder().decode(ChatCompletionRequest.self, from: data) else {
+            guard var request = try? JSONDecoder().decode(ChatCompletionRequest.self, from: data) else {
                 return Self.jsonString([
                     "error": "invalid_request", "message": "Failed to parse chat completion request",
                 ])
             }
+
+            request = await Self.resolveAgentModel(request: request, data: data)
 
             let engine = ChatEngine(source: .httpAPI)
             do {
@@ -197,11 +245,13 @@ final class PluginHostContext: @unchecked Sendable {
         nonisolated(unsafe) let userData = userData
         return Self.blockingAsync {
             let data = Data(requestJSON.utf8)
-            guard let request = try? JSONDecoder().decode(ChatCompletionRequest.self, from: data) else {
+            guard var request = try? JSONDecoder().decode(ChatCompletionRequest.self, from: data) else {
                 return Self.jsonString([
                     "error": "invalid_request", "message": "Failed to parse chat completion request",
                 ])
             }
+
+            request = await Self.resolveAgentModel(request: request, data: data)
 
             let engine = ChatEngine(source: .httpAPI)
             do {
@@ -238,6 +288,28 @@ final class PluginHostContext: @unchecked Sendable {
                 return Self.jsonString(["error": "inference_error", "message": error.localizedDescription])
             }
         }
+    }
+
+    /// When the requested model is empty/default and an `agent_address` is present in the
+    /// raw JSON, resolve the agent's configured model and substitute it into the request.
+    private static func resolveAgentModel(
+        request: ChatCompletionRequest,
+        data: Data
+    ) async -> ChatCompletionRequest {
+        let trimmed = request.model.trimmingCharacters(in: .whitespacesAndNewlines)
+        let isDefault = trimmed.isEmpty || trimmed.caseInsensitiveCompare("default") == .orderedSame
+        guard isDefault else { return request }
+
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let address = json["agent_address"] as? String
+        else { return request }
+
+        let resolved = await MainActor.run {
+            guard let agent = AgentManager.shared.agent(byAddress: address) else { return nil as String? }
+            return AgentManager.shared.effectiveModel(for: agent.id)
+        }
+        guard let resolved, !resolved.isEmpty else { return request }
+        return request.withModel(resolved)
     }
 
     private static func emitChunk(
@@ -465,29 +537,33 @@ final class PluginHostContext: @unchecked Sendable {
 
     // MARK: - Build osr_host_api Struct
 
-    /// Builds the C-compatible host API struct with trampoline function pointers.
-    /// IMPORTANT: `currentContext` must be set to this instance before the plugin
-    /// entry point is called, and the returned struct must remain valid for the
-    /// plugin's lifetime (it's copied into the plugin at init time).
-    func buildHostAPI() -> osr_host_api {
-        return osr_host_api(
-            version: 2,
-            config_get: PluginHostContext.trampolineConfigGet,
-            config_set: PluginHostContext.trampolineConfigSet,
-            config_delete: PluginHostContext.trampolineConfigDelete,
-            db_exec: PluginHostContext.trampolineDbExec,
-            db_query: PluginHostContext.trampolineDbQuery,
-            log: PluginHostContext.trampolineLog,
-            dispatch: PluginHostContext.trampolineDispatch,
-            task_status: PluginHostContext.trampolineTaskStatus,
-            dispatch_cancel: PluginHostContext.trampolineDispatchCancel,
-            dispatch_clarify: PluginHostContext.trampolineDispatchClarify,
-            complete: PluginHostContext.trampolineComplete,
-            complete_stream: PluginHostContext.trampolineCompleteStream,
-            embed: PluginHostContext.trampolineEmbed,
-            list_models: PluginHostContext.trampolineListModels,
-            http_request: PluginHostContext.trampolineHttpRequest
+    /// Builds a heap-allocated C-compatible host API struct with trampoline
+    /// function pointers. The returned pointer is stable for the lifetime of
+    /// this context, so plugins may store it directly.
+    func buildHostAPI() -> UnsafeMutablePointer<osr_host_api> {
+        let ptr = UnsafeMutablePointer<osr_host_api>.allocate(capacity: 1)
+        ptr.initialize(
+            to: osr_host_api(
+                version: 2,
+                config_get: PluginHostContext.trampolineConfigGet,
+                config_set: PluginHostContext.trampolineConfigSet,
+                config_delete: PluginHostContext.trampolineConfigDelete,
+                db_exec: PluginHostContext.trampolineDbExec,
+                db_query: PluginHostContext.trampolineDbQuery,
+                log: PluginHostContext.trampolineLog,
+                dispatch: PluginHostContext.trampolineDispatch,
+                task_status: PluginHostContext.trampolineTaskStatus,
+                dispatch_cancel: PluginHostContext.trampolineDispatchCancel,
+                dispatch_clarify: PluginHostContext.trampolineDispatchClarify,
+                complete: PluginHostContext.trampolineComplete,
+                complete_stream: PluginHostContext.trampolineCompleteStream,
+                embed: PluginHostContext.trampolineEmbed,
+                list_models: PluginHostContext.trampolineListModels,
+                http_request: PluginHostContext.trampolineHttpRequest
+            )
         )
+        hostAPIPtr = ptr
+        return ptr
     }
 
     /// Removes this context from the global registry and closes the database.
@@ -875,7 +951,8 @@ extension PluginHostContext {
         guard let requestPtr, let ctx = activeContext() else { return nil }
         let json = String(cString: requestPtr)
         var result = ""
-        let ms = measureMs { result = ctx.dispatch(requestJSON: json) }
+        var taskId: UUID?
+        let ms = measureMs { (result, taskId) = ctx.dispatch(requestJSON: json) }
         logPluginCall(
             pluginId: ctx.pluginId,
             method: "POST",
@@ -885,6 +962,11 @@ extension PluginHostContext {
             requestBody: json,
             responseBody: result
         )
+        if let taskId {
+            Task { @MainActor in
+                BackgroundTaskManager.shared.releaseEventsForDispatch(taskId: taskId)
+            }
+        }
         return makeCString(result)
     }
 

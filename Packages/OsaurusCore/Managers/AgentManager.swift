@@ -255,6 +255,17 @@ extension AgentManager {
         return overrides[pluginId] ?? true
     }
 
+    /// Returns the primary agent for a plugin: the first custom agent that has
+    /// the plugin enabled, falling back to the default agent.
+    public func primaryAgent(forPlugin pluginId: String) -> UUID? {
+        let custom = agents.filter {
+            $0.id != Agent.defaultId && isPluginEnabled(pluginId, for: $0.id)
+        }
+        if let first = custom.first { return first.id }
+        if isPluginEnabled(pluginId, for: Agent.defaultId) { return Agent.defaultId }
+        return nil
+    }
+
     /// Get the effective model for an agent
     /// For custom agents without a model set, falls back to Default agent's model
     public func effectiveModel(for agentId: UUID) -> String? {

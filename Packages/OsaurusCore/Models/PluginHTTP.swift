@@ -24,6 +24,7 @@ struct OsaurusHTTPRequest: Encodable {
     struct OsaurusContext: Encodable {
         let base_url: String
         let plugin_url: String
+        let agent_address: String
     }
 }
 

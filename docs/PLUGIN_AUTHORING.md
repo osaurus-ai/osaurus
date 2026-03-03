@@ -688,10 +688,19 @@ When a request hits a plugin route, Osaurus builds a JSON request, calls `handle
   "plugin_id": "com.acme.slack",
   "osaurus": {
     "base_url": "https://0x1234.agent.osaurus.ai",
-    "plugin_url": "https://0x1234.agent.osaurus.ai/plugins/com.acme.slack"
+    "plugin_url": "https://0x1234.agent.osaurus.ai/plugins/com.acme.slack",
+    "agent_address": "0x1a2b3c4d5e6f7890abcdef1234567890abcdef12"
   }
 }
 ```
+
+The `osaurus` context object provides host-resolved metadata:
+
+| Field            | Description                                                                 |
+| ---------------- | --------------------------------------------------------------------------- |
+| `base_url`       | Root URL of the Osaurus server (tunnel or local)                            |
+| `plugin_url`     | Full URL prefix for this plugin's routes                                    |
+| `agent_address`  | Crypto address of the agent this request is scoped to — pass this to `dispatch()` and inference calls |
 
 **OsaurusHTTPResponse (returned by plugin):**
 
@@ -813,6 +822,7 @@ v2 plugins can dispatch background agent tasks — autonomous work sessions that
 ### Dispatching a Task
 
 ```c
+// Use osaurus.agent_address from the route request to dispatch under the correct agent
 const char* request = "{"
     "\"prompt\": \"Summarize the latest commit and post to Slack\","
     "\"mode\": \"work\","
@@ -835,9 +845,9 @@ const char* result = host->dispatch(request);
 | `agent_id`       | string | No       | UUID of the target agent (alternative to `agent_address`) |
 | `folder_bookmark`| string | No       | Base64-encoded security-scoped bookmark for folder access |
 
-If neither `agent_address` nor `agent_id` is provided, the task dispatches to the default agent.
+If neither `agent_address` nor `agent_id` is provided, the host auto-resolves to the first custom agent that has this plugin enabled, falling back to the default agent.
 
-**Agent addressing:** Prefer `agent_address` over `agent_id` — plugins typically know an agent's crypto address but not its internal UUID. Both are accepted and resolved automatically.
+**Agent addressing:** Prefer `agent_address` from the route request's `osaurus.agent_address` field — it is always present in route handler requests and ensures the task runs under the correct agent with its configured model and settings. Both `agent_address` and `agent_id` are accepted and resolved automatically.
 
 **Rate limiting:** Dispatch is limited to 10 requests per minute per plugin. Exceeding this returns an error with `"error": "rate_limit_exceeded"`.
 
@@ -1039,12 +1049,13 @@ const char* response = host->complete(request);
 | `messages`    | array  | Yes      | Array of `{role, content}` message objects      |
 | `max_tokens`  | int    | No       | Maximum tokens to generate                     |
 | `temperature` | number | No       | Sampling temperature (0.0 – 2.0)               |
+| `agent_address` | string | No     | Agent crypto address — used to resolve model when `model` is empty/default |
 
 **Model resolution order:**
 
 | Value         | Resolves To                              |
 | ------------- | ---------------------------------------- |
-| `null` or `""`| Default model configured in Osaurus      |
+| `null` or `""`| Agent's configured model (if `agent_address` is provided), otherwise system default |
 | `"local"`     | Local MLX model                          |
 | `"foundation"`| Apple Foundation Model                   |
 | specific name | Exact model by ID (e.g., `"gpt-4o"`)    |

@@ -20,40 +20,65 @@ struct PluginsView: View {
     @State private var hasAppeared = false
     @State private var isRefreshButtonLoading = false
 
-    // Snapshot values from service (updated via .onReceive / reload)
     @State private var isRepoRefreshing = false
     @State private var updatesAvailableCount = 0
     @State private var repoLastError: String?
     @State private var missingPermissionsPerPlugin: [String: [SystemPermission]] = [:]
 
-    // Cached filtered results
     @State private var filteredPlugins: [PluginState] = []
     @State private var installedPlugins: [PluginState] = []
     @State private var pluginsWithMissingPermissionsCount = 0
 
-    // Secrets sheet state for post-installation prompt
     @State private var showSecretsSheet: Bool = false
     @State private var secretsSheetPluginId: String?
     @State private var secretsSheetPluginName: String?
     @State private var secretsSheetPluginVersion: String?
     @State private var secretsSheetSecrets: [PluginManifest.SecretSpec] = []
 
-    var body: some View {
-        VStack(spacing: 0) {
-            headerBar
-                .opacity(hasAppeared ? 1 : 0)
-                .offset(y: hasAppeared ? 0 : -10)
-                .animation(.spring(response: 0.4, dampingFraction: 0.8), value: hasAppeared)
+    // Detail navigation
+    @State private var selectedPlugin: PluginState?
 
-            Group {
-                switch selectedTab {
-                case .installed:
-                    installedTabContent
-                case .browse:
-                    browseTabContent
-                }
+    // Success toast
+    @State private var successMessage: String?
+
+    var body: some View {
+        ZStack {
+            if selectedPlugin == nil {
+                gridContent
+                    .transition(.opacity.combined(with: .move(edge: .leading)))
             }
-            .opacity(hasAppeared ? 1 : 0)
+
+            if let plugin = selectedPlugin {
+                PluginDetailView(
+                    plugin: plugin,
+                    missingPermissions: missingPermissionsPerPlugin[plugin.pluginId] ?? [],
+                    onBack: {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                            selectedPlugin = nil
+                        }
+                    },
+                    onUpgrade: { try await repoService.upgrade(pluginId: plugin.pluginId) },
+                    onUninstall: {
+                        try await repoService.uninstall(pluginId: plugin.pluginId)
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                            selectedPlugin = nil
+                        }
+                    },
+                    onInstall: { try await repoService.install(pluginId: plugin.pluginId) },
+                    onChange: { reload() }
+                )
+                .transition(.opacity.combined(with: .move(edge: .trailing)))
+            }
+
+            if let message = successMessage {
+                VStack {
+                    Spacer()
+                    ThemedToastView(message, type: .success)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                        .padding(.bottom, 20)
+                }
+                .zIndex(100)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(theme.primaryBackground)
@@ -75,7 +100,12 @@ struct PluginsView: View {
             guard !Task.isCancelled else { return }
             await updateFilteredLists()
         }
-        .onReceive(PluginRepositoryService.shared.$plugins) { _ in
+        .onReceive(PluginRepositoryService.shared.$plugins) { newPlugins in
+            if let selected = selectedPlugin,
+                let updated = newPlugins.first(where: { $0.pluginId == selected.pluginId })
+            {
+                selectedPlugin = updated
+            }
             Task { await updateFilteredLists() }
         }
         .onReceive(PluginRepositoryService.shared.$isRefreshing) { isRepoRefreshing = $0 }
@@ -103,7 +133,6 @@ struct PluginsView: View {
         }
     }
 
-    /// Show the secrets sheet for a specific plugin
     private func showSecretsSheetForPlugin(pluginId: String) {
         guard let loaded = PluginManager.shared.plugins.first(where: { $0.plugin.id == pluginId }),
             let secrets = loaded.plugin.manifest.secrets,
@@ -117,6 +146,27 @@ struct PluginsView: View {
         secretsSheetPluginVersion = loaded.plugin.manifest.version
         secretsSheetSecrets = secrets
         showSecretsSheet = true
+    }
+
+    // MARK: - Grid Content
+
+    private var gridContent: some View {
+        VStack(spacing: 0) {
+            headerBar
+                .opacity(hasAppeared ? 1 : 0)
+                .offset(y: hasAppeared ? 0 : -10)
+                .animation(.spring(response: 0.4, dampingFraction: 0.8), value: hasAppeared)
+
+            Group {
+                switch selectedTab {
+                case .installed:
+                    installedTabContent
+                case .browse:
+                    browseTabContent
+                }
+            }
+            .opacity(hasAppeared ? 1 : 0)
+        }
     }
 
     // MARK: - Header Bar
@@ -158,79 +208,112 @@ struct PluginsView: View {
     // MARK: - Installed Tab
 
     private var installedTabContent: some View {
-        ScrollView {
-            LazyVStack(spacing: 16) {
-                SectionHeader(
-                    title: "Installed Plugins",
-                    description: "Manage your installed plugins"
+        Group {
+            if installedPlugins.isEmpty {
+                emptyState(
+                    icon: "puzzlepiece.extension",
+                    title: "No plugins installed",
+                    subtitle: searchText.isEmpty
+                        ? "Browse the repository to install plugins"
+                        : "Try a different search term"
                 )
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        if pluginsWithMissingPermissionsCount > 0 {
+                            ToolPermissionBanner(count: pluginsWithMissingPermissionsCount)
+                        }
 
-                if installedPlugins.isEmpty {
-                    emptyState(
-                        icon: "puzzlepiece.extension",
-                        title: "No plugins installed",
-                        subtitle: searchText.isEmpty
-                            ? "Browse the repository to install plugins"
-                            : "Try a different search term"
-                    )
-                } else {
-                    if pluginsWithMissingPermissionsCount > 0 {
-                        ToolPermissionBanner(count: pluginsWithMissingPermissionsCount)
-                    }
-
-                    ForEach(installedPlugins, id: \.id) { plugin in
-                        InstalledPluginCard(
-                            plugin: plugin,
-                            missingPermissions: missingPermissionsPerPlugin[plugin.pluginId] ?? [],
-                            onUpgrade: { try await repoService.upgrade(pluginId: plugin.pluginId) },
-                            onUninstall: { try await repoService.uninstall(pluginId: plugin.pluginId) }
+                        LazyVGrid(
+                            columns: [
+                                GridItem(.flexible(minimum: 300), spacing: 20),
+                                GridItem(.flexible(minimum: 300), spacing: 20),
+                            ],
+                            spacing: 20
                         ) {
-                            reload()
+                            ForEach(Array(installedPlugins.enumerated()), id: \.element.id) { index, plugin in
+                                PluginCard(
+                                    plugin: plugin,
+                                    missingPermissions: missingPermissionsPerPlugin[plugin.pluginId] ?? [],
+                                    animationDelay: Double(index) * 0.05,
+                                    hasAppeared: hasAppeared,
+                                    onSelect: {
+                                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                                            selectedPlugin = plugin
+                                        }
+                                    },
+                                    onUpgrade: { try await repoService.upgrade(pluginId: plugin.pluginId) },
+                                    onUninstall: {
+                                        try await repoService.uninstall(pluginId: plugin.pluginId)
+                                        reload()
+                                    },
+                                    onChange: { reload() }
+                                )
+                            }
                         }
                     }
+                    .padding(24)
                 }
             }
-            .padding(24)
-            .frame(maxWidth: .infinity)
         }
     }
 
     // MARK: - Browse Tab
 
     private var browseTabContent: some View {
-        ScrollView {
-            LazyVStack(spacing: 12) {
-                SectionHeader(
-                    title: "Plugin Repository",
-                    description: "Browse and install plugins to add new capabilities"
-                )
-                .padding(.bottom, 4)
-
-                if let errorMessage = repoLastError {
+        Group {
+            if let errorMessage = repoLastError {
+                VStack(spacing: 12) {
                     offlineBanner(message: errorMessage)
+                        .padding(.horizontal, 24)
+                        .padding(.top, 16)
+                    browseGrid
                 }
+            } else if isRepoRefreshing && filteredPlugins.isEmpty {
+                loadingState
+            } else if filteredPlugins.isEmpty {
+                emptyState(
+                    icon: "puzzlepiece.extension",
+                    title: searchText.isEmpty ? "No plugins available" : "No plugins match your search",
+                    subtitle: searchText.isEmpty ? nil : "Try a different search term"
+                )
+            } else {
+                browseGrid
+            }
+        }
+    }
 
-                if isRepoRefreshing && filteredPlugins.isEmpty {
-                    loadingState
-                } else if filteredPlugins.isEmpty {
-                    emptyState(
-                        icon: "puzzlepiece.extension",
-                        title: searchText.isEmpty ? "No plugins available" : "No plugins match your search",
-                        subtitle: searchText.isEmpty ? nil : "Try a different search term"
+    private var browseGrid: some View {
+        ScrollView {
+            LazyVGrid(
+                columns: [
+                    GridItem(.flexible(minimum: 300), spacing: 20),
+                    GridItem(.flexible(minimum: 300), spacing: 20),
+                ],
+                spacing: 20
+            ) {
+                ForEach(Array(filteredPlugins.enumerated()), id: \.element.id) { index, plugin in
+                    PluginCard(
+                        plugin: plugin,
+                        missingPermissions: [],
+                        animationDelay: Double(index) * 0.05,
+                        hasAppeared: hasAppeared,
+                        onSelect: {
+                            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                                selectedPlugin = plugin
+                            }
+                        },
+                        onUpgrade: { try await repoService.upgrade(pluginId: plugin.pluginId) },
+                        onUninstall: {
+                            try await repoService.uninstall(pluginId: plugin.pluginId)
+                            reload()
+                        },
+                        onInstall: { try await repoService.install(pluginId: plugin.pluginId) },
+                        onChange: { reload() }
                     )
-                } else {
-                    ForEach(filteredPlugins, id: \.id) { plugin in
-                        PluginBrowseRow(
-                            plugin: plugin,
-                            onInstall: { try await repoService.install(pluginId: plugin.pluginId) },
-                            onUpgrade: { try await repoService.upgrade(pluginId: plugin.pluginId) },
-                            onUninstall: { try await repoService.uninstall(pluginId: plugin.pluginId) }
-                        )
-                    }
                 }
             }
             .padding(24)
-            .frame(maxWidth: .infinity)
         }
     }
 
@@ -252,7 +335,7 @@ struct PluginsView: View {
                     .foregroundColor(theme.tertiaryText)
             }
         }
-        .frame(maxWidth: .infinity)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(.vertical, 60)
     }
 
@@ -264,7 +347,7 @@ struct PluginsView: View {
                 .font(.system(size: 14))
                 .foregroundColor(theme.secondaryText)
         }
-        .frame(maxWidth: .infinity)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(.vertical, 60)
     }
 
@@ -305,9 +388,21 @@ struct PluginsView: View {
         )
     }
 
+    // MARK: - Success Toast
+
+    private func showSuccess(_ message: String) {
+        withAnimation(theme.springAnimation()) {
+            successMessage = message
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+            withAnimation(theme.animationQuick()) {
+                successMessage = nil
+            }
+        }
+    }
+
     // MARK: - Helpers
 
-    /// Whether a plugin matches the current search query.
     nonisolated private static func pluginMatchesQuery(_ plugin: PluginState, query: String) -> Bool {
         guard !query.isEmpty else { return true }
         let queryLower = query.lowercased()
@@ -337,7 +432,6 @@ struct PluginsView: View {
         filteredPlugins = browseResult
         installedPlugins = installedResult
 
-        // Calculate per-plugin missing permissions from capability tool names
         var permissionCount = 0
         var missingPerms: [String: [SystemPermission]] = [:]
         for plugin in installedResult {
@@ -369,491 +463,154 @@ struct PluginsView: View {
     PluginsView()
 }
 
-// MARK: - Installed Plugin Card
+// MARK: - Plugin Card (Grid)
 
-private struct InstalledPluginCard: View {
+private struct PluginCard: View {
     @Environment(\.theme) private var theme
     let plugin: PluginState
     let missingPermissions: [SystemPermission]
-    let onUpgrade: () async throws -> Void
-    let onUninstall: () async throws -> Void
-    let onChange: () -> Void
+    let animationDelay: Double
+    let hasAppeared: Bool
+    let onSelect: () -> Void
+    var onUpgrade: (() async throws -> Void)?
+    var onUninstall: (() async throws -> Void)?
+    var onInstall: (() async throws -> Void)?
+    var onChange: (() -> Void)?
 
-    @State private var isExpanded: Bool = false
-    @State private var isHovering = false
+    @State private var isHovered = false
     @State private var errorMessage: String?
-    @State private var showError: Bool = false
-    @State private var showSecretsSheet: Bool = false
-
-    @State private var hasMissingSecrets: Bool = false
+    @State private var showError = false
+    @State private var hasMissingSecrets = false
     @State private var cachedSecrets: [PluginManifest.SecretSpec] = []
+    @State private var showSecretsSheet = false
 
-    private var hasMissingPermissions: Bool {
-        !missingPermissions.isEmpty
-    }
-
-    private var hasSecrets: Bool {
-        !cachedSecrets.isEmpty
+    private var hasMissingPermissions: Bool { !missingPermissions.isEmpty }
+    private var pluginColor: Color {
+        plugin.hasLoadError
+            ? .red
+            : hasMissingPermissions || hasMissingSecrets
+                ? .orange
+                : theme.accentColor
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 14) {
-                Button(action: {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                        isExpanded.toggle()
-                    }
-                }) {
-                    HStack(spacing: 14) {
-                        ZStack {
-                            RoundedRectangle(cornerRadius: 10)
-                                .fill(
-                                    plugin.hasLoadError
-                                        ? Color.red.opacity(0.12)
-                                        : hasMissingPermissions
-                                            ? theme.warningColor.opacity(0.12)
-                                            : theme.accentColor.opacity(0.12)
-                                )
-                            Image(
-                                systemName: plugin.hasLoadError
-                                    ? "exclamationmark.triangle.fill"
-                                    : "puzzlepiece.extension.fill"
-                            )
-                            .font(.system(size: 20))
-                            .foregroundColor(
-                                plugin.hasLoadError
-                                    ? .red
-                                    : hasMissingPermissions
-                                        ? theme.warningColor
-                                        : theme.accentColor
-                            )
-
-                            if hasMissingPermissions && !plugin.hasLoadError {
-                                Image(systemName: "exclamationmark.circle.fill")
-                                    .font(.system(size: 14))
-                                    .foregroundColor(theme.warningColor)
-                                    .background(Circle().fill(theme.cardBackground).padding(-2))
-                                    .offset(x: 16, y: -16)
-                            }
-                        }
-                        .frame(width: 44, height: 44)
-
-                        VStack(alignment: .leading, spacing: 4) {
-                            HStack(spacing: 8) {
-                                Text(plugin.displayName)
-                                    .font(.system(size: 15, weight: .semibold, design: .rounded))
-                                    .foregroundColor(theme.primaryText)
-
-                                if let version = plugin.installedVersion {
-                                    Text("v\(version.description)")
-                                        .font(.system(size: 11, weight: .medium))
-                                        .foregroundColor(theme.tertiaryText)
-                                        .padding(.horizontal, 6)
-                                        .padding(.vertical, 2)
-                                        .background(
-                                            Capsule()
-                                                .fill(theme.tertiaryBackground)
-                                        )
-                                }
-
-                                if plugin.hasLoadError {
-                                    StatusCapsuleBadge(
-                                        icon: "exclamationmark.triangle.fill",
-                                        text: "Error",
-                                        color: .red
-                                    )
-                                } else if hasMissingSecrets {
-                                    StatusCapsuleBadge(
-                                        icon: "key.fill",
-                                        text: "Needs API Key",
-                                        color: theme.warningColor
-                                    )
-                                } else if hasMissingPermissions {
-                                    StatusCapsuleBadge(
-                                        icon: "lock.shield",
-                                        text: "Needs Permission",
-                                        color: theme.warningColor
-                                    )
-                                } else if plugin.hasUpdate {
-                                    StatusCapsuleBadge(icon: "arrow.up.circle.fill", text: "Update", color: .orange)
-                                }
-                            }
-
-                            if let description = plugin.pluginDescription {
-                                Text(description)
-                                    .font(.system(size: 13))
-                                    .foregroundColor(theme.secondaryText)
-                                    .lineLimit(1)
-                            }
-                        }
-
-                        Spacer()
-
-                        PluginCapabilitiesBadge(
-                            toolCount: plugin.capabilities?.tools?.count ?? 0,
-                            skillCount: plugin.capabilities?.skills?.count ?? 0
-                        )
-
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundColor(theme.tertiaryText)
-                            .rotationEffect(.degrees(isExpanded ? 90 : 0))
-                    }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(PlainButtonStyle())
-
-                HStack(spacing: 8) {
-                    if plugin.isInstalling {
-                        ProgressView()
-                            .scaleEffect(0.8)
-                            .frame(width: 32, height: 32)
-                    } else if plugin.hasLoadError {
-                        Button(action: { retryLoad() }) {
-                            HStack(spacing: 4) {
-                                Image(systemName: "arrow.clockwise")
-                                    .font(.system(size: 11))
-                                Text("Retry")
-                                    .font(.system(size: 12, weight: .semibold))
-                            }
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
-                            .background(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .fill(Color.blue)
-                            )
-                        }
-                        .buttonStyle(PlainButtonStyle())
-                    } else if plugin.hasUpdate {
-                        Button(action: { upgrade() }) {
-                            HStack(spacing: 4) {
-                                Image(systemName: "arrow.up.circle.fill")
-                                    .font(.system(size: 11))
-                                Text("Update")
-                                    .font(.system(size: 12, weight: .semibold))
-                            }
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
-                            .background(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .fill(Color.orange)
-                            )
-                        }
-                        .buttonStyle(PlainButtonStyle())
-                    }
-
-                    Menu {
-                        if plugin.hasLoadError {
-                            Button {
-                                retryLoad()
-                            } label: {
-                                Label("Retry Loading", systemImage: "arrow.clockwise")
-                            }
-                        }
-                        if hasSecrets {
-                            Button {
-                                showSecretsSheet = true
-                            } label: {
-                                Label(
-                                    hasMissingSecrets ? "Configure Secrets" : "Edit Secrets",
-                                    systemImage: "key.fill"
-                                )
-                            }
-                        }
-                        Button(role: .destructive) {
-                            uninstall()
-                            onChange()
-                        } label: {
-                            Label("Uninstall", systemImage: "trash")
-                        }
-                    } label: {
-                        Image(systemName: "ellipsis.circle")
-                            .font(.system(size: 16))
-                            .foregroundColor(theme.secondaryText)
-                            .frame(width: 28, height: 28)
-                            .background(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .fill(theme.tertiaryBackground.opacity(isHovering ? 1 : 0))
-                            )
-                    }
-                    .menuStyle(.borderlessButton)
-                    .fixedSize()
-                }
-            }
-
-            if isExpanded, let loadError = plugin.loadError {
-                Divider()
-                    .padding(.vertical, 4)
-
-                if loadError.hasPrefix(PluginManager.PluginLoadError.consentRequiredPrefix) {
-                    HStack(spacing: 12) {
-                        Image(systemName: "lock.shield.fill")
-                            .font(.system(size: 16))
-                            .foregroundColor(theme.warningColor)
-
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Approval Required")
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundColor(theme.primaryText)
-                            Text("This plugin needs your approval before it can load.")
-                                .font(.system(size: 11))
-                                .foregroundColor(theme.secondaryText)
-                        }
-
-                        Spacer()
-
-                        Button(action: { approveConsent() }) {
-                            HStack(spacing: 4) {
-                                Image(systemName: "checkmark.shield.fill")
-                                    .font(.system(size: 10))
-                                Text("Approve")
-                                    .font(.system(size: 12, weight: .semibold))
-                            }
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 8)
-                            .background(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .fill(theme.accentColor)
-                            )
-                        }
-                        .buttonStyle(PlainButtonStyle())
-                    }
-                    .padding(12)
-                    .background(
+        Button(action: onSelect) {
+            VStack(alignment: .leading, spacing: 12) {
+                // Header row: icon + name + menu
+                HStack(alignment: .center, spacing: 12) {
+                    ZStack {
                         RoundedRectangle(cornerRadius: 10)
-                            .fill(theme.warningColor.opacity(0.08))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 10)
-                                    .stroke(theme.warningColor.opacity(0.2), lineWidth: 1)
-                            )
-                    )
-                    .transition(.opacity.combined(with: .move(edge: .top)))
-                } else {
-                    HStack(spacing: 10) {
-                        Image(systemName: "exclamationmark.circle.fill")
-                            .font(.system(size: 14))
-                            .foregroundColor(.red)
-
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Failed to load plugin")
-                                .font(.system(size: 13, weight: .medium))
-                                .foregroundColor(.red)
-                            Text(loadError)
-                                .font(.system(size: 12))
-                                .foregroundColor(theme.secondaryText)
-                                .lineLimit(3)
-                        }
-
-                        Spacer()
-                    }
-                    .padding(12)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(Color.red.opacity(0.08))
-                    )
-                    .transition(.opacity.combined(with: .move(edge: .top)))
-                }
-            }
-
-            if isExpanded && hasMissingSecrets && !plugin.hasLoadError {
-                Divider()
-                    .padding(.vertical, 4)
-
-                HStack(spacing: 12) {
-                    Image(systemName: "key.fill")
-                        .font(.system(size: 16))
-                        .foregroundColor(theme.warningColor)
-
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("API Keys Required")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundColor(theme.primaryText)
-                        Text("This plugin requires credentials to function properly.")
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.secondaryText)
-                    }
-
-                    Spacer()
-
-                    Button(action: { showSecretsSheet = true }) {
-                        HStack(spacing: 4) {
-                            Image(systemName: "key.fill")
-                                .font(.system(size: 10))
-                            Text("Configure")
-                                .font(.system(size: 12, weight: .semibold))
-                        }
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(theme.accentColor)
-                        )
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                }
-                .padding(12)
-                .background(
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(theme.warningColor.opacity(0.08))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10)
-                                .stroke(theme.warningColor.opacity(0.2), lineWidth: 1)
-                        )
-                )
-                .transition(.opacity.combined(with: .move(edge: .top)))
-            }
-
-            if isExpanded && hasMissingPermissions && !plugin.hasLoadError {
-                Divider()
-                    .padding(.vertical, 4)
-
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack(spacing: 10) {
-                        Image(systemName: "lock.shield.fill")
-                            .font(.system(size: 16))
-                            .foregroundColor(theme.warningColor)
-
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("System Permissions Required")
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundColor(theme.primaryText)
-                            Text("Grant the following permissions to use all features of this plugin:")
-                                .font(.system(size: 11))
-                                .foregroundColor(theme.secondaryText)
-                        }
-
-                        Spacer()
-                    }
-
-                    HStack(spacing: 8) {
-                        ForEach(missingPermissions, id: \.rawValue) { perm in
-                            Button(action: {
-                                SystemPermissionService.shared.requestPermission(perm)
-                                onChange()
-                            }) {
-                                HStack(spacing: 6) {
-                                    Image(systemName: perm.systemIconName)
-                                        .font(.system(size: 11))
-                                    Text("Grant \(perm.displayName)")
-                                        .font(.system(size: 11, weight: .medium))
-                                }
-                                .foregroundColor(.white)
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 8)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 6)
-                                        .fill(theme.accentColor)
+                            .fill(
+                                LinearGradient(
+                                    colors: [pluginColor.opacity(0.15), pluginColor.opacity(0.05)],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
                                 )
-                            }
-                            .buttonStyle(PlainButtonStyle())
-                        }
-
-                        Spacer()
-
-                        Button(action: {
-                            if let firstPerm = missingPermissions.first {
-                                SystemPermissionService.shared.openSystemSettings(for: firstPerm)
-                            }
-                        }) {
-                            HStack(spacing: 4) {
-                                Image(systemName: "gear")
-                                    .font(.system(size: 10))
-                                Text("Open Settings")
-                                    .font(.system(size: 11, weight: .medium))
-                            }
-                            .foregroundColor(theme.secondaryText)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
-                            .background(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .fill(theme.tertiaryBackground)
                             )
+                        Image(
+                            systemName: plugin.hasLoadError
+                                ? "exclamationmark.triangle.fill"
+                                : "puzzlepiece.extension.fill"
+                        )
+                        .font(.system(size: 18))
+                        .foregroundColor(pluginColor)
+                    }
+                    .frame(width: 36, height: 36)
+
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(plugin.displayName)
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundColor(theme.primaryText)
+                            .lineLimit(1)
+
+                        HStack(spacing: 6) {
+                            if let version = plugin.installedVersion ?? plugin.latestVersion {
+                                Text("v\(version.description)")
+                                    .font(.system(size: 10, weight: .medium))
+                                    .foregroundColor(theme.tertiaryText)
+                                    .padding(.horizontal, 5)
+                                    .padding(.vertical, 1)
+                                    .background(Capsule().fill(theme.tertiaryBackground))
+                            }
+
+                            statusBadge
                         }
-                        .buttonStyle(PlainButtonStyle())
                     }
+
+                    Spacer(minLength: 8)
+
+                    cardMenu
                 }
-                .padding(12)
-                .background(
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(theme.warningColor.opacity(0.08))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10)
-                                .stroke(theme.warningColor.opacity(0.2), lineWidth: 1)
-                        )
-                )
-                .transition(.opacity.combined(with: .move(edge: .top)))
-            }
 
-            // Read-only capabilities summary
-            if isExpanded && !plugin.hasLoadError {
-                let specTools = plugin.capabilities?.tools ?? []
-                let specSkills = plugin.capabilities?.skills ?? []
-                if !specTools.isEmpty || !specSkills.isEmpty {
-                    Divider()
-                        .padding(.vertical, 4)
-
-                    PluginProvidesSummary(tools: specTools, skills: specSkills)
-                        .transition(.opacity.combined(with: .move(edge: .top)))
+                // Description
+                if let description = plugin.pluginDescription {
+                    Text(description)
+                        .font(.system(size: 12))
+                        .foregroundColor(theme.secondaryText)
+                        .lineLimit(2)
+                        .lineSpacing(2)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
-            }
 
-            // Plugin config UI (rendered from manifest config spec)
-            if isExpanded && !plugin.hasLoadError {
-                if let loaded = PluginManager.shared.plugins.first(where: { $0.plugin.id == plugin.pluginId }),
-                    let configSpec = loaded.plugin.manifest.capabilities.config
-                {
-                    Divider()
-                        .padding(.vertical, 4)
+                Spacer(minLength: 0)
 
-                    PluginConfigView(
-                        pluginId: plugin.pluginId,
-                        configSpec: configSpec,
-                        plugin: loaded.plugin
-                    )
-                    .transition(.opacity.combined(with: .move(edge: .top)))
-                }
-            }
-
-            // Routes summary
-            if isExpanded && !plugin.hasLoadError {
-                if let loaded = PluginManager.shared.loadedPlugin(for: plugin.pluginId),
-                    !loaded.routes.isEmpty
-                {
-                    Divider()
-                        .padding(.vertical, 4)
-
-                    PluginRoutesSummary(pluginId: plugin.pluginId, routes: loaded.routes)
-                        .transition(.opacity.combined(with: .move(edge: .top)))
-                }
-            }
-
-            // Documentation (README, links)
-            if isExpanded && !plugin.hasLoadError {
-                if let loaded = PluginManager.shared.loadedPlugin(for: plugin.pluginId) {
-                    let manifest = loaded.plugin.manifest
-
-                    if loaded.readmePath != nil || manifest.docs?.links != nil {
-                        Divider()
-                            .padding(.vertical, 4)
-
-                        PluginDocsSection(
-                            readmePath: loaded.readmePath,
-                            changelogPath: loaded.changelogPath,
-                            docLinks: manifest.docs?.links
-                        )
-                        .transition(.opacity.combined(with: .move(edge: .top)))
+                // Compact stats row
+                HStack(spacing: 0) {
+                    if let caps = plugin.capabilities {
+                        let toolCount = caps.tools?.count ?? 0
+                        let skillCount = caps.skills?.count ?? 0
+                        if toolCount > 0 {
+                            statItem(icon: "wrench.and.screwdriver", text: "\(toolCount)")
+                        }
+                        if toolCount > 0 && skillCount > 0 {
+                            statDot
+                        }
+                        if skillCount > 0 {
+                            statItem(icon: "lightbulb", text: "\(skillCount)")
+                        }
                     }
+
+                    if plugin.capabilities?.tools?.count ?? 0 > 0 || plugin.capabilities?.skills?.count ?? 0 > 0 {
+                        if plugin.authors != nil || plugin.license != nil {
+                            statDot
+                        }
+                    }
+
+                    if let authors = plugin.authors, !authors.isEmpty {
+                        statItem(icon: "person", text: authors.joined(separator: ", "))
+                    }
+                    if plugin.authors != nil && plugin.license != nil {
+                        statDot
+                    }
+                    if let license = plugin.license {
+                        statItem(icon: "doc.text", text: license)
+                    }
+                    Spacer(minLength: 0)
                 }
             }
+            .frame(maxHeight: .infinity, alignment: .top)
+            .padding(16)
+            .background(cardBackground)
+            .overlay(hoverGradient)
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .overlay(cardBorder)
+            .shadow(
+                color: Color.black.opacity(isHovered ? 0.08 : 0.04),
+                radius: isHovered ? 10 : 5,
+                x: 0,
+                y: isHovered ? 3 : 2
+            )
+            .contentShape(Rectangle())
         }
-        .padding(16)
-        .frame(maxWidth: .infinity)
-        .background(PluginCardBackground(isHovering: isHovering))
-        .onHover { isHovering = $0 }
+        .buttonStyle(PlainButtonStyle())
+        .scaleEffect(isHovered ? 1.01 : 1.0)
+        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isHovered)
+        .opacity(hasAppeared ? 1 : 0)
+        .offset(y: hasAppeared ? 0 : 20)
+        .animation(.spring(response: 0.4, dampingFraction: 0.8).delay(animationDelay), value: hasAppeared)
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.15)) { isHovered = hovering }
+        }
         .onAppear {
             if let loaded = PluginManager.shared.plugins.first(where: { $0.plugin.id == plugin.pluginId }) {
                 cachedSecrets = loaded.plugin.manifest.secrets ?? []
@@ -874,9 +631,965 @@ private struct InstalledPluginCard: View {
                 secrets: cachedSecrets,
                 onSave: {
                     updateSecretsStatus()
+                    onChange?()
+                }
+            )
+        }
+    }
+
+    // MARK: - Status Badge
+
+    @ViewBuilder
+    private var statusBadge: some View {
+        if plugin.hasLoadError {
+            StatusCapsuleBadge(icon: "exclamationmark.triangle.fill", text: "Error", color: .red)
+        } else if hasMissingSecrets {
+            StatusCapsuleBadge(icon: "key.fill", text: "Key Required", color: theme.warningColor)
+        } else if hasMissingPermissions {
+            StatusCapsuleBadge(icon: "lock.shield", text: "Permission", color: theme.warningColor)
+        } else if plugin.hasUpdate {
+            StatusCapsuleBadge(icon: "arrow.up.circle.fill", text: "Update", color: .orange)
+        } else if plugin.isInstalled {
+            StatusCapsuleBadge(icon: "checkmark.circle.fill", text: "Installed", color: .green)
+        }
+    }
+
+    // MARK: - Card Menu
+
+    @ViewBuilder
+    private var cardMenu: some View {
+        if plugin.isInstalling {
+            ProgressView()
+                .scaleEffect(0.7)
+                .frame(width: 24, height: 24)
+        } else {
+            Menu {
+                Button(action: onSelect) {
+                    Label("View Details", systemImage: "info.circle")
+                }
+                if plugin.hasUpdate, let onUpgrade {
+                    Button {
+                        Task {
+                            do { try await onUpgrade() } catch {
+                                errorMessage = error.localizedDescription
+                                showError = true
+                            }
+                        }
+                    } label: {
+                        Label("Update", systemImage: "arrow.up.circle.fill")
+                    }
+                }
+                if !cachedSecrets.isEmpty {
+                    Button {
+                        showSecretsSheet = true
+                    } label: {
+                        Label(
+                            hasMissingSecrets ? "Configure Secrets" : "Edit Secrets",
+                            systemImage: "key.fill"
+                        )
+                    }
+                }
+                if !plugin.isInstalled, let onInstall {
+                    Button {
+                        Task {
+                            do { try await onInstall() } catch {
+                                errorMessage = error.localizedDescription
+                                showError = true
+                            }
+                        }
+                    } label: {
+                        Label("Install", systemImage: "arrow.down.circle.fill")
+                    }
+                }
+                if plugin.isInstalled, let onUninstall {
+                    Divider()
+                    Button(role: .destructive) {
+                        Task {
+                            do { try await onUninstall() } catch {
+                                errorMessage = error.localizedDescription
+                                showError = true
+                            }
+                        }
+                    } label: {
+                        Label("Uninstall", systemImage: "trash")
+                    }
+                }
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+                    .frame(width: 24, height: 24)
+                    .background(Circle().fill(theme.tertiaryBackground))
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .frame(width: 24)
+        }
+    }
+
+    // MARK: - Stats
+
+    private func statItem(icon: String, text: String) -> some View {
+        HStack(spacing: 3) {
+            Image(systemName: icon)
+                .font(.system(size: 9, weight: .medium))
+            Text(text)
+                .font(.system(size: 10, weight: .medium))
+                .lineLimit(1)
+        }
+        .foregroundColor(theme.tertiaryText)
+    }
+
+    private var statDot: some View {
+        Circle()
+            .fill(theme.tertiaryText.opacity(0.4))
+            .frame(width: 3, height: 3)
+            .padding(.horizontal, 8)
+    }
+
+    // MARK: - Card Styling
+
+    private var cardBackground: some View {
+        RoundedRectangle(cornerRadius: 12)
+            .fill(theme.cardBackground)
+    }
+
+    private var cardBorder: some View {
+        let installedHealthy =
+            plugin.isInstalled && !plugin.hasLoadError
+            && !hasMissingPermissions && !hasMissingSecrets
+        return RoundedRectangle(cornerRadius: 12)
+            .strokeBorder(
+                isHovered
+                    ? pluginColor.opacity(0.25)
+                    : installedHealthy ? Color.green.opacity(0.2) : theme.cardBorder,
+                lineWidth: isHovered ? 1.5 : 1
+            )
+    }
+
+    private var hoverGradient: some View {
+        RoundedRectangle(cornerRadius: 12)
+            .fill(
+                LinearGradient(
+                    colors: [
+                        pluginColor.opacity(isHovered ? 0.06 : 0),
+                        Color.clear,
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
+            .allowsHitTesting(false)
+            .animation(.easeOut(duration: 0.15), value: isHovered)
+    }
+
+    private func updateSecretsStatus() {
+        hasMissingSecrets =
+            !cachedSecrets.isEmpty
+            && !ToolSecretsKeychain.hasAllRequiredSecrets(specs: cachedSecrets, for: plugin.pluginId)
+    }
+}
+
+// MARK: - Plugin Detail View
+
+private struct PluginDetailView: View {
+    @ObservedObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var relayManager = RelayTunnelManager.shared
+    @ObservedObject private var agentManager = AgentManager.shared
+
+    private var theme: ThemeProtocol { themeManager.currentTheme }
+
+    let plugin: PluginState
+    let missingPermissions: [SystemPermission]
+    let onBack: () -> Void
+    let onUpgrade: () async throws -> Void
+    let onUninstall: () async throws -> Void
+    let onInstall: () async throws -> Void
+    let onChange: () -> Void
+
+    @State private var hasAppeared = false
+    @State private var errorMessage: String?
+    @State private var showError = false
+    @State private var showSecretsSheet = false
+    @State private var showDeleteConfirm = false
+    @State private var readmeContent: String?
+    @State private var changelogContent: String?
+    @State private var hasMissingSecrets = false
+    @State private var cachedSecrets: [PluginManifest.SecretSpec] = []
+    @State private var copiedURL: String?
+
+    private var loadedPlugin: PluginManager.LoadedPlugin? {
+        PluginManager.shared.loadedPlugin(for: plugin.pluginId)
+    }
+
+    private var pluginColor: Color {
+        plugin.hasLoadError ? .red : theme.accentColor
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            detailHeaderBar
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    heroHeader
+                        .padding(.bottom, 8)
+
+                    if plugin.hasLoadError {
+                        errorSection
+                    }
+
+                    if hasMissingSecrets && !plugin.hasLoadError {
+                        secretsBanner
+                    }
+
+                    if !missingPermissions.isEmpty && !plugin.hasLoadError {
+                        permissionsBanner
+                    }
+
+                    if plugin.isInstalled && !plugin.hasLoadError,
+                        let loaded = loadedPlugin, !loaded.routes.isEmpty
+                    {
+                        agentsSection
+                    }
+
+                    if plugin.isInstalled && !plugin.hasLoadError {
+                        configSection
+                    }
+
+                    if readmeContent != nil {
+                        readmeSection
+                    }
+
+                    capabilitiesSection
+
+                    if plugin.isInstalled && !plugin.hasLoadError {
+                        routesSection
+                    }
+
+                    if changelogContent != nil {
+                        changelogSection
+                    }
+
+                    externalLinksSection
+                }
+                .padding(24)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(theme.primaryBackground)
+        .opacity(hasAppeared ? 1 : 0)
+        .animation(.easeOut(duration: 0.2), value: hasAppeared)
+        .onAppear {
+            loadPluginData()
+            withAnimation { hasAppeared = true }
+        }
+        .themedAlert(
+            "Error",
+            isPresented: $showError,
+            message: errorMessage ?? "Unknown error",
+            primaryButton: .primary("OK") {}
+        )
+        .themedAlert(
+            "Uninstall Plugin",
+            isPresented: $showDeleteConfirm,
+            message: "Are you sure you want to uninstall \"\(plugin.displayName)\"? This action cannot be undone.",
+            primaryButton: .destructive("Uninstall") {
+                Task {
+                    do {
+                        try await onUninstall()
+                    } catch {
+                        errorMessage = error.localizedDescription
+                        showError = true
+                    }
+                }
+            },
+            secondaryButton: .cancel("Cancel")
+        )
+        .sheet(isPresented: $showSecretsSheet) {
+            ToolSecretsSheet(
+                pluginId: plugin.pluginId,
+                pluginName: plugin.displayName,
+                pluginVersion: plugin.installedVersion?.description,
+                secrets: cachedSecrets,
+                onSave: {
+                    updateSecretsStatus()
                     onChange()
                 }
             )
+        }
+    }
+
+    // MARK: - Header Bar
+
+    private var detailHeaderBar: some View {
+        HStack(spacing: 12) {
+            Button(action: onBack) {
+                HStack(spacing: 6) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 12, weight: .semibold))
+                    Text("Plugins")
+                        .font(.system(size: 13, weight: .medium))
+                }
+                .foregroundColor(theme.accentColor)
+            }
+            .buttonStyle(PlainButtonStyle())
+
+            Spacer()
+
+            HStack(spacing: 6) {
+                if plugin.isInstalled {
+                    Button {
+                        showDeleteConfirm = true
+                    } label: {
+                        Image(systemName: "trash")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(theme.errorColor)
+                            .frame(width: 28, height: 28)
+                            .background(Circle().fill(theme.errorColor.opacity(0.1)))
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .help("Uninstall")
+                }
+            }
+        }
+        .padding(.horizontal, 24)
+        .padding(.vertical, 14)
+        .background(
+            theme.secondaryBackground
+                .overlay(
+                    Rectangle()
+                        .fill(theme.primaryBorder)
+                        .frame(height: 1),
+                    alignment: .bottom
+                )
+        )
+    }
+
+    // MARK: - Hero Header
+
+    private var heroHeader: some View {
+        HStack(spacing: 20) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(
+                        LinearGradient(
+                            colors: [pluginColor.opacity(0.2), pluginColor.opacity(0.05)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                RoundedRectangle(cornerRadius: 16)
+                    .strokeBorder(pluginColor.opacity(0.3), lineWidth: 2)
+                Image(
+                    systemName: plugin.hasLoadError
+                        ? "exclamationmark.triangle.fill"
+                        : "puzzlepiece.extension.fill"
+                )
+                .font(.system(size: 28))
+                .foregroundColor(pluginColor)
+            }
+            .frame(width: 72, height: 72)
+
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 10) {
+                    Text(plugin.displayName)
+                        .font(.system(size: 22, weight: .bold))
+                        .foregroundColor(theme.primaryText)
+
+                    if let version = plugin.installedVersion ?? plugin.latestVersion {
+                        Text("v\(version.description)")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(theme.tertiaryText)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(Capsule().fill(theme.tertiaryBackground))
+                    }
+                }
+
+                if let description = plugin.pluginDescription {
+                    Text(description)
+                        .font(.system(size: 13))
+                        .foregroundColor(theme.secondaryText)
+                        .lineLimit(3)
+                }
+
+                HStack(spacing: 12) {
+                    if let authors = plugin.authors, !authors.isEmpty {
+                        heroStatBadge(
+                            icon: "person",
+                            text: authors.joined(separator: ", "),
+                            color: theme.tertiaryText
+                        )
+                    }
+                    if let license = plugin.license {
+                        heroStatBadge(icon: "doc.text", text: license, color: theme.tertiaryText)
+                    }
+                    if let caps = plugin.capabilities {
+                        let toolCount = caps.tools?.count ?? 0
+                        let skillCount = caps.skills?.count ?? 0
+                        if toolCount > 0 {
+                            heroStatBadge(icon: "wrench.and.screwdriver", text: "\(toolCount) tools", color: .orange)
+                        }
+                        if skillCount > 0 {
+                            heroStatBadge(icon: "lightbulb", text: "\(skillCount) skills", color: .cyan)
+                        }
+                    }
+                    if loadedPlugin?.webConfig != nil {
+                        heroStatBadge(icon: "globe", text: "Web App", color: .purple)
+                    }
+                }
+            }
+
+            Spacer(minLength: 0)
+
+            VStack(spacing: 8) {
+                if plugin.isInstalling {
+                    ProgressView()
+                        .scaleEffect(0.9)
+                        .frame(width: 100, height: 36)
+                } else if plugin.hasUpdate {
+                    Button {
+                        Task {
+                            do { try await onUpgrade() } catch {
+                                errorMessage = error.localizedDescription
+                                showError = true
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 5) {
+                            Image(systemName: "arrow.up.circle.fill").font(.system(size: 12))
+                            Text("Update").font(.system(size: 13, weight: .semibold))
+                        }
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 8)
+                        .background(RoundedRectangle(cornerRadius: 8).fill(Color.orange))
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                } else if !plugin.isInstalled {
+                    Button {
+                        Task {
+                            do { try await onInstall() } catch {
+                                errorMessage = error.localizedDescription
+                                showError = true
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 5) {
+                            Image(systemName: "arrow.down.circle.fill").font(.system(size: 12))
+                            Text("Install").font(.system(size: 13, weight: .semibold))
+                        }
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 8)
+                        .background(RoundedRectangle(cornerRadius: 8).fill(theme.accentColor))
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                }
+
+                if plugin.isInstalled && !plugin.hasLoadError,
+                    let webConfig = loadedPlugin?.webConfig
+                {
+                    Button {
+                        let port = loadServerPort()
+                        let url = URL(string: "http://127.0.0.1:\(port)/plugins/\(plugin.pluginId)\(webConfig.mount)")!
+                        NSWorkspace.shared.open(url)
+                    } label: {
+                        HStack(spacing: 5) {
+                            Image(systemName: "globe").font(.system(size: 12))
+                            Text("Open Web App").font(.system(size: 13, weight: .semibold))
+                        }
+                        .foregroundColor(theme.accentColor)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 8)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(theme.accentColor.opacity(0.1))
+                        )
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                }
+            }
+        }
+    }
+
+    private func heroStatBadge(icon: String, text: String, color: Color) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: icon)
+                .font(.system(size: 10))
+            Text(text)
+                .font(.system(size: 11, weight: .medium))
+                .lineLimit(1)
+        }
+        .foregroundColor(color)
+    }
+
+    // MARK: - Error Section
+
+    private var errorSection: some View {
+        Group {
+            if let loadError = plugin.loadError {
+                if loadError.hasPrefix(PluginManager.PluginLoadError.consentRequiredPrefix) {
+                    detailCard {
+                        HStack(spacing: 12) {
+                            Image(systemName: "lock.shield.fill")
+                                .font(.system(size: 20))
+                                .foregroundColor(theme.warningColor)
+
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Approval Required")
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .foregroundColor(theme.primaryText)
+                                Text("This plugin needs your approval before it can load.")
+                                    .font(.system(size: 12))
+                                    .foregroundColor(theme.secondaryText)
+                            }
+
+                            Spacer()
+
+                            Button {
+                                Task {
+                                    do {
+                                        try PluginManager.shared.grantConsent(pluginId: plugin.pluginId)
+                                        await PluginManager.shared.loadAll()
+                                        onChange()
+                                    } catch {
+                                        errorMessage = error.localizedDescription
+                                        showError = true
+                                    }
+                                }
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "checkmark.shield.fill").font(.system(size: 10))
+                                    Text("Approve").font(.system(size: 12, weight: .semibold))
+                                }
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .background(RoundedRectangle(cornerRadius: 6).fill(theme.accentColor))
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                        }
+                    }
+                } else {
+                    detailCard {
+                        HStack(spacing: 12) {
+                            Image(systemName: "exclamationmark.circle.fill")
+                                .font(.system(size: 20))
+                                .foregroundColor(.red)
+
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Failed to load plugin")
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .foregroundColor(.red)
+                                Text(loadError)
+                                    .font(.system(size: 12))
+                                    .foregroundColor(theme.secondaryText)
+                                    .lineLimit(5)
+                            }
+
+                            Spacer()
+
+                            Button {
+                                Task {
+                                    await PluginManager.shared.loadAll()
+                                    onChange()
+                                }
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "arrow.clockwise").font(.system(size: 11))
+                                    Text("Retry").font(.system(size: 12, weight: .semibold))
+                                }
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .background(RoundedRectangle(cornerRadius: 6).fill(Color.blue))
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Secrets Banner
+
+    private var secretsBanner: some View {
+        detailCard {
+            HStack(spacing: 12) {
+                Image(systemName: "key.fill")
+                    .font(.system(size: 20))
+                    .foregroundColor(theme.warningColor)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("API Keys Required")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
+                    Text("This plugin requires credentials to function properly.")
+                        .font(.system(size: 12))
+                        .foregroundColor(theme.secondaryText)
+                }
+
+                Spacer()
+
+                Button {
+                    showSecretsSheet = true
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "key.fill").font(.system(size: 10))
+                        Text("Configure").font(.system(size: 12, weight: .semibold))
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(RoundedRectangle(cornerRadius: 6).fill(theme.accentColor))
+                }
+                .buttonStyle(PlainButtonStyle())
+            }
+        }
+    }
+
+    // MARK: - Permissions Banner
+
+    private var permissionsBanner: some View {
+        detailCard {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 10) {
+                    Image(systemName: "lock.shield.fill")
+                        .font(.system(size: 20))
+                        .foregroundColor(theme.warningColor)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("System Permissions Required")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundColor(theme.primaryText)
+                        Text("Grant the following permissions to use all features:")
+                            .font(.system(size: 12))
+                            .foregroundColor(theme.secondaryText)
+                    }
+
+                    Spacer()
+                }
+
+                HStack(spacing: 8) {
+                    ForEach(missingPermissions, id: \.rawValue) { perm in
+                        Button {
+                            SystemPermissionService.shared.requestPermission(perm)
+                            onChange()
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: perm.systemIconName).font(.system(size: 11))
+                                Text("Grant \(perm.displayName)").font(.system(size: 11, weight: .medium))
+                            }
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .background(RoundedRectangle(cornerRadius: 6).fill(theme.accentColor))
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                    }
+
+                    Spacer()
+
+                    Button {
+                        if let firstPerm = missingPermissions.first {
+                            SystemPermissionService.shared.openSystemSettings(for: firstPerm)
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "gear").font(.system(size: 10))
+                            Text("Open Settings").font(.system(size: 11, weight: .medium))
+                        }
+                        .foregroundColor(theme.secondaryText)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(RoundedRectangle(cornerRadius: 6).fill(theme.tertiaryBackground))
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                }
+            }
+        }
+    }
+
+    // MARK: - README Section
+
+    private var readmeSection: some View {
+        detailSection(title: "README", icon: "doc.text.fill") {
+            if let content = readmeContent {
+                MarkdownMessageView(text: content, baseWidth: 600)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+
+    // MARK: - Configuration Section
+
+    @ViewBuilder
+    private var configSection: some View {
+        if let loaded = loadedPlugin,
+            let configSpec = loaded.plugin.manifest.capabilities.config
+        {
+            PluginConfigView(
+                pluginId: plugin.pluginId,
+                configSpec: configSpec,
+                plugin: loaded.plugin
+            )
+        }
+    }
+
+    // MARK: - Endpoints Section
+
+    private var agentsSection: some View {
+        detailSection(title: "Endpoints", icon: "link") {
+            VStack(spacing: 0) {
+                let allAgents = agentManager.agents.sorted { $0.name < $1.name }
+                ForEach(Array(allAgents.enumerated()), id: \.element.id) { idx, agent in
+                    if idx > 0 {
+                        Divider().opacity(0.4).padding(.vertical, 2)
+                    }
+                    agentPluginRow(agent: agent)
+                }
+            }
+        }
+    }
+
+    private func agentPluginRow(agent: Agent) -> some View {
+        let isEnabled = agentManager.isPluginEnabled(plugin.pluginId, for: agent.id)
+        let tunnelStatus = relayManager.agentStatuses[agent.id]
+        let tunnelURL: String? = {
+            if case .connected(let baseURL) = tunnelStatus {
+                return "\(baseURL)/plugins/\(plugin.pluginId)"
+            }
+            return nil
+        }()
+        let localURL: String = {
+            let port = loadServerPort()
+            return "http://127.0.0.1:\(port)/plugins/\(plugin.pluginId)"
+        }()
+
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                Circle()
+                    .fill(isEnabled ? theme.successColor : theme.tertiaryText.opacity(0.4))
+                    .frame(width: 8, height: 8)
+
+                Text(agent.name)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(theme.primaryText)
+
+                if agent.isBuiltIn {
+                    Text("Default")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundColor(theme.tertiaryText)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(theme.tertiaryText.opacity(0.12)))
+                }
+
+                Spacer()
+
+                if !isEnabled {
+                    Text("Not enabled")
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.tertiaryText)
+                }
+            }
+
+            if isEnabled {
+                if let url = tunnelURL {
+                    urlRow(label: "Tunnel", url: url)
+                }
+                urlRow(label: "Local", url: localURL)
+            }
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(isEnabled ? theme.tertiaryBackground.opacity(0.3) : Color.clear)
+        )
+    }
+
+    private func urlRow(label: String, url: String) -> some View {
+        HStack(spacing: 8) {
+            Text(label)
+                .font(.system(size: 10, weight: .bold))
+                .foregroundColor(label == "Tunnel" ? theme.accentColor : theme.tertiaryText)
+                .frame(width: 44, alignment: .leading)
+
+            Text(url)
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundColor(label == "Tunnel" ? theme.accentColor : theme.secondaryText)
+                .textSelection(.enabled)
+
+            Spacer(minLength: 4)
+
+            Button {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(url, forType: .string)
+                copiedURL = url
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                    if copiedURL == url { copiedURL = nil }
+                }
+            } label: {
+                Image(systemName: copiedURL == url ? "checkmark" : "doc.on.doc")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(copiedURL == url ? theme.successColor : theme.tertiaryText)
+                    .frame(width: 22, height: 22)
+                    .background(Circle().fill(theme.tertiaryBackground))
+            }
+            .buttonStyle(PlainButtonStyle())
+            .help("Copy URL")
+        }
+        .padding(.leading, 18)
+    }
+
+    private func loadServerPort() -> Int {
+        let url = OsaurusPaths.serverConfigFile()
+        guard let data = try? Data(contentsOf: url),
+            let config = try? JSONDecoder().decode(ServerConfiguration.self, from: data)
+        else { return 1337 }
+        return config.port
+    }
+
+    // MARK: - Capabilities Section
+
+    @ViewBuilder
+    private var capabilitiesSection: some View {
+        let specTools = plugin.capabilities?.tools ?? []
+        let specSkills = plugin.capabilities?.skills ?? []
+        if !specTools.isEmpty || !specSkills.isEmpty {
+            detailSection(title: "Capabilities", icon: "wrench.and.screwdriver.fill") {
+                PluginProvidesSummary(tools: specTools, skills: specSkills)
+            }
+        }
+    }
+
+    // MARK: - Routes Section
+
+    @ViewBuilder
+    private var routesSection: some View {
+        if let loaded = loadedPlugin, !loaded.routes.isEmpty {
+            detailSection(title: "HTTP Routes", icon: "arrow.left.arrow.right") {
+                PluginRoutesSummary(pluginId: plugin.pluginId, routes: loaded.routes)
+            }
+        }
+    }
+
+    // MARK: - Changelog Section
+
+    private var changelogSection: some View {
+        detailSection(title: "Changelog", icon: "clock.arrow.circlepath") {
+            if let content = changelogContent {
+                ScrollView {
+                    Text(content)
+                        .font(.system(size: 12))
+                        .foregroundColor(theme.primaryText)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
+                }
+                .frame(maxHeight: 300)
+            }
+        }
+    }
+
+    // MARK: - External Links Section
+
+    @ViewBuilder
+    private var externalLinksSection: some View {
+        if let loaded = loadedPlugin,
+            let links = loaded.plugin.manifest.docs?.links,
+            !links.isEmpty
+        {
+            detailSection(title: "Links", icon: "link") {
+                HStack(spacing: 12) {
+                    ForEach(links, id: \.url) { link in
+                        Button {
+                            if let url = URL(string: link.url) {
+                                NSWorkspace.shared.open(url)
+                            }
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: "link").font(.system(size: 10))
+                                Text(link.label).font(.system(size: 12, weight: .medium))
+                            }
+                            .foregroundColor(theme.accentColor)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(theme.accentColor.opacity(0.1))
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    Spacer()
+                }
+            }
+        }
+    }
+
+    // MARK: - Section Helpers
+
+    private func detailSection<Content: View>(
+        title: String,
+        icon: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Image(systemName: icon)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(theme.accentColor)
+                Text(title)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+            }
+
+            content()
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(theme.cardBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(theme.cardBorder, lineWidth: 1)
+                )
+        )
+    }
+
+    private func detailCard<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        content()
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(theme.cardBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(theme.cardBorder, lineWidth: 1)
+                    )
+            )
+    }
+
+    // MARK: - Data Loading
+
+    private func loadPluginData() {
+        if let loaded = PluginManager.shared.plugins.first(where: { $0.plugin.id == plugin.pluginId }) {
+            cachedSecrets = loaded.plugin.manifest.secrets ?? []
+        }
+        updateSecretsStatus()
+
+        if let loaded = loadedPlugin {
+            if let path = loaded.readmePath {
+                readmeContent = try? String(contentsOf: path, encoding: .utf8)
+            }
+            if let path = loaded.changelogPath {
+                changelogContent = try? String(contentsOf: path, encoding: .utf8)
+            }
         }
     }
 
@@ -885,296 +1598,30 @@ private struct InstalledPluginCard: View {
             !cachedSecrets.isEmpty
             && !ToolSecretsKeychain.hasAllRequiredSecrets(specs: cachedSecrets, for: plugin.pluginId)
     }
-
-    private func approveConsent() {
-        Task {
-            do {
-                try PluginManager.shared.grantConsent(pluginId: plugin.pluginId)
-                await PluginManager.shared.loadAll()
-                onChange()
-            } catch {
-                errorMessage = error.localizedDescription
-                showError = true
-            }
-        }
-    }
-
-    private func retryLoad() {
-        Task {
-            await PluginManager.shared.loadAll()
-            onChange()
-        }
-    }
-
-    private func upgrade() {
-        Task {
-            do {
-                try await onUpgrade()
-            } catch {
-                errorMessage = error.localizedDescription
-                showError = true
-            }
-        }
-    }
-
-    private func uninstall() {
-        Task {
-            do {
-                try await onUninstall()
-            } catch {
-                errorMessage = error.localizedDescription
-                showError = true
-            }
-        }
-    }
-}
-
-// MARK: - Plugin Browse Row
-
-private struct PluginBrowseRow: View {
-    @Environment(\.theme) private var theme
-    let plugin: PluginState
-    let onInstall: () async throws -> Void
-    let onUpgrade: () async throws -> Void
-    let onUninstall: () async throws -> Void
-
-    @State private var errorMessage: String?
-    @State private var showError: Bool = false
-    @State private var isHovering = false
-    @State private var isExpanded = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 14) {
-                Button(action: {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                        isExpanded.toggle()
-                    }
-                }) {
-                    HStack(spacing: 14) {
-                        ZStack {
-                            RoundedRectangle(cornerRadius: 10)
-                                .fill(theme.accentColor.opacity(0.12))
-                            Image(systemName: "puzzlepiece.extension.fill")
-                                .font(.system(size: 20))
-                                .foregroundColor(theme.accentColor)
-                        }
-                        .frame(width: 44, height: 44)
-
-                        VStack(alignment: .leading, spacing: 4) {
-                            HStack(spacing: 8) {
-                                Text(plugin.displayName)
-                                    .font(.system(size: 15, weight: .semibold, design: .rounded))
-                                    .foregroundColor(theme.primaryText)
-
-                                if let version = plugin.latestVersion {
-                                    Text("v\(version.description)")
-                                        .font(.system(size: 11, weight: .medium))
-                                        .foregroundColor(theme.tertiaryText)
-                                        .padding(.horizontal, 6)
-                                        .padding(.vertical, 2)
-                                        .background(
-                                            Capsule()
-                                                .fill(theme.tertiaryBackground)
-                                        )
-                                }
-
-                                if plugin.hasUpdate {
-                                    StatusCapsuleBadge(icon: "arrow.up.circle.fill", text: "Update", color: .orange)
-                                }
-                            }
-
-                            if let description = plugin.pluginDescription {
-                                Text(description)
-                                    .font(.system(size: 13))
-                                    .foregroundColor(theme.secondaryText)
-                                    .lineLimit(isExpanded ? nil : 1)
-                            }
-                        }
-
-                        Spacer()
-
-                        PluginCapabilitiesBadge(
-                            toolCount: plugin.capabilities?.tools?.count ?? 0,
-                            skillCount: plugin.capabilities?.skills?.count ?? 0
-                        )
-
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundColor(theme.tertiaryText)
-                            .rotationEffect(.degrees(isExpanded ? 90 : 0))
-                    }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(PlainButtonStyle())
-
-                actionButton
-            }
-
-            if isExpanded {
-                HStack(spacing: 12) {
-                    if let authors = plugin.authors, !authors.isEmpty {
-                        Label(authors.joined(separator: ", "), systemImage: "person")
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.tertiaryText)
-                    }
-
-                    if let license = plugin.license {
-                        Label(license, systemImage: "doc.text")
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.tertiaryText)
-                    }
-                }
-                .padding(.leading, 58)
-
-                let specTools = plugin.capabilities?.tools ?? []
-                let specSkills = plugin.capabilities?.skills ?? []
-                if !specTools.isEmpty || !specSkills.isEmpty {
-                    Divider()
-                        .padding(.vertical, 4)
-
-                    PluginProvidesSummary(tools: specTools, skills: specSkills)
-                }
-            }
-        }
-        .padding(16)
-        .frame(maxWidth: .infinity)
-        .background(PluginCardBackground(isHovering: isHovering))
-        .onHover { isHovering = $0 }
-        .themedAlert(
-            "Installation Error",
-            isPresented: $showError,
-            message: errorMessage ?? "Unknown error",
-            primaryButton: .primary("OK") {}
-        )
-    }
-
-    @ViewBuilder
-    private var actionButton: some View {
-        if plugin.isInstalling {
-            ProgressView()
-                .scaleEffect(0.8)
-                .frame(width: 90, height: 32)
-        } else if plugin.hasUpdate {
-            Button(action: { upgrade() }) {
-                HStack(spacing: 5) {
-                    Image(systemName: "arrow.up.circle.fill")
-                        .font(.system(size: 12))
-                    Text("Update")
-                        .font(.system(size: 13, weight: .semibold))
-                }
-                .foregroundColor(.white)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(Color.orange)
-                )
-            }
-            .buttonStyle(PlainButtonStyle())
-        } else if plugin.isInstalled {
-            Menu {
-                Button(role: .destructive) {
-                    uninstall()
-                } label: {
-                    Label("Uninstall", systemImage: "trash")
-                }
-            } label: {
-                HStack(spacing: 5) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 12))
-                    Text("Installed")
-                        .font(.system(size: 13, weight: .medium))
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 9, weight: .semibold))
-                }
-                .foregroundColor(theme.successColor)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(theme.successColor.opacity(0.1))
-                )
-            }
-            .menuStyle(.borderlessButton)
-            .fixedSize()
-        } else {
-            Button(action: { install() }) {
-                HStack(spacing: 5) {
-                    Image(systemName: "arrow.down.circle.fill")
-                        .font(.system(size: 12))
-                    Text("Install")
-                        .font(.system(size: 13, weight: .semibold))
-                }
-                .foregroundColor(.white)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(theme.accentColor)
-                )
-            }
-            .buttonStyle(PlainButtonStyle())
-        }
-    }
-
-    private func install() {
-        Task {
-            do {
-                try await onInstall()
-            } catch {
-                errorMessage = error.localizedDescription
-                showError = true
-            }
-        }
-    }
-
-    private func upgrade() {
-        Task {
-            do {
-                try await onUpgrade()
-            } catch {
-                errorMessage = error.localizedDescription
-                showError = true
-            }
-        }
-    }
-
-    private func uninstall() {
-        Task {
-            do {
-                try await onUninstall()
-            } catch {
-                errorMessage = error.localizedDescription
-                showError = true
-            }
-        }
-    }
 }
 
 // MARK: - Shared Components
 
-/// Small status capsule badge (e.g. "Update", "Error", "Needs Permission").
 private struct StatusCapsuleBadge: View {
     let icon: String
     let text: String
     let color: Color
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 3) {
             Image(systemName: icon)
-                .font(.system(size: 10))
+                .font(.system(size: 9))
             Text(text)
-                .font(.system(size: 10, weight: .semibold))
+                .font(.system(size: 9, weight: .bold))
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 3)
-        .background(Capsule().fill(color.opacity(0.15)))
+        .padding(.horizontal, 6)
+        .padding(.vertical, 2)
+        .background(Capsule().fill(color.opacity(0.12)))
         .foregroundColor(color)
+        .fixedSize()
     }
 }
 
-/// Reusable badge showing tool and skill counts for a plugin.
 private struct PluginCapabilitiesBadge: View {
     @Environment(\.theme) private var theme
 
@@ -1214,7 +1661,6 @@ private struct PluginCapabilitiesBadge: View {
     }
 }
 
-/// Read-only "Provides:" summary showing tool/skill name capsules.
 private struct PluginProvidesSummary: View {
     @Environment(\.theme) private var theme
 
@@ -1224,10 +1670,6 @@ private struct PluginProvidesSummary: View {
     var body: some View {
         if !tools.isEmpty || !skills.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
-                Text("Provides:")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
-
                 PluginFlowLayout(spacing: 6) {
                     ForEach(tools, id: \.name) { tool in
                         HStack(spacing: 4) {
@@ -1259,31 +1701,6 @@ private struct PluginProvidesSummary: View {
                 }
             }
         }
-    }
-}
-
-/// Card background with hover-sensitive border used by both installed and browse cards.
-private struct PluginCardBackground: View {
-    @Environment(\.theme) private var theme
-    let isHovering: Bool
-
-    var body: some View {
-        RoundedRectangle(cornerRadius: 12)
-            .fill(theme.cardBackground)
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(
-                        isHovering ? theme.accentColor.opacity(0.2) : theme.cardBorder,
-                        lineWidth: 1
-                    )
-            )
-            .shadow(
-                color: theme.shadowColor.opacity(theme.shadowOpacity),
-                radius: theme.cardShadowRadius,
-                x: 0,
-                y: theme.cardShadowY
-            )
-            .drawingGroup()
     }
 }
 
@@ -1342,10 +1759,6 @@ private struct PluginRoutesSummary: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("HTTP Routes:")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(theme.secondaryText)
-
             ForEach(routes, id: \.id) { route in
                 HStack(spacing: 8) {
                     Text(route.methods.joined(separator: ", "))
@@ -1383,134 +1796,6 @@ private struct PluginRoutesSummary: View {
         case .none: return .green
         case .verify: return .orange
         case .owner: return .blue
-        }
-    }
-}
-
-// MARK: - Documentation Section
-
-private struct PluginDocsSection: View {
-    @Environment(\.theme) private var theme
-
-    let readmePath: URL?
-    let changelogPath: URL?
-    let docLinks: [PluginManifest.DocLink]?
-
-    @State private var selectedDocTab: DocTab = .readme
-    @State private var readmeContent: String?
-    @State private var changelogContent: String?
-
-    enum DocTab: String, CaseIterable {
-        case readme = "README"
-        case changelog = "Changelog"
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 12) {
-                Text("Documentation")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
-
-                Spacer()
-
-                if readmePath != nil || changelogPath != nil {
-                    HStack(spacing: 0) {
-                        if readmePath != nil {
-                            docTabButton(.readme)
-                        }
-                        if changelogPath != nil {
-                            docTabButton(.changelog)
-                        }
-                    }
-                }
-            }
-
-            // Content area
-            if selectedDocTab == .readme, let content = readmeContent {
-                ScrollView {
-                    Text(content)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.primaryText)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .textSelection(.enabled)
-                }
-                .frame(maxHeight: 300)
-                .padding(10)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(theme.primaryBackground.opacity(0.5))
-                )
-            } else if selectedDocTab == .changelog, let content = changelogContent {
-                ScrollView {
-                    Text(content)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.primaryText)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .textSelection(.enabled)
-                }
-                .frame(maxHeight: 300)
-                .padding(10)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(theme.primaryBackground.opacity(0.5))
-                )
-            }
-
-            // External links
-            if let links = docLinks, !links.isEmpty {
-                HStack(spacing: 12) {
-                    ForEach(links, id: \.url) { link in
-                        Button {
-                            if let url = URL(string: link.url) {
-                                NSWorkspace.shared.open(url)
-                            }
-                        } label: {
-                            HStack(spacing: 4) {
-                                Image(systemName: "link")
-                                    .font(.system(size: 10))
-                                Text(link.label)
-                                    .font(.system(size: 11, weight: .medium))
-                            }
-                            .foregroundColor(theme.accentColor)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-            }
-        }
-        .onAppear {
-            loadDocs()
-            if readmePath == nil && changelogPath != nil {
-                selectedDocTab = .changelog
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func docTabButton(_ tab: DocTab) -> some View {
-        Button {
-            selectedDocTab = tab
-        } label: {
-            Text(tab.rawValue)
-                .font(.system(size: 11, weight: selectedDocTab == tab ? .semibold : .regular))
-                .foregroundColor(selectedDocTab == tab ? theme.accentColor : theme.tertiaryText)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(
-                    RoundedRectangle(cornerRadius: 4)
-                        .fill(selectedDocTab == tab ? theme.accentColor.opacity(0.1) : Color.clear)
-                )
-        }
-        .buttonStyle(.plain)
-    }
-
-    private func loadDocs() {
-        if let path = readmePath {
-            readmeContent = try? String(contentsOf: path, encoding: .utf8)
-        }
-        if let path = changelogPath {
-            changelogContent = try? String(contentsOf: path, encoding: .utf8)
         }
     }
 }

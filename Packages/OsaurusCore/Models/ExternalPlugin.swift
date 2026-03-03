@@ -398,6 +398,41 @@ final class ExternalPlugin: @unchecked Sendable {
         api.destroy?(ctx)
     }
 
+    /// Dispatches a blocking C ABI call on `invokeQueue` and returns the resulting string.
+    /// Keeps `self` alive for the duration of the call to prevent `ctx` from being freed.
+    private func dispatchPluginCall(
+        errorCode: Int,
+        errorMessage: String,
+        _ call: @Sendable @escaping (osr_plugin_ctx_t) -> UnsafePointer<CChar>?
+    ) async throws -> String {
+        let freeString = api.free_string
+        nonisolated(unsafe) let ctx = self.ctx
+        let pluginId = self.id
+
+        return try await withCheckedThrowingContinuation { continuation in
+            ExternalPlugin.invokeQueue.async { [self] in
+                PluginHostContext.setActivePlugin(pluginId)
+                defer { PluginHostContext.clearActivePlugin() }
+
+                guard let resPtr = call(ctx) else {
+                    continuation.resume(
+                        throwing: NSError(
+                            domain: "ExternalPlugin",
+                            code: errorCode,
+                            userInfo: [NSLocalizedDescriptionKey: errorMessage]
+                        )
+                    )
+                    return
+                }
+
+                let result = String(cString: resPtr)
+                freeString?(resPtr)
+                continuation.resume(returning: result)
+                withExtendedLifetime(self) {}
+            }
+        }
+    }
+
     func invoke(type: String, id: String, payload: String) async throws -> String {
         guard let invokeFn = api.invoke else {
             throw NSError(
@@ -407,37 +442,13 @@ final class ExternalPlugin: @unchecked Sendable {
             )
         }
 
-        let freeString = api.free_string
-        nonisolated(unsafe) let ctx = self.ctx
-        let pluginId = self.id
-
-        return try await withCheckedThrowingContinuation { continuation in
-            ExternalPlugin.invokeQueue.async {
-                PluginHostContext.setActivePlugin(pluginId)
-                defer { PluginHostContext.clearActivePlugin() }
-
-                let resPtr = type.withCString { typePtr in
-                    id.withCString { idPtr in
-                        payload.withCString { payloadPtr in
-                            invokeFn(ctx, typePtr, idPtr, payloadPtr)
-                        }
+        return try await dispatchPluginCall(errorCode: 2, errorMessage: "Plugin returned NULL response") { ctx in
+            type.withCString { typePtr in
+                id.withCString { idPtr in
+                    payload.withCString { payloadPtr in
+                        invokeFn(ctx, typePtr, idPtr, payloadPtr)
                     }
                 }
-
-                guard let resPtr else {
-                    continuation.resume(
-                        throwing: NSError(
-                            domain: "ExternalPlugin",
-                            code: 2,
-                            userInfo: [NSLocalizedDescriptionKey: "Plugin returned NULL response"]
-                        )
-                    )
-                    return
-                }
-
-                let result = String(cString: resPtr)
-                freeString?(resPtr)
-                continuation.resume(returning: result)
             }
         }
     }
@@ -451,33 +462,9 @@ final class ExternalPlugin: @unchecked Sendable {
             )
         }
 
-        let freeString = api.free_string
-        nonisolated(unsafe) let ctx = self.ctx
-        let pluginId = self.id
-
-        return try await withCheckedThrowingContinuation { continuation in
-            ExternalPlugin.invokeQueue.async {
-                PluginHostContext.setActivePlugin(pluginId)
-                defer { PluginHostContext.clearActivePlugin() }
-
-                let resPtr = requestJSON.withCString { reqPtr in
-                    routeFn(ctx, reqPtr)
-                }
-
-                guard let resPtr else {
-                    continuation.resume(
-                        throwing: NSError(
-                            domain: "ExternalPlugin",
-                            code: 4,
-                            userInfo: [NSLocalizedDescriptionKey: "Plugin route handler returned NULL"]
-                        )
-                    )
-                    return
-                }
-
-                let result = String(cString: resPtr)
-                freeString?(resPtr)
-                continuation.resume(returning: result)
+        return try await dispatchPluginCall(errorCode: 4, errorMessage: "Plugin route handler returned NULL") { ctx in
+            requestJSON.withCString { reqPtr in
+                routeFn(ctx, reqPtr)
             }
         }
     }
@@ -487,7 +474,7 @@ final class ExternalPlugin: @unchecked Sendable {
         nonisolated(unsafe) let ctx = self.ctx
         let pluginId = self.id
 
-        ExternalPlugin.invokeQueue.async {
+        ExternalPlugin.invokeQueue.async { [self] in
             PluginHostContext.setActivePlugin(pluginId)
             defer { PluginHostContext.clearActivePlugin() }
 
@@ -496,6 +483,7 @@ final class ExternalPlugin: @unchecked Sendable {
                     configFn(ctx, keyPtr, valuePtr)
                 }
             }
+            withExtendedLifetime(self) {}
         }
     }
 
@@ -505,7 +493,7 @@ final class ExternalPlugin: @unchecked Sendable {
         let pluginId = self.id
         let rawType = eventType.rawValue
 
-        ExternalPlugin.invokeQueue.async {
+        ExternalPlugin.invokeQueue.async { [self] in
             PluginHostContext.setActivePlugin(pluginId)
             defer { PluginHostContext.clearActivePlugin() }
 
@@ -514,6 +502,7 @@ final class ExternalPlugin: @unchecked Sendable {
                     eventFn(ctx, taskIdPtr, rawType, jsonPtr)
                 }
             }
+            withExtendedLifetime(self) {}
         }
     }
 
