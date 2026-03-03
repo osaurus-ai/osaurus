@@ -174,6 +174,7 @@ final class PluginRepositoryService: ObservableObject {
             try FileManager.default.removeItem(at: pluginDir)
         }
 
+        ToolSecretsKeychain.deleteAllSecretsAllAgents(for: pluginId)
         ToolSecretsKeychain.deleteAllSecrets(for: pluginId)
         SkillManager.shared.unregisterPluginSkills(pluginId: pluginId)
 
@@ -359,9 +360,8 @@ final class PluginRepositoryService: ObservableObject {
             return
         }
 
-        // Check if any required secrets are missing
         let missingRequired = secrets.filter { spec in
-            spec.required && !ToolSecretsKeychain.hasSecret(id: spec.id, for: pluginId)
+            spec.required && !ToolSecretsKeychain.hasSecret(id: spec.id, for: pluginId, agentId: Agent.defaultId)
         }
 
         if !missingRequired.isEmpty {

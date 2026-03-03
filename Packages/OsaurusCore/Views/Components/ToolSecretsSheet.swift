@@ -17,6 +17,7 @@ struct ToolSecretsSheet: View {
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
     let pluginId: String
+    let agentId: UUID
     let pluginName: String
     let pluginVersion: String?
     let secrets: [PluginManifest.SecretSpec]
@@ -29,12 +30,14 @@ struct ToolSecretsSheet: View {
 
     init(
         pluginId: String,
+        agentId: UUID,
         pluginName: String,
         pluginVersion: String? = nil,
         secrets: [PluginManifest.SecretSpec],
         onSave: @escaping () -> Void
     ) {
         self.pluginId = pluginId
+        self.agentId = agentId
         self.pluginName = pluginName
         self.pluginVersion = pluginVersion
         self.secrets = secrets
@@ -303,14 +306,13 @@ struct ToolSecretsSheet: View {
 
     private func loadExistingSecrets() {
         for spec in secrets {
-            if let existingValue = ToolSecretsKeychain.getSecret(id: spec.id, for: pluginId) {
+            if let existingValue = ToolSecretsKeychain.getSecret(id: spec.id, for: pluginId, agentId: agentId) {
                 secretValues[spec.id] = existingValue
             }
         }
     }
 
     private func save() {
-        // Validate required fields
         var errors: Set<String> = []
         for spec in secrets where spec.required {
             let value = secretValues[spec.id]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -326,14 +328,12 @@ struct ToolSecretsSheet: View {
             return
         }
 
-        // Save all secrets to Keychain
         for spec in secrets {
             let value = secretValues[spec.id]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             if !value.isEmpty {
-                ToolSecretsKeychain.saveSecret(value, id: spec.id, for: pluginId)
+                ToolSecretsKeychain.saveSecret(value, id: spec.id, for: pluginId, agentId: agentId)
             } else {
-                // Delete empty optional secrets
-                ToolSecretsKeychain.deleteSecret(id: spec.id, for: pluginId)
+                ToolSecretsKeychain.deleteSecret(id: spec.id, for: pluginId, agentId: agentId)
             }
         }
 
@@ -533,6 +533,7 @@ private struct DescriptionText: View {
 #Preview {
     ToolSecretsSheet(
         pluginId: "dev.example.weather",
+        agentId: Agent.defaultId,
         pluginName: "Weather Plugin",
         pluginVersion: "1.0.0",
         secrets: [

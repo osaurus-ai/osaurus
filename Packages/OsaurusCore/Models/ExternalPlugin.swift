@@ -536,16 +536,14 @@ final class ExternalPlugin: @unchecked Sendable {
         }
     }
 
-    /// Returns all configured secrets for this plugin from the Keychain
-    /// - Returns: Dictionary mapping secret IDs to their values
-    func resolvedSecrets() -> [String: String] {
-        return ToolSecretsKeychain.getAllSecrets(for: manifest.plugin_id)
+    /// Returns all configured secrets for this plugin from the Keychain, scoped to the given agent.
+    func resolvedSecrets(agentId: UUID) -> [String: String] {
+        return ToolSecretsKeychain.getAllSecrets(for: manifest.plugin_id, agentId: agentId)
     }
 
-    /// Checks if all required secrets are configured
-    /// - Returns: True if all required secrets have values in the Keychain
-    func hasAllRequiredSecrets() -> Bool {
+    /// Checks if all required secrets are configured for the given agent.
+    func hasAllRequiredSecrets(agentId: UUID) -> Bool {
         guard let specs = manifest.secrets else { return true }
-        return ToolSecretsKeychain.hasAllRequiredSecrets(specs: specs, for: manifest.plugin_id)
+        return ToolSecretsKeychain.hasAllRequiredSecrets(specs: specs, for: manifest.plugin_id, agentId: agentId)
     }
 }

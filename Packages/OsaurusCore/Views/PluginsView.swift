@@ -124,6 +124,7 @@ struct PluginsView: View {
             if let pluginId = secretsSheetPluginId {
                 ToolSecretsSheet(
                     pluginId: pluginId,
+                    agentId: Agent.defaultId,
                     pluginName: secretsSheetPluginName ?? pluginId,
                     pluginVersion: secretsSheetPluginVersion,
                     secrets: secretsSheetSecrets,
@@ -626,6 +627,7 @@ private struct PluginCard: View {
         .sheet(isPresented: $showSecretsSheet) {
             ToolSecretsSheet(
                 pluginId: plugin.pluginId,
+                agentId: Agent.defaultId,
                 pluginName: plugin.displayName,
                 pluginVersion: plugin.installedVersion?.description,
                 secrets: cachedSecrets,
@@ -784,9 +786,19 @@ private struct PluginCard: View {
     }
 
     private func updateSecretsStatus() {
-        hasMissingSecrets =
-            !cachedSecrets.isEmpty
-            && !ToolSecretsKeychain.hasAllRequiredSecrets(specs: cachedSecrets, for: plugin.pluginId)
+        guard !cachedSecrets.isEmpty else {
+            hasMissingSecrets = false
+            return
+        }
+        let mgr = AgentManager.shared
+        hasMissingSecrets = mgr.agents.contains { agent in
+            mgr.isPluginEnabled(plugin.pluginId, for: agent.id)
+                && !ToolSecretsKeychain.hasAllRequiredSecrets(
+                    specs: cachedSecrets,
+                    for: plugin.pluginId,
+                    agentId: agent.id
+                )
+        }
     }
 }
 
@@ -817,6 +829,7 @@ private struct PluginDetailView: View {
     @State private var hasMissingSecrets = false
     @State private var cachedSecrets: [PluginManifest.SecretSpec] = []
     @State private var copiedURL: String?
+    @State private var expandedAgents: Set<UUID> = []
 
     private var loadedPlugin: PluginManager.LoadedPlugin? {
         PluginManager.shared.loadedPlugin(for: plugin.pluginId)
@@ -847,14 +860,8 @@ private struct PluginDetailView: View {
                         permissionsBanner
                     }
 
-                    if plugin.isInstalled && !plugin.hasLoadError,
-                        let loaded = loadedPlugin, !loaded.routes.isEmpty
-                    {
-                        agentsSection
-                    }
-
                     if plugin.isInstalled && !plugin.hasLoadError {
-                        configSection
+                        agentsSection
                     }
 
                     if readmeContent != nil {
@@ -909,6 +916,7 @@ private struct PluginDetailView: View {
         .sheet(isPresented: $showSecretsSheet) {
             ToolSecretsSheet(
                 pluginId: plugin.pluginId,
+                agentId: Agent.defaultId,
                 pluginName: plugin.displayName,
                 pluginVersion: plugin.installedVersion?.description,
                 secrets: cachedSecrets,
@@ -1324,28 +1332,15 @@ private struct PluginDetailView: View {
         }
     }
 
-    // MARK: - Configuration Section
-
-    @ViewBuilder
-    private var configSection: some View {
-        if let loaded = loadedPlugin,
-            let configSpec = loaded.plugin.manifest.capabilities.config
-        {
-            PluginConfigView(
-                pluginId: plugin.pluginId,
-                configSpec: configSpec,
-                plugin: loaded.plugin
-            )
-        }
-    }
-
-    // MARK: - Endpoints Section
+    // MARK: - Agents Section (toggle + config + endpoints per agent)
 
     private var agentsSection: some View {
-        detailSection(title: "Endpoints", icon: "link") {
+        detailSection(title: "Agents", icon: "person.2") {
             VStack(spacing: 0) {
-                let allAgents = agentManager.agents.sorted { $0.name < $1.name }
-                ForEach(Array(allAgents.enumerated()), id: \.element.id) { idx, agent in
+                let customAgents = agentManager.agents
+                    .filter { !$0.isBuiltIn }
+                    .sorted { $0.name < $1.name }
+                ForEach(Array(customAgents.enumerated()), id: \.element.id) { idx, agent in
                     if idx > 0 {
                         Divider().opacity(0.4).padding(.vertical, 2)
                     }
@@ -1357,6 +1352,10 @@ private struct PluginDetailView: View {
 
     private func agentPluginRow(agent: Agent) -> some View {
         let isEnabled = agentManager.isPluginEnabled(plugin.pluginId, for: agent.id)
+        let isExpanded = expandedAgents.contains(agent.id)
+        let hasConfig = loadedPlugin?.plugin.manifest.capabilities.config != nil
+        let hasRoutes = !(loadedPlugin?.routes.isEmpty ?? true)
+        let canExpand = isEnabled && (hasConfig || hasRoutes)
         let tunnelStatus = relayManager.agentStatuses[agent.id]
         let tunnelURL: String? = {
             if case .connected(let baseURL) = tunnelStatus {
@@ -1364,47 +1363,71 @@ private struct PluginDetailView: View {
             }
             return nil
         }()
-        let localURL: String = {
-            let port = loadServerPort()
-            return "http://127.0.0.1:\(port)/plugins/\(plugin.pluginId)"
-        }()
 
-        return VStack(alignment: .leading, spacing: 8) {
+        return VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 10) {
-                Circle()
-                    .fill(isEnabled ? theme.successColor : theme.tertiaryText.opacity(0.4))
-                    .frame(width: 8, height: 8)
+                Toggle(
+                    "",
+                    isOn: Binding(
+                        get: { isEnabled },
+                        set: { newValue in
+                            agentManager.setPluginEnabled(newValue, plugin: plugin.pluginId, for: agent.id)
+                            if !newValue {
+                                expandedAgents.remove(agent.id)
+                            }
+                        }
+                    )
+                )
+                .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
+                .labelsHidden()
 
                 Text(agent.name)
                     .font(.system(size: 13, weight: .medium))
                     .foregroundColor(theme.primaryText)
 
-                if agent.isBuiltIn {
-                    Text("Default")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundColor(theme.tertiaryText)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Capsule().fill(theme.tertiaryText.opacity(0.12)))
-                }
-
                 Spacer()
 
-                if !isEnabled {
-                    Text("Not enabled")
-                        .font(.system(size: 11))
+                if canExpand {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10, weight: .semibold))
                         .foregroundColor(theme.tertiaryText)
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                }
+            }
+            .padding(10)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                guard canExpand else { return }
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    if isExpanded {
+                        expandedAgents.remove(agent.id)
+                    } else {
+                        expandedAgents.insert(agent.id)
+                    }
                 }
             }
 
-            if isEnabled {
-                if let url = tunnelURL {
-                    urlRow(label: "Tunnel", url: url)
+            if isEnabled && isExpanded {
+                VStack(alignment: .leading, spacing: 12) {
+                    if let loaded = loadedPlugin,
+                        let configSpec = loaded.plugin.manifest.capabilities.config
+                    {
+                        PluginConfigView(
+                            pluginId: plugin.pluginId,
+                            agentId: agent.id,
+                            configSpec: configSpec,
+                            plugin: loaded.plugin
+                        )
+                    }
+
+                    if hasRoutes, let url = tunnelURL {
+                        urlRow(label: "Tunnel", url: url)
+                    }
                 }
-                urlRow(label: "Local", url: localURL)
+                .padding(.horizontal, 10)
+                .padding(.bottom, 10)
             }
         }
-        .padding(10)
         .background(
             RoundedRectangle(cornerRadius: 8)
                 .fill(isEnabled ? theme.tertiaryBackground.opacity(0.3) : Color.clear)
@@ -1594,9 +1617,18 @@ private struct PluginDetailView: View {
     }
 
     private func updateSecretsStatus() {
-        hasMissingSecrets =
-            !cachedSecrets.isEmpty
-            && !ToolSecretsKeychain.hasAllRequiredSecrets(specs: cachedSecrets, for: plugin.pluginId)
+        guard !cachedSecrets.isEmpty else {
+            hasMissingSecrets = false
+            return
+        }
+        hasMissingSecrets = agentManager.agents.contains { agent in
+            agentManager.isPluginEnabled(plugin.pluginId, for: agent.id)
+                && !ToolSecretsKeychain.hasAllRequiredSecrets(
+                    specs: cachedSecrets,
+                    for: plugin.pluginId,
+                    agentId: agent.id
+                )
+        }
     }
 }
 

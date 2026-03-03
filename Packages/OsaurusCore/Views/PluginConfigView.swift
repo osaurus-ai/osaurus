@@ -13,6 +13,7 @@ struct PluginConfigView: View {
     @Environment(\.theme) private var theme
 
     let pluginId: String
+    let agentId: UUID
     let configSpec: PluginManifest.ConfigSpec
     let plugin: ExternalPlugin?
 
@@ -493,7 +494,7 @@ struct PluginConfigView: View {
                         if let keys = disconnectAction.clear_keys {
                             for key in keys {
                                 values.removeValue(forKey: key)
-                                ToolSecretsKeychain.deleteSecret(id: key, for: pluginId)
+                                ToolSecretsKeychain.deleteSecret(id: key, for: pluginId, agentId: agentId)
                             }
                         }
                         isDirty = false
@@ -516,7 +517,7 @@ struct PluginConfigView: View {
                     let routeId = connectAction.url_route
                 {
                     Button {
-                        let base = Self.resolveBaseURL(for: pluginId)
+                        let base = Self.resolveBaseURL(for: pluginId, agentId: agentId)
                         let url = URL(string: "\(base)/plugins/\(pluginId)/\(routeId)")!
                         NSWorkspace.shared.open(url)
                     } label: {
@@ -562,18 +563,16 @@ struct PluginConfigView: View {
 
     private func hasStoredSecret(_ key: String) -> Bool {
         !editedSecrets.contains(key)
-            && ToolSecretsKeychain.hasSecret(id: key, for: pluginId)
+            && ToolSecretsKeychain.hasSecret(id: key, for: pluginId, agentId: agentId)
     }
 
     private func loadConfig() {
-        values = ToolSecretsKeychain.getAllSecrets(for: pluginId)
+        values = ToolSecretsKeychain.getAllSecrets(for: pluginId, agentId: agentId)
 
         for section in configSpec.sections {
             for field in section.fields {
-                // getAllSecrets (bulk query) can miss keys; fall back to
-                // individual lookup for storable field types before using defaults.
                 if values[field.key] == nil, field.type != .readonly, field.type != .status,
-                    let val = ToolSecretsKeychain.getSecret(id: field.key, for: pluginId)
+                    let val = ToolSecretsKeychain.getSecret(id: field.key, for: pluginId, agentId: agentId)
                 {
                     values[field.key] = val
                 }
@@ -581,16 +580,13 @@ struct PluginConfigView: View {
                     values[field.key] = def.stringValue
                 }
                 if let connKey = field.connected_when, values[connKey] == nil,
-                    let val = ToolSecretsKeychain.getSecret(id: connKey, for: pluginId)
+                    let val = ToolSecretsKeychain.getSecret(id: connKey, for: pluginId, agentId: agentId)
                 {
                     values[connKey] = val
                 }
             }
         }
 
-        // Re-send existing config so the plugin can refresh dynamic state
-        // (e.g., re-check webhook registration). Dispatched as a single batch
-        // on invokeQueue where TLS is set, so the plugin's config_set calls succeed.
         let changes = values.compactMap { (key, value) in
             findField(key: key) != nil ? (key: key, value: value) : nil
         }
@@ -611,10 +607,12 @@ struct PluginConfigView: View {
         var batch: [(key: String, value: String)] = []
         for (key, value) in values {
             if findField(key: key)?.type == .secret && hasStoredSecret(key) {
-                batch.append((key: key, value: ToolSecretsKeychain.getSecret(id: key, for: pluginId) ?? ""))
+                batch.append(
+                    (key: key, value: ToolSecretsKeychain.getSecret(id: key, for: pluginId, agentId: agentId) ?? "")
+                )
                 continue
             }
-            ToolSecretsKeychain.saveSecret(value, id: key, for: pluginId)
+            ToolSecretsKeychain.saveSecret(value, id: key, for: pluginId, agentId: agentId)
             batch.append((key: key, value: value))
         }
         plugin?.notifyConfigBatch(batch)
@@ -683,15 +681,15 @@ struct PluginConfigView: View {
         return nil
     }
 
-    private static func resolveBaseURL(for pluginId: String) -> String {
-        let tunnelURL = ToolSecretsKeychain.getSecret(id: "tunnel_url", for: pluginId) ?? ""
+    private static func resolveBaseURL(for pluginId: String, agentId: UUID) -> String {
+        let tunnelURL = ToolSecretsKeychain.getSecret(id: "tunnel_url", for: pluginId, agentId: agentId) ?? ""
         if !tunnelURL.isEmpty { return tunnelURL }
         return "http://127.0.0.1:\(loadServerPort())"
     }
 
     private func resolveTemplate(_ template: String, pluginId: String) -> String {
-        let baseURL = Self.resolveBaseURL(for: pluginId)
-        let tunnelURL = ToolSecretsKeychain.getSecret(id: "tunnel_url", for: pluginId) ?? ""
+        let baseURL = Self.resolveBaseURL(for: pluginId, agentId: agentId)
+        let tunnelURL = ToolSecretsKeychain.getSecret(id: "tunnel_url", for: pluginId, agentId: agentId) ?? ""
 
         var result = template
         result = result.replacingOccurrences(of: "{{plugin_url}}", with: "\(baseURL)/plugins/\(pluginId)")

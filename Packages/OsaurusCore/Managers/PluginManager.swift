@@ -157,7 +157,45 @@ final class PluginManager {
             NotificationCenter.default.post(name: .toolsListChanged, object: nil)
         }
 
+        migrateGlobalConfigToPerAgent()
         observeTunnelStatus()
+    }
+
+    // MARK: - One-Time Migration (global config → per-agent)
+
+    private static var hasMigrated = false
+
+    /// Copies legacy global keychain entries (`{pluginId}.{key}`) into
+    /// agent-scoped entries (`{agentId}.{pluginId}.{key}`) for every agent
+    /// that has the plugin enabled, then removes the legacy entries.
+    private func migrateGlobalConfigToPerAgent() {
+        guard !Self.hasMigrated else { return }
+        Self.hasMigrated = true
+
+        let agents = AgentManager.shared.agents
+        let pluginIds = plugins.map { $0.plugin.id }
+
+        for pluginId in pluginIds {
+            let legacySecrets = ToolSecretsKeychain.legacySecrets(for: pluginId)
+            guard !legacySecrets.isEmpty else { continue }
+
+            let targetAgents = agents.filter { agent in
+                AgentManager.shared.isPluginEnabled(pluginId, for: agent.id)
+            }
+            // If no agents have the plugin explicitly enabled, migrate to the default agent.
+            let destinations = targetAgents.isEmpty ? [Agent.defaultId] : targetAgents.map { $0.id }
+
+            for agentId in destinations {
+                for (key, value) in legacySecrets {
+                    // Only copy if the agent doesn't already have a value for this key.
+                    if ToolSecretsKeychain.getSecret(id: key, for: pluginId, agentId: agentId) == nil {
+                        ToolSecretsKeychain.saveSecret(value, id: key, for: pluginId, agentId: agentId)
+                    }
+                }
+            }
+
+            ToolSecretsKeychain.deleteLegacySecrets(for: pluginId)
+        }
     }
 
     // MARK: - Tunnel URL Propagation
@@ -178,30 +216,31 @@ final class PluginManager {
         for loaded in plugins where !loaded.routes.isEmpty {
             let pluginId = loaded.plugin.id
 
-            let tunnelURL = statuses.first { agentId, status in
-                if case .connected = status {
-                    return AgentManager.shared.isPluginEnabled(pluginId, for: agentId)
+            for (agentId, status) in statuses {
+                guard AgentManager.shared.isPluginEnabled(pluginId, for: agentId) else { continue }
+
+                let tunnelURL: String? = {
+                    if case .connected(let url) = status { return url }
+                    return nil
+                }()
+
+                let newValue = tunnelURL ?? ""
+                guard ToolSecretsKeychain.getSecret(id: "tunnel_url", for: pluginId, agentId: agentId) != newValue
+                else { continue }
+
+                if let tunnelURL {
+                    ToolSecretsKeychain.saveSecret(tunnelURL, id: "tunnel_url", for: pluginId, agentId: agentId)
+                } else {
+                    ToolSecretsKeychain.deleteSecret(id: "tunnel_url", for: pluginId, agentId: agentId)
                 }
-                return false
-            }.flatMap { _, status -> String? in
-                guard case .connected(let url) = status else { return nil }
-                return url
+                NotificationCenter.default.post(
+                    name: .pluginConfigDidChange,
+                    object: nil,
+                    userInfo: ["pluginId": pluginId, "key": "tunnel_url", "value": newValue]
+                )
+                PluginHostContext.getContext(for: pluginId)?.currentAgentId = agentId
+                loaded.plugin.notifyConfigChanged(key: "tunnel_url", value: newValue)
             }
-
-            let newValue = tunnelURL ?? ""
-            guard ToolSecretsKeychain.getSecret(id: "tunnel_url", for: pluginId) != newValue else { continue }
-
-            if let tunnelURL {
-                ToolSecretsKeychain.saveSecret(tunnelURL, id: "tunnel_url", for: pluginId)
-            } else {
-                ToolSecretsKeychain.deleteSecret(id: "tunnel_url", for: pluginId)
-            }
-            NotificationCenter.default.post(
-                name: .pluginConfigDidChange,
-                object: nil,
-                userInfo: ["pluginId": pluginId, "key": "tunnel_url", "value": newValue]
-            )
-            loaded.plugin.notifyConfigChanged(key: "tunnel_url", value: newValue)
         }
     }
 
