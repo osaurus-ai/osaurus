@@ -1335,16 +1335,31 @@ private struct PluginDetailView: View {
     // MARK: - Agents Section (toggle + config + endpoints per agent)
 
     private var agentsSection: some View {
-        detailSection(title: "Agents", icon: "person.2") {
-            VStack(spacing: 0) {
-                let customAgents = agentManager.agents
-                    .filter { !$0.isBuiltIn }
-                    .sorted { $0.name < $1.name }
-                ForEach(Array(customAgents.enumerated()), id: \.element.id) { idx, agent in
-                    if idx > 0 {
-                        Divider().opacity(0.4).padding(.vertical, 2)
+        let customAgents = agentManager.agents
+            .filter { !$0.isBuiltIn }
+            .sorted { $0.name < $1.name }
+
+        return detailSection(title: "Agents", icon: "person.2") {
+            if customAgents.isEmpty {
+                VStack(spacing: 8) {
+                    Text("No agents yet")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(theme.secondaryText)
+                    Text("Create an agent in the Agents tab to enable this plugin.")
+                        .font(.system(size: 12))
+                        .foregroundColor(theme.tertiaryText)
+                        .multilineTextAlignment(.center)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 16)
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(Array(customAgents.enumerated()), id: \.element.id) { idx, agent in
+                        if idx > 0 {
+                            Divider().opacity(0.4).padding(.vertical, 2)
+                        }
+                        agentPluginRow(agent: agent)
                     }
-                    agentPluginRow(agent: agent)
                 }
             }
         }

@@ -519,7 +519,7 @@ private struct RelaysSectionView: View {
                 .font(.system(size: 12))
                 .foregroundColor(theme.secondaryText)
 
-            let agents = agentManager.agents
+            let agents = agentManager.agents.filter { $0.agentAddress != nil }
 
             if agents.isEmpty {
                 HStack(spacing: 8) {
