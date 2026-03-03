@@ -471,7 +471,11 @@ final class ExternalPlugin: @unchecked Sendable {
     }
 
     func notifyConfigChanged(key: String, value: String) {
-        guard abiVersion >= 2, let configFn = api.on_config_changed else { return }
+        notifyConfigBatch([(key: key, value: value)])
+    }
+
+    func notifyConfigBatch(_ changes: [(key: String, value: String)]) {
+        guard abiVersion >= 2, let configFn = api.on_config_changed, !changes.isEmpty else { return }
         nonisolated(unsafe) let ctx = self.ctx
         let pluginId = self.id
 
@@ -479,9 +483,11 @@ final class ExternalPlugin: @unchecked Sendable {
             PluginHostContext.setActivePlugin(pluginId)
             defer { PluginHostContext.clearActivePlugin() }
 
-            key.withCString { keyPtr in
-                value.withCString { valuePtr in
-                    configFn(ctx, keyPtr, valuePtr)
+            for (key, value) in changes {
+                key.withCString { keyPtr in
+                    value.withCString { valuePtr in
+                        configFn(ctx, keyPtr, valuePtr)
+                    }
                 }
             }
             withExtendedLifetime(self) {}

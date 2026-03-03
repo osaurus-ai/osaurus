@@ -589,11 +589,12 @@ struct PluginConfigView: View {
         }
 
         // Re-send existing config so the plugin can refresh dynamic state
-        // (e.g., re-check webhook registration). Runs on invokeQueue where
-        // TLS is set, so the plugin's config_set calls succeed.
-        for (key, value) in values where findField(key: key) != nil {
-            plugin?.notifyConfigChanged(key: key, value: value)
+        // (e.g., re-check webhook registration). Dispatched as a single batch
+        // on invokeQueue where TLS is set, so the plugin's config_set calls succeed.
+        let changes = values.compactMap { (key, value) in
+            findField(key: key) != nil ? (key: key, value: value) : nil
         }
+        plugin?.notifyConfigBatch(changes)
     }
 
     private func saveConfig() {
@@ -607,17 +608,16 @@ struct PluginConfigView: View {
         }
         guard !hasErrors else { return }
 
+        var batch: [(key: String, value: String)] = []
         for (key, value) in values {
             if findField(key: key)?.type == .secret && hasStoredSecret(key) {
-                plugin?.notifyConfigChanged(
-                    key: key,
-                    value: ToolSecretsKeychain.getSecret(id: key, for: pluginId) ?? ""
-                )
+                batch.append((key: key, value: ToolSecretsKeychain.getSecret(id: key, for: pluginId) ?? ""))
                 continue
             }
             ToolSecretsKeychain.saveSecret(value, id: key, for: pluginId)
-            plugin?.notifyConfigChanged(key: key, value: value)
+            batch.append((key: key, value: value))
         }
+        plugin?.notifyConfigBatch(batch)
         editedSecrets.removeAll()
         isDirty = false
     }

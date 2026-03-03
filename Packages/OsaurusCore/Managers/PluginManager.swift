@@ -112,7 +112,7 @@ final class PluginManager {
                 }
 
                 // Tear down v2 host context (closes DB, removes from registry)
-                PluginHostContext.contexts[loaded.plugin.id]?.teardown()
+                PluginHostContext.getContext(for: loaded.plugin.id)?.teardown()
 
                 // dlclose happens here
                 dlclose(loaded.handle)
@@ -289,7 +289,7 @@ final class PluginManager {
             abiVersion = max(api.version, 2)
             hostContext = ctx
 
-            PluginHostContext.contexts[preliminaryId] = ctx
+            PluginHostContext.setContext(ctx, for: preliminaryId)
             print("[Osaurus] Loaded v2 plugin from \(url.lastPathComponent)")
         } else if let v1sym = dlsym(handle, "osaurus_plugin_entry") {
             // v1 path: no host API
@@ -359,8 +359,7 @@ final class PluginManager {
         // If the manifest plugin_id differs from the directory-derived ID,
         // re-register the host context under the canonical ID.
         if let hc = hostContext, manifest.plugin_id != hc.pluginId {
-            PluginHostContext.contexts.removeValue(forKey: hc.pluginId)
-            PluginHostContext.contexts[manifest.plugin_id] = hc
+            PluginHostContext.rekeyContext(from: hc.pluginId, to: manifest.plugin_id)
         }
 
         let plugin = ExternalPlugin(

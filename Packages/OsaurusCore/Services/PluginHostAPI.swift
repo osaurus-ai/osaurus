@@ -19,12 +19,36 @@ extension Notification.Name {
 /// Registered in a global dictionary keyed by plugin ID so that
 /// @convention(c) trampolines can look up the right context.
 final class PluginHostContext: @unchecked Sendable {
-    /// Global registry of active host contexts. Accessed only from PluginManager's loading path.
-    nonisolated(unsafe) static var contexts: [String: PluginHostContext] = [:]
 
-    /// The currently active context for C trampoline dispatch.
-    /// Set before calling the plugin entry point and cleared after.
+    // MARK: - Context Registry (thread-safe)
+
+    private nonisolated(unsafe) static var contexts: [String: PluginHostContext] = [:]
+    private static let contextsLock = NSLock()
+
+    static func getContext(for pluginId: String) -> PluginHostContext? {
+        contextsLock.withLock { contexts[pluginId] }
+    }
+
+    static func setContext(_ ctx: PluginHostContext, for pluginId: String) {
+        contextsLock.withLock { contexts[pluginId] = ctx }
+    }
+
+    static func removeContext(for pluginId: String) {
+        contextsLock.withLock { contexts.removeValue(forKey: pluginId) }
+    }
+
+    static func rekeyContext(from oldId: String, to newId: String) {
+        contextsLock.withLock {
+            if let ctx = contexts.removeValue(forKey: oldId) {
+                contexts[newId] = ctx
+            }
+        }
+    }
+
+    /// Temporary fallback used only during plugin init.
     nonisolated(unsafe) static var currentContext: PluginHostContext?
+
+    // MARK: - Instance Properties
 
     let pluginId: String
     let database: PluginDatabase
@@ -568,7 +592,7 @@ final class PluginHostContext: @unchecked Sendable {
 
     /// Removes this context from the global registry and closes the database.
     func teardown() {
-        PluginHostContext.contexts.removeValue(forKey: pluginId)
+        PluginHostContext.removeContext(for: pluginId)
         database.close()
     }
 }
@@ -837,10 +861,10 @@ extension PluginHostContext {
 
     private static func activeContext() -> PluginHostContext? {
         if let pluginId = Thread.current.threadDictionary[tlsKey] as? String {
-            return contexts[pluginId]
+            return getContext(for: pluginId)
         }
         if let pluginId = lastDispatchedPluginId {
-            return contexts[pluginId]
+            return getContext(for: pluginId)
         }
         return currentContext
     }
