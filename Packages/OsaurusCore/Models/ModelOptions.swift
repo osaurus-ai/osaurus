@@ -67,6 +67,7 @@ protocol ModelProfile: Sendable {
 
 enum ModelProfileRegistry {
     static let profiles: [any ModelProfile.Type] = [
+        VeniceModelProfile.self,
         OpenAIReasoningProfile.self,
         Gemini31FlashImageProfile.self,
         GeminiProImageProfile.self,
@@ -277,5 +278,49 @@ struct GeminiFlashImageProfile: ModelProfile {
     static let defaults: [String: ModelOptionValue] = [
         "aspectRatio": .string("auto"),
         "outputType": .string("textAndImage"),
+    ]
+}
+
+// MARK: - Venice AI Model Profile
+
+/// Venice AI models — supports web search, thinking control, and Venice system prompt toggle.
+/// See https://docs.venice.ai/api-reference/api-spec for venice_parameters details.
+struct VeniceModelProfile: ModelProfile {
+    static let displayName = "Venice AI"
+
+    static func matches(modelId: String) -> Bool {
+        let lower = modelId.lowercased()
+        return lower.hasPrefix("venice-ai/")
+    }
+
+    static let options: [ModelOptionDefinition] = [
+        ModelOptionDefinition(
+            id: "enableWebSearch",
+            label: "Web Search",
+            icon: "magnifyingglass",
+            kind: .segmented([
+                ModelOptionSegment(id: "off", label: "Off"),
+                ModelOptionSegment(id: "on", label: "On"),
+                ModelOptionSegment(id: "auto", label: "Auto"),
+            ])
+        ),
+        ModelOptionDefinition(
+            id: "disableThinking",
+            label: "Disable Thinking",
+            icon: "brain.head.profile",
+            kind: .toggle(default: false)
+        ),
+        ModelOptionDefinition(
+            id: "includeVeniceSystemPrompt",
+            label: "Venice System Prompt",
+            icon: "text.bubble",
+            kind: .toggle(default: true)
+        ),
+    ]
+
+    static let defaults: [String: ModelOptionValue] = [
+        "enableWebSearch": .string("off"),
+        "disableThinking": .bool(false),
+        "includeVeniceSystemPrompt": .bool(true),
     ]
 }

@@ -1357,7 +1357,30 @@ public actor RemoteProviderService: ToolCapableService {
             tools: tools,
             tool_choice: toolChoice,
             reasoning: reasoning,
-            modelOptions: parameters.modelOptions
+            modelOptions: parameters.modelOptions,
+            veniceParameters: buildVeniceParameters(from: parameters.modelOptions)
+        )
+    }
+
+    /// Extract Venice-specific parameters from model options when the provider is Venice AI.
+    /// Returns nil for non-Venice providers or when all values are defaults.
+    private func buildVeniceParameters(from options: [String: ModelOptionValue]) -> VeniceParameters? {
+        guard provider.host.contains("venice.ai") else { return nil }
+
+        let webSearch = options["enableWebSearch"]?.stringValue
+        let disableThinking = options["disableThinking"]?.boolValue
+        let includeSystemPrompt = options["includeVeniceSystemPrompt"]?.boolValue
+
+        let hasNonDefaults =
+            (webSearch != nil && webSearch != "off")
+            || disableThinking == true
+            || includeSystemPrompt == false
+        guard hasNonDefaults else { return nil }
+
+        return VeniceParameters(
+            enable_web_search: (webSearch != nil && webSearch != "off") ? webSearch : nil,
+            disable_thinking: disableThinking == true ? true : nil,
+            include_venice_system_prompt: includeSystemPrompt == false ? false : nil
         )
     }
 
@@ -1744,6 +1767,14 @@ private struct ReasoningConfig: Encodable {
     let effort: String
 }
 
+/// Venice-specific parameters injected into the request body for Venice AI providers.
+/// See https://docs.venice.ai/api-reference/api-spec
+private struct VeniceParameters: Encodable {
+    var enable_web_search: String?
+    var disable_thinking: Bool?
+    var include_venice_system_prompt: Bool?
+}
+
 /// Chat request structure for remote providers (matches OpenAI format)
 private struct RemoteChatRequest: Encodable {
     let model: String
@@ -1759,11 +1790,13 @@ private struct RemoteChatRequest: Encodable {
     let tool_choice: ToolChoiceOption?
     let reasoning: ReasoningConfig?
     let modelOptions: [String: ModelOptionValue]
+    let veniceParameters: VeniceParameters?
 
     private enum CodingKeys: String, CodingKey {
         case model, messages, temperature, max_completion_tokens, stream
         case top_p, frequency_penalty, presence_penalty, stop, tools, tool_choice
         case reasoning
+        case veniceParameters = "venice_parameters"
     }
 
     /// Convert to Anthropic Messages API request format

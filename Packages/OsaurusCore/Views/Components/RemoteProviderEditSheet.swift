@@ -183,7 +183,7 @@ private struct AddProviderFlow: View {
                     .padding(.horizontal, 4)
 
                 VStack(spacing: 10) {
-                    ForEach(ProviderPreset.allCases) { preset in
+                    ForEach(ProviderPreset.knownPresets + [.custom]) { preset in
                         ProviderSelectionCard(preset: preset) {
                             withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
                                 selectedPreset = preset
@@ -396,26 +396,16 @@ private struct AddProviderFlow: View {
                 .foregroundColor(theme.secondaryText)
 
             VStack(alignment: .leading, spacing: 8) {
-                helpStep(number: 1, text: "Go to \(preset.name) console")
-                helpStep(number: 2, text: "Sign in or create an account")
-                helpStep(number: 3, text: "Click \"API Keys\" \u{2192} \"Create Key\"")
-                helpStep(number: 4, text: "Copy and paste it here")
+                ForEach(Array(preset.helpSteps.enumerated()), id: \.offset) { index, text in
+                    helpStep(number: index + 1, text: text)
+                }
             }
 
-            Button {
-                if let url = URL(string: preset.consoleURL) {
-                    NSWorkspace.shared.open(url)
-                }
-            } label: {
-                HStack(spacing: 6) {
-                    Text("Open \(preset.name) Console")
-                        .font(.system(size: 13, weight: .medium))
-                    Image(systemName: "arrow.up.right")
-                        .font(.system(size: 11, weight: .semibold))
-                }
-                .foregroundColor(theme.accentColor)
-            }
-            .buttonStyle(.plain)
+            ProviderHelpLinks(
+                preset: preset,
+                accentColor: theme.accentColor,
+                secondaryTextColor: theme.secondaryText
+            )
             .padding(.top, 4)
         }
         .padding(16)
@@ -950,9 +940,7 @@ private struct EditProviderFlow: View {
                                 endPoint: .bottomTrailing
                             )
                         )
-                    Image(systemName: preset.icon)
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundColor(.white)
+                    ProviderIcon(preset: preset, size: 16, color: .white)
                 }
                 .frame(width: 40, height: 40)
             } else {
@@ -1191,20 +1179,11 @@ private struct EditProviderFlow: View {
                 .font(.system(size: 14, weight: .medium))
                 .foregroundColor(theme.secondaryText)
 
-            Button {
-                if let url = URL(string: preset.consoleURL) {
-                    NSWorkspace.shared.open(url)
-                }
-            } label: {
-                HStack(spacing: 6) {
-                    Text("Open \(preset.name) Console")
-                        .font(.system(size: 13, weight: .medium))
-                    Image(systemName: "arrow.up.right")
-                        .font(.system(size: 11, weight: .semibold))
-                }
-                .foregroundColor(theme.accentColor)
-            }
-            .buttonStyle(.plain)
+            ProviderHelpLinks(
+                preset: preset,
+                accentColor: theme.accentColor,
+                secondaryTextColor: theme.secondaryText
+            )
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1553,16 +1532,20 @@ private struct ProviderSelectionCard: View {
                         )
                         .frame(width: 42, height: 42)
 
-                    Image(systemName: preset.icon)
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundColor(isHovered ? .white : theme.secondaryText)
+                    ProviderIcon(preset: preset, size: 16, color: isHovered ? .white : theme.secondaryText)
                 }
 
                 // Text
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(preset.name)
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
+                    HStack(spacing: 7) {
+                        Text(preset.name)
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundColor(theme.primaryText)
+
+                        if let badge = preset.badge {
+                            ProviderBadge(badge, gradient: preset.gradient)
+                        }
+                    }
                     Text(preset.description)
                         .font(.system(size: 12))
                         .foregroundColor(theme.secondaryText)
