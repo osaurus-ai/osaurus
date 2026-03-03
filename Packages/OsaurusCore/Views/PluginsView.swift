@@ -100,7 +100,12 @@ struct PluginsView: View {
             guard !Task.isCancelled else { return }
             await updateFilteredLists()
         }
-        .onReceive(PluginRepositoryService.shared.$plugins) { _ in
+        .onReceive(PluginRepositoryService.shared.$plugins) { newPlugins in
+            if let selected = selectedPlugin,
+                let updated = newPlugins.first(where: { $0.pluginId == selected.pluginId })
+            {
+                selectedPlugin = updated
+            }
             Task { await updateFilteredLists() }
         }
         .onReceive(PluginRepositoryService.shared.$isRefreshing) { isRepoRefreshing = $0 }

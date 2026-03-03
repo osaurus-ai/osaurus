@@ -566,16 +566,27 @@ struct PluginConfigView: View {
     }
 
     private func loadConfig() {
-        let allSecrets = ToolSecretsKeychain.getAllSecrets(for: pluginId)
-        values = allSecrets
+        values = ToolSecretsKeychain.getAllSecrets(for: pluginId)
 
-        // Apply defaults for fields not yet set
         for section in configSpec.sections {
             for field in section.fields {
                 if values[field.key] == nil, let def = field.default {
                     values[field.key] = def.stringValue
                 }
+                // Targeted fallback for status keys that getAllSecrets may miss
+                if let connKey = field.connected_when, values[connKey] == nil,
+                    let val = ToolSecretsKeychain.getSecret(id: connKey, for: pluginId)
+                {
+                    values[connKey] = val
+                }
             }
+        }
+
+        // Re-send existing config so the plugin can refresh dynamic state
+        // (e.g., re-check webhook registration). Runs on invokeQueue where
+        // TLS is set, so the plugin's config_set calls succeed.
+        for (key, value) in values where findField(key: key) != nil {
+            plugin?.notifyConfigChanged(key: key, value: value)
         }
     }
 
@@ -673,8 +684,8 @@ struct PluginConfigView: View {
     }
 
     private func resolveTemplate(_ template: String, pluginId: String) -> String {
+        let baseURL = Self.resolveBaseURL(for: pluginId)
         let tunnelURL = ToolSecretsKeychain.getSecret(id: "tunnel_url", for: pluginId) ?? ""
-        let baseURL = tunnelURL.isEmpty ? "http://127.0.0.1:\(Self.loadServerPort())" : tunnelURL
 
         var result = template
         result = result.replacingOccurrences(of: "{{plugin_url}}", with: "\(baseURL)/plugins/\(pluginId)")

@@ -106,9 +106,12 @@ final class PluginHostContext: @unchecked Sendable {
 
     // MARK: - Dispatch Callbacks
 
-    func dispatch(requestJSON: String) -> String {
+    func dispatch(requestJSON: String) -> (result: String, taskId: UUID?) {
         guard checkDispatchRateLimit() else {
-            return Self.jsonString(["error": "rate_limit_exceeded", "message": "Dispatch rate limit (10/min) exceeded"])
+            return (
+                Self.jsonString(["error": "rate_limit_exceeded", "message": "Dispatch rate limit (10/min) exceeded"]),
+                nil
+            )
         }
 
         return Self.blockingAsync { [pluginId] in
@@ -116,7 +119,10 @@ final class PluginHostContext: @unchecked Sendable {
             guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                 let prompt = json["prompt"] as? String
             else {
-                return Self.jsonString(["error": "invalid_request", "message": "Missing required field: prompt"])
+                return (
+                    Self.jsonString(["error": "invalid_request", "message": "Missing required field: prompt"]),
+                    UUID?.none
+                )
             }
 
             let modeStr = json["mode"] as? String ?? "work"
@@ -158,14 +164,23 @@ final class PluginHostContext: @unchecked Sendable {
                 sourcePluginId: pluginId
             )
 
-            let handle = await TaskDispatcher.shared.dispatch(request)
-            guard handle != nil else {
-                return Self.jsonString([
-                    "error": "task_limit_reached", "message": "Maximum concurrent background tasks reached",
-                ])
+            await MainActor.run {
+                BackgroundTaskManager.shared.holdEventsForDispatch(taskId: requestId)
             }
 
-            return Self.jsonString(["id": requestId.uuidString, "status": "running"])
+            let handle = await TaskDispatcher.shared.dispatch(request)
+            guard handle != nil else {
+                await MainActor.run {
+                    BackgroundTaskManager.shared.releaseEventsForDispatch(taskId: requestId)
+                }
+                return (
+                    Self.jsonString([
+                        "error": "task_limit_reached", "message": "Maximum concurrent background tasks reached",
+                    ]), UUID?.none
+                )
+            }
+
+            return (Self.jsonString(["id": requestId.uuidString, "status": "running"]), requestId)
         }
     }
 
@@ -936,7 +951,8 @@ extension PluginHostContext {
         guard let requestPtr, let ctx = activeContext() else { return nil }
         let json = String(cString: requestPtr)
         var result = ""
-        let ms = measureMs { result = ctx.dispatch(requestJSON: json) }
+        var taskId: UUID?
+        let ms = measureMs { (result, taskId) = ctx.dispatch(requestJSON: json) }
         logPluginCall(
             pluginId: ctx.pluginId,
             method: "POST",
@@ -946,6 +962,11 @@ extension PluginHostContext {
             requestBody: json,
             responseBody: result
         )
+        if let taskId {
+            Task { @MainActor in
+                BackgroundTaskManager.shared.releaseEventsForDispatch(taskId: taskId)
+            }
+        }
         return makeCString(result)
     }
 

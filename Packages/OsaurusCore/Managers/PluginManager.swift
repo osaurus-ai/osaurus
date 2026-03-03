@@ -194,6 +194,11 @@ final class PluginManager {
             } else {
                 ToolSecretsKeychain.deleteSecret(id: "tunnel_url", for: pluginId)
             }
+            NotificationCenter.default.post(
+                name: .pluginConfigDidChange,
+                object: nil,
+                userInfo: ["pluginId": pluginId, "key": "tunnel_url", "value": newValue]
+            )
             loaded.plugin.notifyConfigChanged(key: "tunnel_url", value: newValue)
         }
     }
