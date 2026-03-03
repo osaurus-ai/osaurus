@@ -7,6 +7,7 @@
 
 import Foundation
 import Darwin
+import Combine
 import CryptoKit
 import Security
 import OsaurusRepository
@@ -45,6 +46,8 @@ final class PluginManager {
 
     /// Plugins that failed to load, keyed by plugin ID
     private(set) var failedPlugins: [String: FailedPlugin] = [:]
+
+    private var tunnelObserver: AnyCancellable?
 
     private init() {}
 
@@ -150,6 +153,48 @@ final class PluginManager {
         if loadedNew || removedSomething || !failedPlugins.isEmpty {
             await MCPServerManager.shared.notifyToolsListChanged()
             NotificationCenter.default.post(name: .toolsListChanged, object: nil)
+        }
+
+        observeTunnelStatus()
+    }
+
+    // MARK: - Tunnel URL Propagation
+
+    /// Observes relay tunnel status changes and propagates the tunnel URL
+    /// to plugins that declare routes, so they can register webhooks with
+    /// external services (e.g. Telegram).
+    private func observeTunnelStatus() {
+        guard tunnelObserver == nil else { return }
+        tunnelObserver = RelayTunnelManager.shared.$agentStatuses
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] statuses in
+                self?.handleTunnelStatusChange(statuses)
+            }
+    }
+
+    private func handleTunnelStatusChange(_ statuses: [UUID: AgentRelayStatus]) {
+        for loaded in plugins where !loaded.routes.isEmpty {
+            let pluginId = loaded.plugin.id
+
+            let tunnelURL = statuses.first { agentId, status in
+                if case .connected = status {
+                    return AgentManager.shared.isPluginEnabled(pluginId, for: agentId)
+                }
+                return false
+            }.flatMap { _, status -> String? in
+                guard case .connected(let url) = status else { return nil }
+                return url
+            }
+
+            let newValue = tunnelURL ?? ""
+            guard ToolSecretsKeychain.getSecret(id: "tunnel_url", for: pluginId) != newValue else { continue }
+
+            if let tunnelURL {
+                ToolSecretsKeychain.saveSecret(tunnelURL, id: "tunnel_url", for: pluginId)
+            } else {
+                ToolSecretsKeychain.deleteSecret(id: "tunnel_url", for: pluginId)
+            }
+            loaded.plugin.notifyConfigChanged(key: "tunnel_url", value: newValue)
         }
     }
 
@@ -270,7 +315,11 @@ final class PluginManager {
             return .failure(PluginLoadError(message: errorMsg))
         }
 
-        guard let ctx = initFn() else {
+        PluginHostContext.currentContext = hostContext
+        defer { PluginHostContext.currentContext = nil }
+        let ctx = initFn()
+
+        guard let ctx else {
             let errorMsg = "Plugin initialization failed"
             print("[Osaurus] \(errorMsg) in \(url.lastPathComponent)")
             hostContext?.teardown()

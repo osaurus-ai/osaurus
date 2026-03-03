@@ -631,6 +631,9 @@ struct PluginConfigView: View {
         result = result.replacingOccurrences(of: "{{plugin_url}}", with: "http://127.0.0.1:\(port)/plugins/\(pluginId)")
         result = result.replacingOccurrences(of: "{{plugin_id}}", with: pluginId)
 
+        let tunnelURL = ToolSecretsKeychain.getSecret(id: "tunnel_url", for: pluginId) ?? ""
+        result = result.replacingOccurrences(of: "{{tunnel_url}}", with: tunnelURL)
+
         let configPattern = try? NSRegularExpression(pattern: #"\{\{config\.(\w+)\}\}"#)
         if let matches = configPattern?.matches(in: result, range: NSRange(result.startIndex..., in: result)) {
             for match in matches.reversed() {
