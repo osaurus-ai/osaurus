@@ -19,15 +19,12 @@ struct PluginConfigView: View {
     @State private var values: [String: String] = [:]
     @State private var errors: [String: String] = [:]
     @State private var isDirty = false
+    @State private var focusedField: String?
+
+    @State private var saveIndicator: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            if let title = configSpec.title {
-                Text(title)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-            }
-
+        VStack(alignment: .leading, spacing: 16) {
             ForEach(Array(configSpec.sections.enumerated()), id: \.offset) { _, section in
                 configSection(section)
             }
@@ -35,10 +32,36 @@ struct PluginConfigView: View {
             if isDirty {
                 HStack {
                     Spacer()
-                    Button("Save") {
-                        saveConfig()
+
+                    if let indicator = saveIndicator {
+                        HStack(spacing: 4) {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.system(size: 10))
+                            Text(indicator)
+                                .font(.system(size: 11, weight: .medium))
+                        }
+                        .foregroundColor(theme.successColor)
+                        .transition(.opacity.combined(with: .scale(scale: 0.9)))
                     }
-                    .buttonStyle(.borderedProminent)
+
+                    Button {
+                        saveConfig()
+                        withAnimation { saveIndicator = "Saved" }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                            withAnimation { saveIndicator = nil }
+                        }
+                    } label: {
+                        Text("Save Changes")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 8)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(theme.accentColor)
+                            )
+                    }
+                    .buttonStyle(PlainButtonStyle())
                 }
                 .padding(.top, 4)
             }
@@ -50,22 +73,39 @@ struct PluginConfigView: View {
 
     @ViewBuilder
     private func configSection(_ section: PluginManifest.ConfigSection) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(section.title)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(theme.secondaryText)
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                Image(systemName: "gearshape.fill")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(theme.accentColor)
 
-            VStack(spacing: 10) {
-                ForEach(Array(section.fields.enumerated()), id: \.offset) { _, field in
+                Text(section.title.uppercased())
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(theme.secondaryText)
+                    .tracking(0.5)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
+
+            VStack(spacing: 14) {
+                ForEach(Array(section.fields.enumerated()), id: \.offset) { idx, field in
+                    if idx > 0 {
+                        Divider().opacity(0.3)
+                    }
                     configField(field)
                 }
             }
-            .padding(14)
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(theme.secondaryBackground)
-            )
+            .padding(.horizontal, 16)
+            .padding(.bottom, 16)
         }
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(theme.cardBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(theme.cardBorder, lineWidth: 1)
+                )
+        )
     }
 
     // MARK: - Field Dispatch
@@ -104,14 +144,49 @@ struct PluginConfigView: View {
 
     @ViewBuilder
     private func textField(_ field: PluginManifest.ConfigField) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        let isFocused = focusedField == field.key
+        VStack(alignment: .leading, spacing: 6) {
             Text(field.label)
-                .font(.system(size: 12, weight: .medium))
+                .font(.system(size: 11, weight: .medium))
                 .foregroundColor(theme.secondaryText)
 
-            TextField(field.placeholder ?? "", text: binding(for: field.key, default: field.default?.stringValue ?? ""))
-                .textFieldStyle(.roundedBorder)
-                .font(.system(size: 13))
+            HStack(spacing: 10) {
+                ZStack(alignment: .leading) {
+                    if (values[field.key] ?? field.default?.stringValue ?? "").isEmpty {
+                        Text(field.placeholder ?? "")
+                            .font(.system(size: 13))
+                            .foregroundColor(theme.placeholderText)
+                            .allowsHitTesting(false)
+                    }
+                    TextField(
+                        "",
+                        text: binding(for: field.key, default: field.default?.stringValue ?? ""),
+                        onEditingChanged: { editing in
+                            withAnimation(.easeOut(duration: 0.15)) {
+                                focusedField = editing ? field.key : nil
+                            }
+                        }
+                    )
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 13))
+                    .foregroundColor(theme.primaryText)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(theme.inputBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(
+                                errors[field.key] != nil
+                                    ? Color.red.opacity(0.5)
+                                    : isFocused ? theme.accentColor.opacity(0.5) : theme.inputBorder,
+                                lineWidth: isFocused ? 1.5 : 1
+                            )
+                    )
+            )
         }
     }
 
@@ -119,14 +194,54 @@ struct PluginConfigView: View {
 
     @ViewBuilder
     private func secretField(_ field: PluginManifest.ConfigField) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(field.label)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(theme.secondaryText)
+        let isFocused = focusedField == field.key
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: "key.fill")
+                    .font(.system(size: 10))
+                    .foregroundColor(theme.tertiaryText)
+                Text(field.label)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+            }
 
-            SecureField(field.placeholder ?? "", text: binding(for: field.key, default: ""))
-                .textFieldStyle(.roundedBorder)
-                .font(.system(size: 13))
+            HStack(spacing: 10) {
+                ZStack(alignment: .leading) {
+                    if (values[field.key] ?? "").isEmpty {
+                        Text(field.placeholder ?? "")
+                            .font(.system(size: 13))
+                            .foregroundColor(theme.placeholderText)
+                            .allowsHitTesting(false)
+                    }
+                    SecureField(
+                        "",
+                        text: binding(for: field.key, default: "")
+                    )
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 13))
+                    .foregroundColor(theme.primaryText)
+                    .onSubmit {
+                        withAnimation(.easeOut(duration: 0.15)) {
+                            focusedField = nil
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(theme.inputBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(
+                                errors[field.key] != nil
+                                    ? Color.red.opacity(0.5)
+                                    : isFocused ? theme.accentColor.opacity(0.5) : theme.inputBorder,
+                                lineWidth: isFocused ? 1.5 : 1
+                            )
+                    )
+            )
         }
     }
 
@@ -135,29 +250,44 @@ struct PluginConfigView: View {
     @ViewBuilder
     private func toggleField(_ field: PluginManifest.ConfigField) -> some View {
         let defaultVal = field.default?.stringValue ?? "false"
-        Toggle(
-            isOn: Binding(
-                get: { (values[field.key] ?? defaultVal) == "true" },
-                set: { newVal in
-                    values[field.key] = newVal ? "true" : "false"
-                    isDirty = true
-                }
-            )
-        ) {
+        HStack {
             Text(field.label)
-                .font(.system(size: 13))
+                .font(.system(size: 13, weight: .medium))
                 .foregroundColor(theme.primaryText)
+
+            Spacer()
+
+            Toggle(
+                "",
+                isOn: Binding(
+                    get: { (values[field.key] ?? defaultVal) == "true" },
+                    set: { newVal in
+                        values[field.key] = newVal ? "true" : "false"
+                        isDirty = true
+                    }
+                )
+            )
+            .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
+            .labelsHidden()
         }
-        .toggleStyle(.switch)
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(theme.inputBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(theme.inputBorder, lineWidth: 1)
+                )
+        )
     }
 
     // MARK: - Select Field
 
     @ViewBuilder
     private func selectField(_ field: PluginManifest.ConfigField) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 6) {
             Text(field.label)
-                .font(.system(size: 12, weight: .medium))
+                .font(.system(size: 11, weight: .medium))
                 .foregroundColor(theme.secondaryText)
 
             Picker("", selection: binding(for: field.key, default: field.default?.stringValue ?? "")) {
@@ -166,6 +296,7 @@ struct PluginConfigView: View {
                 }
             }
             .labelsHidden()
+            .pickerStyle(.menu)
         }
     }
 
@@ -173,33 +304,48 @@ struct PluginConfigView: View {
 
     @ViewBuilder
     private func multiselectField(_ field: PluginManifest.ConfigField) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
             Text(field.label)
-                .font(.system(size: 12, weight: .medium))
+                .font(.system(size: 11, weight: .medium))
                 .foregroundColor(theme.secondaryText)
 
             let selectedValues = parseMultiselectValues(values[field.key] ?? field.default?.stringValue ?? "[]")
 
-            ForEach(field.options ?? [], id: \.value) { option in
-                Toggle(
-                    isOn: Binding(
-                        get: { selectedValues.contains(option.value) },
-                        set: { isOn in
-                            var current = selectedValues
-                            if isOn { current.insert(option.value) } else { current.remove(option.value) }
-                            let arr = Array(current)
-                            let data = (try? JSONSerialization.data(withJSONObject: arr)) ?? Data()
-                            values[field.key] = String(data: data, encoding: .utf8) ?? "[]"
-                            isDirty = true
-                        }
-                    )
-                ) {
-                    Text(option.label)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.primaryText)
+            VStack(spacing: 0) {
+                ForEach(Array((field.options ?? []).enumerated()), id: \.element.value) { idx, option in
+                    if idx > 0 {
+                        Divider().opacity(0.3)
+                    }
+                    Toggle(
+                        isOn: Binding(
+                            get: { selectedValues.contains(option.value) },
+                            set: { isOn in
+                                var current = selectedValues
+                                if isOn { current.insert(option.value) } else { current.remove(option.value) }
+                                let arr = Array(current)
+                                let data = (try? JSONSerialization.data(withJSONObject: arr)) ?? Data()
+                                values[field.key] = String(data: data, encoding: .utf8) ?? "[]"
+                                isDirty = true
+                            }
+                        )
+                    ) {
+                        Text(option.label)
+                            .font(.system(size: 12))
+                            .foregroundColor(theme.primaryText)
+                    }
+                    .toggleStyle(.checkbox)
+                    .padding(.vertical, 6)
+                    .padding(.horizontal, 10)
                 }
-                .toggleStyle(.checkbox)
             }
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(theme.inputBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(theme.inputBorder, lineWidth: 1)
+                    )
+            )
         }
     }
 
@@ -207,17 +353,49 @@ struct PluginConfigView: View {
 
     @ViewBuilder
     private func numberField(_ field: PluginManifest.ConfigField) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        let isFocused = focusedField == field.key
+        VStack(alignment: .leading, spacing: 6) {
             Text(field.label)
-                .font(.system(size: 12, weight: .medium))
+                .font(.system(size: 11, weight: .medium))
                 .foregroundColor(theme.secondaryText)
 
-            TextField(
-                field.placeholder ?? "0",
-                text: binding(for: field.key, default: field.default?.stringValue ?? "")
+            HStack(spacing: 10) {
+                ZStack(alignment: .leading) {
+                    if (values[field.key] ?? field.default?.stringValue ?? "").isEmpty {
+                        Text(field.placeholder ?? "0")
+                            .font(.system(size: 13, design: .monospaced))
+                            .foregroundColor(theme.placeholderText)
+                            .allowsHitTesting(false)
+                    }
+                    TextField(
+                        "",
+                        text: binding(for: field.key, default: field.default?.stringValue ?? ""),
+                        onEditingChanged: { editing in
+                            withAnimation(.easeOut(duration: 0.15)) {
+                                focusedField = editing ? field.key : nil
+                            }
+                        }
+                    )
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 13, design: .monospaced))
+                    .foregroundColor(theme.primaryText)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(theme.inputBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(
+                                errors[field.key] != nil
+                                    ? Color.red.opacity(0.5)
+                                    : isFocused ? theme.accentColor.opacity(0.5) : theme.inputBorder,
+                                lineWidth: isFocused ? 1.5 : 1
+                            )
+                    )
             )
-            .textFieldStyle(.roundedBorder)
-            .font(.system(size: 13))
         }
     }
 
@@ -225,9 +403,9 @@ struct PluginConfigView: View {
 
     @ViewBuilder
     private func readonlyField(_ field: PluginManifest.ConfigField) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 6) {
             Text(field.label)
-                .font(.system(size: 12, weight: .medium))
+                .font(.system(size: 11, weight: .medium))
                 .foregroundColor(theme.secondaryText)
 
             HStack {
@@ -252,10 +430,15 @@ struct PluginConfigView: View {
                     .help("Copy to clipboard")
                 }
             }
-            .padding(8)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
             .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(theme.primaryBackground.opacity(0.5))
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(theme.inputBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(theme.inputBorder, lineWidth: 1)
+                    )
             )
         }
     }
@@ -269,7 +452,7 @@ struct PluginConfigView: View {
             return values[connKey] != nil && !(values[connKey]?.isEmpty ?? true)
         }()
 
-        HStack {
+        HStack(spacing: 12) {
             Text(field.label)
                 .font(.system(size: 13))
                 .foregroundColor(theme.primaryText)
@@ -278,16 +461,22 @@ struct PluginConfigView: View {
 
             HStack(spacing: 6) {
                 Circle()
-                    .fill(isConnected ? Color.green : Color.gray)
+                    .fill(isConnected ? Color.green : theme.tertiaryText.opacity(0.4))
                     .frame(width: 8, height: 8)
                 Text(isConnected ? "Connected" : "Not Connected")
-                    .font(.system(size: 12))
+                    .font(.system(size: 12, weight: .medium))
                     .foregroundColor(isConnected ? .green : theme.tertiaryText)
             }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(
+                Capsule()
+                    .fill(isConnected ? Color.green.opacity(0.1) : theme.tertiaryBackground)
+            )
 
             if isConnected {
                 if let disconnectAction = field.disconnect_action {
-                    Button("Disconnect") {
+                    Button {
                         if let keys = disconnectAction.clear_keys {
                             for key in keys {
                                 values.removeValue(forKey: key)
@@ -295,23 +484,40 @@ struct PluginConfigView: View {
                             }
                         }
                         isDirty = false
+                    } label: {
+                        Text("Disconnect")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(.red)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(Color.red.opacity(0.1))
+                            )
                     }
-                    .font(.system(size: 12))
-                    .buttonStyle(.plain)
-                    .foregroundColor(.red)
+                    .buttonStyle(PlainButtonStyle())
                 }
             } else {
                 if let connectAction = field.connect_action,
                     connectAction.type == "oauth",
                     let routeId = connectAction.url_route
                 {
-                    Button("Connect") {
+                    Button {
                         let port = Self.loadServerPort()
                         let url = URL(string: "http://127.0.0.1:\(port)/plugins/\(pluginId)/\(routeId)")!
                         NSWorkspace.shared.open(url)
+                    } label: {
+                        Text("Connect")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 6)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(theme.accentColor)
+                            )
                     }
-                    .font(.system(size: 12, weight: .medium))
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(PlainButtonStyle())
                 }
             }
         }

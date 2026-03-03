@@ -153,6 +153,18 @@ public final class PluginInstallManager: @unchecked Sendable {
             }
         }
 
+        // Copy documentation files (README.md, CHANGELOG.md) from the artifact
+        for docName in ["README.md", "CHANGELOG.md"] {
+            if let docURL = findDocFile(named: docName, in: tmpDir) {
+                let destURL = installDir.appendingPathComponent(docName, isDirectory: false)
+                if FileManager.default.fileExists(atPath: destURL.path) {
+                    try FileManager.default.removeItem(at: destURL)
+                }
+                try FileManager.default.copyItem(at: docURL, to: destURL)
+                NSLog("[Osaurus] Installed \(docName) for plugin \(pluginId)")
+            }
+        }
+
         let dylibData = try Data(contentsOf: finalDylibURL)
         let dylibDigest = SHA256.hash(data: dylibData)
         let dylibSha = Data(dylibDigest).map { String(format: "%02x", $0) }.joined()
@@ -261,6 +273,27 @@ public final class PluginInstallManager: @unchecked Sendable {
         let dir = base.appendingPathComponent("osaurus-plugin-\(UUID().uuidString)", isDirectory: true)
         try fm.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
+    }
+
+    /// Finds a documentation file (case-insensitive) in the extracted archive directory
+    private func findDocFile(named filename: String, in directory: URL) -> URL? {
+        let fm = FileManager.default
+        guard
+            let enumerator = fm.enumerator(
+                at: directory,
+                includingPropertiesForKeys: [.isRegularFileKey],
+                options: [.skipsHiddenFiles]
+            )
+        else {
+            return nil
+        }
+        let target = filename.lowercased()
+        for case let fileURL as URL in enumerator {
+            if fileURL.lastPathComponent.lowercased() == target {
+                return fileURL
+            }
+        }
+        return nil
     }
 
     /// Finds all SKILL.md files in the extracted archive directory

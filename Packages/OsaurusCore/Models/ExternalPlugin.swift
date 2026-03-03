@@ -487,7 +487,7 @@ final class ExternalPlugin: @unchecked Sendable {
         nonisolated(unsafe) let ctx = self.ctx
         let pluginId = self.id
 
-        ExternalPlugin.invokeQueue.async {
+        ExternalPlugin.invokeQueue.async { [self] in
             PluginHostContext.setActivePlugin(pluginId)
             defer { PluginHostContext.clearActivePlugin() }
 
@@ -496,6 +496,7 @@ final class ExternalPlugin: @unchecked Sendable {
                     configFn(ctx, keyPtr, valuePtr)
                 }
             }
+            withExtendedLifetime(self) {}
         }
     }
 
@@ -505,7 +506,7 @@ final class ExternalPlugin: @unchecked Sendable {
         let pluginId = self.id
         let rawType = eventType.rawValue
 
-        ExternalPlugin.invokeQueue.async {
+        ExternalPlugin.invokeQueue.async { [self] in
             PluginHostContext.setActivePlugin(pluginId)
             defer { PluginHostContext.clearActivePlugin() }
 
@@ -514,6 +515,7 @@ final class ExternalPlugin: @unchecked Sendable {
                     eventFn(ctx, taskIdPtr, rawType, jsonPtr)
                 }
             }
+            withExtendedLifetime(self) {}
         }
     }
 

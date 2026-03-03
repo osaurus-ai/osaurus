@@ -221,11 +221,9 @@ final class PluginManager {
             }
 
             PluginHostContext.currentContext = ctx
-            var hostAPI = ctx.buildHostAPI()
+            let hostAPIPtr = ctx.buildHostAPI()
             let entryFn = unsafeBitCast(v2sym, to: osr_plugin_entry_v2_t.self)
-            let apiRawPtr = withUnsafePointer(to: &hostAPI) { hostPtr in
-                entryFn(UnsafeRawPointer(hostPtr))
-            }
+            let apiRawPtr = entryFn(UnsafeRawPointer(hostAPIPtr))
             PluginHostContext.currentContext = nil
 
             guard let apiRawPtr else {

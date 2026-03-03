@@ -25,6 +25,11 @@ final class PluginHostContext: @unchecked Sendable {
     let pluginId: String
     let database: PluginDatabase
 
+    /// Heap-allocated host API struct whose pointer is handed to the plugin at
+    /// init. Must outlive the plugin because it may store the pointer rather
+    /// than copying the struct.
+    private(set) var hostAPIPtr: UnsafeMutablePointer<osr_host_api>?
+
     /// Shared URLSession for plugin HTTP requests (thread-safe).
     private static let httpSession: URLSession = {
         let config = URLSessionConfiguration.ephemeral
@@ -52,6 +57,8 @@ final class PluginHostContext: @unchecked Sendable {
     }
 
     deinit {
+        hostAPIPtr?.deinitialize(count: 1)
+        hostAPIPtr?.deallocate()
         database.close()
     }
 
@@ -465,29 +472,33 @@ final class PluginHostContext: @unchecked Sendable {
 
     // MARK: - Build osr_host_api Struct
 
-    /// Builds the C-compatible host API struct with trampoline function pointers.
-    /// IMPORTANT: `currentContext` must be set to this instance before the plugin
-    /// entry point is called, and the returned struct must remain valid for the
-    /// plugin's lifetime (it's copied into the plugin at init time).
-    func buildHostAPI() -> osr_host_api {
-        return osr_host_api(
-            version: 2,
-            config_get: PluginHostContext.trampolineConfigGet,
-            config_set: PluginHostContext.trampolineConfigSet,
-            config_delete: PluginHostContext.trampolineConfigDelete,
-            db_exec: PluginHostContext.trampolineDbExec,
-            db_query: PluginHostContext.trampolineDbQuery,
-            log: PluginHostContext.trampolineLog,
-            dispatch: PluginHostContext.trampolineDispatch,
-            task_status: PluginHostContext.trampolineTaskStatus,
-            dispatch_cancel: PluginHostContext.trampolineDispatchCancel,
-            dispatch_clarify: PluginHostContext.trampolineDispatchClarify,
-            complete: PluginHostContext.trampolineComplete,
-            complete_stream: PluginHostContext.trampolineCompleteStream,
-            embed: PluginHostContext.trampolineEmbed,
-            list_models: PluginHostContext.trampolineListModels,
-            http_request: PluginHostContext.trampolineHttpRequest
+    /// Builds a heap-allocated C-compatible host API struct with trampoline
+    /// function pointers. The returned pointer is stable for the lifetime of
+    /// this context, so plugins may store it directly.
+    func buildHostAPI() -> UnsafeMutablePointer<osr_host_api> {
+        let ptr = UnsafeMutablePointer<osr_host_api>.allocate(capacity: 1)
+        ptr.initialize(
+            to: osr_host_api(
+                version: 2,
+                config_get: PluginHostContext.trampolineConfigGet,
+                config_set: PluginHostContext.trampolineConfigSet,
+                config_delete: PluginHostContext.trampolineConfigDelete,
+                db_exec: PluginHostContext.trampolineDbExec,
+                db_query: PluginHostContext.trampolineDbQuery,
+                log: PluginHostContext.trampolineLog,
+                dispatch: PluginHostContext.trampolineDispatch,
+                task_status: PluginHostContext.trampolineTaskStatus,
+                dispatch_cancel: PluginHostContext.trampolineDispatchCancel,
+                dispatch_clarify: PluginHostContext.trampolineDispatchClarify,
+                complete: PluginHostContext.trampolineComplete,
+                complete_stream: PluginHostContext.trampolineCompleteStream,
+                embed: PluginHostContext.trampolineEmbed,
+                list_models: PluginHostContext.trampolineListModels,
+                http_request: PluginHostContext.trampolineHttpRequest
+            )
         )
+        hostAPIPtr = ptr
+        return ptr
     }
 
     /// Removes this context from the global registry and closes the database.
