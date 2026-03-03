@@ -34,7 +34,7 @@ final class PluginHostContext: @unchecked Sendable {
     }
 
     static func removeContext(for pluginId: String) {
-        contextsLock.withLock { contexts.removeValue(forKey: pluginId) }
+        contextsLock.withLock { _ = contexts.removeValue(forKey: pluginId) }
     }
 
     static func rekeyContext(from oldId: String, to newId: String) {
