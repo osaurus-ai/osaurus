@@ -13,6 +13,7 @@ import SwiftUI
 final class ChatSession: ObservableObject {
     @Published var turns: [ChatTurn] = []
     @Published var isStreaming: Bool = false
+    @Published var lastStreamError: String?
     /// Tracks expand/collapse state for tool calls, thinking blocks, etc.
     /// Lives on the session so state survives NSTableView cell reuse.
     let expandedBlocksStore = ExpandedBlocksStore()
@@ -760,6 +761,7 @@ final class ChatSession: ObservableObject {
 
         currentTask = Task { @MainActor [weak self] in
             guard let self else { return }
+            lastStreamError = nil
             isStreaming = true
             ServerController.signalGenerationStart()
             defer {
@@ -1107,6 +1109,7 @@ final class ChatSession: ObservableObject {
                 }
             } catch {
                 assistantTurn.content = "Error: \(error.localizedDescription)"
+                lastStreamError = error.localizedDescription
             }
         }
     }
