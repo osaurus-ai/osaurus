@@ -570,10 +570,16 @@ struct PluginConfigView: View {
 
         for section in configSpec.sections {
             for field in section.fields {
+                // getAllSecrets (bulk query) can miss keys; fall back to
+                // individual lookup for storable field types before using defaults.
+                if values[field.key] == nil, field.type != .readonly, field.type != .status,
+                    let val = ToolSecretsKeychain.getSecret(id: field.key, for: pluginId)
+                {
+                    values[field.key] = val
+                }
                 if values[field.key] == nil, let def = field.default {
                     values[field.key] = def.stringValue
                 }
-                // Targeted fallback for status keys that getAllSecrets may miss
                 if let connKey = field.connected_when, values[connKey] == nil,
                     let val = ToolSecretsKeychain.getSecret(id: connKey, for: pluginId)
                 {
