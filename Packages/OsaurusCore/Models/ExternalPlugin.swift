@@ -56,6 +56,7 @@ enum TaskEventType: Int32 {
     case completed = 4
     case failed = 5
     case cancelled = 6
+    case output = 7
 }
 
 // Host API callback types (host → plugin, injected at init for v2)

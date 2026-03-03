@@ -114,6 +114,7 @@ typedef struct {
 #define OSR_TASK_EVENT_COMPLETED        4
 #define OSR_TASK_EVENT_FAILED           5
 #define OSR_TASK_EVENT_CANCELLED        6
+#define OSR_TASK_EVENT_OUTPUT           7
 
 // Unified task lifecycle callback.
 // event_type: one of the OSR_TASK_EVENT_* constants above.

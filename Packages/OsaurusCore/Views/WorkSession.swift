@@ -374,6 +374,11 @@ public final class WorkSession: ObservableObject {
         activitySubject.send(event)
     }
 
+    // MARK: - Streaming Output (for plugin output events)
+
+    /// Emits accumulated streaming response text for plugin consumption.
+    public let streamingOutputSubject = PassthroughSubject<String, Never>()
+
     // MARK: - Initialization
 
     init(agentId: UUID, windowState: ChatWindowState? = nil) {
@@ -1130,6 +1135,7 @@ extension WorkSession: WorkEngineDelegate {
     public func workEngine(_ engine: WorkEngine, didReceiveStreamingDelta delta: String, forStep stepIndex: Int) {
         streamingContent += delta
         deltaProcessor?.receiveDelta(delta)
+        streamingOutputSubject.send(streamingContent)
     }
 
     public func workEngine(_ engine: WorkEngine, didGenerateArtifact artifact: Artifact, forIssue issue: Issue) {

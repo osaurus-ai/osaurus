@@ -757,6 +757,10 @@ extension PluginHostContext {
     static func serializeCancelledEvent() -> String {
         jsonString([:])
     }
+
+    static func serializeOutputEvent(text: String) -> String {
+        jsonString(["text": text])
+    }
 }
 
 // MARK: - Async Bridging Helpers

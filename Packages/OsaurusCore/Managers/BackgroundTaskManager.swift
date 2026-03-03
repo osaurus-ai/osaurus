@@ -46,6 +46,11 @@ public final class BackgroundTaskManager: ObservableObject {
     private var dispatchHoldTasks: Set<UUID> = []
     private var heldTaskEvents: [UUID: [(type: TaskEventType, json: String)]] = [:]
 
+    /// Tracks work tasks that have actually started executing at least once.
+    /// Prevents premature completion when Combine publishers fire initial values
+    /// before `context.start()` runs.
+    private var hasStartedExecution: Set<UUID> = []
+
     /// Subject for batching view updates with throttling
     private let viewUpdateSubject = PassthroughSubject<Void, Never>()
     private var viewUpdateCancellable: AnyCancellable?
@@ -93,6 +98,7 @@ public final class BackgroundTaskManager: ObservableObject {
         state.activeIssueId = session.activeIssue?.id
         state.loopState = session.loopState
 
+        hasStartedExecution.insert(windowId)
         registerTask(state)
         observeWorkTask(state, session: session)
 
@@ -146,6 +152,7 @@ public final class BackgroundTaskManager: ObservableObject {
         taskObservers.removeValue(forKey: backgroundId)
         chatTurnCounts.removeValue(forKey: backgroundId)
         lastProgressEmit.removeValue(forKey: backgroundId)
+        hasStartedExecution.remove(backgroundId)
 
         state.releaseReferences()
 
@@ -477,8 +484,25 @@ public final class BackgroundTaskManager: ObservableObject {
         // Activity events for the toast mini-log
         session.activityPublisher
             .sink { [weak self] event in
-                guard let self, let state = self.backgroundTasks[taskId] else { return }
+                guard let self, let state = self.backgroundTasks[taskId],
+                    state.status.isActive
+                else { return }
                 self.recordActivityEvent(event, into: state)
+            }
+            .store(in: &cancellables)
+
+        // Stream agent output to plugins (throttled to 1 event per second)
+        session.streamingOutputSubject
+            .throttle(for: .seconds(1), scheduler: DispatchQueue.main, latest: true)
+            .sink { [weak self] text in
+                guard let self, let state = self.backgroundTasks[taskId],
+                    state.status.isActive, state.sourcePluginId != nil
+                else { return }
+                self.emitPluginEvent(
+                    state,
+                    type: .output,
+                    json: PluginHostContext.serializeOutputEvent(text: text)
+                )
             }
             .store(in: &cancellables)
 
@@ -638,6 +662,7 @@ public final class BackgroundTaskManager: ObservableObject {
         session: WorkSession
     ) {
         guard let state = backgroundTasks[taskId] else { return }
+        guard state.status.isActive else { return }
 
         let wasClarifying = state.status == .awaitingClarification
         state.pendingClarification = clarification
@@ -658,6 +683,7 @@ public final class BackgroundTaskManager: ObservableObject {
                 )
             }
         } else if isExecuting {
+            hasStartedExecution.insert(taskId)
             state.status = .running
             if state.currentStep == nil { state.currentStep = "Working..." }
         } else {
@@ -672,6 +698,7 @@ public final class BackgroundTaskManager: ObservableObject {
         session: WorkSession
     ) {
         guard let state = backgroundTasks[taskId] else { return }
+        guard state.status.isActive else { return }
 
         state.issues = issues
         state.loopState = loopState
@@ -786,6 +813,7 @@ public final class BackgroundTaskManager: ObservableObject {
 
     private func checkWorkCompletion(state: BackgroundTaskState, session: WorkSession) {
         guard !session.hasPendingClarification else { return }
+        guard hasStartedExecution.contains(state.id) else { return }
 
         let issues = session.issues
         let allIssuesClosed = !issues.isEmpty && issues.allSatisfy { $0.status == .closed }
@@ -793,15 +821,26 @@ public final class BackgroundTaskManager: ObservableObject {
 
         if allIssuesClosed || taskCompleted {
             state.progress = 1.0
-            markCompleted(state, success: true, summary: "Task completed successfully")
+            markCompleted(state, success: true, summary: buildCompletionSummary(from: issues))
         } else if session.currentTask == nil {
             let closedCount = issues.filter { $0.status == .closed }.count
             let success = !issues.isEmpty && closedCount == issues.count
             let summary =
                 !issues.isEmpty
-                ? "Completed \(closedCount)/\(issues.count) issues"
+                ? buildCompletionSummary(from: issues)
                 : "Task ended"
             markCompleted(state, success: success, summary: summary)
         }
+    }
+
+    private func buildCompletionSummary(from issues: [Issue]) -> String {
+        let results =
+            issues
+            .filter { $0.status == .closed }
+            .compactMap { $0.result }
+            .filter { !$0.isEmpty }
+        if results.count == 1 { return results[0] }
+        if results.count > 1 { return results.joined(separator: "\n\n") }
+        return "Task completed successfully"
     }
 }

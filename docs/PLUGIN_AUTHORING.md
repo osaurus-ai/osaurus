@@ -943,6 +943,7 @@ Set `on_task_event` to `NULL` to opt out — the host will not call it.
 | `OSR_TASK_EVENT_COMPLETED`     | 4     | Task finishes successfully        | `success` (true), `summary`, `session_id`   |
 | `OSR_TASK_EVENT_FAILED`        | 5     | Task finishes with failure        | `success` (false), `summary`                |
 | `OSR_TASK_EVENT_CANCELLED`     | 6     | Task is cancelled                 | `{}`                                        |
+| `OSR_TASK_EVENT_OUTPUT`        | 7     | Agent generates streaming text    | `text`                                      |
 
 ### Event Payloads
 
@@ -988,6 +989,13 @@ When this event fires, the task is paused. Call `host->dispatch_clarify(task_id,
 ```json
 {}
 ```
+
+**Output:**
+```json
+{"text": "Here are the best restaurants in Irvine:\n\n1. ..."}
+```
+
+Output events stream the agent's accumulated response text during work-mode execution. Throttled to one per second per task. Use this to show progressive response updates (e.g. draft messages in a chat integration).
 
 ### Example: Handling Events
 
