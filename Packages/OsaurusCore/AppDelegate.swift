@@ -381,14 +381,36 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             }
 
             if ChatWindowManager.shared.windowCount > 0 {
-                // Focus existing windows
                 ChatWindowManager.shared.focusAllWindows()
+            } else if WindowManager.shared.isVisible(.management) {
+                WindowManager.shared.show(.management, center: false)
             } else {
-                // No windows exist, create a new one
                 self.showChatOverlay()
             }
         }
         return true
+    }
+
+    // MARK: - Dock Menu
+
+    public func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
+        let menu = NSMenu()
+        menu.addItem(NSMenuItem(title: "New Chat", action: #selector(dockNewChat), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Agents", action: #selector(dockShowAgents), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Settings", action: #selector(dockShowSettings), keyEquivalent: ""))
+        return menu
+    }
+
+    @objc private func dockNewChat() {
+        showChatOverlay()
+    }
+
+    @objc private func dockShowAgents() {
+        showManagementWindow(initialTab: .agents)
+    }
+
+    @objc private func dockShowSettings() {
+        showManagementWindow(initialTab: .settings)
     }
 
     public func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
