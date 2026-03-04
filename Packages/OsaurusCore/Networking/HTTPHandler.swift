@@ -10,6 +10,16 @@ import NIOCore
 import NIOHTTP1
 import NIOPosix
 
+extension SocketAddress {
+    var isLoopback: Bool {
+        switch self {
+        case .v4(let addr): return addr.host == "127.0.0.1"
+        case .v6(let addr): return addr.host == "::1"
+        default: return false
+        }
+    }
+}
+
 /// SwiftNIO HTTP request handler
 final class HTTPHandler: ChannelInboundHandler, Sendable {
     typealias InboundIn = HTTPServerRequestPart
@@ -103,9 +113,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
             // Access key authentication gate (all data snapshotted at server start, zero locks)
             // Plugin routes handle their own auth per-route, so skip the global gate.
+            // Loopback connections (CLI / local tools) are trusted without a token.
             let publicPaths: Set<String> = ["/", "/health"]
             let isPluginRoute = path.hasPrefix("/plugins/")
-            if !publicPaths.contains(path) && !isPluginRoute {
+            let isLoopback = context.channel.remoteAddress?.isLoopback ?? false
+            if !publicPaths.contains(path) && !isPluginRoute && !isLoopback {
                 let authHeader = head.headers.first(name: "Authorization") ?? ""
                 let token =
                     authHeader.hasPrefix("Bearer ")
