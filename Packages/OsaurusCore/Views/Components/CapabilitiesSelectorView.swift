@@ -463,34 +463,16 @@ struct CapabilitiesSelectorView: View {
             content
                 .frame(width: 420, height: min(CGFloat(totalCount * 48 + 200), 540))
                 .background(popoverBackground)
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .overlay(popoverBorder)
-                .shadow(color: theme.shadowColor.opacity(0.25), radius: 20, x: 0, y: 10)
+                .shadow(color: theme.shadowColor.opacity(0.15), radius: 12, x: 0, y: 6)
         }
     }
 
     // MARK: - Background & Border
 
     private var popoverBackground: some View {
-        ZStack {
-            if theme.glassEnabled {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(.ultraThinMaterial)
-            }
-
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(theme.primaryBackground.opacity(theme.isDark ? 0.85 : 0.92))
-
-            LinearGradient(
-                colors: [
-                    theme.accentColor.opacity(theme.isDark ? 0.06 : 0.04),
-                    Color.clear,
-                ],
-                startPoint: .top,
-                endPoint: .center
-            )
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        }
+        RoundedRectangle(cornerRadius: 12, style: .continuous)
+            .fill(theme.primaryBackground)
     }
 
     private var popoverBorder: some View {

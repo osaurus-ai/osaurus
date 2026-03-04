@@ -14,41 +14,65 @@ struct ModelPickerView: View {
     let onDismiss: () -> Void
 
     @State private var searchText = ""
+    @State private var searchDebounceTask: Task<Void, Never>?
     @State private var collapsedGroups: Set<String> = []
-    @State private var highlightedIndex: Int?
-    @State private var keyMonitor: Any?
     @State private var cachedGroupedOptions: [(source: ModelOption.Source, models: [ModelOption])] = []
+    @State private var cachedFlattenedRows: [ModelPickerRow] = []
     @Environment(\.theme) private var theme
 
     // MARK: - Data
 
-    private var filteredGroups: [(source: ModelOption.Source, models: [ModelOption])] {
-        guard !searchText.isEmpty else { return cachedGroupedOptions }
-        return cachedGroupedOptions.compactMap { group in
-            let groupMatches = SearchService.matches(query: searchText, in: group.source.displayName)
-            let matchedModels = group.models.filter {
-                SearchService.matches(query: searchText, in: $0.displayName)
-                    || SearchService.matches(query: searchText, in: $0.id)
+    private func recomputeRows() {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let groups: [(source: ModelOption.Source, models: [ModelOption])]
+
+        if query.isEmpty {
+            groups = cachedGroupedOptions
+        } else {
+            groups = cachedGroupedOptions.compactMap { group in
+                let groupMatches = SearchService.matches(query: query, in: group.source.displayName)
+                let matchedModels = group.models.filter {
+                    SearchService.matches(query: query, in: $0.displayName)
+                        || SearchService.matches(query: query, in: $0.id)
+                }
+                if groupMatches { return group }
+                if !matchedModels.isEmpty {
+                    return (source: group.source, models: matchedModels)
+                }
+                return nil
             }
-            if groupMatches { return group }
-            if !matchedModels.isEmpty {
-                return (source: group.source, models: matchedModels)
-            }
-            return nil
         }
-    }
 
-    private var flatFilteredModels: [ModelOption] {
-        filteredGroups.flatMap { isGroupExpanded($0.source) ? $0.models : [] }
-    }
-
-    private var highlightedModelId: String? {
-        guard let index = highlightedIndex, index >= 0, index < flatFilteredModels.count else { return nil }
-        return flatFilteredModels[index].id
-    }
-
-    private func isGroupExpanded(_ source: ModelOption.Source) -> Bool {
-        !searchText.isEmpty || !collapsedGroups.contains(source.uniqueKey)
+        var rows: [ModelPickerRow] = []
+        for group in groups {
+            let expanded = !query.isEmpty || !collapsedGroups.contains(group.source.uniqueKey)
+            let sourceKey = group.source.uniqueKey
+            rows.append(
+                .groupHeader(
+                    sourceKey: sourceKey,
+                    displayName: group.source.displayName,
+                    sourceType: group.source,
+                    count: group.models.count,
+                    isExpanded: expanded
+                )
+            )
+            if expanded {
+                for model in group.models {
+                    rows.append(
+                        .model(
+                            id: model.id,
+                            sourceKey: sourceKey,
+                            displayName: model.displayName,
+                            description: model.description,
+                            parameterCount: model.parameterCount,
+                            quantization: model.quantization,
+                            isVLM: model.isVLM
+                        )
+                    )
+                }
+            }
+        }
+        cachedFlattenedRows = rows
     }
 
     private func toggleGroup(_ source: ModelOption.Source) {
@@ -57,52 +81,6 @@ struct ModelPickerView: View {
             collapsedGroups.remove(key)
         } else {
             collapsedGroups.insert(key)
-        }
-    }
-
-    // MARK: - Keyboard Navigation
-
-    private func moveHighlight(by offset: Int) {
-        let models = flatFilteredModels
-        guard !models.isEmpty else { return }
-        if let current = highlightedIndex {
-            highlightedIndex = max(0, min(models.count - 1, current + offset))
-        } else {
-            highlightedIndex = offset > 0 ? 0 : models.count - 1
-        }
-    }
-
-    private func selectHighlighted() {
-        guard let index = highlightedIndex, index >= 0, index < flatFilteredModels.count else { return }
-        selectedModel = flatFilteredModels[index].id
-        onDismiss()
-    }
-
-    private func installKeyMonitor() {
-        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            switch event.keyCode {
-            case 125:  // Down arrow
-                moveHighlight(by: 1)
-                return nil
-            case 126:  // Up arrow
-                moveHighlight(by: -1)
-                return nil
-            case 36:  // Return/Enter
-                if highlightedIndex != nil {
-                    selectHighlighted()
-                    return nil
-                }
-                return event
-            default:
-                return event
-            }
-        }
-    }
-
-    private func removeKeyMonitor() {
-        if let monitor = keyMonitor {
-            NSEvent.removeMonitor(monitor)
-            keyMonitor = nil
         }
     }
 
@@ -115,7 +93,7 @@ struct ModelPickerView: View {
             searchField
             Divider().background(theme.primaryBorder.opacity(0.3))
 
-            if filteredGroups.isEmpty {
+            if cachedFlattenedRows.isEmpty {
                 emptyState
             } else {
                 modelList
@@ -123,37 +101,41 @@ struct ModelPickerView: View {
         }
         .frame(width: 380, height: min(CGFloat(options.count * 48 + 160), 480))
         .background(popoverBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(popoverBorder)
-        .shadow(color: theme.shadowColor.opacity(0.25), radius: 20, x: 0, y: 10)
+        .shadow(color: theme.shadowColor.opacity(0.15), radius: 12, x: 0, y: 6)
         .onAppear {
             cachedGroupedOptions = options.groupedBySource()
-            installKeyMonitor()
+            recomputeRows()
         }
-        .onDisappear { removeKeyMonitor() }
+        .onDisappear {
+            searchDebounceTask?.cancel()
+        }
         .onChange(of: options) { _, newOptions in
             cachedGroupedOptions = newOptions.groupedBySource()
+            recomputeRows()
         }
-        .onChange(of: searchText) { _, _ in highlightedIndex = nil }
+        .onChange(of: searchText) { _, newValue in
+            searchDebounceTask?.cancel()
+            if newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                recomputeRows()
+            } else {
+                searchDebounceTask = Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(150))
+                    guard !Task.isCancelled else { return }
+                    recomputeRows()
+                }
+            }
+        }
+        .onChange(of: collapsedGroups) { _, _ in
+            recomputeRows()
+        }
     }
 
     // MARK: - Background & Border
 
     private var popoverBackground: some View {
-        ZStack {
-            if theme.glassEnabled {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(.ultraThinMaterial)
-            }
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(theme.primaryBackground.opacity(theme.isDark ? 0.85 : 0.92))
-            LinearGradient(
-                colors: [theme.accentColor.opacity(theme.isDark ? 0.06 : 0.04), Color.clear],
-                startPoint: .top,
-                endPoint: .center
-            )
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        }
+        RoundedRectangle(cornerRadius: 12, style: .continuous)
+            .fill(theme.primaryBackground)
     }
 
     private var popoverBorder: some View {
@@ -233,59 +215,23 @@ struct ModelPickerView: View {
         .padding()
     }
 
-    // MARK: - Flattened Rows
-
-    private var flattenedRows: [ModelPickerRow] {
-        var rows: [ModelPickerRow] = []
-        for group in filteredGroups {
-            let expanded = isGroupExpanded(group.source)
-            let sourceKey = group.source.uniqueKey
-            rows.append(
-                .groupHeader(
-                    sourceKey: sourceKey,
-                    displayName: group.source.displayName,
-                    sourceType: group.source,
-                    count: group.models.count,
-                    isExpanded: expanded
-                )
-            )
-            if expanded {
-                for model in group.models {
-                    rows.append(
-                        .model(
-                            id: model.id,
-                            sourceKey: sourceKey,
-                            displayName: model.displayName,
-                            description: model.description,
-                            parameterCount: model.parameterCount,
-                            quantization: model.quantization,
-                            isVLM: model.isVLM
-                        )
-                    )
-                }
-            }
-        }
-        return rows
-    }
-
     // MARK: - Model List
 
     private var modelList: some View {
         ModelPickerTableRepresentable(
-            rows: flattenedRows,
+            rows: cachedFlattenedRows,
             theme: theme,
             selectedModelId: selectedModel,
-            highlightedModelId: highlightedModelId,
-            scrollToModelId: highlightedModelId,
             onToggleGroup: { sourceKey in
-                if let group = filteredGroups.first(where: { $0.source.uniqueKey == sourceKey }) {
+                if let group = cachedGroupedOptions.first(where: { $0.source.uniqueKey == sourceKey }) {
                     toggleGroup(group.source)
                 }
             },
             onSelectModel: { modelId in
                 selectedModel = modelId
                 onDismiss()
-            }
+            },
+            onDismiss: onDismiss
         )
     }
 }

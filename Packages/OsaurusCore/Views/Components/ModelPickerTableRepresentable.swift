@@ -59,12 +59,40 @@ enum ModelPickerRow: Equatable, Identifiable {
     }
 }
 
-struct ModelPickerRenderingContext {
-    let theme: ThemeProtocol
-    var selectedModelId: String?
-    var highlightedModelId: String?
-    let onToggleGroup: ((String) -> Void)?
-    let onSelectModel: ((String) -> Void)?
+/// Pre-converted NSColors from the SwiftUI theme, built once per theme change
+/// to avoid expensive `NSColor(SwiftUI.Color)` bridging on every cell configure.
+struct ThemeColorCache {
+    let primaryText: NSColor
+    let secondaryText: NSColor
+    let tertiaryText: NSColor
+    let accentColor: NSColor
+    let secondaryBackground: NSColor
+    let primaryBorder: NSColor
+
+    let accentAlpha09: NSColor
+    let accentAlpha012: NSColor
+    let accentAlpha015: NSColor
+    let secondaryTextAlpha09: NSColor
+    let secondaryTextAlpha012: NSColor
+    let hoverBg: NSColor
+    let borderAlpha01: NSColor
+
+    init(theme: ThemeProtocol) {
+        primaryText = NSColor(theme.primaryText)
+        secondaryText = NSColor(theme.secondaryText)
+        tertiaryText = NSColor(theme.tertiaryText)
+        accentColor = NSColor(theme.accentColor)
+        secondaryBackground = NSColor(theme.secondaryBackground)
+        primaryBorder = NSColor(theme.primaryBorder)
+
+        accentAlpha09 = accentColor.withAlphaComponent(0.9)
+        accentAlpha012 = accentColor.withAlphaComponent(0.12)
+        accentAlpha015 = accentColor.withAlphaComponent(0.15)
+        secondaryTextAlpha09 = secondaryText.withAlphaComponent(0.9)
+        secondaryTextAlpha012 = secondaryText.withAlphaComponent(0.12)
+        hoverBg = secondaryBackground.withAlphaComponent(0.7)
+        borderAlpha01 = primaryBorder.withAlphaComponent(0.1)
+    }
 }
 
 // MARK: - ModelPickerTableRepresentable
@@ -74,10 +102,9 @@ struct ModelPickerTableRepresentable: NSViewRepresentable {
     let rows: [ModelPickerRow]
     let theme: ThemeProtocol
     var selectedModelId: String?
-    var highlightedModelId: String?
-    var scrollToModelId: String?
     var onToggleGroup: ((String) -> Void)?
     var onSelectModel: ((String) -> Void)?
+    var onDismiss: (() -> Void)?
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
@@ -90,35 +117,29 @@ struct ModelPickerTableRepresentable: NSViewRepresentable {
         coordinator.setupDataSource(for: tableView)
         coordinator.setupHoverTracking(on: tableView)
         coordinator.setupScrollObservation(for: scrollView)
-        coordinator.applyRows(rows, context: renderingContext)
+        coordinator.installKeyMonitor()
+
+        coordinator.onToggleGroup = onToggleGroup
+        coordinator.onSelectModel = onSelectModel
+        coordinator.onDismiss = onDismiss
+        coordinator.updateColorsIfNeeded(from: theme)
+        coordinator.updateSelectedModelId(selectedModelId)
+        coordinator.applyRows(rows)
         return scrollView
     }
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         let coordinator = context.coordinator
-        coordinator.applyRows(rows, context: renderingContext)
-
-        if let modelId = scrollToModelId,
-            modelId != coordinator.lastScrolledToModelId
-        {
-            coordinator.lastScrolledToModelId = modelId
-            let suffix = "-\(modelId)"
-            if let idx = coordinator.rowIds.firstIndex(where: { $0.hasSuffix(suffix) }) {
-                coordinator.tableView?.scrollRowToVisible(idx)
-            }
-        }
+        coordinator.onToggleGroup = onToggleGroup
+        coordinator.onSelectModel = onSelectModel
+        coordinator.onDismiss = onDismiss
+        coordinator.updateColorsIfNeeded(from: theme)
+        coordinator.updateSelectedModelId(selectedModelId)
+        coordinator.applyRows(rows)
     }
 
-    // MARK: Helpers
-
-    private var renderingContext: ModelPickerRenderingContext {
-        ModelPickerRenderingContext(
-            theme: theme,
-            selectedModelId: selectedModelId,
-            highlightedModelId: highlightedModelId,
-            onToggleGroup: onToggleGroup,
-            onSelectModel: onSelectModel
-        )
+    static func dismantleNSView(_ nsView: NSScrollView, coordinator: Coordinator) {
+        coordinator.removeKeyMonitor()
     }
 
     private static func makeTableView() -> HoverTrackingTableView {
@@ -203,9 +224,8 @@ private final class PickerBadgeView: NSView {
 
     func configure(
         text: String,
-        icon: String? = nil,
+        iconImage: NSImage? = nil,
         font: NSFont = .systemFont(ofSize: 9, weight: .medium),
-        iconSize: CGFloat = 8,
         textColor: NSColor,
         bgColor: NSColor,
         borderColor: NSColor = .clear,
@@ -215,10 +235,8 @@ private final class PickerBadgeView: NSView {
         label.font = font
         label.textColor = textColor
 
-        if let icon {
-            let config = NSImage.SymbolConfiguration(pointSize: iconSize, weight: .medium)
-            iconView.image = NSImage(systemSymbolName: icon, accessibilityDescription: nil)?
-                .withSymbolConfiguration(config)
+        if let iconImage {
+            iconView.image = iconImage
             iconView.contentTintColor = textColor
             iconView.isHidden = false
         } else {
@@ -290,41 +308,32 @@ private final class GroupHeaderCellView: NSTableCellView {
     func configure(
         id: String,
         displayName: String,
-        sourceType: ModelOption.Source,
         count: Int,
         isExpanded: Bool,
-        theme: ThemeProtocol,
+        colors: ThemeColorCache,
+        chevronImage: NSImage?,
+        sourceIcon: NSImage?,
         onToggle: @escaping () -> Void
     ) {
         rowId = id
         self.onToggle = onToggle
 
-        chevronView.image = NSImage(
-            systemSymbolName: isExpanded ? "chevron.down" : "chevron.right",
-            accessibilityDescription: nil
-        )?.withSymbolConfiguration(.init(pointSize: 10, weight: .semibold))
-        chevronView.contentTintColor = NSColor(theme.tertiaryText)
+        chevronView.image = chevronImage
+        chevronView.contentTintColor = colors.tertiaryText
 
-        let iconName: String
-        switch sourceType {
-        case .foundation: iconName = "apple.logo"
-        case .local: iconName = "internaldrive"
-        case .remote: iconName = "cloud"
-        }
-        sourceIconView.image = NSImage(systemSymbolName: iconName, accessibilityDescription: nil)?
-            .withSymbolConfiguration(.init(pointSize: 11, weight: .regular))
-        sourceIconView.contentTintColor = NSColor(theme.secondaryText)
+        sourceIconView.image = sourceIcon
+        sourceIconView.contentTintColor = colors.secondaryText
 
         nameLabel.stringValue = displayName
         nameLabel.font = .systemFont(ofSize: 12, weight: .semibold)
-        nameLabel.textColor = NSColor(theme.primaryText)
+        nameLabel.textColor = colors.primaryText
 
         countBadge.configure(
             text: "\(count)",
             font: .systemFont(ofSize: 10, weight: .medium),
-            textColor: NSColor(theme.tertiaryText),
-            bgColor: NSColor(theme.secondaryBackground),
-            borderColor: NSColor(theme.primaryBorder).withAlphaComponent(0.1),
+            textColor: colors.tertiaryText,
+            bgColor: colors.secondaryBackground,
+            borderColor: colors.borderAlpha01,
             isCapsule: true
         )
 
@@ -410,7 +419,9 @@ private final class ModelRowCellView: NSTableCellView {
         isSelected: Bool,
         isHighlighted: Bool,
         isHovered: Bool,
-        theme: ThemeProtocol,
+        colors: ThemeColorCache,
+        checkmarkImage: NSImage?,
+        eyeImage: NSImage?,
         onSelect: @escaping () -> Void
     ) {
         rowId = id
@@ -421,18 +432,16 @@ private final class ModelRowCellView: NSTableCellView {
 
         nameLabel.stringValue = displayName
         nameLabel.font = .systemFont(ofSize: 12, weight: isSelected ? .semibold : .medium)
-        nameLabel.textColor = NSColor(isSelected ? theme.primaryText : theme.secondaryText)
+        nameLabel.textColor = isSelected ? colors.primaryText : colors.secondaryText
 
         if isVLM {
-            let accent = NSColor(theme.accentColor)
             vlmBadge.configure(
                 text: "Vision",
-                icon: "eye",
+                iconImage: eyeImage,
                 font: .systemFont(ofSize: 8, weight: .medium),
-                iconSize: 8,
-                textColor: accent,
-                bgColor: accent.withAlphaComponent(0.12),
-                borderColor: accent.withAlphaComponent(0.15),
+                textColor: colors.accentColor,
+                bgColor: colors.accentAlpha012,
+                borderColor: colors.accentAlpha015,
                 isCapsule: true
             )
             vlmBadge.isHidden = false
@@ -443,18 +452,17 @@ private final class ModelRowCellView: NSTableCellView {
         if let desc = description, !desc.isEmpty {
             descLabel.stringValue = desc
             descLabel.font = .systemFont(ofSize: 10)
-            descLabel.textColor = NSColor(theme.tertiaryText)
+            descLabel.textColor = colors.tertiaryText
             descLabel.isHidden = false
         } else {
             descLabel.isHidden = true
         }
 
         if let params = parameterCount {
-            let c = NSColor(theme.accentColor)
             paramBadge.configure(
                 text: params,
-                textColor: c.withAlphaComponent(0.9),
-                bgColor: c.withAlphaComponent(0.12)
+                textColor: colors.accentAlpha09,
+                bgColor: colors.accentAlpha012
             )
             paramBadge.isHidden = false
         } else {
@@ -462,17 +470,19 @@ private final class ModelRowCellView: NSTableCellView {
         }
 
         if let quant = quantization {
-            let c = NSColor(theme.secondaryText)
-            quantBadge.configure(text: quant, textColor: c.withAlphaComponent(0.9), bgColor: c.withAlphaComponent(0.12))
+            quantBadge.configure(
+                text: quant,
+                textColor: colors.secondaryTextAlpha09,
+                bgColor: colors.secondaryTextAlpha012
+            )
             quantBadge.isHidden = false
         } else {
             quantBadge.isHidden = true
         }
 
         if isSelected {
-            checkmarkView.image = NSImage(systemSymbolName: "checkmark", accessibilityDescription: nil)?
-                .withSymbolConfiguration(.init(pointSize: 11, weight: .bold))
-            checkmarkView.contentTintColor = NSColor(theme.accentColor)
+            checkmarkView.image = checkmarkImage
+            checkmarkView.contentTintColor = colors.accentColor
             checkmarkView.isHidden = false
         } else {
             checkmarkView.isHidden = true
@@ -482,7 +492,7 @@ private final class ModelRowCellView: NSTableCellView {
         CATransaction.setDisableActions(true)
         bgLayer.backgroundColor =
             (isHovered || isHighlighted || isSelected)
-            ? NSColor(theme.secondaryBackground).withAlphaComponent(0.7).cgColor
+            ? colors.hoverBg.cgColor
             : nil
         CATransaction.commit()
 
@@ -568,20 +578,70 @@ extension ModelPickerTableRepresentable {
     final class Coordinator: NSObject, NSTableViewDelegate {
 
         weak var tableView: NSTableView?
-        private(set) var dataSource: NSTableViewDiffableDataSource<ModelPickerSection, String>?
-        private(set) var rowIds: [String] = []
-        private(set) var rowLookup: [String: ModelPickerRow] = [:]
+        private var dataSource: NSTableViewDiffableDataSource<ModelPickerSection, String>?
+        private var rowIds: [String] = []
+        private var rowLookup: [String: ModelPickerRow] = [:]
+        private var rowIdToIndex: [String: Int] = [:]
+        private var modelIdToRowIndex: [String: Int] = [:]
+        private var flatModelIds: [String] = []
 
-        private var ctx = ModelPickerRenderingContext(
-            theme: LightTheme(),
-            selectedModelId: nil,
-            highlightedModelId: nil,
-            onToggleGroup: nil,
-            onSelectModel: nil
-        )
+        var selectedModelId: String?
+        var onToggleGroup: ((String) -> Void)?
+        var onSelectModel: ((String) -> Void)?
+        var onDismiss: (() -> Void)?
+
         private var hoveredRowId: String?
-        var lastScrolledToModelId: String?
+        private var highlightedIndex: Int?
+        private var keyMonitor: Any?
         private var isScrolling = false
+
+        // MARK: Cached Theme Colors & Images
+
+        private var colors = ThemeColorCache(theme: LightTheme())
+        private var lastThemeTypeId: ObjectIdentifier?
+
+        private lazy var chevronDown: NSImage? = NSImage(
+            systemSymbolName: "chevron.down",
+            accessibilityDescription: nil
+        )?.withSymbolConfiguration(.init(pointSize: 10, weight: .semibold))
+
+        private lazy var chevronRight: NSImage? = NSImage(
+            systemSymbolName: "chevron.right",
+            accessibilityDescription: nil
+        )?.withSymbolConfiguration(.init(pointSize: 10, weight: .semibold))
+
+        private lazy var appleLogoIcon: NSImage? = NSImage(
+            systemSymbolName: "apple.logo",
+            accessibilityDescription: nil
+        )?.withSymbolConfiguration(.init(pointSize: 11, weight: .regular))
+
+        private lazy var internalDriveIcon: NSImage? = NSImage(
+            systemSymbolName: "internaldrive",
+            accessibilityDescription: nil
+        )?.withSymbolConfiguration(.init(pointSize: 11, weight: .regular))
+
+        private lazy var cloudIcon: NSImage? = NSImage(
+            systemSymbolName: "cloud",
+            accessibilityDescription: nil
+        )?.withSymbolConfiguration(.init(pointSize: 11, weight: .regular))
+
+        private lazy var checkmarkImage: NSImage? = NSImage(
+            systemSymbolName: "checkmark",
+            accessibilityDescription: nil
+        )?.withSymbolConfiguration(.init(pointSize: 11, weight: .bold))
+
+        private lazy var eyeImage: NSImage? = NSImage(
+            systemSymbolName: "eye",
+            accessibilityDescription: nil
+        )?.withSymbolConfiguration(.init(pointSize: 8, weight: .medium))
+
+        private func sourceIcon(for source: ModelOption.Source) -> NSImage? {
+            switch source {
+            case .foundation: return appleLogoIcon
+            case .local: return internalDriveIcon
+            case .remote: return cloudIcon
+            }
+        }
 
         // MARK: Setup
 
@@ -618,21 +678,93 @@ extension ModelPickerTableRepresentable {
         @objc private func onScrollStart() { isScrolling = true; setHoveredRow(nil) }
         @objc private func onScrollEnd() { isScrolling = false }
 
+        // MARK: Keyboard Navigation
+
+        func installKeyMonitor() {
+            keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+                self?.handleKeyDown(event) ?? event
+            }
+        }
+
+        func removeKeyMonitor() {
+            if let monitor = keyMonitor {
+                NSEvent.removeMonitor(monitor)
+                keyMonitor = nil
+            }
+        }
+
+        private func handleKeyDown(_ event: NSEvent) -> NSEvent? {
+            switch event.keyCode {
+            case 125: moveHighlight(by: 1); return nil
+            case 126: moveHighlight(by: -1); return nil
+            case 36:
+                if highlightedIndex != nil { selectHighlighted(); return nil }
+                return event
+            case 53: onDismiss?(); return nil
+            default: return event
+            }
+        }
+
+        private func moveHighlight(by offset: Int) {
+            guard !flatModelIds.isEmpty else { return }
+            let oldIndex = highlightedIndex
+            if let current = oldIndex {
+                highlightedIndex = max(0, min(flatModelIds.count - 1, current + offset))
+            } else {
+                highlightedIndex = offset > 0 ? 0 : flatModelIds.count - 1
+            }
+            if let old = oldIndex, old < flatModelIds.count,
+                let rowIdx = modelIdToRowIndex[flatModelIds[old]]
+            {
+                reconfigureCell(at: rowIdx)
+            }
+            if let new = highlightedIndex, new < flatModelIds.count,
+                let rowIdx = modelIdToRowIndex[flatModelIds[new]]
+            {
+                reconfigureCell(at: rowIdx)
+                tableView?.scrollRowToVisible(rowIdx)
+            }
+        }
+
+        private func selectHighlighted() {
+            guard let index = highlightedIndex, index < flatModelIds.count else { return }
+            onSelectModel?(flatModelIds[index])
+        }
+
+        // MARK: Theme
+
+        func updateColorsIfNeeded(from theme: ThemeProtocol) {
+            let typeId = ObjectIdentifier(type(of: theme))
+            guard typeId != lastThemeTypeId else { return }
+            lastThemeTypeId = typeId
+            colors = ThemeColorCache(theme: theme)
+        }
+
+        // MARK: Selection
+
+        func updateSelectedModelId(_ newId: String?) {
+            guard selectedModelId != newId else { return }
+            selectedModelId = newId
+            reconfigureVisibleCells()
+        }
+
         // MARK: Apply Rows
 
-        func applyRows(_ rows: [ModelPickerRow], context: ModelPickerRenderingContext) {
-            let visualStateChanged =
-                ctx.selectedModelId != context.selectedModelId
-                || ctx.highlightedModelId != context.highlightedModelId
-            ctx = context
+        private var lastRowCount = 0
+        private var lastFirstRowId: String?
+        private var lastLastRowId: String?
+
+        func applyRows(_ rows: [ModelPickerRow]) {
+            let count = rows.count
+            let firstId = rows.first?.id
+            let lastId = rows.last?.id
+            guard count != lastRowCount || firstId != lastFirstRowId || lastId != lastLastRowId else { return }
+            lastRowCount = count
+            lastFirstRowId = firstId
+            lastLastRowId = lastId
 
             let newIds = rows.map(\.id)
             let newLookup = Dictionary(rows.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
-
-            if newIds == rowIds, !rowIds.contains(where: { newLookup[$0] != rowLookup[$0] }) {
-                if visualStateChanged { reconfigureVisibleCells() }
-                return
-            }
 
             if newIds == rowIds {
                 rowLookup = newLookup
@@ -643,11 +775,29 @@ extension ModelPickerTableRepresentable {
             rowLookup = newLookup
             var seen = Set<String>()
             rowIds = newIds.filter { seen.insert($0).inserted }
+            rebuildIndexMaps()
+            highlightedIndex = nil
 
             var snapshot = NSDiffableDataSourceSnapshot<ModelPickerSection, String>()
             snapshot.appendSections([.main])
             snapshot.appendItems(rowIds, toSection: .main)
             dataSource?.apply(snapshot, animatingDifferences: false)
+        }
+
+        private func rebuildIndexMaps() {
+            rowIdToIndex = Dictionary(
+                uniqueKeysWithValues: rowIds.enumerated().map { ($1, $0) }
+            )
+            var modelMap: [String: Int] = [:]
+            var modelIds: [String] = []
+            for (idx, rowId) in rowIds.enumerated() {
+                if let mId = rowLookup[rowId]?.modelId {
+                    modelMap[mId] = idx
+                    modelIds.append(mId)
+                }
+            }
+            modelIdToRowIndex = modelMap
+            flatModelIds = modelIds
         }
 
         // MARK: Cell Updates
@@ -707,12 +857,18 @@ extension ModelPickerTableRepresentable {
             cell.configure(
                 id: row.id,
                 displayName: displayName,
-                sourceType: sourceType,
                 count: count,
                 isExpanded: isExpanded,
-                theme: ctx.theme,
-                onToggle: { [weak self] in self?.ctx.onToggleGroup?(sourceKey) }
+                colors: colors,
+                chevronImage: isExpanded ? chevronDown : chevronRight,
+                sourceIcon: sourceIcon(for: sourceType),
+                onToggle: { [weak self] in self?.onToggleGroup?(sourceKey) }
             )
+        }
+
+        private var highlightedModelId: String? {
+            guard let idx = highlightedIndex, idx < flatModelIds.count else { return nil }
+            return flatModelIds[idx]
         }
 
         private func configureModelRow(_ cell: ModelRowCellView, with row: ModelPickerRow) {
@@ -725,11 +881,13 @@ extension ModelPickerTableRepresentable {
                 parameterCount: params,
                 quantization: quant,
                 isVLM: isVLM,
-                isSelected: ctx.selectedModelId == id,
-                isHighlighted: ctx.highlightedModelId == id,
+                isSelected: selectedModelId == id,
+                isHighlighted: highlightedModelId == id,
                 isHovered: hoveredRowId == row.id,
-                theme: ctx.theme,
-                onSelect: { [weak self] in self?.ctx.onSelectModel?(id) }
+                colors: colors,
+                checkmarkImage: checkmarkImage,
+                eyeImage: eyeImage,
+                onSelect: { [weak self] in self?.onSelectModel?(id) }
             )
         }
 
@@ -749,7 +907,7 @@ extension ModelPickerTableRepresentable {
             hoveredRowId = newRowId
 
             for targetId in [oldRowId, newRowId] {
-                guard let targetId, let idx = rowIds.firstIndex(of: targetId) else { continue }
+                guard let targetId, let idx = rowIdToIndex[targetId] else { continue }
                 reconfigureCell(at: idx)
             }
         }
