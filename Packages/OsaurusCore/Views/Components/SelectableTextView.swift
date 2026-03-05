@@ -818,9 +818,12 @@ struct SelectableTextView: NSViewRepresentable {
     /// Quick check if text likely contains markdown syntax (avoids expensive parsing for plain text)
     @inline(__always)
     private func likelyContainsMarkdown(_ text: String) -> Bool {
-        // Check for common inline markdown characters
-        // This is a fast heuristic to skip markdown parsing for plain text
         text.contains("*") || text.contains("_") || text.contains("`") || text.contains("[") || text.contains("~")
+    }
+
+    @inline(__always)
+    private func containsInlineMath(_ text: String) -> Bool {
+        text.contains("$") || text.contains("\\(")
     }
 
     private func renderInlineMarkdown(
@@ -835,6 +838,20 @@ struct SelectableTextView: NSViewRepresentable {
             .font: baseFont,
             .foregroundColor: NSColor(theme.primaryText),
         ]
+
+        // Check for inline math — if present, split and render segments
+        if containsInlineMath(text) {
+            let segments = splitInlineMath(text)
+            if segments.contains(where: { $0.isMath }) {
+                return renderSegmentsWithMath(
+                    segments,
+                    fontSize: fontSize,
+                    weight: weight,
+                    isItalic: isItalic,
+                    baseAttributes: baseAttributes
+                )
+            }
+        }
 
         // Fast path: skip markdown parsing for plain text
         guard likelyContainsMarkdown(text) else {
@@ -854,6 +871,145 @@ struct SelectableTextView: NSViewRepresentable {
 
         // Fallback to plain text
         return NSMutableAttributedString(string: text, attributes: baseAttributes)
+    }
+
+    // MARK: - Inline Math Helpers
+
+    private struct InlineSegment {
+        let text: String
+        let isMath: Bool
+    }
+
+    /// Split text into alternating plain-text and math segments.
+    /// Handles `$...$` (no whitespace padding) and `\(...\)` delimiters.
+    private func splitInlineMath(_ text: String) -> [InlineSegment] {
+        var segments: [InlineSegment] = []
+        var current = ""
+        let scalars = Array(text.unicodeScalars)
+        var i = 0
+
+        @inline(__always)
+        func flushText() {
+            if !current.isEmpty {
+                segments.append(InlineSegment(text: current, isMath: false))
+                current = ""
+            }
+        }
+
+        while i < scalars.count {
+            // \(...\) delimiter
+            if i + 1 < scalars.count && scalars[i] == "\\" && scalars[i + 1] == "(" {
+                flushText()
+                i += 2
+                var math = ""
+                while i < scalars.count {
+                    if i + 1 < scalars.count && scalars[i] == "\\" && scalars[i + 1] == ")" {
+                        i += 2
+                        break
+                    }
+                    math.append(String(scalars[i]))
+                    i += 1
+                }
+                if !math.isEmpty {
+                    segments.append(InlineSegment(text: math, isMath: true))
+                }
+                continue
+            }
+
+            // Escaped \$ — not a math delimiter
+            if scalars[i] == "\\" && i + 1 < scalars.count && scalars[i + 1] == "$" {
+                current.append("$")
+                i += 2
+                continue
+            }
+
+            // $...$ delimiter — require non-whitespace after opening and before closing $
+            if scalars[i] == "$"
+                && i + 1 < scalars.count
+                && !scalars[i + 1].properties.isWhitespace
+                && scalars[i + 1] != "$"
+            {
+                if let closeIdx = findClosingDollar(scalars, from: i + 1) {
+                    let start = text.unicodeScalars.index(text.unicodeScalars.startIndex, offsetBy: i + 1)
+                    let end = text.unicodeScalars.index(text.unicodeScalars.startIndex, offsetBy: closeIdx)
+                    flushText()
+                    segments.append(InlineSegment(text: String(text.unicodeScalars[start ..< end]), isMath: true))
+                    i = closeIdx + 1
+                    continue
+                }
+            }
+
+            current.append(String(scalars[i]))
+            i += 1
+        }
+
+        flushText()
+        return segments
+    }
+
+    /// Find the index of a closing `$` that has no whitespace before it.
+    private func findClosingDollar(_ scalars: [Unicode.Scalar], from start: Int) -> Int? {
+        var j = start
+        while j < scalars.count {
+            if scalars[j] == "$" && !scalars[j - 1].properties.isWhitespace {
+                return j
+            }
+            j += 1
+        }
+        return nil
+    }
+
+    /// Build an attributed string from mixed text/math segments.
+    private func renderSegmentsWithMath(
+        _ segments: [InlineSegment],
+        fontSize: CGFloat,
+        weight: NSFont.Weight,
+        isItalic: Bool,
+        baseAttributes: [NSAttributedString.Key: Any]
+    ) -> NSMutableAttributedString {
+        let result = NSMutableAttributedString()
+        let textColor = NSColor(theme.primaryText)
+
+        for segment in segments {
+            if segment.isMath {
+                if let image = LaTeXRenderer.shared.renderToImage(
+                    latex: segment.text,
+                    fontSize: fontSize,
+                    textColor: textColor
+                ) {
+                    let attachment = NSTextAttachment()
+                    attachment.image = image
+                    // Align baseline: shift down so math sits on the text baseline
+                    let yOffset = -(image.size.height - fontSize) / 2 - 1
+                    attachment.bounds = CGRect(
+                        x: 0,
+                        y: yOffset,
+                        width: image.size.width,
+                        height: image.size.height
+                    )
+                    result.append(NSAttributedString(attachment: attachment))
+                } else {
+                    // Fallback: render the raw LaTeX as code-styled text
+                    let fallback = NSMutableAttributedString(string: "$\(segment.text)$", attributes: baseAttributes)
+                    result.append(fallback)
+                }
+            } else {
+                // Render plain text through the standard markdown path
+                if likelyContainsMarkdown(segment.text),
+                    let markdownAttr = try? NSAttributedString(
+                        markdown: segment.text,
+                        options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+                    )
+                {
+                    let mutable = NSMutableAttributedString(attributedString: markdownAttr)
+                    applyThemeStyling(to: mutable, baseFontSize: fontSize, baseWeight: weight, isItalic: isItalic)
+                    result.append(mutable)
+                } else {
+                    result.append(NSMutableAttributedString(string: segment.text, attributes: baseAttributes))
+                }
+            }
+        }
+        return result
     }
 
     // MARK: - Font Caching

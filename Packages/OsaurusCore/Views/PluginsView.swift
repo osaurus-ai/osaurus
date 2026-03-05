@@ -918,7 +918,8 @@ private struct PluginDetailView: View {
         .themedAlert(
             "Expose Agent to Internet?",
             isPresented: $showRelayConfirmation,
-            message: "This will create a public URL for this agent via agent.osaurus.ai. Anyone with the URL can send requests to your local server. Your access keys still protect the API endpoints.",
+            message:
+                "This will create a public URL for this agent via agent.osaurus.ai. Anyone with the URL can send requests to your local server. Your access keys still protect the API endpoints.",
             primaryButton: .destructive("Enable Relay") {
                 if let id = pendingRelayAgentId {
                     relayManager.setTunnelEnabled(true, for: id)
@@ -1515,9 +1516,11 @@ private struct PluginDetailView: View {
             } else if let url = tunnelURL {
                 urlRow(label: "Tunnel", url: url)
             } else if !isRelayEnabled {
-                Text("This plugin uses webhooks to receive messages. Enable relay to create a public URL that forwards requests to your local server.")
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.secondaryText)
+                Text(
+                    "This plugin uses webhooks to receive messages. Enable relay to create a public URL that forwards requests to your local server."
+                )
+                .font(.system(size: 11))
+                .foregroundColor(theme.secondaryText)
             }
         }
         .padding(10)

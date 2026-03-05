@@ -749,7 +749,8 @@ struct AgentDetailView: View {
         .themedAlert(
             "Expose Agent to Internet?",
             isPresented: $showRelayConfirmation,
-            message: "This will create a public URL for this agent via agent.osaurus.ai. Anyone with the URL can send requests to your local server. Your access keys still protect the API endpoints.",
+            message:
+                "This will create a public URL for this agent via agent.osaurus.ai. Anyone with the URL can send requests to your local server. Your access keys still protect the API endpoints.",
             primaryButton: .destructive("Enable Relay") {
                 relayManager.setTunnelEnabled(true, for: agent.id)
             },
@@ -1164,9 +1165,11 @@ struct AgentDetailView: View {
 
             AgentDetailSection(title: "Relay", icon: "globe") {
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("Expose this agent to the public internet via a relay tunnel so external services can reach it.")
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.secondaryText)
+                    Text(
+                        "Expose this agent to the public internet via a relay tunnel so external services can reach it."
+                    )
+                    .font(.system(size: 12))
+                    .foregroundColor(theme.secondaryText)
 
                     HStack(spacing: 12) {
                         relayStatusDot(status)
