@@ -34,16 +34,18 @@ final class PrependThinkTagMiddleware: StreamingMiddleware {
 enum StreamingMiddlewareResolver {
     @MainActor
     static func resolve(for modelId: String) -> StreamingMiddleware? {
-        let lower = modelId.lowercased()
+        let id = modelId.lowercased()
 
-        if lower.contains("glm") && lower.contains("flash") {
-            return PrependThinkTagMiddleware()
-        }
+        let needsPrependThink =
+            (id.contains("glm") && id.contains("flash"))
+            || (id.contains("qwen") && id.contains("3.5") && hasParamSize(id, anyOf: "4b", "9b"))
 
-        if lower.contains("qwen") && lower.contains("3.5") && (lower.contains("4b") || lower.contains("9b")) {
-            return PrependThinkTagMiddleware()
-        }
+        return needsPrependThink ? PrependThinkTagMiddleware() : nil
+    }
 
-        return nil
+    /// Matches parameter-count tokens like "4b" while ignoring
+    /// quantization suffixes like "4bit" that share a prefix.
+    private static func hasParamSize(_ id: String, anyOf sizes: String...) -> Bool {
+        sizes.contains { id.range(of: "\($0)(?!it)", options: .regularExpression) != nil }
     }
 }
