@@ -298,9 +298,16 @@ extension MessageTableRepresentable {
             guard let tableView else { return }
             let visible = tableView.rows(in: tableView.visibleRect)
             guard visible.length > 0 else { return }
-            tableView.noteHeightOfRows(
-                withIndexesChanged: IndexSet(integersIn: visible.location ..< visible.location + visible.length)
-            )
+            noteRowHeightsChanged(IndexSet(integersIn: visible.location ..< visible.location + visible.length))
+        }
+
+        /// Re-measure specific rows without animation.
+        private func noteRowHeightsChanged(_ rows: IndexSet) {
+            guard let tableView else { return }
+            NSAnimationContext.beginGrouping()
+            NSAnimationContext.current.duration = 0
+            tableView.noteHeightOfRows(withIndexesChanged: rows)
+            NSAnimationContext.endGrouping()
         }
 
         // MARK: - Apply Blocks (Main Entry Point)
@@ -438,15 +445,19 @@ extension MessageTableRepresentable {
                 if streamingJustEnded, let streamId = previousStreamingBlockId,
                     let row = self.blockIds.firstIndex(of: streamId)
                 {
-                    self.schedulePostStreamingHeightFix(streamId: streamId, row: row)
+                    self.schedulePostStreamingHeightFix(
+                        streamId: streamId,
+                        row: row,
+                        wasPinnedToBottom: wasPinnedToBottom
+                    )
                 }
             }
         }
 
         /// Post-snapshot scroll: new turn with header → scroll to header;
-        /// new continuation turn (no header) → bottom if pinned, else restore;
-        /// same turn → restore anchor. `wasPinnedToBottom` must be captured
-        /// before `apply()` since the snapshot may shift bounds first.
+        /// pinned to bottom → stay at bottom; otherwise → restore anchor.
+        /// `wasPinnedToBottom` must be captured before `apply()` since the
+        /// snapshot may shift bounds first.
         private func handlePostSnapshotScroll(
             lastAssistantTurnId: UUID?,
             autoScrollEnabled: Bool,
@@ -465,6 +476,8 @@ extension MessageTableRepresentable {
                 } else {
                     scrollAnchor.restoreAnchor()
                 }
+            } else if wasPinnedToBottom {
+                scrollAnchor.scrollToBottom()
             } else {
                 scrollAnchor.restoreAnchor()
             }
@@ -526,10 +539,7 @@ extension MessageTableRepresentable {
                 affectedRows.insert(index)
             }
             guard !affectedRows.isEmpty else { return }
-            NSAnimationContext.beginGrouping()
-            NSAnimationContext.current.duration = 0
-            tableView.noteHeightOfRows(withIndexesChanged: affectedRows)
-            NSAnimationContext.endGrouping()
+            noteRowHeightsChanged(affectedRows)
         }
 
         // MARK: - Streaming Height Updates
@@ -538,10 +548,11 @@ extension MessageTableRepresentable {
             streamingHeightWorkItem?.cancel()
             let work = DispatchWorkItem { [weak self] in
                 guard let self, let tv = self.tableView, row < tv.numberOfRows else { return }
-                NSAnimationContext.beginGrouping()
-                NSAnimationContext.current.duration = 0
-                tv.noteHeightOfRows(withIndexesChanged: IndexSet(integer: row))
-                NSAnimationContext.endGrouping()
+                self.noteRowHeightsChanged(IndexSet(integer: row))
+
+                if self.scrollAnchor.isPinnedToBottom {
+                    self.scrollAnchor.scrollToBottom()
+                }
             }
             streamingHeightWorkItem = work
             DispatchQueue.main.asyncAfter(deadline: .now() + streamingHeightInterval, execute: work)
@@ -557,17 +568,14 @@ extension MessageTableRepresentable {
                 row < tv.numberOfRows
             else { return }
 
-            NSAnimationContext.beginGrouping()
-            NSAnimationContext.current.duration = 0
-            tv.noteHeightOfRows(withIndexesChanged: IndexSet(integer: row))
-            NSAnimationContext.endGrouping()
+            noteRowHeightsChanged(IndexSet(integer: row))
         }
 
         /// After streaming ends, reconfigure the previously streaming cell
         /// with its final content and re-measure its height in one shot.
         /// Called from the snapshot-apply completion handler so it runs
         /// *after* the diffable data source has finished updating.
-        private func schedulePostStreamingHeightFix(streamId: String, row: Int) {
+        private func schedulePostStreamingHeightFix(streamId: String, row: Int, wasPinnedToBottom: Bool) {
             guard let block = blockLookup[streamId],
                 let tv = tableView, row < tv.numberOfRows
             else { return }
@@ -582,10 +590,11 @@ extension MessageTableRepresentable {
                 cell.layoutSubtreeIfNeeded()
             }
 
-            NSAnimationContext.beginGrouping()
-            NSAnimationContext.current.duration = 0
-            tv.noteHeightOfRows(withIndexesChanged: IndexSet(integer: row))
-            NSAnimationContext.endGrouping()
+            noteRowHeightsChanged(IndexSet(integer: row))
+
+            if wasPinnedToBottom {
+                scrollAnchor.scrollToBottom()
+            }
         }
 
         // MARK: - Hover Tracking
