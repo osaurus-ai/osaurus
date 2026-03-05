@@ -198,12 +198,16 @@ private struct MemoizedMarkdownView: View {
 
             switch segment.kind {
             case .textGroup(let textBlocks):
-                SelectableTextWithOverlays(
+                SelectableTextView(
                     blocks: textBlocks,
                     baseWidth: baseWidth,
                     theme: theme,
                     cacheKey: segmentCacheKey
                 )
+                .frame(minWidth: baseWidth, maxWidth: baseWidth, alignment: .leading)
+
+            case .codeBlock(let code, let language):
+                CodeBlockView(code: code, language: language, baseWidth: baseWidth)
 
             case .image(let url, let altText):
                 MarkdownImageView(urlString: url, altText: altText, baseWidth: baseWidth)
@@ -221,6 +225,7 @@ private struct MemoizedMarkdownView: View {
 struct ContentSegment: Identifiable {
     enum Kind {
         case textGroup([SelectableTextBlock])
+        case codeBlock(code: String, language: String?)
         case image(url: String, altText: String)
         case math(latex: String)
     }
@@ -239,8 +244,8 @@ struct ContentSegment: Identifiable {
 // MARK: - Block Grouping
 
 /// Groups consecutive text blocks into segments for efficient rendering with NSTextView.
-/// Code blocks, horizontal rules, and tables are kept inline in the text group for continuous
-/// selection. Only images break the text group since they cannot be rendered as attributed text.
+/// Code blocks, images, and math blocks break the text group into separate segments.
+/// Horizontal rules and tables are kept inline for continuous selection.
 private func groupBlocksIntoSegments(_ blocks: [MessageBlock]) -> [ContentSegment] {
     var segments: [ContentSegment] = []
     var currentTextBlocks: [SelectableTextBlock] = []
@@ -284,8 +289,16 @@ private func groupBlocksIntoSegments(_ blocks: [MessageBlock]) -> [ContentSegmen
             }
 
         case .code(let code, let lang):
-            // Keep code blocks inline in the text group for continuous selection
-            currentTextBlocks.append(.codeBlock(code: code, language: lang))
+            flushTextGroup()
+            let spacing: CGFloat = segments.isEmpty ? 0 : 14
+            segments.append(
+                ContentSegment(
+                    id: "code-\(segmentIndex)",
+                    kind: .codeBlock(code: code, language: lang),
+                    spacingBefore: spacing
+                )
+            )
+            segmentIndex += 1
 
         case .image(let url, let altText):
             // Images are the only blocks that break text groups (can't be attributed text)
@@ -328,7 +341,7 @@ private func groupBlocksIntoSegments(_ blocks: [MessageBlock]) -> [ContentSegmen
     return segments
 }
 
-/// Spacing around images (the only block type that breaks text groups)
+/// Spacing between segments (code blocks, images, math, and text groups)
 private let imageSpacing: CGFloat = 16
 
 // MARK: - Message Block
