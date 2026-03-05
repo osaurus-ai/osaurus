@@ -598,6 +598,7 @@ struct AgentDetailView: View {
     @ObservedObject private var agentManager = AgentManager.shared
     @ObservedObject private var scheduleManager = ScheduleManager.shared
     @ObservedObject private var watcherManager = WatcherManager.shared
+    @ObservedObject private var relayManager = RelayTunnelManager.shared
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
@@ -625,6 +626,8 @@ struct AgentDetailView: View {
     @State private var saveIndicator: String?
     @State private var saveDebounceTask: Task<Void, Never>?
     @State private var showDeleteConfirm = false
+    @State private var showRelayConfirmation = false
+    @State private var copiedRelayURL = false
 
     // Model picker
     @State private var modelOptions: [ModelOption] = []
@@ -707,6 +710,7 @@ struct AgentDetailView: View {
                     systemPromptSection
                     generationSection
                     capabilitiesSection
+                    relaySection
                     quickActionsSection
                     themeSection
                     schedulesSection
@@ -740,6 +744,15 @@ struct AgentDetailView: View {
             isPresented: $showDeleteConfirm,
             message: "Are you sure you want to delete \"\(currentAgent.name)\"? This action cannot be undone.",
             primaryButton: .destructive("Delete") { onDelete(currentAgent) },
+            secondaryButton: .cancel("Cancel")
+        )
+        .themedAlert(
+            "Expose Agent to Internet?",
+            isPresented: $showRelayConfirmation,
+            message: "This will create a public URL for this agent via agent.osaurus.ai. Anyone with the URL can send requests to your local server. Your access keys still protect the API endpoints.",
+            primaryButton: .destructive("Enable Relay") {
+                relayManager.setTunnelEnabled(true, for: agent.id)
+            },
             secondaryButton: .cancel("Cancel")
         )
         .sheet(isPresented: $showCreateSchedule) {
@@ -1138,6 +1151,142 @@ struct AgentDetailView: View {
                 )
                 .clipShape(RoundedRectangle(cornerRadius: 10))
         }
+    }
+
+    // MARK: - Relay Section
+
+    @ViewBuilder
+    private var relaySection: some View {
+        let hasIdentity = currentAgent.agentAddress != nil && currentAgent.agentIndex != nil
+        if hasIdentity {
+            let status = relayManager.agentStatuses[agent.id] ?? .disconnected
+            let isEnabled = relayManager.isTunnelEnabled(for: agent.id)
+
+            AgentDetailSection(title: "Relay", icon: "globe") {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Expose this agent to the public internet via a relay tunnel so external services can reach it.")
+                        .font(.system(size: 12))
+                        .foregroundColor(theme.secondaryText)
+
+                    HStack(spacing: 12) {
+                        relayStatusDot(status)
+                            .frame(width: 20)
+
+                        VStack(alignment: .leading, spacing: 3) {
+                            if let address = currentAgent.agentAddress {
+                                let truncated = String(address.prefix(8)) + "..." + String(address.suffix(4))
+                                Text(truncated)
+                                    .font(.system(size: 11, design: .monospaced))
+                                    .foregroundColor(theme.tertiaryText)
+                            }
+
+                            if case .connected(let url) = status {
+                                HStack(spacing: 4) {
+                                    Text(url)
+                                        .font(.system(size: 10, design: .monospaced))
+                                        .foregroundColor(theme.accentColor)
+                                        .lineLimit(1)
+
+                                    Button {
+                                        NSPasteboard.general.clearContents()
+                                        NSPasteboard.general.setString(url, forType: .string)
+                                        copiedRelayURL = true
+                                        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                                            copiedRelayURL = false
+                                        }
+                                    } label: {
+                                        Image(systemName: copiedRelayURL ? "checkmark" : "doc.on.doc")
+                                            .font(.system(size: 9, weight: .medium))
+                                            .foregroundColor(copiedRelayURL ? theme.successColor : theme.tertiaryText)
+                                    }
+                                    .buttonStyle(PlainButtonStyle())
+                                    .help("Copy relay URL")
+                                }
+                            }
+
+                            if case .error(let msg) = status {
+                                Text(msg)
+                                    .font(.system(size: 10))
+                                    .foregroundColor(theme.errorColor)
+                            }
+                        }
+
+                        Spacer()
+
+                        relayStatusBadge(status)
+
+                        Toggle(
+                            "",
+                            isOn: Binding(
+                                get: { isEnabled },
+                                set: { newValue in
+                                    if newValue {
+                                        showRelayConfirmation = true
+                                    } else {
+                                        relayManager.setTunnelEnabled(false, for: agent.id)
+                                    }
+                                }
+                            )
+                        )
+                        .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
+                        .labelsHidden()
+                    }
+                    .padding(10)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(theme.inputBackground)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .stroke(theme.inputBorder, lineWidth: 1)
+                            )
+                    )
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func relayStatusDot(_ status: AgentRelayStatus) -> some View {
+        switch status {
+        case .disconnected:
+            Circle()
+                .fill(theme.tertiaryText.opacity(0.4))
+                .frame(width: 8, height: 8)
+        case .connecting:
+            Circle()
+                .fill(theme.warningColor)
+                .frame(width: 8, height: 8)
+                .overlay(
+                    Circle()
+                        .fill(theme.warningColor.opacity(0.3))
+                        .frame(width: 16, height: 16)
+                )
+        case .connected:
+            Circle()
+                .fill(theme.successColor)
+                .frame(width: 8, height: 8)
+        case .error:
+            Circle()
+                .fill(theme.errorColor)
+                .frame(width: 8, height: 8)
+        }
+    }
+
+    private func relayStatusBadge(_ status: AgentRelayStatus) -> some View {
+        let (label, color): (String, Color) = {
+            switch status {
+            case .disconnected: return ("Disconnected", theme.tertiaryText)
+            case .connecting: return ("Connecting", theme.warningColor)
+            case .connected: return ("Connected", theme.successColor)
+            case .error: return ("Error", theme.errorColor)
+            }
+        }()
+        return Text(label)
+            .font(.system(size: 10, weight: .medium))
+            .foregroundColor(color)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(Capsule().fill(color.opacity(0.1)))
     }
 
     // MARK: - Quick Actions Section
