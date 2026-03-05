@@ -207,6 +207,9 @@ private struct MemoizedMarkdownView: View {
 
             case .image(let url, let altText):
                 MarkdownImageView(urlString: url, altText: altText, baseWidth: baseWidth)
+
+            case .math(let latex):
+                MathBlockView(latex: latex, baseWidth: baseWidth)
             }
         }
     }
@@ -219,6 +222,7 @@ struct ContentSegment: Identifiable {
     enum Kind {
         case textGroup([SelectableTextBlock])
         case image(url: String, altText: String)
+        case math(latex: String)
     }
 
     let id: String
@@ -303,6 +307,18 @@ private func groupBlocksIntoSegments(_ blocks: [MessageBlock]) -> [ContentSegmen
         case .table(let headers, let rows):
             // Keep tables inline in the text group for continuous selection
             currentTextBlocks.append(.table(headers: headers, rows: rows))
+
+        case .math(let latex):
+            flushTextGroup()
+            let spacing = segments.isEmpty ? 0 : imageSpacing
+            segments.append(
+                ContentSegment(
+                    id: "math-\(segmentIndex)",
+                    kind: .math(latex: latex),
+                    spacingBefore: spacing
+                )
+            )
+            segmentIndex += 1
         }
 
     }
@@ -335,6 +351,7 @@ struct MessageBlock: Identifiable {
         case horizontalRule
         case list(items: [ListItem])
         case table(headers: [String], rows: [[String]])
+        case math(String)
 
         /// Generate a stable hash for the block kind
         var contentHash: Int {
@@ -367,6 +384,9 @@ struct MessageBlock: Identifiable {
                 hasher.combine("t")
                 hasher.combine(headers)
                 hasher.combine(rows)
+            case .math(let latex):
+                hasher.combine("m")
+                hasher.combine(latex)
             }
             return hasher.finalize()
         }
@@ -496,6 +516,17 @@ private func parseBlocks(_ input: String) -> [MessageBlock] {
     while i < lines.count {
         let line = lines[i]
         let trimmed = line.trimmingWhitespace()
+
+        // Block math: $$ ... $$ or \[ ... \]
+        if let result = tryParseBlockMath(trimmed, lines: lines, from: i) {
+            flushParagraph()
+            flushBlockquote()
+            flushList()
+            blocks.append(MessageBlock(index: blockIndex, kind: .math(result.latex)))
+            blockIndex += 1
+            i = result.nextIndex
+            continue
+        }
 
         // Fenced code block
         if trimmed.hasPrefix("```") {
@@ -680,6 +711,58 @@ private func parseBlocks(_ input: String) -> [MessageBlock] {
     flushList()
 
     return blocks
+}
+
+// MARK: - Block Math Parsing
+
+private struct BlockMathResult {
+    let latex: String
+    let nextIndex: Int
+}
+
+/// Try to parse a block math expression starting at the current line.
+/// Supports `$$...$$` and `\[...\]` delimiters, both single-line and multi-line.
+/// Returns nil if the line doesn't start a block math expression or the delimiter is unclosed.
+private func tryParseBlockMath(_ trimmed: Substring, lines: [Substring], from i: Int) -> BlockMathResult? {
+    struct Delimiter {
+        let open: String
+        let close: String
+    }
+    let delimiters = [
+        Delimiter(open: "$$", close: "$$"),
+        Delimiter(open: "\\[", close: "\\]"),
+    ]
+
+    for delim in delimiters {
+        guard trimmed.hasPrefix(delim.open) else { continue }
+        let afterOpener = trimmed.dropFirst(delim.open.count).trimmingWhitespace()
+
+        // Single-line: open content close
+        if afterOpener.hasSuffix(delim.close) && afterOpener.count > delim.close.count {
+            let latex = String(afterOpener.dropLast(delim.close.count)).trimmingCharacters(in: .whitespaces)
+            guard !latex.isEmpty else { return nil }
+            return BlockMathResult(latex: latex, nextIndex: i + 1)
+        }
+
+        // Multi-line: scan forward for closing delimiter
+        var mathLines: [Substring] = []
+        if !afterOpener.isEmpty { mathLines.append(afterOpener) }
+        var j = i + 1
+        while j < lines.count {
+            let ml = lines[j].trimmingWhitespace()
+            if ml.hasSuffix(delim.close) {
+                let before = ml.dropLast(delim.close.count).trimmingWhitespace()
+                if !before.isEmpty { mathLines.append(before) }
+                let latex = mathLines.map { String($0) }.joined(separator: "\n")
+                return BlockMathResult(latex: latex, nextIndex: j + 1)
+            }
+            mathLines.append(lines[j])
+            j += 1
+        }
+        // Unclosed delimiter during streaming — fall through
+        return nil
+    }
+    return nil
 }
 
 // MARK: - Table Parsing Helpers

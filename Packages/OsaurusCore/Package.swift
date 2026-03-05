@@ -19,6 +19,7 @@ let package = Package(
         .package(url: "https://github.com/rryam/VecturaKit", from: "3.0.0"),
         .package(url: "https://github.com/21-DOT-DEV/swift-secp256k1", exact: "0.21.1"),
         .package(path: "../OsaurusRepository"),
+        .package(url: "https://github.com/mgriebling/SwiftMath", from: "1.7.3"),
     ],
     targets: [
         .target(
@@ -39,6 +40,7 @@ let package = Package(
                 .product(name: "VecturaKit", package: "VecturaKit"),
                 .product(name: "OsaurusRepository", package: "OsaurusRepository"),
                 .product(name: "P256K", package: "swift-secp256k1"),
+                .product(name: "SwiftMath", package: "SwiftMath"),
             ],
             path: ".",
             exclude: ["Tests"]
