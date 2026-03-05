@@ -289,18 +289,22 @@ extension AgentManager {
         return agent.enabledSkills
     }
 
-    /// Get the effective plugin overrides for an agent
+    /// Get the effective plugin overrides for an agent.
+    /// Returns `nil` only for the default agent (all plugins enabled).
+    /// Custom agents return their explicit overrides or an empty dict
+    /// so that newly installed plugins default to disabled.
     public func effectivePluginOverrides(for agentId: UUID) -> [String: Bool]? {
         guard let agent = agent(for: agentId) else { return nil }
         if agent.id == Agent.defaultId { return nil }
-        return agent.enabledPlugins
+        return agent.enabledPlugins ?? [:]
     }
 
     /// Check if a plugin is enabled for a given agent.
     /// nil overrides (default agent) means all plugins are enabled.
+    /// Custom agents must explicitly enable each plugin.
     public func isPluginEnabled(_ pluginId: String, for agentId: UUID) -> Bool {
         guard let overrides = effectivePluginOverrides(for: agentId) else { return true }
-        return overrides[pluginId] ?? true
+        return overrides[pluginId] ?? false
     }
 
     /// Returns the primary agent for a plugin: the first custom agent that has
