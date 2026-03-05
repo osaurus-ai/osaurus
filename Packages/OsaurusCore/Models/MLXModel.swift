@@ -20,9 +20,10 @@ struct MLXModel: Identifiable, Codable {
     /// Approximate download size in bytes (optional, for display purposes)
     let downloadSizeBytes: Int64?
 
-    // Capture the models root directory at initialization time to avoid
-    // relying on a mutable global during tests or concurrent execution.
-    private let rootDirectory: URL
+    // When non-nil, pins the model to a specific directory (used by tests).
+    // When nil, `localDirectory` resolves dynamically so that user-selected
+    // storage path changes are always respected.
+    private let rootDirectory: URL?
 
     init(
         id: String,
@@ -39,7 +40,7 @@ struct MLXModel: Identifiable, Codable {
         self.downloadURL = downloadURL
         self.isTopSuggestion = isTopSuggestion
         self.downloadSizeBytes = downloadSizeBytes
-        self.rootDirectory = rootDirectory ?? DirectoryPickerService.effectiveModelsDirectory()
+        self.rootDirectory = rootDirectory
     }
 
     /// Formatted download size string (e.g., "3.9 GB")
@@ -52,11 +53,13 @@ struct MLXModel: Identifiable, Codable {
         return formatter.string(fromByteCount: bytes)
     }
 
-    /// Local directory where this model should be stored
+    /// Local directory where this model should be stored.
+    /// Resolves against the current effective models directory unless an
+    /// explicit `rootDirectory` was provided at init (e.g. in tests).
     var localDirectory: URL {
-        // Build the path using each component of the repository id separately.
+        let baseDir = rootDirectory ?? DirectoryPickerService.effectiveModelsDirectory()
         let components = id.split(separator: "/").map(String.init)
-        return components.reduce(rootDirectory) { partial, component in
+        return components.reduce(baseDir) { partial, component in
             partial.appendingPathComponent(component, isDirectory: true)
         }
     }

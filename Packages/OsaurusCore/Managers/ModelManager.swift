@@ -81,6 +81,13 @@ final class ModelManager: NSObject, ObservableObject {
         super.init()
 
         loadAvailableModels()
+
+        NotificationCenter.default.publisher(for: .localModelsChanged)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.refreshDownloadStates()
+            }
+            .store(in: &cancellables)
     }
 
     // MARK: - Public Methods
@@ -107,6 +114,22 @@ final class ModelManager: NSObject, ObservableObject {
         mergeAvailable(with: localModels)
 
         isLoadingModels = false
+    }
+
+    /// Re-evaluate download states for all known models against the current
+    /// effective models directory. Called when the user changes the storage
+    /// location so the UI reflects which models exist at the new path.
+    func refreshDownloadStates() {
+        for model in availableModels {
+            if activeDownloadTasks[model.id] != nil { continue }
+            downloadStates[model.id] = model.isDownloaded ? .completed : .notStarted
+        }
+        for model in suggestedModels {
+            if activeDownloadTasks[model.id] != nil { continue }
+            downloadStates[model.id] = model.isDownloaded ? .completed : .notStarted
+        }
+        let localModels = Self.discoverLocalModels()
+        mergeAvailable(with: localModels)
     }
 
     /// Fetch MLX-compatible models from Hugging Face and merge into availableModels.
