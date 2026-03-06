@@ -187,6 +187,69 @@ public enum OsaurusPaths {
         runtime().appendingPathComponent(instanceId, isDirectory: true)
     }
 
+    // MARK: - Agent VM Paths
+
+    /// Per-agent VM directory: `~/.osaurus/agents/{id}/vm/`
+    public static func agentVM(_ agentId: UUID) -> URL {
+        agents().appendingPathComponent(agentId.uuidString, isDirectory: true)
+            .appendingPathComponent("vm", isDirectory: true)
+    }
+
+    /// Per-agent persistent disk image: `~/.osaurus/agents/{id}/vm/disk.img`
+    public static func agentDiskImage(_ agentId: UUID) -> URL {
+        agentVM(agentId).appendingPathComponent("disk.img")
+    }
+
+    /// Per-agent workspace (mounted as /workspace in VM): `~/.osaurus/agents/{id}/workspace/`
+    public static func agentWorkspace(_ agentId: UUID) -> URL {
+        agents().appendingPathComponent(agentId.uuidString, isDirectory: true)
+            .appendingPathComponent("workspace", isDirectory: true)
+    }
+
+    /// Read-only input mount: `~/.osaurus/agents/{id}/input/`
+    public static func agentInput(_ agentId: UUID) -> URL {
+        agents().appendingPathComponent(agentId.uuidString, isDirectory: true)
+            .appendingPathComponent("input", isDirectory: true)
+    }
+
+    /// Output mount: `~/.osaurus/agents/{id}/output/`
+    public static func agentOutput(_ agentId: UUID) -> URL {
+        agents().appendingPathComponent(agentId.uuidString, isDirectory: true)
+            .appendingPathComponent("output", isDirectory: true)
+    }
+
+    /// Sandbox plugins config file: `~/.osaurus/agents/{id}/sandbox_plugins.json`
+    public static func agentSandboxPluginsFile(_ agentId: UUID) -> URL {
+        agents().appendingPathComponent(agentId.uuidString, isDirectory: true)
+            .appendingPathComponent("sandbox_plugins.json")
+    }
+
+    /// Per-agent EFI NVRAM store: `~/.osaurus/agents/{id}/vm/NVRAM`
+    public static func agentNVRAM(_ agentId: UUID) -> URL {
+        agentVM(agentId).appendingPathComponent("NVRAM")
+    }
+
+    /// Per-agent machine identifier: `~/.osaurus/agents/{id}/vm/MachineIdentifier`
+    public static func agentMachineIdentifier(_ agentId: UUID) -> URL {
+        agentVM(agentId).appendingPathComponent("MachineIdentifier")
+    }
+
+    /// Provisioned sentinel: `~/.osaurus/agents/{id}/vm/.provisioned`
+    public static func agentProvisionedMarker(_ agentId: UUID) -> URL {
+        agentVM(agentId).appendingPathComponent(".provisioned")
+    }
+
+    /// Per-agent boot log: `~/.osaurus/agents/{id}/vm/boot.log`
+    public static func agentBootLog(_ agentId: UUID) -> URL {
+        agentVM(agentId).appendingPathComponent("boot.log")
+    }
+
+    /// Alpine Virt ISO for VM installation: `~/.osaurus/vm/alpine-virt.iso`
+    public static func alpineISO() -> URL {
+        root().appendingPathComponent("vm", isDirectory: true)
+            .appendingPathComponent("alpine-virt.iso")
+    }
+
     // MARK: - Legacy Resolution
 
     /// Resolves a path, preferring the legacy location if it exists and the new location doesn't.

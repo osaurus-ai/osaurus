@@ -599,6 +599,9 @@ struct AgentDetailView: View {
     @ObservedObject private var scheduleManager = ScheduleManager.shared
     @ObservedObject private var watcherManager = WatcherManager.shared
     @ObservedObject private var relayManager = RelayTunnelManager.shared
+    @ObservedObject private var vmManager = VMManager.shared
+    @ObservedObject private var vmRuntime = VMRuntimeDownloader.shared
+    @ObservedObject private var vmBootLog = VMBootLog.shared
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
@@ -711,10 +714,12 @@ struct AgentDetailView: View {
                     generationSection
                     capabilitiesSection
                     relaySection
+                    vmSection
                     quickActionsSection
                     themeSection
                     schedulesSection
                     watchersSection
+                    sandboxPluginsSection
                     historySection
                     workingMemorySection
                     conversationSummariesSection
@@ -1952,6 +1957,413 @@ struct AgentDetailView: View {
                     }
                 }
             }
+        }
+    }
+
+    // MARK: - VM Section
+
+    @ViewBuilder
+    private var vmSection: some View {
+        if !agent.isBuiltIn {
+            AgentDetailSection(title: "Virtual Machine", icon: "desktopcomputer") {
+                if agent.vmConfig != nil {
+                    vmEnabledContent
+                } else {
+                    vmDisabledContent
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var vmEnabledContent: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            switch vmRuntime.status {
+            case .notDownloaded, .failed:
+                vmRuntimeDownloadPrompt
+
+            case .downloading(let progress):
+                vmRuntimeDownloadProgress(progress)
+
+            case .ready:
+                vmRuntimeReadyContent
+            }
+        }
+    }
+
+    private var vmRuntimeDownloadPrompt: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("The VM runtime (Alpine Linux) needs to be downloaded before sandbox plugins can run.")
+                .font(.system(size: 12))
+                .foregroundColor(theme.secondaryText)
+
+            if case .failed(let msg) = vmRuntime.status {
+                HStack(spacing: 4) {
+                    Image(systemName: "exclamationmark.triangle")
+                        .font(.system(size: 10))
+                    Text(msg)
+                        .font(.system(size: 11))
+                }
+                .foregroundColor(.red)
+            }
+
+            Button {
+                Task { await vmRuntime.download() }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "arrow.down.circle")
+                        .font(.system(size: 12))
+                    Text("Download VM Runtime")
+                        .font(.system(size: 12, weight: .medium))
+                }
+                .foregroundColor(.white)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 7)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(theme.accentColor)
+                )
+            }
+            .buttonStyle(PlainButtonStyle())
+        }
+    }
+
+    private func vmRuntimeDownloadProgress(_ progress: Double) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Downloading Alpine Linux ISO...")
+                .font(.system(size: 12))
+                .foregroundColor(theme.secondaryText)
+
+            ProgressView(value: progress)
+                .progressViewStyle(LinearProgressViewStyle(tint: theme.accentColor))
+
+            Text("\(Int(progress * 100))%")
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundColor(theme.tertiaryText)
+        }
+    }
+
+    @State private var showBootLog = false
+
+    private var vmRuntimeReadyContent: some View {
+        let isRunning = vmManager.isRunning(agent.id)
+        let config = agent.vmConfig ?? VMConfig()
+        let currentPhase = vmBootLog.phase[agent.id]
+        let isProvisioning = currentPhase != nil && currentPhase != .ready && currentPhase != .failed
+
+        return VStack(alignment: .leading, spacing: 12) {
+            Text("Sandbox plugins run inside an isolated Linux VM. The VM boots automatically when a sandbox tool is used.")
+                .font(.system(size: 12))
+                .foregroundColor(theme.secondaryText)
+
+            if isProvisioning, let phase = currentPhase {
+                vmProvisioningStatus(phase: phase)
+            }
+
+            if currentPhase == .failed {
+                vmProvisionFailedBanner
+            }
+
+            HStack(spacing: 12) {
+                vmStatusDot(running: isRunning)
+                    .frame(width: 20)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("\(config.cpus) CPUs, \(config.memory)")
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.tertiaryText)
+                }
+
+                Spacer()
+
+                vmStatusBadge(running: isRunning)
+
+                Toggle(
+                    "",
+                    isOn: Binding(
+                        get: { isRunning },
+                        set: { newValue in
+                            Task {
+                                if newValue {
+                                    try? await VMManager.shared.ensureRunning(agentId: agent.id)
+                                } else {
+                                    try? await VMManager.shared.shutdown(agentId: agent.id)
+                                }
+                            }
+                        }
+                    )
+                )
+                .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
+                .labelsHidden()
+            }
+            .padding(10)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(theme.inputBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(theme.inputBorder, lineWidth: 1)
+                    )
+            )
+
+            vmBootLogSection
+        }
+    }
+
+    private func vmProvisioningStatus(phase: VMProvisionPhase) -> some View {
+        HStack(spacing: 8) {
+            ProgressView()
+                .controlSize(.small)
+            Text(phase.displayLabel)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(theme.accentColor)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(theme.accentColor.opacity(0.08))
+        )
+    }
+
+    private var vmProvisionFailedBanner: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 11))
+            Text("Provisioning failed. Check the boot log below for details.")
+                .font(.system(size: 11))
+            Spacer()
+            Button("Copy Log") {
+                let text = VMBootLog.shared.exportText(agentId: agent.id)
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(text, forType: .string)
+            }
+            .font(.system(size: 10, weight: .medium))
+            .buttonStyle(.plain)
+            .foregroundColor(.red)
+        }
+        .foregroundColor(.red)
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.red.opacity(0.08))
+        )
+    }
+
+    @ViewBuilder
+    private var vmBootLogSection: some View {
+        let logEntries = vmBootLog.entries[agent.id] ?? []
+        if !logEntries.isEmpty {
+            DisclosureGroup(isExpanded: $showBootLog) {
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 2) {
+                            ForEach(logEntries) { entry in
+                                Text(entry.message)
+                                    .font(.system(size: 10, design: .monospaced))
+                                    .foregroundColor(entry.phase == .failed ? .red : theme.tertiaryText)
+                                    .textSelection(.enabled)
+                                    .id(entry.id)
+                            }
+                        }
+                        .padding(8)
+                    }
+                    .frame(maxHeight: 200)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(theme.secondaryBackground)
+                    )
+                    .onChange(of: logEntries.count) {
+                        if let last = logEntries.last {
+                            proxy.scrollTo(last.id, anchor: .bottom)
+                        }
+                    }
+                }
+
+                HStack {
+                    Spacer()
+                    Button {
+                        let text = VMBootLog.shared.exportText(agentId: agent.id)
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(text, forType: .string)
+                    } label: {
+                        HStack(spacing: 3) {
+                            Image(systemName: "doc.on.doc")
+                                .font(.system(size: 9))
+                            Text("Copy Log")
+                                .font(.system(size: 10, weight: .medium))
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundColor(theme.accentColor)
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "terminal")
+                        .font(.system(size: 10))
+                    Text("Boot Log")
+                        .font(.system(size: 11, weight: .medium))
+                    Text("(\(logEntries.count))")
+                        .font(.system(size: 10))
+                        .foregroundColor(theme.tertiaryText)
+                }
+                .foregroundColor(theme.secondaryText)
+            }
+        }
+    }
+
+    private var vmDisabledContent: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Enable a Linux VM for this agent to run sandbox plugins — JSON recipes that install CLI tools, MCP servers, and scripts into an isolated environment.")
+                .font(.system(size: 12))
+                .foregroundColor(theme.secondaryText)
+
+            Button {
+                var updated = agent
+                updated.vmConfig = VMConfig()
+                agentManager.update(updated)
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "play.circle")
+                        .font(.system(size: 12))
+                    Text("Enable VM")
+                        .font(.system(size: 12, weight: .medium))
+                }
+                .foregroundColor(.white)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 7)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(theme.accentColor)
+                )
+            }
+            .buttonStyle(PlainButtonStyle())
+        }
+    }
+
+    @ViewBuilder
+    private func vmStatusDot(running: Bool) -> some View {
+        if running {
+            Circle()
+                .fill(theme.successColor)
+                .frame(width: 8, height: 8)
+        } else {
+            Circle()
+                .fill(theme.tertiaryText.opacity(0.4))
+                .frame(width: 8, height: 8)
+        }
+    }
+
+    private func vmStatusBadge(running: Bool) -> some View {
+        let (label, color): (String, Color) = running
+            ? ("Running", theme.successColor)
+            : ("Stopped", theme.tertiaryText)
+        return Text(label)
+            .font(.system(size: 10, weight: .medium))
+            .foregroundColor(color)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(Capsule().fill(color.opacity(0.1)))
+    }
+
+    // MARK: - Sandbox Plugins Section
+
+    @State private var showSandboxEditor = false
+    @State private var sandboxPluginRefreshId = UUID()
+
+    private var sandboxPluginsSection: some View {
+        let store = SandboxPluginStore.load(for: agent.id)
+        return AgentDetailSection(
+            title: "Sandbox Plugins",
+            icon: "shippingbox",
+            subtitle: store.plugins.isEmpty ? "None" : "\(store.plugins.count)"
+        ) {
+            VStack(alignment: .leading, spacing: 12) {
+                if store.plugins.isEmpty {
+                    Text("No sandbox plugins installed. Sandbox plugins run inside a Linux VM and provide CLI tools to the agent.")
+                        .font(.system(size: 12))
+                        .foregroundColor(theme.tertiaryText)
+                        .padding(.vertical, 8)
+                } else {
+                    ForEach(store.plugins, id: \.id) { installed in
+                        HStack(spacing: 10) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(installed.plugin.name)
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundColor(theme.primaryText)
+                                Text(installed.plugin.description)
+                                    .font(.system(size: 10))
+                                    .foregroundColor(theme.tertiaryText)
+                                    .lineLimit(1)
+                            }
+                            Spacer()
+                            statusBadge(for: installed.status)
+                        }
+                        .padding(.vertical, 4)
+                    }
+                }
+
+                HStack {
+                    Button {
+                        showSandboxEditor = true
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "plus.circle")
+                                .font(.system(size: 11))
+                            Text("Add Plugin")
+                                .font(.system(size: 11, weight: .medium))
+                        }
+                        .foregroundColor(theme.accentColor)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    Spacer()
+                }
+            }
+        }
+        .sheet(isPresented: $showSandboxEditor) {
+            SandboxPluginEditorView(agentId: agent.id)
+        }
+        .id(sandboxPluginRefreshId)
+        .onReceive(NotificationCenter.default.publisher(for: .sandboxPluginsChanged)) { _ in
+            sandboxPluginRefreshId = UUID()
+        }
+    }
+
+    @ViewBuilder
+    private func statusBadge(for status: SandboxPluginStatus) -> some View {
+        switch status {
+        case .ready:
+            Text("Ready")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundColor(.green)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(Color.green.opacity(0.15))
+                .cornerRadius(4)
+        case .installing:
+            Text("Installing...")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundColor(.orange)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(Color.orange.opacity(0.15))
+                .cornerRadius(4)
+        case .failed:
+            Text("Failed")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundColor(.red)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(Color.red.opacity(0.15))
+                .cornerRadius(4)
+        case .pending:
+            Text("Pending")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundColor(theme.tertiaryText)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(theme.tertiaryText.opacity(0.15))
+                .cornerRadius(4)
         }
     }
 

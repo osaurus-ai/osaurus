@@ -43,7 +43,10 @@ let package = Package(
                 .product(name: "SwiftMath", package: "SwiftMath"),
             ],
             path: ".",
-            exclude: ["Tests"]
+            exclude: ["Tests"],
+            linkerSettings: [
+                .linkedFramework("Virtualization"),
+            ]
         ),
         .testTarget(
             name: "OsaurusCoreTests",

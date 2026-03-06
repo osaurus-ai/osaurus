@@ -98,6 +98,11 @@ final class ToolRegistry: ObservableObject {
         toolsByName[tool.name] = tool
     }
 
+    /// Remove a tool by name (used when sandbox plugins are uninstalled).
+    func unregister(name: String) {
+        toolsByName.removeValue(forKey: name)
+    }
+
     /// OpenAI-compatible tool specifications for the current registry
     func specs() -> [Tool] {
         return specs(withOverrides: nil)

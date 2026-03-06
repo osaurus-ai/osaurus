@@ -119,6 +119,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // Load external tool plugins at launch (after core is initialized)
         Task { @MainActor in
             await PluginManager.shared.loadAll()
+            await SandboxPluginManager.shared.restoreAll()
         }
 
         // Pre-warm caches immediately for instant first window (no async deps)
@@ -423,6 +424,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                 await serverController.ensureShutdown()
             }
             await MCPServerManager.shared.stopAll()
+            await VMManager.shared.shutdownAll()
             await ModelRuntime.shared.clearAll()
             NSApp.reply(toApplicationShouldTerminate: true)
         }

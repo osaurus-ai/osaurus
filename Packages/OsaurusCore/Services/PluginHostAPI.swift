@@ -976,6 +976,170 @@ final class PluginHostContext: @unchecked Sendable {
         }
     }
 
+    // MARK: - Memory Callbacks
+
+    func memoryQuery(queryJSON: String) -> String {
+        Self.blockingAsync {
+            let data = Data(queryJSON.utf8)
+            let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+            let query = json["query"] as? String ?? ""
+            let topK = json["top_k"] as? Int ?? 10
+            let agentFilter = json["agent_id"] as? String
+
+            guard !query.isEmpty else {
+                return Self.jsonString(["error": "invalid_request", "message": "Missing required field: query"])
+            }
+
+            let entries = await MemorySearchService.shared.searchMemoryEntries(
+                query: query,
+                agentId: agentFilter,
+                topK: topK
+            )
+
+            let results: [[String: Any]] = entries.map { e in
+                var entry: [String: Any] = [
+                    "id": e.id,
+                    "agent_id": e.agentId,
+                    "content": e.content,
+                    "type": e.type.rawValue,
+                    "confidence": e.confidence,
+                    "created_at": e.createdAt,
+                ]
+                if !e.tags.isEmpty { entry["tags"] = e.tags }
+                return entry
+            }
+            return Self.jsonString(["results": results])
+        }
+    }
+
+    func memoryStore(contentJSON: String) -> String {
+        Self.blockingAsync { [weak self] in
+            guard let self else { return Self.jsonString(["error": "context_gone"]) }
+            let data = Data(contentJSON.utf8)
+            let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+            let content = json["content"] as? String ?? ""
+            let tagsArray = json["tags"] as? [String]
+
+            guard !content.isEmpty else {
+                return Self.jsonString(["error": "invalid_request", "message": "Missing required field: content"])
+            }
+
+            let agentId = self.resolvedAgentId.uuidString
+            let entryId = UUID().uuidString
+            let tagsJSON: String? = tagsArray.flatMap { arr in
+                (try? JSONSerialization.data(withJSONObject: arr)).flatMap { String(data: $0, encoding: .utf8) }
+            }
+
+            let now = ISO8601DateFormatter().string(from: Date())
+            let entry = MemoryEntry(
+                id: entryId,
+                agentId: agentId,
+                type: .fact,
+                content: content,
+                confidence: 0.9,
+                model: "plugin:\(self.pluginId)",
+                sourceConversationId: nil,
+                tagsJSON: tagsJSON,
+                status: "active",
+                supersededBy: nil,
+                createdAt: now,
+                lastAccessed: now,
+                accessCount: 0,
+                validFrom: now,
+                validUntil: nil
+            )
+
+            do {
+                try MemoryDatabase.shared.insertMemoryEntry(entry)
+                return Self.jsonString(["id": entryId, "status": "stored"])
+            } catch {
+                return Self.jsonString(["error": "storage_error", "message": error.localizedDescription])
+            }
+        }
+    }
+
+    // MARK: - Events Callbacks
+
+    func eventsSubscribe(eventType: String, callback: @escaping @Sendable (String, String) -> Void) -> String {
+        Self.blockingAsync { [pluginId] in
+            let subId = await EventBus.shared.subscribe(
+                eventType: eventType,
+                pluginId: pluginId,
+                handler: callback
+            )
+            return subId.uuidString
+        }
+    }
+
+    func eventsEmit(eventType: String, payload: String) {
+        Task {
+            await EventBus.shared.emit(eventType: eventType, payload: payload)
+        }
+    }
+
+    // MARK: - Identity Callbacks
+
+    func identityAddress() -> String? {
+        Self.blockingMainActor {
+            let agentId = self.resolvedAgentId
+            let agent = AgentManager.shared.agents.first(where: { $0.id == agentId })
+            return agent?.agentAddress
+        }
+    }
+
+    func identitySign(dataHex: String) -> String {
+        Self.jsonString([
+            "error": "not_supported",
+            "message": "Identity signing requires biometric authentication and is not available via the plugin Host API. Use identity_address() to get the agent's address.",
+        ])
+    }
+
+    // MARK: - Plugin CRUD Callbacks
+
+    func pluginCreate(jsonStr: String) -> String {
+        Self.blockingAsync {
+            guard let data = jsonStr.data(using: .utf8),
+                  let _ = try? JSONDecoder().decode(SandboxPlugin.self, from: data)
+            else {
+                return Self.jsonString(["error": "invalid_json", "message": "Failed to parse sandbox plugin JSON"])
+            }
+            let agentId = await MainActor.run { self.resolvedAgentId }
+            do {
+                try await SandboxPluginManager.shared.install(jsonData: data, for: agentId)
+                return Self.jsonString(["status": "ok"])
+            } catch {
+                return Self.jsonString(["error": "install_error", "message": error.localizedDescription])
+            }
+        }
+    }
+
+    func pluginList() -> String {
+        Self.blockingAsync {
+            let agentId = await MainActor.run { self.resolvedAgentId }
+            let plugins = await SandboxPluginManager.shared.listPlugins(for: agentId)
+            let items: [[String: Any]] = plugins.map { p in
+                var entry: [String: Any] = ["name": p.name, "description": p.description]
+                if let v = p.version { entry["version"] = v }
+                let toolNames = p.tools?.map { $0.id } ?? []
+                if !toolNames.isEmpty { entry["tools"] = toolNames }
+                return entry
+            }
+            return Self.jsonString(["plugins": items])
+        }
+    }
+
+    func pluginRemove(name: String) -> String {
+        Self.blockingAsync {
+            let agentId = await MainActor.run { self.resolvedAgentId }
+            do {
+                try await SandboxPluginManager.shared.uninstall(name: name, for: agentId)
+                return Self.jsonString(["status": "ok"])
+            } catch {
+                return Self.jsonString(["error": "remove_error", "message": error.localizedDescription])
+            }
+        }
+    }
+
     // MARK: - Build osr_host_api Struct
 
     /// Builds a heap-allocated C-compatible host API struct with trampoline
@@ -985,7 +1149,7 @@ final class PluginHostContext: @unchecked Sendable {
         let ptr = UnsafeMutablePointer<osr_host_api>.allocate(capacity: 1)
         ptr.initialize(
             to: osr_host_api(
-                version: 2,
+                version: 3,
                 config_get: PluginHostContext.trampolineConfigGet,
                 config_set: PluginHostContext.trampolineConfigSet,
                 config_delete: PluginHostContext.trampolineConfigDelete,
@@ -1000,7 +1164,16 @@ final class PluginHostContext: @unchecked Sendable {
                 complete_stream: PluginHostContext.trampolineCompleteStream,
                 embed: PluginHostContext.trampolineEmbed,
                 list_models: PluginHostContext.trampolineListModels,
-                http_request: PluginHostContext.trampolineHttpRequest
+                http_request: PluginHostContext.trampolineHttpRequest,
+                events_subscribe: PluginHostContext.trampolineEventsSubscribe,
+                events_emit: PluginHostContext.trampolineEventsEmit,
+                memory_query: PluginHostContext.trampolineMemoryQuery,
+                memory_store: PluginHostContext.trampolineMemoryStore,
+                plugin_create: PluginHostContext.trampolinePluginCreate,
+                plugin_list: PluginHostContext.trampolinePluginList,
+                plugin_remove: PluginHostContext.trampolinePluginRemove,
+                identity_address: PluginHostContext.trampolineIdentityAddress,
+                identity_sign: PluginHostContext.trampolineIdentitySign
             )
         )
         hostAPIPtr = ptr
@@ -1572,6 +1745,131 @@ extension PluginHostContext {
             requestBody: json,
             responseBody: result
         )
+        return makeCString(result)
+    }
+
+    // MARK: v3 Events Trampolines
+
+    static let trampolineEventsSubscribe: osr_events_subscribe_t = { eventTypePtr, onEvent, userData in
+        guard let eventTypePtr, let onEvent, let ctx = activeContext() else { return nil }
+        let eventType = String(cString: eventTypePtr)
+        nonisolated(unsafe) let userData = userData
+        let callback: @Sendable (String, String) -> Void = { type, payload in
+            type.withCString { typePtr in
+                payload.withCString { payloadPtr in
+                    onEvent(typePtr, payloadPtr, userData)
+                }
+            }
+        }
+        let subId = ctx.eventsSubscribe(eventType: eventType, callback: callback)
+        return makeCString(subId)
+    }
+
+    static let trampolineEventsEmit: osr_events_emit_t = { eventTypePtr, payloadPtr in
+        guard let eventTypePtr, let ctx = activeContext() else { return }
+        let eventType = String(cString: eventTypePtr)
+        let payload = payloadPtr.map { String(cString: $0) } ?? "{}"
+        ctx.eventsEmit(eventType: eventType, payload: payload)
+    }
+
+    // MARK: v3 Memory Trampolines
+
+    static let trampolineMemoryQuery: osr_memory_query_t = { queryPtr in
+        guard let queryPtr, let ctx = activeContext() else { return nil }
+        let json = String(cString: queryPtr)
+        var result = ""
+        let ms = measureMs { result = ctx.memoryQuery(queryJSON: json) }
+        logPluginCall(
+            pluginId: ctx.pluginId,
+            method: "POST",
+            path: "/host-api/memory/query",
+            statusCode: responseContainsError(result) ? 500 : 200,
+            durationMs: ms,
+            requestBody: json,
+            responseBody: result
+        )
+        return makeCString(result)
+    }
+
+    static let trampolineMemoryStore: osr_memory_store_t = { contentPtr in
+        guard let contentPtr, let ctx = activeContext() else { return nil }
+        let json = String(cString: contentPtr)
+        var result = ""
+        let ms = measureMs { result = ctx.memoryStore(contentJSON: json) }
+        logPluginCall(
+            pluginId: ctx.pluginId,
+            method: "POST",
+            path: "/host-api/memory/store",
+            statusCode: responseContainsError(result) ? 500 : 200,
+            durationMs: ms,
+            requestBody: json,
+            responseBody: result
+        )
+        return makeCString(result)
+    }
+
+    // MARK: v3 Plugin CRUD Trampolines
+
+    static let trampolinePluginCreate: osr_plugin_create_t = { jsonPtr in
+        guard let jsonPtr, let ctx = activeContext() else { return nil }
+        let json = String(cString: jsonPtr)
+        var result = ""
+        let ms = measureMs { result = ctx.pluginCreate(jsonStr: json) }
+        logPluginCall(
+            pluginId: ctx.pluginId,
+            method: "POST",
+            path: "/host-api/plugin/create",
+            statusCode: responseContainsError(result) ? 500 : 200,
+            durationMs: ms,
+            requestBody: json,
+            responseBody: result
+        )
+        return makeCString(result)
+    }
+
+    static let trampolinePluginList: osr_plugin_list_t = {
+        guard let ctx = activeContext() else { return nil }
+        var result = ""
+        let ms = measureMs { result = ctx.pluginList() }
+        logPluginCall(
+            pluginId: ctx.pluginId,
+            method: "GET",
+            path: "/host-api/plugin/list",
+            statusCode: 200,
+            durationMs: ms,
+            responseBody: result
+        )
+        return makeCString(result)
+    }
+
+    static let trampolinePluginRemove: osr_plugin_remove_t = { namePtr in
+        guard let namePtr, let ctx = activeContext() else { return nil }
+        let name = String(cString: namePtr)
+        var result = ""
+        let ms = measureMs { result = ctx.pluginRemove(name: name) }
+        logPluginCall(
+            pluginId: ctx.pluginId,
+            method: "DELETE",
+            path: "/host-api/plugin/\(name)",
+            statusCode: responseContainsError(result) ? 500 : 200,
+            durationMs: ms,
+            responseBody: result
+        )
+        return makeCString(result)
+    }
+
+    // MARK: v3 Identity Trampolines
+
+    static let trampolineIdentityAddress: osr_identity_address_t = {
+        guard let ctx = activeContext() else { return nil }
+        guard let address = ctx.identityAddress() else { return nil }
+        return makeCString(address)
+    }
+
+    static let trampolineIdentitySign: osr_identity_sign_t = { dataPtr in
+        guard let dataPtr, let ctx = activeContext() else { return nil }
+        let dataHex = String(cString: dataPtr)
+        let result = ctx.identitySign(dataHex: dataHex)
         return makeCString(result)
     }
 }

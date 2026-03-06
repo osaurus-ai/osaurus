@@ -41,6 +41,52 @@ public struct AgentQuickAction: Codable, Identifiable, Sendable, Equatable {
     ]
 }
 
+/// VM resource configuration for sandbox plugin execution
+public struct VMConfig: Codable, Sendable, Equatable {
+    /// Whether the VM is currently active (running). Toggling this starts/stops the VM.
+    public var active: Bool
+    /// Memory allocation (e.g. "512MB", "1GB")
+    public var memory: String
+    /// Number of virtual CPUs
+    public var cpus: Int
+    /// Disk quota (e.g. "5GB")
+    public var diskQuota: String
+    /// Network policy: "outbound", "none"
+    public var network: String
+
+    public init(active: Bool = false, memory: String = "512MB", cpus: Int = 2, diskQuota: String = "5GB", network: String = "outbound") {
+        self.active = active
+        self.memory = memory
+        self.cpus = cpus
+        self.diskQuota = diskQuota
+        self.network = network
+    }
+
+    /// Parse memory string (e.g. "512MB", "1GB") to bytes.
+    public var memoryBytes: UInt64 {
+        let str = memory.trimmingCharacters(in: .whitespaces).uppercased()
+        let digits = String(str.prefix(while: { $0.isNumber }))
+        let value = UInt64(digits) ?? 512
+        if str.hasSuffix("GB") { return value * 1024 * 1024 * 1024 }
+        return value * 1024 * 1024
+    }
+}
+
+/// Configuration for autonomous command execution by an agent
+public struct AutonomousExecConfig: Codable, Sendable, Equatable {
+    public var enabled: Bool
+    public var maxCommandsPerTurn: Int
+    public var commandTimeout: Int
+    public var pluginCreate: Bool
+
+    public init(enabled: Bool = false, maxCommandsPerTurn: Int = 5, commandTimeout: Int = 30, pluginCreate: Bool = false) {
+        self.enabled = enabled
+        self.maxCommandsPerTurn = maxCommandsPerTurn
+        self.commandTimeout = commandTimeout
+        self.pluginCreate = pluginCreate
+    }
+}
+
 /// A customizable assistant agent for ChatView
 public struct Agent: Codable, Identifiable, Sendable, Equatable {
     /// Unique identifier for the agent
@@ -79,6 +125,10 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
     public var agentIndex: UInt32?
     /// Derived cryptographic address for this agent (nil = no address yet)
     public var agentAddress: String?
+    /// VM configuration for sandbox plugin execution (nil = no VM)
+    public var vmConfig: VMConfig?
+    /// Configuration for autonomous command execution
+    public var autonomousExec: AutonomousExecConfig?
 
     public init(
         id: UUID = UUID(),
@@ -98,7 +148,9 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
         agentIndex: UInt32? = nil,
-        agentAddress: String? = nil
+        agentAddress: String? = nil,
+        vmConfig: VMConfig? = nil,
+        autonomousExec: AutonomousExecConfig? = nil
     ) {
         self.id = id
         self.name = name
@@ -118,6 +170,8 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         self.updatedAt = updatedAt
         self.agentIndex = agentIndex
         self.agentAddress = agentAddress
+        self.vmConfig = vmConfig
+        self.autonomousExec = autonomousExec
     }
 
     // MARK: - Built-in Agents
@@ -191,7 +245,9 @@ extension Agent {
                 createdAt: Date(),
                 updatedAt: Date(),
                 agentIndex: nil,
-                agentAddress: nil
+                agentAddress: nil,
+                vmConfig: exportedAgent.vmConfig,
+                autonomousExec: exportedAgent.autonomousExec
             )
         }
     }

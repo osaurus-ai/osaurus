@@ -146,6 +146,26 @@ public final class AgentManager: ObservableObject {
     /// Returns true if deletion was successful
     @discardableResult
     public func delete(id: UUID) -> Bool {
+        // Unregister sandbox tools synchronously before removing the agent
+        let store = SandboxPluginStore.load(for: id)
+        for installed in store.plugins {
+            if let tools = installed.plugin.tools {
+                for toolSpec in tools {
+                    let name = SandboxTool.registeredName(pluginName: installed.plugin.normalizedName, toolId: toolSpec.id)
+                    ToolRegistry.shared.unregister(name: name)
+                }
+            }
+        }
+
+        // Async cleanup: shut down VM, stop MCP servers, remove disk images
+        Task {
+            await MCPBridge.shared.stopAll(for: id)
+            if VMManager.shared.isRunning(id) {
+                try? await VMManager.shared.shutdown(agentId: id)
+            }
+            try? DiskImageManager.shared.removeAgentVM(for: id)
+        }
+
         guard AgentStore.delete(id: id) else {
             return false
         }

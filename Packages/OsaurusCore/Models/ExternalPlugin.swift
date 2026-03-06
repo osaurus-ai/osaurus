@@ -90,6 +90,24 @@ typealias osr_list_models_t = @convention(c) () -> UnsafePointer<CChar>?
 // HTTP client
 typealias osr_http_request_t = @convention(c) (UnsafePointer<CChar>?) -> UnsafePointer<CChar>?
 
+// v3: Events
+typealias osr_on_event_t = @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?, UnsafeMutableRawPointer?) -> Void
+typealias osr_events_subscribe_t = @convention(c) (UnsafePointer<CChar>?, osr_on_event_t?, UnsafeMutableRawPointer?) -> UnsafePointer<CChar>?
+typealias osr_events_emit_t = @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> Void
+
+// v3: Memory
+typealias osr_memory_query_t = @convention(c) (UnsafePointer<CChar>?) -> UnsafePointer<CChar>?
+typealias osr_memory_store_t = @convention(c) (UnsafePointer<CChar>?) -> UnsafePointer<CChar>?
+
+// v3: Plugin CRUD
+typealias osr_plugin_create_t = @convention(c) (UnsafePointer<CChar>?) -> UnsafePointer<CChar>?
+typealias osr_plugin_list_t = @convention(c) () -> UnsafePointer<CChar>?
+typealias osr_plugin_remove_t = @convention(c) (UnsafePointer<CChar>?) -> UnsafePointer<CChar>?
+
+// v3: Identity
+typealias osr_identity_address_t = @convention(c) () -> UnsafePointer<CChar>?
+typealias osr_identity_sign_t = @convention(c) (UnsafePointer<CChar>?) -> UnsafePointer<CChar>?
+
 struct osr_host_api {
     var version: UInt32
 
@@ -115,6 +133,25 @@ struct osr_host_api {
 
     // HTTP Client
     var http_request: osr_http_request_t?
+
+    // v3 fields (zeroed for v2 plugins)
+
+    // Events
+    var events_subscribe: osr_events_subscribe_t?
+    var events_emit: osr_events_emit_t?
+
+    // Memory
+    var memory_query: osr_memory_query_t?
+    var memory_store: osr_memory_store_t?
+
+    // Plugin CRUD
+    var plugin_create: osr_plugin_create_t?
+    var plugin_list: osr_plugin_list_t?
+    var plugin_remove: osr_plugin_remove_t?
+
+    // Identity
+    var identity_address: osr_identity_address_t?
+    var identity_sign: osr_identity_sign_t?
 }
 
 struct osr_plugin_api {

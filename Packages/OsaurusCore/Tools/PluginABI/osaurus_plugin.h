@@ -10,6 +10,7 @@ extern "C" {
 
 #define OSR_ABI_VERSION_1 1
 #define OSR_ABI_VERSION_2 2
+#define OSR_ABI_VERSION_3 3
 
 // Opaque context provided by the plugin, passed back to all function calls.
 typedef void* osr_plugin_ctx_t;
@@ -78,8 +79,46 @@ typedef const char* (*osr_list_models_fn)(void);
 // Returns JSON with "status", "headers", "body", "body_encoding", "elapsed_ms".
 typedef const char* (*osr_http_request_fn)(const char* request_json);
 
+// v3 additions: Events, Memory, Plugin CRUD, Identity
+
+// Events — host-side event bus for plugin communication.
+// event_type: dot-separated string (e.g. "message.received").
+// payload_json: arbitrary JSON payload.
+// on_event: callback invoked when a matching event fires.
+// user_data: passed through to on_event.
+// subscribe returns a subscription ID string (UUID). Caller must free via free_string.
+typedef const char* (*osr_events_subscribe_fn)(
+    const char* event_type,
+    void (*on_event)(const char* event_type, const char* payload_json, void* user_data),
+    void* user_data
+);
+typedef void (*osr_events_emit_fn)(const char* event_type, const char* payload_json);
+
+// Memory — shared memory store accessible to all agents.
+// memory_query: query_json has "query" (required), "agent_id", "top_k".
+//   Returns JSON with "results" array.
+// memory_store: content_json has "content" (required), "tags" (optional string array).
+//   Stored tagged with the current agent_id. Returns JSON with "id", "status".
+typedef const char* (*osr_memory_query_fn)(const char* query_json);
+typedef const char* (*osr_memory_store_fn)(const char* content_json);
+
+// Plugin CRUD — create, list, and remove sandbox plugins.
+// plugin_create: plugin_json is a full sandbox plugin JSON recipe.
+//   Returns JSON with "status":"ok" or error.
+// plugin_list: Returns JSON with "plugins" array.
+// plugin_remove: name is the plugin name to remove. Returns JSON status.
+typedef const char* (*osr_plugin_create_fn)(const char* plugin_json);
+typedef const char* (*osr_plugin_list_fn)(void);
+typedef const char* (*osr_plugin_remove_fn)(const char* name);
+
+// Identity — agent cryptographic identity (OsaurusID).
+// identity_address: Returns the agent's address string, or NULL if none.
+// identity_sign: data_hex is hex-encoded bytes. Returns JSON with "signature" (hex).
+typedef const char* (*osr_identity_address_fn)(void);
+typedef const char* (*osr_identity_sign_fn)(const char* data_hex);
+
 typedef struct {
-    uint32_t           version;       // OSR_ABI_VERSION_2
+    uint32_t           version;       // OSR_ABI_VERSION_2 or OSR_ABI_VERSION_3
 
     // Config + Storage + Logging
     osr_config_get_fn       config_get;
@@ -103,6 +142,25 @@ typedef struct {
 
     // HTTP Client
     osr_http_request_fn     http_request;
+
+    // v3 fields (zeroed for v2 plugins)
+
+    // Events
+    osr_events_subscribe_fn events_subscribe;
+    osr_events_emit_fn      events_emit;
+
+    // Memory
+    osr_memory_query_fn     memory_query;
+    osr_memory_store_fn     memory_store;
+
+    // Plugin CRUD
+    osr_plugin_create_fn    plugin_create;
+    osr_plugin_list_fn      plugin_list;
+    osr_plugin_remove_fn    plugin_remove;
+
+    // Identity
+    osr_identity_address_fn identity_address;
+    osr_identity_sign_fn    identity_sign;
 } osr_host_api;
 
 // ── Task lifecycle event types ──
