@@ -131,12 +131,75 @@ public enum OsaurusPaths {
         root().appendingPathComponent("PluginSpecs", isDirectory: true)
     }
 
+    /// Central sandbox plugin library (`~/.osaurus/sandbox-plugins/`)
+    public static func sandboxPluginLibrary() -> URL {
+        root().appendingPathComponent("sandbox-plugins", isDirectory: true)
+    }
+
+    // MARK: - Container / Sandbox Paths
+
+    /// Container root: `~/.osaurus/container/`
+    public static func container() -> URL {
+        root().appendingPathComponent("container", isDirectory: true)
+    }
+
+    /// Kernel binary directory: `~/.osaurus/container/kernel/`
+    public static func containerKernelDir() -> URL {
+        container().appendingPathComponent("kernel", isDirectory: true)
+    }
+
+    /// Path to the Linux kernel binary
+    public static func containerKernelFile() -> URL {
+        containerKernelDir().appendingPathComponent("vmlinux")
+    }
+
+    /// Path to the init filesystem image: `~/.osaurus/container/initfs.ext4`
+    public static func containerInitFSFile() -> URL {
+        container().appendingPathComponent("initfs.ext4")
+    }
+
+    /// Mounted as `/workspace` inside the container
+    public static func containerWorkspace() -> URL {
+        container().appendingPathComponent("workspace", isDirectory: true)
+    }
+
+    /// Per-agent workspace directories inside the container workspace
+    public static func containerAgentsDir() -> URL {
+        containerWorkspace().appendingPathComponent("agents", isDirectory: true)
+    }
+
+    /// A specific agent's workspace directory (host-side path)
+    public static func containerAgentDir(_ agentName: String) -> URL {
+        containerAgentsDir().appendingPathComponent(agentName, isDirectory: true)
+    }
+
+    /// Shared workspace readable by all agents
+    public static func containerSharedDir() -> URL {
+        containerWorkspace().appendingPathComponent("shared", isDirectory: true)
+    }
+
+    /// Mounted as `/output` inside the container, writable by all agents
+    public static func containerOutputDir() -> URL {
+        container().appendingPathComponent("output", isDirectory: true)
+    }
+
+    /// In-container absolute path for an agent's home directory
+    public static func inContainerAgentHome(_ agentName: String) -> String {
+        "/workspace/agents/\(agentName)"
+    }
+
+    /// In-container absolute path for a plugin directory
+    public static func inContainerPluginDir(_ agentName: String, _ pluginName: String) -> String {
+        "/workspace/agents/\(agentName)/plugins/\(pluginName)"
+    }
+
     // MARK: - Configuration Files
 
     public static func chatConfigFile() -> URL { config().appendingPathComponent("chat.json") }
     public static func serverConfigFile() -> URL { config().appendingPathComponent("server.json") }
     public static func toolConfigFile() -> URL { config().appendingPathComponent("tools.json") }
     public static func toastConfigFile() -> URL { config().appendingPathComponent("toast.json") }
+    public static func sandboxConfigFile() -> URL { config().appendingPathComponent("sandbox.json") }
     public static func speechConfigFile() -> URL { voiceConfig().appendingPathComponent("speech.json") }
     public static func vadConfigFile() -> URL { voiceConfig().appendingPathComponent("vad.json") }
     public static func transcriptionConfigFile() -> URL { voiceConfig().appendingPathComponent("transcription.json") }

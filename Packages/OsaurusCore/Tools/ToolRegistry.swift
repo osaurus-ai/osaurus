@@ -15,6 +15,9 @@ final class ToolRegistry: ObservableObject {
     @Published private var toolsByName: [String: OsaurusTool] = [:]
     @Published private var configuration: ToolConfiguration = ToolConfigurationStore.load()
 
+    /// Tool names that require the sandbox container to be running
+    private var sandboxToolNames: Set<String> = []
+
     struct ToolPolicyInfo {
         let isPermissioned: Bool
         let defaultPolicy: ToolPermissionPolicy
@@ -386,10 +389,62 @@ final class ToolRegistry: ObservableObject {
         )
     }
 
+    // MARK: - Sandbox Tool Registration
+
+    /// Register a tool that requires the sandbox container.
+    func registerSandboxTool(_ tool: OsaurusTool) {
+        toolsByName[tool.name] = tool
+        sandboxToolNames.insert(tool.name)
+    }
+
+    /// Register all tools from a sandbox plugin for a given agent.
+    func registerSandboxPluginTools(plugin: SandboxPlugin, agentId: String, agentName: String) {
+        guard let tools = plugin.tools else { return }
+        for spec in tools {
+            let tool = SandboxPluginTool(
+                spec: spec,
+                plugin: plugin,
+                agentId: agentId,
+                agentName: agentName
+            )
+            registerSandboxTool(tool)
+        }
+    }
+
+    /// Unregister all sandbox tools for a given plugin.
+    func unregisterSandboxPluginTools(pluginId: String) {
+        let prefix = "\(pluginId)_"
+        let names = toolsByName.keys.filter { $0.hasPrefix(prefix) && sandboxToolNames.contains($0) }
+        for name in names {
+            toolsByName.removeValue(forKey: name)
+            sandboxToolNames.remove(name)
+        }
+        Task { @MainActor in
+            await MCPServerManager.shared.notifyToolsListChanged()
+        }
+    }
+
+    /// Unregister all sandbox tools (e.g., when sandbox becomes unavailable).
+    func unregisterAllSandboxTools() {
+        for name in sandboxToolNames {
+            toolsByName.removeValue(forKey: name)
+        }
+        sandboxToolNames.removeAll()
+        Task { @MainActor in
+            await MCPServerManager.shared.notifyToolsListChanged()
+        }
+    }
+
+    /// Whether a tool requires the sandbox container.
+    func isSandboxTool(_ name: String) -> Bool {
+        sandboxToolNames.contains(name)
+    }
+
     // MARK: - Unregister
     func unregister(names: [String]) {
         for n in names {
             toolsByName.removeValue(forKey: n)
+            sandboxToolNames.remove(n)
         }
         Task { @MainActor in
             await MCPServerManager.shared.notifyToolsListChanged()

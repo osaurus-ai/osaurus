@@ -79,6 +79,10 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
     public var agentIndex: UInt32?
     /// Derived cryptographic address for this agent (nil = no address yet)
     public var agentAddress: String?
+    /// Sandbox plugin IDs assigned to this agent
+    public var sandboxPlugins: [String]?
+    /// Controls the agent's ability to run arbitrary commands in the sandbox
+    public var autonomousExec: AutonomousExecConfig?
 
     public init(
         id: UUID = UUID(),
@@ -98,7 +102,9 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
         agentIndex: UInt32? = nil,
-        agentAddress: String? = nil
+        agentAddress: String? = nil,
+        sandboxPlugins: [String]? = nil,
+        autonomousExec: AutonomousExecConfig? = nil
     ) {
         self.id = id
         self.name = name
@@ -118,6 +124,8 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         self.updatedAt = updatedAt
         self.agentIndex = agentIndex
         self.agentAddress = agentAddress
+        self.sandboxPlugins = sandboxPlugins
+        self.autonomousExec = autonomousExec
     }
 
     // MARK: - Built-in Agents
@@ -157,6 +165,34 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
     }
 }
 
+// MARK: - Autonomous Exec Configuration
+
+public struct AutonomousExecConfig: Codable, Sendable, Equatable {
+    public var enabled: Bool
+    public var maxCommandsPerTurn: Int
+    public var commandTimeout: Int
+    public var pluginCreate: Bool
+
+    public static let `default` = AutonomousExecConfig(
+        enabled: true,
+        maxCommandsPerTurn: 10,
+        commandTimeout: 30,
+        pluginCreate: true
+    )
+
+    public init(
+        enabled: Bool = true,
+        maxCommandsPerTurn: Int = 10,
+        commandTimeout: Int = 30,
+        pluginCreate: Bool = true
+    ) {
+        self.enabled = enabled
+        self.maxCommandsPerTurn = maxCommandsPerTurn
+        self.commandTimeout = commandTimeout
+        self.pluginCreate = pluginCreate
+    }
+}
+
 // MARK: - Export/Import Support
 
 extension Agent {
@@ -191,7 +227,9 @@ extension Agent {
                 createdAt: Date(),
                 updatedAt: Date(),
                 agentIndex: nil,
-                agentAddress: nil
+                agentAddress: nil,
+                sandboxPlugins: exportedAgent.sandboxPlugins,
+                autonomousExec: exportedAgent.autonomousExec
             )
         }
     }

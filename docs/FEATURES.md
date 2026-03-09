@@ -36,6 +36,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 | Voice Input (FluidAudio)         | Stable    | "Voice Input"      | VOICE_INPUT.md                | Services/SpeechService.swift, Managers/SpeechModelManager.swift                  |
 | VAD Mode                         | Stable    | "Voice Input"      | VOICE_INPUT.md                | Services/VADService.swift, Views/ContentView.swift (VAD controls)                     |
 | Transcription Mode               | Stable    | "Voice Input"      | VOICE_INPUT.md                | Services/TranscriptionModeService.swift, Views/TranscriptionOverlayView.swift         |
+| Sandbox                          | macOS 26+ | "Sandbox"          | SANDBOX.md                    | Services/SandboxManager.swift, Tools/BuiltinSandboxTools.swift, Managers/SandboxPluginManager.swift, Views/SandboxView.swift |
 | CLI                              | Stable    | "CLI Reference"    | (in README)                   | Packages/OsaurusCLI/                                                                  |
 
 ---
@@ -60,6 +61,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 │  │   ├── SchedulesView (Schedules)                                       │
 │  │   ├── WatchersView (Watchers)                                         │
 │  │   ├── ThemesView (Themes)                                             │
+│  │   ├── SandboxView (Sandbox Container & Plugins)                       │
 │  │   ├── InsightsView (Developer: Insights)                              │
 │  │   ├── ServerView (Developer: Server Explorer)                         │
 │  │   ├── VoiceView (Voice Input & VAD Settings)                          │
@@ -96,6 +98,13 @@ Canonical reference for all Osaurus features, their status, and documentation.
 │  │   ├── WorkEngine (Task execution coordinator)                        │
 │  │   ├── WorkExecutionEngine (Plan generation and execution)            │
 │  │   └── IssueManager (Issue lifecycle management)                       │
+│  ├── Sandbox                                                             │
+│  │   ├── SandboxManager (Container lifecycle and exec)                   │
+│  │   ├── SandboxPluginManager (Per-agent plugin install/uninstall)       │
+│  │   ├── SandboxToolRegistrar (Tool registration on status change)       │
+│  │   ├── HostAPIBridgeServer (Vsock bridge to host services)             │
+│  │   ├── SandboxLogBuffer (Ring buffer for container logs)               │
+│  │   └── SandboxSecurity (Path sanitization, network, rate limiting)     │
 │  ├── Voice/Audio                                                         │
 │  │   ├── SpeechService (Speech-to-text transcription)                    │
 │  │   ├── SpeechModelManager (Parakeet model downloads)                    │
@@ -538,6 +547,107 @@ Canonical reference for all Osaurus features, their status, and documentation.
 
 ---
 
+### Sandbox
+
+**Purpose:** Run agent code in an isolated Linux virtual machine with full dev environment capabilities, per-agent isolation, and an extensible plugin system — safely and locally on Apple Silicon.
+
+**Why it matters:**
+
+- **Safe execution** — Agents run code in a disposable VM with zero risk to the host macOS system
+- **Real dev environment** — Full Linux with shell, Python (pip), Node.js (npm), system packages (apk), compilers, and POSIX tools
+- **Multi-agent isolation** — Each agent gets its own Linux user and home directory, preventing cross-contamination
+- **Lightweight plugins** — JSON recipe plugins require no compilation, no Xcode, no code signing
+- **Local-first** — Apple Virtualization framework with native Apple Silicon performance; no Docker or cloud VMs
+- **Seamless host bridge** — Agents in the VM access Osaurus inference, memory, secrets, and events via vsock
+
+**Components:**
+
+- `Services/SandboxManager.swift` — Container lifecycle (provision, start, stop, reset, exec)
+- `Services/SandboxLogBuffer.swift` — Ring buffer for container log entries
+- `Services/SandboxToolRegistrar.swift` — Registers/unregisters tools on status and agent changes
+- `Services/SandboxSecurity.swift` — Path sanitization, network policy, rate limiting
+- `Managers/SandboxPluginManager.swift` — Per-agent plugin install, uninstall, and update tracking
+- `Managers/SandboxPluginLibrary.swift` — Plugin library storage and discovery
+- `Tools/BuiltinSandboxTools.swift` — 14 built-in tools for file ops, shell, and package management
+- `Tools/SandboxPluginTool.swift` — Wraps plugin tool specs as OsaurusTool instances
+- `Tools/ToolRegistry.swift` — Sandbox tool registration and namespace management
+- `Networking/HostAPIBridgeServer.swift` — HTTP server over vsock for host service access
+- `Models/SandboxPlugin.swift` — Plugin model with tool specs, MCP, daemon, events, and permissions
+- `Models/SandboxConfiguration.swift` — Container config (CPUs, memory, network, auto-start)
+- `Models/SandboxAgentMap.swift` — Linux username to agent UUID mapping
+- `Views/SandboxView.swift` — Container dashboard, log console, diagnostics, plugin management UI
+
+**VM Configuration:**
+
+| Setting | Range | Default |
+|---------|-------|---------|
+| CPUs | 1–8 | 2 |
+| Memory | 1–8 GB | 2 GB |
+| Network | outbound / none | outbound |
+| Auto-Start | on / off | on |
+| Rootfs | — | 8 GiB |
+
+**Built-in Tools:**
+
+| Tool | Category | Description |
+|------|----------|-------------|
+| `sandbox_read_file` | Read-only | Read file contents |
+| `sandbox_list_directory` | Read-only | List files and directories |
+| `sandbox_search_files` | Read-only | Search with grep |
+| `sandbox_write_file` | Write | Write file contents |
+| `sandbox_move` | Write | Move or rename |
+| `sandbox_delete` | Write | Delete files or directories |
+| `sandbox_exec` | Exec | Run shell command (timeout, rate limited) |
+| `sandbox_exec_background` | Exec | Start background process |
+| `sandbox_exec_kill` | Exec | Kill background process |
+| `sandbox_install` | Package | Install via apk (root) |
+| `sandbox_pip_install` | Package | Install via pip |
+| `sandbox_npm_install` | Package | Install via npm |
+| `sandbox_whoami` | Info | Agent identity and environment |
+| `sandbox_processes` | Info | List agent processes |
+
+Read-only tools are always available. Write/exec/package tools require `autonomous_exec.enabled` on the agent.
+
+**Plugin Format (JSON recipe):**
+
+| Property | Description |
+|----------|-------------|
+| `name` | Display name |
+| `description` | Brief description |
+| `dependencies` | System packages via `apk add` |
+| `setup` | Setup command as agent user |
+| `files` | Seed files into plugin directory |
+| `tools` | Custom tool definitions (shell commands with `$PARAM_` env vars) |
+| `secrets` | Required secret names |
+| `permissions` | Network and inference access |
+
+**Host API Bridge Services:**
+
+| Service | Routes |
+|---------|--------|
+| Secrets | `GET /api/secrets/{name}` |
+| Config | `GET/POST /api/config/{key}` |
+| Inference | `POST /api/inference/chat` |
+| Agent | `POST /api/agent/dispatch`, `POST /api/agent/memory` |
+| Events | `POST /api/events/emit` |
+| Plugin | `POST /api/plugin/create` |
+| Log | `POST /api/log` |
+
+**Storage:**
+
+| Path | Purpose |
+|------|---------|
+| `~/.osaurus/container/` | Container root |
+| `~/.osaurus/container/kernel/vmlinux` | Linux kernel |
+| `~/.osaurus/container/workspace/` | Mounted as `/workspace` |
+| `~/.osaurus/container/workspace/agents/{name}/` | Per-agent home |
+| `~/.osaurus/container/output/` | Mounted as `/output` |
+| `~/.osaurus/sandbox-plugins/` | Plugin library |
+| `~/.osaurus/config/sandbox.json` | Configuration |
+| `~/.osaurus/config/sandbox-agent-map.json` | Agent map |
+
+---
+
 ### Chat Session Management
 
 **Purpose:** Persist and manage chat conversations with per-session configuration.
@@ -905,6 +1015,7 @@ Results are cached for 10 seconds per agent.
 | [VOICE_INPUT.md](VOICE_INPUT.md)                               | Voice input, FluidAudio, and VAD mode guide       |
 | [SKILLS.md](SKILLS.md)                                         | Skills and capability selection guide             |
 | [MEMORY.md](MEMORY.md)                                         | Memory system and configuration guide            |
+| [SANDBOX.md](SANDBOX.md)                                       | Sandbox VM and plugin guide                       |
 | [PLUGIN_AUTHORING.md](PLUGIN_AUTHORING.md)                     | Creating custom plugins                           |
 | [OpenAI_API_GUIDE.md](OpenAI_API_GUIDE.md)                     | API usage, tool calling, streaming                |
 | [SHARED_CONFIGURATION_GUIDE.md](SHARED_CONFIGURATION_GUIDE.md) | Shared configuration for teams                    |

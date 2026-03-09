@@ -710,6 +710,7 @@ struct AgentDetailView: View {
                     systemPromptSection
                     generationSection
                     capabilitiesSection
+                    sandboxSection
                     relaySection
                     quickActionsSection
                     themeSection
@@ -1151,6 +1152,131 @@ struct AgentDetailView: View {
                         )
                 )
                 .clipShape(RoundedRectangle(cornerRadius: 10))
+        }
+    }
+
+    // MARK: - Sandbox Section
+
+    @ViewBuilder
+    private var sandboxSection: some View {
+        let sandboxAvailable = SandboxManager.State.shared.availability.isAvailable
+        let sandboxRunning = SandboxManager.State.shared.status == .running
+        let sandboxPlugins = SandboxPluginManager.shared.plugins(for: agent.id.uuidString)
+        let execConfig = currentAgent.autonomousExec
+
+        let sandboxSubtitle: String = {
+            if sandboxRunning { return "\(sandboxPlugins.count) plugins" }
+            if sandboxAvailable { return "Not Running" }
+            return "Unavailable"
+        }()
+
+        AgentDetailSection(
+            title: "Sandbox",
+            icon: "shippingbox",
+            subtitle: sandboxSubtitle
+        ) {
+            VStack(alignment: .leading, spacing: 12) {
+                if !sandboxAvailable {
+                    HStack(spacing: 8) {
+                        Image(systemName: "info.circle")
+                            .font(.system(size: 12))
+                            .foregroundColor(theme.tertiaryText)
+                        Text("Sandbox requires macOS 26+. Native plugins work normally.")
+                            .font(.system(size: 12))
+                            .foregroundColor(theme.secondaryText)
+                    }
+                } else if !sandboxRunning {
+                    HStack(spacing: 8) {
+                        Image(systemName: "info.circle")
+                            .font(.system(size: 12))
+                            .foregroundColor(theme.tertiaryText)
+                        Text("Start the sandbox container to enable these options.")
+                            .font(.system(size: 12))
+                            .foregroundColor(theme.secondaryText)
+                    }
+                } else {
+                    // Autonomous Exec Toggle
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Autonomous Execution")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundColor(theme.primaryText)
+                            Text("Allow agent to run arbitrary commands in the sandbox")
+                                .font(.system(size: 11))
+                                .foregroundColor(theme.tertiaryText)
+                        }
+                        Spacer()
+                        Toggle(
+                            "",
+                            isOn: Binding(
+                                get: { execConfig?.enabled ?? false },
+                                set: { enabled in
+                                    var agent = currentAgent
+                                    if agent.autonomousExec == nil {
+                                        agent.autonomousExec = .default
+                                    }
+                                    agent.autonomousExec?.enabled = enabled
+                                    agentManager.update(agent)
+                                }
+                            )
+                        )
+                        .toggleStyle(.switch)
+                        .labelsHidden()
+                    }
+
+                    if execConfig?.enabled == true {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Plugin Creation")
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundColor(theme.primaryText)
+                                Text("Agent can create its own tools as plugins")
+                                    .font(.system(size: 11))
+                                    .foregroundColor(theme.tertiaryText)
+                            }
+                            Spacer()
+                            Toggle(
+                                "",
+                                isOn: Binding(
+                                    get: { execConfig?.pluginCreate ?? false },
+                                    set: { create in
+                                        var agent = currentAgent
+                                        agent.autonomousExec?.pluginCreate = create
+                                        agentManager.update(agent)
+                                    }
+                                )
+                            )
+                            .toggleStyle(.switch)
+                            .labelsHidden()
+                        }
+                    }
+
+                    // Sandbox Plugin List
+                    if !sandboxPlugins.isEmpty {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Sandbox Plugins")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundColor(theme.secondaryText)
+
+                            ForEach(sandboxPlugins) { installed in
+                                HStack(spacing: 8) {
+                                    Circle()
+                                        .fill(installed.status == .ready ? Color.green : Color.orange)
+                                        .frame(width: 6, height: 6)
+                                    Text(installed.plugin.name)
+                                        .font(.system(size: 12))
+                                        .foregroundColor(theme.primaryText)
+                                    Spacer()
+                                    Text(installed.status.rawValue)
+                                        .font(.system(size: 10))
+                                        .foregroundColor(theme.tertiaryText)
+                                }
+                                .padding(.vertical, 4)
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 

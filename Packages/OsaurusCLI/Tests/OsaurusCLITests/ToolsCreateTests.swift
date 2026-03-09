@@ -70,7 +70,7 @@ final class ToolsCreateTests: XCTestCase {
 
         XCTAssertTrue(content.contains("name: \"test-plugin\""))
         XCTAssertTrue(content.contains("\"test_plugin\""))
-        XCTAssertTrue(content.contains("swift-tools-version: 6.0"))
+        XCTAssertTrue(content.contains("swift-tools-version: 6.2"))
         XCTAssertTrue(content.contains(".dynamic"))
     }
 

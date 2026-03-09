@@ -61,6 +61,7 @@ Osaurus is the AI edge runtime for macOS. It brings together:
 - **Schedules** — Automate recurring AI tasks with timed execution
 - **Watchers** — Monitor folders for changes and trigger AI tasks automatically
 - **Work Mode** — Autonomous task execution with issue tracking, parallel tasks, and file operations
+- **Sandbox** — Isolated Linux VM for safe agent code execution with shell, package managers, and extensible plugins — all running locally on Apple Silicon (macOS 26+)
 - **Multi-Window Chat** — Multiple independent chat windows with per-window agents
 - **Developer Tools** — Built-in insights and server explorer for debugging
 - **Voice Input** — Speech-to-text using FluidAudio with real-time on-device transcription
@@ -88,6 +89,7 @@ Osaurus is the AI edge runtime for macOS. It brings together:
 | **Schedules**            | Automate AI tasks with daily, weekly, monthly, or yearly runs           |
 | **Watchers**             | Monitor folders and trigger AI tasks on file system changes             |
 | **Work Mode**            | Autonomous multi-step task execution with parallel task support         |
+| **Sandbox**              | Isolated Linux VM for safe code execution — agents get shell, pip, npm, and per-agent workspaces |
 | **Custom Themes**        | Create, import, and export themes with full color customization         |
 | **Developer Tools**      | Request insights, API explorer, and live endpoint testing               |
 | **Multi-Window Chat**    | Multiple independent chat windows with per-window agents                |
@@ -417,6 +419,33 @@ Execute complex, multi-step tasks autonomously with built-in issue tracking and 
 Access via Chat window → **Work Mode** tab.
 
 See [Work Mode Guide](docs/WORK.md) for details.
+
+### Sandbox
+
+Give your agents a real Linux environment — safely. The Sandbox runs an isolated Alpine Linux VM on your Mac using Apple's Virtualization framework. Agents can execute shell commands, install packages, build software, and run servers — all without any risk to the host system.
+
+**Features:**
+
+- **Safe Execution** — Code runs in a disposable VM; reset the container anytime to start fresh
+- **Full Dev Environment** — Shell access, Python (pip), Node.js (npm), system packages (apk), compilers, and POSIX tools
+- **Per-Agent Isolation** — Each agent gets its own Linux user and home directory
+- **JSON Recipe Plugins** — Extend agents with plugins that install dependencies, seed files, and define custom tools — no Xcode or code signing needed
+- **Local-First** — Runs entirely on-device with native Apple Silicon performance; no Docker or cloud VMs
+- **Host Bridge** — Agents inside the VM access Osaurus services (inference, memory, secrets) via vsock
+- **14 Built-in Tools** — File operations, shell execution, package installation, process management
+- **Diagnostics** — Built-in health checks for the container, networking, and bridge connectivity
+
+**Use Cases:**
+
+- Run untrusted code safely in a disposable environment
+- Give agents full dev environment access to build, test, and deploy
+- Install and run Python or Node.js projects inside the sandbox
+- Extend agent capabilities with shareable JSON recipe plugins
+- Run multiple specialized agents with isolated workspaces
+
+Access via Management window (`⌘ Shift M`) → **Sandbox**.
+
+See [Sandbox Guide](docs/SANDBOX.md) for details.
 
 ### Multi-Window Chat
 

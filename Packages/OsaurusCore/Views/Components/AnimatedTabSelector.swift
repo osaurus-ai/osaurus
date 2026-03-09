@@ -147,6 +147,15 @@ enum PluginsTab: String, CaseIterable, AnimatedTabItem {
     var title: String { rawValue }
 }
 
+// MARK: - Sandbox Tab (for SandboxView)
+
+enum SandboxTab: String, CaseIterable, AnimatedTabItem {
+    case container = "Container"
+    case plugins = "Plugins"
+
+    var title: String { rawValue }
+}
+
 // MARK: - Preview
 
 #Preview {
@@ -154,6 +163,7 @@ enum PluginsTab: String, CaseIterable, AnimatedTabItem {
         @State private var modelTab: ModelListTab = .all
         @State private var toolsTab: ToolsTab = .available
         @State private var pluginsTab: PluginsTab = .installed
+        @State private var sandboxTab: SandboxTab = .container
 
         var body: some View {
             VStack(spacing: 40) {
@@ -171,6 +181,11 @@ enum PluginsTab: String, CaseIterable, AnimatedTabItem {
                     selection: $pluginsTab,
                     counts: [.installed: 3, .browse: 24],
                     badges: [.browse: 2]
+                )
+
+                AnimatedTabSelector(
+                    selection: $sandboxTab,
+                    counts: [.plugins: 5]
                 )
             }
             .padding(40)
