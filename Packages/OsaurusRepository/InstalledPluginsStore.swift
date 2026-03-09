@@ -107,7 +107,6 @@ public final class InstalledPluginsStore: @unchecked Sendable {
         for entry in entries {
             guard entry.hasDirectoryPath else { continue }
             let pluginId = entry.lastPathComponent
-            // Only include if at least one valid version is installed
             if !installedVersions(pluginId: pluginId).isEmpty {
                 pluginIds.append(pluginId)
             }

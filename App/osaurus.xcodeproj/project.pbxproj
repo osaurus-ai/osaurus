@@ -29,15 +29,6 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
-		F041F78A2ED1FE0F00AEE282 /* CopyFiles */ = {
-			isa = PBXCopyFilesBuildPhase;
-			buildActionMask = 2147483647;
-			dstPath = Contents/MacOS;
-			dstSubfolderSpec = 6;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
 		F0EEC1202E60000100895593 /* Embed CLI */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
@@ -147,7 +138,6 @@
 				F0BB3C232E51FBCC00895593 /* Frameworks */,
 				F0BB3C242E51FBCC00895593 /* Resources */,
 				F0EEC1202E60000100895593 /* Embed CLI */,
-				F041F78A2ED1FE0F00AEE282 /* CopyFiles */,
 			);
 			buildRules = (
 			);
@@ -216,7 +206,7 @@
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
 				LastSwiftUpdateCheck = 1640;
-				LastUpgradeCheck = 2600;
+				LastUpgradeCheck = 2630;
 				TargetAttributes = {
 					F0BB3C252E51FBCC00895593 = {
 						CreatedOnToolsVersion = 16.4;
@@ -458,12 +448,13 @@
 				DEVELOPMENT_TEAM = 4W8QF9VR2F;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_RESOURCE_ACCESS_AUDIO_INPUT = YES;
 				ENABLE_RESOURCE_ACCESS_CALENDARS = YES;
 				ENABLE_RESOURCE_ACCESS_CAMERA = NO;
 				ENABLE_RESOURCE_ACCESS_CONTACTS = YES;
-				ENABLE_RESOURCE_ACCESS_LOCATION = NO;
+				ENABLE_RESOURCE_ACCESS_LOCATION = YES;
 				ENABLE_RESOURCE_ACCESS_PHOTO_LIBRARY = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = osaurus/Info.plist;
@@ -499,7 +490,7 @@
 				SU_FEED_URL = "https://dinoki.github.io/osaurus/appcast.xml";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_STRICT_CONCURRENCY = complete;
-				SWIFT_VERSION = 6.0;
+				SWIFT_VERSION = 6.2;
 			};
 			name = Debug;
 		};
@@ -518,12 +509,13 @@
 				DEVELOPMENT_TEAM = 4W8QF9VR2F;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_RESOURCE_ACCESS_AUDIO_INPUT = YES;
 				ENABLE_RESOURCE_ACCESS_CALENDARS = YES;
 				ENABLE_RESOURCE_ACCESS_CAMERA = NO;
 				ENABLE_RESOURCE_ACCESS_CONTACTS = YES;
-				ENABLE_RESOURCE_ACCESS_LOCATION = NO;
+				ENABLE_RESOURCE_ACCESS_LOCATION = YES;
 				ENABLE_RESOURCE_ACCESS_PHOTO_LIBRARY = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = osaurus/Info.plist;
@@ -559,7 +551,7 @@
 				SU_FEED_URL = "https://dinoki.github.io/osaurus/appcast.xml";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_STRICT_CONCURRENCY = complete;
-				SWIFT_VERSION = 6.0;
+				SWIFT_VERSION = 6.2;
 			};
 			name = Release;
 		};
@@ -578,7 +570,7 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_STRICT_CONCURRENCY = complete;
-				SWIFT_VERSION = 6.0;
+				SWIFT_VERSION = 6.2;
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/osaurus.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/osaurus";
 			};
 			name = Debug;
@@ -598,7 +590,7 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_STRICT_CONCURRENCY = complete;
-				SWIFT_VERSION = 6.0;
+				SWIFT_VERSION = 6.2;
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/osaurus.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/osaurus";
 			};
 			name = Release;
@@ -616,7 +608,7 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_STRICT_CONCURRENCY = complete;
-				SWIFT_VERSION = 6.0;
+				SWIFT_VERSION = 6.2;
 				TEST_TARGET_NAME = osaurus;
 			};
 			name = Debug;
@@ -634,7 +626,7 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_STRICT_CONCURRENCY = complete;
-				SWIFT_VERSION = 6.0;
+				SWIFT_VERSION = 6.2;
 				TEST_TARGET_NAME = osaurus;
 			};
 			name = Release;

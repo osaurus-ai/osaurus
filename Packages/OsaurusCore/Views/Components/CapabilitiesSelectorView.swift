@@ -5,6 +5,7 @@
 //  Capabilities selector with tools grouped by plugin/provider.
 //
 
+import Combine
 import SwiftUI
 
 // MARK: - Types
@@ -18,6 +19,7 @@ enum CapabilityTab: String, CaseIterable {
 private struct ToolGroup: Identifiable {
     enum Source: Hashable {
         case plugin(id: String, name: String)
+        case sandboxPlugin(id: String, name: String)
         case mcpProvider(id: UUID, name: String)
         case memory
         case builtIn
@@ -29,6 +31,7 @@ private struct ToolGroup: Identifiable {
     var id: String {
         switch source {
         case .plugin(let id, _): return "plugin-\(id)"
+        case .sandboxPlugin(let id, _): return "sandbox-plugin-\(id)"
         case .mcpProvider(let id, _): return "mcp-\(id.uuidString)"
         case .memory: return "memory"
         case .builtIn: return "builtin"
@@ -37,7 +40,7 @@ private struct ToolGroup: Identifiable {
 
     var displayName: String {
         switch source {
-        case .plugin(_, let name), .mcpProvider(_, let name): return name
+        case .plugin(_, let name), .sandboxPlugin(_, let name), .mcpProvider(_, let name): return name
         case .memory: return "Memory"
         case .builtIn: return "Built-in"
         }
@@ -45,7 +48,7 @@ private struct ToolGroup: Identifiable {
 
     var icon: String {
         switch source {
-        case .plugin: return "puzzlepiece.extension"
+        case .plugin, .sandboxPlugin: return "puzzlepiece.extension"
         case .mcpProvider: return "cloud"
         case .memory: return "brain"
         case .builtIn: return "gearshape"
@@ -76,6 +79,7 @@ struct CapabilitiesSelectorView: View {
     @ObservedObject private var toolRegistry = ToolRegistry.shared
     @ObservedObject private var skillManager = SkillManager.shared
     @ObservedObject private var agentManager = AgentManager.shared
+    @ObservedObject private var sandboxPluginManager = SandboxPluginManager.shared
 
     @State private var selectedTab: CapabilityTab = .tools
     @State private var searchText = ""
@@ -132,6 +136,30 @@ struct CapabilitiesSelectorView: View {
             }
         }
 
+        // Installed sandbox plugins: group tools and add to Plugins tab
+        for installed in sandboxPluginManager.plugins(for: agentId.uuidString) where installed.status == .ready {
+            let plugin = installed.plugin
+            let pluginToolNames = (plugin.tools ?? []).map { "\(plugin.id)_\($0.id)" }
+            let matched = tools.filter { $0.name.hasPrefix("\(plugin.id)_") && !assignedNames.contains($0.name) }
+
+            if !matched.isEmpty {
+                groups.append(ToolGroup(source: .sandboxPlugin(id: plugin.id, name: plugin.name), tools: matched))
+                assignedNames.formUnion(matched.map { $0.name })
+            }
+
+            if !pluginToolNames.isEmpty {
+                compoundPlugins.append(
+                    CompoundPluginGroup(
+                        pluginId: plugin.id,
+                        name: plugin.name,
+                        toolNames: pluginToolNames,
+                        skillNames: [],
+                        hasRoutes: false
+                    )
+                )
+            }
+        }
+
         // Group by connected MCP providers
         let providerManager = MCPProviderManager.shared
         for provider in providerManager.configuration.providers {
@@ -160,6 +188,14 @@ struct CapabilitiesSelectorView: View {
             groups.insert(ToolGroup(source: .memory, tools: memoryTools), at: 0)
             assignedNames.formUnion(memoryTools.map { $0.name })
         }
+
+        // Built-in sandbox tools are managed by AutonomousExecConfig, not the
+        // capabilities selector. Exclude them so they don't appear in any group.
+        // (Sandbox *plugin* tools are already assigned to .sandboxPlugin groups above.)
+        let builtinSandboxTools = tools.filter {
+            toolRegistry.isSandboxTool($0.name) && !assignedNames.contains($0.name)
+        }
+        assignedNames.formUnion(builtinSandboxTools.map { $0.name })
 
         // Remaining tools go to Built-in
         let remaining = tools.filter { !assignedNames.contains($0.name) }
@@ -443,7 +479,9 @@ struct CapabilitiesSelectorView: View {
                 selectedTab = .plugins
             }
         }
-        .onReceive(toolRegistry.objectWillChange) { _ in
+        .onReceive(
+            Publishers.Merge(toolRegistry.objectWillChange, sandboxPluginManager.objectWillChange)
+        ) { _ in
             DispatchQueue.main.async { rebuildToolsCache() }
         }
         .onReceive(NotificationCenter.default.publisher(for: .toolsListChanged)) { _ in rebuildToolsCache() }
