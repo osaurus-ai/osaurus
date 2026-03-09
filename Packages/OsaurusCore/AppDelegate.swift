@@ -193,6 +193,21 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // Initialize WatcherManager to start file system watchers
         _ = WatcherManager.shared
 
+        // Start sandbox tool registrar so it observes container status changes
+        SandboxToolRegistrar.shared.start()
+
+        // Initialize sandbox container (if available and configured to auto-start)
+        Task.detached {
+            let availability = await SandboxManager.shared.refreshAvailability()
+            if availability.isAvailable {
+                let config = SandboxConfigurationStore.load()
+                let status = await SandboxManager.shared.refreshStatus()
+                if config.autoStart && (status == .stopped || status.isRunning) {
+                    try? await SandboxManager.shared.startContainer()
+                }
+            }
+        }
+
         // Show onboarding for first-time users
         if OnboardingService.shared.shouldShowOnboarding {
             // Slight delay to let the app finish launching
@@ -424,6 +439,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             }
             await MCPServerManager.shared.stopAll()
             await ModelRuntime.shared.clearAll()
+            do {
+                try await SandboxManager.shared.stopContainer()
+            } catch {
+                NSLog("[Osaurus] Sandbox stop failed: \(error)")
+            }
             NSApp.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater

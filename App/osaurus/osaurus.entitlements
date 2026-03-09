@@ -8,6 +8,8 @@
 	<true/>
 	<key>com.apple.security.network.client</key>
 	<true/>
+	<key>com.apple.security.network.server</key>
+	<true/>
 	<key>com.apple.security.personal-information.addressbook</key>
 	<true/>
 	<key>com.apple.security.personal-information.calendars</key>
@@ -15,6 +17,8 @@
 	<key>com.apple.security.personal-information.location</key>
 	<true/>
 	<key>com.apple.security.device.audio-input</key>
+	<true/>
+	<key>com.apple.security.virtualization</key>
 	<true/>
 </dict>
 </plist>

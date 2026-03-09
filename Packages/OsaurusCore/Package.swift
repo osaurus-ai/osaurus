@@ -1,4 +1,4 @@
-// swift-tools-version: 6.0
+// swift-tools-version: 6.2
 import PackageDescription
 
 let package = Package(
@@ -9,6 +9,7 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.88.0"),
+        .package(url: "https://github.com/apple/containerization.git", from: "0.26.0"),
         .package(url: "https://github.com/modelcontextprotocol/swift-sdk.git", .upToNextMinor(from: "0.10.0")),
         .package(url: "https://github.com/orlandos-nl/IkigaJSON", from: "2.3.2"),
         .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.7.0"),
@@ -41,6 +42,8 @@ let package = Package(
                 .product(name: "OsaurusRepository", package: "OsaurusRepository"),
                 .product(name: "P256K", package: "swift-secp256k1"),
                 .product(name: "SwiftMath", package: "SwiftMath"),
+                .product(name: "Containerization", package: "containerization"),
+                .product(name: "ContainerizationExtras", package: "containerization"),
             ],
             path: ".",
             exclude: ["Tests"]

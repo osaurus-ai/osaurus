@@ -18,6 +18,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable {
     case providers
     case agents
     case plugins
+    case sandbox
     case tools
     case skills
     case memory
@@ -39,6 +40,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable {
         case .providers: "cloud.fill"
         case .agents: "person.2.fill"
         case .plugins: "puzzlepiece.extension.fill"
+        case .sandbox: "shippingbox.fill"
         case .tools: "wrench.and.screwdriver.fill"
         case .skills: "sparkles"
         case .memory: "brain.head.profile.fill"
@@ -60,6 +62,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable {
         case .providers: "Providers"
         case .agents: "Agents"
         case .plugins: "Plugins"
+        case .sandbox: "Sandbox"
         case .tools: "Tools"
         case .skills: "Skills"
         case .memory: "Memory"
@@ -102,6 +105,7 @@ struct ManagementView: View {
     @ObservedObject private var watcherManager = WatcherManager.shared
     @ObservedObject private var modelManager = ModelManager.shared
     @ObservedObject private var speechModelManager = SpeechModelManager.shared
+    @ObservedObject private var sandboxPluginLibrary = SandboxPluginLibrary.shared
 
     @EnvironmentObject private var updater: UpdaterViewModel
 
@@ -198,6 +202,8 @@ private extension ManagementView {
             AgentsView()
         case .plugins:
             PluginsView()
+        case .sandbox:
+            SandboxView()
         case .tools:
             ToolsManagerView()
         case .skills:
@@ -250,6 +256,8 @@ private extension ManagementView {
             count = remoteProviderManager.providerStates.values.filter(\.isConnected).count
         case .plugins:
             count = repoService.plugins.filter { $0.isInstalled }.count
+        case .sandbox:
+            count = sandboxPluginLibrary.plugins.count
         case .tools:
             count = ToolRegistry.shared.listTools().count
         case .skills:
