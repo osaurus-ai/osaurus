@@ -42,6 +42,39 @@ struct osaurusTests {
         #expect(internalMessages[1].content == "Hello")
     }
 
+    @Test func openResponses_decodes_items_without_type() async throws {
+        let json = """
+            {
+              "input": [
+                {
+                  "content": "hi",
+                  "role": "user"
+                }
+              ],
+              "model": "gpt-5.3-codex",
+              "stream": false
+            }
+            """.data(using: .utf8)!
+
+        let req = try JSONDecoder().decode(OpenResponsesRequest.self, from: json)
+
+        #expect(req.model == "gpt-5.3-codex")
+        #expect(req.stream == false)
+
+        guard case .items(let items) = req.input else {
+            Issue.record("Expected item-based input")
+            return
+        }
+        #expect(items.count == 1)
+
+        guard case .message(let message) = items[0] else {
+            Issue.record("Expected first item to decode as message")
+            return
+        }
+        #expect(message.role == "user")
+        #expect(message.content.plainText == "hi")
+    }
+
     @Test func serverConfiguration_portValidation() async throws {
         var cfg = ServerConfiguration.default
         cfg.port = 0

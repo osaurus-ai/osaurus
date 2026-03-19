@@ -83,24 +83,52 @@ public enum OpenResponsesInputItem: Codable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case type
+        case role
+        case content
+        case call_id
+        case output
     }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        let type = try container.decode(String.self, forKey: .type)
-
-        switch type {
-        case "message":
-            self = .message(try OpenResponsesMessageItem(from: decoder))
-        case "function_call_output":
-            self = .functionCallOutput(try OpenResponsesFunctionCallOutputItem(from: decoder))
-        default:
-            throw DecodingError.dataCorruptedError(
-                forKey: .type,
-                in: container,
-                debugDescription: "Unknown input item type: \(type)"
-            )
+        // Support both strict Open Responses items with explicit `type` and OpenAI-style
+        // shorthand items where message objects omit `type`.
+        if let type = try? container.decode(String.self, forKey: .type) {
+            switch type {
+            case "message":
+                self = .message(try OpenResponsesMessageItem(from: decoder))
+            case "function_call_output":
+                self = .functionCallOutput(try OpenResponsesFunctionCallOutputItem(from: decoder))
+            default:
+                throw DecodingError.dataCorruptedError(
+                    forKey: .type,
+                    in: container,
+                    debugDescription: "Unknown input item type: \(type)"
+                )
+            }
+            return
         }
+
+        // OpenAI Responses shorthand: {"role":"user","content":"..."} without type.
+        if container.contains(.role), container.contains(.content) {
+            self = .message(try OpenResponsesMessageItem(from: decoder))
+            return
+        }
+
+        // Tolerate tool output shorthand if type is omitted.
+        if container.contains(.call_id), container.contains(.output) {
+            self = .functionCallOutput(try OpenResponsesFunctionCallOutputItem(from: decoder))
+            return
+        }
+
+        throw DecodingError.typeMismatch(
+            OpenResponsesInputItem.self,
+            DecodingError.Context(
+                codingPath: decoder.codingPath,
+                debugDescription:
+                    "Unknown input item format. Expected `type`, or message keys (`role` + `content`), or function output keys (`call_id` + `output`)."
+            )
+        )
     }
 
     public func encode(to encoder: Encoder) throws {
