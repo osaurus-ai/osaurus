@@ -20,6 +20,8 @@ struct ChatEmptyState: View {
     let onQuickAction: (String) -> Void
     let onSelectAgent: (UUID) -> Void
     let onOpenOnboarding: (() -> Void)?
+    var discoveredAgents: [DiscoveredAgent] = []
+    var onSelectDiscoveredAgent: ((DiscoveredAgent) -> Void)? = nil
 
     @State private var hasAppeared = false
     @Environment(\.theme) private var theme
@@ -132,7 +134,9 @@ struct ChatEmptyState: View {
         AgentPill(
             agents: agents,
             activeAgentId: activeAgentId,
-            onSelectAgent: onSelectAgent
+            onSelectAgent: onSelectAgent,
+            discoveredAgents: discoveredAgents,
+            onSelectDiscoveredAgent: onSelectDiscoveredAgent
         )
     }
 

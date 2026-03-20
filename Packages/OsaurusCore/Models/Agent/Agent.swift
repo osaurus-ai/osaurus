@@ -79,6 +79,8 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
     public var autonomousExec: AutonomousExecConfig?
     /// Per-agent plugin instruction overrides keyed by plugin ID
     public var pluginInstructions: [String: String]?
+    /// Whether this agent is advertised via Bonjour on the local network
+    public var bonjourEnabled: Bool
 
     public init(
         id: UUID = UUID(),
@@ -98,7 +100,8 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         agentAddress: String? = nil,
         sandboxPlugins: [String]? = nil,
         autonomousExec: AutonomousExecConfig? = nil,
-        pluginInstructions: [String: String]? = nil
+        pluginInstructions: [String: String]? = nil,
+        bonjourEnabled: Bool = false
     ) {
         self.id = id
         self.name = name
@@ -118,6 +121,7 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         self.sandboxPlugins = sandboxPlugins
         self.autonomousExec = autonomousExec
         self.pluginInstructions = pluginInstructions
+        self.bonjourEnabled = bonjourEnabled
     }
 
     // MARK: - Built-in Agents
@@ -151,6 +155,38 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
     /// All built-in agents
     public static var builtInAgents: [Agent] {
         [.default]
+    }
+}
+
+// MARK: - Decodable Migration
+
+extension Agent {
+    /// Custom decoder that provides default values for fields added after the initial release,
+    /// ensuring older persisted JSON files remain loadable.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        description = try c.decode(String.self, forKey: .description)
+        systemPrompt = try c.decode(String.self, forKey: .systemPrompt)
+        enabledTools = try c.decodeIfPresent([String: Bool].self, forKey: .enabledTools)
+        enabledSkills = try c.decodeIfPresent([String: Bool].self, forKey: .enabledSkills)
+        enabledPlugins = try c.decodeIfPresent([String: Bool].self, forKey: .enabledPlugins)
+        themeId = try c.decodeIfPresent(UUID.self, forKey: .themeId)
+        defaultModel = try c.decodeIfPresent(String.self, forKey: .defaultModel)
+        temperature = try c.decodeIfPresent(Float.self, forKey: .temperature)
+        maxTokens = try c.decodeIfPresent(Int.self, forKey: .maxTokens)
+        chatQuickActions = try c.decodeIfPresent([AgentQuickAction].self, forKey: .chatQuickActions)
+        workQuickActions = try c.decodeIfPresent([AgentQuickAction].self, forKey: .workQuickActions)
+        isBuiltIn = try c.decode(Bool.self, forKey: .isBuiltIn)
+        createdAt = try c.decode(Date.self, forKey: .createdAt)
+        updatedAt = try c.decode(Date.self, forKey: .updatedAt)
+        agentIndex = try c.decodeIfPresent(UInt32.self, forKey: .agentIndex)
+        agentAddress = try c.decodeIfPresent(String.self, forKey: .agentAddress)
+        sandboxPlugins = try c.decodeIfPresent([String].self, forKey: .sandboxPlugins)
+        autonomousExec = try c.decodeIfPresent(AutonomousExecConfig.self, forKey: .autonomousExec)
+        pluginInstructions = try c.decodeIfPresent([String: String].self, forKey: .pluginInstructions)
+        bonjourEnabled = try c.decodeIfPresent(Bool.self, forKey: .bonjourEnabled) ?? false
     }
 }
 

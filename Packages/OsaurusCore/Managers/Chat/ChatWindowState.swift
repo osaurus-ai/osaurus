@@ -44,6 +44,7 @@ final class ChatWindowState: ObservableObject {
 
     @Published var agentId: UUID
     @Published private(set) var agents: [Agent] = []
+    @Published private(set) var discoveredAgents: [DiscoveredAgent] = []
 
     // MARK: - Theme State
 
@@ -61,6 +62,7 @@ final class ChatWindowState: ObservableObject {
 
     private nonisolated(unsafe) var notificationObservers: [NSObjectProtocol] = []
     private var sessionRefreshWorkItem: DispatchWorkItem?
+    private var bonjourCancellable: AnyCancellable?
 
     // MARK: - Initialization
 
@@ -92,6 +94,7 @@ final class ChatWindowState: ObservableObject {
         }
 
         setupNotificationObservers()
+        observeBonjourBrowser()
     }
 
     /// Wrap an existing `ExecutionContext`, reusing its sessions without duplication.
@@ -122,6 +125,7 @@ final class ChatWindowState: ObservableObject {
         }
 
         setupNotificationObservers()
+        observeBonjourBrowser()
     }
 
     deinit {
@@ -286,6 +290,14 @@ final class ChatWindowState: ObservableObject {
     }
 
     // MARK: - Private
+
+    private func observeBonjourBrowser() {
+        bonjourCancellable = BonjourBrowser.shared.$discoveredAgents
+            .receive(on: RunLoop.main)
+            .sink { [weak self] agents in
+                self?.discoveredAgents = agents
+            }
+    }
 
     private static func loadTheme(for agentId: UUID) -> ThemeProtocol {
         if let themeId = AgentManager.shared.themeId(for: agentId),
