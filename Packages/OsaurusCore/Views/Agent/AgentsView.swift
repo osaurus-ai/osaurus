@@ -1074,6 +1074,7 @@ struct AgentDetailView: View {
     private var sandboxTabContent: some View {
         tabHelperText(DetailTab.sandbox.helperText)
         sandboxSection
+        bonjourSection
         relaySection
     }
 
@@ -1378,6 +1379,56 @@ struct AgentDetailView: View {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var bonjourSection: some View {
+        AgentDetailSection(title: "Bonjour", icon: "antenna.radiowaves.left.and.right") {
+            VStack(alignment: .leading, spacing: 12) {
+                Text(
+                    "Advertise this agent on your local network via Bonjour so nearby devices can discover it automatically."
+                )
+                .font(.system(size: 12))
+                .foregroundColor(theme.secondaryText)
+
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Local Network Discovery")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(theme.primaryText)
+                        Text("Broadcast this agent as a \(BonjourAdvertiser.serviceType) service")
+                            .font(.system(size: 11))
+                            .foregroundColor(theme.tertiaryText)
+                    }
+
+                    Spacer()
+
+                    Toggle(
+                        "",
+                        isOn: Binding(
+                            get: { currentAgent.bonjourEnabled },
+                            set: { newValue in
+                                var updated = currentAgent
+                                updated.bonjourEnabled = newValue
+                                agentManager.update(updated)
+                                showSaveIndicator()
+                            }
+                        )
+                    )
+                    .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
+                    .labelsHidden()
+                }
+                .padding(10)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(theme.inputBackground)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(theme.inputBorder, lineWidth: 1)
+                        )
+                )
             }
         }
     }

@@ -118,6 +118,7 @@ final class ServerController: ObservableObject {
             lastErrorMessage = nil
             print("[Osaurus] NIO server started successfully on port \(configuration.port)")
 
+            BonjourAdvertiser.shared.startAdvertising(port: configuration.port)
             RelayTunnelManager.shared.reconnectIfNeeded(port: configuration.port)
         } catch {
             handleServerError(error)
@@ -144,6 +145,7 @@ final class ServerController: ObservableObject {
         print("[Osaurus] Stopping NIO server...")
 
         RelayTunnelManager.shared.disconnectAll()
+        BonjourAdvertiser.shared.stopAdvertising()
         isRunning = false
 
         // Stop the actor-backed server if present
