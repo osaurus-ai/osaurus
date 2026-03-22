@@ -41,8 +41,8 @@ struct StatusPanelView: View {
             .padding(16)
         }
         .frame(
-            width: 300,
-            height: 150
+            width: 320,
+            height: 170
         )
         .environment(\.theme, themeManager.currentTheme)
         .tint(theme.accentColor)

@@ -417,17 +417,20 @@ private struct ImageThumbnail: View {
     @State private var isHovered = false
     @State private var showFullScreen = false
 
-    private var maxImageWidth: CGFloat {
-        min(baseWidth - 32, 560)
-    }
-
     private func displaySize(for image: NSImage) -> CGSize {
         let size = image.size
         guard size.width > 0, size.height > 0 else {
-            return CGSize(width: maxImageWidth, height: maxImageWidth * 0.75)
+            return CGSize(width: 280, height: 210)
         }
-        let width = min(size.width, maxImageWidth)
-        return CGSize(width: width, height: width * size.height / size.width)
+
+        let maxWidth: CGFloat = 280
+        let maxHeight: CGFloat = 200
+
+        let widthRatio = maxWidth / size.width
+        let heightRatio = maxHeight / size.height
+        let scale = min(widthRatio, heightRatio, 1.0)
+
+        return CGSize(width: size.width * scale, height: size.height * scale)
     }
 
     var body: some View {
