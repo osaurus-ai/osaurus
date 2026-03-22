@@ -1379,7 +1379,9 @@ struct ChatView: View {
                                     onSelectAgent: { newAgentId in
                                         windowState.switchAgent(to: newAgentId)
                                     },
-                                    onOpenOnboarding: nil
+                                    onOpenOnboarding: nil,
+                                    discoveredAgents: windowState.discoveredAgents,
+                                    onSelectDiscoveredAgent: { _ in }
                                 )
                                 .transition(.opacity.combined(with: .scale(scale: 0.98)))
                             } else {
@@ -1444,7 +1446,9 @@ struct ChatView: View {
                                     ChatWindowManager.shared.closeWindow(id: windowState.windowId)
                                     // Show onboarding window
                                     AppDelegate.shared?.showOnboardingWindow()
-                                }
+                                },
+                                discoveredAgents: windowState.discoveredAgents,
+                                onSelectDiscoveredAgent: { _ in }
                             )
                         }
                     }

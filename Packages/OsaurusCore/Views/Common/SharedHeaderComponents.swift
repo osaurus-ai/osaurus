@@ -171,6 +171,8 @@ struct AgentPill: View {
     let agents: [Agent]
     let activeAgentId: UUID
     let onSelectAgent: (UUID) -> Void
+    var discoveredAgents: [DiscoveredAgent] = []
+    var onSelectDiscoveredAgent: ((DiscoveredAgent) -> Void)? = nil
 
     @State private var isHovered = false
     @Environment(\.theme) private var theme
@@ -189,6 +191,20 @@ struct AgentPill: View {
                             Spacer()
                             Image(systemName: "checkmark")
                                 .font(.system(size: 12, weight: .medium))
+                        }
+                    }
+                }
+            }
+
+            if !discoveredAgents.isEmpty {
+                Divider()
+                Section("On This Network") {
+                    ForEach(discoveredAgents) { remote in
+                        Button(action: { onSelectDiscoveredAgent?(remote) }) {
+                            Label(
+                                remote.name + (remote.agentDescription.isEmpty ? "" : " – \(remote.agentDescription)"),
+                                systemImage: "network"
+                            )
                         }
                     }
                 }
