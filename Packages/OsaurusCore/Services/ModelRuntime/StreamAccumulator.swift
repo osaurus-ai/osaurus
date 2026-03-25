@@ -256,6 +256,18 @@ struct StreamAccumulator: AsyncSequence, Sendable {
                 generationTask?.cancel()
                 finished = true
 
+                // When a stop sequence marks the end of an XML-wrapped tool call
+                // (e.g. `</tool_call>`), include everything up to and including
+                // the stop sequence in the tool-detection window so the XML regex
+                // can match the complete block.
+                if hasTools, let tools {
+                    let stopEndIndex = stopRange.upperBound
+                    let bufferWithStop = String(rollingBuffer[rollingBuffer.startIndex ..< stopEndIndex])
+                    if let (name, argsJSON) = ToolDetection.detectInlineToolCall(in: bufferWithStop, tools: tools) {
+                        return .toolInvocation(name: name, argsJSON: argsJSON)
+                    }
+                }
+
                 if stopGlobalIndex > emittedCount {
                     let yieldGlobalStart = Swift.max(emittedCount, bufferStartOffset)
                     let yieldGlobalEnd = stopGlobalIndex

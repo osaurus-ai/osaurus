@@ -417,6 +417,18 @@ actor ModelRuntime {
         debugLog("[ModelRuntime] generateEventStream: start model=\(modelName)")
         genLog.info("generateEventStream: start model=\(modelName, privacy: .public)")
         print("[ModelRuntime] generateEventStream: start model=\(modelName)")
+
+        // Qwen2.5/3/3.5 chat templates always wrap tool calls in <tool_call>…</tool_call>.
+        // Add </tool_call> as a stop sequence so generation halts after the closing tag,
+        // giving ToolDetection a clean, complete XML block to parse.
+        var effectiveStopSequences = stopSequences
+        let lowerName = modelName.lowercased()
+        if !(tools ?? []).isEmpty && lowerName.contains("qwen") {
+            if !effectiveStopSequences.contains("</tool_call>") {
+                effectiveStopSequences.append("</tool_call>")
+            }
+        }
+
         let cfg = await getConfig()
         debugLog("[ModelRuntime] generateEventStream: got config, loading container...")
         let holder = try await loadContainer(id: modelId, name: modelName)
@@ -543,7 +555,7 @@ actor ModelRuntime {
         let eventStream = StreamAccumulator.accumulate(
             events: rawStream,
             tokenizer: tokenizer,
-            stopSequences: stopSequences,
+            stopSequences: effectiveStopSequences,
             tools: tools,
             generationTask: genTask,
             onGeneratedTokenIds: { ids in generatedTokenIds = ids }

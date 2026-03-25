@@ -9,6 +9,10 @@ import Foundation
 
 enum ToolDetection {
     /// Best-effort detector for inline tool-call JSON in generated text. Returns (toolName, argsJSON).
+    ///
+    /// Supports two formats:
+    /// - Plain JSON: `{"name": "fn", "arguments": {...}}`
+    /// - Qwen XML-wrapped: `<tool_call>{"name": "fn", "arguments": {...}}</tool_call>`
     static func detectInlineToolCall(
         in text: String,
         tools: [Tool]
@@ -17,6 +21,26 @@ enum ToolDetection {
         let window = String(text.suffix(5000))
         let toolNames = Set(tools.map { $0.function.name })
 
+        // Fast path: Qwen-style <tool_call>...</tool_call> XML wrapper.
+        // The Qwen2.5/3/3.5 Jinja2 chat template always wraps tool calls in
+        // these tags. Search backwards for the *last* open tag so that prior
+        // tool calls in the conversation history don't shadow the current one,
+        // then search forward for the matching close tag.
+        if let openRange = window.range(of: "<tool_call>", options: .backwards),
+           let closeRange = window.range(of: "</tool_call>", range: openRange.upperBound ..< window.endIndex),
+           openRange.upperBound <= closeRange.lowerBound
+        {
+            // Extract the content between the tags
+            let inner = String(window[openRange.upperBound ..< closeRange.lowerBound])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if let (name, argsJSON) = extractToolCall(fromJSON: inner),
+               toolNames.contains(name)
+            {
+                return (name, argsJSON)
+            }
+        }
+
+        // General path: search for a JSON object containing a known tool name field.
         for name in toolNames {
             if let range = window.range(of: #""name"\s*:\s*"\#(name)""#, options: [.regularExpression])
                 ?? window.range(of: #""tool_name"\s*:\s*"\#(name)""#, options: [.regularExpression])
