@@ -217,6 +217,28 @@ struct KVCacheStoreTests {
         #expect(!store.hasPrefixCache(modelName: "llama", hash: "h1"))
     }
 
+    // MARK: - Async behavior TDD
+
+    @Test func saveToDiskIsNonBlocking() async throws {
+        var store = KVCacheStore()
+        let cache = makeCache()
+        
+        let start = Date()
+        store.saveToDisk(sessionId: "testAsync", cache: cache, tokens: nil, modelName: "llama")
+        let duration = Date().timeIntervalSince(start)
+        
+        // Assert it returns immediately (much faster than a safetensors disk write)
+        #expect(duration < 0.05)
+        
+        // Confirm a background task was dispatched
+        #expect(store.lastSaveTask != nil)
+        
+        // Await the background task so we don't leak it across tests
+        if let task = store.lastSaveTask {
+            await task.value
+        }
+    }
+
     // MARK: - Budget computation
 
     @Test func computeBudgetFloor() {

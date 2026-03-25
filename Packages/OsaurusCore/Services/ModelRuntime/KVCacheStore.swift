@@ -13,6 +13,12 @@ import MLX
 
 /// Manages per-session KV caches across a hot RAM tier and cold SSD tier.
 /// Must be used from within the `ModelRuntime` actor (not independently thread-safe).
+
+private final class CacheBox: @unchecked Sendable {
+    let cache: [any KVCache]
+    init(_ cache: [any KVCache]) { self.cache = cache }
+}
+
 struct KVCacheStore {
 
     // MARK: - Entry
@@ -60,6 +66,9 @@ struct KVCacheStore {
 
     /// Maximum total SSD cache size in bytes (default 4 GB)
     private let maxSSDBytes: Int = 4 * 1024 * 1024 * 1024
+
+    /// For tracking background disk writes in tests
+    var lastSaveTask: Task<Void, Never>?
 
     // MARK: - Budget
 
@@ -161,48 +170,48 @@ struct KVCacheStore {
             return
         }
 
-        // Save to SSD if not already persisted
+        // Save to SSD if not already persisted (saveToDisk calls pruneSSDIfNeeded internally)
         if entry.ssdPath == nil {
-            let url = ssdCacheDir.appendingPathComponent("\(sessionId).safetensors")
-            do {
-                var metadata = ["model": entry.modelName]
-                if let tokens = entry.tokens, let data = try? JSONEncoder().encode(tokens),
-                    let str = String(data: data, encoding: .utf8)
-                {
-                    metadata["tokens"] = str
-                }
-                try savePromptCache(url: url, cache: cache, metadata: metadata)
-                entry.ssdPath = url
-                print("[KVCacheStore] Saved session \(sessionId.prefix(8)) to SSD (\(entry.sizeBytes / 1024)KB)")
-            } catch {
-                print("[KVCacheStore] Failed to save SSD cache: \(error)")
-            }
+            saveToDisk(sessionId: sessionId, cache: cache, tokens: entry.tokens, modelName: entry.modelName)
         }
 
         totalHotBytes -= entry.sizeBytes
         entry.cache = nil
         entry.sizeBytes = 0
         lruOrder.removeAll { $0 == sessionId }
-
-        pruneSSDIfNeeded()
     }
 
-    /// Saves the given session's cache to SSD synchronously.
+    /// Saves the given session's cache to SSD asynchronously in a background task.
+    /// Sets `ssdPath` optimistically before the write completes so duplicate saves are avoided.
+    /// Also calls `pruneSSDIfNeeded()` synchronously after scheduling the write.
     mutating func saveToDisk(sessionId: String, cache: [any KVCache], tokens: [Int]?, modelName: String) {
         let url = ssdCacheDir.appendingPathComponent("\(sessionId).safetensors")
-        do {
-            var metadata = ["model": modelName]
-            if let tokens = tokens, let data = try? JSONEncoder().encode(tokens),
-                let str = String(data: data, encoding: .utf8)
-            {
-                metadata["tokens"] = str
+        let bytes = Self.cacheBytes(cache)
+        let start = Date()
+        
+        let box = CacheBox(cache)
+        
+        // Optimistically set the SSD path so we don't try to save it again
+        self.entries[sessionId]?.ssdPath = url
+        
+        let task = Task.detached(priority: .background) {
+            do {
+                var metadata = ["model": modelName]
+                if let tokens = tokens, let data = try? JSONEncoder().encode(tokens),
+                    let str = String(data: data, encoding: .utf8)
+                {
+                    metadata["tokens"] = str
+                }
+                try savePromptCache(url: url, cache: box.cache, metadata: metadata)
+                let durationMs = Date().timeIntervalSince(start) * 1000
+                print("[KVCacheStore] [BENCHMARK] Saved session \(sessionId.prefix(8)) to SSD (\(bytes / 1024)KB) asynchronously in \(String(format: "%.1f", durationMs))ms")
+            } catch {
+                let durationMs = Date().timeIntervalSince(start) * 1000
+                print("[KVCacheStore] [BENCHMARK] SSD save failed for \(sessionId.prefix(8)) after \(String(format: "%.1f", durationMs))ms: \(error)")
             }
-            try savePromptCache(url: url, cache: cache, metadata: metadata)
-            entries[sessionId]?.ssdPath = url
-            pruneSSDIfNeeded()
-        } catch {
-            print("[KVCacheStore] SSD save failed for \(sessionId.prefix(8)): \(error)")
         }
+        self.lastSaveTask = task
+        pruneSSDIfNeeded()
     }
 
     // MARK: - Invalidation
@@ -397,12 +406,7 @@ struct KVCacheStore {
         guard let entry = entries[sessionId] else { return }
 
         if saveSSD, entry.cache != nil, entry.ssdPath == nil {
-            let url = ssdCacheDir.appendingPathComponent("\(sessionId).safetensors")
-            do {
-                try savePromptCache(url: url, cache: entry.cache!, metadata: ["model": entry.modelName])
-            } catch {
-                // best-effort
-            }
+            saveToDisk(sessionId: sessionId, cache: entry.cache!, tokens: entry.tokens, modelName: entry.modelName)
         }
 
         if entry.cache != nil {
