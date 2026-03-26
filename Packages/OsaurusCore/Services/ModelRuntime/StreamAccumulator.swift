@@ -105,6 +105,7 @@ struct StreamAccumulator: AsyncSequence, Sendable {
         private var braceDepth = 0
         private var seenOpenBrace = false
         private var finished = false
+        private var isMaskingToolBlock = false
         private var pendingEvents: [ModelRuntimeEvent] = []
 
         private var maxStopLen: Int
@@ -212,6 +213,7 @@ struct StreamAccumulator: AsyncSequence, Sendable {
                             InferenceProgressManager.shared.prefillDidFinishAsync()
                             generationTask?.cancel()
                             finished = true
+                            isMaskingToolBlock = false
                             return .toolInvocation(name: name, argsJSON: argsJSON)
                         }
                         seenOpenBrace = false
@@ -264,6 +266,7 @@ struct StreamAccumulator: AsyncSequence, Sendable {
                     let stopEndIndex = stopRange.upperBound
                     let bufferWithStop = String(rollingBuffer[rollingBuffer.startIndex ..< stopEndIndex])
                     if let (name, argsJSON) = ToolDetection.detectInlineToolCall(in: bufferWithStop, tools: tools) {
+                        isMaskingToolBlock = false
                         return .toolInvocation(name: name, argsJSON: argsJSON)
                     }
                 }
@@ -286,7 +289,22 @@ struct StreamAccumulator: AsyncSequence, Sendable {
             }
 
             // Safe prefix emission: emit everything except the last (maxStopLen - 1) chars.
-            let safeEnd = rollingBuffer.count - (maxStopLen - 1)
+            var safeEnd = rollingBuffer.count - (maxStopLen - 1)
+
+            // Mask `<tool_call>` XML wrappers from leaking to the UI during tool generation.
+            if hasTools {
+                let toolCallRange = rollingBuffer.range(of: "<tool_call>")
+                if toolCallRange != nil {
+                    isMaskingToolBlock = true
+                }
+                if isMaskingToolBlock {
+                    // Prevent EVERYTHING from emitting to the UI.
+                    // Any UI emission is hard clamped exactly to where the tool block started.
+                    let tcStartLocal = toolCallRange?.lowerBound ?? rollingBuffer.startIndex
+                    safeEnd = Swift.min(safeEnd, rollingBuffer.distance(from: rollingBuffer.startIndex, to: tcStartLocal))
+                }
+            }
+
             let safeGlobalEnd = bufferStartOffset + safeEnd
             if safeGlobalEnd > emittedCount && safeEnd > 0 {
                 let yieldStart = Swift.max(emittedCount, bufferStartOffset)
@@ -330,7 +348,37 @@ struct StreamAccumulator: AsyncSequence, Sendable {
                         let startIdx = rollingBuffer.index(rollingBuffer.startIndex, offsetBy: localStart)
                         let endIdx = rollingBuffer.index(rollingBuffer.startIndex, offsetBy: localEnd)
                         let content = String(rollingBuffer[startIdx ..< endIdx])
-                        if !content.isEmpty { pendingEvents.append(.tokens(content)) }
+                        if !content.isEmpty {
+                            if isMaskingToolBlock {
+                                // Generation ended inside a masked `<tool_call>` block — likely hit
+                                // max-tokens, a loop, or a crash. Try to extract a tool name and emit
+                                // a structured error event so the UI stays silent and the LLM can
+                                // detect the failure on the next turn.
+                                //
+                                // Try Qwen format first (`"name": "toolname"` inside partial JSON),
+                                // then fall back to Command-R `<function=NAME>` syntax.
+                                let toolName =
+                                    ToolDetection.extractToolNameFromPartialQwenBlock(content)
+                                    ?? {
+                                        // Command-R fallback: `<function=NAME>`
+                                        let crPattern = "(?s)<function=([^>]+)>"
+                                        if let regex = try? NSRegularExpression(pattern: crPattern),
+                                           let m = regex.firstMatch(in: content, range: NSRange(content.startIndex..., in: content)),
+                                           let r = Range(m.range(at: 1), in: content)
+                                        {
+                                            return String(content[r]).trimmingCharacters(in: .whitespacesAndNewlines)
+                                        }
+                                        return nil
+                                    }()
+                                if let name = toolName {
+                                    pendingEvents.append(.toolInvocation(name: name, argsJSON: "{\"error\": \"Incomplete tool call (generation truncated or crashed)\"}"))
+                                } else {
+                                    pendingEvents.append(.toolInvocation(name: "unknown_error", argsJSON: "{\"error\": \"Unrecoverable tool call — could not identify tool name\"}"))
+                                }
+                            } else {
+                                pendingEvents.append(.tokens(content))
+                            }
+                        }
                     }
                 }
             }

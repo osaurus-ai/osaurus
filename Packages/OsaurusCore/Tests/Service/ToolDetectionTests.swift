@@ -100,14 +100,16 @@ struct ToolDetectionTests {
         #expect(result?.1.contains("Tokyo") == true)
     }
 
-    @Test func returnsNilForXmlWithUnknownToolName() {
+    @Test func xmlPathReturnsUnknownToolName() {
+        // The XML path intentionally does NOT filter by known tool names.
+        // This lets callers detect hallucinated tool calls and return an error to the LLM.
         let text = """
         <tool_call>
         {"name": "unknown_tool", "arguments": {}}
         </tool_call>
         """
         let result = ToolDetection.detectInlineToolCall(in: text, tools: [tool("get_weather")])
-        #expect(result == nil)
+        #expect(result?.0 == "unknown_tool")
     }
 
     @Test func detectsQwenXmlNestedArguments() {
@@ -169,5 +171,54 @@ struct ToolDetectionTests {
             tools: [tool("get_weather"), tool("search")]
         )
         #expect(result?.0 == "search")
+    }
+
+    // MARK: Command-R XML format
+
+    @Test func detectsCommandRXmlFunctionFormat() {
+        let text = """
+        <function=get_weather><parameter=city>London</parameter></function>
+        """
+        let result = ToolDetection.detectInlineToolCall(in: text, tools: [tool("get_weather")])
+        #expect(result?.0 == "get_weather")
+        #expect(result?.1.contains("London") == true)
+    }
+
+    @Test func detectsCommandRXmlWithMultipleParameters() {
+        let text = """
+        <function=create_event><parameter=title>Meeting</parameter><parameter=date>2026-03-26</parameter></function>
+        """
+        let result = ToolDetection.detectInlineToolCall(in: text, tools: [tool("create_event")])
+        #expect(result?.0 == "create_event")
+        #expect(result?.1.contains("Meeting") == true)
+        #expect(result?.1.contains("2026-03-26") == true)
+    }
+
+    // MARK: Premature JSON guard (open > close)
+
+    @Test func returnsNilWhenInsideOpenToolCallBlock() {
+        // The model is mid-generation: <tool_call> has been seen but </tool_call> hasn't.
+        // The general JSON path must NOT fire — that would parse partial/garbage JSON.
+        let partialGeneration = """
+        <tool_call>
+        {"name": "get_weather", "arguments": {"city": "Tok
+        """
+        // No </tool_call> yet — must return nil so we don't emit a broken tool call
+        let result = ToolDetection.detectInlineToolCall(in: partialGeneration, tools: [tool("get_weather")])
+        #expect(result == nil)
+    }
+
+    // MARK: extractToolNameFromPartialQwenBlock
+
+    @Test func extractsToolNameFromPartialQwenBlock() {
+        let partial = #"<tool_call>{"name": "get_weather", "arguments": {"city": "Tok"#
+        let name = ToolDetection.extractToolNameFromPartialQwenBlock(partial)
+        #expect(name == "get_weather")
+    }
+
+    @Test func extractToolNameFromPartialQwenBlockReturnsNilForNoName() {
+        let partial = "<tool_call>{\"arguments\": {\"city\": \"Tok\""
+        let name = ToolDetection.extractToolNameFromPartialQwenBlock(partial)
+        #expect(name == nil)
     }
 }
