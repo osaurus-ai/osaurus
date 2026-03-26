@@ -1154,6 +1154,8 @@ struct ChatView: View {
     @State private var editingTurnId: UUID?
     @State private var editText: String = ""
     @State private var userImagePreview: NSImage?
+    // Bonjour agent connection
+    @State private var pendingDiscoveredAgent: DiscoveredAgent? = nil
 
     /// Convenience accessor for the window's theme
     private var theme: ThemeProtocol { windowState.theme }
@@ -1323,7 +1325,7 @@ struct ChatView: View {
                                     },
                                     onOpenOnboarding: nil,
                                     discoveredAgents: windowState.discoveredAgents,
-                                    onSelectDiscoveredAgent: { _ in }
+                                    onSelectDiscoveredAgent: { agent in pendingDiscoveredAgent = agent }
                                 )
                                 .transition(.opacity.combined(with: .scale(scale: 0.98)))
                             } else {
@@ -1442,6 +1444,50 @@ struct ChatView: View {
         }
         .environment(\.theme, windowState.theme)
         .tint(theme.accentColor)
+        .sheet(item: $pendingDiscoveredAgent) { agent in
+            BonjourTokenSheet(agentName: agent.name) { token in
+                connectToDiscoveredAgent(agent, token: token)
+                pendingDiscoveredAgent = nil
+            } onCancel: {
+                pendingDiscoveredAgent = nil
+            }
+            .environment(\.theme, windowState.theme)
+        }
+    }
+
+    private func connectToDiscoveredAgent(_ agent: DiscoveredAgent, token: String) {
+        // Strip trailing dot from mDNS hostnames (e.g. "device.local." -> "device.local")
+        let rawHost = agent.host ?? agent.address ?? "localhost"
+        let host = rawHost.hasSuffix(".") ? String(rawHost.dropLast()) : rawHost
+        let manager = RemoteProviderManager.shared
+
+        // Reuse an existing provider that points to the same host:port
+        if let existing = manager.configuration.providers.first(where: {
+            $0.host == host && $0.effectivePort == agent.port
+        }) {
+            if !token.isEmpty {
+                var updated = existing
+                updated.authType = .apiKey
+                manager.updateProvider(updated, apiKey: token)
+            } else {
+                Task { try? await manager.connect(providerId: existing.id) }
+            }
+        } else {
+            let provider = RemoteProvider(
+                name: agent.name,
+                host: host,
+                providerProtocol: .http,
+                port: agent.port,
+                basePath: "/v1",
+                authType: token.isEmpty ? .none : .apiKey,
+                providerType: .openai,
+                enabled: true,
+                autoConnect: true
+            )
+            manager.addProvider(provider, apiKey: token.isEmpty ? nil : token)
+        }
+
+        Task { await session.refreshPickerItems() }
     }
 
     // MARK: - Background
@@ -1783,6 +1829,49 @@ struct ChatView: View {
             NSEvent.removeMonitor(monitor)
             keyMonitor = nil
         }
+    }
+}
+
+// MARK: - Bonjour Token Sheet
+
+/// Sheet shown when the user selects a Bonjour-discovered remote agent.
+/// Prompts for an optional server token before connecting.
+private struct BonjourTokenSheet: View {
+    let agentName: String
+    let onConnect: (String) -> Void
+    let onCancel: () -> Void
+
+    @State private var token: String = ""
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Connect to \(agentName)")
+                    .font(theme.font(size: 16, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+
+                Text("Enter the server token for this agent, or leave blank if none is required.")
+                    .font(theme.font(size: 13))
+                    .foregroundColor(theme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            SecureField("Server token (optional)", text: $token)
+                .textFieldStyle(.roundedBorder)
+                .font(theme.font(size: 13))
+
+            HStack {
+                Button("Cancel") { onCancel() }
+                    .keyboardShortcut(.cancelAction)
+                Spacer()
+                Button("Connect") { onConnect(token) }
+                    .keyboardShortcut(.defaultAction)
+                    .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding(24)
+        .frame(width: 380)
     }
 }
 

@@ -19,7 +19,7 @@ extension SocketAddress {
         }
     }
 }
-
+ 
 private final class SendableBool: @unchecked Sendable {
     private var _value: Bool
     private let _lock = NSLock()
