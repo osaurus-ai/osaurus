@@ -26,6 +26,8 @@
 	<string>Osaurus uses the microphone for on-device voice transcription with FluidAudio.</string>
 	<key>NSScreenCaptureUsageDescription</key>
 	<string>Osaurus can capture system audio for transcription. Screen content is not recorded.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Osaurus uses the local network to discover and connect to agents running on other devices.</string>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_osaurus._tcp</string>
