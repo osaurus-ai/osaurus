@@ -46,6 +46,7 @@ final class ChatWindowState: ObservableObject {
     @Published private(set) var agents: [Agent] = []
     @Published private(set) var discoveredAgents: [DiscoveredAgent] = []
     @Published var selectedDiscoveredAgent: DiscoveredAgent?
+    @Published var selectedDiscoveredAgentProviderId: UUID?
 
     // MARK: - Theme State
 
@@ -154,6 +155,7 @@ final class ChatWindowState: ObservableObject {
         if !session.turns.isEmpty { session.save() }
         agentId = newAgentId
         selectedDiscoveredAgent = nil
+        selectedDiscoveredAgentProviderId = nil
         session.reset(for: newAgentId)
         refreshTheme()
         refreshSessions()
@@ -302,6 +304,7 @@ final class ChatWindowState: ObservableObject {
                     !agents.contains(where: { $0.id == selected.id })
                 {
                     self?.selectedDiscoveredAgent = nil
+                    self?.selectedDiscoveredAgentProviderId = nil
                 }
             }
     }

@@ -1163,6 +1163,17 @@ struct ChatView: View {
     /// Convenience accessor for the window ID
     private var windowId: UUID { windowState.windowId }
 
+    /// Picker items filtered to the active Bonjour provider, or all items when no Bonjour agent is selected.
+    private var filteredPickerItems: [ModelPickerItem] {
+        guard let providerId = windowState.selectedDiscoveredAgentProviderId else {
+            return session.pickerItems
+        }
+        return session.pickerItems.filter {
+            if case .remote(_, let id) = $0.source { return id == providerId }
+            return false
+        }
+    }
+
     /// Observed session - needed to properly propagate @Published changes from ChatSession
     @ObservedObject private var observedSession: ChatSession
 
@@ -1343,7 +1354,7 @@ struct ChatView: View {
                                 isContinuousVoiceMode: $observedSession.isContinuousVoiceMode,
                                 voiceInputState: $observedSession.voiceInputState,
                                 showVoiceOverlay: $observedSession.showVoiceOverlay,
-                                pickerItems: observedSession.pickerItems,
+                                pickerItems: filteredPickerItems,
                                 activeModelOptions: $observedSession.activeModelOptions,
                                 isStreaming: observedSession.isStreaming,
                                 supportsImages: observedSession.selectedModelSupportsImages,
@@ -1443,6 +1454,31 @@ struct ChatView: View {
         .onDisappear {
             cleanupKeyMonitor()
         }
+        .onChange(of: observedSession.pickerItems) { _, newItems in
+            guard let providerId = windowState.selectedDiscoveredAgentProviderId else { return }
+            let providerItems = newItems.filter {
+                if case .remote(_, let id) = $0.source { return id == providerId }
+                return false
+            }
+            guard let firstItem = providerItems.first else { return }
+            let currentIsFromProvider = newItems.first(where: { $0.id == session.selectedModel }).map {
+                if case .remote(_, let id) = $0.source { return id == providerId }
+                return false
+            } ?? false
+            if !currentIsFromProvider {
+                session.selectedModel = firstItem.id
+            }
+        }
+        .onChange(of: windowState.selectedDiscoveredAgentProviderId) { _, providerId in
+            guard providerId == nil else { return }
+            // Bonjour agent deselected — restore agent's preferred model
+            let agentModel = AgentManager.shared.effectiveModel(for: windowState.agentId)
+            if let model = agentModel, session.pickerItems.contains(where: { $0.id == model }) {
+                session.selectedModel = model
+            } else {
+                session.selectedModel = session.pickerItems.first?.id
+            }
+        }
         .environment(\.theme, windowState.theme)
         .tint(theme.accentColor)
         .sheet(item: $pendingDiscoveredAgent) { agent in
@@ -1462,10 +1498,12 @@ struct ChatView: View {
         let host = rawHost.hasSuffix(".") ? String(rawHost.dropLast()) : rawHost
         let manager = RemoteProviderManager.shared
 
+        let providerId: UUID
         // Reuse an existing provider that points to the same host:port
         if let existing = manager.configuration.providers.first(where: {
             $0.host == host && $0.effectivePort == agent.port
         }) {
+            providerId = existing.id
             if !token.isEmpty {
                 var updated = existing
                 updated.authType = .apiKey
@@ -1485,10 +1523,12 @@ struct ChatView: View {
                 enabled: true,
                 autoConnect: true
             )
+            providerId = provider.id
             manager.addProvider(provider, apiKey: token.isEmpty ? nil : token)
         }
 
         windowState.selectedDiscoveredAgent = agent
+        windowState.selectedDiscoveredAgentProviderId = providerId
         Task { await session.refreshPickerItems() }
     }
 
