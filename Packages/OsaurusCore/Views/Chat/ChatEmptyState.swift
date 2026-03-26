@@ -22,6 +22,7 @@ struct ChatEmptyState: View {
     let onOpenOnboarding: (() -> Void)?
     var discoveredAgents: [DiscoveredAgent] = []
     var onSelectDiscoveredAgent: ((DiscoveredAgent) -> Void)? = nil
+    var activeDiscoveredAgent: DiscoveredAgent? = nil
 
     @State private var hasAppeared = false
     @Environment(\.theme) private var theme
@@ -136,7 +137,8 @@ struct ChatEmptyState: View {
             activeAgentId: activeAgentId,
             onSelectAgent: onSelectAgent,
             discoveredAgents: discoveredAgents,
-            onSelectDiscoveredAgent: onSelectDiscoveredAgent
+            onSelectDiscoveredAgent: onSelectDiscoveredAgent,
+            activeDiscoveredAgent: activeDiscoveredAgent
         )
     }
 

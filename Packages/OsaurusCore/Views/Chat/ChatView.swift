@@ -1325,7 +1325,8 @@ struct ChatView: View {
                                     },
                                     onOpenOnboarding: nil,
                                     discoveredAgents: windowState.discoveredAgents,
-                                    onSelectDiscoveredAgent: { agent in pendingDiscoveredAgent = agent }
+                                    onSelectDiscoveredAgent: { agent in pendingDiscoveredAgent = agent },
+                                    activeDiscoveredAgent: windowState.selectedDiscoveredAgent
                                 )
                                 .transition(.opacity.combined(with: .scale(scale: 0.98)))
                             } else {
@@ -1487,6 +1488,7 @@ struct ChatView: View {
             manager.addProvider(provider, apiKey: token.isEmpty ? nil : token)
         }
 
+        windowState.selectedDiscoveredAgent = agent
         Task { await session.refreshPickerItems() }
     }
 

@@ -45,6 +45,7 @@ final class ChatWindowState: ObservableObject {
     @Published var agentId: UUID
     @Published private(set) var agents: [Agent] = []
     @Published private(set) var discoveredAgents: [DiscoveredAgent] = []
+    @Published var selectedDiscoveredAgent: DiscoveredAgent?
 
     // MARK: - Theme State
 
@@ -152,6 +153,7 @@ final class ChatWindowState: ObservableObject {
     func switchAgent(to newAgentId: UUID) {
         if !session.turns.isEmpty { session.save() }
         agentId = newAgentId
+        selectedDiscoveredAgent = nil
         session.reset(for: newAgentId)
         refreshTheme()
         refreshSessions()
@@ -296,6 +298,11 @@ final class ChatWindowState: ObservableObject {
             .receive(on: RunLoop.main)
             .sink { [weak self] agents in
                 self?.discoveredAgents = agents
+                if let selected = self?.selectedDiscoveredAgent,
+                    !agents.contains(where: { $0.id == selected.id })
+                {
+                    self?.selectedDiscoveredAgent = nil
+                }
             }
     }
 

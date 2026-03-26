@@ -173,6 +173,7 @@ struct AgentPill: View {
     let onSelectAgent: (UUID) -> Void
     var discoveredAgents: [DiscoveredAgent] = []
     var onSelectDiscoveredAgent: ((DiscoveredAgent) -> Void)? = nil
+    var activeDiscoveredAgent: DiscoveredAgent? = nil
 
     @State private var isHovered = false
     @Environment(\.theme) private var theme
@@ -181,13 +182,17 @@ struct AgentPill: View {
         agents.first { $0.id == activeAgentId } ?? Agent.default
     }
 
+    private var displayName: String {
+        activeDiscoveredAgent?.name ?? activeAgent.name
+    }
+
     var body: some View {
         Menu {
             ForEach(agents) { agent in
                 Button(action: { onSelectAgent(agent.id) }) {
                     HStack {
                         Text(agent.name)
-                        if agent.id == activeAgentId {
+                        if agent.id == activeAgentId && activeDiscoveredAgent == nil {
                             Spacer()
                             Image(systemName: "checkmark")
                                 .font(.system(size: 12, weight: .medium))
@@ -203,7 +208,7 @@ struct AgentPill: View {
                         Button(action: { onSelectDiscoveredAgent?(remote) }) {
                             Label(
                                 remote.name + (remote.agentDescription.isEmpty ? "" : " – \(remote.agentDescription)"),
-                                systemImage: "network"
+                                systemImage: activeDiscoveredAgent?.id == remote.id ? "checkmark" : "network"
                             )
                         }
                     }
@@ -219,11 +224,11 @@ struct AgentPill: View {
             }
         } label: {
             HStack(spacing: 6) {
-                Image(systemName: "person.fill")
+                Image(systemName: activeDiscoveredAgent != nil ? "network" : "person.fill")
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(isHovered ? theme.accentColor : theme.secondaryText)
 
-                Text(activeAgent.name)
+                Text(displayName)
                     .font(theme.font(size: CGFloat(theme.bodySize), weight: .medium))
                     .foregroundColor(theme.primaryText)
 
