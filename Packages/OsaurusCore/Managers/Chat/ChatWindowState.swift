@@ -137,6 +137,9 @@ final class ChatWindowState: ObservableObject {
 
     /// Stops any running execution and breaks reference chains — call when window is closing.
     func cleanup() {
+        removeEphemeralProviderIfNeeded()
+        selectedDiscoveredAgent = nil
+        selectedDiscoveredAgentProviderId = nil
         workSession?.cancelExecution()
         session.stop()
         workSession = nil
@@ -154,6 +157,7 @@ final class ChatWindowState: ObservableObject {
     func switchAgent(to newAgentId: UUID) {
         if !session.turns.isEmpty { session.save() }
         agentId = newAgentId
+        removeEphemeralProviderIfNeeded()
         selectedDiscoveredAgent = nil
         selectedDiscoveredAgentProviderId = nil
         session.reset(for: newAgentId)
@@ -303,10 +307,18 @@ final class ChatWindowState: ObservableObject {
                 if let selected = self?.selectedDiscoveredAgent,
                     !agents.contains(where: { $0.id == selected.id })
                 {
+                    self?.removeEphemeralProviderIfNeeded()
                     self?.selectedDiscoveredAgent = nil
                     self?.selectedDiscoveredAgentProviderId = nil
                 }
             }
+    }
+
+    private func removeEphemeralProviderIfNeeded() {
+        guard let providerId = selectedDiscoveredAgentProviderId,
+            RemoteProviderManager.shared.isEphemeral(id: providerId)
+        else { return }
+        RemoteProviderManager.shared.removeProvider(id: providerId)
     }
 
     private static func loadTheme(for agentId: UUID) -> ThemeProtocol {

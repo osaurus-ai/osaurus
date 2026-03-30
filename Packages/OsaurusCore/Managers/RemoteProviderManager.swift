@@ -54,6 +54,9 @@ public final class RemoteProviderManager: ObservableObject {
     /// Active service instances keyed by provider ID
     private var services: [UUID: RemoteProviderService] = [:]
 
+    /// Provider IDs created from Bonjour discovery — not persisted to disk
+    private var ephemeralProviderIds: Set<UUID> = []
+
     private init() {
         self.configuration = RemoteProviderConfigurationStore.load()
 
@@ -65,10 +68,20 @@ public final class RemoteProviderManager: ObservableObject {
 
     // MARK: - Provider Management
 
-    /// Add a new provider
-    public func addProvider(_ provider: RemoteProvider, apiKey: String?) {
+    /// Returns true if the provider was created ephemerally from Bonjour discovery
+    public func isEphemeral(id: UUID) -> Bool {
+        ephemeralProviderIds.contains(id)
+    }
+
+    /// Add a new provider. Pass `isEphemeral: true` for Bonjour-discovered providers so they
+    /// are held only in memory and removed when the agent is deselected or goes offline.
+    public func addProvider(_ provider: RemoteProvider, apiKey: String?, isEphemeral: Bool = false) {
         configuration.add(provider)
-        RemoteProviderConfigurationStore.save(configuration)
+        if isEphemeral {
+            ephemeralProviderIds.insert(provider.id)
+        } else {
+            RemoteProviderConfigurationStore.save(configuration)
+        }
 
         // Save API key to Keychain if provided
         if let apiKey = apiKey, !apiKey.isEmpty {
@@ -126,6 +139,7 @@ public final class RemoteProviderManager: ObservableObject {
 
         // Remove from configuration (also cleans up Keychain)
         configuration.remove(id: id)
+        ephemeralProviderIds.remove(id)
         RemoteProviderConfigurationStore.save(configuration)
 
         // Clean up state

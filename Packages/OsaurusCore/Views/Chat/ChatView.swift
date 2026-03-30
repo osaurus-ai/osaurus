@@ -1524,7 +1524,7 @@ struct ChatView: View {
                 autoConnect: true
             )
             providerId = provider.id
-            manager.addProvider(provider, apiKey: token.isEmpty ? nil : token)
+            manager.addProvider(provider, apiKey: token.isEmpty ? nil : token, isEphemeral: true)
         }
 
         windowState.selectedDiscoveredAgent = agent
