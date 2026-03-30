@@ -68,8 +68,9 @@ public final class BonjourAdvertiser: NSObject {
         // Publish or re-publish services for current agents.
         for agent in agents where agent.bonjourEnabled {
             let existing = services[agent.id]
+            let expectedName = "\(agent.name)@\(agent.id.uuidString)"
             // Re-publish when there is no service yet or the display name changed.
-            if existing == nil || existing?.name != agent.name {
+            if existing == nil || existing?.name != expectedName {
                 existing?.stop()
                 publish(agent: agent)
             }
