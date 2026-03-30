@@ -65,13 +65,17 @@ public final class BonjourBrowser: NSObject, ObservableObject {
         // Skip agents that belong to this device.
         let localIds = Set(AgentManager.shared.agents.map(\.id))
         guard !localIds.contains(agentId) else { return }
-
+        
+        guard
+            let name = fields["name"].flatMap({ String(data: $0, encoding: .utf8) })
+        else { return }
+        
         let desc = fields["description"].flatMap { String(data: $0, encoding: .utf8) } ?? ""
         let addr = fields["address"].flatMap { String(data: $0, encoding: .utf8) }
 
         let agent = DiscoveredAgent(
             id: agentId,
-            name: service.name,
+            name: name,
             agentDescription: desc,
             address: addr,
             host: service.hostName,

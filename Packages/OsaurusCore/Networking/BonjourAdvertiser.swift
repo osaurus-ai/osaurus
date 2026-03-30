@@ -77,10 +77,11 @@ public final class BonjourAdvertiser: NSObject {
     }
 
     private func publish(agent: Agent) {
+        let name = "\(agent.name)@\(agent.id.uuidString)"
         let service = NetService(
             domain: "",  // empty = local. domain
             type: Self.serviceType,
-            name: agent.name,
+            name: name,
             port: Int32(currentPort)
         )
         service.setTXTRecord(txtRecord(for: agent))
@@ -91,6 +92,7 @@ public final class BonjourAdvertiser: NSObject {
 
     private func txtRecord(for agent: Agent) -> Data {
         var fields: [String: Data] = [:]
+        fields["name"] = agent.name.data(using: .utf8)
         fields["id"] = agent.id.uuidString.data(using: .utf8)
         if !agent.description.isEmpty {
             fields["description"] = agent.description.data(using: .utf8)
