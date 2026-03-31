@@ -35,7 +35,7 @@ jobs:
           restore-keys: spm-core-${{ runner.os }}-
 
       - name: Test OsaurusCore
-        run: >-
+        run: |
           swift test --package-path Packages/OsaurusCore
           --skip KVCacheStoreTests
           --skip MLXGenerationEngineTests
