@@ -5,6 +5,7 @@ set -euo pipefail
 : "${GH_TOKEN:?GH_TOKEN is required}"
 
 # Target repository for hosting files and releases (match SUFeedURL)
+# Keep this in sync with scripts/create_release.sh and the workflow env
 PUBLIC_REPO="${PUBLIC_REPO:-$GITHUB_REPOSITORY}"
 
 SPARKLE_CHANNEL="${SPARKLE_CHANNEL:-release}"
