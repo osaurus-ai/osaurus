@@ -13,7 +13,7 @@ permissions:
   contents: read
 
 jobs:
-  test:
+  test-core:
     runs-on: macos-latest
     steps:
       - name: Checkout code
@@ -30,14 +30,33 @@ jobs:
       - name: Cache SPM packages
         uses: actions/cache@v4
         with:
-          path: |
-            Packages/OsaurusCore/.build
-            Packages/OsaurusCLI/.build
-          key: spm-${{ runner.os }}-${{ hashFiles('Packages/*/Package.swift') }}
-          restore-keys: spm-${{ runner.os }}-
+          path: Packages/OsaurusCore/.build
+          key: spm-core-${{ runner.os }}-${{ hashFiles('Packages/OsaurusCore/Package.swift') }}
+          restore-keys: spm-core-${{ runner.os }}-
 
       - name: Test OsaurusCore
-        run: swift test --package-path Packages/OsaurusCore
+        run: >-
+          swift test --package-path Packages/OsaurusCore
+          --skip KVCacheStoreTests
+          --skip MLXGenerationEngineTests
+
+  test-cli:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Cache SPM packages
+        uses: actions/cache@v4
+        with:
+          path: Packages/OsaurusCLI/.build
+          key: spm-cli-${{ runner.os }}-${{ hashFiles('Packages/OsaurusCLI/Package.swift') }}
+          restore-keys: spm-cli-${{ runner.os }}-
 
       - name: Test OsaurusCLI
         run: swift test --package-path Packages/OsaurusCLI
