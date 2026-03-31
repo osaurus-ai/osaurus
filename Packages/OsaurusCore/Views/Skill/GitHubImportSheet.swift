@@ -31,6 +31,7 @@ struct GitHubImportSheet: View {
     @State private var selectedSkillPaths: Set<String> = []
     @State private var hasAppeared = false
     @State private var isInputFocused = false
+    @State private var activeTask: Task<Void, Never>?
 
     // MARK: - Body
 
@@ -53,6 +54,10 @@ struct GitHubImportSheet: View {
         .animation(.spring(response: 0.3, dampingFraction: 0.8), value: hasAppeared)
         .onAppear {
             withAnimation { hasAppeared = true }
+        }
+        .onDisappear {
+            activeTask?.cancel()
+            activeTask = nil
         }
     }
 
@@ -94,7 +99,7 @@ struct GitHubImportSheet: View {
 
             Spacer()
 
-            Button(action: onCancel) {
+            Button(action: cancel) {
                 Image(systemName: "xmark")
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundColor(theme.tertiaryText)
@@ -468,7 +473,7 @@ struct GitHubImportSheet: View {
         HStack(spacing: 10) {
             Spacer()
 
-            Button("Cancel", action: onCancel)
+            Button("Cancel", action: cancel)
                 .buttonStyle(GitHubSecondaryButtonStyle())
 
             switch importState {
@@ -505,20 +510,32 @@ struct GitHubImportSheet: View {
 
     // MARK: - Actions
 
+    private func cancel() {
+        activeTask?.cancel()
+        activeTask = nil
+        onCancel()
+    }
+
     private func fetchSkills() {
         let url = urlInput.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !url.isEmpty else { return }
 
+        activeTask?.cancel()
         importState = .loading
 
-        Task {
+        activeTask = Task {
             do {
                 let result = try await gitHubService.fetchSkills(from: url)
+                guard !Task.isCancelled else { return }
                 selectedSkillPaths = Set(result.skills.map(\.path))
                 importState = .skillSelection(result)
+            } catch is CancellationError {
+                return
             } catch let error as GitHubSkillError {
+                guard !Task.isCancelled else { return }
                 importState = .error(error)
             } catch {
+                guard !Task.isCancelled else { return }
                 importState = .error(.networkError(error))
             }
         }
@@ -528,22 +545,29 @@ struct GitHubImportSheet: View {
         let selectedPaths = Array(selectedSkillPaths)
         guard !selectedPaths.isEmpty else { return }
 
+        activeTask?.cancel()
         importState = .importing(progress: 0, total: selectedPaths.count)
 
-        Task {
+        activeTask = Task {
             var importedSkills: [Skill] = []
 
             for (index, path) in selectedPaths.enumerated() {
+                guard !Task.isCancelled else { return }
                 importState = .importing(progress: index + 1, total: selectedPaths.count)
 
                 do {
                     let content = try await gitHubService.fetchSkillContent(from: result.repo, skillPath: path)
+                    guard !Task.isCancelled else { return }
                     let skill = try Skill.parseAnyFormat(from: content)
                     importedSkills.append(skill)
+                } catch is CancellationError {
+                    return
                 } catch {
                     print("Failed to import skill at \(path): \(error)")
                 }
             }
+
+            guard !Task.isCancelled else { return }
 
             if !importedSkills.isEmpty {
                 onImport(importedSkills)
@@ -566,8 +590,7 @@ private struct GitHubSkillSelectionRow: View {
     @State private var isHovered = false
 
     private var skillColor: Color {
-        let hash = abs(skill.displayName.hashValue)
-        let hue = Double(hash % 360) / 360.0
+        let hue = Double(abs(skill.displayName.hashValue % 360)) / 360.0
         return Color(hue: hue, saturation: 0.55, brightness: 0.75)
     }
 

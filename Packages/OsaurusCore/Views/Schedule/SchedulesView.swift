@@ -209,8 +209,7 @@ private struct ScheduleCard: View {
 
     /// Consistent color derived from the schedule name
     private var scheduleColor: Color {
-        let hash = abs(schedule.name.hashValue)
-        let hue = Double(hash % 360) / 360.0
+        let hue = Double(abs(schedule.name.hashValue % 360)) / 360.0
         return Color(hue: hue, saturation: 0.6, brightness: 0.8)
     }
 
@@ -1327,8 +1326,7 @@ private struct AgentPicker: View {
     }
 
     private func agentColor(for name: String) -> Color {
-        let hash = abs(name.hashValue)
-        let hue = Double(hash % 360) / 360.0
+        let hue = Double(abs(name.hashValue % 360)) / 360.0
         return Color(hue: hue, saturation: 0.6, brightness: 0.8)
     }
 

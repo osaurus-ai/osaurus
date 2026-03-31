@@ -132,7 +132,10 @@ public enum SkillStore {
             return
         }
 
-        let dirName = skill.directoryName ?? skill.xplaceholder_agentSkillsNamex
+        var dirName = skill.directoryName ?? skill.xplaceholder_agentSkillsNamex
+        if dirName.isEmpty {
+            dirName = "skill-\(skill.id.uuidString.prefix(8).lowercased())"
+        }
         let skillDir = skillsDirectory().appendingPathComponent(dirName)
 
         do {
@@ -202,7 +205,10 @@ public enum SkillStore {
 
     /// Get the directory URL for a skill
     public static func skillDirectory(for skill: Skill) -> URL {
-        let dirName = skill.directoryName ?? skill.xplaceholder_agentSkillsNamex
+        var dirName = skill.directoryName ?? skill.xplaceholder_agentSkillsNamex
+        if dirName.isEmpty {
+            dirName = "skill-\(skill.id.uuidString.prefix(8).lowercased())"
+        }
         return skillsDirectory().appendingPathComponent(dirName)
     }
 
@@ -322,7 +328,10 @@ public enum SkillStore {
             do {
                 let content = try String(contentsOf: file, encoding: .utf8)
                 let skill = try Skill.parseAnyFormat(from: content)
-                let dirName = skill.directoryName ?? skill.xplaceholder_agentSkillsNamex
+                var dirName = skill.directoryName ?? skill.xplaceholder_agentSkillsNamex
+                if dirName.isEmpty {
+                    dirName = "skill-\(skill.id.uuidString.prefix(8).lowercased())"
+                }
                 let skillDir = directory.appendingPathComponent(dirName)
 
                 var isDirectory: ObjCBool = false

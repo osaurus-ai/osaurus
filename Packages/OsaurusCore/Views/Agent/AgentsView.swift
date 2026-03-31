@@ -4,8 +4,7 @@ import UniformTypeIdentifiers
 // MARK: - Shared Helpers
 
 func agentColorFor(_ name: String) -> Color {
-    let hash = abs(name.hashValue)
-    let hue = Double(hash % 360) / 360.0
+    let hue = Double(abs(name.hashValue % 360)) / 360.0
     return Color(hue: hue, saturation: 0.6, brightness: 0.8)
 }
 

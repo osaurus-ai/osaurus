@@ -208,8 +208,7 @@ private struct WatcherCard: View {
     }
 
     private var watcherColor: Color {
-        let hash = abs(watcher.name.hashValue)
-        let hue = Double(hash % 360) / 360.0
+        let hue = Double(abs(watcher.name.hashValue % 360)) / 360.0
         return Color(hue: hue, saturation: 0.6, brightness: 0.8)
     }
 
@@ -1062,8 +1061,7 @@ private struct WatcherAgentPicker: View {
     }
 
     private func agentColor(for name: String) -> Color {
-        let hash = abs(name.hashValue)
-        let hue = Double(hash % 360) / 360.0
+        let hue = Double(abs(name.hashValue % 360)) / 360.0
         return Color(hue: hue, saturation: 0.6, brightness: 0.8)
     }
 

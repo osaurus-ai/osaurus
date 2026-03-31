@@ -428,8 +428,7 @@ private struct SkillRow: View {
     }
 
     private var skillColor: Color {
-        let hash = abs(skill.name.hashValue)
-        let hue = Double(hash % 360) / 360.0
+        let hue = Double(abs(skill.name.hashValue % 360)) / 360.0
         return Color(hue: hue, saturation: 0.6, brightness: 0.8)
     }
 

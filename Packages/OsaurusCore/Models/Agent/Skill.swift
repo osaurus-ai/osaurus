@@ -668,13 +668,14 @@ extension Skill {
 extension Skill {
     /// Convert name to Agent Skills format (lowercase, hyphens)
     public var xplaceholder_agentSkillsNamex: String {
-        name.lowercased()
+        let sanitized = name.lowercased()
             .replacingOccurrences(of: " ", with: "-")
             .replacingOccurrences(of: "_", with: "-")
             .components(separatedBy: CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-")).inverted)
             .joined()
             .replacingOccurrences(of: "--", with: "-")
             .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+        return sanitized.isEmpty ? "skill-\(id.uuidString.prefix(8).lowercased())" : sanitized
     }
 
     /// Export to Agent Skills SKILL.md format

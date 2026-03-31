@@ -1075,8 +1075,7 @@ private struct SandboxProvisionSheet: View {
 // MARK: - Shared Helpers
 
 private func sandboxAgentColor(for name: String) -> Color {
-    let hash = abs(name.hashValue)
-    let hue = Double(hash % 360) / 360.0
+    let hue = Double(abs(name.hashValue % 360)) / 360.0
     return Color(hue: hue, saturation: 0.6, brightness: 0.8)
 }
 
