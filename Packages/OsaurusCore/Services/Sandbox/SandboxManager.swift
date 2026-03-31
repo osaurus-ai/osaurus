@@ -165,7 +165,7 @@
 
                         // NAT interface for outbound internet (apk, pip, npm, etc.)
                         let natInterface = NATInterface(
-                            ipv4Address: try! CIDRv4("10.0.2.15/24"),
+                            ipv4Address: try! CIDRv4("10.0.2.15/24"),  // swiftlint:disable:this force_try
                             ipv4Gateway: nil
                         )
                         cfg.interfaces = [natInterface]

@@ -4162,7 +4162,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             // Skip leading CRLF
             var contentStart = partStart
             if data[contentStart ..< min(contentStart + 2, partEnd)] == crlfData {
-                contentStart = contentStart + 2
+                contentStart += 2
             }
 
             // Find headers end (double CRLF)
@@ -4176,7 +4176,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
             // Trim trailing CRLF from body
             if bodyEnd >= 2 && data[bodyEnd - 2 ..< bodyEnd] == crlfData {
-                bodyEnd = bodyEnd - 2
+                bodyEnd -= 2
             }
 
             let bodyData = data[bodyStart ..< bodyEnd]

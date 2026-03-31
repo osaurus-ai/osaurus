@@ -136,6 +136,10 @@ struct CapabilitiesLoadToolTests {
     }
 
     @Test func toolLoadBuffersSpec() async throws {
+        await MainActor.run {
+            ToolRegistry.shared.setEnabled(true, for: "capabilities_search")
+        }
+
         let tool = CapabilitiesLoadTool()
         let result = try await tool.execute(
             argumentsJSON: "{\"ids\": [\"tool/capabilities_search\"]}"

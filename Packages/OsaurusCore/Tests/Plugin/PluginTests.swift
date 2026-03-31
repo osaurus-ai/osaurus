@@ -20,6 +20,7 @@ struct PluginRouteMatchingTests {
             plugin_id: "com.test.plugin",
             description: nil,
             capabilities: .init(tools: nil, routes: routes, config: nil, web: nil, artifact_handler: nil),
+            instructions: nil,
             name: nil,
             version: nil,
             license: nil,

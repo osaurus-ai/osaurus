@@ -277,7 +277,7 @@ struct WorkView: View {
 
     private var agentEmptyState: some View {
         WorkEmptyState(
-            hasModels: session.pickerItems.count > 0,
+            hasModels: !session.pickerItems.isEmpty,
             selectedModel: session.selectedModel,
             agents: windowState.agents,
             activeAgentId: windowState.agentId,

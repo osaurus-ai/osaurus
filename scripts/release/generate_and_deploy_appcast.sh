@@ -109,7 +109,7 @@ mv "$tmpfile" updates/appcast-arm64.xml
 NEW_ITEMS=$(sed -n '/<item>/,/<\/item>/p' updates/appcast-arm64.xml)
 
 # Clone the public repo to merge with the existing appcast
-git clone https://x-access-token:${GH_TOKEN}@github.com/${PUBLIC_REPO}.git public-repo
+git clone "https://x-access-token:${GH_TOKEN}@github.com/${PUBLIC_REPO}.git" public-repo
 mkdir -p public-repo/docs
 
 # Merge new items into the existing appcast (preserving items from other channels)

@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Install Metal Toolchain
+        run: xcodebuild -downloadComponent MetalToolchain
+
+      - name: Cache SPM packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            Packages/OsaurusCore/.build
+            Packages/OsaurusCLI/.build
+          key: spm-${{ runner.os }}-${{ hashFiles('Packages/*/Package.swift') }}
+          restore-keys: spm-${{ runner.os }}-
+
+      - name: Test OsaurusCore
+        run: swift test --package-path Packages/OsaurusCore
+
+      - name: Test OsaurusCLI
+        run: swift test --package-path Packages/OsaurusCLI
+
+  swiftlint:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install SwiftLint
+        run: brew install swiftlint
+
+      - name: Run SwiftLint
+        run: swiftlint lint --reporter github-actions-logging
+
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install shellcheck
+        run: sudo apt-get install -y shellcheck
+
+      - name: Lint shell scripts
+        run: shellcheck --severity=warning scripts/**/*.sh

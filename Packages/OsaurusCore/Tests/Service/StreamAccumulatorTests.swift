@@ -314,9 +314,12 @@ struct StreamAccumulatorTests {
     // MARK: prefillDidFinish signaling
 
     @Test func prefillDidFinish_calledAfterFirstToken() async throws {
-        // Reset shared state (MainActor-isolated method requires await)
-        await MainActor.run { InferenceProgressManager.shared.prefillWillStart(tokenCount: 5) }
-        let countAfterStart = await MainActor.run { InferenceProgressManager.shared.prefillTokenCount }
+        // Set and read in one MainActor block to avoid a suspension point where
+        // a lingering prefillDidFinishAsync() from a parallel test could clear the value.
+        let countAfterStart = await MainActor.run {
+            InferenceProgressManager.shared.prefillWillStart(tokenCount: 5)
+            return InferenceProgressManager.shared.prefillTokenCount
+        }
         #expect(countAfterStart != nil)
 
         // Build a stream with one token then a finish.

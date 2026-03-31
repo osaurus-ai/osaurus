@@ -682,6 +682,8 @@ struct TaskStateDictTests {
 
 struct DispatchRateLimitTests {
 
+    private let testAgentId = UUID()
+
     private func makeContext() throws -> PluginHostContext {
         try PluginHostContext(pluginId: "com.test.ratelimit.\(UUID().uuidString)")
     }
@@ -689,14 +691,14 @@ struct DispatchRateLimitTests {
     @Test func allowsFirstRequest() throws {
         let ctx = try makeContext()
         defer { ctx.teardown() }
-        #expect(ctx.checkDispatchRateLimit() == true)
+        #expect(ctx.checkDispatchRateLimit(agentId: testAgentId) == true)
     }
 
     @Test func allowsUpTo10Requests() throws {
         let ctx = try makeContext()
         defer { ctx.teardown() }
         for i in 0 ..< 10 {
-            #expect(ctx.checkDispatchRateLimit() == true, "Request \(i) should be allowed")
+            #expect(ctx.checkDispatchRateLimit(agentId: testAgentId) == true, "Request \(i) should be allowed")
         }
     }
 
@@ -704,9 +706,9 @@ struct DispatchRateLimitTests {
         let ctx = try makeContext()
         defer { ctx.teardown() }
         for _ in 0 ..< 10 {
-            _ = ctx.checkDispatchRateLimit()
+            _ = ctx.checkDispatchRateLimit(agentId: testAgentId)
         }
-        #expect(ctx.checkDispatchRateLimit() == false)
+        #expect(ctx.checkDispatchRateLimit(agentId: testAgentId) == false)
     }
 
     @Test func separateContextsHaveIndependentLimits() throws {
@@ -716,10 +718,10 @@ struct DispatchRateLimitTests {
         defer { ctx2.teardown() }
 
         for _ in 0 ..< 10 {
-            _ = ctx1.checkDispatchRateLimit()
+            _ = ctx1.checkDispatchRateLimit(agentId: testAgentId)
         }
-        #expect(ctx1.checkDispatchRateLimit() == false)
-        #expect(ctx2.checkDispatchRateLimit() == true)
+        #expect(ctx1.checkDispatchRateLimit(agentId: testAgentId) == false)
+        #expect(ctx2.checkDispatchRateLimit(agentId: testAgentId) == true)
     }
 }
 

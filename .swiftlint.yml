@@ -1,0 +1,39 @@
+included:
+  - Packages/OsaurusCore
+  - Packages/OsaurusCLI
+  - Packages/OsaurusRepository
+  - App
+
+excluded:
+  - Packages/OsaurusCore/.build
+  - Packages/OsaurusCore/Tests
+  - Packages/OsaurusCLI/.build
+  - Packages/OsaurusCLI/Tests
+
+disabled_rules:
+  - line_length
+  - type_body_length
+  - file_length
+  - function_body_length
+  - cyclomatic_complexity
+  - function_parameter_count
+  - large_tuple
+  - nesting
+  - todo
+  - identifier_name
+  - type_name
+  - trailing_comma
+
+opt_in_rules:
+  - empty_count
+  - closure_spacing
+  - contains_over_filter_count
+  - contains_over_first_not_nil
+  - discouraged_optional_boolean
+  - empty_collection_literal
+  - empty_string
+  - first_where
+  - last_where
+  - modifier_order
+  - redundant_nil_coalescing
+  - sorted_first_last
