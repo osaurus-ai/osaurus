@@ -95,7 +95,10 @@ NOTES_FILE="$RELEASE_NOTES_FILE" awk -v ver="${VERSION}" '
     nf = ENVIRON["NOTES_FILE"]
     if (nf != "") {
       print "            <description><![CDATA["
-      while ((getline line < nf) > 0) print line
+      while ((getline line < nf) > 0) {
+        gsub(/\]\]>/, "]]]]><![CDATA[>", line)
+        print line
+      }
       close(nf)
       print "]]></description>"
     }
