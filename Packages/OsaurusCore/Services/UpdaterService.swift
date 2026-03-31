@@ -10,6 +10,8 @@ import Sparkle
 
 @MainActor
 final class UpdaterViewModel: NSObject, ObservableObject, SPUUpdaterDelegate {
+    nonisolated private static let betaUpdatesKey = "betaUpdatesEnabled"
+
     lazy var updaterController: SPUStandardUpdaterController = SPUStandardUpdaterController(
         startingUpdater: true,
         updaterDelegate: self,
@@ -20,7 +22,16 @@ final class UpdaterViewModel: NSObject, ObservableObject, SPUUpdaterDelegate {
     @Published var updateAvailable: Bool = false
     @Published var availableVersion: String? = nil
 
+    @Published var isBetaChannel: Bool {
+        didSet {
+            UserDefaults.standard.set(isBetaChannel, forKey: Self.betaUpdatesKey)
+            updaterController.updater.resetUpdateCycle()
+            NSLog("Sparkle: update channel changed to %@", isBetaChannel ? "beta" : "release")
+        }
+    }
+
     override init() {
+        self.isBetaChannel = UserDefaults.standard.bool(forKey: Self.betaUpdatesKey)
         super.init()
     }
 
@@ -37,7 +48,8 @@ final class UpdaterViewModel: NSObject, ObservableObject, SPUUpdaterDelegate {
     // MARK: - SPUUpdaterDelegate
 
     nonisolated func allowedChannels(for updater: SPUUpdater) -> Set<String> {
-        return Set(["release"])
+        let beta = UserDefaults.standard.bool(forKey: Self.betaUpdatesKey)
+        return beta ? Set(["release", "beta"]) : Set(["release"])
     }
 
     nonisolated func feedURLString(for updater: SPUUpdater) -> String? {

@@ -3,6 +3,7 @@ import SwiftUI
 // MARK: - Configuration View
 struct ConfigurationView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
+    @EnvironmentObject private var updater: UpdaterViewModel
 
     /// Use computed property to always get the current theme from ThemeManager
     private var theme: ThemeProtocol { themeManager.currentTheme }
@@ -87,6 +88,8 @@ struct ConfigurationView: View {
                             "Hotkey",
                             "Login",
                             "Start at Login",
+                            "Beta",
+                            "Updates",
                             "CLI",
                             "Command Line",
                             "Install",
@@ -114,6 +117,13 @@ struct ConfigurationView: View {
                                         title: "Hide Dock Icon",
                                         description: "Run in menu bar only (requires restart)",
                                         isOn: $tempHideDockIcon
+                                    )
+
+                                    SettingsToggle(
+                                        title: "Beta Updates",
+                                        description:
+                                            "Receive pre-release updates with new features before they're generally available",
+                                        isOn: $updater.isBetaChannel
                                     )
 
                                     SettingsDivider()

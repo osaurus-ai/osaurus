@@ -12,7 +12,7 @@ let package = Package(
         .package(url: "https://github.com/apple/containerization.git", from: "0.26.0"),
         .package(url: "https://github.com/modelcontextprotocol/swift-sdk.git", from: "0.12.0"),
         .package(url: "https://github.com/orlandos-nl/IkigaJSON", from: "2.3.2"),
-        .package(url: "https://github.com/sparkle-project/Sparkle", "2.7.0" ..< "2.9.0"),
+        .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.7.0"),
         .package(url: "https://github.com/ml-explore/mlx-swift", from: "0.29.1"),
         .package(url: "https://github.com/ml-explore/mlx-swift-lm", branch: "main"),
         .package(url: "https://github.com/huggingface/swift-transformers", from: "1.1.6"),

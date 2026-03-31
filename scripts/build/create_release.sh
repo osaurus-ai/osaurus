@@ -6,19 +6,30 @@ set -euo pipefail
 # Target repository for release assets (keep in sync with generate_and_deploy_appcast.sh)
 PUBLIC_REPO="${PUBLIC_REPO:-$GITHUB_REPOSITORY}"
 
+IS_BETA="${IS_BETA:-false}"
+
 git config --global user.name "github-actions[bot]"
 git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+RELEASE_FLAGS=()
+if [ "$IS_BETA" = "true" ]; then
+  RELEASE_FLAGS+=(--prerelease)
+  RELEASE_FLAGS+=(--title "Osaurus ${VERSION} (Beta)")
+else
+  RELEASE_FLAGS+=(--latest)
+  RELEASE_FLAGS+=(--title "Osaurus ${VERSION}")
+fi
 
 gh release create "${VERSION}" \
   "build_output/Osaurus-${VERSION}.dmg" \
   "build_output/Osaurus.dmg" \
-  "updates/arm64/Osaurus-${VERSION}.html" \
   --repo "${PUBLIC_REPO}" \
-  --title "Osaurus ${VERSION}" \
   --notes-file RELEASE_NOTES.md \
-  --latest
+  "${RELEASE_FLAGS[@]}"
 
 echo "✅ Release created successfully"
-echo "📥 Latest download URL: https://github.com/${PUBLIC_REPO}/releases/latest/download/Osaurus.dmg"
-
-
+if [ "$IS_BETA" = "true" ]; then
+  echo "🧪 Beta release URL: https://github.com/${PUBLIC_REPO}/releases/tag/${VERSION}"
+else
+  echo "📥 Latest download URL: https://github.com/${PUBLIC_REPO}/releases/latest/download/Osaurus.dmg"
+fi
