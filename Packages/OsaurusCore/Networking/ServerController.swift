@@ -118,7 +118,11 @@ final class ServerController: ObservableObject {
             lastErrorMessage = nil
             print("[Osaurus] NIO server started successfully on port \(configuration.port)")
 
-            BonjourAdvertiser.shared.startAdvertising(port: configuration.port)
+            if configuration.exposeToNetwork {
+                BonjourAdvertiser.shared.startAdvertising(port: configuration.port)
+            } else {
+                BonjourAdvertiser.shared.stopAdvertising()
+            }
             RelayTunnelManager.shared.reconnectIfNeeded(port: configuration.port)
         } catch {
             handleServerError(error)

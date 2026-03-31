@@ -620,6 +620,7 @@ struct AgentDetailView: View {
     private var scheduleManager = ScheduleManager.shared
     private var watcherManager = WatcherManager.shared
     @ObservedObject private var relayManager = RelayTunnelManager.shared
+    @EnvironmentObject private var server: ServerController
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
@@ -1574,6 +1575,7 @@ struct AgentDetailView: View {
 
     @ViewBuilder
     private var bonjourSection: some View {
+        let exposeToNetwork = server.configuration.exposeToNetwork
         AgentDetailSection(title: "Bonjour", icon: "antenna.radiowaves.left.and.right") {
             VStack(alignment: .leading, spacing: 12) {
                 Text(
@@ -1608,6 +1610,7 @@ struct AgentDetailView: View {
                     )
                     .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
                     .labelsHidden()
+                    .disabled(!exposeToNetwork)
                 }
                 .padding(10)
                 .background(
@@ -1618,6 +1621,13 @@ struct AgentDetailView: View {
                                 .stroke(theme.inputBorder, lineWidth: 1)
                         )
                 )
+                .opacity(exposeToNetwork ? 1 : 0.5)
+
+                if !exposeToNetwork {
+                    Text("Requires \"Expose to Local Network\" to be enabled in Server Settings.")
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.tertiaryText)
+                }
             }
         }
     }
