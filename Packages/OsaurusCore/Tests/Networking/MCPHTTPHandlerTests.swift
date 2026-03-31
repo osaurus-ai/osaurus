@@ -13,6 +13,7 @@ import Testing
 
 @testable import OsaurusCore
 
+@Suite(.serialized)
 struct MCPHTTPHandlerTests {
 
     @Test func mcp_health_returns_ok() async throws {
@@ -42,7 +43,6 @@ struct MCPHTTPHandlerTests {
         // Register and enable a test tool
         await ToolRegistry.shared.register(EchoTool())
         await ToolRegistry.shared.setEnabled(true, for: EchoTool.nameStatic)
-        defer { Task { @MainActor in ToolRegistry.shared.unregister(names: [EchoTool.nameStatic]) } }
 
         let server = try await startTestServer()
         defer { Task { await server.shutdown() } }
@@ -76,7 +76,6 @@ struct MCPHTTPHandlerTests {
         // Register and enable a test tool
         await ToolRegistry.shared.register(EchoTool())
         await ToolRegistry.shared.setEnabled(true, for: EchoTool.nameStatic)
-        defer { Task { @MainActor in ToolRegistry.shared.unregister(names: [EchoTool.nameStatic]) } }
 
         let server = try await startTestServer()
         defer { Task { await server.shutdown() } }
@@ -117,7 +116,6 @@ struct MCPHTTPHandlerTests {
         // Register and enable a test tool
         await ToolRegistry.shared.register(EchoTool())
         await ToolRegistry.shared.setEnabled(true, for: EchoTool.nameStatic)
-        defer { Task { @MainActor in ToolRegistry.shared.unregister(names: [EchoTool.nameStatic]) } }
 
         let server = try await startTestServer()
         defer { Task { await server.shutdown() } }
