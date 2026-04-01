@@ -78,10 +78,10 @@ struct WorkEmptyState: View {
                     discoveredAgents: discoveredAgents,
                     onSelectDiscoveredAgent: onSelectDiscoveredAgent
                 )
-                    .opacity(hasAppeared ? 1 : 0)
-                    .offset(y: hasAppeared ? 0 : 12)
-                    .scaleEffect(hasAppeared ? 1 : 0.97)
-                    .animation(theme.springAnimation().delay(0.25), value: hasAppeared)
+                .opacity(hasAppeared ? 1 : 0)
+                .offset(y: hasAppeared ? 0 : 12)
+                .scaleEffect(hasAppeared ? 1 : 0.97)
+                .animation(theme.springAnimation().delay(0.25), value: hasAppeared)
             }
 
             if !quickActions.isEmpty {

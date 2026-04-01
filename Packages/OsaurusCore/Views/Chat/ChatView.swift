@@ -1461,10 +1461,11 @@ struct ChatView: View {
                 return false
             }
             guard let firstItem = providerItems.first else { return }
-            let currentIsFromProvider = newItems.first(where: { $0.id == session.selectedModel }).map {
-                if case .remote(_, let id) = $0.source { return id == providerId }
-                return false
-            } ?? false
+            let currentIsFromProvider =
+                newItems.first(where: { $0.id == session.selectedModel }).map {
+                    if case .remote(_, let id) = $0.source { return id == providerId }
+                    return false
+                } ?? false
             if !currentIsFromProvider {
                 session.selectedModel = firstItem.id
             }
