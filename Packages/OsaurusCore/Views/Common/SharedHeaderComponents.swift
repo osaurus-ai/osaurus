@@ -218,7 +218,7 @@ struct AgentPill: View {
                 }
             }
 
-            if !discoveredAgents.isEmpty {
+            if !discoveredAgents.isEmpty && onSelectDiscoveredAgent != nil {
                 Divider()
                 Section("On This Network") {
                     ForEach(discoveredAgents) { remote in

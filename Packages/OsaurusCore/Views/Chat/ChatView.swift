@@ -1409,7 +1409,7 @@ struct ChatView: View {
                                     AppDelegate.shared?.showOnboardingWindow()
                                 },
                                 discoveredAgents: windowState.discoveredAgents,
-                                onSelectDiscoveredAgent: { _ in }
+                                onSelectDiscoveredAgent: { agent in pendingDiscoveredAgent = agent }
                             )
                         }
                     }
@@ -1494,7 +1494,7 @@ struct ChatView: View {
 
     private func connectToDiscoveredAgent(_ agent: DiscoveredAgent, token: String) {
         // Strip trailing dot from mDNS hostnames (e.g. "device.local." -> "device.local")
-        let rawHost = agent.host ?? agent.address ?? "localhost"
+        let rawHost = agent.host ?? "localhost"
         let host = rawHost.hasSuffix(".") ? String(rawHost.dropLast()) : rawHost
         let manager = RemoteProviderManager.shared
 
@@ -1507,10 +1507,10 @@ struct ChatView: View {
             if !token.isEmpty {
                 var updated = existing
                 updated.authType = .apiKey
+                updated.enabled = true
                 manager.updateProvider(updated, apiKey: token)
-            } else {
-                Task { try? await manager.connect(providerId: existing.id) }
             }
+            Task { try? await manager.connect(providerId: existing.id) }
         } else {
             let provider = RemoteProvider(
                 name: agent.name,
