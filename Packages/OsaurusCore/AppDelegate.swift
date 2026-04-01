@@ -144,13 +144,17 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             await ModelPickerItemCache.shared.prewarmModelCache()
         }
 
-        // Initialize memory database with retry (does not depend on embedding)
-        Task { @MainActor in
-            var opened = false
+        // All VecturaKit inits run sequentially in one Task to prevent concurrent
+        // CoreML model loads that can SIGSEGV on Apple Silicon.
+        // Memory DB opens first because MemorySearchService.initialize() needs it
+        // for reverse maps. Registered as startup init task so ModelRuntime can
+        // gate MLX inference until CoreML embedding work finishes.
+        let embeddingInitTask = Task {
+            var memoryDBOpened = false
             for attempt in 1 ... 3 {
                 do {
                     try MemoryDatabase.shared.open()
-                    opened = true
+                    memoryDBOpened = true
                     break
                 } catch {
                     MemoryLogger.database.error("Memory database open attempt \(attempt)/3 failed: \(error)")
@@ -159,20 +163,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                     }
                 }
             }
-            if opened {
-                ActivityTracker.shared.start()
-                await MemoryService.shared.recoverOrphanedSignals()
+            if memoryDBOpened {
+                await MemorySearchService.shared.initialize()
             } else {
                 MemoryLogger.database.error("Memory system disabled — database failed to open after 3 attempts")
             }
-        }
-
-        // All VecturaKit inits run sequentially in one Task to prevent concurrent
-        // CoreML model loads that can SIGSEGV on Apple Silicon.
-        // Registered as startup init task so ModelRuntime can gate MLX inference
-        // until CoreML embedding work finishes (prevents concurrent Metal operations).
-        let embeddingInitTask = Task {
-            await MemorySearchService.shared.initialize()
 
             try? MethodDatabase.shared.open()
             await MethodSearchService.shared.initialize()
@@ -187,6 +182,15 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             await MethodSearchService.shared.rebuildIndex()
         }
         EmbeddingService.setStartupInitTask(embeddingInitTask)
+
+        // Start activity tracking and recover orphaned signals once DB is ready
+        Task { @MainActor in
+            await embeddingInitTask.value
+            if MemoryDatabase.shared.isOpen {
+                ActivityTracker.shared.start()
+                await MemoryService.shared.recoverOrphanedSignals()
+            }
+        }
 
         // Auto-start server on app launch
         Task { @MainActor in
