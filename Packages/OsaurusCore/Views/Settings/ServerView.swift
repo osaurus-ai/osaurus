@@ -171,41 +171,6 @@ private struct ServerStatusCard: View {
                 }
             }
 
-            HStack {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Expose to Local Network")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(theme.primaryText)
-                    Text("Allow devices on your network to connect")
-                        .font(.system(size: 11))
-                        .foregroundStyle(theme.tertiaryText)
-                }
-
-                Spacer()
-
-                Toggle("", isOn: Binding(
-                    get: { server.configuration.exposeToNetwork },
-                    set: { newValue in
-                        server.configuration.exposeToNetwork = newValue
-                        server.saveConfiguration()
-                        if server.isRunning {
-                            Task { await server.restartServer() }
-                        }
-                    }
-                ))
-                .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
-                .labelsHidden()
-            }
-            .padding(12)
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(theme.inputBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(theme.inputBorder, lineWidth: 1)
-                    )
-            )
-
             if !server.isRunning && server.serverHealth == .stopped {
                 Button(action: { Task { await server.startServer() } }) {
                     HStack(spacing: 8) {

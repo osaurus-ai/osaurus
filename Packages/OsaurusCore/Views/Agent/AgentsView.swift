@@ -1575,7 +1575,6 @@ struct AgentDetailView: View {
 
     @ViewBuilder
     private var bonjourSection: some View {
-        let exposeToNetwork = server.configuration.exposeToNetwork
         AgentDetailSection(title: "Bonjour", icon: "antenna.radiowaves.left.and.right") {
             VStack(alignment: .leading, spacing: 12) {
                 Text(
@@ -1610,7 +1609,6 @@ struct AgentDetailView: View {
                     )
                     .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
                     .labelsHidden()
-                    .disabled(!exposeToNetwork)
                 }
                 .padding(10)
                 .background(
@@ -1621,12 +1619,16 @@ struct AgentDetailView: View {
                                 .stroke(theme.inputBorder, lineWidth: 1)
                         )
                 )
-                .opacity(exposeToNetwork ? 1 : 0.5)
 
-                if !exposeToNetwork {
-                    Text("Requires \"Expose to Local Network\" to be enabled in Server Settings.")
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
+                if currentAgent.bonjourEnabled {
+                    HStack(spacing: 6) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 11))
+                            .foregroundColor(theme.warningColor)
+                        Text("Your server is exposed to the local network while Bonjour is enabled.")
+                            .font(.system(size: 11))
+                            .foregroundColor(theme.secondaryText)
+                    }
                 }
             }
         }
