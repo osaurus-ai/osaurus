@@ -182,8 +182,25 @@ struct AgentPill: View {
         agents.first { $0.id == activeAgentId } ?? Agent.default
     }
 
+    private func shortHost(_ host: String) -> String {
+        host
+            .trimmingCharacters(in: CharacterSet(charactersIn: "."))
+            .replacingOccurrences(of: "\\.local$", with: "", options: .regularExpression)
+    }
+
+    private func label(for agent: DiscoveredAgent) -> String {
+        var parts = [agent.name]
+        if let host = agent.host { parts.append("(\(shortHost(host)))") }
+        if !agent.agentDescription.isEmpty { parts.append("– \(agent.agentDescription)") }
+        return parts.joined(separator: " ")
+    }
+
     private var displayName: String {
-        activeDiscoveredAgent?.name ?? activeAgent.name
+        guard let discovered = activeDiscoveredAgent else { return activeAgent.name }
+        if let host = discovered.host {
+            return "\(discovered.name) (\(shortHost(host)))"
+        }
+        return discovered.name
     }
 
     var body: some View {
@@ -207,7 +224,7 @@ struct AgentPill: View {
                     ForEach(discoveredAgents) { remote in
                         Button(action: { onSelectDiscoveredAgent?(remote) }) {
                             Label(
-                                remote.name + (remote.agentDescription.isEmpty ? "" : " – \(remote.agentDescription)"),
+                                label(for: remote),
                                 systemImage: activeDiscoveredAgent?.id == remote.id ? "checkmark" : "network"
                             )
                         }
