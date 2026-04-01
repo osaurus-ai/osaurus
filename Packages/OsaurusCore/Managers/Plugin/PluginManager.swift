@@ -197,6 +197,7 @@ final class PluginManager {
         migrateGlobalConfigToPerAgent()
         notifyNewPluginsWithAgentConfig(from: scanResult)
         observeTunnelStatus()
+        sendCurrentTunnelURLToNewPlugins(from: scanResult)
     }
 
     /// For each newly loaded plugin, re-deliver its config for every agent.
@@ -295,42 +296,57 @@ final class PluginManager {
 
     private func handleTunnelStatusChange(_ statuses: [UUID: AgentRelayStatus]) {
         for loaded in plugins where !loaded.routes.isEmpty {
-            let pluginId = loaded.plugin.id
-
             for (agentId, status) in statuses {
-                let tunnelURL: String? = {
-                    if case .connected(let url) = status { return url }
-                    return nil
-                }()
+                let tunnelURL: String? = if case .connected(let url) = status { url } else { nil }
 
                 let storedValue = ToolSecretsKeychain.getSecret(
                     id: "tunnel_url",
-                    for: pluginId,
+                    for: loaded.plugin.id,
                     agentId: agentId
                 )
                 guard storedValue != tunnelURL else { continue }
 
-                if let tunnelURL {
-                    ToolSecretsKeychain.saveSecret(tunnelURL, id: "tunnel_url", for: pluginId, agentId: agentId)
-                } else {
-                    ToolSecretsKeychain.deleteSecret(id: "tunnel_url", for: pluginId, agentId: agentId)
-                }
-
-                NotificationCenter.default.post(
-                    name: .pluginConfigDidChange,
-                    object: nil,
-                    userInfo: ["pluginId": pluginId, "key": "tunnel_url", "value": tunnelURL ?? ""]
-                )
-
-                if let tunnelURL {
-                    loaded.plugin.notifyConfigChanged(
-                        key: "tunnel_url",
-                        value: tunnelURL,
-                        agentId: agentId
-                    )
-                }
+                pushTunnelURL(tunnelURL, to: loaded, agentId: agentId)
             }
         }
+    }
+
+    /// Delivers the current tunnel URL to freshly loaded plugins that declare
+    /// routes, bypassing the keychain dedup so that newly-loaded plugins
+    /// always receive the URL when the relay is already connected.
+    private func sendCurrentTunnelURLToNewPlugins(from scanResult: PluginScanResult) {
+        let statuses = RelayTunnelManager.shared.agentStatuses
+
+        for entry in scanResult.loadResults {
+            guard case .success(let loaded) = entry.result, !loaded.routes.isEmpty else { continue }
+
+            for (agentId, status) in statuses {
+                guard case .connected(let url) = status else { continue }
+                pushTunnelURL(url, to: loaded, agentId: agentId)
+            }
+        }
+    }
+
+    private func pushTunnelURL(_ url: String?, to loaded: LoadedPlugin, agentId: UUID) {
+        let pluginId = loaded.plugin.id
+
+        if let url {
+            ToolSecretsKeychain.saveSecret(url, id: "tunnel_url", for: pluginId, agentId: agentId)
+        } else {
+            ToolSecretsKeychain.deleteSecret(id: "tunnel_url", for: pluginId, agentId: agentId)
+        }
+
+        NotificationCenter.default.post(
+            name: .pluginConfigDidChange,
+            object: nil,
+            userInfo: ["pluginId": pluginId, "key": "tunnel_url", "value": url ?? ""]
+        )
+
+        loaded.plugin.notifyConfigChanged(
+            key: "tunnel_url",
+            value: url ?? "",
+            agentId: agentId
+        )
     }
 
     // MARK: - Artifact Handler Notifications
