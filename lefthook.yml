@@ -1,0 +1,5 @@
+pre-push:
+  jobs:
+    - name: swift lint
+      run: swift-format lint --strict --recursive Packages App
+      fail_text: Run "swift-format format --in-place --recursive Packages App" to fix linting issues

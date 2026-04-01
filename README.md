@@ -27,10 +27,10 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/osaurus-ai/osaurus/releases/latest/download/Osaurus.dmg">Download for Mac</a> · 
-  <a href="https://docs.osaurus.ai">Docs</a> · 
-  <a href="https://discord.com/invite/dinoki">Discord</a> · 
-  <a href="https://x.com/OsaurusAI">Twitter</a> · 
+  <a href="https://github.com/osaurus-ai/osaurus/releases/latest/download/Osaurus.dmg">Download for Mac</a> ·
+  <a href="https://docs.osaurus.ai">Docs</a> ·
+  <a href="https://discord.com/invite/dinoki">Discord</a> ·
+  <a href="https://x.com/OsaurusAI">Twitter</a> ·
   <a href="https://github.com/osaurus-ai/osaurus-tools">Plugin Registry</a>
 </p>
 
@@ -164,11 +164,11 @@ osaurus tools dev com.acme.my-plugin     # Dev with hot reload
 
 Drop-in endpoints for existing tools:
 
-| API | Endpoint |
-|-----|----------|
-| OpenAI | `http://127.0.0.1:1337/v1/chat/completions` |
+| API       | Endpoint                                      |
+| --------- | --------------------------------------------- |
+| OpenAI    | `http://127.0.0.1:1337/v1/chat/completions`   |
 | Anthropic | `http://127.0.0.1:1337/anthropic/v1/messages` |
-| Ollama | `http://127.0.0.1:1337/api/chat` |
+| Ollama    | `http://127.0.0.1:1337/api/chat`              |
 
 All prefixes supported (`/v1`, `/api`, `/v1/api`). Full function calling with streaming tool call deltas. See [OpenAI API Guide](docs/OpenAI_API_GUIDE.md) for tool calling, streaming, and SDK examples. Building a macOS app that connects to Osaurus? See the [Shared Configuration Guide](docs/SHARED_CONFIGURATION_GUIDE.md).
 
@@ -221,6 +221,17 @@ open osaurus.xcworkspace
 ```
 
 Build and run the `osaurus` target. Requires Xcode 16+ and macOS 15.5+.
+
+### Git Hooks (lefthook)
+
+Install [lefthook](https://github.com/evilmartians/lefthook) to set up the hooks that verify quality of the code:
+
+```bash
+brew install lefthook
+lefthook install
+```
+
+This installs a `pre-push` hook that runs `swift-format` over the `Packages/` directory before each push.
 
 ## Project Structure
 
