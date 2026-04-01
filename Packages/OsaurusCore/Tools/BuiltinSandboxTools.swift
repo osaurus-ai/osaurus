@@ -92,6 +92,24 @@ enum BuiltinSandboxTools {
         )
         registry.registerSandboxTool(SandboxProcessesTool(agentName: agentName), runtimeManaged: true)
         registry.registerSandboxTool(ShareArtifactTool(), runtimeManaged: true)
+
+        // Secret management tools
+        registry.registerSandboxTool(
+            SandboxSecretCheckTool(agentId: agentId),
+            runtimeManaged: true
+        )
+        registry.registerSandboxTool(
+            SandboxSecretSetTool(agentId: agentId),
+            runtimeManaged: true
+        )
+
+        // Plugin self-creation (gated by pluginCreate)
+        if config.pluginCreate {
+            registry.registerSandboxTool(
+                SandboxPluginRegisterTool(agentId: agentId, agentName: agentName),
+                runtimeManaged: true
+            )
+        }
     }
 
     /// Unregister all built-in sandbox tools.
@@ -105,6 +123,8 @@ enum BuiltinSandboxTools {
             "sandbox_run_script",
             "sandbox_whoami", "sandbox_processes",
             "share_artifact",
+            "sandbox_secret_check", "sandbox_secret_set",
+            "sandbox_plugin_register",
         ]
         ToolRegistry.shared.unregister(names: names)
     }

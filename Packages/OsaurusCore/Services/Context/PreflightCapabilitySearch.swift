@@ -142,12 +142,43 @@ enum PreflightCapabilitySearch {
             }
         }
 
-        let snippet = sections.joined(separator: "\n")
+        var snippet = sections.joined(separator: "\n")
 
-        let items: [PreflightCapabilityItem] =
+        var items: [PreflightCapabilityItem] =
             methods.map { .init(type: .method, name: $0.method.name, description: $0.method.description) }
             + tools.map { .init(type: .tool, name: $0.entry.name, description: $0.entry.description) }
             + skills.map { .init(type: .skill, name: $0.skill.name, description: $0.skill.description) }
+
+        // When nothing matches and pluginCreate is enabled, inject the full
+        // Sandbox Plugin Creator skill so the agent can self-create tools.
+        if methods.isEmpty && tools.isEmpty && skills.isEmpty && toolSpecsToAdd.isEmpty {
+            let canCreate = await MainActor.run {
+                let agentId = AgentManager.shared.activeAgent.id
+                return AgentManager.shared.effectiveAutonomousExec(for: agentId)?.pluginCreate == true
+            }
+            if canCreate {
+                let creatorSkill = await MainActor.run {
+                    SkillManager.shared.skill(named: "Sandbox Plugin Creator")
+                }
+                if let skill = creatorSkill {
+                    snippet = """
+                        ## No existing tools match this request
+
+                        You can create new tools by writing a sandbox plugin.
+                        Follow the instructions below.
+
+                        ## Skill: \(skill.name)
+                        \(skill.instructions)
+                        """
+                    items.append(.init(
+                        type: .skill,
+                        name: skill.name,
+                        description: skill.description
+                    ))
+                    logger.info("Pre-flight: no results, injected Sandbox Plugin Creator skill")
+                }
+            }
+        }
 
         if !toolSpecsToAdd.isEmpty || !snippet.isEmpty {
             let tc = toolSpecsToAdd.count

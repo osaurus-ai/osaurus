@@ -292,13 +292,24 @@ public actor WorkEngine {
 
         injectSavedNotesIfNeeded(into: &session)
 
+        // If this was a secret prompt, store the value in Keychain and
+        // redact it from the conversation history.
+        var displayResponse = response
+        if SecretPromptParser.isSecretPrompt(awaiting.request.context),
+            let parsed = SecretPromptParser.parseContext(awaiting.request.context ?? ""),
+            let agentUUID = UUID(uuidString: parsed.agentId)
+        {
+            AgentSecretsKeychain.saveSecret(response, id: parsed.key, agentId: agentUUID)
+            displayResponse = "[Secret \(parsed.key) stored securely]"
+        }
+
         session.messages.append(
             ChatMessage(
                 role: "user",
                 content: """
                     [Clarification response]
                     Q: \(awaiting.request.question)
-                    A: \(response)
+                    A: \(displayResponse)
 
                     Continue with the task using this information.
                     """

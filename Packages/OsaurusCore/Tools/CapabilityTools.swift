@@ -119,6 +119,18 @@ final class CapabilitiesSearchTool: OsaurusTool, @unchecked Sendable {
         results.sort { $0.score > $1.score }
 
         if results.isEmpty {
+            let canCreatePlugins = await MainActor.run {
+                let agentId = AgentManager.shared.activeAgent.id
+                return AgentManager.shared.effectiveAutonomousExec(for: agentId)?.pluginCreate == true
+            }
+            if canCreatePlugins {
+                return """
+                    No capabilities found matching '\(query)'.
+
+                    You can create new tools for this. Load the plugin creator skill:
+                      capabilities_load("skill/Sandbox Plugin Creator")
+                    """
+            }
             return "No capabilities found matching '\(query)'."
         }
 

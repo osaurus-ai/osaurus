@@ -801,8 +801,10 @@ public actor WorkExecutionEngine {
             // Execute the tool
             let result = try await executeToolCall(invocation, issueId: issue.id, agentId: agentId)
 
-            // Hot-load tools injected by capabilities_load
-            if invocation.toolName == "capabilities_load" {
+            // Hot-load tools injected by capabilities_load or sandbox_plugin_register
+            if invocation.toolName == "capabilities_load"
+                || invocation.toolName == "sandbox_plugin_register"
+            {
                 let newTools = await CapabilityLoadBuffer.shared.drain()
                 for tool in newTools where !activeTools.contains(where: { $0.function.name == tool.function.name }) {
                     activeTools.append(tool)
@@ -881,6 +883,19 @@ public actor WorkExecutionEngine {
                     await onArtifact(artifact)
                     await onStatusUpdate("Shared artifact: \(artifact.filename)")
                     await PluginManager.shared.notifyArtifactHandlers(artifact: artifact)
+                }
+
+            case "sandbox_secret_set":
+                if let prompt = SecretPromptParser.parse(result.result) {
+                    return .needsClarification(
+                        ClarificationRequest(
+                            question: "**\(prompt.description)**\n\n\(prompt.instructions)",
+                            context: "secret_prompt:\(prompt.key):\(prompt.agentId)"
+                        ),
+                        messages: messages,
+                        iteration: iteration,
+                        totalToolCalls: totalToolCalls
+                    )
                 }
 
             default:
@@ -1088,6 +1103,43 @@ public actor WorkExecutionEngine {
         )
     }
 
+}
+
+// MARK: - Secret Prompt Parsing
+
+enum SecretPromptParser {
+    struct Prompt {
+        let key: String
+        let description: String
+        let instructions: String
+        let agentId: String
+    }
+
+    static func parse(_ toolResult: String) -> Prompt? {
+        guard let data = toolResult.data(using: .utf8),
+            let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let action = dict["action"] as? String,
+            action == SecretPromptAction.actionKey,
+            let key = dict["key"] as? String,
+            let desc = dict["description"] as? String,
+            let instructions = dict["instructions"] as? String,
+            let agentId = dict["agent_id"] as? String
+        else { return nil }
+        return Prompt(key: key, description: desc, instructions: instructions, agentId: agentId)
+    }
+
+    static let contextPrefix = "secret_prompt:"
+
+    static func isSecretPrompt(_ context: String?) -> Bool {
+        context?.hasPrefix(contextPrefix) == true
+    }
+
+    static func parseContext(_ context: String) -> (key: String, agentId: String)? {
+        guard context.hasPrefix(contextPrefix) else { return nil }
+        let parts = context.dropFirst(contextPrefix.count).split(separator: ":", maxSplits: 1)
+        guard parts.count == 2 else { return nil }
+        return (String(parts[0]), String(parts[1]))
+    }
 }
 
 // MARK: - Supporting Types
