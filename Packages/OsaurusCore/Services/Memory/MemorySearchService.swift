@@ -36,29 +36,41 @@ public actor MemorySearchService {
     public func initialize() async {
         guard !isInitialized else { return }
 
-        do {
-            let storageDir = OsaurusPaths.memory().appendingPathComponent("vectura", isDirectory: true)
-            OsaurusPaths.ensureExistsSilent(storageDir)
+        let storageDir = OsaurusPaths.memory().appendingPathComponent("vectura", isDirectory: true)
 
-            let config = try VecturaConfig(
-                name: "osaurus-memory",
-                directoryURL: storageDir,
-                searchOptions: VecturaConfig.SearchOptions(
-                    defaultNumResults: 10,
-                    minThreshold: 0.3,
-                    hybridWeight: 0.5,
-                    k1: 1.2,
-                    b: 0.75
-                ),
-                memoryStrategy: .automatic()
-            )
+        for attempt in 1 ... 2 {
+            do {
+                OsaurusPaths.ensureExistsSilent(storageDir)
 
-            vectorDB = try await VecturaKit(config: config, embedder: EmbeddingService.sharedEmbedder)
-            isInitialized = true
-            MemoryLogger.search.info("VecturaKit initialized successfully")
-        } catch {
-            MemoryLogger.search.error("VecturaKit initialization failed (text search fallback active): \(error)")
-            vectorDB = nil
+                let config = try VecturaConfig(
+                    name: "osaurus-memory",
+                    directoryURL: storageDir,
+                    dimension: EmbeddingService.embeddingDimension,
+                    searchOptions: VecturaConfig.SearchOptions(
+                        defaultNumResults: 10,
+                        minThreshold: 0.3,
+                        hybridWeight: 0.5,
+                        k1: 1.2,
+                        b: 0.75
+                    ),
+                    memoryStrategy: .automatic()
+                )
+
+                vectorDB = try await VecturaKit(config: config, embedder: EmbeddingService.sharedEmbedder)
+                isInitialized = true
+                MemoryLogger.search.info("VecturaKit initialized successfully")
+                break
+            } catch {
+                if attempt == 1 {
+                    MemoryLogger.search.warning("VecturaKit init failed, deleting storage to recover: \(error)")
+                    try? FileManager.default.removeItem(at: storageDir)
+                } else {
+                    MemoryLogger.search.error(
+                        "VecturaKit initialization failed (text search fallback active): \(error)"
+                    )
+                    vectorDB = nil
+                }
+            }
         }
 
         buildReverseMaps()
@@ -150,6 +162,7 @@ public actor MemorySearchService {
         lambda: Double? = nil,
         fetchMultiplier: Double? = nil
     ) async -> [MemoryEntry] {
+        guard topK > 0 else { return [] }
         if let db = vectorDB {
             do {
                 let fetchCount = Int(Double(topK) * (fetchMultiplier ?? Self.defaultFetchMultiplier))
@@ -192,6 +205,7 @@ public actor MemorySearchService {
         agentId: String? = nil,
         topK: Int = 1
     ) async -> [(entry: MemoryEntry, score: Double)] {
+        guard topK > 0 else { return [] }
         guard let db = vectorDB else { return [] }
         do {
             let results = try await db.search(
@@ -232,6 +246,7 @@ public actor MemorySearchService {
         lambda: Double? = nil,
         fetchMultiplier: Double? = nil
     ) async -> [ConversationChunk] {
+        guard topK > 0 else { return [] }
         if let db = vectorDB {
             do {
                 let fetchCount = Int(Double(topK) * (fetchMultiplier ?? Self.defaultFetchMultiplier))
@@ -289,6 +304,7 @@ public actor MemorySearchService {
         lambda: Double? = nil,
         fetchMultiplier: Double? = nil
     ) async -> [ConversationSummary] {
+        guard topK > 0 else { return [] }
         if let db = vectorDB {
             do {
                 let fetchCount = Int(Double(topK) * (fetchMultiplier ?? Self.defaultFetchMultiplier))
@@ -431,15 +447,17 @@ public actor MemorySearchService {
 
     /// Reranks results using Maximal Marginal Relevance.
     /// Balances relevance (from search score) with diversity (penalizes redundancy).
-    private nonisolated func mmrRerank<T>(
+    nonisolated func mmrRerank<T>(
         results: [(item: T, score: Double, content: String)],
         lambda: Double,
         topK: Int
     ) -> [T] {
         guard !results.isEmpty else { return [] }
 
-        let maxScore = results.map(\.score).max()!
-        let minScore = results.map(\.score).min()!
+        guard let maxScore = results.map(\.score).max(),
+            let minScore = results.map(\.score).min()
+        else { return results.map(\.item) }
+
         let scoreRange = maxScore - minScore
         let normalized = results.map { r in
             (item: r.item, score: scoreRange > 0 ? (r.score - minScore) / scoreRange : 1.0, content: r.content)
@@ -453,10 +471,12 @@ public actor MemorySearchService {
             var bestMMR = -Double.infinity
 
             for (i, candidate) in remaining.enumerated() {
-                let maxSim =
-                    selected.isEmpty
-                    ? 0.0
-                    : selected.map { TextSimilarity.jaccard(candidate.content, $0.content) }.max()!
+                let maxSim: Double
+                if selected.isEmpty {
+                    maxSim = 0.0
+                } else {
+                    maxSim = selected.map { TextSimilarity.jaccard(candidate.content, $0.content) }.max() ?? 0.0
+                }
 
                 let mmrScore = lambda * candidate.score - (1.0 - lambda) * maxSim
 

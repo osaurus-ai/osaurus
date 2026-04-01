@@ -634,7 +634,10 @@ final class ChatSession: ObservableObject {
                 content: context.userContent,
                 tokenCount: max(1, context.userContent.count / 4)
             )
-            Task.detached { await MemorySearchService.shared.indexConversationChunk(userChunk) }
+            Task.detached {
+                await EmbeddingService.awaitStartupInit()
+                await MemorySearchService.shared.indexConversationChunk(userChunk)
+            }
             if let assistantContent, !assistantContent.isEmpty {
                 do {
                     try db.insertChunk(
@@ -654,7 +657,10 @@ final class ChatSession: ObservableObject {
                     content: assistantContent,
                     tokenCount: max(1, assistantContent.count / 4)
                 )
-                Task.detached { await MemorySearchService.shared.indexConversationChunk(assistantChunk) }
+                Task.detached {
+                    await EmbeddingService.awaitStartupInit()
+                    await MemorySearchService.shared.indexConversationChunk(assistantChunk)
+                }
             }
         }
 

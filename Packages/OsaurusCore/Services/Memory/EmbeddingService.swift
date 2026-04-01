@@ -13,6 +13,8 @@ import os
 public actor EmbeddingService {
     public static let shared = EmbeddingService()
     public static let modelName = "potion-base-4M"
+    /// Known dimension for potion-base-4M so VecturaKit can init without loading the model.
+    public static let embeddingDimension = 128
 
     /// Single shared embedder used by all VecturaKit indexes and the embedding API.
     /// Using one instance prevents concurrent CoreML model loads that can SIGSEGV

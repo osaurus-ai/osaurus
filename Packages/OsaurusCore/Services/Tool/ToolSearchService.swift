@@ -42,29 +42,41 @@ public actor ToolSearchService {
     public func initialize() async {
         guard !isInitialized else { return }
 
-        do {
-            let storageDir = OsaurusPaths.toolIndex().appendingPathComponent("vectura", isDirectory: true)
-            OsaurusPaths.ensureExistsSilent(storageDir)
+        let storageDir = OsaurusPaths.toolIndex().appendingPathComponent("vectura", isDirectory: true)
 
-            let config = try VecturaConfig(
-                name: "osaurus-tools",
-                directoryURL: storageDir,
-                searchOptions: VecturaConfig.SearchOptions(
-                    defaultNumResults: 10,
-                    minThreshold: 0.3,
-                    hybridWeight: 0.5,
-                    k1: 1.2,
-                    b: 0.75
-                ),
-                memoryStrategy: .automatic()
-            )
+        for attempt in 1 ... 2 {
+            do {
+                OsaurusPaths.ensureExistsSilent(storageDir)
 
-            vectorDB = try await VecturaKit(config: config, embedder: EmbeddingService.sharedEmbedder)
-            isInitialized = true
-            ToolIndexLogger.search.info("VecturaKit initialized successfully for tools")
-        } catch {
-            ToolIndexLogger.search.error("VecturaKit init failed for tools (search unavailable): \(error)")
-            vectorDB = nil
+                let config = try VecturaConfig(
+                    name: "osaurus-tools",
+                    directoryURL: storageDir,
+                    dimension: EmbeddingService.embeddingDimension,
+                    searchOptions: VecturaConfig.SearchOptions(
+                        defaultNumResults: 10,
+                        minThreshold: 0.3,
+                        hybridWeight: 0.5,
+                        k1: 1.2,
+                        b: 0.75
+                    ),
+                    memoryStrategy: .automatic()
+                )
+
+                vectorDB = try await VecturaKit(config: config, embedder: EmbeddingService.sharedEmbedder)
+                isInitialized = true
+                ToolIndexLogger.search.info("VecturaKit initialized successfully for tools")
+                break
+            } catch {
+                if attempt == 1 {
+                    ToolIndexLogger.search.warning(
+                        "VecturaKit init failed for tools, deleting storage to recover: \(error)"
+                    )
+                    try? FileManager.default.removeItem(at: storageDir)
+                } else {
+                    ToolIndexLogger.search.error("VecturaKit init failed for tools (search unavailable): \(error)")
+                    vectorDB = nil
+                }
+            }
         }
     }
 
@@ -99,6 +111,7 @@ public actor ToolSearchService {
         topK: Int = 10,
         threshold: Float? = nil
     ) async -> [ToolSearchResult] {
+        guard topK > 0 else { return [] }
         guard let db = vectorDB else { return [] }
         do {
             let fetchCount = topK * 3

@@ -26,29 +26,41 @@ public actor MethodSearchService {
     public func initialize() async {
         guard !isInitialized else { return }
 
-        do {
-            let storageDir = OsaurusPaths.methods().appendingPathComponent("vectura", isDirectory: true)
-            OsaurusPaths.ensureExistsSilent(storageDir)
+        let storageDir = OsaurusPaths.methods().appendingPathComponent("vectura", isDirectory: true)
 
-            let config = try VecturaConfig(
-                name: "osaurus-methods",
-                directoryURL: storageDir,
-                searchOptions: VecturaConfig.SearchOptions(
-                    defaultNumResults: 10,
-                    minThreshold: 0.3,
-                    hybridWeight: 0.5,
-                    k1: 1.2,
-                    b: 0.75
-                ),
-                memoryStrategy: .automatic()
-            )
+        for attempt in 1 ... 2 {
+            do {
+                OsaurusPaths.ensureExistsSilent(storageDir)
 
-            vectorDB = try await VecturaKit(config: config, embedder: EmbeddingService.sharedEmbedder)
-            isInitialized = true
-            MethodLogger.search.info("VecturaKit initialized successfully for methods")
-        } catch {
-            MethodLogger.search.error("VecturaKit init failed for methods (search unavailable): \(error)")
-            vectorDB = nil
+                let config = try VecturaConfig(
+                    name: "osaurus-methods",
+                    directoryURL: storageDir,
+                    dimension: EmbeddingService.embeddingDimension,
+                    searchOptions: VecturaConfig.SearchOptions(
+                        defaultNumResults: 10,
+                        minThreshold: 0.3,
+                        hybridWeight: 0.5,
+                        k1: 1.2,
+                        b: 0.75
+                    ),
+                    memoryStrategy: .automatic()
+                )
+
+                vectorDB = try await VecturaKit(config: config, embedder: EmbeddingService.sharedEmbedder)
+                isInitialized = true
+                MethodLogger.search.info("VecturaKit initialized successfully for methods")
+                break
+            } catch {
+                if attempt == 1 {
+                    MethodLogger.search.warning(
+                        "VecturaKit init failed for methods, deleting storage to recover: \(error)"
+                    )
+                    try? FileManager.default.removeItem(at: storageDir)
+                } else {
+                    MethodLogger.search.error("VecturaKit init failed for methods (search unavailable): \(error)")
+                    vectorDB = nil
+                }
+            }
         }
     }
 
@@ -84,6 +96,7 @@ public actor MethodSearchService {
         topK: Int = 10,
         threshold: Float? = nil
     ) async -> [MethodSearchResult] {
+        guard topK > 0 else { return [] }
         guard let db = vectorDB else { return [] }
         do {
             let fetchCount = topK * 3

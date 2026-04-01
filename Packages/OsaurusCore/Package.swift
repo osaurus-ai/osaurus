@@ -54,6 +54,7 @@ let package = Package(
             dependencies: [
                 "OsaurusCore",
                 .product(name: "NIOEmbedded", package: "swift-nio"),
+                .product(name: "VecturaKit", package: "VecturaKit"),
             ],
             path: "Tests"
         ),

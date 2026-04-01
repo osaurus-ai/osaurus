@@ -144,7 +144,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             await ModelPickerItemCache.shared.prewarmModelCache()
         }
 
-        // Initialize memory system with retry
+        // Initialize memory database with retry (does not depend on embedding)
         Task { @MainActor in
             var opened = false
             for attempt in 1 ... 3 {
@@ -161,19 +161,19 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             }
             if opened {
                 ActivityTracker.shared.start()
-                await MemorySearchService.shared.initialize()
                 await MemoryService.shared.recoverOrphanedSignals()
             } else {
                 MemoryLogger.database.error("Memory system disabled — database failed to open after 3 attempts")
             }
         }
 
-        // Context indexes: open DBs and construct VecturaKit instances in order so only one
-        // SwiftEmbedder-backed init runs at a time (see EmbeddingService.sharedEmbedder).
-        // Rebuild paths batch documents into a single embed call per index, not N serial adds.
-        // Registered as startup init task so ModelRuntime can gate MLX inference until
-        // CoreML embedding work finishes (prevents concurrent Metal operations).
+        // All VecturaKit inits run sequentially in one Task to prevent concurrent
+        // CoreML model loads that can SIGSEGV on Apple Silicon.
+        // Registered as startup init task so ModelRuntime can gate MLX inference
+        // until CoreML embedding work finishes (prevents concurrent Metal operations).
         let embeddingInitTask = Task {
+            await MemorySearchService.shared.initialize()
+
             try? MethodDatabase.shared.open()
             await MethodSearchService.shared.initialize()
 

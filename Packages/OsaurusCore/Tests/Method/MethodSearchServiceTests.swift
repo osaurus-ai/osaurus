@@ -39,4 +39,9 @@ struct MethodSearchServiceTests {
     @Test func rebuildIndexDoesNotCrashWhenUninitialized() async {
         await MethodSearchService.shared.rebuildIndex()
     }
+
+    @Test func searchWithTopKZeroReturnsEmpty() async {
+        let results = await MethodSearchService.shared.search(query: "anything", topK: 0)
+        #expect(results.isEmpty)
+    }
 }

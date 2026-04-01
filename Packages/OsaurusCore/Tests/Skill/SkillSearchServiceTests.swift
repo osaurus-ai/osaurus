@@ -49,6 +49,11 @@ struct SkillSearchServiceTests {
         await SkillSearchService.shared.rebuildIndex()
     }
 
+    @Test func searchWithTopKZeroReturnsEmpty() async {
+        let results = await SkillSearchService.shared.search(query: "anything", topK: 0)
+        #expect(results.isEmpty)
+    }
+
     @Test func skillSearchResultCarriesScore() {
         let skill = Skill(
             id: UUID(),

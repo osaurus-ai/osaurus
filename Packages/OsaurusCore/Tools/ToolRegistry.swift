@@ -345,6 +345,7 @@ final class ToolRegistry: ObservableObject {
         } else {
             builtInSandboxToolNames.remove(tool.name)
             Task {
+                await EmbeddingService.awaitStartupInit()
                 await ToolIndexService.shared.onToolRegistered(
                     name: tool.name,
                     description: tool.description,
@@ -410,6 +411,7 @@ final class ToolRegistry: ObservableObject {
         toolsByName[tool.name] = tool
         mcpToolNames.insert(tool.name)
         Task {
+            await EmbeddingService.awaitStartupInit()
             await ToolIndexService.shared.onToolRegistered(
                 name: tool.name,
                 description: tool.description,
@@ -440,6 +442,7 @@ final class ToolRegistry: ObservableObject {
             setEnabled(true, for: tool.name)
         }
         Task {
+            await EmbeddingService.awaitStartupInit()
             await ToolIndexService.shared.onToolRegistered(
                 name: tool.name,
                 description: tool.description,
