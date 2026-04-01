@@ -19,8 +19,7 @@ public actor WorkExecutionEngine {
 
     private func resolvedChatEngine() async -> ChatEngineProtocol {
         if let engine = _chatEngine { return engine }
-        let remoteServices = await MainActor.run { RemoteProviderManager.shared.connectedServices() }
-        let engine = ChatEngine(remoteServices: remoteServices, source: .chatUI)
+        let engine = ChatEngine(source: .chatUI)
         _chatEngine = engine
         return engine
     }

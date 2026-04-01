@@ -9,7 +9,6 @@ import Foundation
 
 actor ChatEngine: Sendable, ChatEngineProtocol {
     private let services: [ModelService]
-    private let remoteServicesSnapshot: [ModelService]
     private let installedModelsProvider: @Sendable () -> [String]
 
     /// Source of the inference (for logging purposes)
@@ -17,14 +16,12 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
 
     init(
         services: [ModelService] = [FoundationModelService(), MLXService()],
-        remoteServices: [ModelService] = [],
         installedModelsProvider: @escaping @Sendable () -> [String] = {
             MLXService.getAvailableModels()
         },
         source: InferenceSource = .httpAPI
     ) {
         self.services = services
-        self.remoteServicesSnapshot = remoteServices
         self.installedModelsProvider = installedModelsProvider
         self.inferenceSource = source
     }
@@ -81,8 +78,9 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         // Candidate services and installed models (injected for testability)
         let services = self.services
 
-        // Use pre-snapshotted remote services (captured on @MainActor at construction time)
-        let remoteServices = self.remoteServicesSnapshot
+        // Fetch current remote services from MainActor at request time so routing always
+        // reflects the latest connected Bonjour/remote agents without requiring a new engine.
+        let remoteServices = await MainActor.run { RemoteProviderManager.shared.connectedServices() }
         debugLog("[ChatEngine] streamChat: remoteServices=\(remoteServices.count), routing model=\(request.model)")
 
         let route = ModelServiceRouter.resolve(
@@ -291,8 +289,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
 
         let services = self.services
 
-        // Use pre-snapshotted remote services (captured on @MainActor at construction time)
-        let remoteServices = self.remoteServicesSnapshot
+        // Fetch current remote services from MainActor at request time.
+        let remoteServices = await MainActor.run { RemoteProviderManager.shared.connectedServices() }
 
         let route = ModelServiceRouter.resolve(
             requestedModel: request.model,

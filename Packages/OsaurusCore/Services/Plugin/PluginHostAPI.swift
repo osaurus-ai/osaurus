@@ -418,8 +418,7 @@ final class PluginHostContext: @unchecked Sendable {
         if options.wantsPreflight {
             enriched = await applyPreflightSearch(to: enriched, executionMode: execMode)
         }
-        let remoteServices = await MainActor.run { RemoteProviderManager.shared.connectedServices() }
-        let engine = ChatEngine(remoteServices: remoteServices, source: .plugin)
+        let engine = ChatEngine(source: .plugin)
         let budgetMgr = await createBudgetManager(for: enriched, maxIterations: options.maxIterations)
         return PreparedInference(
             enriched: enriched,

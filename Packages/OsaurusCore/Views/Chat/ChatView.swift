@@ -58,7 +58,7 @@ final class ChatSession: ObservableObject {
     private var activeRunId: UUID?
     private var activeRunContext: RunContext?
     var chatEngineFactory: @MainActor () -> ChatEngineProtocol = {
-        ChatEngine(remoteServices: RemoteProviderManager.shared.connectedServices(), source: .chatUI)
+        ChatEngine(source: .chatUI)
     }
     // nonisolated(unsafe) allows deinit to access these for cleanup
     nonisolated(unsafe) private var remoteModelsObserver: NSObjectProtocol?

@@ -2104,8 +2104,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let logSelf = self
             Task(priority: .userInitiated) {
                 do {
-                    let remoteServices = await MainActor.run { RemoteProviderManager.shared.connectedServices() }
-                    let chatEngine = ChatEngine(remoteServices: remoteServices)
+                    let chatEngine = self.chatEngine
                     let enrichedReq = await Self.enrichWithAgentContext(req, agentId: memoryAgentId)
 
                     // Compute prefix hash after enrichment so it matches the cache key
@@ -2259,8 +2258,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let logSelf = self
             Task(priority: .userInitiated) {
                 do {
-                    let remoteServices = await MainActor.run { RemoteProviderManager.shared.connectedServices() }
-                    let chatEngine = ChatEngine(remoteServices: remoteServices)
+                    let chatEngine = self.chatEngine
                     let enrichedReq = await Self.enrichWithAgentContext(req, agentId: memoryAgentId)
                     var resp = try await chatEngine.completeChat(request: enrichedReq)
                     // Compute prefix hash after enrichment so it matches the cache key
@@ -2411,8 +2409,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logSelf = self
         Task(priority: .userInitiated) {
             do {
-                let remoteServices = await MainActor.run { RemoteProviderManager.shared.connectedServices() }
-                let chatEngine = ChatEngine(remoteServices: remoteServices)
+                let chatEngine = self.chatEngine
                 let stream = try await chatEngine.streamChat(request: req)
                 for try await delta in stream {
                     if StreamingToolHint.isSentinel(delta) { continue }
@@ -3211,8 +3208,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
         Task(priority: .userInitiated) {
             do {
-                let remoteServices = await MainActor.run { RemoteProviderManager.shared.connectedServices() }
-                let chatEngine = ChatEngine(remoteServices: remoteServices)
+                let chatEngine = self.chatEngine
                 let stream = try await chatEngine.streamChat(request: internalReq)
                 for try await delta in stream {
                     if StreamingToolHint.isSentinel(delta) { continue }
@@ -3323,8 +3319,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
         Task(priority: .userInitiated) {
             do {
-                let remoteServices = await MainActor.run { RemoteProviderManager.shared.connectedServices() }
-                let chatEngine = ChatEngine(remoteServices: remoteServices)
+                let chatEngine = self.chatEngine
                 let resp = try await chatEngine.completeChat(request: internalReq)
 
                 // Convert OpenAI response to Anthropic format
@@ -3849,8 +3844,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
         Task(priority: .userInitiated) {
             do {
-                let remoteServices = await MainActor.run { RemoteProviderManager.shared.connectedServices() }
-                let chatEngine = ChatEngine(remoteServices: remoteServices)
+                let chatEngine = self.chatEngine
                 let stream = try await chatEngine.streamChat(request: internalReq)
                 for try await delta in stream {
                     if StreamingToolHint.isSentinel(delta) { continue }
@@ -3975,8 +3969,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
         Task(priority: .userInitiated) {
             do {
-                let remoteServices = await MainActor.run { RemoteProviderManager.shared.connectedServices() }
-                let chatEngine = ChatEngine(remoteServices: remoteServices)
+                let chatEngine = self.chatEngine
                 let resp = try await chatEngine.completeChat(request: internalReq)
 
                 // Convert to Open Responses format
