@@ -281,13 +281,13 @@ extension ToolCategory {
     /// First color of the SwiftUI gradient, translated to NSColor.
     var primaryNSColor: NSColor {
         switch self {
-        case .file:     return NSColor(red: 0.96, green: 0.62, blue: 0.27, alpha: 1)
-        case .search:   return NSColor(red: 0.55, green: 0.36, blue: 0.96, alpha: 1)
+        case .file: return NSColor(red: 0.96, green: 0.62, blue: 0.27, alpha: 1)
+        case .search: return NSColor(red: 0.55, green: 0.36, blue: 0.96, alpha: 1)
         case .terminal: return NSColor(red: 0.06, green: 0.73, blue: 0.51, alpha: 1)
-        case .network:  return NSColor(red: 0.23, green: 0.51, blue: 0.96, alpha: 1)
+        case .network: return NSColor(red: 0.23, green: 0.51, blue: 0.96, alpha: 1)
         case .database: return NSColor(red: 0.93, green: 0.29, blue: 0.60, alpha: 1)
-        case .code:     return NSColor(red: 0.02, green: 0.71, blue: 0.83, alpha: 1)
-        case .general:  return NSColor(red: 0.42, green: 0.45, blue: 0.50, alpha: 1)
+        case .code: return NSColor(red: 0.02, green: 0.71, blue: 0.83, alpha: 1)
+        case .general: return NSColor(red: 0.42, green: 0.45, blue: 0.50, alpha: 1)
         }
     }
 }
@@ -357,7 +357,7 @@ final class NativeToolCallGroupView: NSView {
             removed.removeFromSuperview()
         }
 
-        let innerWidth = max(0, width - 8 - 6) // subtract accent strip + padding
+        let innerWidth = max(0, width - 8 - 6)  // subtract accent strip + padding
         for (index, item) in calls.enumerated() {
             let row = rowViews[index]
             let isExpanded = expandedIds.contains(item.call.id)
@@ -392,7 +392,7 @@ final class NativeToolCallGroupView: NSView {
     func measuredHeight() -> CGFloat {
         rowViews.reduce(0) { $0 + $1.measuredHeight() }
     }
-    
+
     // provide intrinsic content size for auto layout
     override var intrinsicContentSize: NSSize {
         let height = measuredHeight()
@@ -579,8 +579,13 @@ final class NativeToolCallRowView: NSView {
             if let args = cachedArgs {
                 let av = ensureArgsView()
                 let textW = max(0, width - Self.sectionMarkdownWidthDeduction)
-                av.configure(text: "```json\n\(args)\n```", width: textW, theme: theme,
-                             cacheKey: "args-\(item.call.id)", isStreaming: false)
+                av.configure(
+                    text: "```json\n\(args)\n```",
+                    width: textW,
+                    theme: theme,
+                    cacheKey: "args-\(item.call.id)",
+                    isStreaming: false
+                )
                 av.onHeightChanged = { [weak self] in self?.applyHeight() }
             }
             if let result = item.result {
@@ -590,8 +595,13 @@ final class NativeToolCallRowView: NSView {
                 let rv = ensureResultView()
                 rv.isHidden = false
                 let textW = max(0, width - Self.sectionMarkdownWidthDeduction)
-                rv.configure(text: displayResult, width: textW, theme: theme,
-                             cacheKey: "result-\(item.call.id)", isStreaming: false)
+                rv.configure(
+                    text: displayResult,
+                    width: textW,
+                    theme: theme,
+                    cacheKey: "result-\(item.call.id)",
+                    isStreaming: false
+                )
                 rv.onHeightChanged = { [weak self] in self?.applyHeight() }
                 contentBottomToArgs?.isActive = false
                 contentBottomToResult?.isActive = true
@@ -696,7 +706,10 @@ final class NativeToolCallRowView: NSView {
         contentContainer.addSubview(argumentsSectionTitle)
 
         NSLayoutConstraint.activate([
-            argumentsSectionTitle.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor, constant: Self.sectionContentInset),
+            argumentsSectionTitle.leadingAnchor.constraint(
+                equalTo: contentContainer.leadingAnchor,
+                constant: Self.sectionContentInset
+            ),
             argumentsSectionTitle.trailingAnchor.constraint(lessThanOrEqualTo: contentContainer.trailingAnchor),
             argumentsSectionTitle.topAnchor.constraint(equalTo: contentContainer.topAnchor),
         ])

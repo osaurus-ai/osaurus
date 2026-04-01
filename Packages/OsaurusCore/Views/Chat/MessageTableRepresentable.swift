@@ -663,7 +663,8 @@ extension MessageTableRepresentable {
             var affectedRows = IndexSet()
             for (index, blockId) in blockIds.enumerated() {
                 guard let block = blockLookup[blockId], block.turnId == turnId else { continue }
-                if let cell = tableView.view(atColumn: 0, row: index, makeIfNecessary: false) as? NativeMessageCellView {
+                if let cell = tableView.view(atColumn: 0, row: index, makeIfNecessary: false) as? NativeMessageCellView
+                {
                     heightCache.removeValue(forKey: blockId)
                     configureCell(cell, with: block)
                 }
@@ -777,9 +778,13 @@ extension MessageTableRepresentable {
                 else { continue }
                 let groupId = groupHeaderMap[block.turnId] ?? block.turnId
                 guard groupId == oldGroupId || groupId == newGroupId else { continue }
-                guard let cell = tableView.view(
-                    atColumn: 0, row: row, makeIfNecessary: false
-                ) as? NativeMessageCellView else { continue }
+                guard
+                    let cell = tableView.view(
+                        atColumn: 0,
+                        row: row,
+                        makeIfNecessary: false
+                    ) as? NativeMessageCellView
+                else { continue }
 
                 // for header rows, use the fast hover path
                 if case .header = block.kind {

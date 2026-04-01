@@ -63,6 +63,36 @@ struct PreflightResult: Sendable {
 
 enum PreflightCapabilitySearch {
 
+    private static let searchTermExtractionPrompt = """
+        Given a user's request, identify what tools or capabilities would be needed to accomplish it. \
+        Output 3-5 short capability descriptions, one per line. \
+        Focus on the type of action or tool required, not the subject matter of the request. \
+        No numbering, no explanations, no extra text.
+        """
+
+    private static let extractionTimeout: TimeInterval = 5
+
+    /// Uses the core model to distill focused search terms from a raw user query.
+    /// Falls back to the original query on any failure.
+    private static func extractSearchTerms(from query: String) async -> String {
+        do {
+            let response = try await CoreModelService.shared.generate(
+                prompt: query,
+                systemPrompt: searchTermExtractionPrompt,
+                temperature: 0.0,
+                maxTokens: 128,
+                timeout: extractionTimeout
+            )
+            let terms = response.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !terms.isEmpty else { return query }
+            logger.info("Pre-flight extracted search terms: \(terms)")
+            return terms
+        } catch {
+            logger.warning("Pre-flight search term extraction failed, using raw query: \(error)")
+            return query
+        }
+    }
+
     /// Searches methods, tools, and skills in parallel and returns
     /// tool specs + a context snippet for system prompt injection.
     static func search(query: String, mode: PreflightSearchMode = .balanced) async -> PreflightResult {
@@ -73,10 +103,12 @@ enum PreflightCapabilitySearch {
             return empty
         }
 
+        let searchQuery = await extractSearchTerms(from: query)
+
         let topK = mode.topKValues
-        async let methodHits = MethodSearchService.shared.search(query: query, topK: topK.methods)
-        async let toolHits = ToolSearchService.shared.search(query: query, topK: topK.tools)
-        async let skillHits = SkillSearchService.shared.search(query: query, topK: topK.skills)
+        async let methodHits = MethodSearchService.shared.search(query: searchQuery, topK: topK.methods)
+        async let toolHits = ToolSearchService.shared.search(query: searchQuery, topK: topK.tools)
+        async let skillHits = SkillSearchService.shared.search(query: searchQuery, topK: topK.skills)
 
         let methods = await methodHits
         let tools = await toolHits
@@ -170,11 +202,13 @@ enum PreflightCapabilitySearch {
                         ## Skill: \(skill.name)
                         \(skill.instructions)
                         """
-                    items.append(.init(
-                        type: .skill,
-                        name: skill.name,
-                        description: skill.description
-                    ))
+                    items.append(
+                        .init(
+                            type: .skill,
+                            name: skill.name,
+                            description: skill.description
+                        )
+                    )
                     logger.info("Pre-flight: no results, injected Sandbox Plugin Creator skill")
                 }
             }

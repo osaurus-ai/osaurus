@@ -181,7 +181,13 @@ final class NativeHeaderView: NSView {
 
     private static let actionButtonSize: CGFloat = 28
 
-    private func addBtn(icon: String, help: String, theme: any ThemeProtocol, tint: NSColor?, action: @escaping () -> Void) {
+    private func addBtn(
+        icon: String,
+        help: String,
+        theme: any ThemeProtocol,
+        tint: NSColor?,
+        action: @escaping () -> Void
+    ) {
         let control = HeaderCircleActionControl(action: action)
         let pointSize = CGFloat(theme.captionSize) - 1
         let cfg = NSImage.SymbolConfiguration(pointSize: pointSize, weight: .medium)
@@ -562,10 +568,13 @@ private final class UserMessageInlineEditView: NSView, NSTextViewDelegate {
         cancelButton.layer?.backgroundColor = NSColor(theme.secondaryBackground).cgColor
         cancelButton.layer?.borderWidth = CGFloat(theme.defaultBorderWidth)
         cancelButton.layer?.borderColor = NSColor(theme.primaryBorder).withAlphaComponent(theme.borderOpacity).cgColor
-        cancelButton.attributedTitle = NSAttributedString(string: "Cancel", attributes: [
-            .foregroundColor: NSColor(theme.secondaryText),
-            .font: NSFont.systemFont(ofSize: cap, weight: .medium),
-        ])
+        cancelButton.attributedTitle = NSAttributedString(
+            string: "Cancel",
+            attributes: [
+                .foregroundColor: NSColor(theme.secondaryText),
+                .font: NSFont.systemFont(ofSize: cap, weight: .medium),
+            ]
+        )
 
         confirmButton.layer?.cornerRadius = 6
         if let sym = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: nil) {
@@ -576,17 +585,23 @@ private final class UserMessageInlineEditView: NSView, NSTextViewDelegate {
 
         if empty {
             confirmButton.layer?.backgroundColor = NSColor(theme.secondaryBackground).cgColor
-            confirmButton.attributedTitle = NSAttributedString(string: "Save & Regenerate", attributes: [
-                .foregroundColor: NSColor(theme.secondaryText),
-                .font: NSFont.systemFont(ofSize: cap, weight: .semibold),
-            ])
+            confirmButton.attributedTitle = NSAttributedString(
+                string: "Save & Regenerate",
+                attributes: [
+                    .foregroundColor: NSColor(theme.secondaryText),
+                    .font: NSFont.systemFont(ofSize: cap, weight: .semibold),
+                ]
+            )
             confirmButton.contentTintColor = NSColor(theme.secondaryText)
         } else {
             confirmButton.layer?.backgroundColor = NSColor(theme.accentColor).cgColor
-            confirmButton.attributedTitle = NSAttributedString(string: "Save & Regenerate", attributes: [
-                .foregroundColor: NSColor.white,
-                .font: NSFont.systemFont(ofSize: cap, weight: .semibold),
-            ])
+            confirmButton.attributedTitle = NSAttributedString(
+                string: "Save & Regenerate",
+                attributes: [
+                    .foregroundColor: NSColor.white,
+                    .font: NSFont.systemFont(ofSize: cap, weight: .semibold),
+                ]
+            )
             confirmButton.contentTintColor = .white
         }
 
@@ -746,19 +761,44 @@ final class NativeMessageCellView: NSTableCellView {
             configureAsHeader(block: block, role: role, name: name, context: context, sameKind: sameKind)
 
         case let .paragraph(_, text, isStreaming, _):
-            configureAsParagraph(block: block, text: text, isStreaming: isStreaming, context: context, sameKind: sameKind)
+            configureAsParagraph(
+                block: block,
+                text: text,
+                isStreaming: isStreaming,
+                context: context,
+                sameKind: sameKind
+            )
 
         case let .thinking(_, text, isStreaming):
-            configureAsThinking(block: block, text: text, isStreaming: isStreaming, context: context, sameKind: sameKind)
+            configureAsThinking(
+                block: block,
+                text: text,
+                isStreaming: isStreaming,
+                context: context,
+                sameKind: sameKind
+            )
 
         case let .toolCallGroup(calls):
             configureAsToolCallGroup(block: block, calls: calls, context: context, sameKind: sameKind)
 
         case let .userMessage(text, attachments):
-            configureAsUserMessage(block: block, text: text, attachments: attachments, context: context, sameKind: sameKind)
+            configureAsUserMessage(
+                block: block,
+                text: text,
+                attachments: attachments,
+                context: context,
+                sameKind: sameKind
+            )
 
         case let .pendingToolCall(toolName, argPreview, argSize):
-            configureAsPendingToolCall(block: block, toolName: toolName, argPreview: argPreview, argSize: argSize, context: context, sameKind: sameKind)
+            configureAsPendingToolCall(
+                block: block,
+                toolName: toolName,
+                argPreview: argPreview,
+                argSize: argSize,
+                context: context,
+                sameKind: sameKind
+            )
 
         case .typingIndicator:
             configureAsTypingIndicator(context: context, sameKind: sameKind)
@@ -844,8 +884,11 @@ final class NativeMessageCellView: NSTableCellView {
     // MARK: - Paragraph (native NSTextView)
 
     private func configureAsParagraph(
-        block: ContentBlock, text: String, isStreaming: Bool,
-        context: CellRenderingContext, sameKind: Bool
+        block: ContentBlock,
+        text: String,
+        isStreaming: Bool,
+        context: CellRenderingContext,
+        sameKind: Bool
     ) {
         if !sameKind || nativeMarkdownView == nil {
             removeAllContentViews()
@@ -877,8 +920,11 @@ final class NativeMessageCellView: NSTableCellView {
     // MARK: - Thinking (NativeThinkingView)
 
     private func configureAsThinking(
-        block: ContentBlock, text: String, isStreaming: Bool,
-        context: CellRenderingContext, sameKind: Bool
+        block: ContentBlock,
+        text: String,
+        isStreaming: Bool,
+        context: CellRenderingContext,
+        sameKind: Bool
     ) {
         if !sameKind || nativeThinkingView == nil {
             removeAllContentViews()
@@ -894,8 +940,7 @@ final class NativeMessageCellView: NSTableCellView {
         }
         let tv = nativeThinkingView!
         let thinkingLen: Int?
-        if case .thinking(_, _, _) = block.kind { thinkingLen = text.count }
-        else { thinkingLen = nil }
+        if case .thinking(_, _, _) = block.kind { thinkingLen = text.count } else { thinkingLen = nil }
 
         tv.configure(
             thinking: text,
@@ -921,8 +966,10 @@ final class NativeMessageCellView: NSTableCellView {
     // MARK: - Tool Call Group (NativeToolCallGroupView)
 
     private func configureAsToolCallGroup(
-        block: ContentBlock, calls: [ToolCallItem],
-        context: CellRenderingContext, sameKind: Bool
+        block: ContentBlock,
+        calls: [ToolCallItem],
+        context: CellRenderingContext,
+        sameKind: Bool
     ) {
         if !sameKind || nativeToolCallGroupView == nil {
             removeAllContentViews()
@@ -953,8 +1000,11 @@ final class NativeMessageCellView: NSTableCellView {
     // MARK: - User Message (native text + image thumbnails)
 
     private func configureAsUserMessage(
-        block: ContentBlock, text: String, attachments: [Attachment],
-        context: CellRenderingContext, sameKind: Bool
+        block: ContentBlock,
+        text: String,
+        attachments: [Attachment],
+        context: CellRenderingContext,
+        sameKind: Bool
     ) {
         let images = attachments.filter(\.isImage)
         let theme = context.theme
@@ -977,7 +1027,7 @@ final class NativeMessageCellView: NSTableCellView {
             let container = NSView()
             container.translatesAutoresizingMaskIntoConstraints = false
             container.wantsLayer = true
-            container.layer?.masksToBounds = false // prevent border clipping
+            container.layer?.masksToBounds = false  // prevent border clipping
             addSubview(container)
             NSLayoutConstraint.activate([
                 container.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
@@ -1055,15 +1105,15 @@ final class NativeMessageCellView: NSTableCellView {
 
                 if let mv = userTextView {
                     NSLayoutConstraint.activate([
-                        container.bottomAnchor.constraint(equalTo: mv.bottomAnchor, constant: 16),
+                        container.bottomAnchor.constraint(equalTo: mv.bottomAnchor, constant: 16)
                     ])
                 } else if userImageStack != nil, let stack = userImageStack {
                     NSLayoutConstraint.activate([
-                        container.bottomAnchor.constraint(equalTo: stack.bottomAnchor, constant: 16),
+                        container.bottomAnchor.constraint(equalTo: stack.bottomAnchor, constant: 16)
                     ])
                 } else {
                     NSLayoutConstraint.activate([
-                        hv.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -8),
+                        hv.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -8)
                     ])
                 }
             }
@@ -1077,7 +1127,8 @@ final class NativeMessageCellView: NSTableCellView {
                 return NSColor(theme.accentColor).withAlphaComponent(theme.userBubbleOpacity)
             }()
             let borderW = CGFloat(theme.messageBorderWidth)
-            let borderColor: NSColor = theme.showEdgeLight
+            let borderColor: NSColor =
+                theme.showEdgeLight
                 ? NSColor(theme.glassEdgeLight)
                 : NSColor(theme.primaryBorder).withAlphaComponent(theme.borderOpacity)
 
@@ -1139,7 +1190,13 @@ final class NativeMessageCellView: NSTableCellView {
                 let totalH = self.measureFittedRowHeight()
                 context.onHeightMeasured?(totalH, id)
             }
-            mv.configure(text: text, width: innerWidth - 24, theme: theme, cacheKey: block.id, isStreaming: context.isStreaming)
+            mv.configure(
+                text: text,
+                width: innerWidth - 24,
+                theme: theme,
+                cacheKey: block.id,
+                isStreaming: context.isStreaming
+            )
         }
 
         if let stack = userImageStack {
@@ -1182,8 +1239,12 @@ final class NativeMessageCellView: NSTableCellView {
     // MARK: - PendingToolCall
 
     private func configureAsPendingToolCall(
-        block: ContentBlock, toolName: String, argPreview: String?,
-        argSize: Int, context: CellRenderingContext, sameKind: Bool
+        block: ContentBlock,
+        toolName: String,
+        argPreview: String?,
+        argSize: Int,
+        context: CellRenderingContext,
+        sameKind: Bool
     ) {
         if !sameKind || nativePendingView == nil {
             removeAllContentViews()
@@ -1223,8 +1284,10 @@ final class NativeMessageCellView: NSTableCellView {
     // MARK: - SharedArtifact
 
     private func configureAsArtifact(
-        block: ContentBlock, artifact: SharedArtifact,
-        context: CellRenderingContext, sameKind: Bool
+        block: ContentBlock,
+        artifact: SharedArtifact,
+        context: CellRenderingContext,
+        sameKind: Bool
     ) {
         if !sameKind || nativeArtifactView == nil {
             removeAllContentViews()
@@ -1258,8 +1321,10 @@ final class NativeMessageCellView: NSTableCellView {
     // MARK: - PreflightCapabilities
 
     private func configureAsPreflight(
-        block: ContentBlock, items: [PreflightCapabilityItem],
-        context: CellRenderingContext, sameKind: Bool
+        block: ContentBlock,
+        items: [PreflightCapabilityItem],
+        context: CellRenderingContext,
+        sameKind: Bool
     ) {
         if !sameKind || nativePreflightView == nil {
             removeAllContentViews()
@@ -1366,7 +1431,7 @@ private final class UserAttachmentThumbnailView: NSView {
         guard let img = image else { return NSSize(width: 96, height: 96) }
         let size = img.size
         guard size.width > 0, size.height > 0 else { return NSSize(width: 96, height: 96) }
-        
+
         let aspectRatio = size.width / size.height
         if aspectRatio > 1 {
             // landscape: fixed width 96, height shrinks (to stay within 96x96 box)
@@ -1406,7 +1471,7 @@ private final class UserAttachmentThumbnailView: NSView {
         // clip to the actual view bounds (which now match the aspect ratio via intrinsicContentSize)
         NSBezierPath(roundedRect: rect, xRadius: Self.cornerRadius, yRadius: Self.cornerRadius).addClip()
         NSGraphicsContext.current?.imageInterpolation = .high
-        
+
         // since the view bounds (rect) already match the aspect ratio,
         // simple drawing into rect will show the full image correctly without stretching.
         img.draw(
@@ -1496,7 +1561,7 @@ enum NativeCellHeightEstimator {
 
         case let .userMessage(text, attachments):
             // header: 10 top + 24 label + 4 gap = 38pt; text below; 16pt bottom = 54pt base
-            
+
             // "You" header
             var h: CGFloat = 38
             let innerW = max(width - 32, 100)

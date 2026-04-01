@@ -492,8 +492,7 @@ final class NativePreflightCapabilitiesView: NSView {
 
         let types = Set(items.map(\.type))
         let iconName: String
-        if types.count == 1, let only = types.first { iconName = only.icon }
-        else { iconName = "sparkles" }
+        if types.count == 1, let only = types.first { iconName = only.icon } else { iconName = "sparkles" }
         iconView.image = NSImage(systemSymbolName: iconName, accessibilityDescription: nil)
         iconView.contentTintColor = NSColor(theme.tertiaryText)
 
@@ -608,9 +607,9 @@ final class NativeCodeBlockView: NSView {
     private let copyButton = NSButton()
     private var codeView: CodeNSTextView?
     private var codeHeightConstraint: NSLayoutConstraint?
-    
+
     // MARK: Callback
-    
+
     var onHeightChanged: (() -> Void)?
 
     // MARK: State
@@ -700,7 +699,7 @@ final class NativeCodeBlockView: NSView {
         copyButton.title = ""
         copyButton.image = NSImage(systemSymbolName: "doc.on.doc", accessibilityDescription: nil)
         copyButton.isBordered = false
-        copyButton.alphaValue = 1 // Ensure it's visible
+        copyButton.alphaValue = 1  // Ensure it's visible
         copyButton.target = self
         copyButton.action = #selector(copyCode)
         copyButton.alphaValue = 0.45
@@ -741,11 +740,11 @@ final class NativeCodeBlockView: NSView {
         cv.insertionPointColor = NSColor(theme.cursorColor)
         cv.lineNumberColor = NSColor(theme.tertiaryText).withAlphaComponent(0.4)
         addSubview(cv)
-        
+
         let hc = cv.heightAnchor.constraint(equalToConstant: 0)
         hc.isActive = true
         codeHeightConstraint = hc
-        
+
         NSLayoutConstraint.activate([
             cv.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
             cv.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
@@ -755,11 +754,11 @@ final class NativeCodeBlockView: NSView {
         codeView = cv
         return cv
     }
-    
+
     // provide intrinsic content size so the view can size itself
     override var intrinsicContentSize: NSSize {
         let codeHeight = codeHeightConstraint?.constant ?? 0
-        let totalHeight = 28 + codeHeight + 8 // header + code + padding
+        let totalHeight = 28 + codeHeight + 8  // header + code + padding
         // ensure minimum visible height even if code hasn't been measured yet
         return NSSize(width: NSView.noIntrinsicMetric, height: max(totalHeight, 60))
     }
@@ -784,7 +783,7 @@ final class NativeCodeBlockView: NSView {
         let bodyFontSize = CGFloat(theme.bodySize) * scale
         cv.codeFontSize = bodyFontSize * 0.85
         cv.lineCount = code.components(separatedBy: "\n").count
-        
+
         // update height constraint based on measured text height
         if let tc = cv.textContainer, let lm = cv.layoutManager {
             lm.ensureLayout(for: tc)
@@ -802,12 +801,14 @@ final class NativeCodeBlockView: NSView {
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         for area in trackingAreas { removeTrackingArea(area) }
-        addTrackingArea(NSTrackingArea(
-            rect: bounds,
-            options: [.mouseEnteredAndExited, .activeInKeyWindow],
-            owner: self,
-            userInfo: nil
-        ))
+        addTrackingArea(
+            NSTrackingArea(
+                rect: bounds,
+                options: [.mouseEnteredAndExited, .activeInKeyWindow],
+                owner: self,
+                userInfo: nil
+            )
+        )
     }
 
     override func mouseEntered(with event: NSEvent) {

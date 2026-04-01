@@ -134,7 +134,7 @@ struct MemoryConfigurationTests {
         let config = try JSONDecoder().decode(MemoryConfiguration.self, from: data)
         #expect(config.enabled == false)
         #expect(config.maxEntriesPerAgent == 500)
-        #expect(config.coreModelName == "claude-haiku-4-5")
+        #expect(config.embeddingBackend == "mlx")
     }
 
     @Test func roundTrips() throws {

@@ -1550,11 +1550,11 @@ struct ChatView: View {
                     bottomLeadingRadius: windowState.showSidebar ? 0 : nil
                 )
                 .allowsHitTesting(false)
-
+            
                 // Solid backing scaled by glass opacity so low values produce real transparency
                 let baseBacking = theme.windowBackingOpacity
                 let backingOpacity = baseBacking * (0.4 + theme.glassOpacityPrimary * 0.6)
-
+            
                 LinearGradient(
                     colors: [
                         theme.primaryBackground.opacity(backingOpacity + theme.glassOpacityPrimary * 0.3),
@@ -1733,10 +1733,12 @@ struct ChatView: View {
                 }
             }
         }
-        .sheet(isPresented: Binding(
-            get: { userImagePreview != nil },
-            set: { if !$0 { userImagePreview = nil } }
-        )) {
+        .sheet(
+            isPresented: Binding(
+                get: { userImagePreview != nil },
+                set: { if !$0 { userImagePreview = nil } }
+            )
+        ) {
             if let img = userImagePreview {
                 ImageFullScreenView(image: img, altText: "")
                     .imageFullScreenSheetPresentation()
