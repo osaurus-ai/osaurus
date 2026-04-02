@@ -1718,11 +1718,19 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
         let responseId = "chatcmpl-\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(12))"
         let created = Int(Date().timeIntervalSince1970)
-        let model = req.model
 
         hop { writerBound.value.writeHeaders(ctx.value, extraHeaders: cors) }
 
         Task(priority: .userInitiated) {
+            // Resolve model: client sends "default" when no specific model was known
+            let model: String
+            if req.model.isEmpty || req.model == "default" {
+                let agentModel = await MainActor.run { AgentManager.shared.effectiveModel(for: agentId) }
+                model = agentModel ?? req.model
+            } else {
+                model = req.model
+            }
+
             // Enrich with agent context (system prompt + memory)
             var messages = await Self.enrichWithAgentContext(req, agentId: agentId.uuidString).messages
 
@@ -1750,7 +1758,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 iteration += 1
 
                 let iterationReq = ChatCompletionRequest(
-                    model: req.model,
+                    model: model,
                     messages: messages,
                     temperature: req.temperature,
                     max_tokens: req.max_tokens,

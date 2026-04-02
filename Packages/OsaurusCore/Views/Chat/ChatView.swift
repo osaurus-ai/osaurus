@@ -1669,6 +1669,7 @@ struct ChatView: View {
 
         windowState.selectedDiscoveredAgent = agent
         windowState.selectedDiscoveredAgentProviderId = providerId
+        session.reset()
         Task { await session.refreshPickerItems() }
     }
 

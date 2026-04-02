@@ -2338,9 +2338,9 @@ extension RemoteProviderService {
             return try await fetchGeminiModels(from: provider)
         }
 
-        // Native Osaurus agent — fetch agent info to discover the configured model
+        // Native Osaurus agent — fetch all models from the server's /models endpoint
         if provider.providerType == .osaurus {
-            return try await fetchOsaurusAgentModel(from: provider)
+            return try await fetchOsaurusModels(from: provider)
         }
 
         // OpenAI-compatible providers use /models endpoint
@@ -2373,32 +2373,43 @@ extension RemoteProviderService {
         return modelsResponse.data.map { $0.id }
     }
 
-    /// Fetch the model for a native Osaurus agent by calling GET /agents/{id}
-    private static func fetchOsaurusAgentModel(from provider: RemoteProvider) async throws -> [String] {
-        guard let agentId = provider.remoteAgentId else {
-            throw RemoteProviderServiceError.invalidURL
-        }
-        guard let url = provider.url(for: "/agents/\(agentId.uuidString)") else {
-            throw RemoteProviderServiceError.invalidURL
+    /// Fetch models for a native Osaurus agent.
+    /// Tries the server's /models endpoint first (returns all available models so the user can
+    /// select one in the picker). Falls back to GET /agents/{id} when /models is unavailable.
+    private static func fetchOsaurusModels(from provider: RemoteProvider) async throws -> [String] {
+        // Try /models first
+        if let url = provider.url(for: "/models") {
+            var req = URLRequest(url: url)
+            req.httpMethod = "GET"
+            req.setValue("application/json", forHTTPHeaderField: "Accept")
+            req.timeoutInterval = min(provider.timeout, 10)
+            for (key, value) in provider.resolvedHeaders() { req.setValue(value, forHTTPHeaderField: key) }
+            if let (data, response) = try? await URLSession.shared.data(for: req),
+                let http = response as? HTTPURLResponse, http.statusCode < 400,
+                let parsed = try? JSONDecoder().decode(ModelsResponse.self, from: data),
+                !parsed.data.isEmpty
+            {
+                return parsed.data.map { $0.id }
+            }
         }
 
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.timeoutInterval = min(provider.timeout, 10)
-
-        for (key, value) in provider.resolvedHeaders() {
-            request.setValue(value, forHTTPHeaderField: key)
-        }
-
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode < 400 else {
+        // Fallback: fetch the agent's configured default_model
+        guard let agentId = provider.remoteAgentId,
+            let url = provider.url(for: "/agents/\(agentId.uuidString)")
+        else {
             return ["default"]
         }
-
-        struct AgentInfo: Decodable {
-            let default_model: String?
+        var req = URLRequest(url: url)
+        req.httpMethod = "GET"
+        req.setValue("application/json", forHTTPHeaderField: "Accept")
+        req.timeoutInterval = min(provider.timeout, 10)
+        for (key, value) in provider.resolvedHeaders() { req.setValue(value, forHTTPHeaderField: key) }
+        guard let (data, response) = try? await URLSession.shared.data(for: req),
+            let http = response as? HTTPURLResponse, http.statusCode < 400
+        else {
+            return ["default"]
         }
+        struct AgentInfo: Decodable { let default_model: String? }
         let model = (try? JSONDecoder().decode(AgentInfo.self, from: data))?.default_model ?? "default"
         return [model]
     }
