@@ -60,70 +60,13 @@ final class CapabilitiesSearchTool: OsaurusTool, @unchecked Sendable {
         }
 
         let query = queries.joined(separator: " ")
+        let hits = await CapabilitySearch.search(
+            query: query,
+            topK: (methods: 5, tools: 5, skills: 3)
+        )
 
-        async let methodResults = MethodSearchService.shared.search(query: query, topK: 5)
-        async let toolResults = ToolSearchService.shared.search(query: query, topK: 5)
-        async let skillResults = SkillSearchService.shared.search(query: query, topK: 3)
-
-        let methods = await methodResults
-        let tools = await toolResults
-        let skills = await skillResults
-
-        struct ScoredResult {
-            let id: String
-            let type: String
-            let description: String
-            let score: Double
-            let extra: String?
-        }
-
-        var results: [ScoredResult] = []
-
-        for r in methods {
-            let m = r.method
-            results.append(
-                ScoredResult(
-                    id: "method/\(m.id)",
-                    type: "method",
-                    description: "\(m.name): \(m.description)",
-                    score: r.score,
-                    extra: "tools_used: \(m.toolsUsed.joined(separator: ", "))"
-                )
-            )
-        }
-
-        for r in tools {
-            results.append(
-                ScoredResult(
-                    id: "tool/\(r.entry.id)",
-                    type: "tool",
-                    description: "\(r.entry.name): \(r.entry.description)",
-                    score: Double(r.searchScore),
-                    extra: "runtime: \(r.entry.runtime.rawValue)"
-                )
-            )
-        }
-
-        for r in skills {
-            results.append(
-                ScoredResult(
-                    id: "skill/\(r.skill.name)",
-                    type: "skill",
-                    description: "\(r.skill.name): \(r.skill.description)",
-                    score: Double(r.searchScore),
-                    extra: nil
-                )
-            )
-        }
-
-        results.sort { $0.score > $1.score }
-
-        if results.isEmpty {
-            let canCreatePlugins = await MainActor.run {
-                let agentId = AgentManager.shared.activeAgent.id
-                return AgentManager.shared.effectiveAutonomousExec(for: agentId)?.pluginCreate == true
-            }
-            if canCreatePlugins {
+        if hits.isEmpty {
+            if await CapabilitySearch.canCreatePlugins() {
                 return """
                     No capabilities found matching '\(query)'.
 
@@ -133,6 +76,43 @@ final class CapabilitiesSearchTool: OsaurusTool, @unchecked Sendable {
             }
             return "No capabilities found matching '\(query)'."
         }
+
+        struct ScoredResult {
+            let id: String
+            let type: String
+            let description: String
+            let score: Double
+            let extra: String?
+        }
+
+        let results: [ScoredResult] =
+            (hits.methods.map {
+                ScoredResult(
+                    id: "method/\($0.method.id)",
+                    type: "method",
+                    description: "\($0.method.name): \($0.method.description)",
+                    score: $0.score,
+                    extra: "tools_used: \($0.method.toolsUsed.joined(separator: ", "))"
+                )
+            }
+            + hits.tools.map {
+                ScoredResult(
+                    id: "tool/\($0.entry.id)",
+                    type: "tool",
+                    description: "\($0.entry.name): \($0.entry.description)",
+                    score: Double($0.searchScore),
+                    extra: "runtime: \($0.entry.runtime.rawValue)"
+                )
+            }
+            + hits.skills.map {
+                ScoredResult(
+                    id: "skill/\($0.skill.name)",
+                    type: "skill",
+                    description: "\($0.skill.name): \($0.skill.description)",
+                    score: Double($0.searchScore),
+                    extra: nil
+                )
+            }).sorted { $0.score > $1.score }
 
         var output = "Found \(results.count) capability(ies):\n\n"
         for r in results {
