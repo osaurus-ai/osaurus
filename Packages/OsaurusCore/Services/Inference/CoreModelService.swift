@@ -36,12 +36,12 @@ public actor CoreModelService {
     private let localServices: [ModelService] = [FoundationModelService(), MLXService.shared]
 
     private static let maxRetries = 3
-    private static let baseRetryDelay: UInt64 = 1_000_000_000
+    private static let baseRetryDelayNanoseconds: UInt64 = 1_000_000_000
 
     private var consecutiveFailures = 0
     private var circuitOpenUntil: Date?
     private static let circuitBreakerThreshold = 5
-    private static let circuitBreakerCooldown: TimeInterval = 60
+    private static let circuitBreakerCooldownSeconds: TimeInterval = 60
 
     private init() {}
 
@@ -92,7 +92,7 @@ public actor CoreModelService {
                 lastError = error
                 let isRetryable = !(error is CoreModelError) || error as? CoreModelError == .timedOut
                 if !isRetryable || attempt == Self.maxRetries - 1 { break }
-                let delay = Self.baseRetryDelay * UInt64(1 << attempt)
+                let delay = Self.baseRetryDelayNanoseconds * UInt64(1 << attempt)
                 logger.warning(
                     "Core model call failed (attempt \(attempt + 1)/\(Self.maxRetries)), retrying: \(error)"
                 )
@@ -102,7 +102,7 @@ public actor CoreModelService {
 
         consecutiveFailures += 1
         if consecutiveFailures >= Self.circuitBreakerThreshold {
-            circuitOpenUntil = Date().addingTimeInterval(Self.circuitBreakerCooldown)
+            circuitOpenUntil = Date().addingTimeInterval(Self.circuitBreakerCooldownSeconds)
             logger.error(
                 "Circuit breaker opened after \(self.consecutiveFailures) consecutive failures"
             )

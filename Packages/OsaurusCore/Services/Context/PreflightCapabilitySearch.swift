@@ -123,7 +123,7 @@ enum PreflightCapabilitySearch {
         No numbering, no explanations, no extra text.
         """
 
-    private static let extractionTimeout: TimeInterval = 5
+    private static let extractionTimeoutSeconds: TimeInterval = 5
 
     /// Uses the core model to translate a raw user query into capability-oriented search terms.
     /// Returns nil when no core model is configured or extraction fails — callers should
@@ -135,7 +135,7 @@ enum PreflightCapabilitySearch {
                 systemPrompt: searchTermExtractionPrompt,
                 temperature: 0.0,
                 maxTokens: 128,
-                timeout: extractionTimeout
+                timeout: extractionTimeoutSeconds
             )
             let terms = response.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !terms.isEmpty else { return nil }
@@ -207,8 +207,8 @@ enum PreflightCapabilitySearch {
         var sections: [String] = []
         if !hits.methods.isEmpty {
             sections.append("## Pre-loaded Methods\n")
-            for r in hits.methods {
-                let m = r.method
+            for result in hits.methods {
+                let m = result.method
                 sections.append("### \(m.name)\n")
                 sections.append("*\(m.description)*\n")
                 if !m.toolsUsed.isEmpty {
@@ -220,8 +220,8 @@ enum PreflightCapabilitySearch {
         if !hits.skills.isEmpty {
             sections.append("## Available Skills\n")
             sections.append("Use `capabilities_load` with a skill ID to load its full instructions.\n")
-            for r in hits.skills {
-                sections.append("- skill/\(r.skill.name): \(r.skill.description)\n")
+            for result in hits.skills {
+                sections.append("- skill/\(result.skill.name): \(result.skill.description)\n")
             }
         }
 
