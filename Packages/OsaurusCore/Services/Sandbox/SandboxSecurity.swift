@@ -188,6 +188,7 @@ public enum SandboxPluginDefaults {
         return domains.joined(separator: ",")
     }
 
+    // swiftlint:disable:next force_try
     private static let domainPattern = try! NSRegularExpression(
         pattern: "^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$"
     )
