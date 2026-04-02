@@ -1024,7 +1024,7 @@ final class ChatSession: ObservableObject {
                         var uiDeltaCount = 0
                         var firstDeltaTime: Date?
 
-                        let processor = StreamingDeltaProcessor(
+                        var processor = StreamingDeltaProcessor(
                             turn: assistantTurn,
                             modelId: selectedModel ?? "default",
                             modelOptions: activeModelOptions
@@ -1041,8 +1041,33 @@ final class ChatSession: ObservableObject {
                                 processor.finalize()
                                 break outer
                             }
+                            // Server-side tool call complete: add the call card + result turn to the chat log
+                            if let done = StreamingToolHint.decodeDone(delta) {
+                                processor.finalize()
+                                let call = ToolCall(
+                                    id: done.callId,
+                                    type: "function",
+                                    function: ToolCallFunction(name: done.name, arguments: done.arguments)
+                                )
+                                assistantTurn.pendingToolName = nil
+                                assistantTurn.clearPendingToolArgs()
+                                if assistantTurn.toolCalls == nil { assistantTurn.toolCalls = [] }
+                                assistantTurn.toolCalls!.append(call)
+                                assistantTurn.toolResults[done.callId] = done.result
+                                let toolTurn = ChatTurn(role: .tool, content: done.result)
+                                toolTurn.toolCallId = done.callId
+                                let newAssistantTurn = ChatTurn(role: .assistant, content: "")
+                                turns.append(contentsOf: [toolTurn, newAssistantTurn])
+                                assistantTurn = newAssistantTurn
+                                processor = StreamingDeltaProcessor(
+                                    turn: newAssistantTurn,
+                                    modelId: selectedModel ?? "default",
+                                    modelOptions: activeModelOptions
+                                ) { [weak self] in self?.rebuildVisibleBlocks() }
+                                rebuildVisibleBlocks()
+                                continue
+                            }
                             if let toolName = StreamingToolHint.decode(delta) {
-                                // Empty tool name is a "clear" signal (used by remote server-side execution)
                                 assistantTurn.pendingToolName = toolName.isEmpty ? nil : toolName
                                 rebuildVisibleBlocks()
                                 continue

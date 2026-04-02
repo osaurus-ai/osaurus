@@ -1850,10 +1850,16 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     toolResult = "[REJECTED] \(error.localizedDescription)"
                 }
 
-                // Clear the pending tool indicator on the client (empty tool name = clear)
+                // Notify the client the tool call is complete with its result so it can
+                // display the call card and result in the chat log
                 hop {
                     writerBound.value.writeContent(
-                        StreamingToolHint.encode(""),
+                        StreamingToolHint.encodeDone(
+                            callId: callId,
+                            name: invocation.toolName,
+                            arguments: invocation.jsonArguments,
+                            result: toolResult
+                        ),
                         model: model, responseId: responseId, created: created, context: ctx.value
                     )
                 }
