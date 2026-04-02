@@ -81,8 +81,9 @@ struct SandboxPluginRegisterTool: OsaurusTool, @unchecked Sendable {
     // MARK: - Private
 
     private func loadPlugin(pluginId: String) -> (SandboxPlugin?, String?) {
-        let pluginFile = OsaurusPaths.containerWorkspace()
-            .appendingPathComponent("agents/\(agentName)/plugins/\(pluginId)/plugin.json")
+        let pluginDir = OsaurusPaths.containerWorkspace()
+            .appendingPathComponent("agents/\(agentName)/plugins/\(pluginId)")
+        let pluginFile = pluginDir.appendingPathComponent("plugin.json")
 
         guard FileManager.default.fileExists(atPath: pluginFile.path) else {
             return (nil, "plugin.json not found at plugins/\(pluginId)/plugin.json")
@@ -92,10 +93,55 @@ struct SandboxPluginRegisterTool: OsaurusTool, @unchecked Sendable {
             let data = try Data(contentsOf: pluginFile)
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .iso8601
-            return (try decoder.decode(SandboxPlugin.self, from: data), nil)
+            var plugin = try decoder.decode(SandboxPlugin.self, from: data)
+
+            // Package all files in the directory (excluding plugin.json) into
+            // plugin.files so the install mechanism can seed them correctly.
+            let discoveredFiles = collectFiles(in: pluginDir)
+            if !discoveredFiles.isEmpty {
+                var merged = plugin.files ?? [:]
+                for (path, content) in discoveredFiles where merged[path] == nil {
+                    merged[path] = content
+                }
+                plugin.files = merged
+            }
+
+            return (plugin, nil)
         } catch {
             return (nil, "Invalid plugin.json: \(error.localizedDescription)")
         }
+    }
+
+    /// Recursively collects all files under `directory`, returning relative paths
+    /// mapped to their UTF-8 contents. Skips `plugin.json` and binary files.
+    private func collectFiles(in directory: URL) -> [String: String] {
+        let fm = FileManager.default
+        guard
+            let enumerator = fm.enumerator(
+                at: directory,
+                includingPropertiesForKeys: [.isRegularFileKey],
+                options: [.skipsHiddenFiles]
+            )
+        else { return [:] }
+
+        var result: [String: String] = [:]
+        let basePath = directory.standardizedFileURL.path
+
+        for case let fileURL as URL in enumerator {
+            guard let values = try? fileURL.resourceValues(forKeys: [.isRegularFileKey]),
+                values.isRegularFile == true
+            else { continue }
+
+            let fullPath = fileURL.standardizedFileURL.path
+            let relativePath = String(fullPath.dropFirst(basePath.count + 1))
+
+            if relativePath == "plugin.json" { continue }
+
+            guard let content = try? String(contentsOf: fileURL, encoding: .utf8) else { continue }
+            result[relativePath] = content
+        }
+
+        return result
     }
 
     private func validate(_ plugin: SandboxPlugin) -> String? {

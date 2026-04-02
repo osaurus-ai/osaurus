@@ -52,7 +52,7 @@ public actor MemoryService {
         }
 
         let config = MemoryConfigurationStore.load()
-        guard config.enabled else { return }
+        guard config.enabled, await hasCoreModel() else { return }
 
         let startTime = Date()
         let allExistingEntries: [MemoryEntry]
@@ -175,7 +175,7 @@ public actor MemoryService {
         } else {
             cfg = MemoryConfigurationStore.load()
         }
-        guard cfg.enabled else { return }
+        guard cfg.enabled, await hasCoreModel() else { return }
 
         let coreModelId = await coreModelIdentifier()
         MemoryLogger.service.debug("Profile regeneration starting, model: \(coreModelId)")
@@ -258,7 +258,7 @@ public actor MemoryService {
     /// before summaries could be generated. Called once during app initialization.
     public func recoverOrphanedSignals() async {
         let config = MemoryConfigurationStore.load()
-        guard config.enabled else { return }
+        guard config.enabled, await hasCoreModel() else { return }
 
         let conversations: [(agentId: String, conversationId: String)]
         do {
@@ -284,6 +284,10 @@ public actor MemoryService {
         let config = MemoryConfigurationStore.load()
         guard config.enabled else {
             MemoryLogger.service.debug("Sync skipped — memory system is disabled")
+            return
+        }
+        guard await hasCoreModel() else {
+            MemoryLogger.service.debug("Sync skipped — no core model configured")
             return
         }
 
@@ -345,7 +349,7 @@ public actor MemoryService {
     private func generateConversationSummary(agentId: String, conversationId: String, sessionDate: String? = nil) async
     {
         let config = MemoryConfigurationStore.load()
-        guard config.enabled else { return }
+        guard config.enabled, await hasCoreModel() else { return }
 
         let coreModelId = await coreModelIdentifier()
         let startTime = Date()
@@ -436,6 +440,10 @@ public actor MemoryService {
 
     private func coreModelIdentifier() async -> String {
         await MainActor.run { ChatConfigurationStore.load().coreModelIdentifier ?? "none" }
+    }
+
+    private func hasCoreModel() async -> Bool {
+        await MainActor.run { ChatConfigurationStore.load().coreModelIdentifier != nil }
     }
 
     // MARK: - Prompt Building

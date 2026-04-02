@@ -468,6 +468,11 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
                 └── ...
         ```
 
+        Write the scripts FIRST, then plugin.json. When you call
+        `sandbox_plugin_register`, all files in the directory are automatically
+        packaged for installation and persistence — you do NOT need to inline
+        file contents in plugin.json.
+
         ### 4. Write plugin.json
 
         The plugin.json follows the SandboxPlugin schema:
@@ -510,6 +515,7 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
         - `secrets`: Array of secret names the plugin needs (values come from Keychain)
         - `permissions.network`: Comma-separated API domains the scripts need to reach
         - `tools`: Array of tool definitions with `id`, `description`, `parameters`, and `run` command
+        - Do NOT add a `files` field — scripts in the directory are collected automatically
 
         ### 5. Write the scripts
 

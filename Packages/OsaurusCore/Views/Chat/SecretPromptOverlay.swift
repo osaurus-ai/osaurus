@@ -19,6 +19,7 @@ public final class SecretPromptState: ObservableObject {
     let instructions: String
     let agentId: String
     private let completion: (String?) -> Void
+    private var resolved = false
 
     init(
         key: String,
@@ -35,12 +36,19 @@ public final class SecretPromptState: ObservableObject {
     }
 
     func submit(_ value: String) {
-        guard let uuid = UUID(uuidString: agentId) else { return }
+        guard !resolved else { return }
+        resolved = true
+        guard let uuid = UUID(uuidString: agentId) else {
+            completion(nil)
+            return
+        }
         AgentSecretsKeychain.saveSecret(value, id: key, agentId: uuid)
         completion(value)
     }
 
     func cancel() {
+        guard !resolved else { return }
+        resolved = true
         completion(nil)
     }
 }
@@ -58,7 +66,7 @@ struct SecretPromptOverlay: View {
         VStack {
             Spacer()
 
-            SecretPromptCard(state: state, onDismiss: onDismiss)
+            SecretPromptCard(state: state, onCancel: cancelAndDismiss, onDismiss: onDismiss)
                 .opacity(isAppearing ? 1 : 0)
                 .offset(y: isAppearing ? 0 : 30)
                 .padding(.horizontal, 20)
@@ -69,6 +77,17 @@ struct SecretPromptOverlay: View {
                 isAppearing = true
             }
         }
+        .onDisappear {
+            state.cancel()
+        }
+        .onExitCommand {
+            cancelAndDismiss()
+        }
+    }
+
+    private func cancelAndDismiss() {
+        state.cancel()
+        onDismiss()
     }
 }
 
@@ -76,6 +95,7 @@ struct SecretPromptOverlay: View {
 
 private struct SecretPromptCard: View {
     let state: SecretPromptState
+    let onCancel: () -> Void
     let onDismiss: () -> Void
 
     @State private var secretValue: String = ""
@@ -126,14 +146,13 @@ private struct SecretPromptCard: View {
 
             Spacer()
 
-            HStack(spacing: 4) {
-                Circle()
-                    .fill(theme.warningColor)
-                    .frame(width: 6, height: 6)
-                Text("Waiting")
-                    .font(theme.font(size: CGFloat(theme.captionSize) - 2, weight: .medium))
+            Button(action: onCancel) {
+                Text("Cancel")
+                    .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .medium))
                     .foregroundColor(theme.tertiaryText)
             }
+            .buttonStyle(.plain)
+            .keyboardShortcut(.cancelAction)
         }
     }
 

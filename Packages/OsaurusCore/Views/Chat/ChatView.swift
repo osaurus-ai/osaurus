@@ -1320,6 +1320,7 @@ struct ChatView: View {
         .overlay {
             if let promptState = session.pendingSecretPrompt {
                 SecretPromptOverlay(state: promptState) {
+                    promptState.cancel()
                     session.pendingSecretPrompt = nil
                 }
             }

@@ -842,6 +842,7 @@ public final class WorkSession: ObservableObject {
         errorMessage = nil
         failedIssue = nil
         pendingClarification = nil
+        pendingSecretPrompt?.cancel()
         pendingSecretPrompt = nil
         clarificationIssueId = nil
         pausedIssueId = nil
@@ -1012,6 +1013,7 @@ public final class WorkSession: ObservableObject {
         pausedIssueId = nil
         pausedExecutionReason = nil
         pendingClarification = nil
+        pendingSecretPrompt?.cancel()
         pendingSecretPrompt = nil
         clarificationIssueId = nil
         preserveTurnsOnNextExecutionStart = false
@@ -1053,6 +1055,7 @@ public final class WorkSession: ObservableObject {
         isRetrying = false
         failedIssue = nil
         pendingClarification = nil
+        pendingSecretPrompt?.cancel()
         pendingSecretPrompt = nil
         clarificationIssueId = nil
         pausedIssueId = nil
@@ -1137,6 +1140,7 @@ public final class WorkSession: ObservableObject {
     /// Clears the clarification UI state
     private func clearClarificationState() {
         pendingClarification = nil
+        pendingSecretPrompt?.cancel()
         pendingSecretPrompt = nil
         clarificationIssueId = nil
     }
@@ -1363,6 +1367,7 @@ public final class WorkSession: ObservableObject {
             setPendingClarification(request)
         default:
             pendingClarification = nil
+            pendingSecretPrompt?.cancel()
             pendingSecretPrompt = nil
             clarificationIssueId = nil
             setPendingClarification(nil)
@@ -1660,6 +1665,20 @@ extension WorkSession: WorkEngineDelegate {
             emitActivity(.resumedWithSummary)
         } else {
             emitActivity(.willExecuteStep(index: currentStep, total: loopState?.maxIterations, description: status))
+        }
+    }
+
+    public func workEngine(_ engine: WorkEngine, needsSecret prompt: SecretPromptParser.Prompt) async -> String? {
+        await withCheckedContinuation { continuation in
+            let state = SecretPromptState(
+                key: prompt.key,
+                description: prompt.description,
+                instructions: prompt.instructions,
+                agentId: prompt.agentId
+            ) { value in
+                continuation.resume(returning: value)
+            }
+            pendingSecretPrompt = state
         }
     }
 }
