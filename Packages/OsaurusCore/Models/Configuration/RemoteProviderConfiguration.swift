@@ -56,7 +56,7 @@ public enum RemoteProviderType: String, Codable, Sendable, CaseIterable {
         case .anthropic: return "/messages"
         case .openResponses: return "/responses"
         case .gemini: return "/models"  // Actual URL is built dynamically: /models/{model}:generateContent
-        case .osaurus: return "/run"  // Prefixed with /agents/{id} at call site
+        case .osaurus: return "/run"  // Unused — full URL built by RemoteProviderService.buildURLRequest
         }
     }
 

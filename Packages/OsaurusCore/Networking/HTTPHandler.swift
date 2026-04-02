@@ -1873,44 +1873,23 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     )
                 }
 
-                let cleanedContent = responseContent.isEmpty ? nil : responseContent
-                if let content = cleanedContent {
-                    messages.append(
-                        ChatMessage(
-                            role: "assistant",
-                            content: content,
-                            tool_calls: [
-                                ToolCall(
-                                    id: callId,
-                                    type: "function",
-                                    function: ToolCallFunction(
-                                        name: invocation.toolName,
-                                        arguments: invocation.jsonArguments
-                                    )
+                messages.append(
+                    ChatMessage(
+                        role: "assistant",
+                        content: responseContent.isEmpty ? nil : responseContent,
+                        tool_calls: [
+                            ToolCall(
+                                id: callId,
+                                type: "function",
+                                function: ToolCallFunction(
+                                    name: invocation.toolName,
+                                    arguments: invocation.jsonArguments
                                 )
-                            ],
-                            tool_call_id: nil
-                        )
+                            )
+                        ],
+                        tool_call_id: nil
                     )
-                } else {
-                    messages.append(
-                        ChatMessage(
-                            role: "assistant",
-                            content: nil,
-                            tool_calls: [
-                                ToolCall(
-                                    id: callId,
-                                    type: "function",
-                                    function: ToolCallFunction(
-                                        name: invocation.toolName,
-                                        arguments: invocation.jsonArguments
-                                    )
-                                )
-                            ],
-                            tool_call_id: nil
-                        )
-                    )
-                }
+                )
                 messages.append(
                     ChatMessage(role: "tool", content: toolResult, tool_calls: nil, tool_call_id: callId)
                 )
