@@ -531,6 +531,14 @@ extension WorkView {
                 }
             }
         }
+        .overlay {
+            if let promptState = session.pendingSecretPrompt {
+                SecretPromptOverlay(state: promptState) {
+                    promptState.cancel()
+                    session.pendingSecretPrompt = nil
+                }
+            }
+        }
     }
 
     /// Copy a turn's content to the clipboard

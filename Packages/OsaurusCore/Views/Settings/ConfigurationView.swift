@@ -27,6 +27,9 @@ struct ConfigurationView: View {
     @State private var tempChatMaxToolAttempts: String = ""
     @State private var tempPreflightSearchMode: PreflightSearchMode = .balanced
     @State private var tempDisableTools: Bool = false
+    @State private var tempCoreModelProvider: String = ""
+    @State private var tempCoreModelName: String = ""
+    @State private var coreModelPickerItems: [ModelPickerItem] = []
     @State private var tempEnableClipboardMonitoring: Bool = false
 
     // Work generation settings state
@@ -91,6 +94,7 @@ struct ConfigurationView: View {
                             "Start at Login",
                             "Beta",
                             "Updates",
+                            "Core Model",
                             "CLI",
                             "Command Line",
                             "Install",
@@ -126,6 +130,19 @@ struct ConfigurationView: View {
                                             "Receive pre-release updates with new features before they're generally available",
                                         isOn: $updater.isBetaChannel
                                     )
+
+                                    SettingsDivider()
+
+                                    SettingsSubsection(label: "Core Model") {
+                                        VStack(alignment: .leading, spacing: 8) {
+                                            coreModelPicker
+                                            Text(
+                                                "Lightweight model used for memory extraction, preflight search optimization, and other background inference tasks."
+                                            )
+                                            .font(.system(size: 11))
+                                            .foregroundColor(theme.tertiaryText)
+                                        }
+                                    }
 
                                     SettingsDivider()
 
@@ -593,6 +610,9 @@ struct ConfigurationView: View {
                 hasAppeared = true
             }
         }
+        .onReceive(ModelPickerItemCache.shared.$items) { options in
+            coreModelPickerItems = options
+        }
     }
 
     // MARK: - Success Toast
@@ -644,6 +664,8 @@ struct ConfigurationView: View {
         tempChatMaxToolAttempts = chat.maxToolAttempts.map(String.init) ?? ""
         tempPreflightSearchMode = chat.preflightSearchMode ?? .balanced
         tempDisableTools = chat.disableTools
+        tempCoreModelProvider = chat.coreModelProvider ?? ""
+        tempCoreModelName = chat.coreModelName ?? ""
         tempEnableClipboardMonitoring = chat.enableClipboardMonitoring
 
         // Work generation settings
@@ -685,18 +707,15 @@ struct ConfigurationView: View {
     // MARK: - Reset to Defaults
 
     private func resetToDefaults() {
-        // Reset all fields to default values
         let serverDefaults = ServerConfiguration.default
         let chatDefaults = ChatConfiguration.default
 
-        // Server settings
         tempPortString = String(serverDefaults.port)
         tempExposeToNetwork = serverDefaults.exposeToNetwork
         tempStartAtLogin = serverDefaults.startAtLogin
         tempHideDockIcon = serverDefaults.hideDockIcon
         tempAllowedOrigins = ""
 
-        // Chat settings - clear overrides to use defaults
         tempChatHotkey = chatDefaults.hotkey
         tempSystemPrompt = ""
         tempChatTemperature = ""
@@ -706,13 +725,14 @@ struct ConfigurationView: View {
         tempChatMaxToolAttempts = ""
         tempPreflightSearchMode = .balanced
         tempDisableTools = false
+        tempCoreModelProvider = ""
+        tempCoreModelName = ""
         tempEnableClipboardMonitoring = chatDefaults.enableClipboardMonitoring
         tempAgentTemperature = ""
         tempAgentMaxTokens = ""
         tempAgentTopP = ""
         tempAgentMaxIterations = ""
 
-        // Local Inference settings - clear to use defaults
         tempTopP = ""
         tempKVBits = ""
         tempKVGroup = ""
@@ -721,7 +741,6 @@ struct ConfigurationView: View {
         tempPrefillStep = ""
         tempEvictionPolicy = serverDefaults.modelEvictionPolicy
 
-        // Show success toast
         showSuccess("Settings reset to defaults")
     }
 
@@ -739,7 +758,6 @@ struct ConfigurationView: View {
         configuration.startAtLogin = tempStartAtLogin
         configuration.hideDockIcon = tempHideDockIcon
 
-        // Save Local Inference settings
         let defaults = ServerConfiguration.default
         let trimmedTopP = tempTopP.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmedTopP.isEmpty {
@@ -771,10 +789,8 @@ struct ConfigurationView: View {
         let trimmedPrefillStep = tempPrefillStep.trimmingCharacters(in: .whitespacesAndNewlines)
         configuration.genPrefillStepSize = trimmedPrefillStep.isEmpty ? nil : Int(trimmedPrefillStep)
 
-        // Save eviction policy
         configuration.modelEvictionPolicy = tempEvictionPolicy
 
-        // Save CORS allowed origins
         let parsedOrigins: [String] =
             tempAllowedOrigins
             .split(separator: ",")
@@ -782,7 +798,6 @@ struct ConfigurationView: View {
             .filter { !$0.isEmpty }
         configuration.allowedOrigins = parsedOrigins
 
-        // Determine which side effects are actually needed
         let serverConfigChanged = previousServerCfg != configuration
         let startAtLoginChanged = previousServerCfg.startAtLogin != configuration.startAtLogin
         let serverRestartNeeded =
@@ -797,10 +812,8 @@ struct ConfigurationView: View {
             || previousServerCfg.genPrefillStepSize != configuration.genPrefillStepSize
             || previousServerCfg.modelEvictionPolicy != configuration.modelEvictionPolicy
 
-        // Persist to disk
         ServerConfigurationStore.save(configuration)
 
-        // Save Chat configuration (per-chat overrides)
         let trimmedTemp = tempChatTemperature.trimmingCharacters(in: .whitespacesAndNewlines)
         let parsedTemp: Float? = {
             guard !trimmedTemp.isEmpty, let v = Float(trimmedTemp) else { return nil }
@@ -831,7 +844,6 @@ struct ConfigurationView: View {
             return max(1, min(50, v))
         }()
 
-        // Parse work generation settings
         let parsedAgentTemp: Float? = {
             let s = tempAgentTemperature.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !s.isEmpty, let v = Float(s) else { return nil }
@@ -856,7 +868,6 @@ struct ConfigurationView: View {
             return max(1, min(100, v))
         }()
 
-        // Preserve the existing defaultModel (auto-persisted via model picker)
         let existingDefaultModel = previousChatCfg.defaultModel
         let chatCfg = ChatConfiguration(
             hotkey: tempChatHotkey,
@@ -867,6 +878,8 @@ struct ConfigurationView: View {
             topPOverride: parsedTopP,
             maxToolAttempts: parsedMaxToolAttempts,
             defaultModel: existingDefaultModel,
+            coreModelProvider: tempCoreModelProvider.isEmpty ? nil : tempCoreModelProvider,
+            coreModelName: tempCoreModelName.isEmpty ? nil : tempCoreModelName,
             workTemperature: parsedAgentTemp,
             workMaxTokens: parsedAgentMax,
             workTopPOverride: parsedAgentTopP,
@@ -879,17 +892,13 @@ struct ConfigurationView: View {
 
         let hotkeyChanged = previousChatCfg.hotkey != chatCfg.hotkey
 
-        // Apply hotkey without relaunch (only if it changed)
         if hotkeyChanged {
             AppDelegate.shared?.applyChatHotkey()
         }
-
-        // Apply login item state (only if it changed)
         if startAtLoginChanged {
             LoginItemService.shared.applyStartAtLogin(configuration.startAtLogin)
         }
 
-        // Sync in-memory server configuration and restart only if needed
         Task { @MainActor in
             if serverConfigChanged {
                 AppDelegate.shared?.serverController.configuration = configuration
@@ -899,8 +908,53 @@ struct ConfigurationView: View {
             }
         }
 
-        // Show success toast
         showSuccess("Settings saved successfully")
+    }
+
+    // MARK: - Core Model Picker
+
+    private var coreModelIdentifierBinding: Binding<String> {
+        Binding(
+            get: {
+                if tempCoreModelName.isEmpty { return "" }
+                return tempCoreModelProvider.isEmpty
+                    ? tempCoreModelName
+                    : "\(tempCoreModelProvider)/\(tempCoreModelName)"
+            },
+            set: { newValue in
+                if newValue.isEmpty {
+                    tempCoreModelProvider = ""
+                    tempCoreModelName = ""
+                    return
+                }
+                let parts = newValue.split(separator: "/", maxSplits: 1)
+                if parts.count == 2 {
+                    tempCoreModelProvider = String(parts[0])
+                    tempCoreModelName = String(parts[1])
+                } else {
+                    tempCoreModelProvider = ""
+                    tempCoreModelName = newValue
+                }
+            }
+        )
+    }
+
+    private var coreModelPicker: some View {
+        Picker("", selection: coreModelIdentifierBinding) {
+            Text("None").tag("")
+            if !coreModelIdentifierBinding.wrappedValue.isEmpty,
+                !coreModelPickerItems.contains(where: { $0.id == coreModelIdentifierBinding.wrappedValue })
+            {
+                Text(coreModelIdentifierBinding.wrappedValue)
+                    .tag(coreModelIdentifierBinding.wrappedValue)
+            }
+            ForEach(coreModelPickerItems) { option in
+                Text(option.displayName)
+                    .tag(option.id)
+            }
+        }
+        .labelsHidden()
+        .frame(maxWidth: 280)
     }
 }
 

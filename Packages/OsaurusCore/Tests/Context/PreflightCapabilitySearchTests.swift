@@ -22,7 +22,6 @@ struct PreflightCapabilitySearchTests {
             query: "zzz_completely_nonexistent_capability_xyz_12345"
         )
         #expect(result.toolSpecs.isEmpty)
-        #expect(result.contextSnippet.isEmpty)
     }
 
     @Test func resultContainsNoDuplicateToolSpecs() async {

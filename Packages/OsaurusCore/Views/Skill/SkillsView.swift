@@ -188,7 +188,7 @@ struct SkillsView: View {
             if newValue {
                 // Delay showing the progress bar to avoid flickering for fast operations
                 Task {
-                    try? await Task.sleep(nanoseconds: 2_500_000_000) // 2.5 seconds
+                    try? await Task.sleep(nanoseconds: 2_500_000_000)  // 2.5 seconds
                     if isProcessing || skillManager.isRefreshing {
                         withAnimation(.easeIn(duration: 0.2)) {
                             showProgress = true

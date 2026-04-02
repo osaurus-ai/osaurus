@@ -15,6 +15,7 @@ private func pluralized(_ count: Int, _ singular: String, _ plural: String? = ni
 struct MemoryView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
     @ObservedObject private var agentManager = AgentManager.shared
+    @ObservedObject private var appConfig = AppConfiguration.shared
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
@@ -41,7 +42,6 @@ struct MemoryView: View {
     @State private var agentMemoryCounts: [(agent: Agent, count: Int)] = []
     @State private var defaultAgentEntries: [MemoryEntry] = []
     @State private var defaultAgentSummaries: [ConversationSummary] = []
-    @State private var pickerItems: [ModelPickerItem] = []
 
     // MARK: UI State
 
@@ -148,9 +148,6 @@ struct MemoryView: View {
             withAnimation(.easeOut(duration: 0.25).delay(0.05)) {
                 hasAppeared = true
             }
-        }
-        .onReceive(ModelPickerItemCache.shared.$items) { options in
-            pickerItems = options
         }
         .sheet(isPresented: $showProfileEditor) {
             ProfileEditSheet(
@@ -571,40 +568,21 @@ struct MemoryView: View {
     private var configurationSection: some View {
         MemorySection(title: "Configuration", icon: "gearshape") {
             VStack(alignment: .leading, spacing: 14) {
-                // Core Model picker
                 HStack(spacing: 12) {
                     Text("Core Model")
                         .font(.system(size: 12, weight: .medium))
                         .foregroundColor(theme.secondaryText)
                         .frame(width: 100, alignment: .leading)
 
-                    Picker(
-                        "",
-                        selection: Binding(
-                            get: { config.coreModelIdentifier },
-                            set: { newValue in
-                                let parts = newValue.split(separator: "/", maxSplits: 1)
-                                if parts.count == 2 {
-                                    config.coreModelProvider = String(parts[0])
-                                    config.coreModelName = String(parts[1])
-                                } else {
-                                    config.coreModelProvider = ""
-                                    config.coreModelName = newValue
-                                }
-                                MemoryConfigurationStore.save(config)
-                            }
-                        )
-                    ) {
-                        if !pickerItems.contains(where: { $0.id == config.coreModelIdentifier }) {
-                            Text(config.coreModelIdentifier)
-                                .tag(config.coreModelIdentifier)
-                        }
-                        ForEach(pickerItems) { option in
-                            Text(option.displayName)
-                                .tag(option.id)
-                        }
-                    }
-                    .frame(maxWidth: 280)
+                    Text(appConfig.chatConfig.coreModelIdentifier ?? "None")
+                        .font(.system(size: 13))
+                        .foregroundColor(theme.primaryText)
+
+                    Spacer()
+
+                    Text("Change in Settings → General")
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.tertiaryText)
                 }
 
                 Divider().opacity(0.5)

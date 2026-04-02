@@ -507,6 +507,10 @@ public actor WorkEngine {
                         output: outputTokens,
                         forIssue: issue
                     )
+                },
+                onSecretPrompt: { [weak self] prompt in
+                    guard let self = self else { return nil }
+                    return await self.delegate?.workEngine(self, needsSecret: prompt)
                 }
             )
         } catch {
@@ -985,6 +989,8 @@ public protocol WorkEngineDelegate: AnyObject, Sendable {
     // Retry
     func workEngine(_ engine: WorkEngine, willRetryIssue issue: Issue, attempt: Int, afterDelay: TimeInterval)
 
+    // Secret prompt — present a secure input overlay, return the value or nil if cancelled/unavailable
+    func workEngine(_ engine: WorkEngine, needsSecret prompt: SecretPromptParser.Prompt) async -> String?
 }
 
 /// Default implementations for optional delegate methods
@@ -1025,6 +1031,8 @@ extension WorkEngineDelegate {
     // Retry
     public func workEngine(_ engine: WorkEngine, willRetryIssue issue: Issue, attempt: Int, afterDelay: TimeInterval) {}
 
+    // Secret prompt — default returns nil (no UI available)
+    public func workEngine(_ engine: WorkEngine, needsSecret prompt: SecretPromptParser.Prompt) async -> String? { nil }
 }
 
 // MARK: - Pending Execution Context

@@ -238,11 +238,6 @@ public actor WorkExecutionEngine {
 
         Pre-installed: bash, python3, node, git, curl, wget, jq, ripgrep (rg), \
         sqlite3, build-base (gcc/make), cmake, vim, tree, and standard POSIX utilities.
-
-        **Prefer scripts over sequential tool calls.** Use `sandbox_run_script` for \
-        multi-line scripts (python, bash, node). For single shell commands use \
-        `sandbox_exec`. For background processes use `sandbox_exec_background`. \
-        Set `timeout` for long operations (default 60 s scripts, 30 s exec, max 300 s).
         """
 
     private static let sandboxEnvironmentBlockCompact = """
@@ -250,8 +245,43 @@ public actor WorkExecutionEngine {
         **You have full internet access.** Use `curl`, Python `requests`, or \
         Node `fetch` to call APIs and download data. Do NOT claim you lack \
         internet — always fetch real data. \
-        Pre-installed: bash, python3, node, git, curl, jq, rg, sqlite3, gcc/make, cmake. \
-        Prefer `sandbox_run_script` for multi-line scripts (pass code in `script` arg, escape newlines as `\\n`); `sandbox_exec` for single commands.
+        Pre-installed: bash, python3, node, git, curl, jq, rg, sqlite3, gcc/make, cmake.
+        """
+
+    private static let sandboxToolGuide = """
+        Tool usage:
+        - Use `sandbox_read_file` before editing — never modify code you have not inspected.
+        - Use `sandbox_edit_file` for targeted changes (old_string → new_string). Prefer this over rewriting entire files with `sandbox_write_file`.
+        - Use `sandbox_write_file` only for new files or complete rewrites.
+        - Use `sandbox_find_files` to locate files by name pattern (e.g. `*.py`).
+        - Use `sandbox_search_files` to search file contents with regex (ripgrep). Use `sandbox_find_files` for name-based lookup.
+        - Use `sandbox_list_directory` with `recursive: true` for project structure overview.
+        - Prefer `sandbox_run_script` for multi-line logic (python, bash, node). Use `sandbox_exec` for single shell commands. Use `sandbox_exec_background` for servers, watchers, and long-running processes.
+        - Set `timeout` for long operations (default 60 s scripts, 30 s exec, max 300 s).
+        - Use dedicated tools instead of shell equivalents: `sandbox_read_file` not `cat`, `sandbox_edit_file` not `sed`, `sandbox_find_files` not `find`.
+        - When multiple tool calls have no dependency on each other, issue them in parallel.
+        """
+
+    private static let sandboxToolGuideCompact = """
+        Tools: `sandbox_read_file` before editing. `sandbox_edit_file` for targeted edits (old_string/new_string) — prefer over full rewrites. \
+        `sandbox_find_files` for name patterns, `sandbox_search_files` for content search. \
+        `sandbox_run_script` for multi-line scripts; `sandbox_exec` for single commands.
+        """
+
+    private static let sandboxCodeStyle = """
+        Code style:
+        - Limit changes to what was requested — a bug fix does not warrant adjacent refactoring or style cleanup.
+        - Do not add defensive error handling for conditions that cannot arise in the current code path.
+        - Do not extract helpers or utilities for logic that appears only once.
+        - Only add comments when reasoning is genuinely non-obvious — never narrate what the code does.
+        - Do not add docstrings or type annotations to code you did not modify.
+        """
+
+    private static let sandboxRiskGuidance = """
+        Risk-aware actions:
+        - Local, reversible actions (editing a file, running a test) — proceed without hesitation.
+        - Destructive or hard-to-undo actions (deleting files, `rm -rf`, dropping data) — confirm with the user first.
+        - When encountering unexpected state (unfamiliar files, unknown processes), investigate before removing anything.
         """
 
     private static let sandboxRuntimeHints = """
@@ -270,6 +300,7 @@ public actor WorkExecutionEngine {
     /// Chat-mode sandbox guidance (no `complete_task` workflow).
     static func chatSandboxPromptSection(compact: Bool = false, secretNames: [String] = []) -> String {
         let env = compact ? sandboxEnvironmentBlockCompact : sandboxEnvironmentBlock
+        let tools = compact ? sandboxToolGuideCompact : sandboxToolGuide
         let hints = compact ? sandboxRuntimeHintsCompact : sandboxRuntimeHints
         var section = """
 
@@ -278,9 +309,19 @@ public actor WorkExecutionEngine {
             \(env)
             Files persist across messages.
 
+            \(tools)
+
             \(hints)
 
             """
+        if !compact {
+            section += """
+                \(sandboxCodeStyle)
+
+                \(sandboxRiskGuidance)
+
+                """
+        }
         section += secretsPromptBlock(secretNames)
         return section
     }
@@ -288,6 +329,7 @@ public actor WorkExecutionEngine {
     /// Work-mode sandbox guidance with build/verify pattern.
     static func sandboxPromptSection(compact: Bool = false, secretNames: [String] = []) -> String {
         let env = compact ? sandboxEnvironmentBlockCompact : sandboxEnvironmentBlock
+        let tools = compact ? sandboxToolGuideCompact : sandboxToolGuide
         let hints = compact ? sandboxRuntimeHintsCompact : sandboxRuntimeHints
 
         var section = """
@@ -296,6 +338,8 @@ public actor WorkExecutionEngine {
 
             \(env)
             Files persist across tasks.
+
+            \(tools)
 
             """
 
@@ -307,6 +351,10 @@ public actor WorkExecutionEngine {
                 3. Install project-specific dependencies with `sandbox_pip_install` or `sandbox_npm_install`.
                 4. \(sandboxVerifyGuidance).
                 5. If verification fails, read the error carefully, fix the cause, and rerun.
+
+                \(sandboxCodeStyle)
+
+                \(sandboxRiskGuidance)
 
                 """
         }
@@ -520,6 +568,9 @@ public actor WorkExecutionEngine {
     public typealias TokenConsumptionCallback = @MainActor @Sendable (Int, Int) async -> Void
     public typealias InterruptCheckCallback = @Sendable () async -> Bool
 
+    /// Callback for secret prompt — shows a secure input overlay and returns the value (nil if cancelled)
+    public typealias SecretPromptCallback = @MainActor @Sendable (SecretPromptParser.Prompt) async -> String?
+
     /// Default maximum iterations for the reasoning loop
     public static let defaultMaxIterations = 50
 
@@ -568,7 +619,8 @@ public actor WorkExecutionEngine {
         onToolCall: @escaping ToolCallCallback,
         onStatusUpdate: @escaping StatusCallback,
         onArtifact: @escaping ArtifactCallback,
-        onTokensConsumed: @escaping TokenConsumptionCallback
+        onTokensConsumed: @escaping TokenConsumptionCallback,
+        onSecretPrompt: SecretPromptCallback? = nil
     ) async throws -> LoopResult {
         var activeTools = tools
         var iteration = 0
@@ -801,8 +853,10 @@ public actor WorkExecutionEngine {
             // Execute the tool
             let result = try await executeToolCall(invocation, issueId: issue.id, agentId: agentId)
 
-            // Hot-load tools injected by capabilities_load
-            if invocation.toolName == "capabilities_load" {
+            // Hot-load tools injected by capabilities_load or sandbox_plugin_register
+            if invocation.toolName == "capabilities_load"
+                || invocation.toolName == "sandbox_plugin_register"
+            {
                 let newTools = await CapabilityLoadBuffer.shared.drain()
                 for tool in newTools where !activeTools.contains(where: { $0.function.name == tool.function.name }) {
                     activeTools.append(tool)
@@ -883,6 +937,25 @@ public actor WorkExecutionEngine {
                     await PluginManager.shared.notifyArtifactHandlers(artifact: artifact)
                 }
 
+            case "sandbox_secret_set":
+                if let prompt = SecretPromptParser.parse(result.result),
+                    let handler = onSecretPrompt
+                {
+                    let secretValue = await handler(prompt)
+                    let replacement =
+                        secretValue != nil
+                        ? SecretToolResult.stored(key: prompt.key)
+                        : SecretToolResult.cancelled(key: prompt.key)
+                    if let lastIdx = messages.indices.last, messages[lastIdx].role == "tool" {
+                        messages[lastIdx] = ChatMessage(
+                            role: "tool",
+                            content: replacement,
+                            tool_calls: nil,
+                            tool_call_id: messages[lastIdx].tool_call_id
+                        )
+                    }
+                }
+
             default:
                 break
             }
@@ -933,8 +1006,11 @@ public actor WorkExecutionEngine {
         ## Instructions
 
         - ALWAYS attempt the task using your tools. Never refuse or list limitations.
-        - Use tools step by step. Read/explore before modifying.
+        - Read/explore before modifying. Never edit code you have not examined.
         - Use `create_issue` for additional work; `request_clarification` if ambiguous.
+        - If something fails: read the error, verify assumptions, apply a targeted fix. Do not retry blindly.
+        - Limit changes to what was requested. No speculative error handling, no premature abstractions, no narrating comments.
+        - Start with the answer — no filler, no echoing the user. Be concise.
         - You MUST call `share_artifact` for every output file BEFORE calling `complete_task`. The user sees nothing unless you share it.
         - Only after sharing all outputs, call `complete_task` with `{"summary": "...", "success": true}`.
         - NEVER call `complete_task` without first calling `share_artifact`.
@@ -963,21 +1039,43 @@ public actor WorkExecutionEngine {
         - Use `complete_task` as the normal way to finish work once the task is actually verified.
         - If the task is ambiguous and you cannot make a reasonable assumption, use `request_clarification`.
 
-        ## Important Guidelines
+        ## Task Execution
 
-        - Always read/explore before modifying. Do not guess at file contents or project structure.
+        - Always read/explore before modifying. Never propose changes to code you have not examined.
         - For coding tasks: install missing dependencies, write code efficiently, then verify it works.
-        - Prefer bulk file generation or editing approaches over many tiny write calls when the tools support it.
-        - After failed tests/builds, inspect the error output, fix the cause, and rerun verification.
-        - If something fails, analyze the error and try a different approach. Do not repeat the same action.
         - Keep the user's original request in mind at all times. Every action should serve the goal.
         - When creating follow-up issues, write detailed descriptions with full context about what you learned.
 
-        ## Communication Style
+        ## Failure Recovery
 
-        - Before calling tools, briefly explain what you are about to do and why.
-        - After receiving tool results, summarize what you learned before proceeding.
-        - Use concise natural language (not code or JSON) when explaining your actions.
+        When something fails, follow this protocol:
+        1. Read and understand the actual error output.
+        2. Verify the assumptions that led to the failed action.
+        3. Apply a targeted correction based on the diagnosis.
+        4. Do not re-execute the same action without changing anything.
+        5. Do not discard a fundamentally sound strategy because of a single failure.
+        6. Only escalate to the user when you have exhausted actionable diagnostic steps.
+
+        ## Code Style
+
+        - Limit changes to what was explicitly requested. A bug fix does not warrant adjacent refactoring, style cleanup, or feature additions.
+        - Do not insert defensive error handling, fallback logic, or input validation for conditions that cannot arise in the current code path.
+        - Do not extract helpers or utility functions for logic that appears only once.
+        - Only add code comments when the reasoning behind a decision is genuinely non-obvious. Never comment to narrate what the code does.
+        - Do not add docstrings, comments, or type annotations to code you did not modify.
+
+        ## Tool Discipline
+
+        - Use dedicated tools instead of shell equivalents when available. Purpose-built tools give better visibility into what you are doing.
+        - When multiple tool calls have no dependency on each other's results, issue them in parallel.
+
+        ## Communication
+
+        - Start with the answer or action — no context-setting preamble.
+        - Eliminate filler phrases, hedging language, and unnecessary transitions.
+        - Do not echo or paraphrase what the user said.
+        - Focus on: decisions needing input, progress at meaningful checkpoints, and errors requiring attention.
+        - If a single sentence suffices, do not expand it into a paragraph.
         - The user sees your text responses in real time, so keep them informed of progress.
 
         ## Completion
@@ -1086,6 +1184,31 @@ public actor WorkExecutionEngine {
             options: args.options,
             context: args.context
         )
+    }
+
+}
+
+// MARK: - Secret Prompt Parsing
+
+public enum SecretPromptParser {
+    public struct Prompt: Sendable {
+        public let key: String
+        public let description: String
+        public let instructions: String
+        public let agentId: String
+    }
+
+    public static func parse(_ toolResult: String) -> Prompt? {
+        guard let data = toolResult.data(using: .utf8),
+            let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let action = dict["action"] as? String,
+            action == SecretPromptAction.actionKey,
+            let key = dict["key"] as? String,
+            let desc = dict["description"] as? String,
+            let instructions = dict["instructions"] as? String,
+            let agentId = dict["agent_id"] as? String
+        else { return nil }
+        return Prompt(key: key, description: desc, instructions: instructions, agentId: agentId)
     }
 
 }

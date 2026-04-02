@@ -265,6 +265,9 @@ public final class WorkSession: ObservableObject {
     /// Pending clarification request (execution paused)
     @Published public var pendingClarification: ClarificationRequest?
 
+    /// Pending secret prompt (execution paused, secure input needed)
+    @Published public var pendingSecretPrompt: SecretPromptState?
+
     /// Issue ID awaiting clarification
     @Published public var clarificationIssueId: String?
 
@@ -839,6 +842,7 @@ public final class WorkSession: ObservableObject {
         errorMessage = nil
         failedIssue = nil
         pendingClarification = nil
+        dismissSecretPrompt()
         clarificationIssueId = nil
         pausedIssueId = nil
         pausedExecutionReason = nil
@@ -1008,6 +1012,7 @@ public final class WorkSession: ObservableObject {
         pausedIssueId = nil
         pausedExecutionReason = nil
         pendingClarification = nil
+        dismissSecretPrompt()
         clarificationIssueId = nil
         preserveTurnsOnNextExecutionStart = false
     }
@@ -1048,6 +1053,7 @@ public final class WorkSession: ObservableObject {
         isRetrying = false
         failedIssue = nil
         pendingClarification = nil
+        dismissSecretPrompt()
         clarificationIssueId = nil
         pausedIssueId = nil
         pausedExecutionReason = nil
@@ -1128,9 +1134,14 @@ public final class WorkSession: ObservableObject {
         }
     }
 
-    /// Clears the clarification UI state
+    private func dismissSecretPrompt() {
+        pendingSecretPrompt?.cancel()
+        pendingSecretPrompt = nil
+    }
+
     private func clearClarificationState() {
         pendingClarification = nil
+        dismissSecretPrompt()
         clarificationIssueId = nil
     }
 
@@ -1356,6 +1367,7 @@ public final class WorkSession: ObservableObject {
             setPendingClarification(request)
         default:
             pendingClarification = nil
+            dismissSecretPrompt()
             clarificationIssueId = nil
             setPendingClarification(nil)
         }
@@ -1652,6 +1664,20 @@ extension WorkSession: WorkEngineDelegate {
             emitActivity(.resumedWithSummary)
         } else {
             emitActivity(.willExecuteStep(index: currentStep, total: loopState?.maxIterations, description: status))
+        }
+    }
+
+    public func workEngine(_ engine: WorkEngine, needsSecret prompt: SecretPromptParser.Prompt) async -> String? {
+        await withCheckedContinuation { continuation in
+            let state = SecretPromptState(
+                key: prompt.key,
+                description: prompt.description,
+                instructions: prompt.instructions,
+                agentId: prompt.agentId
+            ) { value in
+                continuation.resume(returning: value)
+            }
+            pendingSecretPrompt = state
         }
     }
 }

@@ -41,6 +41,21 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
     /// Default model for new chat sessions (nil uses first available)
     public var defaultModel: String?
 
+    // MARK: - Core Model Settings
+    /// Provider for the shared core model (e.g. "anthropic")
+    public var coreModelProvider: String?
+    /// Name of the shared core model (e.g. "claude-haiku-4-5")
+    public var coreModelName: String?
+
+    /// Full model identifier for routing, or nil when no core model is configured.
+    public var coreModelIdentifier: String? {
+        guard let name = coreModelName, !name.isEmpty else { return nil }
+        if let provider = coreModelProvider, !provider.isEmpty {
+            return "\(provider)/\(name)"
+        }
+        return name
+    }
+
     // MARK: - Work Generation Settings
     /// Work-specific temperature override (nil uses default 0.3)
     public var workTemperature: Float?
@@ -76,6 +91,8 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         topPOverride: Float? = nil,
         maxToolAttempts: Int? = nil,
         defaultModel: String? = nil,
+        coreModelProvider: String? = nil,
+        coreModelName: String? = nil,
         workTemperature: Float? = nil,
         workMaxTokens: Int? = nil,
         workTopPOverride: Float? = nil,
@@ -93,6 +110,8 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         self.topPOverride = topPOverride
         self.maxToolAttempts = maxToolAttempts
         self.defaultModel = defaultModel
+        self.coreModelProvider = coreModelProvider
+        self.coreModelName = coreModelName
         self.workTemperature = workTemperature
         self.workMaxTokens = workMaxTokens
         self.workTopPOverride = workTopPOverride
@@ -113,6 +132,8 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         topPOverride = try container.decodeIfPresent(Float.self, forKey: .topPOverride)
         maxToolAttempts = try container.decodeIfPresent(Int.self, forKey: .maxToolAttempts)
         defaultModel = try container.decodeIfPresent(String.self, forKey: .defaultModel)
+        coreModelProvider = try container.decodeIfPresent(String.self, forKey: .coreModelProvider)
+        coreModelName = try container.decodeIfPresent(String.self, forKey: .coreModelName)
         workTemperature = try container.decodeIfPresent(Float.self, forKey: .workTemperature)
         workMaxTokens = try container.decodeIfPresent(Int.self, forKey: .workMaxTokens)
         workTopPOverride = try container.decodeIfPresent(Float.self, forKey: .workTopPOverride)
@@ -130,7 +151,6 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
     }
 
     public static var `default`: ChatConfiguration {
-        // Default hotkey: Command + Semicolon
         let key: UInt32 = UInt32(kVK_ANSI_Semicolon)
         let mods: UInt32 = UInt32(cmdKey)
         let display = "⌘;"
@@ -138,14 +158,16 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
             hotkey: Hotkey(keyCode: key, carbonModifiers: mods, displayString: display),
             systemPrompt: "",
             temperature: nil,
-            maxTokens: 16384,  // High default to support long generations (essays, code, etc.)
-            contextLength: 128000,  // Default to 128k for modern remote models
+            maxTokens: 16384,
+            contextLength: 128000,
             topPOverride: nil,
-            maxToolAttempts: 15,  // Max consecutive tool calls per chat turn
-            workTemperature: 0.3,  // Low temperature for reliable tool-calling
-            workMaxTokens: 4096,  // Conservative per-iteration limit for work steps
+            maxToolAttempts: 15,
+            coreModelProvider: nil,
+            coreModelName: nil,
+            workTemperature: 0.3,
+            workMaxTokens: 4096,
             workTopPOverride: nil,
-            workMaxIterations: 50,  // Default reasoning loop iterations
+            workMaxIterations: 50,
             defaultAutonomousExec: nil,
             preflightSearchMode: .balanced,
             enableClipboardMonitoring: true

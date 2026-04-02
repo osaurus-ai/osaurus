@@ -234,12 +234,14 @@ final class NativeArtifactCardView: NSView {
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         for area in trackingAreas { removeTrackingArea(area) }
-        addTrackingArea(NSTrackingArea(
-            rect: bounds,
-            options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
-            owner: self,
-            userInfo: nil
-        ))
+        addTrackingArea(
+            NSTrackingArea(
+                rect: bounds,
+                options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+                owner: self,
+                userInfo: nil
+            )
+        )
     }
 
     override func mouseEntered(with event: NSEvent) {

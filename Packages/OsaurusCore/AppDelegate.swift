@@ -816,7 +816,7 @@ extension AppDelegate {
                     // 50ms
                     try? await Task.sleep(nanoseconds: 50_000_000)
                 }
-                
+
                 self?.toggleChatOverlay()
             }
         }
@@ -881,7 +881,7 @@ extension AppDelegate {
     @MainActor func showChatOverlay() {
         print("[AppDelegate] Creating new chat window via ChatWindowManager...")
         ChatWindowManager.shared.createWindow()
-        
+
         // start clipboard monitoring and do an immediate check
         ClipboardService.shared.startMonitoring()
         ClipboardService.shared.checkPasteboard()

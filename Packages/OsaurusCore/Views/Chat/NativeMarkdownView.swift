@@ -75,7 +75,7 @@ final class NativeMarkdownView: NSView {
     override init(frame: NSRect) {
         super.init(frame: frame)
         translatesAutoresizingMaskIntoConstraints = false
-        
+
         // small placeholder until configure() runs measuredHeight (pure text path used to skip that and left 100pt)
         let hc = heightAnchor.constraint(equalToConstant: 8)
         hc.isActive = true
@@ -98,7 +98,7 @@ final class NativeMarkdownView: NSView {
             onHeightChanged?()
         }
     }
-    
+
     // provide intrinsic content size based on height constraint
     override var intrinsicContentSize: NSSize {
         let height = heightConstraint?.constant ?? 8
@@ -130,7 +130,14 @@ final class NativeMarkdownView: NSView {
         lastIsStreaming = isStreaming
 
         if let cached = ThreadCache.shared.markdown(for: text) {
-            applySegments(cached.segments, cacheKey: cacheKey, textChanged: textChanged || themeChanged, widthChanged: widthChanged, width: width, theme: theme)
+            applySegments(
+                cached.segments,
+                cacheKey: cacheKey,
+                textChanged: textChanged || themeChanged,
+                widthChanged: widthChanged,
+                width: width,
+                theme: theme
+            )
             lastText = text
             return
         }
@@ -144,7 +151,12 @@ final class NativeMarkdownView: NSView {
 
     // MARK: Configure (pre-parsed blocks entry point, used by applyMixedSegments)
 
-    func configureWithBlocks(_ blocks: [SelectableTextBlock], width: CGFloat, theme: any ThemeProtocol, cacheKey: String?) {
+    func configureWithBlocks(
+        _ blocks: [SelectableTextBlock],
+        width: CGFloat,
+        theme: any ThemeProtocol,
+        cacheKey: String?
+    ) {
         let themeFingerprint = makeThemeFingerprint(theme)
         let textChanged = blocks != lastBlocks
         let widthChanged = abs(width - lastWidth) > 0.5
@@ -164,7 +176,12 @@ final class NativeMarkdownView: NSView {
             coordinator.cacheKey = cacheKey
             let stv = SelectableTextView(blocks: blocks, baseWidth: width, theme: theme)
             if !widthChanged && !lastBlocks.isEmpty {
-                stv.updateTextStorageIncrementally(textView: tv, oldBlocks: lastBlocks, newBlocks: blocks, coordinator: coordinator)
+                stv.updateTextStorageIncrementally(
+                    textView: tv,
+                    oldBlocks: lastBlocks,
+                    newBlocks: blocks,
+                    coordinator: coordinator
+                )
             } else {
                 tv.textStorage?.setAttributedString(stv.buildAttributedString(coordinator: coordinator))
             }
@@ -212,11 +229,11 @@ final class NativeMarkdownView: NSView {
             lm.ensureLayout(for: tc)
             // +8: text view top/bottom inset (4+4) to superview; +4: slack for font leading / subpixel glyph bounds
             let h = ceil(lm.usedRect(for: tc).height) + 8 + 4
-            heightConstraint?.constant = max(h, 8) // ensure minimum height
+            heightConstraint?.constant = max(h, 8)  // ensure minimum height
             invalidateIntrinsicContentSize()
             return max(h, 8)
         }
-        
+
         // multi segment: match applyMixedSegments — 4pt top, then each segment's spacingBefore + height.
         var totalH: CGFloat = 4
         for seg in lastMixedSegments {
@@ -270,7 +287,9 @@ final class NativeMarkdownView: NSView {
         width: CGFloat,
         theme: any ThemeProtocol
     ) {
-        let isPureText = segments.allSatisfy { if case .textGroup = $0.kind { return true }; return false }
+        let isPureText = segments.allSatisfy {
+            if case .textGroup = $0.kind { return true }; return false
+        }
 
         if isPureText {
             // collect all text blocks from every text-group segment
@@ -278,7 +297,14 @@ final class NativeMarkdownView: NSView {
             for seg in segments {
                 if case .textGroup(let blocks) = seg.kind { allBlocks.append(contentsOf: blocks) }
             }
-            applyPureTextBlocks(allBlocks, cacheKey: cacheKey, textChanged: textChanged, widthChanged: widthChanged, width: width, theme: theme)
+            applyPureTextBlocks(
+                allBlocks,
+                cacheKey: cacheKey,
+                textChanged: textChanged,
+                widthChanged: widthChanged,
+                width: width,
+                theme: theme
+            )
         } else {
             applyMixedSegments(segments, cacheKey: cacheKey, width: width, theme: theme)
         }
@@ -305,7 +331,10 @@ final class NativeMarkdownView: NSView {
             let stv = SelectableTextView(blocks: blocks, baseWidth: width, theme: theme)
             if !widthChanged && !lastBlocks.isEmpty {
                 stv.updateTextStorageIncrementally(
-                    textView: tv, oldBlocks: lastBlocks, newBlocks: blocks, coordinator: coordinator
+                    textView: tv,
+                    oldBlocks: lastBlocks,
+                    newBlocks: blocks,
+                    coordinator: coordinator
                 )
             } else {
                 tv.textStorage?.setAttributedString(stv.buildAttributedString(coordinator: coordinator))
@@ -343,7 +372,9 @@ final class NativeMarkdownView: NSView {
         let subviewPointers = Set(subviews.map { Unmanaged.passUnretained($0).toOpaque() })
         let verticalConstraints = constraints.filter { c in
             if c.firstAttribute == .top || c.firstAttribute == .bottom {
-                if let first = c.firstItem as? NSView, subviewPointers.contains(Unmanaged.passUnretained(first).toOpaque()) {
+                if let first = c.firstItem as? NSView,
+                    subviewPointers.contains(Unmanaged.passUnretained(first).toOpaque())
+                {
                     return true
                 }
             }
@@ -430,7 +461,7 @@ final class NativeMarkdownView: NSView {
                 segView.trailingAnchor.constraint(equalTo: trailingAnchor),
                 segView.topAnchor.constraint(equalTo: prevAnchor, constant: prevOffset + seg.spacingBefore),
             ])
-            
+
             if existingEntry == nil {
                 segmentViews.append((view: segView, key: seg.id))
             }
@@ -555,7 +586,9 @@ final class NativeMarkdownView: NSView {
                 await MainActor.run {
                     guard let self, let imageView else { return }
                     guard self.imageLoadTasks[segmentId]?.0 == token else { return }
-                    guard self.segmentViews.contains(where: { $0.key == segmentId && $0.view === imageView }) else { return }
+                    guard self.segmentViews.contains(where: { $0.key == segmentId && $0.view === imageView }) else {
+                        return
+                    }
                     imageView.image = nil
                     self.imageLoadTasks.removeValue(forKey: segmentId)
                 }
@@ -564,7 +597,9 @@ final class NativeMarkdownView: NSView {
             await MainActor.run {
                 guard let self, let imageView else { return }
                 guard self.imageLoadTasks[segmentId]?.0 == token else { return }
-                guard self.segmentViews.contains(where: { $0.key == segmentId && $0.view === imageView }) else { return }
+                guard self.segmentViews.contains(where: { $0.key == segmentId && $0.view === imageView }) else {
+                    return
+                }
                 imageView.image = img
                 self.imageLoadTasks.removeValue(forKey: segmentId)
                 self.onHeightChanged?()

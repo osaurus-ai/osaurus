@@ -32,6 +32,10 @@ enum BuiltinSandboxTools {
             SandboxSearchFilesTool(agentName: agentName, home: home),
             runtimeManaged: true
         )
+        registry.registerSandboxTool(
+            SandboxFindFilesTool(agentName: agentName, home: home),
+            runtimeManaged: true
+        )
 
         // Gated by autonomous_exec.enabled
         guard let config = config, config.enabled else { return }
@@ -40,6 +44,10 @@ enum BuiltinSandboxTools {
 
         registry.registerSandboxTool(
             SandboxWriteFileTool(agentName: agentName, home: home),
+            runtimeManaged: true
+        )
+        registry.registerSandboxTool(
+            SandboxEditFileTool(agentName: agentName, home: home),
             runtimeManaged: true
         )
         registry.registerSandboxTool(SandboxMoveTool(agentName: agentName, home: home), runtimeManaged: true)
@@ -92,19 +100,39 @@ enum BuiltinSandboxTools {
         )
         registry.registerSandboxTool(SandboxProcessesTool(agentName: agentName), runtimeManaged: true)
         registry.registerSandboxTool(ShareArtifactTool(), runtimeManaged: true)
+
+        // Secret management tools
+        registry.registerSandboxTool(
+            SandboxSecretCheckTool(agentId: agentId),
+            runtimeManaged: true
+        )
+        registry.registerSandboxTool(
+            SandboxSecretSetTool(agentId: agentId),
+            runtimeManaged: true
+        )
+
+        // Plugin self-creation (gated by pluginCreate)
+        if config.pluginCreate {
+            registry.registerSandboxTool(
+                SandboxPluginRegisterTool(agentId: agentId, agentName: agentName),
+                runtimeManaged: true
+            )
+        }
     }
 
     /// Unregister all built-in sandbox tools.
     @MainActor
     static func unregisterAll() {
         let names = [
-            "sandbox_read_file", "sandbox_list_directory", "sandbox_search_files",
-            "sandbox_write_file", "sandbox_move", "sandbox_delete",
+            "sandbox_read_file", "sandbox_list_directory", "sandbox_search_files", "sandbox_find_files",
+            "sandbox_write_file", "sandbox_edit_file", "sandbox_move", "sandbox_delete",
             "sandbox_exec", "sandbox_exec_background", "sandbox_exec_kill",
             "sandbox_install", "sandbox_pip_install", "sandbox_npm_install",
             "sandbox_run_script",
             "sandbox_whoami", "sandbox_processes",
             "share_artifact",
+            "sandbox_secret_check", "sandbox_secret_set",
+            "sandbox_plugin_register",
         ]
         ToolRegistry.shared.unregister(names: names)
     }
@@ -448,7 +476,8 @@ private struct SandboxListDirectoryTool: OsaurusTool, @unchecked Sendable {
 
 private struct SandboxSearchFilesTool: OsaurusTool, @unchecked Sendable {
     let name = "sandbox_search_files"
-    let description = "Search file contents with ripgrep in the sandbox environment."
+    let description =
+        "Search file contents with ripgrep in the sandbox. Returns matching lines with file paths and line numbers. For finding files by name, use sandbox_find_files instead."
     let agentName: String
     let home: String
 
@@ -469,6 +498,19 @@ private struct SandboxSearchFilesTool: OsaurusTool, @unchecked Sendable {
                     "type": .string("string"),
                     "description": .string("File glob filter (e.g. '*.py')"),
                 ]),
+                "context_lines": .object([
+                    "type": .string("integer"),
+                    "description": .string("Number of context lines to show before and after each match"),
+                ]),
+                "case_insensitive": .object([
+                    "type": .string("boolean"),
+                    "description": .string("Enable case-insensitive search"),
+                    "default": .bool(false),
+                ]),
+                "max_results": .object([
+                    "type": .string("integer"),
+                    "description": .string("Maximum lines of output (default: 100)"),
+                ]),
             ]),
             "required": .array([.string("pattern")]),
         ])
@@ -484,13 +526,65 @@ private struct SandboxSearchFilesTool: OsaurusTool, @unchecked Sendable {
         else { return jsonResult(["error": "Invalid path"]) }
 
         var cmd = "rg -n --no-heading"
+        if coerceBool(args["case_insensitive"]) == true {
+            cmd += " -i"
+        }
+        if let contextLines = coerceInt(args["context_lines"]), contextLines > 0 {
+            cmd += " -C \(min(contextLines, 10))"
+        }
         if let include = args["include"] as? String {
             cmd += " --glob '\(include)'"
         }
-        cmd += " '\(pattern)' '\(resolved)' 2>/dev/null | head -100"
+        let maxResults = coerceInt(args["max_results"]) ?? 100
+        let cappedMax = max(1, min(maxResults, 500))
+        cmd += " '\(pattern)' '\(resolved)' 2>/dev/null | head -\(cappedMax)"
 
         let result = try await SandboxToolCommandRunnerRegistry.shared.execAsAgent(agentName, command: cmd)
         return jsonResult(["matches": result.stdout])
+    }
+}
+
+// MARK: - sandbox_find_files
+
+private struct SandboxFindFilesTool: OsaurusTool, @unchecked Sendable {
+    let name = "sandbox_find_files"
+    let description =
+        "Find files by name pattern in the sandbox. Use this to locate files by glob (e.g. '*.py', '*.swift'). For searching file contents, use sandbox_search_files instead."
+    let agentName: String
+    let home: String
+
+    var parameters: JSONValue? {
+        .object([
+            "type": .string("object"),
+            "properties": .object([
+                "pattern": .object([
+                    "type": .string("string"),
+                    "description": .string("File name glob pattern (e.g. '*.py', 'test_*', '*.ts')"),
+                ]),
+                "path": .object([
+                    "type": .string("string"),
+                    "description": .string("Directory to search (default: agent home)"),
+                    "default": .string("."),
+                ]),
+            ]),
+            "required": .array([.string("pattern")]),
+        ])
+    }
+
+    func execute(argumentsJSON: String) async throws -> String {
+        guard let args = parseArguments(argumentsJSON),
+            let pattern = args["pattern"] as? String
+        else { return jsonResult(["error": "Pattern required"]) }
+
+        let path = args["path"] as? String ?? "."
+        guard let resolved = validatePath(path, home: home)
+        else { return jsonResult(["error": "Invalid path"]) }
+
+        let escapedPattern = pattern.replacingOccurrences(of: "'", with: "'\\''")
+        let cmd = "find '\(resolved)' -type f -name '\(escapedPattern)' 2>/dev/null | head -200"
+
+        let result = try await SandboxToolCommandRunnerRegistry.shared.execAsAgent(agentName, command: cmd)
+        return jsonResult(["files": result.stdout])
     }
 }
 
@@ -540,6 +634,115 @@ private struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
             return jsonResult(["error": result.stderr])
         }
         return jsonResult(["path": resolved, "size": content.count])
+    }
+}
+
+// MARK: - sandbox_edit_file
+
+private struct SandboxEditFileTool: OsaurusTool, @unchecked Sendable {
+    let name = "sandbox_edit_file"
+    let description =
+        "Edit a file by replacing an exact string match. old_string must uniquely match exactly one location in the file — include surrounding context lines if needed. Fails if old_string is not found or matches multiple locations. Prefer this over sandbox_write_file for targeted edits."
+    let agentName: String
+    let home: String
+
+    var parameters: JSONValue? {
+        .object([
+            "type": .string("object"),
+            "properties": .object([
+                "path": .object([
+                    "type": .string("string"),
+                    "description": .string("File path relative to agent home or absolute within sandbox"),
+                ]),
+                "old_string": .object([
+                    "type": .string("string"),
+                    "description": .string(
+                        "The exact text to find and replace (must match exactly one location in the file)"
+                    ),
+                ]),
+                "new_string": .object([
+                    "type": .string("string"),
+                    "description": .string("The replacement text"),
+                ]),
+            ]),
+            "required": .array([.string("path"), .string("old_string"), .string("new_string")]),
+        ])
+    }
+
+    func execute(argumentsJSON: String) async throws -> String {
+        guard let args = parseArguments(argumentsJSON),
+            let path = args["path"] as? String,
+            let oldString = args["old_string"] as? String,
+            let newString = args["new_string"] as? String,
+            let resolved = validatePath(path, home: home)
+        else { return jsonResult(["error": "Invalid arguments"]) }
+
+        guard !oldString.isEmpty else {
+            return jsonResult(["error": "old_string must not be empty"])
+        }
+
+        let tmpDir = "\(home)/.tmp"
+        _ = try await SandboxToolCommandRunnerRegistry.shared.execAsAgent(
+            agentName,
+            command: "mkdir -p '\(tmpDir)'"
+        )
+
+        let suffix = String(UUID().uuidString.prefix(8))
+        let oldFile = "\(tmpDir)/.edit_old_\(suffix)"
+        let newFile = "\(tmpDir)/.edit_new_\(suffix)"
+
+        let escapedOld = oldString.replacingOccurrences(of: "'", with: "'\\''")
+        let escapedNew = newString.replacingOccurrences(of: "'", with: "'\\''")
+        _ = try await SandboxToolCommandRunnerRegistry.shared.execAsAgent(
+            agentName,
+            command: "printf '%s' '\(escapedOld)' > '\(oldFile)'"
+        )
+        _ = try await SandboxToolCommandRunnerRegistry.shared.execAsAgent(
+            agentName,
+            command: "printf '%s' '\(escapedNew)' > '\(newFile)'"
+        )
+
+        let script = """
+            import sys
+            target = sys.argv[1]
+            old_file = sys.argv[2]
+            new_file = sys.argv[3]
+            with open(target, 'r') as f:
+                content = f.read()
+            with open(old_file, 'r') as f:
+                old = f.read()
+            with open(new_file, 'r') as f:
+                new = f.read()
+            count = content.count(old)
+            if count == 0:
+                print('ERROR: old_string not found in file', file=sys.stderr)
+                sys.exit(1)
+            if count > 1:
+                print(f'ERROR: old_string matches {count} locations — include more context to make it unique', file=sys.stderr)
+                sys.exit(1)
+            content = content.replace(old, new, 1)
+            with open(target, 'w') as f:
+                f.write(content)
+            old_lines = old.count('\\n') + (0 if old.endswith('\\n') else 1)
+            new_lines = new.count('\\n') + (0 if new.endswith('\\n') else 1)
+            print(f'replaced {old_lines} line(s) with {new_lines} line(s)')
+            """
+
+        let escapedScript = script.replacingOccurrences(of: "'", with: "'\\''")
+        let result = try await SandboxToolCommandRunnerRegistry.shared.execAsAgent(
+            agentName,
+            command:
+                "python3 -c '\(escapedScript)' '\(resolved)' '\(oldFile)' '\(newFile)'; EC=$?; rm -f '\(oldFile)' '\(newFile)'; exit $EC"
+        )
+
+        guard result.succeeded else {
+            return jsonResult(["error": result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)])
+        }
+
+        return jsonResult([
+            "path": resolved,
+            "result": result.stdout.trimmingCharacters(in: .whitespacesAndNewlines),
+        ])
     }
 }
 

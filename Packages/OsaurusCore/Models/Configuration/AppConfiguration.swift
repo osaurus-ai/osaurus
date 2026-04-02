@@ -53,11 +53,41 @@ public final class AppConfiguration: ObservableObject {
         }
         do {
             let data = try Data(contentsOf: url)
-            return try JSONDecoder().decode(ChatConfiguration.self, from: data)
+            var config = try JSONDecoder().decode(ChatConfiguration.self, from: data)
+
+            // One-time migration: if chat.json is missing either core model key,
+            // copy values from memory.json so existing users keep their choice.
+            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                json["coreModelProvider"] as? String == nil || json["coreModelName"] as? String == nil
+            {
+                config = migrateCoreModelFromMemoryConfig(into: config)
+                saveToDisk(config)
+            }
+
+            return config
         } catch {
             print("[Osaurus] Failed to load ChatConfiguration: \(error)")
             return ChatConfiguration.default
         }
+    }
+
+    /// Reads core model fields from memory.json and writes them into the chat config.
+    private static func migrateCoreModelFromMemoryConfig(into config: ChatConfiguration) -> ChatConfiguration {
+        let memoryURL = OsaurusPaths.memoryConfigFile()
+        guard FileManager.default.fileExists(atPath: memoryURL.path),
+            let data = try? Data(contentsOf: memoryURL),
+            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return config }
+
+        var migrated = config
+        if let provider = json["coreModelProvider"] as? String {
+            migrated.coreModelProvider = provider
+        }
+        if let name = json["coreModelName"] as? String {
+            migrated.coreModelName = name
+        }
+        print("[Osaurus] Migrated core model from memory.json: \(migrated.coreModelIdentifier ?? "none")")
+        return migrated
     }
 
     private static func saveToDisk(_ config: ChatConfiguration) {

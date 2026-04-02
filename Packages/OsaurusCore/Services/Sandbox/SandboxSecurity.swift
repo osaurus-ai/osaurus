@@ -157,16 +157,46 @@ public enum SandboxPathSanitizer {
 
 public enum SandboxPluginDefaults {
     /// Apply restricted defaults to agent-created plugins.
+    /// Preserves declared network domains (if all are valid hostnames)
+    /// and secrets (just names, values come from Keychain at runtime).
+    /// Always blocks inference access.
     public static func applyRestrictedDefaults(_ plugin: inout SandboxPlugin) {
-        // No network during setup (prevents exfiltration)
         if plugin.permissions == nil {
             plugin.permissions = SandboxPermissions()
         }
-        plugin.permissions?.network = "none"
-        plugin.permissions?.inference = false
 
-        // No secrets allowed
-        plugin.secrets = nil
+        let currentNetwork = plugin.permissions?.network
+        plugin.permissions?.network = sanitizedNetworkPermission(currentNetwork)
+        plugin.permissions?.inference = false
+    }
+
+    /// Validates a network permission value. If it contains only valid
+    /// domain names (comma-separated), returns it as-is. Otherwise "none".
+    private static func sanitizedNetworkPermission(_ value: String?) -> String {
+        guard let value, !value.isEmpty, value != "none" else { return "none" }
+
+        if value == "outbound" { return "none" }
+
+        let domains = value.split(separator: ",").map {
+            $0.trimmingCharacters(in: .whitespaces).lowercased()
+        }
+        guard !domains.isEmpty else { return "none" }
+
+        for domain in domains {
+            guard isValidDomain(domain) else { return "none" }
+        }
+        return domains.joined(separator: ",")
+    }
+
+    // swiftlint:disable:next force_try
+    private static let domainPattern = try! NSRegularExpression(
+        pattern: "^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$"
+    )
+
+    private static func isValidDomain(_ domain: String) -> Bool {
+        guard domain.count <= 253 else { return false }
+        let range = NSRange(domain.startIndex..., in: domain)
+        return domainPattern.firstMatch(in: domain, range: range) != nil
     }
 }
 

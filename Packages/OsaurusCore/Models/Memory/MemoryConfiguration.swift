@@ -9,11 +9,6 @@ import Foundation
 import os
 
 public struct MemoryConfiguration: Codable, Equatable, Sendable {
-    /// Core Model provider (e.g. "anthropic")
-    public var coreModelProvider: String
-    /// Core Model name (e.g. "claude-haiku-4-5")
-    public var coreModelName: String
-
     /// Embedding backend ("mlx" or "none")
     public var embeddingBackend: String
     /// Embedding model name
@@ -64,11 +59,6 @@ public struct MemoryConfiguration: Codable, Equatable, Sendable {
     /// Jaccard threshold for Layer 1 near-duplicate detection (above this = auto-SKIP)
     public var verificationJaccardDedupThreshold: Double
 
-    /// Full model identifier for routing (e.g. "anthropic/claude-haiku-4-5" or "foundation")
-    public var coreModelIdentifier: String {
-        coreModelProvider.isEmpty ? coreModelName : "\(coreModelProvider)/\(coreModelName)"
-    }
-
     // MARK: - Internal Constants (not user-configurable)
 
     /// Approximate characters per token for budget calculations.
@@ -86,8 +76,6 @@ public struct MemoryConfiguration: Codable, Equatable, Sendable {
     public static let maxContentLength = 50_000
 
     public init(
-        coreModelProvider: String = "anthropic",
-        coreModelName: String = "claude-haiku-4-5",
         embeddingBackend: String = "mlx",
         embeddingModel: String = "nomic-embed-text-v1.5",
         summaryDebounceSeconds: Int = 60,
@@ -108,8 +96,6 @@ public struct MemoryConfiguration: Codable, Equatable, Sendable {
         verificationSemanticDedupThreshold: Double = 0.85,
         verificationJaccardDedupThreshold: Double = 0.6
     ) {
-        self.coreModelProvider = coreModelProvider
-        self.coreModelName = coreModelName
         self.embeddingBackend = embeddingBackend
         self.embeddingModel = embeddingModel
         self.summaryDebounceSeconds = summaryDebounceSeconds
@@ -155,8 +141,6 @@ public struct MemoryConfiguration: Codable, Equatable, Sendable {
     public init(from decoder: Decoder) throws {
         let defaults = MemoryConfiguration()
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        coreModelProvider = try c.decodeIfPresent(String.self, forKey: .coreModelProvider) ?? defaults.coreModelProvider
-        coreModelName = try c.decodeIfPresent(String.self, forKey: .coreModelName) ?? defaults.coreModelName
         embeddingBackend = try c.decodeIfPresent(String.self, forKey: .embeddingBackend) ?? defaults.embeddingBackend
         embeddingModel = try c.decodeIfPresent(String.self, forKey: .embeddingModel) ?? defaults.embeddingModel
         summaryDebounceSeconds =
@@ -213,8 +197,7 @@ public enum MemoryConfigurationStore: Sendable {
 
         let url = OsaurusPaths.memoryConfigFile()
         guard FileManager.default.fileExists(atPath: url.path) else {
-            let (provider, name) = resolveDefaultCoreModel()
-            let defaults = MemoryConfiguration(coreModelProvider: provider, coreModelName: name)
+            let defaults = MemoryConfiguration()
             save(defaults)
             return defaults
         }
@@ -245,18 +228,5 @@ public enum MemoryConfigurationStore: Sendable {
 
     public static func invalidateCache() {
         lock.withLock { $0 = nil }
-    }
-
-    /// Picks the best default core model: first local MLX model,
-    /// falling back to anthropic/claude-haiku-4-5 when no local models are available.
-    private static func resolveDefaultCoreModel() -> (provider: String, name: String) {
-        if let id = ModelManager.discoverLocalModels().first?.id {
-            let parts = id.split(separator: "/", maxSplits: 1)
-            if parts.count == 2 {
-                return (provider: String(parts[0]), name: String(parts[1]))
-            }
-            return (provider: "", name: id)
-        }
-        return (provider: "anthropic", name: "claude-haiku-4-5")
     }
 }

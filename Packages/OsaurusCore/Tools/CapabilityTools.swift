@@ -60,14 +60,22 @@ final class CapabilitiesSearchTool: OsaurusTool, @unchecked Sendable {
         }
 
         let query = queries.joined(separator: " ")
+        let hits = await CapabilitySearch.search(
+            query: query,
+            topK: (methods: 5, tools: 5, skills: 3)
+        )
 
-        async let methodResults = MethodSearchService.shared.search(query: query, topK: 5)
-        async let toolResults = ToolSearchService.shared.search(query: query, topK: 5)
-        async let skillResults = SkillSearchService.shared.search(query: query, topK: 3)
+        if hits.isEmpty {
+            if await CapabilitySearch.canCreatePlugins() {
+                return """
+                    No capabilities found matching '\(query)'.
 
-        let methods = await methodResults
-        let tools = await toolResults
-        let skills = await skillResults
+                    You can create new tools for this. Load the plugin creator skill:
+                      capabilities_load("skill/Sandbox Plugin Creator")
+                    """
+            }
+            return "No capabilities found matching '\(query)'."
+        }
 
         struct ScoredResult {
             let id: String
@@ -77,50 +85,34 @@ final class CapabilitiesSearchTool: OsaurusTool, @unchecked Sendable {
             let extra: String?
         }
 
-        var results: [ScoredResult] = []
-
-        for r in methods {
-            let m = r.method
-            results.append(
+        let results: [ScoredResult] =
+            (hits.methods.map {
                 ScoredResult(
-                    id: "method/\(m.id)",
+                    id: "method/\($0.method.id)",
                     type: "method",
-                    description: "\(m.name): \(m.description)",
-                    score: r.score,
-                    extra: "tools_used: \(m.toolsUsed.joined(separator: ", "))"
+                    description: "\($0.method.name): \($0.method.description)",
+                    score: $0.score,
+                    extra: "tools_used: \($0.method.toolsUsed.joined(separator: ", "))"
                 )
-            )
-        }
-
-        for r in tools {
-            results.append(
+            }
+            + hits.tools.map {
                 ScoredResult(
-                    id: "tool/\(r.entry.id)",
+                    id: "tool/\($0.entry.id)",
                     type: "tool",
-                    description: "\(r.entry.name): \(r.entry.description)",
-                    score: Double(r.searchScore),
-                    extra: "runtime: \(r.entry.runtime.rawValue)"
+                    description: "\($0.entry.name): \($0.entry.description)",
+                    score: Double($0.searchScore),
+                    extra: "runtime: \($0.entry.runtime.rawValue)"
                 )
-            )
-        }
-
-        for r in skills {
-            results.append(
+            }
+            + hits.skills.map {
                 ScoredResult(
-                    id: "skill/\(r.skill.name)",
+                    id: "skill/\($0.skill.name)",
                     type: "skill",
-                    description: "\(r.skill.name): \(r.skill.description)",
-                    score: Double(r.searchScore),
+                    description: "\($0.skill.name): \($0.skill.description)",
+                    score: Double($0.searchScore),
                     extra: nil
                 )
-            )
-        }
-
-        results.sort { $0.score > $1.score }
-
-        if results.isEmpty {
-            return "No capabilities found matching '\(query)'."
-        }
+            }).sorted { $0.score > $1.score }
 
         var output = "Found \(results.count) capability(ies):\n\n"
         for r in results {

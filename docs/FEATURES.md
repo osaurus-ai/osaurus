@@ -595,9 +595,12 @@ Canonical reference for all Osaurus features, their status, and documentation.
 - `Services/Sandbox/SandboxSecurity.swift` — Path sanitization, network policy, rate limiting
 - `Managers/Plugin/SandboxPluginManager.swift` — Per-agent plugin install, uninstall, and update tracking
 - `Managers/Plugin/SandboxPluginLibrary.swift` — Plugin library storage and discovery
-- `Tools/BuiltinSandboxTools.swift` — 14 built-in tools for file ops, shell, and package management
+- `Tools/BuiltinSandboxTools.swift` — Built-in tools for file ops, shell, package management, secrets, and plugin creation
 - `Tools/SandboxPluginTool.swift` — Wraps plugin tool specs as OsaurusTool instances
+- `Tools/SandboxSecretTools.swift` — Secret check and set tools with direct-value and secure-prompt paths
+- `Tools/SandboxPluginRegisterTool.swift` — Hot-registers agent-created plugins with file auto-packaging
 - `Tools/ToolRegistry.swift` — Sandbox tool registration and namespace management
+- `Views/Chat/SecretPromptOverlay.swift` — Secure overlay for collecting secrets in Chat and Work modes
 - `Networking/HostAPIBridgeServer.swift` — HTTP server over vsock for host service access
 - `Models/SandboxPlugin.swift` — Plugin model with tool specs, MCP, daemon, events, and permissions
 - `Models/Plugin/SandboxConfiguration.swift` — Container config (CPUs, memory, network, auto-start)
@@ -618,10 +621,12 @@ Canonical reference for all Osaurus features, their status, and documentation.
 
 | Tool | Category | Description |
 |------|----------|-------------|
-| `sandbox_read_file` | Read-only | Read file contents |
+| `sandbox_read_file` | Read-only | Read file contents (supports line ranges and log tails) |
 | `sandbox_list_directory` | Read-only | List files and directories |
-| `sandbox_search_files` | Read-only | Search with grep |
-| `sandbox_write_file` | Write | Write file contents |
+| `sandbox_search_files` | Read-only | Search file contents with ripgrep (regex, context lines, case-insensitive) |
+| `sandbox_find_files` | Read-only | Find files by name glob pattern (e.g. `*.py`, `test_*`) |
+| `sandbox_write_file` | Write | Write content to a file (creates parent directories) |
+| `sandbox_edit_file` | Write | Edit a file by exact string replacement (old_string/new_string) |
 | `sandbox_move` | Write | Move or rename |
 | `sandbox_delete` | Write | Delete files or directories |
 | `sandbox_exec` | Exec | Run shell command (timeout, rate limited) |
@@ -630,10 +635,15 @@ Canonical reference for all Osaurus features, their status, and documentation.
 | `sandbox_install` | Package | Install via apk (root) |
 | `sandbox_pip_install` | Package | Install via pip |
 | `sandbox_npm_install` | Package | Install via npm |
+| `sandbox_run_script` | Exec | Run a script file (Python, Node, Bash, etc.) |
 | `sandbox_whoami` | Info | Agent identity and environment |
 | `sandbox_processes` | Info | List agent processes |
+| `share_artifact` | Artifact | Share a file as a downloadable artifact |
+| `sandbox_secret_check` | Secret | Check whether a secret exists (never reveals value) |
+| `sandbox_secret_set` | Secret | Store a secret directly or prompt the user |
+| `sandbox_plugin_register` | Plugin | Register an agent-created plugin (requires `pluginCreate`) |
 
-Read-only tools are always available. Write/exec/package tools require `autonomous_exec.enabled` on the agent.
+Read-only tools are always available. Write/exec/package/secret tools require `autonomous_exec.enabled` on the agent. `sandbox_plugin_register` additionally requires `pluginCreate` to be enabled.
 
 **Plugin Format (JSON recipe):**
 
@@ -1088,6 +1098,7 @@ Results are cached for 10 seconds per agent.
 
 **Resilience:**
 
+- Core model guard: all LLM-dependent memory work (extraction, summarization, profile regeneration) is automatically skipped when no core model is configured, preventing error churn on fresh installs
 - Circuit breaker: opens after 5 consecutive failures, 60-second cooldown
 - Retry logic: exponential backoff (1s, 2s, 4s), max 3 retries, 60-second timeout
 - Actor-based concurrency for thread safety

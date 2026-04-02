@@ -52,7 +52,7 @@ public actor MemoryService {
         }
 
         let config = MemoryConfigurationStore.load()
-        guard config.enabled else { return }
+        guard config.enabled, await hasCoreModel() else { return }
 
         let startTime = Date()
         let allExistingEntries: [MemoryEntry]
@@ -72,15 +72,20 @@ public actor MemoryService {
             sessionDate: sessionDate
         )
 
+        let coreModelId = await coreModelIdentifier()
+
         do {
-            let response = try await callCoreModel(prompt: prompt, systemPrompt: extractionSystemPrompt, config: config)
+            let response = try await CoreModelService.shared.generate(
+                prompt: prompt,
+                systemPrompt: extractionSystemPrompt
+            )
 
             let parsed = parseResponse(response)
             let entries = buildMemoryEntries(
                 from: parsed.entries,
                 agentId: agentId,
                 conversationId: conversationId,
-                model: config.coreModelIdentifier
+                model: coreModelId
             )
 
             let verifyResult = await verifyAndInsertEntries(
@@ -94,15 +99,15 @@ public actor MemoryService {
                 parsed.profileFacts,
                 agentId: agentId,
                 conversationId: conversationId,
-                model: config.coreModelIdentifier
+                model: coreModelId
             )
-            insertGraphData(parsed.graph, model: config.coreModelIdentifier)
+            insertGraphData(parsed.graph, model: coreModelId)
 
             let durationMs = Int(Date().timeIntervalSince(startTime) * 1000)
             logProcessing(
                 agentId: agentId,
                 taskType: "turn_extraction",
-                model: config.coreModelIdentifier,
+                model: coreModelId,
                 status: "success",
                 inputTokens: prompt.count / MemoryConfiguration.charsPerToken,
                 outputTokens: response.count / MemoryConfiguration.charsPerToken,
@@ -122,7 +127,7 @@ public actor MemoryService {
             logProcessing(
                 agentId: agentId,
                 taskType: "turn_extraction",
-                model: config.coreModelIdentifier,
+                model: coreModelId,
                 status: "error",
                 details: error.localizedDescription
             )
@@ -170,9 +175,10 @@ public actor MemoryService {
         } else {
             cfg = MemoryConfigurationStore.load()
         }
-        guard cfg.enabled else { return }
+        guard cfg.enabled, await hasCoreModel() else { return }
 
-        MemoryLogger.service.debug("Profile regeneration starting, model: \(cfg.coreModelIdentifier)")
+        let coreModelId = await coreModelIdentifier()
+        MemoryLogger.service.debug("Profile regeneration starting, model: \(coreModelId)")
         let startTime = Date()
 
         do {
@@ -190,7 +196,10 @@ public actor MemoryService {
                 userEdits: edits
             )
 
-            let response = try await callCoreModel(prompt: userPrompt, systemPrompt: systemPrompt, config: cfg)
+            let response = try await CoreModelService.shared.generate(
+                prompt: userPrompt,
+                systemPrompt: systemPrompt
+            )
             let profileText = stripPreamble(response)
             let tokenCount = max(1, profileText.count / MemoryConfiguration.charsPerToken)
             let version = (currentProfile?.version ?? 0) + 1
@@ -199,7 +208,7 @@ public actor MemoryService {
                 content: profileText,
                 tokenCount: tokenCount,
                 version: version,
-                model: cfg.coreModelIdentifier,
+                model: coreModelId,
                 generatedAt: Self.iso8601Formatter.string(from: Date())
             )
             try db.saveUserProfile(profile)
@@ -213,7 +222,7 @@ public actor MemoryService {
                         agentId: "system",
                         eventType: "regeneration",
                         content: "Profile regenerated to v\(version)",
-                        model: cfg.coreModelIdentifier
+                        model: coreModelId
                     )
                 )
             } catch {
@@ -224,7 +233,7 @@ public actor MemoryService {
             logProcessing(
                 agentId: "system",
                 taskType: "profile_regeneration",
-                model: cfg.coreModelIdentifier,
+                model: coreModelId,
                 status: "success",
                 inputTokens: userPrompt.count / MemoryConfiguration.charsPerToken,
                 outputTokens: response.count / MemoryConfiguration.charsPerToken,
@@ -236,7 +245,7 @@ public actor MemoryService {
             logProcessing(
                 agentId: "system",
                 taskType: "profile_regeneration",
-                model: cfg.coreModelIdentifier,
+                model: coreModelId,
                 status: "error",
                 details: error.localizedDescription
             )
@@ -249,7 +258,7 @@ public actor MemoryService {
     /// before summaries could be generated. Called once during app initialization.
     public func recoverOrphanedSignals() async {
         let config = MemoryConfigurationStore.load()
-        guard config.enabled else { return }
+        guard config.enabled, await hasCoreModel() else { return }
 
         let conversations: [(agentId: String, conversationId: String)]
         do {
@@ -275,6 +284,10 @@ public actor MemoryService {
         let config = MemoryConfigurationStore.load()
         guard config.enabled else {
             MemoryLogger.service.debug("Sync skipped — memory system is disabled")
+            return
+        }
+        guard await hasCoreModel() else {
+            MemoryLogger.service.debug("Sync skipped — no core model configured")
             return
         }
 
@@ -336,8 +349,9 @@ public actor MemoryService {
     private func generateConversationSummary(agentId: String, conversationId: String, sessionDate: String? = nil) async
     {
         let config = MemoryConfigurationStore.load()
-        guard config.enabled else { return }
+        guard config.enabled, await hasCoreModel() else { return }
 
+        let coreModelId = await coreModelIdentifier()
         let startTime = Date()
         let signals: [PendingSignal]
         do {
@@ -362,10 +376,9 @@ public actor MemoryService {
         prompt += "\n\nSummarize this conversation using the structured format."
 
         do {
-            let response = try await callCoreModel(
+            let response = try await CoreModelService.shared.generate(
                 prompt: prompt,
-                systemPrompt: summarySystemPrompt,
-                config: config
+                systemPrompt: summarySystemPrompt
             )
             let summaryText = stripPreamble(response)
             guard !summaryText.isEmpty else {
@@ -386,7 +399,7 @@ public actor MemoryService {
                 conversationId: conversationId,
                 summary: summaryText,
                 tokenCount: tokenCount,
-                model: config.coreModelIdentifier,
+                model: coreModelId,
                 conversationAt: conversationAt
             )
             do {
@@ -400,7 +413,7 @@ public actor MemoryService {
             logProcessing(
                 agentId: agentId,
                 taskType: "conversation_summary",
-                model: config.coreModelIdentifier,
+                model: coreModelId,
                 status: "success",
                 inputTokens: prompt.count / MemoryConfiguration.charsPerToken,
                 outputTokens: response.count / MemoryConfiguration.charsPerToken,
@@ -414,7 +427,7 @@ public actor MemoryService {
             logProcessing(
                 agentId: agentId,
                 taskType: "conversation_summary",
-                model: config.coreModelIdentifier,
+                model: coreModelId,
                 status: "error",
                 details: error.localizedDescription
             )
@@ -423,117 +436,14 @@ public actor MemoryService {
         summaryTasks[conversationId] = nil
     }
 
-    // MARK: - Core Model Routing
+    // MARK: - Core Model Identifier
 
-    private let localServices: [ModelService] = [FoundationModelService(), MLXService.shared]
-
-    private static let maxRetries = 3
-    private static let baseRetryDelay: UInt64 = 1_000_000_000  // 1 second in nanoseconds
-    private static let modelCallTimeout: TimeInterval = 60
-
-    /// Circuit breaker state: tracks consecutive failures to avoid hammering a down service.
-    private var consecutiveFailures = 0
-    private var circuitOpenUntil: Date?
-    private static let circuitBreakerThreshold = 5
-    private static let circuitBreakerCooldown: TimeInterval = 60
-
-    private func callCoreModel(prompt: String, systemPrompt: String? = nil, config: MemoryConfiguration) async throws
-        -> String
-    {
-        if let openUntil = circuitOpenUntil, Date() < openUntil {
-            throw MemoryServiceError.circuitBreakerOpen
-        }
-
-        let model = config.coreModelIdentifier
-        let messages: [ChatMessage] =
-            if let systemPrompt {
-                [ChatMessage(role: "system", content: systemPrompt), ChatMessage(role: "user", content: prompt)]
-            } else {
-                [ChatMessage(role: "user", content: prompt)]
-            }
-        let params = GenerationParameters(temperature: 0.3, maxTokens: 2048)
-
-        var lastError: Error?
-        for attempt in 0 ..< Self.maxRetries {
-            do {
-                let result = try await withModelTimeout {
-                    try await self.executeModelCall(model: model, messages: messages, params: params)
-                }
-                consecutiveFailures = 0
-                circuitOpenUntil = nil
-                return result
-            } catch {
-                lastError = error
-                let isRetryable = !(error is MemoryServiceError) || error as? MemoryServiceError == .modelCallTimedOut
-                if !isRetryable || attempt == Self.maxRetries - 1 { break }
-                let delay = Self.baseRetryDelay * UInt64(1 << attempt)  // exponential: 1s, 2s, 4s
-                MemoryLogger.service.warning(
-                    "Core model call failed (attempt \(attempt + 1)/\(Self.maxRetries)), retrying in \(1 << attempt)s: \(error)"
-                )
-                try? await Task.sleep(nanoseconds: delay)
-            }
-        }
-
-        consecutiveFailures += 1
-        if consecutiveFailures >= Self.circuitBreakerThreshold {
-            circuitOpenUntil = Date().addingTimeInterval(Self.circuitBreakerCooldown)
-            let cooldown = Int(Self.circuitBreakerCooldown)
-            MemoryLogger.service.error(
-                "Circuit breaker opened after \(self.consecutiveFailures) consecutive failures — cooling down for \(cooldown)s"
-            )
-        }
-
-        throw lastError ?? MemoryServiceError.coreModelUnavailable(model)
+    private func coreModelIdentifier() async -> String {
+        await MainActor.run { ChatConfigurationStore.load().coreModelIdentifier ?? "none" }
     }
 
-    private func executeModelCall(model: String, messages: [ChatMessage], params: GenerationParameters) async throws
-        -> String
-    {
-        let remoteServices: [ModelService] = await MainActor.run {
-            RemoteProviderManager.shared.connectedServices()
-        }
-
-        let route = ModelServiceRouter.resolve(
-            requestedModel: model,
-            services: localServices,
-            remoteServices: remoteServices
-        )
-
-        switch route {
-        case .service(let service, let effectiveModel):
-            let promptLen = messages.last?.content?.count ?? 0
-            MemoryLogger.service.debug(
-                "Routing to \(service.id) (model: \(effectiveModel), prompt: \(promptLen) chars)"
-            )
-            return try await service.generateOneShot(
-                messages: messages,
-                parameters: params,
-                requestedModel: model
-            )
-        case .none:
-            let localIds = self.localServices.map(\.id)
-            let remoteIds = remoteServices.map(\.id)
-            MemoryLogger.service.info(
-                "No service found for model '\(model)' — local: \(localIds), remote: \(remoteIds)"
-            )
-            throw MemoryServiceError.coreModelUnavailable(model)
-        }
-    }
-
-    private func withModelTimeout<T: Sendable>(_ operation: @escaping @Sendable () async throws -> T) async throws -> T
-    {
-        try await withThrowingTaskGroup(of: T.self) { group in
-            group.addTask { try await operation() }
-            group.addTask {
-                try await Task.sleep(for: .seconds(Self.modelCallTimeout))
-                throw MemoryServiceError.modelCallTimedOut
-            }
-            guard let result = try await group.next() else {
-                throw MemoryServiceError.modelCallTimedOut
-            }
-            group.cancelAll()
-            return result
-        }
+    private func hasCoreModel() async -> Bool {
+        await MainActor.run { ChatConfigurationStore.load().coreModelIdentifier != nil }
     }
 
     // MARK: - Prompt Building
@@ -1185,25 +1095,6 @@ public actor MemoryService {
             )
             let cfg = config
             Task { await self.regenerateProfile(config: cfg) }
-        }
-    }
-}
-
-// MARK: - Errors
-
-enum MemoryServiceError: Error, LocalizedError, Equatable {
-    case coreModelUnavailable(String)
-    case circuitBreakerOpen
-    case modelCallTimedOut
-
-    var errorDescription: String? {
-        switch self {
-        case .coreModelUnavailable(let model):
-            return "Core model '\(model)' is not available for memory processing"
-        case .circuitBreakerOpen:
-            return "Memory service temporarily unavailable (too many recent failures)"
-        case .modelCallTimedOut:
-            return "Model call timed out"
         }
     }
 }

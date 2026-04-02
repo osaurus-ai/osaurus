@@ -734,7 +734,8 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
         if isTrusted {
             return "SUCCESS: Process is trusted for Accessibility."
         } else {
-            return "ERROR: Process is NOT trusted for Accessibility. If enabled in System Settings, try removing and re-adding Osaurus to the list."
+            return
+                "ERROR: Process is NOT trusted for Accessibility. If enabled in System Settings, try removing and re-adding Osaurus to the list."
         }
     }
 

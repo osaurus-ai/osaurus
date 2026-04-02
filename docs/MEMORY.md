@@ -274,6 +274,10 @@ All settings are configurable via the Memory tab in the Management window. The c
 
 `MemoryService` and `MemorySearchService` are Swift actors, ensuring all state mutations are serialized and thread-safe. Background extraction never blocks the chat UI -- conversation turns are recorded and processed asynchronously.
 
+### Core Model Guard
+
+All LLM-dependent memory operations (extraction, summarization, profile regeneration, sync, and orphaned signal recovery) check whether a core model is configured before proceeding. When no core model is set (e.g., on a fresh install or after clearing the configuration), these operations silently skip rather than producing `modelUnavailable` errors. Pending conversation signals are still persisted and will be processed once a core model is configured.
+
 ### Circuit Breaker
 
 To prevent hammering a failing model service, the memory system implements a circuit breaker:

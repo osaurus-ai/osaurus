@@ -14,6 +14,7 @@ final class ChatSession: ObservableObject {
     @Published var turns: [ChatTurn] = []
     @Published var isStreaming: Bool = false
     @Published var lastStreamError: String?
+    @Published var pendingSecretPrompt: SecretPromptState?
     /// Tracks expand/collapse state for tool calls, thinking blocks, etc.
     /// Lives on the session so state survives NSTableView cell reuse.
     let expandedBlocksStore = ExpandedBlocksStore()
@@ -951,12 +952,19 @@ final class ChatSession: ObservableObject {
                 }
 
                 let maxAttempts = max(chatCfg.maxToolAttempts ?? 15, 1)
+                let toolBudgetWarningThreshold = 3
                 var attempts = 0
+                var reachedToolLimit = false
+                var pendingBudgetNotice: String?
                 let effectiveTemp = AgentManager.shared.effectiveTemperature(for: effectiveAgentId)
 
                 outer: while attempts < maxAttempts {
                     attempts += 1
-                    let msgs = buildMessages()
+                    var msgs = buildMessages()
+                    if let notice = pendingBudgetNotice {
+                        msgs.append(ChatMessage(role: "user", content: notice))
+                        pendingBudgetNotice = nil
+                    }
                     let convTokens =
                         msgs
                         .filter { $0.role != "system" }
@@ -1074,8 +1082,10 @@ final class ChatSession: ObservableObject {
                             }
                             if !isRunActive(runId) { break outer }
 
-                            // Hot-load tools injected by capabilities_load
-                            if inv.toolName == "capabilities_load" {
+                            // Hot-load tools injected by capabilities_load or sandbox_plugin_register
+                            if inv.toolName == "capabilities_load"
+                                || inv.toolName == "sandbox_plugin_register"
+                            {
                                 let newTools = await CapabilityLoadBuffer.shared.drain()
                                 for tool in newTools
                                 where !toolSpecs.contains(where: { $0.function.name == tool.function.name }) {
@@ -1091,6 +1101,27 @@ final class ChatSession: ObservableObject {
                                 if let artifact = SharedArtifact.fromEnrichedToolResult(resultText) {
                                     PluginManager.shared.notifyArtifactHandlers(artifact: artifact)
                                 }
+                            }
+
+                            if inv.toolName == "sandbox_secret_set",
+                                let prompt = SecretPromptParser.parse(resultText)
+                            {
+                                let stored: Bool = await withCheckedContinuation { continuation in
+                                    let promptState = SecretPromptState(
+                                        key: prompt.key,
+                                        description: prompt.description,
+                                        instructions: prompt.instructions,
+                                        agentId: prompt.agentId
+                                    ) { value in
+                                        continuation.resume(returning: value != nil)
+                                    }
+                                    self.pendingSecretPrompt = promptState
+                                }
+                                self.pendingSecretPrompt = nil
+                                resultText =
+                                    stored
+                                    ? SecretToolResult.stored(key: prompt.key)
+                                    : SecretToolResult.cancelled(key: prompt.key)
                             }
 
                             // Log tool success (truncated result)
@@ -1122,8 +1153,52 @@ final class ChatSession: ObservableObject {
                         assistantTurn = newAssistantTurn
                         rebuildVisibleBlocks()
 
-                        // Continue loop with new history
+                        let remaining = maxAttempts - attempts
+                        if remaining <= 0 {
+                            reachedToolLimit = true
+                        } else if remaining <= toolBudgetWarningThreshold {
+                            pendingBudgetNotice =
+                                "[System Notice] Tool call budget: \(remaining) of \(maxAttempts) remaining. Wrap up your current work and provide a summary."
+                        }
                         continue
+                    }
+                }
+
+                if reachedToolLimit && isRunActive(runId) {
+                    do {
+                        var finalReq = ChatCompletionRequest(
+                            model: selectedModel ?? "default",
+                            messages: buildMessages(),
+                            temperature: effectiveTemp,
+                            max_tokens: effectiveMaxTokensForAgent ?? 16384,
+                            stream: true,
+                            top_p: chatCfg.topPOverride,
+                            frequency_penalty: nil,
+                            presence_penalty: nil,
+                            stop: nil,
+                            n: nil,
+                            tools: nil,
+                            tool_choice: nil,
+                            session_id: sessionId?.uuidString
+                        )
+                        finalReq.modelOptions = activeModelOptions.isEmpty ? nil : activeModelOptions
+
+                        let processor = StreamingDeltaProcessor(
+                            turn: assistantTurn,
+                            modelId: selectedModel ?? "default",
+                            modelOptions: activeModelOptions
+                        ) { [weak self] in
+                            self?.rebuildVisibleBlocks()
+                        }
+
+                        let stream = try await engine.streamChat(request: finalReq)
+                        for try await delta in stream {
+                            if !isRunActive(runId) { break }
+                            if !delta.isEmpty { processor.receiveDelta(delta) }
+                        }
+                        processor.finalize()
+                    } catch {
+                        debugLog("send: final wrap-up call failed: \(error.localizedDescription)")
                     }
                 }
             } catch {
@@ -1238,6 +1313,14 @@ struct ChatView: View {
         )
         .themedAlertScope(.chat(windowState.windowId))
         .overlay(ThemedAlertHost(scope: .chat(windowState.windowId)))
+        .overlay {
+            if let promptState = session.pendingSecretPrompt {
+                SecretPromptOverlay(state: promptState) {
+                    promptState.cancel()
+                    session.pendingSecretPrompt = nil
+                }
+            }
+        }
     }
 
     private var workCloseConfirmationPresented: Binding<Bool> {
@@ -1550,11 +1633,11 @@ struct ChatView: View {
                     bottomLeadingRadius: windowState.showSidebar ? 0 : nil
                 )
                 .allowsHitTesting(false)
-
+            
                 // Solid backing scaled by glass opacity so low values produce real transparency
                 let baseBacking = theme.windowBackingOpacity
                 let backingOpacity = baseBacking * (0.4 + theme.glassOpacityPrimary * 0.6)
-
+            
                 LinearGradient(
                     colors: [
                         theme.primaryBackground.opacity(backingOpacity + theme.glassOpacityPrimary * 0.3),
@@ -1733,10 +1816,12 @@ struct ChatView: View {
                 }
             }
         }
-        .sheet(isPresented: Binding(
-            get: { userImagePreview != nil },
-            set: { if !$0 { userImagePreview = nil } }
-        )) {
+        .sheet(
+            isPresented: Binding(
+                get: { userImagePreview != nil },
+                set: { if !$0 { userImagePreview = nil } }
+            )
+        ) {
             if let img = userImagePreview {
                 ImageFullScreenView(image: img, altText: "")
                     .imageFullScreenSheetPresentation()
