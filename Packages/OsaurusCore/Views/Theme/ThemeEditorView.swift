@@ -938,7 +938,10 @@ struct ThemeChatPreview: View {
                     RoundedRectangle(cornerRadius: radius, style: .continuous)
                         .strokeBorder(
                             LinearGradient(
-                                colors: [c(theme.glass.edgeLight), c(theme.glass.edgeLight).opacity(0.4)],
+                                colors: [
+                                    c(theme.colors.primaryBorder),
+                                    c(theme.colors.primaryBorder).opacity(0.4),
+                                ],
                                 startPoint: .topLeading,
                                 endPoint: .bottomTrailing
                             ),
