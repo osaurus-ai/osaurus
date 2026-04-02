@@ -612,6 +612,15 @@ public actor RemoteProviderService: ToolCapableService {
         toolChoice: ToolChoiceOption?,
         requestedModel: String?
     ) async throws -> String {
+        // Native Osaurus agents run tools server-side — route through generateOneShot
+        if provider.providerType == .osaurus {
+            return try await generateOneShot(
+                messages: messages,
+                parameters: parameters,
+                requestedModel: requestedModel
+            )
+        }
+
         guard let modelName = extractModelName(requestedModel) else {
             throw RemoteProviderServiceError.noModelsAvailable
         }
@@ -663,6 +672,18 @@ public actor RemoteProviderService: ToolCapableService {
         toolChoice: ToolChoiceOption?,
         requestedModel: String?
     ) async throws -> AsyncThrowingStream<String, Error> {
+        // Native Osaurus agents run tools server-side — the /agents/{id}/run endpoint handles
+        // the full inference+tool loop and streams back only text deltas. No tool invocations
+        // are propagated to the client.
+        if provider.providerType == .osaurus {
+            return try await streamDeltas(
+                messages: messages,
+                parameters: parameters,
+                requestedModel: requestedModel,
+                stopSequences: stopSequences
+            )
+        }
+
         guard let modelName = extractModelName(requestedModel) else {
             throw RemoteProviderServiceError.noModelsAvailable
         }
@@ -1521,6 +1542,15 @@ public actor RemoteProviderService: ToolCapableService {
             } else {
                 url = geminiURL
             }
+        } else if provider.providerType == .osaurus {
+            // Native Osaurus agent: POST /agents/{remoteAgentId}/run
+            guard let agentId = provider.remoteAgentId else {
+                throw RemoteProviderServiceError.invalidURL
+            }
+            guard let agentURL = provider.url(for: "/agents/\(agentId.uuidString)/run") else {
+                throw RemoteProviderServiceError.invalidURL
+            }
+            url = agentURL
         } else {
             let endpoint = provider.providerType.chatEndpoint
             guard let standardURL = provider.url(for: endpoint) else {
@@ -1567,6 +1597,9 @@ public actor RemoteProviderService: ToolCapableService {
         case .gemini:
             let geminiRequest = request.toGeminiRequest()
             bodyData = try encoder.encode(geminiRequest)
+        case .osaurus:
+            // Native Osaurus agent uses OpenAI-compatible request format
+            bodyData = try encoder.encode(request)
         }
         urlRequest.httpBody = bodyData
         return urlRequest
@@ -1665,6 +1698,12 @@ public actor RemoteProviderService: ToolCapableService {
             }
 
             return (textContent.isEmpty ? nil : textContent, toolCalls.isEmpty ? nil : toolCalls)
+
+        case .osaurus:
+            // Native Osaurus agent returns OpenAI-compatible responses
+            let response = try JSONDecoder().decode(ChatCompletionResponse.self, from: data)
+            let content = response.choices.first?.message.content
+            return (content, nil)
         }
     }
 
@@ -2299,6 +2338,11 @@ extension RemoteProviderService {
             return try await fetchGeminiModels(from: provider)
         }
 
+        // Native Osaurus agent — fetch agent info to discover the configured model
+        if provider.providerType == .osaurus {
+            return try await fetchOsaurusAgentModel(from: provider)
+        }
+
         // OpenAI-compatible providers use /models endpoint
         guard let url = provider.url(for: "/models") else {
             throw RemoteProviderServiceError.invalidURL
@@ -2327,6 +2371,36 @@ extension RemoteProviderService {
         // Parse models response
         let modelsResponse = try JSONDecoder().decode(ModelsResponse.self, from: data)
         return modelsResponse.data.map { $0.id }
+    }
+
+    /// Fetch the model for a native Osaurus agent by calling GET /agents/{id}
+    private static func fetchOsaurusAgentModel(from provider: RemoteProvider) async throws -> [String] {
+        guard let agentId = provider.remoteAgentId else {
+            throw RemoteProviderServiceError.invalidURL
+        }
+        guard let url = provider.url(for: "/agents/\(agentId.uuidString)") else {
+            throw RemoteProviderServiceError.invalidURL
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.timeoutInterval = min(provider.timeout, 10)
+
+        for (key, value) in provider.resolvedHeaders() {
+            request.setValue(value, forHTTPHeaderField: key)
+        }
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode < 400 else {
+            return ["default"]
+        }
+
+        struct AgentInfo: Decodable {
+            let default_model: String?
+        }
+        let model = (try? JSONDecoder().decode(AgentInfo.self, from: data))?.default_model ?? "default"
+        return [model]
     }
 
     /// Fetch models from Gemini API (different response format from OpenAI)

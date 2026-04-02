@@ -1637,9 +1637,9 @@ struct ChatView: View {
         let manager = RemoteProviderManager.shared
 
         let providerId: UUID
-        // Reuse an existing provider that points to the same host:port
+        // Reuse an existing Osaurus provider that already targets the same agent
         if let existing = manager.configuration.providers.first(where: {
-            $0.host == host && $0.effectivePort == agent.port
+            $0.providerType == .osaurus && $0.remoteAgentId == agent.id
         }) {
             providerId = existing.id
             if !token.isEmpty {
@@ -1650,16 +1650,18 @@ struct ChatView: View {
             }
             Task { try? await manager.connect(providerId: existing.id) }
         } else {
+            // Use basePath="" so URLs are constructed directly as /agents/{id}/run
             let provider = RemoteProvider(
                 name: agent.name,
                 host: host,
                 providerProtocol: .http,
                 port: agent.port,
-                basePath: "/v1",
+                basePath: "",
                 authType: token.isEmpty ? .none : .apiKey,
-                providerType: .openai,
+                providerType: .osaurus,
                 enabled: true,
-                autoConnect: true
+                autoConnect: true,
+                remoteAgentId: agent.id
             )
             providerId = provider.id
             manager.addProvider(provider, apiKey: token.isEmpty ? nil : token, isEphemeral: true)

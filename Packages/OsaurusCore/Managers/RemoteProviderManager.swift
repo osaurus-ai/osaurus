@@ -378,7 +378,7 @@ public final class RemoteProviderManager: ObservableObject {
                 if testHeaders["x-goog-api-key"] == nil {
                     testHeaders["x-goog-api-key"] = apiKey
                 }
-            case .openai, .openResponses:
+            case .openai, .openResponses, .osaurus:
                 if testHeaders["Authorization"] == nil {
                     testHeaders["Authorization"] = "Bearer \(apiKey)"
                 }

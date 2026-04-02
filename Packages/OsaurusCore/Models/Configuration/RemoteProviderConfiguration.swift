@@ -38,6 +38,7 @@ public enum RemoteProviderType: String, Codable, Sendable, CaseIterable {
     case anthropic = "anthropic"  // Anthropic Messages API
     case openResponses = "openResponses"  // Open Responses API
     case gemini = "gemini"  // Google Gemini API
+    case osaurus = "osaurus"  // Native Osaurus agent — full server-side execution via /agents/{id}/run
 
     public var displayName: String {
         switch self {
@@ -45,6 +46,7 @@ public enum RemoteProviderType: String, Codable, Sendable, CaseIterable {
         case .anthropic: return "Anthropic"
         case .openResponses: return "Open Responses"
         case .gemini: return "Google Gemini"
+        case .osaurus: return "Osaurus Agent"
         }
     }
 
@@ -54,6 +56,7 @@ public enum RemoteProviderType: String, Codable, Sendable, CaseIterable {
         case .anthropic: return "/messages"
         case .openResponses: return "/responses"
         case .gemini: return "/models"  // Actual URL is built dynamically: /models/{model}:generateContent
+        case .osaurus: return "/run"  // Prefixed with /agents/{id} at call site
         }
     }
 
@@ -83,10 +86,13 @@ public struct RemoteProvider: Codable, Identifiable, Sendable, Equatable {
     // Keys for headers that should be stored in Keychain (not persisted in config)
     public var secretHeaderKeys: [String]
 
+    /// The UUID of the agent on the remote Osaurus server. Only used when providerType == .osaurus.
+    public var remoteAgentId: UUID?
+
     private enum CodingKeys: String, CodingKey {
         case id, name, host, providerProtocol, port, basePath
         case customHeaders, authType, providerType, enabled, autoConnect, timeout
-        case secretHeaderKeys
+        case secretHeaderKeys, remoteAgentId
     }
 
     public init(
@@ -102,7 +108,8 @@ public struct RemoteProvider: Codable, Identifiable, Sendable, Equatable {
         enabled: Bool = true,
         autoConnect: Bool = true,
         timeout: TimeInterval = 60,
-        secretHeaderKeys: [String] = []
+        secretHeaderKeys: [String] = [],
+        remoteAgentId: UUID? = nil
     ) {
         self.id = id
         self.name = name
@@ -117,6 +124,7 @@ public struct RemoteProvider: Codable, Identifiable, Sendable, Equatable {
         self.autoConnect = autoConnect
         self.timeout = timeout
         self.secretHeaderKeys = secretHeaderKeys
+        self.remoteAgentId = remoteAgentId
     }
 
     /// Custom decoder – uses `decodeIfPresent` for backward compatibility with older config files.
@@ -136,6 +144,7 @@ public struct RemoteProvider: Codable, Identifiable, Sendable, Equatable {
         autoConnect = try container.decodeIfPresent(Bool.self, forKey: .autoConnect) ?? true
         timeout = try container.decodeIfPresent(TimeInterval.self, forKey: .timeout) ?? 60
         secretHeaderKeys = try container.decodeIfPresent([String].self, forKey: .secretHeaderKeys) ?? []
+        remoteAgentId = try container.decodeIfPresent(UUID.self, forKey: .remoteAgentId)
     }
 
     /// Get the effective port (uses protocol default if not specified)
@@ -241,7 +250,7 @@ public struct RemoteProvider: Codable, Identifiable, Sendable, Equatable {
                 if headers["x-goog-api-key"] == nil {
                     headers["x-goog-api-key"] = apiKey
                 }
-            case .openai, .openResponses:
+            case .openai, .openResponses, .osaurus:
                 if headers["Authorization"] == nil {
                     headers["Authorization"] = "Bearer \(apiKey)"
                 }
