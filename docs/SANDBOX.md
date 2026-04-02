@@ -128,15 +128,17 @@ When the container is running, sandbox tools are automatically registered for th
 
 | Tool | Description |
 |------|-------------|
-| `sandbox_read_file` | Read a file's contents from the sandbox |
-| `sandbox_list_directory` | List files and directories (supports recursive listing) |
-| `sandbox_search_files` | Search file contents with grep (regex, glob filters) |
+| `sandbox_read_file` | Read a file's contents from the sandbox (supports line ranges, tail, char cap) |
+| `sandbox_list_directory` | List files and directories (supports recursive listing via `tree`) |
+| `sandbox_search_files` | Search file contents with ripgrep (regex, glob filters, context lines, case-insensitive) |
+| `sandbox_find_files` | Find files by name glob pattern (e.g. `*.py`, `test_*`) |
 
 ### Requires Autonomous Exec
 
 | Tool | Description |
 |------|-------------|
 | `sandbox_write_file` | Write content to a file (creates parent directories) |
+| `sandbox_edit_file` | Edit a file by exact string replacement — `old_string` must match exactly once |
 | `sandbox_move` | Move or rename files and directories |
 | `sandbox_delete` | Delete files or directories |
 | `sandbox_exec` | Run a shell command (configurable timeout, max 300s) |
@@ -145,8 +147,13 @@ When the container is running, sandbox tools are automatically registered for th
 | `sandbox_install` | Install system packages via `apk` (runs as root) |
 | `sandbox_pip_install` | Install Python packages via `pip install --user` |
 | `sandbox_npm_install` | Install Node.js packages via `npm install` |
+| `sandbox_run_script` | Run a script file (auto-detects Python, Node, Bash, etc.) |
 | `sandbox_whoami` | Get agent identity, home directory, installed plugins, and disk usage |
 | `sandbox_processes` | List running processes for this agent |
+| `share_artifact` | Share a file as a downloadable artifact |
+| `sandbox_secret_check` | Check whether a secret exists for this agent (never reveals the value) |
+| `sandbox_secret_set` | Store a secret securely — pass `value` directly or omit to prompt the user |
+| `sandbox_plugin_register` | Register an agent-created plugin (requires `pluginCreate` permission) |
 
 All file paths are validated on the host side before container execution. Path traversal attacks are blocked by `SandboxPathSanitizer`.
 
@@ -242,6 +249,64 @@ Parameters are passed as environment variables with the prefix `PARAM_`:
 | `output_format` | `$PARAM_OUTPUT_FORMAT` |
 
 The `run` field is a shell command executed as the agent's Linux user with the working directory set to the plugin folder.
+
+---
+
+## Secret Management
+
+Agents can check for and store secrets (API keys, tokens) using `sandbox_secret_check` and `sandbox_secret_set`. Secrets are stored in the macOS Keychain, scoped per agent.
+
+### Two Storage Paths
+
+| Path | When | How |
+|------|------|-----|
+| **Direct** | Agent already has the value (e.g., received via Host API or Telegram bot) | Pass `value` parameter to `sandbox_secret_set` |
+| **Prompt** | Agent needs the user to provide the value (Chat or Work UI) | Omit `value` — a secure overlay appears with `SecureField` input |
+
+The prompt path keeps secret values out of the conversation history and LLM context entirely. The execution loop pauses via `withCheckedContinuation` until the user submits or cancels.
+
+### Prompt Flow
+
+1. Agent calls `sandbox_secret_set` without `value`
+2. Tool returns a `secret_prompt` marker (JSON with key, description, instructions)
+3. The execution loop (Chat or Work) intercepts the marker and shows `SecretPromptOverlay`
+4. User enters the secret value in a `SecureField` and submits (or cancels via button/ESC)
+5. The value is stored in Keychain and the tool result is rewritten to `{"stored": true, "key": "..."}` (or cancelled)
+6. Execution resumes with the sanitized result — the LLM never sees the secret
+
+### Robustness
+
+- `SecretPromptState` tracks a `resolved` flag, making `submit()` and `cancel()` idempotent
+- `onDisappear` on the overlay calls `cancel()` as a safety net if the view is dismissed unexpectedly
+- All session reset paths (`cancelExecution`, `finishExecution`, etc.) dismiss pending prompts before clearing state
+
+---
+
+## Agent-Created Plugins
+
+Agents can create, package, and register new plugins at runtime via the `sandbox_plugin_register` tool. This enables agents to extend their own capabilities during a session and share plugins for future use.
+
+### Requirements
+
+- `autonomous_exec.enabled` must be `true` on the agent
+- `pluginCreate` must be `true` in the agent's autonomous exec config
+
+### Workflow
+
+1. Agent writes script files to `~/plugins/{plugin-id}/scripts/` (or any subdirectory)
+2. Agent writes a `plugin.json` manifest defining the plugin name, description, tools, and dependencies
+3. Agent calls `sandbox_plugin_register` with the `plugin_id`
+4. The tool reads `plugin.json`, **auto-packages all files** in the directory into `plugin.files`, validates the plugin, and installs it
+5. Plugin tools are hot-registered into the active session via `CapabilityLoadBuffer` — immediately usable without restart
+6. A non-blocking toast notifies the user with a "Remove" action for later review
+
+### File Auto-Packaging
+
+When `sandbox_plugin_register` loads a plugin directory, it recursively collects all files (excluding `plugin.json` itself) and merges them into the plugin's `files` map. Files explicitly defined in `plugin.json` take precedence over auto-discovered ones. This means agents only need to write files to disk and provide a minimal `plugin.json` — no manual `files` map is needed.
+
+### Plugin Persistence
+
+Registered plugins are saved to the `SandboxPluginLibrary` and survive app restarts. They can be managed, exported, or removed from the Sandbox → Plugins tab.
 
 ---
 
