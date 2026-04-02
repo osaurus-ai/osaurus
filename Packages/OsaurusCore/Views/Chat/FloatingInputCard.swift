@@ -1404,7 +1404,7 @@ extension FloatingInputCard {
                 Text("Paste \(info.label) From")
                     .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
                     .foregroundColor(theme.secondaryText)
-                
+
                 Text(clipboardService.lastSourceApp ?? "Clipboard")
                     .font(theme.font(size: CGFloat(theme.captionSize), weight: .bold))
                     .foregroundColor(theme.accentColor)
@@ -1522,18 +1522,18 @@ extension FloatingInputCard {
         // reset state immediately and hide animation layers
         clipboardPulseAmount = 0
         clipboardPulseOpacity = 0
-        
+
         // small delay to ensure the window transition is complete
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
             withAnimation(.easeIn(duration: 0.1)) {
                 clipboardPulseOpacity = 1.0
             }
-            
+
             // animate the stroke clockwise around the capsule
             withAnimation(.easeInOut(duration: 0.8)) {
                 clipboardPulseAmount = 1.0
             }
-            
+
             // fade out after completion
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) {
                 withAnimation(.easeOut(duration: 0.4)) {
@@ -1545,7 +1545,7 @@ extension FloatingInputCard {
 
     private func attachClipboardSnippet() {
         guard let content = clipboardService.currentContent else { return }
-        
+
         switch content {
         case .text(let text):
             // Inject directly into the text input area for better UX (editing)
@@ -1561,18 +1561,19 @@ extension FloatingInputCard {
                 clipboardService.markAsRead()
                 isFocused = true
             }
-            
+
         case .image(let data):
             withAnimation(theme.springAnimation()) {
                 pendingAttachments.append(.image(data))
                 clipboardService.markAsRead()
             }
-            
+
         case .file(let url):
             if DocumentParser.isImageFile(url: url) {
                 if let data = try? Data(contentsOf: url),
-                   let nsImage = NSImage(data: data),
-                   let pngData = nsImage.pngData() {
+                    let nsImage = NSImage(data: data),
+                    let pngData = nsImage.pngData()
+                {
                     withAnimation(theme.springAnimation()) {
                         pendingAttachments.append(.image(pngData))
                         clipboardService.markAsRead()
@@ -2082,13 +2083,13 @@ struct ClipboardSweepShape: Shape {
     func path(in rect: CGRect) -> Path {
         var path = Path()
         let radius = rect.height / 2
-        
+
         // Start at top center (12 o'clock)
         path.move(to: CGPoint(x: rect.midX, y: 0))
-        
+
         // Top right straight line
         path.addLine(to: CGPoint(x: rect.maxX - radius, y: 0))
-        
+
         // Right semi-circle
         path.addArc(
             center: CGPoint(x: rect.maxX - radius, y: radius),
@@ -2097,10 +2098,10 @@ struct ClipboardSweepShape: Shape {
             endAngle: Angle(degrees: 90),
             clockwise: false
         )
-        
+
         // Bottom straight line
         path.addLine(to: CGPoint(x: rect.minX + radius, y: rect.maxY))
-        
+
         // Left semi-circle
         path.addArc(
             center: CGPoint(x: rect.minX + radius, y: radius),
@@ -2109,10 +2110,10 @@ struct ClipboardSweepShape: Shape {
             endAngle: Angle(degrees: 270),
             clockwise: false
         )
-        
+
         // Top left straight line back to center
         path.addLine(to: CGPoint(x: rect.midX, y: 0))
-        
+
         return path
     }
 }

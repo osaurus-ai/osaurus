@@ -952,7 +952,9 @@ final class ChatSession: ObservableObject {
                 }
 
                 let maxAttempts = max(chatCfg.maxToolAttempts ?? 15, 1)
+                let toolBudgetWarningThreshold = 3
                 var attempts = 0
+                var reachedToolLimit = false
                 let effectiveTemp = AgentManager.shared.effectiveTemperature(for: effectiveAgentId)
 
                 outer: while attempts < maxAttempts {
@@ -1147,8 +1149,55 @@ final class ChatSession: ObservableObject {
                         assistantTurn = newAssistantTurn
                         rebuildVisibleBlocks()
 
-                        // Continue loop with new history
+                        let remaining = maxAttempts - attempts
+                        if remaining <= 0 {
+                            reachedToolLimit = true
+                        } else if remaining <= toolBudgetWarningThreshold {
+                            turns.append(
+                                ChatTurn(
+                                    role: .user,
+                                    content:
+                                        "[System Notice] Tool call budget: \(remaining) of \(maxAttempts) remaining. Wrap up your current work and provide a summary."
+                                )
+                            )
+                        }
                         continue
+                    }
+                }
+
+                if reachedToolLimit && isRunActive(runId) {
+                    do {
+                        let msgs = buildMessages()
+                        var finalReq = ChatCompletionRequest(
+                            model: selectedModel ?? "default",
+                            messages: msgs,
+                            temperature: effectiveTemp,
+                            max_tokens: effectiveMaxTokensForAgent ?? 16384,
+                            stream: true,
+                            tools: nil,
+                            tool_choice: nil,
+                            session_id: sessionId?.uuidString
+                        )
+                        finalReq.modelOptions = activeModelOptions.isEmpty ? nil : activeModelOptions
+
+                        let finalProcessor = StreamingDeltaProcessor(
+                            turn: assistantTurn,
+                            modelId: selectedModel ?? "default",
+                            modelOptions: activeModelOptions
+                        ) { [weak self] in
+                            self?.rebuildVisibleBlocks()
+                        }
+
+                        let stream = try await engine.streamChat(request: finalReq)
+                        for try await delta in stream {
+                            if !isRunActive(runId) { break }
+                            if !delta.isEmpty {
+                                finalProcessor.receiveDelta(delta)
+                            }
+                        }
+                        finalProcessor.finalize()
+                    } catch {
+                        debugLog("send: final wrap-up call failed: \(error.localizedDescription)")
                     }
                 }
             } catch {

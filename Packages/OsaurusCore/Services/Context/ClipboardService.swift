@@ -19,7 +19,7 @@ public final class ClipboardService: ObservableObject {
         case text(String)
         case image(Data)
         case file(URL)
-        
+
         public var isText: Bool {
             if case .text = self { return true }
             return false
@@ -28,7 +28,7 @@ public final class ClipboardService: ObservableObject {
 
     /// The current content on the pasteboard
     @Published public private(set) var currentContent: ClipboardContent?
-    
+
     /// The application that was frontmost when the clipboard last changed
     @Published public private(set) var lastSourceApp: String?
 
@@ -47,7 +47,7 @@ public final class ClipboardService: ObservableObject {
     public func startMonitoring() {
         guard timer == nil else { return }
         print("[ClipboardService] Starting monitoring...")
-        
+
         // Poll every 0.5 seconds for pasteboard changes
         timer = Timer.publish(every: 0.5, on: .main, in: .common)
             .autoconnect()
@@ -67,19 +67,19 @@ public final class ClipboardService: ObservableObject {
     public func checkPasteboard() {
         let pb = NSPasteboard.general
         guard pb.changeCount != lastChangeCount else { return }
-        
+
         print("[ClipboardService] Pasteboard change detected. Count: \(pb.changeCount) (was \(lastChangeCount))")
         lastChangeCount = pb.changeCount
-        
+
         let newContent = detectContent(in: pb)
-        
+
         if let content = newContent {
             // Only update if content actually changed
             if content != currentContent {
                 print("[ClipboardService] New content detected: \(content)")
                 currentContent = content
                 hasNewContent = true
-                
+
                 // Identify the source application
                 if let frontmost = NSWorkspace.shared.frontmostApplication {
                     lastSourceApp = frontmost.localizedName ?? frontmost.bundleIdentifier
@@ -101,20 +101,22 @@ public final class ClipboardService: ObservableObject {
                 return .file(url)
             }
         }
-        
+
         // 2. try images (direct data)
         if let imageData = pb.data(forType: .png) {
             return .image(imageData)
         }
-        if let tiffData = pb.data(forType: .tiff), let nsImage = NSImage(data: tiffData), let pngData = nsImage.pngData() {
+        if let tiffData = pb.data(forType: .tiff), let nsImage = NSImage(data: tiffData),
+            let pngData = nsImage.pngData()
+        {
             return .image(pngData)
         }
-        
+
         // 3. try plain text
         if let text = pb.string(forType: .string), !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return .text(text)
         }
-        
+
         return nil
     }
 
@@ -124,31 +126,31 @@ public final class ClipboardService: ObservableObject {
         let pb = NSPasteboard.general
         let startChangeCount = pb.changeCount
         print("[ClipboardService] Starting grabSelection. Current changeCount: \(startChangeCount)")
-        
+
         // 1. simulate Cmd+C
         let posted = keyboardService.copySelection()
         print("[ClipboardService] copySelection() call returned: \(posted)")
-        
+
         if !posted {
             print("[ClipboardService] FAILED to post Cmd+C event. Likely missing accessibility permissions.")
             return nil
         }
-        
+
         // 2. wait for update (up to 500ms)
         print("[ClipboardService] Waiting for pasteboard update...")
-        for i in 0..<10 {
-            try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
+        for i in 0 ..< 10 {
+            try? await Task.sleep(nanoseconds: 50_000_000)  // 50ms
             if pb.changeCount != startChangeCount {
                 print("[ClipboardService] Pasteboard update detected at iteration \(i+1). New count: \(pb.changeCount)")
                 checkPasteboard()
-                
+
                 if case .text(let text) = currentContent {
                     return text
                 }
                 return nil
             }
         }
-        
+
         print("[ClipboardService] TIMEOUT: Pasteboard did not update after 500ms.")
         return nil
     }
