@@ -520,6 +520,9 @@ public actor WorkExecutionEngine {
     public typealias TokenConsumptionCallback = @MainActor @Sendable (Int, Int) async -> Void
     public typealias InterruptCheckCallback = @Sendable () async -> Bool
 
+    /// Callback for secret prompt — shows a secure input overlay and returns the value (nil if cancelled)
+    public typealias SecretPromptCallback = @MainActor @Sendable (SecretPromptParser.Prompt) async -> String?
+
     /// Default maximum iterations for the reasoning loop
     public static let defaultMaxIterations = 50
 
@@ -568,7 +571,8 @@ public actor WorkExecutionEngine {
         onToolCall: @escaping ToolCallCallback,
         onStatusUpdate: @escaping StatusCallback,
         onArtifact: @escaping ArtifactCallback,
-        onTokensConsumed: @escaping TokenConsumptionCallback
+        onTokensConsumed: @escaping TokenConsumptionCallback,
+        onSecretPrompt: SecretPromptCallback? = nil
     ) async throws -> LoopResult {
         var activeTools = tools
         var iteration = 0
@@ -886,16 +890,22 @@ public actor WorkExecutionEngine {
                 }
 
             case "sandbox_secret_set":
-                if let prompt = SecretPromptParser.parse(result.result) {
-                    return .needsClarification(
-                        ClarificationRequest(
-                            question: "**\(prompt.description)**\n\n\(prompt.instructions)",
-                            context: "secret_prompt:\(prompt.key):\(prompt.agentId)"
-                        ),
-                        messages: messages,
-                        iteration: iteration,
-                        totalToolCalls: totalToolCalls
-                    )
+                if let prompt = SecretPromptParser.parse(result.result),
+                    let handler = onSecretPrompt
+                {
+                    let secretValue = await handler(prompt)
+                    let replacement =
+                        secretValue != nil
+                        ? SecretToolResult.stored(key: prompt.key)
+                        : SecretToolResult.cancelled(key: prompt.key)
+                    if let lastIdx = messages.indices.last, messages[lastIdx].role == "tool" {
+                        messages[lastIdx] = ChatMessage(
+                            role: "tool",
+                            content: replacement,
+                            tool_calls: nil,
+                            tool_call_id: messages[lastIdx].tool_call_id
+                        )
+                    }
                 }
 
             default:
@@ -1107,15 +1117,15 @@ public actor WorkExecutionEngine {
 
 // MARK: - Secret Prompt Parsing
 
-enum SecretPromptParser {
-    struct Prompt {
-        let key: String
-        let description: String
-        let instructions: String
-        let agentId: String
+public enum SecretPromptParser {
+    public struct Prompt: Sendable {
+        public let key: String
+        public let description: String
+        public let instructions: String
+        public let agentId: String
     }
 
-    static func parse(_ toolResult: String) -> Prompt? {
+    public static func parse(_ toolResult: String) -> Prompt? {
         guard let data = toolResult.data(using: .utf8),
             let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
             let action = dict["action"] as? String,
@@ -1128,18 +1138,6 @@ enum SecretPromptParser {
         return Prompt(key: key, description: desc, instructions: instructions, agentId: agentId)
     }
 
-    static let contextPrefix = "secret_prompt:"
-
-    static func isSecretPrompt(_ context: String?) -> Bool {
-        context?.hasPrefix(contextPrefix) == true
-    }
-
-    static func parseContext(_ context: String) -> (key: String, agentId: String)? {
-        guard context.hasPrefix(contextPrefix) else { return nil }
-        let parts = context.dropFirst(contextPrefix.count).split(separator: ":", maxSplits: 1)
-        guard parts.count == 2 else { return nil }
-        return (String(parts[0]), String(parts[1]))
-    }
 }
 
 // MARK: - Supporting Types

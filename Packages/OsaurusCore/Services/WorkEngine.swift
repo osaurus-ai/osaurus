@@ -292,24 +292,13 @@ public actor WorkEngine {
 
         injectSavedNotesIfNeeded(into: &session)
 
-        // If this was a secret prompt, store the value in Keychain and
-        // redact it from the conversation history.
-        var displayResponse = response
-        if SecretPromptParser.isSecretPrompt(awaiting.request.context),
-            let parsed = SecretPromptParser.parseContext(awaiting.request.context ?? ""),
-            let agentUUID = UUID(uuidString: parsed.agentId)
-        {
-            AgentSecretsKeychain.saveSecret(response, id: parsed.key, agentId: agentUUID)
-            displayResponse = "[Secret \(parsed.key) stored securely]"
-        }
-
         session.messages.append(
             ChatMessage(
                 role: "user",
                 content: """
                     [Clarification response]
                     Q: \(awaiting.request.question)
-                    A: \(displayResponse)
+                    A: \(response)
 
                     Continue with the task using this information.
                     """
@@ -518,6 +507,20 @@ public actor WorkEngine {
                         output: outputTokens,
                         forIssue: issue
                     )
+                },
+                onSecretPrompt: { [weak self] prompt in
+                    guard let self = self else { return nil }
+                    return await withCheckedContinuation { continuation in
+                        let state = SecretPromptState(
+                            key: prompt.key,
+                            description: prompt.description,
+                            instructions: prompt.instructions,
+                            agentId: prompt.agentId
+                        ) { value in
+                            continuation.resume(returning: value)
+                        }
+                        (self.delegate as? WorkSession)?.pendingSecretPrompt = state
+                    }
                 }
             )
         } catch {

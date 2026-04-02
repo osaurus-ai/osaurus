@@ -434,13 +434,24 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
         sandbox_secret_check(key: "SERVICE_API_KEY")
         ```
 
-        If the secret doesn't exist, prompt the user:
+        If the secret doesn't exist, prompt the user to provide it:
 
         ```
         sandbox_secret_set(
             key: "SERVICE_API_KEY",
             description: "API key for the service",
             instructions: "Go to https://example.com/settings → API Keys → Create new key → copy the value"
+        )
+        ```
+
+        If you already have the secret value (e.g. from user input or Host API), pass it directly:
+
+        ```
+        sandbox_secret_set(
+            key: "SERVICE_API_KEY",
+            description: "API key for the service",
+            instructions: "...",
+            value: "sk-the-actual-key"
         )
         ```
 

@@ -4,7 +4,7 @@
 //
 //  Builtin sandbox tools for agent-driven secret management.
 //  - sandbox_secret_check: test whether a secret exists (never reveals values)
-//  - sandbox_secret_set: prompt the user to provide a secret and store it
+//  - sandbox_secret_set: store a secret directly or prompt the user to provide one
 //
 
 import Foundation
@@ -45,20 +45,15 @@ struct SandboxSecretCheckTool: OsaurusTool, @unchecked Sendable {
         }
 
         let exists = AgentSecretsKeychain.getSecret(id: key, agentId: uuid) != nil
-
-        let dict: [String: Any] = ["key": key, "exists": exists]
-        guard let data = try? JSONSerialization.data(withJSONObject: dict),
-            let json = String(data: data, encoding: .utf8)
-        else { return "{\"exists\":false}" }
-        return json
+        return SecretToolResult.encode(["key": key, "exists": exists])
     }
 }
 
 // MARK: - sandbox_secret_set
 
-/// Marker action returned by sandbox_secret_set. The execution engine
-/// intercepts this to pause the loop, prompt the user, store the value
-/// in Keychain, and resume.
+/// Marker action returned by sandbox_secret_set when no value is provided.
+/// The execution loop (Chat or Work) intercepts this to show a secure prompt
+/// overlay, store the result in Keychain, and resume.
 enum SecretPromptAction {
     static let actionKey = "secret_prompt"
 }
@@ -66,9 +61,9 @@ enum SecretPromptAction {
 struct SandboxSecretSetTool: OsaurusTool, @unchecked Sendable {
     let name = "sandbox_secret_set"
     let description =
-        "Prompt the user to provide a secret (API key, token) and store it securely. "
-        + "The value is stored in the host keychain, never on the sandbox filesystem. "
-        + "Provide clear instructions so the user knows where to obtain the secret."
+        "Store a secret (API key, token) securely for the current agent. "
+        + "If you already have the value, pass it directly via the 'value' parameter. "
+        + "If you don't have the value, omit 'value' and the user will be prompted."
 
     let agentId: String
 
@@ -88,6 +83,13 @@ struct SandboxSecretSetTool: OsaurusTool, @unchecked Sendable {
                     "type": .string("string"),
                     "description": .string("Instructions for the user on how to obtain this secret"),
                 ]),
+                "value": .object([
+                    "type": .string("string"),
+                    "description": .string(
+                        "The secret value to store. If provided, stores directly without prompting. "
+                            + "Omit to prompt the user via a secure input dialog."
+                    ),
+                ]),
             ]),
             "required": .array([.string("key"), .string("description"), .string("instructions")]),
         ])
@@ -103,16 +105,41 @@ struct SandboxSecretSetTool: OsaurusTool, @unchecked Sendable {
             return "{\"error\":\"Missing required parameters: key, description, instructions\"}"
         }
 
-        let dict: [String: Any] = [
+        // If value is provided, store directly (headless / Host API path)
+        if let value = args["value"] as? String, !value.isEmpty {
+            guard let uuid = UUID(uuidString: agentId) else {
+                return "{\"error\":\"Invalid agent ID\"}"
+            }
+            AgentSecretsKeychain.saveSecret(value, id: key, agentId: uuid)
+            return SecretToolResult.stored(key: key)
+        }
+
+        // No value — return marker for the execution loop to intercept and prompt
+        return SecretToolResult.encode([
             "action": SecretPromptAction.actionKey,
             "key": key,
             "description": desc,
             "instructions": instructions,
             "agent_id": agentId,
-        ]
+        ])
+    }
+}
+
+// MARK: - Shared Result Encoding
+
+enum SecretToolResult {
+    static func encode(_ dict: [String: Any]) -> String {
         guard let data = try? JSONSerialization.data(withJSONObject: dict),
             let json = String(data: data, encoding: .utf8)
-        else { return "{\"error\":\"Failed to encode prompt\"}" }
+        else { return "{\"error\":\"Failed to encode result\"}" }
         return json
+    }
+
+    static func stored(key: String) -> String {
+        encode(["stored": true, "key": key])
+    }
+
+    static func cancelled(key: String) -> String {
+        encode(["stored": false, "key": key, "reason": "User cancelled"])
     }
 }

@@ -14,6 +14,7 @@ final class ChatSession: ObservableObject {
     @Published var turns: [ChatTurn] = []
     @Published var isStreaming: Bool = false
     @Published var lastStreamError: String?
+    @Published var pendingSecretPrompt: SecretPromptState?
     /// Tracks expand/collapse state for tool calls, thinking blocks, etc.
     /// Lives on the session so state survives NSTableView cell reuse.
     let expandedBlocksStore = ExpandedBlocksStore()
@@ -1074,8 +1075,10 @@ final class ChatSession: ObservableObject {
                             }
                             if !isRunActive(runId) { break outer }
 
-                            // Hot-load tools injected by capabilities_load
-                            if inv.toolName == "capabilities_load" {
+                            // Hot-load tools injected by capabilities_load or sandbox_plugin_register
+                            if inv.toolName == "capabilities_load"
+                                || inv.toolName == "sandbox_plugin_register"
+                            {
                                 let newTools = await CapabilityLoadBuffer.shared.drain()
                                 for tool in newTools
                                 where !toolSpecs.contains(where: { $0.function.name == tool.function.name }) {
@@ -1091,6 +1094,28 @@ final class ChatSession: ObservableObject {
                                 if let artifact = SharedArtifact.fromEnrichedToolResult(resultText) {
                                     PluginManager.shared.notifyArtifactHandlers(artifact: artifact)
                                 }
+                            }
+
+                            // Intercept sandbox_secret_set: show secure prompt overlay
+                            if inv.toolName == "sandbox_secret_set",
+                                let prompt = SecretPromptParser.parse(resultText)
+                            {
+                                let stored: Bool = await withCheckedContinuation { continuation in
+                                    let promptState = SecretPromptState(
+                                        key: prompt.key,
+                                        description: prompt.description,
+                                        instructions: prompt.instructions,
+                                        agentId: prompt.agentId
+                                    ) { value in
+                                        continuation.resume(returning: value != nil)
+                                    }
+                                    self.pendingSecretPrompt = promptState
+                                }
+                                self.pendingSecretPrompt = nil
+                                resultText =
+                                    stored
+                                    ? SecretToolResult.stored(key: prompt.key)
+                                    : SecretToolResult.cancelled(key: prompt.key)
                             }
 
                             // Log tool success (truncated result)
@@ -1238,6 +1263,13 @@ struct ChatView: View {
         )
         .themedAlertScope(.chat(windowState.windowId))
         .overlay(ThemedAlertHost(scope: .chat(windowState.windowId)))
+        .overlay {
+            if let promptState = session.pendingSecretPrompt {
+                SecretPromptOverlay(state: promptState) {
+                    session.pendingSecretPrompt = nil
+                }
+            }
+        }
     }
 
     private var workCloseConfirmationPresented: Binding<Bool> {
