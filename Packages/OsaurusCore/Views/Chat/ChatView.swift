@@ -1174,6 +1174,11 @@ final class ChatSession: ObservableObject {
                             temperature: effectiveTemp,
                             max_tokens: effectiveMaxTokensForAgent ?? 16384,
                             stream: true,
+                            top_p: nil,
+                            frequency_penalty: nil,
+                            presence_penalty: nil,
+                            stop: nil,
+                            n: nil,
                             tools: nil,
                             tool_choice: nil,
                             session_id: sessionId?.uuidString
