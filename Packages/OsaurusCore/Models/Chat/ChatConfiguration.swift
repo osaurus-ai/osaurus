@@ -78,6 +78,10 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
     /// when osaurus is acting as a plain LLM backend for an external agent (e.g. Claude via API).
     public var disableTools: Bool
 
+    // MARK: - Clipboard Settings
+    /// When true, Osaurus will monitor the clipboard for new text content to offer as context.
+    public var enableClipboardMonitoring: Bool
+
     public init(
         hotkey: Hotkey?,
         systemPrompt: String,
@@ -95,7 +99,8 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         workMaxIterations: Int? = nil,
         defaultAutonomousExec: AutonomousExecConfig? = nil,
         preflightSearchMode: PreflightSearchMode? = nil,
-        disableTools: Bool = false
+        disableTools: Bool = false,
+        enableClipboardMonitoring: Bool = true
     ) {
         self.hotkey = hotkey
         self.systemPrompt = systemPrompt
@@ -114,6 +119,7 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         self.defaultAutonomousExec = defaultAutonomousExec
         self.preflightSearchMode = preflightSearchMode
         self.disableTools = disableTools
+        self.enableClipboardMonitoring = enableClipboardMonitoring
     }
 
     public init(from decoder: Decoder) throws {
@@ -141,6 +147,7 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
             forKey: .preflightSearchMode
         )
         disableTools = try container.decodeIfPresent(Bool.self, forKey: .disableTools) ?? false
+        enableClipboardMonitoring = try container.decodeIfPresent(Bool.self, forKey: .enableClipboardMonitoring) ?? true
     }
 
     public static var `default`: ChatConfiguration {
@@ -162,7 +169,8 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
             workTopPOverride: nil,
             workMaxIterations: 50,
             defaultAutonomousExec: nil,
-            preflightSearchMode: .balanced
+            preflightSearchMode: .balanced,
+            enableClipboardMonitoring: true
         )
     }
 }

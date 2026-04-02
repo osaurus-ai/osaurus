@@ -176,7 +176,7 @@ final class PluginRepositoryService: ObservableObject {
 
         ToolSecretsKeychain.deleteAllSecretsAllAgents(for: pluginId)
         ToolSecretsKeychain.deleteAllSecrets(for: pluginId)
-        SkillManager.shared.unregisterPluginSkills(pluginId: pluginId)
+        await SkillManager.shared.unregisterPluginSkills(pluginId: pluginId)
 
         // Update state immediately so the UI reflects uninstallation
         if let index = plugins.firstIndex(where: { $0.pluginId == pluginId }) {

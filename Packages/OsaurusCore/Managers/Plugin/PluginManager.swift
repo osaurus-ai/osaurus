@@ -111,7 +111,7 @@ final class PluginManager {
             for loaded in plugins {
                 ToolRegistry.shared.unregister(names: loaded.tools.map { $0.name })
                 if !loaded.skills.isEmpty {
-                    SkillManager.shared.unregisterPluginSkills(pluginId: loaded.plugin.id)
+                    await SkillManager.shared.unregisterPluginSkills(pluginId: loaded.plugin.id)
                 }
                 await loaded.plugin.shutdown()
                 PluginHostContext.getContext(for: loaded.plugin.id)?.teardown()
@@ -149,7 +149,7 @@ final class PluginManager {
             } else {
                 ToolRegistry.shared.unregister(names: loaded.tools.map { $0.name })
                 if !loaded.skills.isEmpty {
-                    SkillManager.shared.unregisterPluginSkills(pluginId: loaded.plugin.id)
+                    await SkillManager.shared.unregisterPluginSkills(pluginId: loaded.plugin.id)
                 }
                 await loaded.plugin.shutdown()
                 PluginHostContext.getContext(for: loaded.plugin.id)?.teardown()
@@ -178,7 +178,7 @@ final class PluginManager {
 
                 // Register plugin skills
                 for skill in loaded.skills {
-                    SkillManager.shared.registerPluginSkill(skill)
+                    await SkillManager.shared.registerPluginSkill(skill)
                 }
 
                 // Clear any previous failure for this plugin

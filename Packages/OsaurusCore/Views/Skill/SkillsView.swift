@@ -24,6 +24,8 @@ struct SkillsView: View {
     @State private var showImportPicker = false
     @State private var showGitHubImport = false
     @State private var exportingSkill: Skill?
+    @State private var isProcessing = false
+    @State private var showProgress = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -33,9 +35,19 @@ struct SkillsView: View {
                 .offset(y: hasAppeared ? 0 : -10)
                 .animation(.spring(response: 0.4, dampingFraction: 0.8), value: hasAppeared)
 
+            // Progress bar
+            if showProgress {
+                ProgressView()
+                    .progressViewStyle(LinearProgressViewStyle())
+                    .frame(height: 2)
+                    .transition(.opacity)
+            } else {
+                Spacer().frame(height: 2)
+            }
+
             // Content
             ZStack {
-                if skillManager.skills.isEmpty {
+                if skillManager.skills.isEmpty && !skillManager.isRefreshing {
                     SettingsEmptyState(
                         icon: "sparkles",
                         title: "Create Your First Skill",
@@ -69,7 +81,11 @@ struct SkillsView: View {
                                     animationDelay: Double(index) * 0.03,
                                     hasAppeared: hasAppeared,
                                     onToggle: { enabled in
-                                        skillManager.setEnabled(enabled, for: skill.id)
+                                        Task {
+                                            isProcessing = true
+                                            defer { isProcessing = false }
+                                            await skillManager.setEnabled(enabled, for: skill.id)
+                                        }
                                     },
                                     onEdit: {
                                         editingSkill = skill
@@ -78,8 +94,12 @@ struct SkillsView: View {
                                         exportingSkill = skill
                                     },
                                     onDelete: {
-                                        skillManager.delete(id: skill.id)
-                                        showToast("Deleted \"\(skill.name)\"")
+                                        Task {
+                                            isProcessing = true
+                                            defer { isProcessing = false }
+                                            await skillManager.delete(id: skill.id)
+                                            showToast("Deleted \"\(skill.name)\"")
+                                        }
                                     }
                                 )
                             }
@@ -107,16 +127,20 @@ struct SkillsView: View {
             SkillEditorSheet(
                 mode: .create,
                 onSave: { skill in
-                    skillManager.create(
-                        name: skill.name,
-                        description: skill.description,
-                        version: skill.version,
-                        author: skill.author,
-                        category: skill.category,
-                        instructions: skill.instructions
-                    )
-                    isCreating = false
-                    showToast("Created \"\(skill.name)\"")
+                    Task {
+                        isProcessing = true
+                        defer { isProcessing = false }
+                        await skillManager.create(
+                            name: skill.name,
+                            description: skill.description,
+                            version: skill.version,
+                            author: skill.author,
+                            category: skill.category,
+                            instructions: skill.instructions
+                        )
+                        isCreating = false
+                        showToast("Created \"\(skill.name)\"")
+                    }
                 },
                 onCancel: {
                     isCreating = false
@@ -127,9 +151,13 @@ struct SkillsView: View {
             SkillEditorSheet(
                 mode: .edit(skill),
                 onSave: { updated in
-                    skillManager.update(updated)
-                    editingSkill = nil
-                    showToast("Updated \"\(updated.name)\"")
+                    Task {
+                        isProcessing = true
+                        defer { isProcessing = false }
+                        await skillManager.update(updated)
+                        editingSkill = nil
+                        showToast("Updated \"\(updated.name)\"")
+                    }
                 },
                 onCancel: {
                     editingSkill = nil
@@ -139,12 +167,16 @@ struct SkillsView: View {
         .sheet(isPresented: $showGitHubImport) {
             GitHubImportSheet(
                 onImport: { skills in
-                    let imported = skillManager.importSkillsFromMarkdown(skills)
-                    showGitHubImport = false
-                    if imported.count == 1 {
-                        showToast("Imported \"\(imported[0].name)\"")
-                    } else {
-                        showToast("Imported \(imported.count) skills")
+                    Task {
+                        isProcessing = true
+                        defer { isProcessing = false }
+                        let imported = await skillManager.importSkillsFromMarkdown(skills)
+                        showGitHubImport = false
+                        if imported.count == 1 {
+                            showToast("Imported \"\(imported[0].name)\"")
+                        } else {
+                            showToast("Imported \(imported.count) skills")
+                        }
                     }
                 },
                 onCancel: {
@@ -152,10 +184,29 @@ struct SkillsView: View {
                 }
             )
         }
+        .onChange(of: isProcessing || skillManager.isRefreshing) { _, newValue in
+            if newValue {
+                // Delay showing the progress bar to avoid flickering for fast operations
+                Task {
+                    try? await Task.sleep(nanoseconds: 2_500_000_000) // 2.5 seconds
+                    if isProcessing || skillManager.isRefreshing {
+                        withAnimation(.easeIn(duration: 0.2)) {
+                            showProgress = true
+                        }
+                    }
+                }
+            } else {
+                withAnimation(.easeOut(duration: 0.2)) {
+                    showProgress = false
+                }
+            }
+        }
         .onAppear {
-            skillManager.refresh()
-            withAnimation(.easeOut(duration: 0.25).delay(0.05)) {
-                hasAppeared = true
+            Task {
+                await skillManager.refresh()
+                withAnimation(.easeOut(duration: 0.25).delay(0.05)) {
+                    hasAppeared = true
+                }
             }
         }
         .fileImporter(
@@ -168,18 +219,24 @@ struct SkillsView: View {
             ],
             allowsMultipleSelection: false
         ) { result in
-            handleImport(result)
+            Task {
+                await handleImport(result)
+            }
         }
         .onChange(of: exportingSkill) { _, skill in
             if let skill = skill {
-                exportSkill(skill)
+                Task {
+                    await exportSkill(skill)
+                }
             }
         }
     }
 
     // MARK: - Import/Export
 
-    private func handleImport(_ result: Result<[URL], Error>) {
+    private func handleImport(_ result: Result<[URL], Error>) async {
+        isProcessing = true
+        defer { isProcessing = false }
         switch result {
         case .success(let urls):
             guard let url = urls.first else { return }
@@ -196,7 +253,7 @@ struct SkillsView: View {
 
                 if ext == "zip" {
                     // Import from ZIP archive (Agent Skills compatible)
-                    let skill = try skillManager.importSkillFromZip(url)
+                    let skill = try await skillManager.importSkillFromZip(url)
                     let fileCount = skill.totalFileCount
                     if fileCount > 0 {
                         showToast("Imported \"\(skill.name)\" with \(fileCount) files")
@@ -210,12 +267,12 @@ struct SkillsView: View {
                         showToast("Invalid file content", isError: true)
                         return
                     }
-                    let skill = try skillManager.importSkill(from: data)
+                    let skill = try await skillManager.importSkill(from: data)
                     showToast("Imported \"\(skill.name)\"")
                 } else {
                     // Import from Markdown (SKILL.md or .md)
                     let content = try String(contentsOf: url, encoding: .utf8)
-                    let skill = try skillManager.importSkillFromMarkdown(content)
+                    let skill = try await skillManager.importSkillFromMarkdown(content)
                     showToast("Imported \"\(skill.name)\"")
                 }
             } catch {
@@ -227,7 +284,7 @@ struct SkillsView: View {
         }
     }
 
-    private func exportSkill(_ skill: Skill) {
+    private func exportSkill(_ skill: Skill) async {
         let panel = NSSavePanel()
 
         // If skill has associated files, export as ZIP; otherwise just SKILL.md
@@ -245,26 +302,30 @@ struct SkillsView: View {
 
         panel.begin { response in
             if response == .OK, let url = panel.url {
-                do {
-                    if skill.hasAssociatedFiles {
-                        // Export as ZIP
-                        let zipURL = try skillManager.exportSkillAsZip(skill)
-                        try FileManager.default.copyItem(at: zipURL, to: url)
-                        try? FileManager.default.removeItem(at: zipURL)
-                        DispatchQueue.main.async {
-                            self.showToast("Exported \"\(skill.name)\" as ZIP")
+                Task {
+                    self.isProcessing = true
+                    defer { self.isProcessing = false }
+                    do {
+                        if skill.hasAssociatedFiles {
+                            // export as ZIP
+                            let zipURL = try await skillManager.exportSkillAsZip(skill)
+                            try FileManager.default.copyItem(at: zipURL, to: url)
+                            try? FileManager.default.removeItem(at: zipURL)
+                            DispatchQueue.main.async {
+                                self.showToast("Exported \"\(skill.name)\" as ZIP")
+                            }
+                        } else {
+                            // export as SKILL.md
+                            let content = skillManager.exportSkillAsAgentSkills(skill)
+                            try content.write(to: url, atomically: true, encoding: .utf8)
+                            DispatchQueue.main.async {
+                                self.showToast("Exported \"\(skill.name)\" as SKILL.md")
+                            }
                         }
-                    } else {
-                        // Export as SKILL.md
-                        let content = skillManager.exportSkillAsAgentSkills(skill)
-                        try content.write(to: url, atomically: true, encoding: .utf8)
+                    } catch {
                         DispatchQueue.main.async {
-                            self.showToast("Exported \"\(skill.name)\" as SKILL.md")
+                            self.showToast("Export failed: \(error.localizedDescription)", isError: true)
                         }
-                    }
-                } catch {
-                    DispatchQueue.main.async {
-                        self.showToast("Export failed: \(error.localizedDescription)", isError: true)
                     }
                 }
             }
@@ -282,16 +343,21 @@ struct SkillsView: View {
             subtitle: "Specialized knowledge and guidance for the AI",
             count: skillManager.skills.isEmpty ? nil : skillManager.enabledCount
         ) {
-            HeaderIconButton("arrow.clockwise", help: "Refresh skills") {
-                skillManager.refresh()
+            HeaderIconButton("arrow.clockwise", isLoading: skillManager.isRefreshing, help: "Refresh skills") {
+                Task {
+                    await skillManager.refresh()
+                }
             }
             ImportDropdownButton(
                 onGitHub: { showGitHubImport = true },
                 onLocal: { showImportPicker = true }
             )
+            .disabled(isProcessing || skillManager.isRefreshing)
+
             HeaderPrimaryButton("Create Skill", icon: "plus") {
                 isCreating = true
             }
+            .disabled(isProcessing || skillManager.isRefreshing)
         }
     }
 

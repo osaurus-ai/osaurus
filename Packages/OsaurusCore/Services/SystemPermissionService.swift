@@ -726,6 +726,18 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
         return "NO RESULT"
     }
 
+    // MARK: - Debug: Test Accessibility Access
+
+    /// Debug function to test if Accessibility access is trusted.
+    nonisolated static func debugTestAccessibilityAccess() -> String {
+        let isTrusted = AXIsProcessTrusted()
+        if isTrusted {
+            return "SUCCESS: Process is trusted for Accessibility."
+        } else {
+            return "ERROR: Process is NOT trusted for Accessibility. If enabled in System Settings, try removing and re-adding Osaurus to the list."
+        }
+    }
+
     // MARK: - Debug: Test Calendar AppleScript
 
     /// Debug function to test if Calendar AppleScript works from this process.

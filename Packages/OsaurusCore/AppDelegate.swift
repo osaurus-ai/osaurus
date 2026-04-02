@@ -805,6 +805,18 @@ extension AppDelegate {
         let cfg = ChatConfigurationStore.load()
         HotKeyManager.shared.register(hotkey: cfg.hotkey) { [weak self] in
             Task { @MainActor in
+                // if opening (about to be shown), and clipboard monitoring is enabled, trigger a selection grab before showing Osaurus
+                // to capture content from the currently active application.
+                if !ChatWindowManager.shared.hasVisibleWindows && cfg.enableClipboardMonitoring {
+                    // start grabbing selection in the background before we take focus
+                    Task {
+                        _ = await ClipboardService.shared.grabSelection()
+                    }
+                    // small yield to allow Cmd+C to be posted before toggle takes focus
+                    // 50ms
+                    try? await Task.sleep(nanoseconds: 50_000_000)
+                }
+                
                 self?.toggleChatOverlay()
             }
         }
@@ -849,12 +861,19 @@ extension AppDelegate {
         ChatWindowManager.shared.toggleLastFocused()
 
         if ChatWindowManager.shared.hasVisibleWindows {
+            // start clipboard monitoring and do an immediate check
+            ClipboardService.shared.startMonitoring()
+            ClipboardService.shared.checkPasteboard()
+
             // Pause VAD when chat window is shown (like when VAD detects a agent)
             // This allows voice input to work without competing for the microphone
             Task {
                 await VADService.shared.pause()
             }
             NotificationCenter.default.post(name: .chatOverlayActivated, object: nil)
+        } else {
+            // stop clipboard monitoring when overlay is hidden to save battery
+            ClipboardService.shared.stopMonitoring()
         }
     }
 
@@ -862,6 +881,10 @@ extension AppDelegate {
     @MainActor func showChatOverlay() {
         print("[AppDelegate] Creating new chat window via ChatWindowManager...")
         ChatWindowManager.shared.createWindow()
+        
+        // start clipboard monitoring and do an immediate check
+        ClipboardService.shared.startMonitoring()
+        ClipboardService.shared.checkPasteboard()
 
         // Pause VAD when chat window is shown (like when VAD detects a agent)
         // This allows voice input to work without competing for the microphone

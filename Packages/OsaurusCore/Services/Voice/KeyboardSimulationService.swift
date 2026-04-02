@@ -117,6 +117,23 @@ public final class KeyboardSimulationService: ObservableObject {
         return true
     }
 
+    // MARK: - Clipboard Copy
+
+    /// Simulate Cmd+C to copy the current selection in the active application
+    /// - Returns: True if the command was posted
+    @discardableResult
+    public func copySelection() -> Bool {
+        guard hasAccessibilityPermission else {
+            print("[KeyboardSimulationService] Cannot copy: accessibility permission not granted")
+            checkAccessibilityPermission()
+            return false
+        }
+
+        print("[KeyboardSimulationService] Posting Cmd+C event...")
+        Self.typeKeyCode(UInt16(kVK_ANSI_C), modifiers: .maskCommand)
+        return true
+    }
+
     // MARK: - Clipboard Paste
 
     /// Paste the given text into the currently focused text field via clipboard

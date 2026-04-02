@@ -8,13 +8,12 @@
 
 import Foundation
 
-@MainActor
 public enum SkillStore {
 
     // MARK: - Public API
 
     /// Load all skills sorted by name, including built-ins
-    public static func loadAll() -> [Skill] {
+    public static func loadAll() async -> [Skill] {
         let directory = skillsDirectory()
         OsaurusPaths.ensureExistsSilent(directory)
         migrateOldFormat()
@@ -95,7 +94,7 @@ public enum SkillStore {
     }
 
     /// Load a specific skill by ID
-    public static func load(id: UUID) -> Skill? {
+    public static func load(id: UUID) async -> Skill? {
         if let builtIn = Skill.builtInSkills.first(where: { $0.id == id }) {
             return builtIn
         }
@@ -126,7 +125,7 @@ public enum SkillStore {
     }
 
     /// Save a skill to disk
-    public static func save(_ skill: Skill) {
+    public static func save(_ skill: Skill) async {
         if skill.isBuiltIn {
             saveBuiltInState(skill)
             return
@@ -163,7 +162,7 @@ public enum SkillStore {
 
     /// Delete a skill by ID
     @discardableResult
-    public static func delete(id: UUID) -> Bool {
+    public static func delete(id: UUID) async -> Bool {
         guard !Skill.builtInSkills.contains(where: { $0.id == id }) else {
             return false
         }
@@ -199,8 +198,11 @@ public enum SkillStore {
     }
 
     /// Check if a skill exists
-    public static func exists(id: UUID) -> Bool {
-        Skill.builtInSkills.contains(where: { $0.id == id }) || load(id: id) != nil
+    public static func exists(id: UUID) async -> Bool {
+        if Skill.builtInSkills.contains(where: { $0.id == id }) {
+            return true
+        }
+        return await load(id: id) != nil
     }
 
     /// Get the directory URL for a skill
@@ -215,27 +217,27 @@ public enum SkillStore {
     // MARK: - File Operations
 
     /// Add a reference file to a skill
-    public static func addReference(to skill: Skill, name: String, content: Data) throws {
+    public static func addReference(to skill: Skill, name: String, content: Data) async throws {
         let refsDir = skillDirectory(for: skill).appendingPathComponent("references")
         try FileManager.default.createDirectory(at: refsDir, withIntermediateDirectories: true)
         try content.write(to: refsDir.appendingPathComponent(name))
     }
 
     /// Add an asset file to a skill
-    public static func addAsset(to skill: Skill, name: String, content: Data) throws {
+    public static func addAsset(to skill: Skill, name: String, content: Data) async throws {
         let assetsDir = skillDirectory(for: skill).appendingPathComponent("assets")
         try FileManager.default.createDirectory(at: assetsDir, withIntermediateDirectories: true)
         try content.write(to: assetsDir.appendingPathComponent(name))
     }
 
     /// Remove a file from a skill
-    public static func removeFile(from skill: Skill, relativePath: String) throws {
+    public static func removeFile(from skill: Skill, relativePath: String) async throws {
         let fileURL = skillDirectory(for: skill).appendingPathComponent(relativePath)
         try FileManager.default.removeItem(at: fileURL)
     }
 
     /// Read content of a skill file
-    public static func readFile(from skill: Skill, relativePath: String) throws -> Data {
+    public static func readFile(from skill: Skill, relativePath: String) async throws -> Data {
         let fileURL = skillDirectory(for: skill).appendingPathComponent(relativePath)
         return try Data(contentsOf: fileURL)
     }

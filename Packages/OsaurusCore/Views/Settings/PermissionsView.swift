@@ -118,7 +118,7 @@ private struct SystemPermissionRow: View {
     private var canTest: Bool {
         switch permission {
         case .automation, .automationCalendar, .automationMail, .notes,
-            .contacts, .calendar, .reminders, .location:
+            .contacts, .calendar, .reminders, .location, .accessibility:
             return true
         default:
             return false
@@ -350,6 +350,8 @@ private struct SystemPermissionRow: View {
                 result = SystemPermissionService.debugTestNotesAccess()
             case .contacts:
                 result = SystemPermissionService.debugTestContactsAccess()
+            case .accessibility:
+                result = SystemPermissionService.debugTestAccessibilityAccess()
             default:
                 result = "Test not available"
             }
