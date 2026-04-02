@@ -1042,7 +1042,8 @@ final class ChatSession: ObservableObject {
                                 break outer
                             }
                             if let toolName = StreamingToolHint.decode(delta) {
-                                assistantTurn.pendingToolName = toolName
+                                // Empty tool name is a "clear" signal (used by remote server-side execution)
+                                assistantTurn.pendingToolName = toolName.isEmpty ? nil : toolName
                                 rebuildVisibleBlocks()
                                 continue
                             }

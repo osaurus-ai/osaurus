@@ -1734,9 +1734,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             // Enrich with agent context (system prompt + memory)
             var messages = await Self.enrichWithAgentContext(req, agentId: agentId.uuidString).messages
 
-            // Load tools from the server's registry for this agent
+            // Load tools: use sandbox mode when the agent has Autonomous Execution enabled
             let tools = await MainActor.run {
-                ToolRegistry.shared.alwaysLoadedSpecs(mode: .none)
+                let autonomousEnabled = AgentManager.shared.effectiveAutonomousExec(for: agentId)?.enabled == true
+                let mode: WorkExecutionMode =
+                    autonomousEnabled ? ToolRegistry.shared.resolveWorkExecutionMode(folderContext: nil) : .none
+                return ToolRegistry.shared.alwaysLoadedSpecs(mode: mode)
             }
 
             let maxIterations = 30
@@ -1816,6 +1819,18 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     break
                 }
 
+                // Notify the client that a tool is being called so it can show it in the chat log
+                hop {
+                    writerBound.value.writeContent(
+                        StreamingToolHint.encode(invocation.toolName),
+                        model: model, responseId: responseId, created: created, context: ctx.value
+                    )
+                    writerBound.value.writeContent(
+                        StreamingToolHint.encodeArgs(invocation.jsonArguments),
+                        model: model, responseId: responseId, created: created, context: ctx.value
+                    )
+                }
+
                 // Execute the tool on the server and append result to messages
                 let callId =
                     invocation.toolCallId
@@ -1833,6 +1848,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     }
                 } catch {
                     toolResult = "[REJECTED] \(error.localizedDescription)"
+                }
+
+                // Clear the pending tool indicator on the client (empty tool name = clear)
+                hop {
+                    writerBound.value.writeContent(
+                        StreamingToolHint.encode(""),
+                        model: model, responseId: responseId, created: created, context: ctx.value
+                    )
                 }
 
                 let cleanedContent = responseContent.isEmpty ? nil : responseContent
