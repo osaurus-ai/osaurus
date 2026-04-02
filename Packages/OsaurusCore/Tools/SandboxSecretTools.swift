@@ -37,11 +37,11 @@ struct SandboxSecretCheckTool: OsaurusTool, @unchecked Sendable {
             let key = args["key"] as? String,
             !key.isEmpty
         else {
-            return "{\"error\":\"Missing required parameter: key\"}"
+            return SecretToolResult.error("Missing required parameter: key")
         }
 
         guard let uuid = UUID(uuidString: agentId) else {
-            return "{\"error\":\"Invalid agent ID\"}"
+            return SecretToolResult.error("Invalid agent ID")
         }
 
         let exists = AgentSecretsKeychain.getSecret(id: key, agentId: uuid) != nil
@@ -102,13 +102,12 @@ struct SandboxSecretSetTool: OsaurusTool, @unchecked Sendable {
             let desc = args["description"] as? String,
             let instructions = args["instructions"] as? String
         else {
-            return "{\"error\":\"Missing required parameters: key, description, instructions\"}"
+            return SecretToolResult.error("Missing required parameters: key, description, instructions")
         }
 
-        // If value is provided, store directly (headless / Host API path)
         if let value = args["value"] as? String, !value.isEmpty {
             guard let uuid = UUID(uuidString: agentId) else {
-                return "{\"error\":\"Invalid agent ID\"}"
+                return SecretToolResult.error("Invalid agent ID")
             }
             AgentSecretsKeychain.saveSecret(value, id: key, agentId: uuid)
             return SecretToolResult.stored(key: key)
@@ -133,6 +132,10 @@ enum SecretToolResult {
             let json = String(data: data, encoding: .utf8)
         else { return "{\"error\":\"Failed to encode result\"}" }
         return json
+    }
+
+    static func error(_ message: String) -> String {
+        encode(["error": message])
     }
 
     static func stored(key: String) -> String {

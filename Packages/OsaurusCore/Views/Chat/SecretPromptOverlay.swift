@@ -66,7 +66,7 @@ struct SecretPromptOverlay: View {
         VStack {
             Spacer()
 
-            SecretPromptCard(state: state, onCancel: cancelAndDismiss, onDismiss: onDismiss)
+            SecretPromptCard(state: state, onCancel: cancelAndDismiss, onSubmitted: onDismiss)
                 .opacity(isAppearing ? 1 : 0)
                 .offset(y: isAppearing ? 0 : 30)
                 .padding(.horizontal, 20)
@@ -96,7 +96,7 @@ struct SecretPromptOverlay: View {
 private struct SecretPromptCard: View {
     let state: SecretPromptState
     let onCancel: () -> Void
-    let onDismiss: () -> Void
+    let onSubmitted: () -> Void
 
     @State private var secretValue: String = ""
     @Environment(\.theme) private var theme
@@ -121,7 +121,7 @@ private struct SecretPromptCard: View {
     private func submitSecret() {
         guard canSubmit else { return }
         state.submit(secretValue)
-        onDismiss()
+        onSubmitted()
     }
 
     // MARK: - Header

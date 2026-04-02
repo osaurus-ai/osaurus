@@ -55,10 +55,10 @@ public final class AppConfiguration: ObservableObject {
             let data = try Data(contentsOf: url)
             var config = try JSONDecoder().decode(ChatConfiguration.self, from: data)
 
-            // One-time migration: if chat.json has no coreModelProvider key yet,
-            // copy the value from memory.json so existing users keep their choice.
+            // One-time migration: if chat.json is missing either core model key,
+            // copy values from memory.json so existing users keep their choice.
             if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                json["coreModelProvider"] == nil
+                json["coreModelProvider"] as? String == nil || json["coreModelName"] as? String == nil
             {
                 config = migrateCoreModelFromMemoryConfig(into: config)
                 saveToDisk(config)

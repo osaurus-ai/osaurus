@@ -842,8 +842,7 @@ public final class WorkSession: ObservableObject {
         errorMessage = nil
         failedIssue = nil
         pendingClarification = nil
-        pendingSecretPrompt?.cancel()
-        pendingSecretPrompt = nil
+        dismissSecretPrompt()
         clarificationIssueId = nil
         pausedIssueId = nil
         pausedExecutionReason = nil
@@ -1013,8 +1012,7 @@ public final class WorkSession: ObservableObject {
         pausedIssueId = nil
         pausedExecutionReason = nil
         pendingClarification = nil
-        pendingSecretPrompt?.cancel()
-        pendingSecretPrompt = nil
+        dismissSecretPrompt()
         clarificationIssueId = nil
         preserveTurnsOnNextExecutionStart = false
     }
@@ -1055,8 +1053,7 @@ public final class WorkSession: ObservableObject {
         isRetrying = false
         failedIssue = nil
         pendingClarification = nil
-        pendingSecretPrompt?.cancel()
-        pendingSecretPrompt = nil
+        dismissSecretPrompt()
         clarificationIssueId = nil
         pausedIssueId = nil
         pausedExecutionReason = nil
@@ -1137,11 +1134,14 @@ public final class WorkSession: ObservableObject {
         }
     }
 
-    /// Clears the clarification UI state
-    private func clearClarificationState() {
-        pendingClarification = nil
+    private func dismissSecretPrompt() {
         pendingSecretPrompt?.cancel()
         pendingSecretPrompt = nil
+    }
+
+    private func clearClarificationState() {
+        pendingClarification = nil
+        dismissSecretPrompt()
         clarificationIssueId = nil
     }
 
@@ -1367,8 +1367,7 @@ public final class WorkSession: ObservableObject {
             setPendingClarification(request)
         default:
             pendingClarification = nil
-            pendingSecretPrompt?.cancel()
-            pendingSecretPrompt = nil
+            dismissSecretPrompt()
             clarificationIssueId = nil
             setPendingClarification(nil)
         }

@@ -955,11 +955,16 @@ final class ChatSession: ObservableObject {
                 let toolBudgetWarningThreshold = 3
                 var attempts = 0
                 var reachedToolLimit = false
+                var pendingBudgetNotice: String?
                 let effectiveTemp = AgentManager.shared.effectiveTemperature(for: effectiveAgentId)
 
                 outer: while attempts < maxAttempts {
                     attempts += 1
-                    let msgs = buildMessages()
+                    var msgs = buildMessages()
+                    if let notice = pendingBudgetNotice {
+                        msgs.append(ChatMessage(role: "user", content: notice))
+                        pendingBudgetNotice = nil
+                    }
                     let convTokens =
                         msgs
                         .filter { $0.role != "system" }
@@ -1098,7 +1103,6 @@ final class ChatSession: ObservableObject {
                                 }
                             }
 
-                            // Intercept sandbox_secret_set: show secure prompt overlay
                             if inv.toolName == "sandbox_secret_set",
                                 let prompt = SecretPromptParser.parse(resultText)
                             {
@@ -1153,13 +1157,8 @@ final class ChatSession: ObservableObject {
                         if remaining <= 0 {
                             reachedToolLimit = true
                         } else if remaining <= toolBudgetWarningThreshold {
-                            turns.append(
-                                ChatTurn(
-                                    role: .user,
-                                    content:
-                                        "[System Notice] Tool call budget: \(remaining) of \(maxAttempts) remaining. Wrap up your current work and provide a summary."
-                                )
-                            )
+                            pendingBudgetNotice =
+                                "[System Notice] Tool call budget: \(remaining) of \(maxAttempts) remaining. Wrap up your current work and provide a summary."
                         }
                         continue
                     }
@@ -1167,14 +1166,13 @@ final class ChatSession: ObservableObject {
 
                 if reachedToolLimit && isRunActive(runId) {
                     do {
-                        let msgs = buildMessages()
                         var finalReq = ChatCompletionRequest(
                             model: selectedModel ?? "default",
-                            messages: msgs,
+                            messages: buildMessages(),
                             temperature: effectiveTemp,
                             max_tokens: effectiveMaxTokensForAgent ?? 16384,
                             stream: true,
-                            top_p: nil,
+                            top_p: chatCfg.topPOverride,
                             frequency_penalty: nil,
                             presence_penalty: nil,
                             stop: nil,
@@ -1185,7 +1183,7 @@ final class ChatSession: ObservableObject {
                         )
                         finalReq.modelOptions = activeModelOptions.isEmpty ? nil : activeModelOptions
 
-                        let finalProcessor = StreamingDeltaProcessor(
+                        let processor = StreamingDeltaProcessor(
                             turn: assistantTurn,
                             modelId: selectedModel ?? "default",
                             modelOptions: activeModelOptions
@@ -1196,11 +1194,9 @@ final class ChatSession: ObservableObject {
                         let stream = try await engine.streamChat(request: finalReq)
                         for try await delta in stream {
                             if !isRunActive(runId) { break }
-                            if !delta.isEmpty {
-                                finalProcessor.receiveDelta(delta)
-                            }
+                            if !delta.isEmpty { processor.receiveDelta(delta) }
                         }
-                        finalProcessor.finalize()
+                        processor.finalize()
                     } catch {
                         debugLog("send: final wrap-up call failed: \(error.localizedDescription)")
                     }

@@ -15,6 +15,7 @@ private func pluralized(_ count: Int, _ singular: String, _ plural: String? = ni
 struct MemoryView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
     @ObservedObject private var agentManager = AgentManager.shared
+    @ObservedObject private var appConfig = AppConfiguration.shared
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
@@ -573,7 +574,7 @@ struct MemoryView: View {
                         .foregroundColor(theme.secondaryText)
                         .frame(width: 100, alignment: .leading)
 
-                    Text(ChatConfigurationStore.load().coreModelIdentifier ?? "None")
+                    Text(appConfig.chatConfig.coreModelIdentifier ?? "None")
                         .font(.system(size: 13))
                         .foregroundColor(theme.primaryText)
 
