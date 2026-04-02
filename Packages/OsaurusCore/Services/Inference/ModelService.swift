@@ -74,7 +74,8 @@ enum StreamingToolHint: Sendable {
     /// Encodes a completed server-side tool call so the client can display it in the chat log.
     static func encodeDone(callId: String, name: String, arguments: String, result: String) -> String {
         struct Payload: Encodable { let id, name, arguments, result: String }
-        let json = (try? JSONEncoder().encode(Payload(id: callId, name: name, arguments: arguments, result: result)))
+        let json =
+            (try? JSONEncoder().encode(Payload(id: callId, name: name, arguments: arguments, result: result)))
             .map { String(decoding: $0, as: UTF8.self) } ?? "{}"
         return donePrefix + json
     }

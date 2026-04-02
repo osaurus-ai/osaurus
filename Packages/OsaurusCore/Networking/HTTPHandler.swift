@@ -1823,11 +1823,17 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 hop {
                     writerBound.value.writeContent(
                         StreamingToolHint.encode(invocation.toolName),
-                        model: model, responseId: responseId, created: created, context: ctx.value
+                        model: model,
+                        responseId: responseId,
+                        created: created,
+                        context: ctx.value
                     )
                     writerBound.value.writeContent(
                         StreamingToolHint.encodeArgs(invocation.jsonArguments),
-                        model: model, responseId: responseId, created: created, context: ctx.value
+                        model: model,
+                        responseId: responseId,
+                        created: created,
+                        context: ctx.value
                     )
                 }
 
@@ -1860,36 +1866,49 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                             arguments: invocation.jsonArguments,
                             result: toolResult
                         ),
-                        model: model, responseId: responseId, created: created, context: ctx.value
+                        model: model,
+                        responseId: responseId,
+                        created: created,
+                        context: ctx.value
                     )
                 }
 
                 let cleanedContent = responseContent.isEmpty ? nil : responseContent
                 if let content = cleanedContent {
                     messages.append(
-                        ChatMessage(role: "assistant", content: content, tool_calls: [
-                            ToolCall(
-                                id: callId,
-                                type: "function",
-                                function: ToolCallFunction(
-                                    name: invocation.toolName,
-                                    arguments: invocation.jsonArguments
+                        ChatMessage(
+                            role: "assistant",
+                            content: content,
+                            tool_calls: [
+                                ToolCall(
+                                    id: callId,
+                                    type: "function",
+                                    function: ToolCallFunction(
+                                        name: invocation.toolName,
+                                        arguments: invocation.jsonArguments
+                                    )
                                 )
-                            )
-                        ], tool_call_id: nil)
+                            ],
+                            tool_call_id: nil
+                        )
                     )
                 } else {
                     messages.append(
-                        ChatMessage(role: "assistant", content: nil, tool_calls: [
-                            ToolCall(
-                                id: callId,
-                                type: "function",
-                                function: ToolCallFunction(
-                                    name: invocation.toolName,
-                                    arguments: invocation.jsonArguments
+                        ChatMessage(
+                            role: "assistant",
+                            content: nil,
+                            tool_calls: [
+                                ToolCall(
+                                    id: callId,
+                                    type: "function",
+                                    function: ToolCallFunction(
+                                        name: invocation.toolName,
+                                        arguments: invocation.jsonArguments
+                                    )
                                 )
-                            )
-                        ], tool_call_id: nil)
+                            ],
+                            tool_call_id: nil
+                        )
                     )
                 }
                 messages.append(
