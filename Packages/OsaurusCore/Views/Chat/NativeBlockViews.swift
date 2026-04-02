@@ -253,7 +253,7 @@ final class NativePendingToolCallView: NSView {
         pulseLayer.backgroundColor = NSColor(theme.accentColor).cgColor
 
         if let preview = argPreview, !preview.isEmpty {
-            argsLabel.stringValue = preview
+            argsLabel.stringValue = Self.normalizedArgPreviewForDisplay(preview)
             argsLabel.font = NSFont.monospacedSystemFont(ofSize: 10, weight: .regular)
             argsLabel.textColor = NSColor(theme.tertiaryText)
             argsContainer.isHidden = false
@@ -263,6 +263,23 @@ final class NativePendingToolCallView: NSView {
         }
 
         startPulse()
+    }
+
+    /// streamed JSON often contains literal `\n` / `\t` pairs; show them as real newlines for the preview
+    private static func normalizedArgPreviewForDisplay(_ raw: String) -> String {
+        raw
+            .replacingOccurrences(of: "\\n", with: "\n")
+            .replacingOccurrences(of: "\\r", with: "\r")
+            .replacingOccurrences(of: "\\t", with: "\t")
+    }
+
+    override func layout() {
+        super.layout()
+        let w = argsContainer.bounds.width - 16
+        if w > 1, abs(argsLabel.preferredMaxLayoutWidth - w) > 0.5 {
+            argsLabel.preferredMaxLayoutWidth = w
+            argsLabel.invalidateIntrinsicContentSize()
+        }
     }
 
     // MARK: - Private: Build
@@ -312,8 +329,12 @@ final class NativePendingToolCallView: NSView {
         argsLabel.isEditable = false
         argsLabel.isBordered = false
         argsLabel.drawsBackground = false
+        argsLabel.usesSingleLineMode = false
         argsLabel.maximumNumberOfLines = 3
         argsLabel.lineBreakMode = .byWordWrapping
+        if let cell = argsLabel.cell as? NSTextFieldCell {
+            cell.wraps = true
+        }
         argsContainer.addSubview(argsLabel)
 
         let rowH: CGFloat = 32
@@ -338,7 +359,8 @@ final class NativePendingToolCallView: NSView {
             argsContainer.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
             argsContainer.topAnchor.constraint(equalTo: topAnchor, constant: rowH + 4),
             argsContainer.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
-            argsContainer.heightAnchor.constraint(equalToConstant: 44),
+            // ~3 lines of 10pt monospace + vertical padding
+            argsContainer.heightAnchor.constraint(equalToConstant: 52),
 
             argsLabel.leadingAnchor.constraint(equalTo: argsContainer.leadingAnchor, constant: 8),
             argsLabel.trailingAnchor.constraint(equalTo: argsContainer.trailingAnchor, constant: -8),

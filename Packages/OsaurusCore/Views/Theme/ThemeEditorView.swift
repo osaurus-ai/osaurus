@@ -154,22 +154,6 @@ struct ThemeEditorView: View {
                     Text("Image").tag(ThemeBackground.BackgroundType.image)
                 }
                 .pickerStyle(.segmented)
-
-                Toggle("Glass Effect", isOn: $editingTheme.glass.enabled.animation(.easeInOut(duration: 0.2)))
-                    .font(.system(size: 13))
-
-                if editingTheme.glass.enabled {
-                    Picker("Material", selection: $editingTheme.glass.material) {
-                        Text("HUD Window").tag(ThemeGlass.GlassMaterial.hudWindow)
-                        Text("Popover").tag(ThemeGlass.GlassMaterial.popover)
-                        Text("Menu").tag(ThemeGlass.GlassMaterial.menu)
-                        Text("Sidebar").tag(ThemeGlass.GlassMaterial.sidebar)
-                        Text("Sheet").tag(ThemeGlass.GlassMaterial.sheet)
-                        Text("Content BG").tag(ThemeGlass.GlassMaterial.contentBackground)
-                        Text("Under Window").tag(ThemeGlass.GlassMaterial.underWindowBackground)
-                    }
-                    .font(.system(size: 13))
-                }
             }
         }
     }
@@ -305,18 +289,6 @@ struct ThemeEditorView: View {
                 sliderRow("Shadow Opacity", value: $editingTheme.shadows.shadowOpacity, range: 0 ... 1)
                 sliderRow("Card Shadow", value: $editingTheme.shadows.cardShadowRadius, range: 0 ... 30)
                 sliderRow("Hover Shadow", value: $editingTheme.shadows.cardShadowRadiusHover, range: 0 ... 40)
-
-                if editingTheme.glass.enabled {
-                    Divider().opacity(0.3)
-
-                    Text("Glass").font(.system(size: 11, weight: .semibold)).foregroundColor(currentTheme.tertiaryText)
-                        .textCase(.uppercase)
-                    sliderRow("Blur Radius", value: $editingTheme.glass.blurRadius, range: 0 ... 60)
-                    sliderRow("Window Backing", value: $editingTheme.glass.windowBackingOpacity, range: 0 ... 1)
-                    sliderRow("Primary", value: $editingTheme.glass.opacityPrimary, range: 0 ... 1)
-                    sliderRow("Secondary", value: $editingTheme.glass.opacitySecondary, range: 0 ... 1)
-                    sliderRow("Tertiary", value: $editingTheme.glass.opacityTertiary, range: 0 ... 1)
-                }
             }
         }
     }
@@ -508,36 +480,6 @@ struct ThemeEditorView: View {
                     range: 0 ... 1
                 )
 
-                if editingTheme.glass.enabled {
-                    Divider().opacity(0.3)
-
-                    Text("Glass Tint").font(.system(size: 11, weight: .semibold)).foregroundColor(
-                        currentTheme.tertiaryText
-                    ).textCase(.uppercase)
-                    colorRowOptional("Tint Color", hex: $editingTheme.glass.tintColor)
-                    sliderRow(
-                        "Tint Opacity",
-                        value: Binding(
-                            get: { editingTheme.glass.tintOpacity ?? 0 },
-                            set: { editingTheme.glass.tintOpacity = $0 }
-                        ),
-                        range: 0 ... 1
-                    )
-
-                    Text("Edge Light").font(.system(size: 11, weight: .semibold)).foregroundColor(
-                        currentTheme.tertiaryText
-                    ).textCase(.uppercase)
-                    colorRow("Color", hex: $editingTheme.glass.edgeLight)
-                    sliderRow(
-                        "Width",
-                        value: Binding(
-                            get: { editingTheme.glass.edgeLightWidth ?? 1 },
-                            set: { editingTheme.glass.edgeLightWidth = $0 }
-                        ),
-                        range: 0 ... 4
-                    )
-                }
-
                 Divider().opacity(0.3)
 
                 Text("Shadow Position").font(.system(size: 11, weight: .semibold)).foregroundColor(
@@ -577,7 +519,7 @@ struct ThemeEditorView: View {
         }
     }
 
-    /// Bright gradient backdrop behind the preview to demonstrate glass transparency
+    /// gradient backdrop behind the preview card
     private var transparencyBackdrop: some View {
         let accent = Color(themeHex: editingTheme.colors.accentColor)
         let accentLight = Color(themeHex: editingTheme.colors.accentColorLight)
@@ -929,8 +871,6 @@ struct ThemeChatPreview: View {
         ZStack {
             backgroundLayer
 
-            if theme.glass.enabled { glassOverlay }
-
             VStack(spacing: 0) {
                 previewHeader
                     .padding(.horizontal, 16)
@@ -957,7 +897,7 @@ struct ThemeChatPreview: View {
         .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .stroke(c(theme.glass.edgeLight).opacity(0.5), lineWidth: 0.5)
+                .stroke(c(theme.colors.primaryBorder).opacity(0.5), lineWidth: 0.5)
         )
     }
 
@@ -989,12 +929,8 @@ struct ThemeChatPreview: View {
         .padding(.vertical, 14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            ZStack {
-                RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .fill(.ultraThinMaterial)
-                RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .fill(userBubbleColor.opacity(opacity))
-            }
+            RoundedRectangle(cornerRadius: radius, style: .continuous)
+                .fill(userBubbleColor.opacity(opacity))
         )
         .overlay(
             Group {
@@ -1047,7 +983,7 @@ struct ThemeChatPreview: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    // MARK: - Background & Glass
+    // MARK: - Background
 
     @ViewBuilder
     private var backgroundLayer: some View {
@@ -1109,29 +1045,6 @@ struct ThemeChatPreview: View {
         }
         .frame(width: size.width, height: size.height)
         .clipped()
-    }
-
-    private var glassOverlay: some View {
-        let baseBacking = theme.glass.windowBackingOpacity
-        let backingOpacity = baseBacking * (0.4 + theme.glass.opacityPrimary * 0.6)
-
-        return ZStack {
-            RoundedRectangle(cornerRadius: 24, style: .continuous).fill(.ultraThinMaterial)
-
-            if let tintColor = theme.glass.tintColor {
-                RoundedRectangle(cornerRadius: 24, style: .continuous)
-                    .fill(c(tintColor).opacity(theme.glass.tintOpacity ?? 0))
-            }
-
-            LinearGradient(
-                colors: [
-                    c(theme.colors.primaryBackground).opacity(backingOpacity + theme.glass.opacityPrimary * 0.3),
-                    c(theme.colors.primaryBackground).opacity(backingOpacity + theme.glass.opacitySecondary * 0.2),
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-        }
     }
 
     // MARK: - Header
@@ -1248,20 +1161,18 @@ struct ThemeChatPreview: View {
                 .padding(.bottom, 10)
             }
             .background(
-                ZStack {
-                    RoundedRectangle(cornerRadius: CGFloat(theme.messages.bubbleCornerRadius), style: .continuous).fill(
-                        .ultraThinMaterial
-                    )
-                    RoundedRectangle(cornerRadius: CGFloat(theme.messages.bubbleCornerRadius), style: .continuous)
-                        .fill(c(theme.colors.primaryBackground).opacity(0.6))
-                }
+                RoundedRectangle(cornerRadius: CGFloat(theme.messages.bubbleCornerRadius), style: .continuous)
+                    .fill(c(theme.colors.inputBackground))
             )
             .clipShape(RoundedRectangle(cornerRadius: CGFloat(theme.messages.bubbleCornerRadius), style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: CGFloat(theme.messages.bubbleCornerRadius), style: .continuous)
                     .stroke(
                         LinearGradient(
-                            colors: [c(theme.glass.edgeLight), c(theme.glass.edgeLight).opacity(0.3)],
+                            colors: [
+                                c(theme.colors.primaryBorder),
+                                c(theme.colors.primaryBorder).opacity(0.35),
+                            ],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
                         ),

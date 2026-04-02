@@ -1475,7 +1475,8 @@ enum NativeCellHeightEstimator {
             return 32
 
         case let .pendingToolCall(_, argPreview, _):
-            return argPreview != nil ? 80 : 62
+            // header row + 52pt arg box + cell vertical insets
+            return argPreview != nil ? 112 : 62
 
         case let .thinking(_, text, _):
             if !isExpanded { return 56 }

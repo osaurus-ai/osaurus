@@ -584,13 +584,13 @@ final class NativeToolCallRowView: NSView {
                 av.onHeightChanged = { [weak self] in self?.applyHeight() }
             }
             if let result = item.result {
-                let displayResult = result.hasPrefix("[REJECTED]") ? result : result
                 ensureResultSectionTitle(theme: theme).isHidden = false
 
                 let rv = ensureResultView()
                 rv.isHidden = false
                 let textW = max(0, width - Self.sectionMarkdownWidthDeduction)
-                rv.configure(text: displayResult, width: textW, theme: theme,
+                let resultMarkdown = Self.markdownForToolResultDisplay(result)
+                rv.configure(text: resultMarkdown, width: textW, theme: theme,
                              cacheKey: "result-\(item.call.id)", isStreaming: false)
                 rv.onHeightChanged = { [weak self] in self?.applyHeight() }
                 contentBottomToArgs?.isActive = false
@@ -627,6 +627,24 @@ final class NativeToolCallRowView: NSView {
     }
 
     // MARK: - Private
+
+    /// fenced code + pretty JSON when the payload is JSON (otherwise monospace plain text)
+    private static func markdownForToolResultDisplay(_ result: String) -> String {
+        if result.hasPrefix("[REJECTED]") {
+            return "```\n\(result)\n```"
+        }
+        let trimmed = result.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return "```\n\n```"
+        }
+        if let data = trimmed.data(using: .utf8),
+            (try? JSONSerialization.jsonObject(with: data)) != nil
+        {
+            let pretty = JSONFormatter.prettyJSON(trimmed)
+            return "```json\n\(pretty)\n```"
+        }
+        return "```\n\(trimmed)\n```"
+    }
 
     private func applyHeight() {
         rowHeight?.constant = measuredHeight()
