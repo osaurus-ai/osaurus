@@ -33,15 +33,18 @@ public final class SkillManager {
     public static let shared = SkillManager()
 
     public private(set) var skills: [Skill] = []
+    public private(set) var isRefreshing = false
 
     private init() {
-        refresh()
+        Task { await refresh() }
     }
 
     // MARK: - CRUD
 
-    public func refresh() {
-        skills = SkillStore.loadAll()
+    public func refresh() async {
+        isRefreshing = true
+        defer { isRefreshing = false }
+        skills = await SkillStore.loadAll()
     }
 
     @discardableResult
@@ -52,7 +55,7 @@ public final class SkillManager {
         author: String? = nil,
         category: String? = nil,
         instructions: String = ""
-    ) -> Skill {
+    ) async -> Skill {
         let skill = Skill(
             name: name,
             description: description,
@@ -61,30 +64,30 @@ public final class SkillManager {
             category: category,
             instructions: instructions
         )
-        SkillStore.save(skill)
-        refresh()
+        await SkillStore.save(skill)
+        await refresh()
 
         Task { await SkillSearchService.shared.indexSkill(skill) }
         return skill
     }
 
-    public func update(_ skill: Skill) {
+    public func update(_ skill: Skill) async {
         guard !skill.isBuiltIn && !skill.isFromPlugin else { return }
         var updated = skill
         updated.updatedAt = Date()
-        SkillStore.save(updated)
-        refresh()
+        await SkillStore.save(updated)
+        await refresh()
 
         Task { await SkillSearchService.shared.indexSkill(updated) }
     }
 
     @discardableResult
-    public func delete(id: UUID) -> Bool {
+    public func delete(id: UUID) async -> Bool {
         // Prevent deleting plugin-provided skills
         if let skill = skill(for: id), skill.isFromPlugin { return false }
-        let result = SkillStore.delete(id: id)
+        let result = await SkillStore.delete(id: id)
         if result {
-            refresh()
+            await refresh()
 
             Task { await SkillSearchService.shared.removeSkill(id: id) }
         }
@@ -94,30 +97,30 @@ public final class SkillManager {
     // MARK: - Plugin Skills
 
     /// Register a skill from a plugin. If a skill with the same pluginId and name already exists, update it.
-    public func registerPluginSkill(_ skill: Skill) {
+    public func registerPluginSkill(_ skill: Skill) async {
         // Check if we already have a skill from this plugin with the same name
         if let existing = skills.first(where: { $0.pluginId == skill.pluginId && $0.name == skill.name }) {
             // Update existing skill but preserve enabled state
             var updated = skill
             updated.enabled = existing.enabled
-            SkillStore.save(updated)
+            await SkillStore.save(updated)
         } else {
-            SkillStore.save(skill)
+            await SkillStore.save(skill)
         }
-        refresh()
+        await refresh()
 
         Task { await SkillSearchService.shared.indexSkill(skill) }
     }
 
     /// Remove all skills associated with a plugin
-    public func unregisterPluginSkills(pluginId: String) {
+    public func unregisterPluginSkills(pluginId: String) async {
         let pluginSkillIds = skills.filter { $0.pluginId == pluginId }.map { $0.id }
         for id in pluginSkillIds {
-            _ = SkillStore.delete(id: id)
+            _ = await SkillStore.delete(id: id)
             Task { await SkillSearchService.shared.removeSkill(id: id) }
         }
         if !pluginSkillIds.isEmpty {
-            refresh()
+            await refresh()
 
         }
     }
@@ -127,7 +130,7 @@ public final class SkillManager {
         skills.filter { $0.pluginId == pluginId }
     }
 
-    public func setEnabled(_ enabled: Bool, for id: UUID) {
+    public func setEnabled(_ enabled: Bool, for id: UUID) async {
         guard var skill = skill(for: id) else { return }
         skill.enabled = enabled
         skill.updatedAt = Date()
@@ -147,12 +150,12 @@ public final class SkillManager {
                 createdAt: skill.createdAt,
                 updatedAt: Date()
             )
-            SkillStore.save(saveable)
+            await SkillStore.save(saveable)
         } else {
-            SkillStore.save(skill)
+            await SkillStore.save(skill)
         }
 
-        refresh()
+        await refresh()
 
     }
 
@@ -169,7 +172,7 @@ public final class SkillManager {
     // MARK: - Import/Export
 
     @discardableResult
-    public func importSkill(from data: Data) throws -> Skill {
+    public func importSkill(from data: Data) async throws -> Skill {
         var skill = try Skill.importFromJSON(data)
         skill = Skill(
             name: skill.name,
@@ -179,15 +182,15 @@ public final class SkillManager {
             category: skill.category,
             instructions: skill.instructions
         )
-        SkillStore.save(skill)
-        refresh()
+        await SkillStore.save(skill)
+        await refresh()
 
         Task { await SkillSearchService.shared.indexSkill(skill) }
         return skill
     }
 
     @discardableResult
-    public func importSkillFromMarkdown(_ content: String) throws -> Skill {
+    public func importSkillFromMarkdown(_ content: String) async throws -> Skill {
         var skill = try Skill.parseAnyFormat(from: content)
         skill = Skill(
             name: skill.name,
@@ -197,8 +200,8 @@ public final class SkillManager {
             category: skill.category,
             instructions: skill.instructions
         )
-        SkillStore.save(skill)
-        refresh()
+        await SkillStore.save(skill)
+        await refresh()
 
         Task { await SkillSearchService.shared.indexSkill(skill) }
         return skill
@@ -206,7 +209,7 @@ public final class SkillManager {
 
     /// Import multiple skills at once (batch import from GitHub)
     @discardableResult
-    public func importSkillsFromMarkdown(_ skills: [Skill]) -> [Skill] {
+    public func importSkillsFromMarkdown(_ skills: [Skill]) async -> [Skill] {
         var imported: [Skill] = []
         for parsedSkill in skills {
             let skill = Skill(
@@ -217,11 +220,11 @@ public final class SkillManager {
                 category: parsedSkill.category,
                 instructions: parsedSkill.instructions
             )
-            SkillStore.save(skill)
+            await SkillStore.save(skill)
             imported.append(skill)
         }
         if !imported.isEmpty {
-            refresh()
+            await refresh()
 
             Task {
                 await EmbeddingService.awaitStartupInit()
@@ -243,38 +246,38 @@ public final class SkillManager {
 
     // MARK: - File Management
 
-    public func addReference(to skillId: UUID, name: String, content: Data) throws {
+    public func addReference(to skillId: UUID, name: String, content: Data) async throws {
         guard let skill = skill(for: skillId), !skill.isBuiltIn else {
             throw SkillFileError.cannotModifyBuiltIn
         }
-        try SkillStore.addReference(to: skill, name: name, content: content)
-        refresh()
+        try await SkillStore.addReference(to: skill, name: name, content: content)
+        await refresh()
 
     }
 
-    public func addAsset(to skillId: UUID, name: String, content: Data) throws {
+    public func addAsset(to skillId: UUID, name: String, content: Data) async throws {
         guard let skill = skill(for: skillId), !skill.isBuiltIn else {
             throw SkillFileError.cannotModifyBuiltIn
         }
-        try SkillStore.addAsset(to: skill, name: name, content: content)
-        refresh()
+        try await SkillStore.addAsset(to: skill, name: name, content: content)
+        await refresh()
 
     }
 
-    public func removeFile(from skillId: UUID, relativePath: String) throws {
+    public func removeFile(from skillId: UUID, relativePath: String) async throws {
         guard let skill = skill(for: skillId), !skill.isBuiltIn else {
             throw SkillFileError.cannotModifyBuiltIn
         }
-        try SkillStore.removeFile(from: skill, relativePath: relativePath)
-        refresh()
+        try await SkillStore.removeFile(from: skill, relativePath: relativePath)
+        await refresh()
 
     }
 
-    public func readFile(from skillId: UUID, relativePath: String) throws -> Data {
+    public func readFile(from skillId: UUID, relativePath: String) async throws -> Data {
         guard let skill = skill(for: skillId) else {
             throw SkillFileError.skillNotFound
         }
-        return try SkillStore.readFile(from: skill, relativePath: relativePath)
+        return try await SkillStore.readFile(from: skill, relativePath: relativePath)
     }
 
     public func skillDirectory(for skillId: UUID) -> URL? {
@@ -284,13 +287,13 @@ public final class SkillManager {
 
     // MARK: - ZIP Export/Import
 
-    public func exportSkillAsZip(_ skill: Skill) throws -> URL {
+    public func exportSkillAsZip(_ skill: Skill) async throws -> URL {
         let skillDir = SkillStore.skillDirectory(for: skill)
         let zipURL = FileManager.default.temporaryDirectory.appendingPathComponent(
             "\(skill.xplaceholder_agentSkillsNamex).zip"
         )
         try? FileManager.default.removeItem(at: zipURL)
-        try FileManager.default.zipItem(at: skillDir, to: zipURL)
+        try await FileManager.default.zipItem(at: skillDir, to: zipURL)
         guard FileManager.default.fileExists(atPath: zipURL.path) else {
             throw SkillFileError.exportFailed
         }
@@ -298,12 +301,16 @@ public final class SkillManager {
     }
 
     @discardableResult
-    public func importSkillFromZip(_ zipURL: URL) throws -> Skill {
+    public func importSkillFromZip(_ zipURL: URL) async throws -> Skill {
         let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        defer { try? FileManager.default.removeItem(at: tempDir) }
+        defer {
+            Task.detached {
+                try? FileManager.default.removeItem(at: tempDir)
+            }
+        }
 
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
-        try FileManager.default.unzipItem(at: zipURL, to: tempDir)
+        try await FileManager.default.unzipItem(at: zipURL, to: tempDir)
 
         guard let skillMdURL = findSkillMd(in: tempDir) else {
             throw SkillFileError.invalidSkillArchive
@@ -324,7 +331,7 @@ public final class SkillManager {
             directoryName: skill.xplaceholder_agentSkillsNamex
         )
 
-        SkillStore.save(skill)
+        await SkillStore.save(skill)
 
         // Copy associated files
         let destDir = SkillStore.skillDirectory(for: skill)
@@ -348,7 +355,7 @@ public final class SkillManager {
             }
         }
 
-        refresh()
+        await refresh()
 
         Task { await SkillSearchService.shared.indexSkill(skill) }
         return skill
@@ -380,31 +387,31 @@ public final class SkillManager {
 
     // MARK: - Catalog & Instructions
 
-    public func loadInstructions(for skillNames: [String]) -> [String: String] {
+    public func loadInstructions(for skillNames: [String]) async -> [String: String] {
         var result: [String: String] = [:]
         for name in skillNames {
             if let skill = skill(named: name), skill.enabled {
-                result[name] = buildFullInstructions(for: skill)
+                result[name] = await buildFullInstructions(for: skill)
             }
         }
         return result
     }
 
-    public func loadInstructions(forIds ids: [UUID]) -> [UUID: String] {
+    public func loadInstructions(forIds ids: [UUID]) async -> [UUID: String] {
         var result: [UUID: String] = [:]
         for id in ids {
             if let skill = skill(for: id), skill.enabled {
-                result[id] = buildFullInstructions(for: skill)
+                result[id] = await buildFullInstructions(for: skill)
             }
         }
         return result
     }
 
-    private func buildFullInstructions(for skill: Skill) -> String {
+    private func buildFullInstructions(for skill: Skill) async -> String {
         var sections = [skill.instructions]
 
         if !skill.references.isEmpty {
-            let refs = loadReferenceContents(for: skill)
+            let refs = await loadReferenceContents(for: skill)
             if !refs.isEmpty {
                 sections.append("\n## Reference Materials\n\n\(refs)")
             }
@@ -413,7 +420,7 @@ public final class SkillManager {
         return sections.joined(separator: "\n")
     }
 
-    private func loadReferenceContents(for skill: Skill) -> String {
+    private func loadReferenceContents(for skill: Skill) async -> String {
         let textExtensions: Set<String> = [
             "md", "txt", "json", "yaml", "yml", "xml", "html", "css", "js", "ts",
             "swift", "py", "rb", "go", "rs", "java", "kt", "c", "cpp", "h", "hpp",
@@ -430,7 +437,7 @@ public final class SkillManager {
             }
 
             do {
-                let data = try SkillStore.readFile(from: skill, relativePath: file.relativePath)
+                let data = try await SkillStore.readFile(from: skill, relativePath: file.relativePath)
                 if let text = String(data: data, encoding: .utf8) {
                     contents.append("### \(file.name)\n\n```\n\(text)\n```\n")
                 }
@@ -457,48 +464,52 @@ public final class SkillManager {
 // MARK: - FileManager ZIP Extension
 
 extension FileManager {
-    func unzipItem(at sourceURL: URL, to destinationURL: URL) throws {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/unzip")
-        process.arguments = ["-o", "-q", sourceURL.path, "-d", destinationURL.path]
+    func unzipItem(at sourceURL: URL, to destinationURL: URL) async throws {
+        try await Task.detached(priority: .userInitiated) {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/unzip")
+            process.arguments = ["-o", "-q", sourceURL.path, "-d", destinationURL.path]
 
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = pipe
+            let pipe = Pipe()
+            process.standardOutput = pipe
+            process.standardError = pipe
 
-        try process.run()
-        process.waitUntilExit()
+            try process.run()
+            process.waitUntilExit()
 
-        if process.terminationStatus != 0 {
-            let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-            throw NSError(
-                domain: "FileManager",
-                code: Int(process.terminationStatus),
-                userInfo: [NSLocalizedDescriptionKey: "Unzip failed: \(output)"]
-            )
-        }
+            if process.terminationStatus != 0 {
+                let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+                throw NSError(
+                    domain: "FileManager",
+                    code: Int(process.terminationStatus),
+                    userInfo: [NSLocalizedDescriptionKey: "Unzip failed: \(output)"]
+                )
+            }
+        }.value
     }
 
-    func zipItem(at sourceURL: URL, to destinationURL: URL) throws {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/zip")
-        process.currentDirectoryURL = sourceURL.deletingLastPathComponent()
-        process.arguments = ["-r", "-q", destinationURL.path, sourceURL.lastPathComponent]
+    func zipItem(at sourceURL: URL, to destinationURL: URL) async throws {
+        try await Task.detached(priority: .userInitiated) {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/zip")
+            process.currentDirectoryURL = sourceURL.deletingLastPathComponent()
+            process.arguments = ["-r", "-q", destinationURL.path, sourceURL.lastPathComponent]
 
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = pipe
+            let pipe = Pipe()
+            process.standardOutput = pipe
+            process.standardError = pipe
 
-        try process.run()
-        process.waitUntilExit()
+            try process.run()
+            process.waitUntilExit()
 
-        if process.terminationStatus != 0 {
-            let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-            throw NSError(
-                domain: "FileManager",
-                code: Int(process.terminationStatus),
-                userInfo: [NSLocalizedDescriptionKey: "Zip failed: \(output)"]
-            )
-        }
+            if process.terminationStatus != 0 {
+                let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+                throw NSError(
+                    domain: "FileManager",
+                    code: Int(process.terminationStatus),
+                    userInfo: [NSLocalizedDescriptionKey: "Zip failed: \(output)"]
+                )
+            }
+        }.value
     }
 }
