@@ -641,19 +641,19 @@ final class NativeToolCallRowView: NSView {
 
     // MARK: - Private
 
-    /// fenced code + pretty JSON when the payload is JSON (otherwise monospace plain text)
+    /// JSON → fenced `json` block (pretty-printed). Anything else → raw markdown so prose/lists/**bold** render.
     private static func markdownForToolResultDisplay(_ result: String) -> String {
         if result.hasPrefix("[REJECTED]") {
-            return "```\n\(result)\n```"
+            return result
         }
         let trimmed = result.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
-            return "```\n\n```"
+            return ""
         }
         if let pretty = JSONFormatter.prettyPrintedJSONIfValid(trimmed) {
             return "```json\n\(pretty)\n```"
         }
-        return "```\n\(trimmed)\n```"
+        return trimmed
     }
 
     private func applyHeight() {

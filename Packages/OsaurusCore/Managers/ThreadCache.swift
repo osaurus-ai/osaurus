@@ -7,6 +7,7 @@
 //
 
 import AppKit
+import CryptoKit
 import Foundation
 
 /// Cached result for parsed markdown content
@@ -58,13 +59,11 @@ final class ThreadCache: @unchecked Sendable {
 
     // MARK: - Markdown
 
-    /// Lightweight cache key that avoids bridging the full text to NSString.
-    /// Uses byte length + a short prefix/suffix fingerprint for uniqueness.
+    /// Stable key over full UTF-8 content
     private static func markdownKey(for text: String) -> NSString {
-        let len = text.utf8.count
-        let prefix = String(text.prefix(64))
-        let suffix = len > 128 ? String(text.suffix(64)) : ""
-        return "\(len)|\(prefix)|\(suffix)" as NSString
+        let digest = SHA256.hash(data: Data(text.utf8))
+        let hex = digest.map { String(format: "%02x", $0) }.joined()
+        return hex as NSString
     }
 
     func markdown(for text: String) -> ParsedMarkdown? {
