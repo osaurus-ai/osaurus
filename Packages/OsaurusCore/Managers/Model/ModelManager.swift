@@ -9,6 +9,7 @@ import Combine
 import Foundation
 import HuggingFace
 import MLXLLM
+import MLXVLM
 import SwiftUI
 
 extension Notification.Name {
@@ -826,7 +827,31 @@ extension ModelManager {
             downloadURL: "https://huggingface.co/lmstudio-community/gpt-oss-120b-MLX-8bit"
         ),
 
+        MLXModel(
+            id: "mlx-community/gemma-4-31b-it-4bit",
+            name: friendlyName(from: "mlx-community/gemma-4-31b-it-4bit"),
+            description: "Google's flagship dense model. Vision + text with top-tier quality. Needs 32GB+ RAM.",
+            downloadURL: "https://huggingface.co/mlx-community/gemma-4-31b-it-4bit",
+            downloadSizeBytes: 18_400_000_000
+        ),
+
         // MARK: Vision Language Models (VLM)
+
+        MLXModel(
+            id: "mlx-community/gemma-4-26b-a4b-it-4bit",
+            name: friendlyName(from: "mlx-community/gemma-4-26b-a4b-it-4bit"),
+            description: "Google's efficient MoE vision model. Only 4B active params. 256K context.",
+            downloadURL: "https://huggingface.co/mlx-community/gemma-4-26b-a4b-it-4bit",
+            downloadSizeBytes: 15_600_000_000
+        ),
+
+        MLXModel(
+            id: "mlx-community/gemma-4-e4b-it-8bit",
+            name: friendlyName(from: "mlx-community/gemma-4-e4b-it-8bit"),
+            description: "Google's multimodal edge model. Handles images, video, and audio. 128K context.",
+            downloadURL: "https://huggingface.co/mlx-community/gemma-4-e4b-it-8bit",
+            downloadSizeBytes: 9_000_000_000
+        ),
 
         MLXModel(
             id: "mlx-community/Ministral-3-8B-Instruct-2512-4bit",
@@ -883,6 +908,14 @@ extension ModelManager {
         ),
 
         // MARK: Compact Models
+
+        MLXModel(
+            id: "mlx-community/gemma-4-e2b-it-4bit",
+            name: friendlyName(from: "mlx-community/gemma-4-e2b-it-4bit"),
+            description: "Google's smallest multimodal model. Runs on any Mac.",
+            downloadURL: "https://huggingface.co/mlx-community/gemma-4-e2b-it-4bit",
+            downloadSizeBytes: 3_600_000_000
+        ),
 
         MLXModel(
             id: "LiquidAI/LFM2.5-1.2B-Instruct-MLX-8bit",
@@ -1205,8 +1238,12 @@ extension ModelManager {
 // MARK: - Vision Language Model (VLM) Detection
 
 extension ModelManager {
-    /// Check if a model supports vision/multimodal input by examining its config.json
-    /// VLM models typically have vision_config, image_processor, or vision_encoder fields
+    /// Check if a downloaded model supports vision/multimodal input.
+    ///
+    /// Reads config.json from the local model directory and checks:
+    /// 1. Structural keys (vision_config, image_processor, etc.)
+    /// 2. model_type against `VLMTypeRegistry.supportedModelTypes` from mlx-swift-lm
+    /// 3. preprocessor_config.json as a final fallback
     nonisolated static func isVisionModel(modelId: String) -> Bool {
         guard let localDir = findLocalModelDirectory(forModelId: modelId) else {
             return false
@@ -1214,7 +1251,7 @@ extension ModelManager {
         return isVisionModel(at: localDir)
     }
 
-    /// Check if a model at the given directory supports vision input
+    /// Check if a model at the given directory supports vision input.
     nonisolated static func isVisionModel(at directory: URL) -> Bool {
         let configURL = directory.appendingPathComponent("config.json")
         guard let data = try? Data(contentsOf: configURL),
@@ -1223,68 +1260,45 @@ extension ModelManager {
             return false
         }
 
-        // Check for common VLM indicators in config.json
-        let visionIndicators = [
+        // Structural keys that indicate vision capability in config.json.
+        // Checked first to disambiguate dual-registered model types (e.g. gemma4
+        // appears in both VLM and LLM registries; vision_config distinguishes them).
+        let visionKeys: Set<String> = [
             "vision_config",
             "image_processor",
             "vision_encoder",
             "vision_tower",
             "image_encoder",
             "visual_encoder",
-            "image_size",
-            "patch_size",
             "num_image_tokens",
             "vision_feature_layer",
-            "image_aspect_ratio",
         ]
 
-        for key in visionIndicators {
-            if json[key] != nil {
-                return true
-            }
+        if json.keys.contains(where: { visionKeys.contains($0) }) {
+            return true
         }
 
-        // Check model_type for known VLM architectures
-        if let modelType = json["model_type"] as? String {
-            let vlmModelTypes = [
-                "llava",
-                "llava_next",
-                "qwen2_vl",
-                "qwen_vl",
-                "pixtral",
-                "paligemma",
-                "idefics",
-                "idefics2",
-                "internvl",
-                "cogvlm",
-                "minicpm_v",
-                "phi3_v",
-                "mllama",
-                "florence",
-                "blip",
-                "git",
-                "instructblip",
-            ]
-            if vlmModelTypes.contains(modelType.lowercased()) {
-                return true
-            }
+        // model_type check against the library's canonical VLM type registry.
+        if let modelType = json["model_type"] as? String,
+            VLMTypeRegistry.supportedModelTypes.contains(modelType)
+        {
+            return true
         }
 
-        // Check for preprocessor_config.json which often indicates VLM
+        // Fallback: preprocessor_config.json presence with image-related processor.
         let preprocessorURL = directory.appendingPathComponent("preprocessor_config.json")
-        if FileManager.default.fileExists(atPath: preprocessorURL.path) {
-            if let prepData = try? Data(contentsOf: preprocessorURL),
-                let prepJson = try? JSONSerialization.jsonObject(with: prepData) as? [String: Any]
+        if let prepData = try? Data(contentsOf: preprocessorURL),
+            let prepJson = try? JSONSerialization.jsonObject(with: prepData) as? [String: Any]
+        {
+            if let processorClass = prepJson["processor_class"] as? String,
+                processorClass.lowercased().contains("image")
             {
-                // Check for image processor type
-                if let processorClass = prepJson["processor_class"] as? String,
-                    processorClass.lowercased().contains("image")
-                {
-                    return true
-                }
-                if let imageProcessorType = prepJson["image_processor_type"] as? String {
-                    return !imageProcessorType.isEmpty
-                }
+                return true
+            }
+            if let imageProcessorType = prepJson["image_processor_type"] as? String,
+                !imageProcessorType.isEmpty
+            {
+                return true
             }
         }
 

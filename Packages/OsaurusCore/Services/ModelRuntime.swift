@@ -16,8 +16,7 @@ import os.log
 
 private let genLog = Logger(subsystem: "com.dinoki.osaurus", category: "Generation")
 
-// Force MLXVLM to be linked by referencing VLMModelFactory
-// This ensures VLM models can be loaded via the ModelFactoryRegistry
+// Force-link MLXVLM so ModelFactoryRegistry discovers the VLM trampoline at runtime.
 private let _vlmFactory = MLXVLM.VLMModelFactory.shared
 
 actor ModelRuntime {
@@ -324,21 +323,12 @@ actor ModelRuntime {
         }
 
         let task = Task<SessionHolder, Error> {
-            let isVLM = ModelManager.isVisionModel(at: localURL)
             let tokenizerLoader = SwiftTransformersTokenizerLoader()
-            let container: ModelContainer
-
-            if isVLM {
-                container = try await VLMModelFactory.shared.loadContainer(
-                    from: localURL,
-                    using: tokenizerLoader
-                )
-            } else {
-                container = try await loadModelContainer(
-                    from: localURL,
-                    using: tokenizerLoader
-                )
-            }
+            let container = try await loadModelContainer(
+                from: localURL,
+                using: tokenizerLoader
+            )
+            let isVLM = await container.isVLM
             let weightsBytes = Self.computeWeightsSizeBytes(at: localURL)
             return SessionHolder(
                 name: name,
