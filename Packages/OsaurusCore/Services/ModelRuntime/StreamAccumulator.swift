@@ -16,7 +16,6 @@
 
 import Foundation
 import MLXLMCommon
-import Tokenizers
 import os.log
 
 private let accumSignposter = OSSignposter(subsystem: "ai.osaurus", category: "Generation")
@@ -251,11 +250,11 @@ struct StreamAccumulator: AsyncSequence, Sendable {
                 // The context window handles BPE / byte-level tokenisers that need a
                 // few preceding tokens to correctly decode the newest one.
                 let contextWithNew = decodeContextIds + [tokenId]
-                let withNewDecoded = tokenizer.decode(tokens: contextWithNew)
+                let withNewDecoded = tokenizer.decode(tokenIds: contextWithNew)
                 let contextDecoded =
                     decodeContextIds.isEmpty
                     ? ""
-                    : tokenizer.decode(tokens: decodeContextIds)
+                    : tokenizer.decode(tokenIds: decodeContextIds)
                 let token: String
                 if withNewDecoded.count > contextDecoded.count {
                     token = String(withNewDecoded.dropFirst(contextDecoded.count))

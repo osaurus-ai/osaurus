@@ -380,68 +380,7 @@ struct KVCacheStore {
     /// object of the same concrete type.  The underlying MLXArrays are shared via
     /// copy-on-write until generation mutates the new copy, so this is very cheap.
     static func deepCopyCache(_ source: [any KVCache]) -> [any KVCache] {
-        source.map { layer -> any KVCache in
-            let copy: any KVCache
-
-            switch layer {
-            case let src as ChunkedKVCache:
-                // ChunkedKVCache must precede KVCacheSimple (subclass relationship).
-                // metaState restores chunkSize + startPosition; state restores keys/values/offset.
-                let dst = ChunkedKVCache()
-                dst.state = src.state
-                dst.metaState = src.metaState
-                copy = dst
-
-            case let src as KVCacheSimple:
-                let dst = KVCacheSimple()
-                let st = src.state
-                if !st.isEmpty { dst.state = st }
-                copy = dst
-
-            case let src as RotatingKVCache:
-                // RotatingKVCache requires maxSize at construction; read it from metaState[1].
-                // Guard against empty state (fresh cache that hasn't processed any tokens yet).
-                let meta = src.metaState
-                let maxSize = meta.count >= 2 ? (Int(meta[1]) ?? 4096) : 4096
-                let dst = RotatingKVCache(maxSize: maxSize)
-                let st = src.state
-                if !st.isEmpty { dst.state = st }
-                dst.metaState = meta
-                copy = dst
-
-            case let src as QuantizedKVCache:
-                // groupSize/bits are restored via metaState setter; offset is restored too.
-                let dst = QuantizedKVCache()
-                dst.state = src.state
-                dst.metaState = src.metaState
-                copy = dst
-
-            case let src as MambaCache:
-                // MambaCache is ArraysCache(size:2); state setter replaces the array list.
-                let dst = MambaCache()
-                dst.state = src.state
-                copy = dst
-
-            case let src as ArraysCache:
-                // Generic ArraysCache: state count tells us the real size.
-                let st = src.state
-                let dst = ArraysCache(size: st.count)
-                dst.state = st
-                copy = dst
-
-            default:
-                // Unknown concrete type: fall back to state/metaState round-trip.
-                // This will fatalError only if the unknown type has incompatible state.
-                assertionFailure(
-                    "[KVCacheStore] deepCopyCache: unhandled KVCache subtype \(type(of: layer)) — add an explicit case"
-                )
-                let dst = KVCacheSimple()
-                dst.state = layer.state
-                copy = dst
-            }
-
-            return copy
-        }
+        source.map { $0.copy() }
     }
 
     private static let maxPrefixCachesPerModel = 2

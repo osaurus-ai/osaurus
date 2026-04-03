@@ -14,7 +14,6 @@
 import Foundation
 import MLXLMCommon
 import Testing
-import Tokenizers
 
 @testable import OsaurusCore
 

@@ -10,7 +10,6 @@
 import Foundation
 import MLXLMCommon
 import Testing
-import Tokenizers
 
 @testable import OsaurusCore
 
@@ -19,64 +18,36 @@ import Tokenizers
 /// A minimal Tokenizer stub that maps token IDs to single characters.
 /// Token 32-126 → the corresponding ASCII character (all printable ASCII).
 /// Everything outside that range → " ".
-/// The key invariant: `decode(tokens: ids)` concatenates the per-id chars,
+/// The key invariant: `decode(tokenIds: ids)` concatenates the per-id chars,
 /// which is exactly the behaviour the accumulator's incremental-decode diff relies on.
-final class StubTokenizer: Tokenizer, @unchecked Sendable {
-    func tokenize(text: String) -> [String] { text.map { String($0) } }
-    func encode(text: String) -> [Int] { text.unicodeScalars.map { Int($0.value) } }
-    func encode(text: String, addSpecialTokens: Bool) -> [Int] { encode(text: text) }
-    func callAsFunction(_ text: String, addSpecialTokens: Bool) -> [Int] { encode(text: text) }
+final class StubTokenizer: MLXLMCommon.Tokenizer, @unchecked Sendable {
+    func encode(text: String, addSpecialTokens: Bool) -> [Int] {
+        text.unicodeScalars.map { Int($0.value) }
+    }
 
-    func decode(tokens: [Int]) -> String {
-        tokens.map { id -> String in
+    func decode(tokenIds: [Int], skipSpecialTokens: Bool) -> String {
+        tokenIds.map { id -> String in
             guard id >= 32, id <= 126, let scalar = Unicode.Scalar(id) else { return " " }
             return String(scalar)
         }.joined()
     }
 
-    func decode(tokens: [Int], skipSpecialTokens: Bool) -> String { decode(tokens: tokens) }
+    func convertTokenToId(_ token: String) -> Int? {
+        token.unicodeScalars.first.map { Int($0.value) }
+    }
 
-    func convertTokenToId(_ token: String) -> Int? { token.unicodeScalars.first.map { Int($0.value) } }
-    func convertTokensToIds(_ tokens: [String]) -> [Int?] { tokens.map { convertTokenToId($0) } }
     func convertIdToToken(_ id: Int) -> String? {
         guard id >= 32, id <= 126, let scalar = Unicode.Scalar(id) else { return nil }
         return String(scalar)
     }
-    func convertIdsToTokens(_ ids: [Int]) -> [String?] { ids.map { convertIdToToken($0) } }
 
     var bosToken: String? { nil }
-    var bosTokenId: Int? { nil }
     var eosToken: String? { nil }
-    var eosTokenId: Int? { nil }
     var unknownToken: String? { nil }
-    var unknownTokenId: Int? { nil }
-    var hasChatTemplate: Bool { false }
-    func applyChatTemplate(messages: [Tokenizers.Message]) throws -> [Int] { [] }
-    func applyChatTemplate(messages: [Tokenizers.Message], tools: [Tokenizers.ToolSpec]?) throws -> [Int] { [] }
+
     func applyChatTemplate(
-        messages: [Tokenizers.Message],
-        tools: [Tokenizers.ToolSpec]?,
-        additionalContext: [String: any Sendable]?
-    ) throws -> [Int] { [] }
-    func applyChatTemplate(messages: [Tokenizers.Message], chatTemplate: Tokenizers.ChatTemplateArgument) throws
-        -> [Int]
-    { [] }
-    func applyChatTemplate(messages: [Tokenizers.Message], chatTemplate: String) throws -> [Int] { [] }
-    func applyChatTemplate(
-        messages: [Tokenizers.Message],
-        chatTemplate: Tokenizers.ChatTemplateArgument?,
-        addGenerationPrompt: Bool,
-        truncation: Bool,
-        maxLength: Int?,
-        tools: [Tokenizers.ToolSpec]?
-    ) throws -> [Int] { [] }
-    func applyChatTemplate(
-        messages: [Tokenizers.Message],
-        chatTemplate: Tokenizers.ChatTemplateArgument?,
-        addGenerationPrompt: Bool,
-        truncation: Bool,
-        maxLength: Int?,
-        tools: [Tokenizers.ToolSpec]?,
+        messages: [[String: any Sendable]],
+        tools: [[String: any Sendable]]?,
         additionalContext: [String: any Sendable]?
     ) throws -> [Int] { [] }
 }

@@ -7,7 +7,7 @@
 
 import Combine
 import Foundation
-import Hub
+import HuggingFace
 import MLXLLM
 import SwiftUI
 
@@ -476,85 +476,74 @@ final class ModelManager: NSObject, ObservableObject {
         // Start snapshot download task
         let task = Task { [weak self] in
             guard let self = self else { return }
-            let repo = Hub.Repo(id: model.id)
+            let client = HubClient.default
+            guard let repoID = Repo.ID(rawValue: model.id) else {
+                await MainActor.run {
+                    self.downloadStates[model.id] = .failed(error: "Invalid repository ID: \(model.id)")
+                }
+                return
+            }
 
             do {
-                // Download a snapshot to a temporary location managed by Hub
-                let progressHandler: @Sendable (Progress) -> Void = { (progress: Progress) in
-                    Task { @MainActor [weak self] in
-                        guard let self = self else { return }
-                        guard self.downloadTokens[model.id] == token else { return }
-                        let fraction = max(0.0, min(1.0, progress.fractionCompleted))
-                        self.downloadStates[model.id] = .downloading(progress: fraction)
-                        let estTotalBytes = self.downloadSizeEstimates[model.id]
-                        let completedUnits = progress.completedUnitCount
-                        let totalUnits = progress.totalUnitCount
-                        let bytesCompleted: Int64? = {
-                            if let est = estTotalBytes, est > 0 {
-                                return Int64((Double(est) * fraction).rounded())
-                            } else {
-                                return completedUnits > 0 ? completedUnits : nil
-                            }
-                        }()
-                        let totalBytesForDisplay: Int64? = {
-                            if let est = estTotalBytes, est > 0 {
-                                return est
-                            } else {
-                                return totalUnits > 0 ? totalUnits : nil
-                            }
-                        }()
-                        let now = Date().timeIntervalSince1970
-                        var samples = self.progressSamples[model.id] ?? []
-                        samples.append((timestamp: now, completed: bytesCompleted ?? completedUnits))
-                        // Keep only the last 5s of samples
-                        let window: TimeInterval = 5.0
-                        samples = samples.filter { now - $0.timestamp <= window }
-                        self.progressSamples[model.id] = samples
-                        var speed: Double? = nil
-                        if let first = samples.first, let last = samples.last,
-                            last.timestamp > first.timestamp
-                        {
-                            let bytesDelta = Double(last.completed - first.completed)
-                            let timeDelta = last.timestamp - first.timestamp
-                            if timeDelta > 0 { speed = max(0, bytesDelta / timeDelta) }
+                let progressHandler: @MainActor @Sendable (Progress) -> Void = {
+                    [weak self] (progress: Progress) in
+                    guard let self = self else { return }
+                    guard self.downloadTokens[model.id] == token else { return }
+                    let fraction = max(0.0, min(1.0, progress.fractionCompleted))
+                    self.downloadStates[model.id] = .downloading(progress: fraction)
+                    let estTotalBytes = self.downloadSizeEstimates[model.id]
+                    let completedUnits = progress.completedUnitCount
+                    let totalUnits = progress.totalUnitCount
+                    let bytesCompleted: Int64? = {
+                        if let est = estTotalBytes, est > 0 {
+                            return Int64((Double(est) * fraction).rounded())
+                        } else {
+                            return completedUnits > 0 ? completedUnits : nil
                         }
-                        var eta: Double? = nil
-                        if let speed, speed > 0, let totalBytesForDisplay,
-                            let bytesCompleted = bytesCompleted,
-                            totalBytesForDisplay > 0
-                        {
-                            let remaining = Double(totalBytesForDisplay - bytesCompleted)
-                            if remaining > 0 { eta = remaining / speed }
+                    }()
+                    let totalBytesForDisplay: Int64? = {
+                        if let est = estTotalBytes, est > 0 {
+                            return est
+                        } else {
+                            return totalUnits > 0 ? totalUnits : nil
                         }
-                        self.downloadMetrics[model.id] = DownloadMetrics(
-                            bytesReceived: bytesCompleted,
-                            totalBytes: totalBytesForDisplay,
-                            bytesPerSecond: speed,
-                            etaSeconds: eta
-                        )
+                    }()
+                    let now = Date().timeIntervalSince1970
+                    var samples = self.progressSamples[model.id] ?? []
+                    samples.append((timestamp: now, completed: bytesCompleted ?? completedUnits))
+                    let window: TimeInterval = 5.0
+                    samples = samples.filter { now - $0.timestamp <= window }
+                    self.progressSamples[model.id] = samples
+                    var speed: Double? = nil
+                    if let first = samples.first, let last = samples.last,
+                        last.timestamp > first.timestamp
+                    {
+                        let bytesDelta = Double(last.completed - first.completed)
+                        let timeDelta = last.timestamp - first.timestamp
+                        if timeDelta > 0 { speed = max(0, bytesDelta / timeDelta) }
                     }
+                    var eta: Double? = nil
+                    if let speed, speed > 0, let totalBytesForDisplay,
+                        let bytesCompleted = bytesCompleted,
+                        totalBytesForDisplay > 0
+                    {
+                        let remaining = Double(totalBytesForDisplay - bytesCompleted)
+                        if remaining > 0 { eta = remaining / speed }
+                    }
+                    self.downloadMetrics[model.id] = DownloadMetrics(
+                        bytesReceived: bytesCompleted,
+                        totalBytes: totalBytesForDisplay,
+                        bytesPerSecond: speed,
+                        etaSeconds: eta
+                    )
                 }
 
-                let snapshotDirectory = try await Hub.snapshot(
-                    from: repo,
+                try await client.downloadSnapshot(
+                    of: repoID,
+                    to: model.localDirectory,
                     matching: patterns,
                     progressHandler: progressHandler
                 )
-
-                // Copy snapshot contents into our managed models directory
-                try self.copyContents(of: snapshotDirectory, to: model.localDirectory)
-
-                // Attempt to remove the Hub snapshot cache directory to free disk space
-                // This directory is a cached snapshot; we've already copied the contents
-                // into our app-managed models directory above, so it's safe to delete.
-                do {
-                    try FileManager.default.removeItem(at: snapshotDirectory)
-                } catch {
-                    // Non-fatal cleanup failure
-                    print(
-                        "Warning: failed to remove Hub snapshot cache at \(snapshotDirectory.path): \(error)"
-                    )
-                }
 
                 // Verify
                 let completed = model.isDownloaded
@@ -710,39 +699,6 @@ final class ModelManager: NSObject, ObservableObject {
                 description: "From MLX registry",
                 downloadURL: "https://huggingface.co/\(id)"
             )
-        }
-    }
-
-    private func copyContents(of sourceDirectory: URL, to destinationDirectory: URL) throws {
-        let fileManager = FileManager.default
-
-        // Ensure destination exists (do not wipe; we will merge/overwrite files)
-        if !fileManager.fileExists(atPath: destinationDirectory.path) {
-            try fileManager.createDirectory(at: destinationDirectory, withIntermediateDirectories: true)
-        }
-
-        // Copy/overwrite all items
-        let items = try fileManager.contentsOfDirectory(atPath: sourceDirectory.path)
-        for item in items {
-            let src = sourceDirectory.appendingPathComponent(item)
-            let dst = destinationDirectory.appendingPathComponent(item)
-
-            var isDir: ObjCBool = false
-            fileManager.fileExists(atPath: src.path, isDirectory: &isDir)
-
-            if isDir.boolValue {
-                // Ensure directory exists at destination, then recurse
-                if !fileManager.fileExists(atPath: dst.path) {
-                    try fileManager.createDirectory(at: dst, withIntermediateDirectories: true)
-                }
-                try copyContents(of: src, to: dst)
-            } else {
-                // If a file exists at destination, remove it before copying to allow overwrite
-                if fileManager.fileExists(atPath: dst.path) {
-                    try fileManager.removeItem(at: dst)
-                }
-                try fileManager.copyItem(at: src, to: dst)
-            }
         }
     }
 

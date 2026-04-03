@@ -306,6 +306,14 @@ struct AcknowledgementsView: View {
             licenseUrl: "https://github.com/huggingface/swift-transformers/blob/main/LICENSE"
         ),
         Acknowledgement(
+            name: "Swift HuggingFace",
+            identity: "swift-huggingface",
+            version: "0.8",
+            repository: "https://github.com/huggingface/swift-huggingface",
+            license: "Apache 2.0",
+            licenseUrl: "https://github.com/huggingface/swift-huggingface/blob/main/LICENSE"
+        ),
+        Acknowledgement(
             name: "IkigaJSON",
             identity: "ikigajson",
             version: "2.3",

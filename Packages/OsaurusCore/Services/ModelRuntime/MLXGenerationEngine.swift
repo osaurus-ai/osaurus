@@ -11,7 +11,6 @@ import MLXLLM
 @preconcurrency import MLXLMCommon
 import CoreImage
 import MLXVLM
-import Tokenizers
 import os.log
 
 private let engineLog = Logger(subsystem: "ai.osaurus", category: "Generation")

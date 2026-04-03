@@ -12,7 +12,6 @@ import MLX
 import MLXLLM
 @preconcurrency import MLXLMCommon
 import MLXVLM
-import Tokenizers
 import os.log
 
 private let genLog = Logger(subsystem: "com.dinoki.osaurus", category: "Generation")
@@ -326,13 +325,19 @@ actor ModelRuntime {
 
         let task = Task<SessionHolder, Error> {
             let isVLM = ModelManager.isVisionModel(at: localURL)
+            let tokenizerLoader = SwiftTransformersTokenizerLoader()
             let container: ModelContainer
 
             if isVLM {
-                let configuration = ModelConfiguration(directory: localURL)
-                container = try await VLMModelFactory.shared.loadContainer(configuration: configuration)
+                container = try await VLMModelFactory.shared.loadContainer(
+                    from: localURL,
+                    using: tokenizerLoader
+                )
             } else {
-                container = try await loadModelContainer(directory: localURL)
+                container = try await loadModelContainer(
+                    from: localURL,
+                    using: tokenizerLoader
+                )
             }
             let weightsBytes = Self.computeWeightsSizeBytes(at: localURL)
             return SessionHolder(

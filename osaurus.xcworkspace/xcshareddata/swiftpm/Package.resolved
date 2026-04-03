@@ -1,5 +1,5 @@
 {
-  "originHash" : "5ea90f152446294109050fa908d320b5f7608491b91f2da3fd7dcda154ab9df6",
+  "originHash" : "cdd38d475f1b8db6910d75766779f86b7c107a8d0889ac6a33f6457aa8415c68",
   "pins" : [
     {
       "identity" : "async-http-client",
@@ -67,10 +67,10 @@
     {
       "identity" : "mlx-swift-lm",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/ml-explore/mlx-swift-lm",
+      "location" : "https://github.com/osaurus-ai/mlx-swift-lm",
       "state" : {
-        "branch" : "2.31.3",
-        "revision" : "25b00d4e22e61ec9c41efda47990cd2084ec87ff"
+        "branch" : "main",
+        "revision" : "6bdf0412603c8c6adc0a2e34a95f76a1d9d53ec6"
       }
     },
     {
@@ -341,6 +341,15 @@
       "state" : {
         "revision" : "89888196dd79c61c50bca9a103d8114f32e1e598",
         "version" : "2.10.1"
+      }
+    },
+    {
+      "identity" : "swift-syntax",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/swiftlang/swift-syntax.git",
+      "state" : {
+        "revision" : "0687f71944021d616d34d922343dcef086855920",
+        "version" : "600.0.1"
       }
     },
     {
