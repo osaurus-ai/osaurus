@@ -1384,6 +1384,14 @@ struct APIEndpoint {
                 examplePayload: nil
             ),
             APIEndpoint(
+                method: "GET",
+                path: "/agents/{id}",
+                description: "Return info for a single agent",
+                compatibility: "Osaurus",
+                category: .agents,
+                examplePayload: nil
+            ),
+            APIEndpoint(
                 method: "POST",
                 path: "/memory/ingest",
                 description: "Bulk-ingest conversation turns into memory",
@@ -1422,6 +1430,22 @@ struct APIEndpoint {
                 compatibility: "MCP",
                 category: .mcp,
                 examplePayload: "{\n  \"name\": \"example_tool\",\n  \"arguments\": {}\n}"
+            ),
+            APIEndpoint(
+                method: "POST",
+                path: "/agents/{id}/run",
+                description: "Run the full agent chat loop server-side, streaming SSE text deltas",
+                compatibility: "Osaurus",
+                category: .agents,
+                examplePayload: """
+                    {
+                      "model": "default",
+                      "messages": [
+                        {"role": "user", "content": "Summarize the repo"}
+                      ],
+                      "stream": true
+                    }
+                    """
             ),
             APIEndpoint(
                 method: "POST",
