@@ -764,8 +764,8 @@ final class ChatSession: ObservableObject {
     }
 
     /// Build tool specifications: always-loaded set for chat mode.
-    func buildToolSpecs(executionMode: WorkExecutionMode) -> [Tool] {
-        ToolRegistry.shared.alwaysLoadedSpecs(mode: executionMode)
+    func buildToolSpecs(executionMode: WorkExecutionMode, excludeCapabilityTools: Bool = false) -> [Tool] {
+        ToolRegistry.shared.alwaysLoadedSpecs(mode: executionMode, excludeCapabilityTools: excludeCapabilityTools)
     }
 
     func send(_ text: String, attachments: [Attachment] = []) {
@@ -849,10 +849,11 @@ final class ChatSession: ObservableObject {
                 updateMemoryTokens(fromContext: memoryContext)
 
                 // Pre-flight RAG: search capabilities based on user's message.
-                // Skipped when disableTools is set — raw message goes directly to the model.
+                // Skipped when disableTools is set or when the agent uses manual tool selection.
                 let toolsDisabled = chatCfg.disableTools
+                let toolMode = AgentManager.shared.effectiveToolSelectionMode(for: effectiveAgentId)
                 let preflight: PreflightResult
-                if !toolsDisabled {
+                if !toolsDisabled && toolMode == .auto {
                     let preflightMode = chatCfg.preflightSearchMode ?? .balanced
                     preflight = await PreflightCapabilitySearch.search(query: trimmed, mode: preflightMode)
                 } else {
@@ -877,12 +878,25 @@ final class ChatSession: ObservableObject {
                 }
 
                 sys = SystemPromptBuilder.prependMemoryContext(memoryContext, to: sys)
-                var toolSpecs = toolsDisabled ? [] : buildToolSpecs(executionMode: executionMode)
+                let isManualTools = toolMode == .manual
+                var toolSpecs = toolsDisabled
+                    ? []
+                    : buildToolSpecs(executionMode: executionMode, excludeCapabilityTools: isManualTools)
 
                 if !toolsDisabled {
-                    for spec in preflight.toolSpecs
-                    where !toolSpecs.contains(where: { $0.function.name == spec.function.name }) {
-                        toolSpecs.append(spec)
+                    if isManualTools {
+                        if let manualNames = AgentManager.shared.effectiveManualToolNames(for: effectiveAgentId) {
+                            let manualSpecs = ToolRegistry.shared.specs(forTools: manualNames)
+                            for spec in manualSpecs
+                            where !toolSpecs.contains(where: { $0.function.name == spec.function.name }) {
+                                toolSpecs.append(spec)
+                            }
+                        }
+                    } else {
+                        for spec in preflight.toolSpecs
+                        where !toolSpecs.contains(where: { $0.function.name == spec.function.name }) {
+                            toolSpecs.append(spec)
+                        }
                     }
                 }
 

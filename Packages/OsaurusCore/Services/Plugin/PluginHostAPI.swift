@@ -416,7 +416,12 @@ final class PluginHostContext: @unchecked Sendable {
             }
         }
         if options.wantsPreflight {
-            enriched = await applyPreflightSearch(to: enriched, executionMode: execMode)
+            let resolvedAgentId = agentCtx?.agentId ?? Agent.defaultId
+            enriched = await applyPreflightSearch(
+                to: enriched,
+                executionMode: execMode,
+                agentId: resolvedAgentId
+            )
         }
         let engine = ChatEngine(source: .plugin)
         let budgetMgr = await createBudgetManager(for: enriched, maxIterations: options.maxIterations)
@@ -576,9 +581,37 @@ final class PluginHostContext: @unchecked Sendable {
 
     private static func applyPreflightSearch(
         to inference: EnrichedInference,
-        executionMode: WorkExecutionMode = .none
+        executionMode: WorkExecutionMode = .none,
+        agentId: UUID = Agent.defaultId
     ) async -> EnrichedInference {
-        // If this session already has a preflight result, reuse it without re-running the search.
+        let toolMode = await MainActor.run {
+            AgentManager.shared.effectiveToolSelectionMode(for: agentId)
+        }
+        let isManualTools = toolMode == .manual
+
+        // Manual mode: merge user-selected tools, skip RAG entirely.
+        // Also strip any capability tools that may already be on the inference
+        // from resolveAgentContext, since manual mode disables dynamic discovery.
+        if isManualTools {
+            let (builtInTools, manualSpecs, capNames) = await MainActor.run {
+                let base = ToolRegistry.shared.alwaysLoadedSpecs(
+                    mode: executionMode,
+                    excludeCapabilityTools: true
+                )
+                let names = AgentManager.shared.effectiveManualToolNames(for: agentId) ?? []
+                let manual = ToolRegistry.shared.specs(forTools: names)
+                return (base, manual, ToolRegistry.capabilityToolNames)
+            }
+            let filteredExisting = (inference.tools ?? []).filter { !capNames.contains($0.function.name) }
+            let cleanInference = EnrichedInference(
+                request: inference.request,
+                tools: filteredExisting.isEmpty ? nil : filteredExisting
+            )
+            let empty = PreflightResult(toolSpecs: manualSpecs, contextSnippet: "", items: [])
+            return applyPreflightResult(empty, to: cleanInference, builtInTools: builtInTools)
+        }
+
+        // Auto mode: RAG-based preflight
         if let sid = inference.request.session_id {
             let cached = preflightCacheLock.withLock { preflightCache[sid] }
             if let cached {
@@ -598,7 +631,6 @@ final class PluginHostContext: @unchecked Sendable {
 
         let preflight = await PreflightCapabilitySearch.search(query: query, mode: preflightMode)
 
-        // Store result for this session so all subsequent turns reuse the same tool set.
         if let sid = inference.request.session_id {
             preflightCacheLock.withLock { preflightCache[sid] = preflight }
         }

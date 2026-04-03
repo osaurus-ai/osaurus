@@ -772,22 +772,39 @@ public final class WorkSession: ObservableObject {
         resetExecutionState(for: issue)
 
         let config = await buildExecutionConfig()
-        var tools = ToolRegistry.shared.alwaysLoadedSpecs(mode: config.executionMode)
+        let toolMode = AgentManager.shared.effectiveToolSelectionMode(for: agentId)
+        let isManualTools = toolMode == .manual
+        var tools = ToolRegistry.shared.alwaysLoadedSpecs(
+            mode: config.executionMode,
+            excludeCapabilityTools: isManualTools
+        )
 
-        // Pre-flight RAG: search capabilities based on issue
-        let preflightMode = ChatConfigurationStore.load().preflightSearchMode ?? .balanced
-        let preflightQuery = [issue.title, issue.description].compactMap { $0 }.joined(separator: " ")
-        let preflight = await PreflightCapabilitySearch.search(query: preflightQuery, mode: preflightMode)
-        pendingPreflightCapabilities = preflight.items.isEmpty ? nil : preflight.items
+        // Pre-flight RAG: search capabilities based on issue (skipped in manual mode)
+        var preflightSnippet = ""
+        if isManualTools {
+            if let manualNames = AgentManager.shared.effectiveManualToolNames(for: agentId) {
+                let manualSpecs = ToolRegistry.shared.specs(forTools: manualNames)
+                for spec in manualSpecs
+                where !tools.contains(where: { $0.function.name == spec.function.name }) {
+                    tools.append(spec)
+                }
+            }
+        } else {
+            let preflightMode = ChatConfigurationStore.load().preflightSearchMode ?? .balanced
+            let preflightQuery = [issue.title, issue.description].compactMap { $0 }.joined(separator: " ")
+            let preflight = await PreflightCapabilitySearch.search(query: preflightQuery, mode: preflightMode)
+            pendingPreflightCapabilities = preflight.items.isEmpty ? nil : preflight.items
+            preflightSnippet = preflight.contextSnippet
 
-        for spec in preflight.toolSpecs
-        where !tools.contains(where: { $0.function.name == spec.function.name }) {
-            tools.append(spec)
+            for spec in preflight.toolSpecs
+            where !tools.contains(where: { $0.function.name == spec.function.name }) {
+                tools.append(spec)
+            }
         }
 
         var systemPrompt = config.systemPrompt
-        if !preflight.contextSnippet.isEmpty {
-            systemPrompt += "\n\n" + preflight.contextSnippet
+        if !preflightSnippet.isEmpty {
+            systemPrompt += "\n\n" + preflightSnippet
         }
 
         budgetTracker.snapshot(
@@ -1314,21 +1331,38 @@ public final class WorkSession: ObservableObject {
         }
 
         let config = await buildExecutionConfig()
-        var tools = ToolRegistry.shared.alwaysLoadedSpecs(mode: config.executionMode)
+        let resumeToolMode = AgentManager.shared.effectiveToolSelectionMode(for: agentId)
+        let resumeIsManual = resumeToolMode == .manual
+        var tools = ToolRegistry.shared.alwaysLoadedSpecs(
+            mode: config.executionMode,
+            excludeCapabilityTools: resumeIsManual
+        )
 
-        let preflightMode = ChatConfigurationStore.load().preflightSearchMode ?? .balanced
-        let preflightQuery = [issue.title, issue.description].compactMap { $0 }.joined(separator: " ")
-        let preflight = await PreflightCapabilitySearch.search(query: preflightQuery, mode: preflightMode)
-        pendingPreflightCapabilities = preflight.items.isEmpty ? nil : preflight.items
+        var resumePreflightSnippet = ""
+        if resumeIsManual {
+            if let manualNames = AgentManager.shared.effectiveManualToolNames(for: agentId) {
+                let manualSpecs = ToolRegistry.shared.specs(forTools: manualNames)
+                for spec in manualSpecs
+                where !tools.contains(where: { $0.function.name == spec.function.name }) {
+                    tools.append(spec)
+                }
+            }
+        } else {
+            let preflightMode = ChatConfigurationStore.load().preflightSearchMode ?? .balanced
+            let preflightQuery = [issue.title, issue.description].compactMap { $0 }.joined(separator: " ")
+            let preflight = await PreflightCapabilitySearch.search(query: preflightQuery, mode: preflightMode)
+            pendingPreflightCapabilities = preflight.items.isEmpty ? nil : preflight.items
+            resumePreflightSnippet = preflight.contextSnippet
 
-        for spec in preflight.toolSpecs
-        where !tools.contains(where: { $0.function.name == spec.function.name }) {
-            tools.append(spec)
+            for spec in preflight.toolSpecs
+            where !tools.contains(where: { $0.function.name == spec.function.name }) {
+                tools.append(spec)
+            }
         }
 
         var systemPrompt = config.systemPrompt
-        if !preflight.contextSnippet.isEmpty {
-            systemPrompt += "\n\n" + preflight.contextSnippet
+        if !resumePreflightSnippet.isEmpty {
+            systemPrompt += "\n\n" + resumePreflightSnippet
         }
 
         budgetTracker.snapshot(

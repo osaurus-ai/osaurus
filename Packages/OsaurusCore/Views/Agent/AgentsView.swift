@@ -656,6 +656,9 @@ struct AgentDetailView: View {
     @State private var workQuickActions: [AgentQuickAction]?
     @State private var editingQuickActionId: UUID?
     @State private var pluginInstructionsMap: [String: String] = [:]
+    @State private var toolSelectionMode: ToolSelectionMode = .auto
+    @State private var manualToolNames: Set<String> = []
+    @State private var toolSearchText: String = ""
 
     // MARK: - UI State
 
@@ -1037,6 +1040,7 @@ struct AgentDetailView: View {
         tabHelperText(DetailTab.configure.helperText)
         systemPromptSection
         generationSection
+        toolSelectionSection
         quickActionsSection
         themeSection
     }
@@ -1201,6 +1205,144 @@ struct AgentDetailView: View {
             .onChange(of: temperature) { debouncedSave() }
             .onChange(of: maxTokens) { debouncedSave() }
         }
+    }
+
+    // MARK: - Tool Selection
+
+    private var selectableTools: [ToolRegistry.ToolEntry] {
+        let builtIn = ToolRegistry.shared.builtInToolNames
+        return ToolRegistry.shared.listTools().filter { $0.enabled && !builtIn.contains($0.name) }
+    }
+
+    private var filteredTools: [ToolRegistry.ToolEntry] {
+        let tools = selectableTools
+        guard !toolSearchText.isEmpty else { return tools }
+        let query = toolSearchText.lowercased()
+        return tools
+            .compactMap { entry -> (ToolRegistry.ToolEntry, Int)? in
+                let name = entry.name.lowercased()
+                let desc = entry.description.lowercased()
+                let score: Int =
+                    if name == query { 100 }
+                    else if name.hasPrefix(query) { 80 }
+                    else if name.contains(query) { 60 }
+                    else if desc.contains(query) { 40 }
+                    else if SearchService.fuzzyMatch(query: query, in: name) { 20 }
+                    else { 0 }
+                return score > 0 ? (entry, score) : nil
+            }
+            .sorted { $0.1 > $1.1 }
+            .map(\.0)
+    }
+
+    private var toolSelectionSection: some View {
+        AgentDetailSection(title: "Tools", icon: "wrench.and.screwdriver") {
+            VStack(alignment: .leading, spacing: 12) {
+                Picker("", selection: $toolSelectionMode) {
+                    Text("Auto").tag(ToolSelectionMode.auto)
+                    Text("Manual").tag(ToolSelectionMode.manual)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+
+                Text(toolSelectionMode == .auto
+                    ? "Tools are discovered automatically using pre-flight search."
+                    : "Only the tools you select below will be available to this agent."
+                )
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+
+                if toolSelectionMode == .manual {
+                    toolSearchField
+                    toolList
+                }
+            }
+            .onChange(of: toolSelectionMode) { debouncedSave() }
+        }
+    }
+
+    private var toolSearchField: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+            TextField("Search tools...", text: $toolSearchText)
+                .font(.system(size: 12))
+                .textFieldStyle(.plain)
+                .foregroundColor(theme.primaryText)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(theme.inputBackground)
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(theme.inputBorder, lineWidth: 1))
+        )
+    }
+
+    @ViewBuilder
+    private var toolList: some View {
+        let tools = filteredTools
+        if tools.isEmpty {
+            Text(toolSearchText.isEmpty ? "No tools available" : "No matching tools")
+                .font(.system(size: 12))
+                .foregroundColor(theme.tertiaryText)
+                .frame(maxWidth: .infinity, alignment: .center)
+                .padding(.vertical, 12)
+        } else {
+            ScrollView {
+                VStack(spacing: 0) {
+                    ForEach(tools, id: \.name) { entry in
+                        toolRow(entry)
+                        if entry.name != tools.last?.name {
+                            Divider().foregroundColor(theme.primaryBorder)
+                        }
+                    }
+                }
+            }
+            .frame(maxHeight: 300)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(theme.inputBackground)
+                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(theme.inputBorder, lineWidth: 1))
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+
+            Text("\(manualToolNames.count) tool\(manualToolNames.count == 1 ? "" : "s") selected")
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+        }
+    }
+
+    private func toolRow(_ entry: ToolRegistry.ToolEntry) -> some View {
+        let isSelected = manualToolNames.contains(entry.name)
+        return Button {
+            if isSelected { manualToolNames.remove(entry.name) }
+            else { manualToolNames.insert(entry.name) }
+            debouncedSave()
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 14))
+                    .foregroundColor(isSelected ? theme.accentColor : theme.tertiaryText)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(entry.name)
+                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                        .foregroundColor(theme.primaryText)
+                    if !entry.description.isEmpty {
+                        Text(entry.description)
+                            .font(.system(size: 11))
+                            .foregroundColor(theme.tertiaryText)
+                            .lineLimit(2)
+                    }
+                }
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Plugin Tab Content
@@ -2512,6 +2654,8 @@ struct AgentDetailView: View {
         selectedThemeId = agent.themeId
         chatQuickActions = agent.chatQuickActions
         workQuickActions = agent.workQuickActions
+        toolSelectionMode = agent.toolSelectionMode ?? .auto
+        manualToolNames = Set(agent.manualToolNames ?? [])
 
         var instrMap: [String: String] = [:]
         let overrides = agent.pluginInstructions ?? [:]
@@ -2575,7 +2719,9 @@ struct AgentDetailView: View {
             agentAddress: current.agentAddress,
             sandboxPlugins: current.sandboxPlugins,
             autonomousExec: current.autonomousExec,
-            pluginInstructions: effectivePluginInstructions
+            pluginInstructions: effectivePluginInstructions,
+            toolSelectionMode: toolSelectionMode,
+            manualToolNames: toolSelectionMode == .manual ? Array(manualToolNames) : nil
         )
 
         agentManager.update(updated)
