@@ -1580,11 +1580,12 @@ extension FloatingInputCard {
                     }
                 }
             } else if DocumentParser.canParse(url: url) {
+                let animation = theme.springAnimation()
                 Task.detached(priority: .userInitiated) {
                     do {
                         let attachments = try DocumentParser.parseAll(url: url)
                         await MainActor.run {
-                            withAnimation {
+                            withAnimation(animation) {
                                 self.pendingAttachments.append(contentsOf: attachments)
                                 self.clipboardService.markAsRead()
                             }
@@ -1793,12 +1794,13 @@ extension FloatingInputCard {
 
     private func parseAndAttach(url: URL) {
         let filename = url.lastPathComponent
+        let animation = theme.springAnimation()
         Task.detached(priority: .userInitiated) {
             do {
                 let attachments = try DocumentParser.parseAll(url: url)
                 await MainActor.run {
-                    for attachment in attachments {
-                        self.appendAttachment(attachment)
+                    withAnimation(animation) {
+                        self.pendingAttachments.append(contentsOf: attachments)
                     }
                 }
             } catch {

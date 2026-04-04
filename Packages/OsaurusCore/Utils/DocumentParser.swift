@@ -189,7 +189,7 @@ enum DocumentParser {
         return pages.joined(separator: "\n\n")
     }
 
-    private static let maxPixelsPerPage = 4000 * 4000  // ~64MP cap per page
+    private static let maxPixelsPerPage = 4000 * 4000  // ~16MP cap per page
 
     private static func renderPDFPagesAsImages(document: PDFDocument, maxPages: Int) -> [Data] {
         let pageCount = min(document.pageCount, maxPages)
@@ -204,7 +204,7 @@ enum DocumentParser {
             let intWidth = Int(bounds.width * scale)
             let intHeight = Int(bounds.height * scale)
 
-            guard intWidth > 0, intHeight > 0, intWidth * intHeight <= maxPixelsPerPage else { continue }
+            guard intWidth > 0, intHeight > 0, intWidth <= maxPixelsPerPage / intHeight else { continue }
 
             guard let context = CGContext(
                 data: nil,
