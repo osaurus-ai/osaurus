@@ -165,4 +165,20 @@ struct osaurusTests {
         let errorObj = try JSONDecoder().decode(OpenAIError.self, from: errorData)
         #expect(errorObj.error.message == "Server configuration error")
     }
+
+    @Test @MainActor func alwaysLoadedSpecs_includesCapabilityTools_byDefault() async throws {
+        let specs = ToolRegistry.shared.alwaysLoadedSpecs(mode: .none)
+        let names = Set(specs.map(\.function.name))
+        for cap in ToolRegistry.capabilityToolNames {
+            #expect(names.contains(cap), "Expected \(cap) in default always-loaded specs")
+        }
+    }
+
+    @Test @MainActor func alwaysLoadedSpecs_excludesCapabilityTools_whenFlagSet() async throws {
+        let specs = ToolRegistry.shared.alwaysLoadedSpecs(mode: .none, excludeCapabilityTools: true)
+        let names = Set(specs.map(\.function.name))
+        for cap in ToolRegistry.capabilityToolNames {
+            #expect(!names.contains(cap), "\(cap) should be excluded when excludeCapabilityTools is true")
+        }
+    }
 }

@@ -415,14 +415,24 @@ final class PluginHostContext: @unchecked Sendable {
                 SystemPromptBuilder.appendSystemContent(instructions, into: &enriched.request.messages)
             }
         }
+        let resolvedAgentId = agentCtx?.agentId ?? Agent.defaultId
         if options.wantsPreflight {
-            let resolvedAgentId = agentCtx?.agentId ?? Agent.defaultId
             enriched = await applyPreflightSearch(
                 to: enriched,
                 executionMode: execMode,
                 agentId: resolvedAgentId
             )
         }
+
+        let isManual = await MainActor.run {
+            AgentManager.shared.effectiveToolSelectionMode(for: resolvedAgentId) == .manual
+        }
+        if isManual,
+            let section = await SkillManager.shared.manualSkillPromptSection(for: resolvedAgentId)
+        {
+            SystemPromptBuilder.appendSystemContent(section, into: &enriched.request.messages)
+        }
+
         let engine = ChatEngine(source: .plugin)
         let budgetMgr = await createBudgetManager(for: enriched, maxIterations: options.maxIterations)
         return PreparedInference(
@@ -615,12 +625,8 @@ final class PluginHostContext: @unchecked Sendable {
                 return (base, manual, ToolRegistry.capabilityToolNames)
             }
             let filteredExisting = (inference.tools ?? []).filter { !capNames.contains($0.function.name) }
-            var request = inference.request
-            if let section = await SkillManager.shared.manualSkillPromptSection(for: agentId) {
-                SystemPromptBuilder.appendSystemContent(section, into: &request.messages)
-            }
             let cleanInference = EnrichedInference(
-                request: request,
+                request: inference.request,
                 tools: filteredExisting.isEmpty ? nil : filteredExisting
             )
             let empty = PreflightResult(toolSpecs: manualSpecs, contextSnippet: "", items: [])

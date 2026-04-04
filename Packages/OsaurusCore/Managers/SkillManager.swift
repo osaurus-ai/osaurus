@@ -395,9 +395,11 @@ public final class SkillManager {
         else { return nil }
         let instructions = await loadInstructions(for: skillNames)
         guard !instructions.isEmpty else { return nil }
-        return instructions.values
-            .map { "## Skill Instructions\n\n\($0)" }
-            .joined(separator: "\n\n")
+        let sections = skillNames.compactMap { name -> String? in
+            guard let body = instructions[name] else { return nil }
+            return "## Skill: \(name)\n\n\(body)"
+        }
+        return sections.joined(separator: "\n\n")
     }
 
     public func loadInstructions(for skillNames: [String]) async -> [String: String] {

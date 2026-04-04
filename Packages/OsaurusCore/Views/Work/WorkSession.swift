@@ -865,6 +865,7 @@ public final class WorkSession: ObservableObject {
         errorMessage = nil
         failedIssue = nil
         pendingClarification = nil
+        pendingPreflightCapabilities = nil
         dismissSecretPrompt()
         clarificationIssueId = nil
         pausedIssueId = nil

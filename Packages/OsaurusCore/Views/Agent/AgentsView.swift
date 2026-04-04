@@ -1215,8 +1215,9 @@ struct AgentDetailView: View {
     // MARK: - Tool Selection
 
     private func reloadToolsAndSkills() {
-        let builtIn = ToolRegistry.shared.builtInToolNames
-        cachedTools = ToolRegistry.shared.listTools().filter { $0.enabled && !builtIn.contains($0.name) }
+        let hidden = ToolRegistry.shared.builtInToolNames
+            .union(ToolRegistry.shared.runtimeManagedToolNames)
+        cachedTools = ToolRegistry.shared.listTools().filter { $0.enabled && !hidden.contains($0.name) }
         cachedSkills = SkillManager.shared.skills.filter { $0.enabled || !$0.isBuiltIn }
         applyToolSearchFilter()
     }
@@ -1265,7 +1266,7 @@ struct AgentDetailView: View {
                 Text(
                     toolSelectionMode == .auto
                         ? "Tools are discovered automatically using pre-flight search."
-                        : "Only the tools and skills you select below will be available to this agent."
+                        : "Core tools are always available. Select additional tools and skills below."
                 )
                 .font(.system(size: 11))
                 .foregroundColor(theme.tertiaryText)
