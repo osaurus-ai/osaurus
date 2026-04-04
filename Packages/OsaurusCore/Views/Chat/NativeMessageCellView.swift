@@ -33,7 +33,7 @@ struct CellRenderingContext {
     var onRegenerate: ((UUID) -> Void)? = nil
     var onEdit: ((UUID) -> Void)? = nil
     var onDelete: ((UUID) -> Void)? = nil
-    /// attachment id string:  opens full screen preview from ChatView
+    /// attachment or shared-artifact id string → full screen preview from ChatView
     var onUserImagePreview: ((String) -> Void)? = nil
 }
 
@@ -1315,6 +1315,7 @@ final class NativeMessageCellView: NSTableCellView {
             guard let self, let av = self.nativeArtifactView else { return }
             context.onHeightMeasured?(av.measuredCardHeight() + 12, blockId)
         }
+        nativeArtifactView?.onImagePreviewTap = { id in context.onUserImagePreview?(id) }
         nativeArtifactView?.configure(artifact: artifact, theme: context.theme)
         if let av = nativeArtifactView {
             let h = av.measuredCardHeight() + 12
@@ -1592,8 +1593,9 @@ enum NativeCellHeightEstimator {
             return 8 + PreflightCapabilitiesRowHeight.estimated(items: items, tableWidth: width)
 
         case let .sharedArtifact(artifact):
-            // matches NativeArtifactCardView: inner padding + title row + gaps + footer + cell margins
-            var h: CGFloat = 12 + 24 + 8 + 8 + 26 + 12 + 12
+            // matches NativeArtifactCardView: inner padding + title row + gaps + footer row + inner bottom
+            // footer uses 36pt (multi-button row / wrapping); was 26 and clipped with Save + Finder
+            var h: CGFloat = 12 + 24 + 8 + 8 + 36 + 12 + 12
             if let d = artifact.description, !d.isEmpty { h += 20 }
             let pathEmpty = artifact.hostPath.isEmpty
             if pathEmpty {
@@ -1611,7 +1613,8 @@ enum NativeCellHeightEstimator {
                 let lines = min(6, max(1, c.components(separatedBy: "\n").count))
                 h += CGFloat(lines) * 14 + 12
             }
-            return h
+            // configureAsArtifact reports measuredCardHeight() + 12 for cell top/bottom inset — match that here
+            return h + 12
         }
     }
 }

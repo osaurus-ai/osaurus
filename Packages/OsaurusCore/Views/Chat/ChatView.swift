@@ -1842,6 +1842,21 @@ struct ChatView: View {
                 }
             }
         }
+        if let url = sharedArtifactImageURL(artifactId: attachmentId),
+            let data = try? Data(contentsOf: url),
+            let img = NSImage(data: data)
+        {
+            userImagePreview = img
+        }
+    }
+
+    private func sharedArtifactImageURL(artifactId: String) -> URL? {
+        for block in session.visibleBlocks {
+            guard case let .sharedArtifact(art) = block.kind else { continue }
+            guard art.id == artifactId, art.isImage, !art.hostPath.isEmpty else { continue }
+            return URL(fileURLWithPath: art.hostPath)
+        }
+        return nil
     }
 
     /// Copy a turn's thinking + content to the clipboard

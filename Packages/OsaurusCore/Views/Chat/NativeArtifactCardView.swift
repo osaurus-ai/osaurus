@@ -16,6 +16,8 @@ import QuartzCore
 final class NativeArtifactCardView: NSView {
 
     var onHeightChanged: (() -> Void)?
+    /// taps image thumbnail → full-screen preview (wired from `CellRenderingContext.onUserImagePreview`)
+    var onImagePreviewTap: ((String) -> Void)?
 
     private let accentStrip = NSView()
     private let iconBg = NSView()
@@ -27,6 +29,7 @@ final class NativeArtifactCardView: NSView {
     private let descLabel = NSTextField(labelWithString: "")
     private let previewHost = NSView()
     private let footerStack = NSStackView()
+    private let saveArtifactButton = NSButton(title: "", target: nil, action: nil)
     private let openInFinderButton = NSButton(title: "", target: nil, action: nil)
     private let openInBrowserButton = NSButton(title: "", target: nil, action: nil)
 
@@ -140,6 +143,11 @@ final class NativeArtifactCardView: NSView {
 
         styleFooterButton(openInFinderButton, title: "Open in Finder", symbol: "folder", theme: theme)
         styleFooterButton(openInBrowserButton, title: "Open in Browser", symbol: "safari", theme: theme)
+        styleFooterButton(saveArtifactButton, title: "Save…", symbol: "square.and.arrow.down", theme: theme)
+
+        let canSave = canOpen && (artifact.isImage || artifact.isPDF)
+        saveArtifactButton.isHidden = !canSave
+        saveArtifactButton.isEnabled = canSave
 
         updateChrome(theme: theme)
         updateFooterAlpha()
@@ -167,8 +175,13 @@ final class NativeArtifactCardView: NSView {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             self.layoutSubtreeIfNeeded()
-            self.cachedLayoutHeight = max(self.fittingSize.height, 1)
+            let newH = max(self.fittingSize.height, 1)
+            let oldH = self.cachedLayoutHeight
+            self.cachedLayoutHeight = newH
             self.invalidateIntrinsicContentSize()
+            if abs(newH - oldH) > 0.5 {
+                self.onHeightChanged?()
+            }
         }
     }
 
@@ -257,7 +270,8 @@ final class NativeArtifactCardView: NSView {
     }
 
     private func updateFooterAlpha() {
-        footerStack.alphaValue = isHovered ? 1 : 0.6
+        // keep footer actions fully visible — low alpha read as “missing” on light cards
+        footerStack.alphaValue = 1
     }
 
     private func scheduleIntroGlowIfNeeded(theme: any ThemeProtocol, artifactId: String) {
@@ -286,6 +300,9 @@ final class NativeArtifactCardView: NSView {
     // MARK: - Preview host
 
     private func clearPreviewHost() {
+        for g in previewImageView.gestureRecognizers {
+            previewImageView.removeGestureRecognizer(g)
+        }
         for v in previewHost.subviews {
             v.removeFromSuperview()
         }
@@ -336,11 +353,15 @@ final class NativeArtifactCardView: NSView {
 
     private func buildImagePreview(artifact: SharedArtifact, theme: any ThemeProtocol) {
         previewHost.isHidden = false
+        let container = NSView()
+        container.translatesAutoresizingMaskIntoConstraints = false
+        previewHost.addSubview(container)
+
         let bg = NSView()
         bg.wantsLayer = true
         bg.layer?.backgroundColor = NSColor(theme.tertiaryBackground).withAlphaComponent(0.3).cgColor
         bg.translatesAutoresizingMaskIntoConstraints = false
-        previewHost.addSubview(bg)
+        container.addSubview(bg)
 
         let iv = previewImageView
         iv.translatesAutoresizingMaskIntoConstraints = false
@@ -350,19 +371,27 @@ final class NativeArtifactCardView: NSView {
         iv.layer?.masksToBounds = true
         iv.layer?.borderWidth = 0.5
         iv.layer?.borderColor = NSColor(theme.primaryBorder).withAlphaComponent(0.1).cgColor
-        previewHost.addSubview(iv)
+        container.addSubview(iv)
+
+        let click = NSClickGestureRecognizer(target: self, action: #selector(artifactImagePreviewTapped))
+        iv.addGestureRecognizer(click)
 
         NSLayoutConstraint.activate([
-            bg.leadingAnchor.constraint(equalTo: previewHost.leadingAnchor),
-            bg.trailingAnchor.constraint(equalTo: previewHost.trailingAnchor),
-            bg.topAnchor.constraint(equalTo: previewHost.topAnchor),
-            bg.heightAnchor.constraint(equalToConstant: Self.thumbnailHeight),
+            container.leadingAnchor.constraint(equalTo: previewHost.leadingAnchor),
+            container.trailingAnchor.constraint(equalTo: previewHost.trailingAnchor),
+            container.topAnchor.constraint(equalTo: previewHost.topAnchor),
+            container.heightAnchor.constraint(equalToConstant: Self.thumbnailHeight),
+            previewHost.bottomAnchor.constraint(equalTo: container.bottomAnchor),
 
-            iv.leadingAnchor.constraint(equalTo: previewHost.leadingAnchor),
-            iv.trailingAnchor.constraint(equalTo: previewHost.trailingAnchor),
-            iv.topAnchor.constraint(equalTo: previewHost.topAnchor),
-            iv.heightAnchor.constraint(equalToConstant: Self.thumbnailHeight),
-            previewHost.bottomAnchor.constraint(equalTo: iv.bottomAnchor),
+            bg.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            bg.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            bg.topAnchor.constraint(equalTo: container.topAnchor),
+            bg.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+
+            iv.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            iv.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            iv.topAnchor.constraint(equalTo: container.topAnchor),
+            iv.bottomAnchor.constraint(equalTo: container.bottomAnchor),
         ])
 
         if let img = ChatImageCache.shared.cachedImage(for: artifact.id) {
@@ -400,6 +429,9 @@ final class NativeArtifactCardView: NSView {
         iv.layer?.cornerRadius = 8
         iv.layer?.masksToBounds = true
         container.addSubview(iv)
+
+        let pdfClick = NSClickGestureRecognizer(target: self, action: #selector(openArtifactWithDefaultApp))
+        iv.addGestureRecognizer(pdfClick)
 
         pdfBadgeBackdrop.wantsLayer = true
         pdfBadgeBackdrop.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.6).cgColor
@@ -702,6 +734,39 @@ final class NativeArtifactCardView: NSView {
         NSWorkspace.shared.open(URL(fileURLWithPath: hostPath))
     }
 
+    @objc private func artifactImagePreviewTapped() {
+        guard !currentArtifactId.isEmpty else { return }
+        onImagePreviewTap?(currentArtifactId)
+    }
+
+    @objc private func saveArtifactTapped() {
+        guard !hostPath.isEmpty else { return }
+        let src = URL(fileURLWithPath: hostPath)
+        let suggestedName = boundArtifact?.filename ?? (src.lastPathComponent.isEmpty ? "artifact" : src.lastPathComponent)
+
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = suggestedName
+        panel.canCreateDirectories = true
+
+        let finish: (NSApplication.ModalResponse) -> Void = { response in
+            guard response == .OK, let dest = panel.url else { return }
+            do {
+                if FileManager.default.fileExists(atPath: dest.path) {
+                    try FileManager.default.removeItem(at: dest)
+                }
+                try FileManager.default.copyItem(at: src, to: dest)
+            } catch {
+                // best-effort; avoid blocking chat on failure
+            }
+        }
+
+        if let window = window {
+            panel.beginSheetModal(for: window, completionHandler: finish)
+        } else {
+            finish(panel.runModal())
+        }
+    }
+
     // MARK: - Build
 
     private func buildViews() {
@@ -757,6 +822,7 @@ final class NativeArtifactCardView: NSView {
         let fs = NSView()
         fs.setContentHuggingPriority(.defaultLow, for: .horizontal)
         footerStack.addArrangedSubview(fs)
+        footerStack.addArrangedSubview(saveArtifactButton)
         footerStack.addArrangedSubview(openInBrowserButton)
         footerStack.addArrangedSubview(openInFinderButton)
 
@@ -764,6 +830,9 @@ final class NativeArtifactCardView: NSView {
         openInFinderButton.action = #selector(openInFinderTapped)
         openInBrowserButton.target = self
         openInBrowserButton.action = #selector(openInBrowserTapped)
+        saveArtifactButton.target = self
+        saveArtifactButton.action = #selector(saveArtifactTapped)
+        saveArtifactButton.isHidden = true
 
         inner.addSubview(iconBg)
         inner.addSubview(nameLabel)
