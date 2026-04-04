@@ -39,6 +39,14 @@
 
         private static var cachedTurns: [ChatTurn]?
 
+        /// per-process temp folder under `FileManager.default.temporaryDirectory` (sandbox-safe vs fixed `/tmp/...`)
+        private static let mockArtifactRootURL: URL = {
+            let base = FileManager.default.temporaryDirectory
+            let dir = base.appendingPathComponent("osaurus-mock-\(UUID().uuidString)", isDirectory: true)
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            return dir
+        }()
+
         /// stable for the process lifetime so BlockMemoizer fast paths behave like a fixed conversation
         static func mockTurnsForPerformanceTest() -> [ChatTurn] {
             if let cached = cachedTurns { return cached }
@@ -343,7 +351,7 @@
             hostPath: String? = nil,
             fileSize: Int? = nil
         ) -> String {
-            let resolvedHost = hostPath ?? "/tmp/osaurus-mock/\(filename)"
+            let resolvedHost = hostPath ?? mockArtifactRootURL.appendingPathComponent(filename).path
             let resolvedSize = fileSize ?? (hasContent ? body.utf8.count : 0)
             let metadata: [String: Any] = [
                 "filename": filename,
@@ -358,8 +366,21 @@
             guard let jsonData = try? JSONSerialization.data(withJSONObject: metadata),
                 let jsonLine = String(data: jsonData, encoding: .utf8)
             else {
-                let fallback =
-                    "{\"filename\":\"fallback.txt\",\"mime_type\":\"text/plain\",\"has_content\":true,\"description\":\"mock\",\"host_path\":\"/tmp/osaurus-mock/fallback.txt\",\"context_id\":\"mock-chat-context\",\"context_type\":\"chat\",\"file_size\":0}"
+                let fallbackMeta: [String: Any] = [
+                    "filename": "fallback.txt",
+                    "mime_type": "text/plain",
+                    "has_content": true,
+                    "description": "mock",
+                    "host_path": mockArtifactRootURL.appendingPathComponent("fallback.txt").path,
+                    "context_id": "mock-chat-context",
+                    "context_type": ArtifactContextType.chat.rawValue,
+                    "file_size": 0,
+                ]
+                guard let fbData = try? JSONSerialization.data(withJSONObject: fallbackMeta),
+                    let fallback = String(data: fbData, encoding: .utf8)
+                else {
+                    return SharedArtifact.startMarker + "{}" + SharedArtifact.endMarker
+                }
                 return SharedArtifact.startMarker + fallback + SharedArtifact.endMarker
             }
             if body.isEmpty {
@@ -368,11 +389,9 @@
             return SharedArtifact.startMarker + jsonLine + "\n" + body + SharedArtifact.endMarker
         }
 
-        /// writes a small PNG to `/tmp/osaurus-mock` so `NativeArtifactCardView` can load bytes like a real share_artifact file.
+        /// writes a small PNG under `mockArtifactRootURL` so `NativeArtifactCardView` can load bytes like a real share_artifact file.
         private static func writeMockPNGArtifact(filename: String, pairIndex: Int) -> (path: String, byteCount: Int) {
-            let dir = URL(fileURLWithPath: "/tmp/osaurus-mock", isDirectory: true)
-            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            let url = dir.appendingPathComponent(filename)
+            let url = mockArtifactRootURL.appendingPathComponent(filename)
             let size = NSSize(width: 280, height: 160)
             let img = NSImage(size: size)
             img.lockFocus()

@@ -1313,6 +1313,7 @@ final class NativeMessageCellView: NSTableCellView {
         let blockId = block.id
         nativeArtifactView?.onHeightChanged = { [weak self] in
             guard let self, let av = self.nativeArtifactView else { return }
+            guard self.currentBlockId == blockId else { return }
             context.onHeightMeasured?(av.measuredCardHeight() + 12, blockId)
         }
         nativeArtifactView?.onImagePreviewTap = { id in context.onUserImagePreview?(id) }
@@ -1320,6 +1321,7 @@ final class NativeMessageCellView: NSTableCellView {
         // fittingSize before layout often omits footerStack height — row cache would clip Open in Finder.
         DispatchQueue.main.async { [weak self] in
             guard let self, let av = self.nativeArtifactView else { return }
+            guard self.currentBlockId == blockId else { return }
             av.layoutSubtreeIfNeeded()
             context.onHeightMeasured?(av.measuredCardHeight() + 12, blockId)
         }

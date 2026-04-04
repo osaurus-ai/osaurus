@@ -918,6 +918,9 @@ final class NativeArtifactCardView: NSView {
             previewHost.trailingAnchor.constraint(equalTo: inner.trailingAnchor),
 
             footerStack.centerXAnchor.constraint(equalTo: inner.centerXAnchor),
+            footerStack.leadingAnchor.constraint(greaterThanOrEqualTo: inner.leadingAnchor),
+            footerStack.trailingAnchor.constraint(lessThanOrEqualTo: inner.trailingAnchor),
+            footerStack.widthAnchor.constraint(lessThanOrEqualTo: inner.widthAnchor),
             footerStack.topAnchor.constraint(equalTo: previewHost.bottomAnchor, constant: Self.footerVerticalGap),
             inner.bottomAnchor.constraint(equalTo: footerStack.bottomAnchor),
         ])
