@@ -1,5 +1,5 @@
 {
-  "originHash" : "cdd38d475f1b8db6910d75766779f86b7c107a8d0889ac6a33f6457aa8415c68",
+  "originHash" : "0af5e0d0bc4617abe3a7e9dfddde2332f7af7ebf6dcd488328a93f6b8abd12f7",
   "pins" : [
     {
       "identity" : "async-http-client",
@@ -58,10 +58,10 @@
     {
       "identity" : "mlx-swift",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/ml-explore/mlx-swift",
+      "location" : "https://github.com/osaurus-ai/mlx-swift",
       "state" : {
-        "revision" : "61b9e011e09a62b489f6bd647958f1555bdf2896",
-        "version" : "0.31.3"
+        "branch" : "main",
+        "revision" : "509d46d8252c5d344ae87fe4f53b5b038cf04075"
       }
     },
     {
@@ -70,7 +70,7 @@
       "location" : "https://github.com/osaurus-ai/mlx-swift-lm",
       "state" : {
         "branch" : "main",
-        "revision" : "cc74de9b0282d7d5c19d2ad305defbb65a52c6f3"
+        "revision" : "809f58685d4fef8d9304570894b0e1a9ea3dc181"
       }
     },
     {
@@ -204,8 +204,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/huggingface/swift-huggingface.git",
       "state" : {
-        "revision" : "de01c0ab8fd537bbd8216cea7f774275178501a2",
-        "version" : "0.8.1"
+        "revision" : "b721959445b617d0bf03910b2b4aced345fd93bf",
+        "version" : "0.9.0"
       }
     },
     {
@@ -368,15 +368,6 @@
       "state" : {
         "revision" : "eed7264ac5e4ec5dfa6165c6e5c5577364344fe4",
         "version" : "1.2.0"
-      }
-    },
-    {
-      "identity" : "swift-xet",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/mattt/swift-xet.git",
-      "state" : {
-        "revision" : "341bfd4172f6a57119bfd49bafa11cf5d21fab75",
-        "version" : "0.2.3"
       }
     },
     {

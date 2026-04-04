@@ -15,6 +15,9 @@ permissions:
 jobs:
   test-core:
     runs-on: macos-latest
+    env:
+      WORKSPACE: osaurus.xcworkspace
+      SPM_CACHE: .spm-cache
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -30,18 +33,31 @@ jobs:
       - name: Cache SPM packages
         uses: actions/cache@v4
         with:
-          path: Packages/OsaurusCore/.build
-          key: spm-core-${{ runner.os }}-${{ hashFiles('Packages/OsaurusCore/Package.swift') }}
-          restore-keys: spm-core-${{ runner.os }}-
+          path: .spm-cache
+          key: spm-${{ runner.os }}-${{ hashFiles('osaurus.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+          restore-keys: spm-${{ runner.os }}-
+
+      - name: Resolve dependencies
+        run: >-
+          xcodebuild -resolvePackageDependencies
+          -workspace $WORKSPACE
+          -clonedSourcePackagesDirPath $SPM_CACHE
 
       - name: Test OsaurusCore
         run: >-
-          swift test --package-path Packages/OsaurusCore
-          --skip KVCacheStoreTests
-          --skip MLXGenerationEngineTests
+          xcodebuild test
+          -workspace $WORKSPACE
+          -scheme OsaurusCore
+          -disableAutomaticPackageResolution
+          -clonedSourcePackagesDirPath $SPM_CACHE
+          -skip-testing OsaurusCoreTests/KVCacheStoreTests
+          -skip-testing OsaurusCoreTests/MLXGenerationEngineTests
 
   test-cli:
     runs-on: macos-latest
+    env:
+      WORKSPACE: osaurus.xcworkspace
+      SPM_CACHE: .spm-cache
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -54,12 +70,23 @@ jobs:
       - name: Cache SPM packages
         uses: actions/cache@v4
         with:
-          path: Packages/OsaurusCLI/.build
-          key: spm-cli-${{ runner.os }}-${{ hashFiles('Packages/OsaurusCLI/Package.swift') }}
-          restore-keys: spm-cli-${{ runner.os }}-
+          path: .spm-cache
+          key: spm-${{ runner.os }}-${{ hashFiles('osaurus.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+          restore-keys: spm-${{ runner.os }}-
+
+      - name: Resolve dependencies
+        run: >-
+          xcodebuild -resolvePackageDependencies
+          -workspace $WORKSPACE
+          -clonedSourcePackagesDirPath $SPM_CACHE
 
       - name: Test OsaurusCLI
-        run: swift test --package-path Packages/OsaurusCLI
+        run: >-
+          xcodebuild test
+          -workspace $WORKSPACE
+          -scheme OsaurusCLITests
+          -disableAutomaticPackageResolution
+          -clonedSourcePackagesDirPath $SPM_CACHE
 
   swiftlint:
     runs-on: macos-latest

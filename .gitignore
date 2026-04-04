@@ -123,7 +123,6 @@ ggml-*.metal
 
 .env
 Packages/**/Package.resolved
-!Packages/OsaurusCore/Package.resolved
 App/osaurus.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
 
 # Private keys and certificates

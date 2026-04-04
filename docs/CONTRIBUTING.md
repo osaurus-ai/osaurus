@@ -120,6 +120,22 @@ The core library (`Packages/OsaurusCore/`) follows a layered architecture. Each 
 - Add doc comments for non-obvious logic; avoid redundant comments
 - Handle errors explicitly and avoid swallowing exceptions
 
+### Dependencies
+
+The workspace lockfile at `osaurus.xcworkspace/xcshareddata/swiftpm/Package.resolved`
+is the single source of truth for pinned dependency versions. Xcode updates
+this file automatically when you add, remove, or update a package. Commit
+the changed `Package.resolved` alongside your other changes.
+
+CI resolves dependencies from this committed lockfile and builds with
+`-disableAutomaticPackageResolution`, so it uses the exact same versions
+you tested locally. If the resolved file is stale relative to
+`Package.swift`, CI will fail rather than silently pulling different
+versions.
+
+Package-level resolved files (e.g. `Packages/*/Package.resolved`) are
+gitignored and not used by CI.
+
 ### Testing
 
 - Add or update tests in `Packages/OsaurusCore/Tests/` where reasonable
