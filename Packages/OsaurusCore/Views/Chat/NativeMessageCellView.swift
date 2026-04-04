@@ -33,7 +33,7 @@ struct CellRenderingContext {
     var onRegenerate: ((UUID) -> Void)? = nil
     var onEdit: ((UUID) -> Void)? = nil
     var onDelete: ((UUID) -> Void)? = nil
-    /// attachment id string:  opens full screen preview from ChatView
+    /// attachment or shared-artifact id string → full screen preview from ChatView
     var onUserImagePreview: ((String) -> Void)? = nil
 }
 
@@ -1299,7 +1299,7 @@ final class NativeMessageCellView: NSTableCellView {
             av.translatesAutoresizingMaskIntoConstraints = false
             addSubview(av)
             let bottomToCell = av.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6)
-            // row height is often 44 until `heightOfRow` + cache apply; don't fight intrinsic card height
+            // low priority: intrinsic card height should drive row via onHeightMeasured; if row is still too short, footer clips (mitigated by generous NativeCellHeightEstimator slack)
             bottomToCell.priority = NSLayoutConstraint.Priority(250)
             NSLayoutConstraint.activate([
                 av.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
@@ -1313,12 +1313,17 @@ final class NativeMessageCellView: NSTableCellView {
         let blockId = block.id
         nativeArtifactView?.onHeightChanged = { [weak self] in
             guard let self, let av = self.nativeArtifactView else { return }
+            guard self.currentBlockId == blockId else { return }
             context.onHeightMeasured?(av.measuredCardHeight() + 12, blockId)
         }
+        nativeArtifactView?.onImagePreviewTap = { id in context.onUserImagePreview?(id) }
         nativeArtifactView?.configure(artifact: artifact, theme: context.theme)
-        if let av = nativeArtifactView {
-            let h = av.measuredCardHeight() + 12
-            context.onHeightMeasured?(h, block.id)
+        // fittingSize before layout often omits footerStack height — row cache would clip Open in Finder.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let av = self.nativeArtifactView else { return }
+            guard self.currentBlockId == blockId else { return }
+            av.layoutSubtreeIfNeeded()
+            context.onHeightMeasured?(av.measuredCardHeight() + 12, blockId)
         }
     }
 
@@ -1592,14 +1597,14 @@ enum NativeCellHeightEstimator {
             return 8 + PreflightCapabilitiesRowHeight.estimated(items: items, tableWidth: width)
 
         case let .sharedArtifact(artifact):
-            // matches NativeArtifactCardView: inner padding + title row + gaps + footer + cell margins
-            var h: CGFloat = 12 + 24 + 8 + 8 + 26 + 12 + 12
+            // matches NativeArtifactCardView: inner top 12 + bottom 8 (footerVerticalGap), symmetric gap above/below footer row
+            var h: CGFloat = 12 + 24 + 8 + 8 + 40 + 4 + 4
             if let d = artifact.description, !d.isEmpty { h += 20 }
             let pathEmpty = artifact.hostPath.isEmpty
             if pathEmpty {
                 if artifact.isText, let c = artifact.content, !c.isEmpty {
                     let lines = min(6, max(1, c.components(separatedBy: "\n").count))
-                    h += CGFloat(lines) * 14 + 12
+                    h += CGFloat(lines) * 14 + 8
                 }
             } else if artifact.isImage || artifact.isPDF || artifact.isVideo {
                 h += 160 + 8
@@ -1609,9 +1614,11 @@ enum NativeCellHeightEstimator {
                 h += 44 + 8
             } else if artifact.isText, let c = artifact.content, !c.isEmpty {
                 let lines = min(6, max(1, c.components(separatedBy: "\n").count))
-                h += CGFloat(lines) * 14 + 12
+                h += CGFloat(lines) * 14 + 8
             }
-            return h
+            // configureAsArtifact reports measuredCardHeight() + 12 for cell top/bottom inset — match that here
+            // extra slack: intrinsic footer + deferred layout can exceed this; too-small row clips Open in Finder
+            return h + 12 + 24
         }
     }
 }
