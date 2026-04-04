@@ -91,6 +91,8 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
     public var toolSelectionMode: ToolSelectionMode?
     /// Tool names explicitly selected by the user when toolSelectionMode is .manual
     public var manualToolNames: [String]?
+    /// Skill names explicitly selected by the user when toolSelectionMode is .manual
+    public var manualSkillNames: [String]?
 
     public init(
         id: UUID = UUID(),
@@ -113,7 +115,8 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         pluginInstructions: [String: String]? = nil,
         bonjourEnabled: Bool = false,
         toolSelectionMode: ToolSelectionMode? = nil,
-        manualToolNames: [String]? = nil
+        manualToolNames: [String]? = nil,
+        manualSkillNames: [String]? = nil
     ) {
         self.id = id
         self.name = name
@@ -136,6 +139,7 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         self.bonjourEnabled = bonjourEnabled
         self.toolSelectionMode = toolSelectionMode
         self.manualToolNames = manualToolNames
+        self.manualSkillNames = manualSkillNames
     }
 
     // MARK: - Built-in Agents
@@ -200,6 +204,7 @@ extension Agent {
         bonjourEnabled = try c.decodeIfPresent(Bool.self, forKey: .bonjourEnabled) ?? false
         toolSelectionMode = try c.decodeIfPresent(ToolSelectionMode.self, forKey: .toolSelectionMode)
         manualToolNames = try c.decodeIfPresent([String].self, forKey: .manualToolNames)
+        manualSkillNames = try c.decodeIfPresent([String].self, forKey: .manualSkillNames)
     }
 }
 
@@ -266,7 +271,8 @@ extension Agent {
                 sandboxPlugins: exportedAgent.sandboxPlugins,
                 autonomousExec: exportedAgent.autonomousExec,
                 toolSelectionMode: exportedAgent.toolSelectionMode,
-                manualToolNames: exportedAgent.manualToolNames
+                manualToolNames: exportedAgent.manualToolNames,
+                manualSkillNames: exportedAgent.manualSkillNames
             )
         }
     }

@@ -807,6 +807,12 @@ public final class WorkSession: ObservableObject {
             systemPrompt += "\n\n" + preflightSnippet
         }
 
+        if isManualTools,
+            let section = await SkillManager.shared.manualSkillPromptSection(for: agentId)
+        {
+            systemPrompt += "\n\n" + section
+        }
+
         budgetTracker.snapshot(
             systemPromptChars: systemPrompt.count,
             memoryTokens: windowState?.session.estimatedContextBreakdown.memory ?? 0,
@@ -1363,6 +1369,12 @@ public final class WorkSession: ObservableObject {
         var systemPrompt = config.systemPrompt
         if !resumePreflightSnippet.isEmpty {
             systemPrompt += "\n\n" + resumePreflightSnippet
+        }
+
+        if resumeIsManual,
+            let section = await SkillManager.shared.manualSkillPromptSection(for: agentId)
+        {
+            systemPrompt += "\n\n" + section
         }
 
         budgetTracker.snapshot(

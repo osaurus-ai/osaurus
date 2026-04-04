@@ -358,6 +358,14 @@ extension AgentManager {
         return agent.manualToolNames
     }
 
+    /// Get the manually selected skill names for an agent, or nil when not in manual mode.
+    public func effectiveManualSkillNames(for agentId: UUID) -> [String]? {
+        guard let agent = agent(for: agentId) else { return nil }
+        if agent.id == Agent.defaultId { return nil }
+        guard agent.toolSelectionMode == .manual else { return nil }
+        return agent.manualSkillNames
+    }
+
     /// Get the theme ID for an agent (nil if agent uses global theme)
     public func themeId(for agentId: UUID) -> UUID? {
         guard let agent = agent(for: agentId) else {

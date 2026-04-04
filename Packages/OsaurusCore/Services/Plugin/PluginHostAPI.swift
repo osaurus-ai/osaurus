@@ -456,7 +456,19 @@ final class PluginHostContext: @unchecked Sendable {
         var ctx: AgentContext = await MainActor.run {
             let mgr = AgentManager.shared
             let execMode = ToolRegistry.shared.resolveWorkExecutionMode(folderContext: nil)
-            let tools = ToolRegistry.shared.alwaysLoadedSpecs(mode: execMode)
+            let isManual = mgr.effectiveToolSelectionMode(for: agentId) == .manual
+            var tools = ToolRegistry.shared.alwaysLoadedSpecs(
+                mode: execMode,
+                excludeCapabilityTools: isManual
+            )
+
+            if isManual, let manualNames = mgr.effectiveManualToolNames(for: agentId) {
+                let manualSpecs = ToolRegistry.shared.specs(forTools: manualNames)
+                for spec in manualSpecs
+                where !tools.contains(where: { $0.function.name == spec.function.name }) {
+                    tools.append(spec)
+                }
+            }
 
             var systemPrompt = mgr.effectiveSystemPrompt(for: agentId)
             if execMode.usesSandboxTools {
@@ -603,8 +615,12 @@ final class PluginHostContext: @unchecked Sendable {
                 return (base, manual, ToolRegistry.capabilityToolNames)
             }
             let filteredExisting = (inference.tools ?? []).filter { !capNames.contains($0.function.name) }
+            var request = inference.request
+            if let section = await SkillManager.shared.manualSkillPromptSection(for: agentId) {
+                SystemPromptBuilder.appendSystemContent(section, into: &request.messages)
+            }
             let cleanInference = EnrichedInference(
-                request: inference.request,
+                request: request,
                 tools: filteredExisting.isEmpty ? nil : filteredExisting
             )
             let empty = PreflightResult(toolSpecs: manualSpecs, contextSnippet: "", items: [])

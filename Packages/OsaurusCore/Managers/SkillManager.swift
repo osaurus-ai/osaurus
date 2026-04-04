@@ -387,6 +387,19 @@ public final class SkillManager {
 
     // MARK: - Catalog & Instructions
 
+    /// Builds the combined skill instructions section for an agent in manual mode,
+    /// or returns nil if the agent has no selected skills or is not in manual mode.
+    public func manualSkillPromptSection(for agentId: UUID) async -> String? {
+        guard let skillNames = AgentManager.shared.effectiveManualSkillNames(for: agentId),
+            !skillNames.isEmpty
+        else { return nil }
+        let instructions = await loadInstructions(for: skillNames)
+        guard !instructions.isEmpty else { return nil }
+        return instructions.values
+            .map { "## Skill Instructions\n\n\($0)" }
+            .joined(separator: "\n\n")
+    }
+
     public func loadInstructions(for skillNames: [String]) async -> [String: String] {
         var result: [String: String] = [:]
         for name in skillNames {

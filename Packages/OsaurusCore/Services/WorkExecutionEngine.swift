@@ -853,9 +853,15 @@ public actor WorkExecutionEngine {
             // Execute the tool
             let result = try await executeToolCall(invocation, issueId: issue.id, agentId: agentId)
 
-            // Hot-load tools injected by capabilities_load or sandbox_plugin_register
-            if invocation.toolName == "capabilities_load"
-                || invocation.toolName == "sandbox_plugin_register"
+            // Hot-load tools injected by capabilities_load or sandbox_plugin_register.
+            // Skipped in manual mode — the user's explicit tool set is fixed.
+            let isManualMode: Bool = await {
+                guard let id = agentId else { return false }
+                return await MainActor.run { AgentManager.shared.effectiveToolSelectionMode(for: id) == .manual }
+            }()
+            if !isManualMode,
+                invocation.toolName == "capabilities_load"
+                    || invocation.toolName == "sandbox_plugin_register"
             {
                 let newTools = await CapabilityLoadBuffer.shared.drain()
                 for tool in newTools where !activeTools.contains(where: { $0.function.name == tool.function.name }) {

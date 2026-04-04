@@ -879,7 +879,8 @@ final class ChatSession: ObservableObject {
 
                 sys = SystemPromptBuilder.prependMemoryContext(memoryContext, to: sys)
                 let isManualTools = toolMode == .manual
-                var toolSpecs = toolsDisabled
+                var toolSpecs =
+                    toolsDisabled
                     ? []
                     : buildToolSpecs(executionMode: executionMode, excludeCapabilityTools: isManualTools)
 
@@ -898,6 +899,12 @@ final class ChatSession: ObservableObject {
                             toolSpecs.append(spec)
                         }
                     }
+                }
+
+                if isManualTools,
+                    let section = await SkillManager.shared.manualSkillPromptSection(for: effectiveAgentId)
+                {
+                    sys += "\n\n" + section
                 }
 
                 budgetTracker.snapshot(
@@ -1096,9 +1103,11 @@ final class ChatSession: ObservableObject {
                             }
                             if !isRunActive(runId) { break outer }
 
-                            // Hot-load tools injected by capabilities_load or sandbox_plugin_register
-                            if inv.toolName == "capabilities_load"
-                                || inv.toolName == "sandbox_plugin_register"
+                            // Hot-load tools injected by capabilities_load or sandbox_plugin_register.
+                            // Skipped in manual mode — the user's explicit tool set is fixed.
+                            if !isManualTools,
+                                inv.toolName == "capabilities_load"
+                                    || inv.toolName == "sandbox_plugin_register"
                             {
                                 let newTools = await CapabilityLoadBuffer.shared.drain()
                                 for tool in newTools
