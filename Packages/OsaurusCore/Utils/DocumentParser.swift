@@ -34,16 +34,29 @@ enum DocumentParser {
     // MARK: - Public API
 
     static func parse(url: URL) throws -> Attachment {
+        let results = try parseAll(url: url)
+        guard let first = results.first else {
+            throw ParseError.emptyContent
+        }
+        return first
+    }
+
+    /// Parse a file into one or more attachments.
+    /// PDFs with no extractable text are rendered as page images (one per page).
+    static func parseAll(url: URL) throws -> [Attachment] {
         let fileSize = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
         let ext = url.pathExtension.lowercased()
         let filename = url.lastPathComponent
+
+        // PDF may fall back to image rendering if text extraction yields nothing
+        if ext == "pdf" {
+            return try parsePDFWithFallback(url: url, filename: filename, fileSize: fileSize)
+        }
 
         let content: String
         switch ext {
         case _ where isPlainText(ext: ext):
             content = try parsePlainText(url: url)
-        case "pdf":
-            content = try parsePDF(url: url)
         case "docx":
             content = try parseRichDocument(url: url)
         case "doc":
@@ -66,7 +79,7 @@ enum DocumentParser {
                 + "\n\n[Document truncated — exceeded \(maxParsedTextLength) character limit]"
             : content
 
-        return .document(filename: filename, content: trimmed, fileSize: fileSize)
+        return [.document(filename: filename, content: trimmed, fileSize: fileSize)]
     }
 
     static func canParse(url: URL) -> Bool {
@@ -136,19 +149,87 @@ enum DocumentParser {
 
     // MARK: - PDF
 
-    private static func parsePDF(url: URL) throws -> String {
+    /// Maximum number of PDF pages to render as images when text extraction fails
+    private static let maxPDFImagePages = 20
+
+    private static func parsePDFWithFallback(url: URL, filename: String, fileSize: Int) throws -> [Attachment] {
         guard let document = PDFDocument(url: url) else {
             throw ParseError.readFailed("Could not open PDF")
         }
 
+        // Try text extraction first
+        let text = extractPDFText(from: document)
+        if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let trimmed =
+                text.count > maxParsedTextLength
+                ? String(text.prefix(maxParsedTextLength))
+                    + "\n\n[Document truncated — exceeded \(maxParsedTextLength) character limit]"
+                : text
+            return [.document(filename: filename, content: trimmed, fileSize: fileSize)]
+        }
+
+        // Text extraction yielded nothing — render pages as images
+        let images = renderPDFPagesAsImages(document: document, maxPages: maxPDFImagePages)
+        guard !images.isEmpty else {
+            throw ParseError.emptyContent
+        }
+
+        return images.map { .image($0) }
+    }
+
+    private static func extractPDFText(from document: PDFDocument) -> String {
         var pages: [String] = []
         for i in 0 ..< document.pageCount {
-            if let page = document.page(at: i), let text = page.string {
+            if let page = document.page(at: i), let text = page.string,
+                !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            {
                 pages.append(text)
             }
         }
-
         return pages.joined(separator: "\n\n")
+    }
+
+    private static let maxPixelsPerPage = 4000 * 4000  // ~64MP cap per page
+
+    private static func renderPDFPagesAsImages(document: PDFDocument, maxPages: Int) -> [Data] {
+        let pageCount = min(document.pageCount, maxPages)
+        var images: [Data] = []
+        let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
+
+        for i in 0 ..< pageCount {
+            guard let page = document.page(at: i) else { continue }
+            let bounds = page.bounds(for: .mediaBox)
+            // Render at 2x for readability
+            let scale: CGFloat = 2.0
+            let intWidth = Int(bounds.width * scale)
+            let intHeight = Int(bounds.height * scale)
+
+            guard intWidth > 0, intHeight > 0, intWidth * intHeight <= maxPixelsPerPage else { continue }
+
+            guard let context = CGContext(
+                data: nil,
+                width: intWidth,
+                height: intHeight,
+                bitsPerComponent: 8,
+                bytesPerRow: 0,
+                space: colorSpace,
+                bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue
+            ) else { continue }
+
+            // White background
+            context.setFillColor(CGColor.white)
+            context.fill(CGRect(x: 0, y: 0, width: intWidth, height: intHeight))
+
+            context.scaleBy(x: scale, y: scale)
+            page.draw(with: .mediaBox, to: context)
+
+            guard let cgImage = context.makeImage() else { continue }
+            let nsImage = NSImage(cgImage: cgImage, size: NSSize(width: bounds.width, height: bounds.height))
+            if let pngData = nsImage.pngData() {
+                images.append(pngData)
+            }
+        }
+        return images
     }
 
     // MARK: - Rich Documents (DOCX, RTF, HTML)

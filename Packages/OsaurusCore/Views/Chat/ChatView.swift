@@ -33,6 +33,8 @@ final class ChatSession: ObservableObject {
     @Published var showVoiceOverlay: Bool = false
     /// The agent this session belongs to
     @Published var agentId: UUID?
+    /// Per-session tool overrides. nil = auto (RAG preflight), non-nil = use these tools explicitly.
+    @Published var sessionToolNames: Set<String>? = nil
 
     // MARK: - Persistence Properties
     @Published var sessionId: UUID?
@@ -849,11 +851,13 @@ final class ChatSession: ObservableObject {
                 updateMemoryTokens(fromContext: memoryContext)
 
                 // Pre-flight RAG: search capabilities based on user's message.
-                // Skipped when disableTools is set or when the agent uses manual tool selection.
+                // Skipped when disableTools is set, when the agent uses manual tool selection,
+                // or when the session has explicit tool overrides.
                 let toolsDisabled = chatCfg.disableTools
                 let toolMode = AgentManager.shared.effectiveToolSelectionMode(for: effectiveAgentId)
+                let hasSessionToolOverrides = sessionToolNames != nil
                 let preflight: PreflightResult
-                if !toolsDisabled && toolMode == .auto {
+                if !toolsDisabled && toolMode == .auto && !hasSessionToolOverrides {
                     let preflightMode = chatCfg.preflightSearchMode ?? .balanced
                     preflight = await PreflightCapabilitySearch.search(query: trimmed, mode: preflightMode)
                 } else {
@@ -878,14 +882,21 @@ final class ChatSession: ObservableObject {
                 }
 
                 sys = SystemPromptBuilder.prependMemoryContext(memoryContext, to: sys)
-                let isManualTools = toolMode == .manual
+                let isManualTools = toolMode == .manual || hasSessionToolOverrides
                 var toolSpecs =
                     toolsDisabled
                     ? []
                     : buildToolSpecs(executionMode: executionMode, excludeCapabilityTools: isManualTools)
 
                 if !toolsDisabled {
-                    if isManualTools {
+                    if let sessionNames = sessionToolNames {
+                        // Per-session tool overrides take precedence
+                        let sessionSpecs = ToolRegistry.shared.specs(forTools: Array(sessionNames))
+                        for spec in sessionSpecs
+                        where !toolSpecs.contains(where: { $0.function.name == spec.function.name }) {
+                            toolSpecs.append(spec)
+                        }
+                    } else if isManualTools {
                         if let manualNames = AgentManager.shared.effectiveManualToolNames(for: effectiveAgentId) {
                             let manualSpecs = ToolRegistry.shared.specs(forTools: manualNames)
                             for spec in manualSpecs
@@ -901,7 +912,7 @@ final class ChatSession: ObservableObject {
                     }
                 }
 
-                if isManualTools,
+                if toolMode == .manual,
                     let section = await SkillManager.shared.manualSkillPromptSection(for: effectiveAgentId)
                 {
                     sys += "\n\n" + section
@@ -1476,7 +1487,8 @@ struct ChatView: View {
                                 focusTrigger: focusTrigger,
                                 agentId: windowState.agentId,
                                 windowId: windowState.windowId,
-                                isCompact: windowState.showSidebar
+                                isCompact: windowState.showSidebar,
+                                sessionToolNames: $observedSession.sessionToolNames
                             )
                         } else {
                             // No models empty state
