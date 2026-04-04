@@ -41,14 +41,14 @@ jobs:
         run: >-
           xcodebuild -resolvePackageDependencies
           -workspace $WORKSPACE
-          -scheme OsaurusCore
+          -scheme OsaurusCoreTests
           -clonedSourcePackagesDirPath $SPM_CACHE
 
       - name: Test OsaurusCore
         run: >-
           xcodebuild test
           -workspace $WORKSPACE
-          -scheme OsaurusCore
+          -scheme OsaurusCoreTests
           -disableAutomaticPackageResolution
           -clonedSourcePackagesDirPath $SPM_CACHE
           -skip-testing OsaurusCoreTests/KVCacheStoreTests
