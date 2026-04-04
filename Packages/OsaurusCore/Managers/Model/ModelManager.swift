@@ -7,7 +7,6 @@
 
 import Combine
 import Foundation
-import HuggingFace
 import MLXLLM
 import MLXVLM
 import SwiftUI
@@ -104,8 +103,8 @@ final class ModelManager: NSObject, ObservableObject {
     @Published var downloadMetrics: [String: DownloadMetrics] = [:]
 
     // MARK: - Properties
-    /// Globs for files to download from Hugging Face snapshots
-    static let snapshotDownloadPatterns: [String] = [
+    /// Glob patterns for files to download from a Hugging Face model repo
+    static let downloadFilePatterns: [String] = [
         "config.json",
         "tokenizer.json",
         "tokenizer_config.json",
@@ -127,6 +126,8 @@ final class ModelManager: NSObject, ObservableObject {
     private var progressSamples: [String: [(timestamp: TimeInterval, completed: Int64)]] = [:]
     /// Cached estimated total bytes for active downloads
     private var downloadSizeEstimates: [String: Int64] = [:]
+    /// Last non-zero speed per download, used as fallback during upstream stalls
+    private var lastKnownSpeed: [String: Double] = [:]
     private var remoteSearchTask: Task<Void, Never>? = nil
 
     // MARK: - Initialization
@@ -393,19 +394,18 @@ final class ModelManager: NSObject, ObservableObject {
         downloadModel(model)
     }
 
-    /// Estimate total download size for a model using the Hugging Face API.
-    /// This is only called from the detail view to avoid spamming the API from the list.
+    /// Estimate total download size for a model.
+    /// Only called from the detail view to avoid excessive API requests.
     func estimateDownloadSize(for model: MLXModel) async -> Int64? {
         return await HuggingFaceService.shared.estimateTotalSize(
             repoId: model.id,
-            patterns: Self.snapshotDownloadPatterns
+            patterns: Self.downloadFilePatterns
         )
     }
 
-    /// Download a model using Hugging Face Hub snapshot API
+    /// Download a model's files from Hugging Face
     func downloadModel(_ model: MLXModel) {
-        // Patterns for files to download (shared with estimator)
-        let patterns = Self.snapshotDownloadPatterns
+        let patterns = Self.downloadFilePatterns
 
         // If core assets are present but optional files from patterns are missing, we'll top-up.
         let needsTopUp = Self.isMissingExactPatternFiles(at: model.localDirectory, patterns: patterns)
@@ -436,31 +436,6 @@ final class ModelManager: NSObject, ObservableObject {
         )
         progressSamples[model.id] = []
 
-        // Kick off an asynchronous size estimate (used to compute byte progress & speed)
-        Task { [weak self] in
-            guard let self = self else { return }
-            let est = await self.estimateDownloadSize(for: model)
-            await MainActor.run {
-                if let est {
-                    self.downloadSizeEstimates[model.id] = est
-                    // Seed metrics immediately using current UI fraction so bytes show up ASAP
-                    let currentFraction: Double = {
-                        if case .downloading(let p) = (self.downloadStates[model.id] ?? .notStarted) {
-                            return max(0.0, min(1.0, p))
-                        }
-                        return 0.0
-                    }()
-                    let received = Int64((Double(est) * currentFraction).rounded())
-                    self.downloadMetrics[model.id] = DownloadMetrics(
-                        bytesReceived: received > 0 ? received : nil,
-                        totalBytes: est,
-                        bytesPerSecond: self.downloadMetrics[model.id]?.bytesPerSecond,
-                        etaSeconds: self.downloadMetrics[model.id]?.etaSeconds
-                    )
-                }
-            }
-        }
-
         // Ensure local directory exists
         do {
             try FileManager.default.createDirectory(
@@ -471,94 +446,101 @@ final class ModelManager: NSObject, ObservableObject {
             downloadStates[model.id] = .failed(
                 error: "Failed to create directory: \(error.localizedDescription)"
             )
+            clearDownloadTracking(for: model.id)
             return
         }
 
-        // Start snapshot download task
         let task = Task { [weak self] in
             guard let self = self else { return }
-            let client = HubClient.default
-            guard let repoID = Repo.ID(rawValue: model.id) else {
-                await MainActor.run {
-                    self.downloadStates[model.id] = .failed(error: "Invalid repository ID: \(model.id)")
-                }
-                return
-            }
 
             do {
-                let progressHandler: @MainActor @Sendable (Progress) -> Void = {
-                    [weak self] (progress: Progress) in
-                    guard let self = self else { return }
+                // Fetch file manifest from HF tree API
+                guard let files = await HuggingFaceService.shared.fetchMatchingFiles(
+                    repoId: model.id, patterns: patterns
+                ), !files.isEmpty else {
+                    await MainActor.run {
+                        if self.downloadTokens[model.id] == token {
+                            self.downloadStates[model.id] = .failed(
+                                error: "Could not retrieve file list from Hugging Face"
+                            )
+                        }
+                    }
+                    return
+                }
+
+                let totalBytes = files.reduce(Int64(0)) { $0 + $1.size }
+                var completedFileBytes: Int64 = 0
+
+                // Skip files already present with matching size (resume support)
+                var filesToDownload: [HuggingFaceService.MatchedFile] = []
+                for file in files {
+                    let dest = model.localDirectory.appendingPathComponent(file.path)
+                    let attrs = try? FileManager.default.attributesOfItem(atPath: dest.path)
+                    let existingSize = (attrs?[.size] as? NSNumber)?.int64Value ?? 0
+                    if existingSize == file.size {
+                        completedFileBytes += file.size
+                    } else {
+                        filesToDownload.append(file)
+                    }
+                }
+
+                await MainActor.run {
                     guard self.downloadTokens[model.id] == token else { return }
-                    let fraction = max(0.0, min(1.0, progress.fractionCompleted))
+                    self.downloadSizeEstimates[model.id] = totalBytes
+                    let fraction = totalBytes > 0 ? Double(completedFileBytes) / Double(totalBytes) : 0
                     self.downloadStates[model.id] = .downloading(progress: fraction)
-                    let estTotalBytes = self.downloadSizeEstimates[model.id]
-                    let completedUnits = progress.completedUnitCount
-                    let totalUnits = progress.totalUnitCount
-                    let bytesCompleted: Int64? = {
-                        if let est = estTotalBytes, est > 0 {
-                            return Int64((Double(est) * fraction).rounded())
-                        } else {
-                            return completedUnits > 0 ? completedUnits : nil
-                        }
-                    }()
-                    let totalBytesForDisplay: Int64? = {
-                        if let est = estTotalBytes, est > 0 {
-                            return est
-                        } else {
-                            return totalUnits > 0 ? totalUnits : nil
-                        }
-                    }()
-                    let now = Date().timeIntervalSince1970
-                    var samples = self.progressSamples[model.id] ?? []
-                    samples.append((timestamp: now, completed: bytesCompleted ?? completedUnits))
-                    let window: TimeInterval = 5.0
-                    samples = samples.filter { now - $0.timestamp <= window }
-                    self.progressSamples[model.id] = samples
-                    var speed: Double? = nil
-                    if let first = samples.first, let last = samples.last,
-                        last.timestamp > first.timestamp
-                    {
-                        let bytesDelta = Double(last.completed - first.completed)
-                        let timeDelta = last.timestamp - first.timestamp
-                        if timeDelta > 0 { speed = max(0, bytesDelta / timeDelta) }
-                    }
-                    var eta: Double? = nil
-                    if let speed, speed > 0, let totalBytesForDisplay,
-                        let bytesCompleted = bytesCompleted,
-                        totalBytesForDisplay > 0
-                    {
-                        let remaining = Double(totalBytesForDisplay - bytesCompleted)
-                        if remaining > 0 { eta = remaining / speed }
-                    }
                     self.downloadMetrics[model.id] = DownloadMetrics(
-                        bytesReceived: bytesCompleted,
-                        totalBytes: totalBytesForDisplay,
-                        bytesPerSecond: speed,
-                        etaSeconds: eta
+                        bytesReceived: completedFileBytes > 0 ? completedFileBytes : 0,
+                        totalBytes: totalBytes,
+                        bytesPerSecond: nil,
+                        etaSeconds: nil
                     )
                 }
 
-                try await client.downloadSnapshot(
-                    of: repoID,
-                    to: model.localDirectory,
-                    matching: patterns,
-                    progressHandler: progressHandler
-                )
+                let downloader = DirectDownloader()
+                defer { downloader.invalidate() }
 
-                // Verify
+                for file in filesToDownload {
+                    try Task.checkCancellation()
+
+                    let encodedPath = file.path.addingPercentEncoding(
+                        withAllowedCharacters: .urlPathAllowed
+                    ) ?? file.path
+                    guard let downloadURL = URL(
+                        string: "https://huggingface.co/\(model.id)/resolve/main/\(encodedPath)"
+                    ) else { continue }
+                    let destination = model.localDirectory.appendingPathComponent(file.path)
+
+                    let baseCompleted = completedFileBytes
+                    let onProgress: @Sendable (Int64, Int64) -> Void = {
+                        [weak self] bytesWritten, _ in
+                        Task { @MainActor [weak self] in
+                            guard let self else { return }
+                            self.updateDownloadProgress(
+                                modelId: model.id,
+                                token: token,
+                                completedBytes: baseCompleted + bytesWritten,
+                                totalBytes: totalBytes
+                            )
+                        }
+                    }
+
+                    try await downloader.download(
+                        from: downloadURL, to: destination, onProgress: onProgress
+                    )
+                    completedFileBytes += file.size
+                }
+
                 let completed = model.isDownloaded
                 await MainActor.run {
-                    // Only update state if this session is still current
                     if self.downloadTokens[model.id] == token {
                         self.downloadStates[model.id] =
-                            completed ? .completed : .failed(error: "Downloaded snapshot incomplete")
-                        self.downloadTokens[model.id] = nil
-                        self.downloadMetrics[model.id] = nil
-                        self.progressSamples[model.id] = nil
-                        self.downloadSizeEstimates[model.id] = nil
+                            completed ? .completed : .failed(error: "Download incomplete")
+                        self.clearDownloadTracking(for: model.id)
                         if completed {
-                            NotificationService.shared.postModelReady(modelId: model.id, modelName: model.name)
+                            NotificationService.shared.postModelReady(
+                                modelId: model.id, modelName: model.name
+                            )
                             Self.invalidateLocalModelsCache()
                             NotificationCenter.default.post(name: .localModelsChanged, object: nil)
                         }
@@ -568,20 +550,14 @@ final class ModelManager: NSObject, ObservableObject {
                 await MainActor.run {
                     if self.downloadTokens[model.id] == token {
                         self.downloadStates[model.id] = .notStarted
-                        self.downloadTokens[model.id] = nil
-                        self.downloadMetrics[model.id] = nil
-                        self.progressSamples[model.id] = nil
-                        self.downloadSizeEstimates[model.id] = nil
+                        self.clearDownloadTracking(for: model.id)
                     }
                 }
             } catch {
                 await MainActor.run {
                     if self.downloadTokens[model.id] == token {
                         self.downloadStates[model.id] = .failed(error: error.localizedDescription)
-                        self.downloadTokens[model.id] = nil
-                        self.downloadMetrics[model.id] = nil
-                        self.progressSamples[model.id] = nil
-                        self.downloadSizeEstimates[model.id] = nil
+                        self.clearDownloadTracking(for: model.id)
                     }
                 }
             }
@@ -594,40 +570,119 @@ final class ModelManager: NSObject, ObservableObject {
         activeDownloadTasks[model.id] = task
     }
 
-    /// Cancel a download
-    func cancelDownload(_ modelId: String) {
-        // Cancel active snapshot task if any
-        activeDownloadTasks[modelId]?.cancel()
-        activeDownloadTasks[modelId] = nil
+    /// Clears all transient download tracking state for a model.
+    private func clearDownloadTracking(for modelId: String) {
         downloadTokens[modelId] = nil
-        downloadStates[modelId] = .notStarted
         downloadMetrics[modelId] = nil
         progressSamples[modelId] = nil
+        downloadSizeEstimates[modelId] = nil
+        lastKnownSpeed[modelId] = nil
+    }
+
+    /// Updates download progress, speed, and ETA for a single model.
+    private func updateDownloadProgress(
+        modelId: String, token: UUID, completedBytes: Int64, totalBytes: Int64
+    ) {
+        guard downloadTokens[modelId] == token else { return }
+
+        let fraction = totalBytes > 0
+            ? min(1.0, Double(completedBytes) / Double(totalBytes)) : 0
+        downloadStates[modelId] = .downloading(progress: fraction)
+
+        let now = Date().timeIntervalSince1970
+        var samples = progressSamples[modelId] ?? []
+        samples.append((timestamp: now, completed: completedBytes))
+        let window: TimeInterval = 5.0
+        samples = samples.filter { now - $0.timestamp <= window }
+        progressSamples[modelId] = samples
+
+        var speed: Double? = nil
+        if let first = samples.first, let last = samples.last,
+            last.timestamp > first.timestamp
+        {
+            let bytesDelta = Double(last.completed - first.completed)
+            let timeDelta = last.timestamp - first.timestamp
+            if timeDelta > 0 { speed = max(0, bytesDelta / timeDelta) }
+        }
+        if let speed, speed > 0 {
+            lastKnownSpeed[modelId] = speed
+        } else {
+            speed = lastKnownSpeed[modelId]
+        }
+
+        var eta: Double? = nil
+        if let speed, speed > 0, totalBytes > 0 {
+            let remaining = Double(totalBytes - completedBytes)
+            if remaining > 0 { eta = remaining / speed }
+        }
+
+        downloadMetrics[modelId] = DownloadMetrics(
+            bytesReceived: completedBytes,
+            totalBytes: totalBytes,
+            bytesPerSecond: speed,
+            etaSeconds: eta
+        )
+    }
+
+    /// Cancel a download
+    func cancelDownload(_ modelId: String) {
+        activeDownloadTasks[modelId]?.cancel()
+        activeDownloadTasks[modelId] = nil
+        clearDownloadTracking(for: modelId)
+        downloadStates[modelId] = .notStarted
     }
 
     /// Delete a downloaded model
     func deleteModel(_ model: MLXModel) {
-        // Cancel any active download task and reset state first
         activeDownloadTasks[model.id]?.cancel()
         activeDownloadTasks[model.id] = nil
-        downloadTokens[model.id] = nil
-        downloadStates[model.id] = .notStarted
-        downloadMetrics[model.id] = nil
-        progressSamples[model.id] = nil
+        clearDownloadTracking(for: model.id)
 
-        // Remove local files if present
         let fm = FileManager.default
+
+        // Remove local model files
         let path = model.localDirectory.path
         if fm.fileExists(atPath: path) {
-            do {
-                try fm.removeItem(atPath: path)
-                Self.invalidateLocalModelsCache()
-                NotificationCenter.default.post(name: .localModelsChanged, object: nil)
-            } catch {
-                // Log but keep state reset
-                print("Failed to delete model: \(error)")
+            try? fm.removeItem(atPath: path)
+        }
+
+        // Remove any leftover HF cache entries from prior downloadSnapshot usage.
+        // The cache uses the convention: {cacheRoot}/models--{namespace}--{name}/
+        let cacheDirName = "models--\(model.id.replacingOccurrences(of: "/", with: "--"))"
+        for cacheRoot in Self.hfCacheRoots() {
+            let cacheModelDir = cacheRoot.appendingPathComponent(cacheDirName)
+            if fm.fileExists(atPath: cacheModelDir.path) {
+                try? fm.removeItem(at: cacheModelDir)
             }
         }
+
+        // Update state AFTER all files are removed so the re-render sees clean disk
+        downloadStates[model.id] = .notStarted
+        Self.invalidateLocalModelsCache()
+        NotificationCenter.default.post(name: .localModelsChanged, object: nil)
+    }
+
+    /// Possible root directories for the HF hub cache.
+    private static func hfCacheRoots() -> [URL] {
+        let fm = FileManager.default
+        var roots: [URL] = []
+
+        if let envCache = ProcessInfo.processInfo.environment["HF_HUB_CACHE"], !envCache.isEmpty {
+            roots.append(URL(fileURLWithPath: (envCache as NSString).expandingTildeInPath, isDirectory: true))
+        }
+        if let envHome = ProcessInfo.processInfo.environment["HF_HOME"], !envHome.isEmpty {
+            let expanded = (envHome as NSString).expandingTildeInPath
+            roots.append(URL(fileURLWithPath: expanded, isDirectory: true).appendingPathComponent("hub"))
+        }
+
+        let home = fm.homeDirectoryForCurrentUser
+        roots.append(home.appendingPathComponent(".cache/huggingface/hub"))
+
+        if let appCaches = fm.urls(for: .cachesDirectory, in: .userDomainMask).first {
+            roots.append(appCaches.appendingPathComponent("huggingface/hub"))
+        }
+
+        return roots
     }
 
     /// Get download progress for a model
@@ -1326,5 +1381,97 @@ extension ModelManager {
             return false
         }
         return isVisionModel(modelId: found.id)
+    }
+}
+
+// MARK: - Direct file downloader with session-level delegate
+
+/// Downloads files using a session-level URLSessionDownloadDelegate for reliable
+/// per-byte progress reporting. Works around an Apple platform issue where per-task
+/// delegates passed to URLSession.download(for:delegate:) may not fire didWriteData.
+private final class DirectDownloader: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
+    private let lock = NSLock()
+    private var currentContinuation: CheckedContinuation<Void, Error>?
+    private var currentDestination: URL?
+    private var onProgress: (@Sendable (Int64, Int64) -> Void)?
+
+    private lazy var session: URLSession = {
+        URLSession(configuration: .default, delegate: self, delegateQueue: nil)
+    }()
+
+    func download(
+        from url: URL,
+        to destination: URL,
+        onProgress: @escaping @Sendable (Int64, Int64) -> Void
+    ) async throws {
+        let fm = FileManager.default
+        try fm.createDirectory(
+            at: destination.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            lock.lock()
+            self.currentContinuation = continuation
+            self.currentDestination = destination
+            self.onProgress = onProgress
+            lock.unlock()
+            let task = session.downloadTask(with: url)
+            task.resume()
+        }
+    }
+
+    func invalidate() {
+        session.invalidateAndCancel()
+    }
+
+    func urlSession(
+        _: URLSession,
+        downloadTask _: URLSessionDownloadTask,
+        didWriteData _: Int64,
+        totalBytesWritten: Int64,
+        totalBytesExpectedToWrite: Int64
+    ) {
+        lock.lock()
+        let progress = onProgress
+        lock.unlock()
+        progress?(totalBytesWritten, totalBytesExpectedToWrite)
+    }
+
+    func urlSession(
+        _: URLSession,
+        downloadTask _: URLSessionDownloadTask,
+        didFinishDownloadingTo location: URL
+    ) {
+        lock.lock()
+        let continuation = currentContinuation
+        let destination = currentDestination
+        currentContinuation = nil
+        currentDestination = nil
+        onProgress = nil
+        lock.unlock()
+        guard let continuation, let destination else { return }
+        do {
+            let fm = FileManager.default
+            try? fm.removeItem(at: destination)
+            try fm.moveItem(at: location, to: destination)
+            continuation.resume()
+        } catch {
+            continuation.resume(throwing: error)
+        }
+    }
+
+    func urlSession(
+        _: URLSession,
+        task _: URLSessionTask,
+        didCompleteWithError error: Error?
+    ) {
+        guard let error else { return }
+        lock.lock()
+        let continuation = currentContinuation
+        currentContinuation = nil
+        currentDestination = nil
+        onProgress = nil
+        lock.unlock()
+        continuation?.resume(throwing: error)
     }
 }

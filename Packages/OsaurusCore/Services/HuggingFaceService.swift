@@ -61,12 +61,15 @@ actor HuggingFaceService {
         }
     }
 
+    struct MatchedFile {
+        let path: String
+        let size: Int64
+    }
+
     private init() {}
 
-    /// Estimate the total size for files matching provided patterns.
-    /// Uses Hugging Face REST API endpoints that return directory listings with sizes.
-    func estimateTotalSize(repoId: String, patterns: [String]) async -> Int64? {
-        // Use tree endpoint: /api/models/{repo}/tree/main?recursive=1
+    /// Fetch files from a Hugging Face repo that match the given glob patterns.
+    func fetchMatchingFiles(repoId: String, patterns: [String]) async -> [MatchedFile]? {
         var comps = URLComponents()
         comps.scheme = "https"
         comps.host = "huggingface.co"
@@ -92,19 +95,26 @@ actor HuggingFaceService {
             let nodes = try JSONDecoder().decode([TreeNode].self, from: data)
             if nodes.isEmpty { return nil }
             let matchers = patterns.compactMap { Glob($0) }
-            let total = nodes.reduce(Int64(0)) { acc, node in
-                // Only sum files, not directories
-                if node.type == "directory" { return acc }
+            let files = nodes.compactMap { node -> MatchedFile? in
+                if node.type == "directory" { return nil }
                 let filename = (node.path as NSString).lastPathComponent
                 let matched = matchers.contains { $0.matches(filename) }
-                guard matched else { return acc }
+                guard matched else { return nil }
                 let sz = node.size ?? node.lfs?.size ?? 0
-                return acc + sz
+                guard sz > 0 else { return nil }
+                return MatchedFile(path: node.path, size: sz)
             }
-            return total > 0 ? total : nil
+            return files.isEmpty ? nil : files
         } catch {
             return nil
         }
+    }
+
+    /// Estimate the total size for files matching provided patterns.
+    func estimateTotalSize(repoId: String, patterns: [String]) async -> Int64? {
+        guard let files = await fetchMatchingFiles(repoId: repoId, patterns: patterns) else { return nil }
+        let total = files.reduce(Int64(0)) { $0 + $1.size }
+        return total > 0 ? total : nil
     }
 
     /// Determine if a Hugging Face repo is MLX-compatible using repository metadata.

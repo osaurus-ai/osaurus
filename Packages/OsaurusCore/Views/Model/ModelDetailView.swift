@@ -856,7 +856,7 @@ private struct RequiredFilesSection: View {
 
             if isExpanded {
                 VStack(alignment: .leading, spacing: 3) {
-                    ForEach(ModelManager.snapshotDownloadPatterns, id: \.self) { pattern in
+                    ForEach(ModelManager.downloadFilePatterns, id: \.self) { pattern in
                         Text(pattern)
                             .font(.system(size: 11, design: .monospaced))
                             .foregroundColor(theme.tertiaryText)
