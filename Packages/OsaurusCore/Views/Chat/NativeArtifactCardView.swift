@@ -15,6 +15,9 @@ import QuartzCore
 
 final class NativeArtifactCardView: NSView {
 
+    /// match `NativeMessageCellView` / table rows — non-flipped + flipped parent breaks vertical constraints
+    override var isFlipped: Bool { true }
+
     var onHeightChanged: (() -> Void)?
     /// taps image thumbnail → full-screen preview (wired from `CellRenderingContext.onUserImagePreview`)
     var onImagePreviewTap: ((String) -> Void)?
@@ -24,12 +27,10 @@ final class NativeArtifactCardView: NSView {
     private let iconGradient = CAGradientLayer()
     private let iconBadge = NSImageView()
     private let nameLabel = NSTextField(labelWithString: "")
-    private let typePillContainer = NSView()
-    private let typePillLabel = NSTextField(labelWithString: "")
     private let descLabel = NSTextField(labelWithString: "")
+    private let headerRow = NSStackView()
     private let previewHost = NSView()
     private let footerStack = NSStackView()
-    private let saveArtifactButton = NSButton(title: "", target: nil, action: nil)
     private let openInFinderButton = NSButton(title: "", target: nil, action: nil)
     private let openInBrowserButton = NSButton(title: "", target: nil, action: nil)
 
@@ -68,6 +69,8 @@ final class NativeArtifactCardView: NSView {
 
     private static let thumbnailHeight: CGFloat = 160
     private static let innerPadding: CGFloat = 12
+    /// space between preview and footer row, and footer row and inner bottom (matches side padding)
+    private static let footerVerticalGap: CGFloat = 12
 
     override var intrinsicContentSize: NSSize {
         NSSize(width: NSView.noIntrinsicMetric, height: max(1, cachedLayoutHeight))
@@ -91,7 +94,10 @@ final class NativeArtifactCardView: NSView {
 
     func configure(artifact: SharedArtifact, theme: any ThemeProtocol) {
         let themeFP = Self.themeFingerprint(theme)
-        guard artifact.id != currentArtifactId || themeFP != currentThemeFingerprint else { return }
+        // must not skip when hostPath or other fields update for the same id (tool result arrives after first paint)
+        if artifact.id == currentArtifactId, themeFP == currentThemeFingerprint, boundArtifact == artifact {
+            return
+        }
 
         currentArtifactId = artifact.id
         currentThemeFingerprint = themeFP
@@ -109,11 +115,6 @@ final class NativeArtifactCardView: NSView {
         nameLabel.stringValue = artifact.filename
         nameLabel.font = NSFont.systemFont(ofSize: CGFloat(theme.bodySize), weight: .semibold)
         nameLabel.textColor = NSColor(theme.primaryText)
-
-        typePillLabel.stringValue = artifact.categoryLabel
-        typePillLabel.font = NSFont.systemFont(ofSize: 9, weight: .semibold)
-        typePillLabel.textColor = NSColor(theme.tertiaryText)
-        typePillContainer.layer?.backgroundColor = NSColor(theme.tertiaryBackground).withAlphaComponent(0.6).cgColor
 
         if let desc = artifact.description, !desc.isEmpty {
             descLabel.stringValue = desc
@@ -143,11 +144,6 @@ final class NativeArtifactCardView: NSView {
 
         styleFooterButton(openInFinderButton, title: "Open in Finder", symbol: "folder", theme: theme)
         styleFooterButton(openInBrowserButton, title: "Open in Browser", symbol: "safari", theme: theme)
-        styleFooterButton(saveArtifactButton, title: "Save…", symbol: "square.and.arrow.down", theme: theme)
-
-        let canSave = canOpen && (artifact.isImage || artifact.isPDF)
-        saveArtifactButton.isHidden = !canSave
-        saveArtifactButton.isEnabled = canSave
 
         updateChrome(theme: theme)
         updateFooterAlpha()
@@ -159,9 +155,40 @@ final class NativeArtifactCardView: NSView {
         scheduleIntroGlowIfNeeded(theme: theme, artifactId: artifact.id)
 
         // do not call layoutSubtreeIfNeeded() here — configure runs from table/cell paths during layout
-        cachedLayoutHeight = max(fittingSize.height, 120)
+        let fit = fittingSize.height
+        // until layout runs, fittingSize can under-report footerStack (inline buttons); keep row height honest
+        let footerActions = !openInFinderButton.isHidden || !openInBrowserButton.isHidden
+        let minWithFooter: CGFloat = footerActions ? Self.minimumHeightWithFooterChrome(for: artifact) : 0
+        cachedLayoutHeight = max(fit, minWithFooter, 120)
         invalidateIntrinsicContentSize()
         scheduleDeferredLayoutMetricsUpdate()
+    }
+
+    /// lower bound matching vertical constraints so intrinsic height isn't below footer + preview before first layout pass
+    private static func minimumHeightWithFooterChrome(for artifact: SharedArtifact) -> CGFloat {
+        let innerTopBottom = Self.innerPadding * 2
+        let headerAndGap: CGFloat = 24 + 8
+        let descExtra: CGFloat = (artifact.description.map { !$0.isEmpty } ?? false) ? 22 : 0
+        let previewH: CGFloat = {
+            let path = artifact.hostPath
+            if path.isEmpty {
+                if artifact.isText, let c = artifact.content, !c.isEmpty {
+                    let lines = min(6, max(1, c.components(separatedBy: "\n").count))
+                    return CGFloat(lines) * 14 + 12
+                }
+                return 0
+            }
+            if artifact.isImage || artifact.isPDF || artifact.isVideo { return Self.thumbnailHeight }
+            if artifact.isAudio { return 56 }
+            if artifact.isHTML || (artifact.isDirectory && Self.hasIndexHTML(artifact)) { return 44 }
+            if artifact.isText, let c = artifact.content, !c.isEmpty {
+                let lines = min(6, max(1, c.components(separatedBy: "\n").count))
+                return CGFloat(lines) * 14 + 12
+            }
+            return 0
+        }()
+        let footerRow: CGFloat = 44
+        return innerTopBottom + headerAndGap + descExtra + previewH + Self.footerVerticalGap * 2 + footerRow
     }
 
     func measuredCardHeight() -> CGFloat {
@@ -175,7 +202,12 @@ final class NativeArtifactCardView: NSView {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             self.layoutSubtreeIfNeeded()
-            let newH = max(self.fittingSize.height, 1)
+            var newH = max(self.fittingSize.height, 1)
+            if !self.openInFinderButton.isHidden || !self.openInBrowserButton.isHidden,
+                let bound = self.boundArtifact
+            {
+                newH = max(newH, Self.minimumHeightWithFooterChrome(for: bound))
+            }
             let oldH = self.cachedLayoutHeight
             self.cachedLayoutHeight = newH
             self.invalidateIntrinsicContentSize()
@@ -238,10 +270,6 @@ final class NativeArtifactCardView: NSView {
         let ib = iconBg.bounds
         iconGradient.frame = CGRect(x: 0, y: 0, width: ib.width, height: ib.height)
 
-        let pillH = typePillContainer.bounds.height
-        if pillH > 2 {
-            typePillContainer.layer?.cornerRadius = pillH / 2
-        }
     }
 
     override func updateTrackingAreas() {
@@ -270,7 +298,7 @@ final class NativeArtifactCardView: NSView {
     }
 
     private func updateFooterAlpha() {
-        // keep footer actions fully visible — low alpha read as “missing” on light cards
+        // keep footer actions fully visible — low alpha read as "missing" on light cards
         footerStack.alphaValue = 1
     }
 
@@ -318,7 +346,7 @@ final class NativeArtifactCardView: NSView {
             previewTopToDesc = previewHost.topAnchor.constraint(equalTo: descLabel.bottomAnchor, constant: 8)
             previewTopToDesc?.isActive = true
         } else {
-            previewTopToName = previewHost.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 8)
+            previewTopToName = previewHost.topAnchor.constraint(equalTo: headerRow.bottomAnchor, constant: 8)
             previewTopToName?.isActive = true
         }
     }
@@ -705,7 +733,13 @@ final class NativeArtifactCardView: NSView {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             self.layoutSubtreeIfNeeded()
-            self.cachedLayoutHeight = max(self.fittingSize.height, 1)
+            var newH = max(self.fittingSize.height, 1)
+            if !self.openInFinderButton.isHidden || !self.openInBrowserButton.isHidden,
+                let bound = self.boundArtifact
+            {
+                newH = max(newH, Self.minimumHeightWithFooterChrome(for: bound))
+            }
+            self.cachedLayoutHeight = newH
             self.invalidateIntrinsicContentSize()
             self.onHeightChanged?()
         }
@@ -739,34 +773,6 @@ final class NativeArtifactCardView: NSView {
         onImagePreviewTap?(currentArtifactId)
     }
 
-    @objc private func saveArtifactTapped() {
-        guard !hostPath.isEmpty else { return }
-        let src = URL(fileURLWithPath: hostPath)
-        let suggestedName = boundArtifact?.filename ?? (src.lastPathComponent.isEmpty ? "artifact" : src.lastPathComponent)
-
-        let panel = NSSavePanel()
-        panel.nameFieldStringValue = suggestedName
-        panel.canCreateDirectories = true
-
-        let finish: (NSApplication.ModalResponse) -> Void = { response in
-            guard response == .OK, let dest = panel.url else { return }
-            do {
-                if FileManager.default.fileExists(atPath: dest.path) {
-                    try FileManager.default.removeItem(at: dest)
-                }
-                try FileManager.default.copyItem(at: src, to: dest)
-            } catch {
-                // best-effort; avoid blocking chat on failure
-            }
-        }
-
-        if let window = window {
-            panel.beginSheetModal(for: window, completionHandler: finish)
-        } else {
-            finish(panel.runModal())
-        }
-    }
-
     // MARK: - Build
 
     private func buildViews() {
@@ -798,31 +804,27 @@ final class NativeArtifactCardView: NSView {
         nameLabel.drawsBackground = false
         nameLabel.maximumNumberOfLines = 1
 
-        typePillContainer.translatesAutoresizingMaskIntoConstraints = false
-        typePillContainer.wantsLayer = true
-        typePillLabel.translatesAutoresizingMaskIntoConstraints = false
-        typePillLabel.isEditable = false
-        typePillLabel.isBordered = false
-        typePillLabel.drawsBackground = false
-        typePillLabel.maximumNumberOfLines = 1
-        typePillContainer.addSubview(typePillLabel)
-
         descLabel.translatesAutoresizingMaskIntoConstraints = false
         descLabel.isEditable = false
         descLabel.isBordered = false
         descLabel.drawsBackground = false
         descLabel.maximumNumberOfLines = 1
 
+        headerRow.orientation = .horizontal
+        headerRow.alignment = .centerY
+        headerRow.spacing = 8
+        headerRow.translatesAutoresizingMaskIntoConstraints = false
+        headerRow.setContentHuggingPriority(.required, for: .vertical)
+        headerRow.setContentCompressionResistancePriority(.required, for: .vertical)
+
         previewHost.translatesAutoresizingMaskIntoConstraints = false
+        previewHost.wantsLayer = true
+        previewHost.layer?.masksToBounds = true
 
         footerStack.translatesAutoresizingMaskIntoConstraints = false
         footerStack.orientation = .horizontal
         footerStack.spacing = 8
         footerStack.alignment = .centerY
-        let fs = NSView()
-        fs.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        footerStack.addArrangedSubview(fs)
-        footerStack.addArrangedSubview(saveArtifactButton)
         footerStack.addArrangedSubview(openInBrowserButton)
         footerStack.addArrangedSubview(openInFinderButton)
 
@@ -830,15 +832,14 @@ final class NativeArtifactCardView: NSView {
         openInFinderButton.action = #selector(openInFinderTapped)
         openInBrowserButton.target = self
         openInBrowserButton.action = #selector(openInBrowserTapped)
-        saveArtifactButton.target = self
-        saveArtifactButton.action = #selector(saveArtifactTapped)
-        saveArtifactButton.isHidden = true
 
-        inner.addSubview(iconBg)
-        inner.addSubview(nameLabel)
-        inner.addSubview(typePillContainer)
-        inner.addSubview(descLabel)
+        headerRow.addArrangedSubview(iconBg)
+        headerRow.addArrangedSubview(nameLabel)
+
+        // preview draws first (behind) so header/footer stay visible if frames ever disagree
         inner.addSubview(previewHost)
+        inner.addSubview(headerRow)
+        inner.addSubview(descLabel)
         inner.addSubview(footerStack)
 
         NSLayoutConstraint.activate([
@@ -852,8 +853,10 @@ final class NativeArtifactCardView: NSView {
             inner.topAnchor.constraint(equalTo: topAnchor, constant: Self.innerPadding),
             inner.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -Self.innerPadding),
 
-            iconBg.leadingAnchor.constraint(equalTo: inner.leadingAnchor),
-            iconBg.topAnchor.constraint(equalTo: inner.topAnchor),
+            headerRow.leadingAnchor.constraint(equalTo: inner.leadingAnchor),
+            headerRow.trailingAnchor.constraint(equalTo: inner.trailingAnchor),
+            headerRow.topAnchor.constraint(equalTo: inner.topAnchor),
+
             iconBg.widthAnchor.constraint(equalToConstant: 24),
             iconBg.heightAnchor.constraint(equalToConstant: 24),
 
@@ -862,41 +865,25 @@ final class NativeArtifactCardView: NSView {
             iconBadge.widthAnchor.constraint(equalToConstant: 12),
             iconBadge.heightAnchor.constraint(equalToConstant: 12),
 
-            nameLabel.leadingAnchor.constraint(equalTo: iconBg.trailingAnchor, constant: 8),
-            nameLabel.topAnchor.constraint(equalTo: iconBg.topAnchor),
-            nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: typePillContainer.leadingAnchor, constant: -6),
-
-            typePillContainer.centerYAnchor.constraint(equalTo: nameLabel.centerYAnchor),
-            typePillContainer.trailingAnchor.constraint(lessThanOrEqualTo: inner.trailingAnchor),
-
             descLabel.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
-            descLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 2),
+            descLabel.topAnchor.constraint(equalTo: headerRow.bottomAnchor, constant: 2),
             descLabel.trailingAnchor.constraint(lessThanOrEqualTo: inner.trailingAnchor),
 
             previewHost.leadingAnchor.constraint(equalTo: inner.leadingAnchor),
             previewHost.trailingAnchor.constraint(equalTo: inner.trailingAnchor),
 
-            footerStack.leadingAnchor.constraint(greaterThanOrEqualTo: inner.leadingAnchor),
-            footerStack.trailingAnchor.constraint(equalTo: inner.trailingAnchor),
-            footerStack.topAnchor.constraint(greaterThanOrEqualTo: previewHost.bottomAnchor, constant: 8),
-            footerStack.bottomAnchor.constraint(equalTo: inner.bottomAnchor),
+            footerStack.centerXAnchor.constraint(equalTo: inner.centerXAnchor),
+            footerStack.topAnchor.constraint(equalTo: previewHost.bottomAnchor, constant: Self.footerVerticalGap),
+            inner.bottomAnchor.constraint(equalTo: footerStack.bottomAnchor, constant: Self.footerVerticalGap),
         ])
 
         previewTopToDesc = previewHost.topAnchor.constraint(equalTo: descLabel.bottomAnchor, constant: 8)
-        previewTopToName = previewHost.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 8)
+        previewTopToName = previewHost.topAnchor.constraint(equalTo: headerRow.bottomAnchor, constant: 8)
         previewTopToDesc?.isActive = true
-
-        NSLayoutConstraint.activate([
-            typePillLabel.leadingAnchor.constraint(equalTo: typePillContainer.leadingAnchor, constant: 6),
-            typePillLabel.trailingAnchor.constraint(equalTo: typePillContainer.trailingAnchor, constant: -6),
-            typePillLabel.topAnchor.constraint(equalTo: typePillContainer.topAnchor, constant: 2),
-            typePillLabel.bottomAnchor.constraint(equalTo: typePillContainer.bottomAnchor, constant: -2),
-        ])
     }
 
     private func layoutNameTypeRow(theme: any ThemeProtocol) {
         nameLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        typePillContainer.setContentCompressionResistancePriority(.required, for: .horizontal)
     }
 
     private func styleFooterButton(_ button: NSButton, title: String, symbol: String, theme: any ThemeProtocol) {
@@ -914,6 +901,10 @@ final class NativeArtifactCardView: NSView {
         let colors = Self.iconGradientNSColors(for: artifact)
         iconGradient.colors = colors.map { $0.cgColor }
         iconGradient.locations = [0, 1]
+        iconGradient.startPoint = CGPoint(x: 0, y: 0)
+        iconGradient.endPoint = CGPoint(x: 1, y: 1)
+        iconGradient.cornerRadius = 5.5
+        iconBg.layer?.backgroundColor = colors.last?.cgColor
     }
 
     // MARK: - Helpers

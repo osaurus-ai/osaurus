@@ -1299,7 +1299,7 @@ final class NativeMessageCellView: NSTableCellView {
             av.translatesAutoresizingMaskIntoConstraints = false
             addSubview(av)
             let bottomToCell = av.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6)
-            // row height is often 44 until `heightOfRow` + cache apply; don't fight intrinsic card height
+            // low priority: intrinsic card height should drive row via onHeightMeasured; if row is still too short, footer clips (mitigated by generous NativeCellHeightEstimator slack)
             bottomToCell.priority = NSLayoutConstraint.Priority(250)
             NSLayoutConstraint.activate([
                 av.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
@@ -1317,9 +1317,11 @@ final class NativeMessageCellView: NSTableCellView {
         }
         nativeArtifactView?.onImagePreviewTap = { id in context.onUserImagePreview?(id) }
         nativeArtifactView?.configure(artifact: artifact, theme: context.theme)
-        if let av = nativeArtifactView {
-            let h = av.measuredCardHeight() + 12
-            context.onHeightMeasured?(h, block.id)
+        // fittingSize before layout often omits footerStack height — row cache would clip Open in Finder.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let av = self.nativeArtifactView else { return }
+            av.layoutSubtreeIfNeeded()
+            context.onHeightMeasured?(av.measuredCardHeight() + 12, blockId)
         }
     }
 
@@ -1593,9 +1595,9 @@ enum NativeCellHeightEstimator {
             return 8 + PreflightCapabilitiesRowHeight.estimated(items: items, tableWidth: width)
 
         case let .sharedArtifact(artifact):
-            // matches NativeArtifactCardView: inner padding + title row + gaps + footer row + inner bottom
-            // footer uses 36pt (multi-button row / wrapping); was 26 and clipped with Save + Finder
-            var h: CGFloat = 12 + 24 + 8 + 8 + 36 + 12 + 12
+            // matches NativeArtifactCardView: inner padding + title row + gaps + footer row + footerVerticalGap above/below footer
+            // footer row ~48pt (inline buttons + symbols); slack so table row ≥ card before first measure
+            var h: CGFloat = 12 + 24 + 8 + 8 + 48 + 12 + 12 + 12
             if let d = artifact.description, !d.isEmpty { h += 20 }
             let pathEmpty = artifact.hostPath.isEmpty
             if pathEmpty {
@@ -1614,7 +1616,8 @@ enum NativeCellHeightEstimator {
                 h += CGFloat(lines) * 14 + 12
             }
             // configureAsArtifact reports measuredCardHeight() + 12 for cell top/bottom inset — match that here
-            return h + 12
+            // extra slack: intrinsic footer + deferred layout can exceed this; too-small row clips Open in Finder
+            return h + 12 + 24
         }
     }
 }

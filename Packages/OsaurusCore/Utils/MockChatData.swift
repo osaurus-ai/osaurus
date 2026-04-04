@@ -12,10 +12,12 @@
 //  - USE_MOCK_CHAT_SEED — optional UInt64 for reproducible random lengths (default 0xC0FFEE42)
 //
 //  Assistant turns cycle through variants: markdown (code fences, lists), thinking blocks,
-//  tool call groups (with/without results), preflight capability rows, share_artifact cards, etc.
+//  tool call groups (with/without results), preflight capability rows, share_artifact cards
+//  (markdown + file-backed PNG for image card / footer / full-screen testing), etc.
 //
 
 #if DEBUG
+    import AppKit
     import Foundation
 
     @MainActor
@@ -61,10 +63,10 @@
             return turns
         }
 
-        private static let assistantVariantCount = 12
+        private static let assistantVariantCount = 13
 
         /// Cycles assistant shapes so `ContentBlock.generateBlocks` hits paragraphs (markdown/code),
-        /// thinking, tool groups, preflight rows, share_artifact, and pending-style tool rows.
+        /// thinking, tool groups, preflight rows, share_artifact (text + PNG on disk), and pending-style tool rows.
         private static func makeAssistantTurn(pairIndex: Int, rng: inout SplitMix64) -> ChatTurn {
             let turn = ChatTurn(role: .assistant, content: "")
             let v = pairIndex % assistantVariantCount
@@ -221,7 +223,30 @@
                 turn.content =
                     "> quote: keep frame time under 16ms.\n\n| metric | target |\n| --- | --- |\n| fps | 60 |\n"
 
-            default:
+            case 11:
+                // file-backed PNG — `NativeArtifactCardView` loads from disk; footer + tap → full screen
+                let artId = "mock_\(pairIndex)_img"
+                let filename = "mock-artifact-\(pairIndex).png"
+                let file = writeMockPNGArtifact(filename: filename, pairIndex: pairIndex)
+                turn.toolCalls = [
+                    ToolCall(
+                        id: artId,
+                        type: "function",
+                        function: ToolCallFunction(name: "share_artifact", arguments: "{\"filename\":\"\(filename)\"}")
+                    )
+                ]
+                turn.toolResults[artId] = mockEnrichedShareArtifactToolResult(
+                    filename: filename,
+                    body: "",
+                    hasContent: false,
+                    description: "mock PNG for image artifact UI",
+                    hostPath: file.path,
+                    fileSize: file.byteCount
+                )
+                turn.content =
+                    "Shared a PNG above — click the image for full screen or Open in Finder."
+
+            case 12:
                 // share_artifact then ordinary tool (ordering / split blocks)
                 let shareId = "mock_\(pairIndex)_sh"
                 let readId = "mock_\(pairIndex)_rd"
@@ -243,6 +268,9 @@
                 )
                 turn.toolResults[readId] = "# title\n\nbody\n"
                 turn.content = "Artifact plus file read in one turn."
+
+            default:
+                preconditionFailure("unexpected mock variant \(v) (count=\(assistantVariantCount))")
             }
 
             return turn
@@ -307,16 +335,25 @@
         }
 
         /// Marker-delimited result compatible with `SharedArtifact.fromEnrichedToolResult`.
-        private static func mockEnrichedShareArtifactToolResult(filename: String, body: String) -> String {
+        private static func mockEnrichedShareArtifactToolResult(
+            filename: String,
+            body: String,
+            hasContent: Bool = true,
+            description: String = "mock shared artifact for performance UI",
+            hostPath: String? = nil,
+            fileSize: Int? = nil
+        ) -> String {
+            let resolvedHost = hostPath ?? "/tmp/osaurus-mock/\(filename)"
+            let resolvedSize = fileSize ?? (hasContent ? body.utf8.count : 0)
             let metadata: [String: Any] = [
                 "filename": filename,
                 "mime_type": SharedArtifact.mimeType(from: filename),
-                "has_content": true,
-                "description": "mock shared artifact for performance UI",
-                "host_path": "/tmp/osaurus-mock/\(filename)",
+                "has_content": hasContent,
+                "description": description,
+                "host_path": resolvedHost,
                 "context_id": "mock-chat-context",
                 "context_type": ArtifactContextType.chat.rawValue,
-                "file_size": body.utf8.count,
+                "file_size": resolvedSize,
             ]
             guard let jsonData = try? JSONSerialization.data(withJSONObject: metadata),
                 let jsonLine = String(data: jsonData, encoding: .utf8)
@@ -329,6 +366,33 @@
                 return SharedArtifact.startMarker + jsonLine + SharedArtifact.endMarker
             }
             return SharedArtifact.startMarker + jsonLine + "\n" + body + SharedArtifact.endMarker
+        }
+
+        /// writes a small PNG to `/tmp/osaurus-mock` so `NativeArtifactCardView` can load bytes like a real share_artifact file.
+        private static func writeMockPNGArtifact(filename: String, pairIndex: Int) -> (path: String, byteCount: Int) {
+            let dir = URL(fileURLWithPath: "/tmp/osaurus-mock", isDirectory: true)
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            let url = dir.appendingPathComponent(filename)
+            let size = NSSize(width: 280, height: 160)
+            let img = NSImage(size: size)
+            img.lockFocus()
+            NSColor(calibratedHue: CGFloat(pairIndex % 10) / 10.0, saturation: 0.5, brightness: 0.92, alpha: 1).setFill()
+            NSBezierPath(rect: NSRect(origin: .zero, size: size)).fill()
+            let attrs: [NSAttributedString.Key: Any] = [
+                .font: NSFont.systemFont(ofSize: 16, weight: .semibold),
+                .foregroundColor: NSColor.black.withAlphaComponent(0.75),
+            ]
+            ("mock \(pairIndex)" as NSString).draw(at: NSPoint(x: 14, y: 68), withAttributes: attrs)
+            img.unlockFocus()
+            guard let tiff = img.tiffRepresentation,
+                let rep = NSBitmapImageRep(data: tiff),
+                let png = rep.representation(using: .png, properties: [:])
+            else {
+                return (url.path, 0)
+            }
+            try? png.write(to: url, options: .atomic)
+            let byteCount = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? png.count
+            return (url.path, byteCount)
         }
 
         private static var seedUInt64: UInt64 {
