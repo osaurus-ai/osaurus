@@ -1595,9 +1595,8 @@ enum NativeCellHeightEstimator {
             return 8 + PreflightCapabilitiesRowHeight.estimated(items: items, tableWidth: width)
 
         case let .sharedArtifact(artifact):
-            // matches NativeArtifactCardView: inner padding + title row + gaps + footer row + footerVerticalGap above/below footer
-            // footer row ~48pt (inline buttons + symbols); slack so table row ≥ card before first measure
-            var h: CGFloat = 12 + 24 + 8 + 8 + 48 + 12 + 12 + 12
+            // matches NativeArtifactCardView: inner top 12 + bottom 8 (footerVerticalGap), symmetric gap above/below footer row
+            var h: CGFloat = 12 + 24 + 8 + 8 + 40 + 4 + 4
             if let d = artifact.description, !d.isEmpty { h += 20 }
             let pathEmpty = artifact.hostPath.isEmpty
             if pathEmpty {

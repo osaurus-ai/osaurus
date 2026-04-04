@@ -376,7 +376,8 @@
             let size = NSSize(width: 280, height: 160)
             let img = NSImage(size: size)
             img.lockFocus()
-            NSColor(calibratedHue: CGFloat(pairIndex % 10) / 10.0, saturation: 0.5, brightness: 0.92, alpha: 1).setFill()
+            NSColor(calibratedHue: CGFloat(pairIndex % 10) / 10.0, saturation: 0.5, brightness: 0.92, alpha: 1)
+                .setFill()
             NSBezierPath(rect: NSRect(origin: .zero, size: size)).fill()
             let attrs: [NSAttributedString.Key: Any] = [
                 .font: NSFont.systemFont(ofSize: 16, weight: .semibold),

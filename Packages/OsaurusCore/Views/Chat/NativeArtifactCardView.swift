@@ -69,8 +69,8 @@ final class NativeArtifactCardView: NSView {
 
     private static let thumbnailHeight: CGFloat = 160
     private static let innerPadding: CGFloat = 12
-    /// space between preview and footer row, and footer row and inner bottom (matches side padding)
-    private static let footerVerticalGap: CGFloat = 12
+    /// same value above the footer row (preview→footer) and below it (inner→card) so spacing looks even
+    private static let footerVerticalGap: CGFloat = 4
 
     override var intrinsicContentSize: NSSize {
         NSSize(width: NSView.noIntrinsicMetric, height: max(1, cachedLayoutHeight))
@@ -166,7 +166,7 @@ final class NativeArtifactCardView: NSView {
 
     /// lower bound matching vertical constraints so intrinsic height isn't below footer + preview before first layout pass
     private static func minimumHeightWithFooterChrome(for artifact: SharedArtifact) -> CGFloat {
-        let innerTopBottom = Self.innerPadding * 2
+        let innerTopBottom = Self.innerPadding + Self.footerVerticalGap
         let headerAndGap: CGFloat = 24 + 8
         let descExtra: CGFloat = (artifact.description.map { !$0.isEmpty } ?? false) ? 22 : 0
         let previewH: CGFloat = {
@@ -187,8 +187,8 @@ final class NativeArtifactCardView: NSView {
             }
             return 0
         }()
-        let footerRow: CGFloat = 44
-        return innerTopBottom + headerAndGap + descExtra + previewH + Self.footerVerticalGap * 2 + footerRow
+        let footerRow: CGFloat = 40
+        return innerTopBottom + headerAndGap + descExtra + previewH + Self.footerVerticalGap + footerRow
     }
 
     func measuredCardHeight() -> CGFloat {
@@ -851,7 +851,7 @@ final class NativeArtifactCardView: NSView {
             inner.leadingAnchor.constraint(equalTo: accentStrip.trailingAnchor, constant: Self.innerPadding),
             inner.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Self.innerPadding),
             inner.topAnchor.constraint(equalTo: topAnchor, constant: Self.innerPadding),
-            inner.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -Self.innerPadding),
+            inner.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -Self.footerVerticalGap),
 
             headerRow.leadingAnchor.constraint(equalTo: inner.leadingAnchor),
             headerRow.trailingAnchor.constraint(equalTo: inner.trailingAnchor),
@@ -874,7 +874,7 @@ final class NativeArtifactCardView: NSView {
 
             footerStack.centerXAnchor.constraint(equalTo: inner.centerXAnchor),
             footerStack.topAnchor.constraint(equalTo: previewHost.bottomAnchor, constant: Self.footerVerticalGap),
-            inner.bottomAnchor.constraint(equalTo: footerStack.bottomAnchor, constant: Self.footerVerticalGap),
+            inner.bottomAnchor.constraint(equalTo: footerStack.bottomAnchor),
         ])
 
         previewTopToDesc = previewHost.topAnchor.constraint(equalTo: descLabel.bottomAnchor, constant: 8)
@@ -889,6 +889,7 @@ final class NativeArtifactCardView: NSView {
     private func styleFooterButton(_ button: NSButton, title: String, symbol: String, theme: any ThemeProtocol) {
         button.bezelStyle = .inline
         button.isBordered = false
+        button.controlSize = .small
         button.font = NSFont.systemFont(ofSize: CGFloat(theme.captionSize) - 1, weight: .medium)
         button.contentTintColor = NSColor(theme.accentColor)
         button.title = title
