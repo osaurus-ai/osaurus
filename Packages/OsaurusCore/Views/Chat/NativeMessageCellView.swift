@@ -1602,7 +1602,7 @@ enum NativeCellHeightEstimator {
             if pathEmpty {
                 if artifact.isText, let c = artifact.content, !c.isEmpty {
                     let lines = min(6, max(1, c.components(separatedBy: "\n").count))
-                    h += CGFloat(lines) * 14 + 12
+                    h += CGFloat(lines) * 14 + 8
                 }
             } else if artifact.isImage || artifact.isPDF || artifact.isVideo {
                 h += 160 + 8
@@ -1612,7 +1612,7 @@ enum NativeCellHeightEstimator {
                 h += 44 + 8
             } else if artifact.isText, let c = artifact.content, !c.isEmpty {
                 let lines = min(6, max(1, c.components(separatedBy: "\n").count))
-                h += CGFloat(lines) * 14 + 12
+                h += CGFloat(lines) * 14 + 8
             }
             // configureAsArtifact reports measuredCardHeight() + 12 for cell top/bottom inset — match that here
             // extra slack: intrinsic footer + deferred layout can exceed this; too-small row clips Open in Finder

@@ -174,16 +174,17 @@ final class NativeArtifactCardView: NSView {
             if path.isEmpty {
                 if artifact.isText, let c = artifact.content, !c.isEmpty {
                     let lines = min(6, max(1, c.components(separatedBy: "\n").count))
-                    return CGFloat(lines) * 14 + 12
+                    return CGFloat(lines) * 14 + Self.footerVerticalGap * 2
                 }
                 return 0
             }
             if artifact.isImage || artifact.isPDF || artifact.isVideo { return Self.thumbnailHeight }
             if artifact.isAudio { return 56 }
-            if artifact.isHTML || (artifact.isDirectory && Self.hasIndexHTML(artifact)) { return 44 }
+            if artifact.isHTML || (artifact.isDirectory && Self.hasIndexHTML(artifact)) { return 40 }
             if artifact.isText, let c = artifact.content, !c.isEmpty {
                 let lines = min(6, max(1, c.components(separatedBy: "\n").count))
-                return CGFloat(lines) * 14 + 12
+                // line height ~14 at 11pt mono + vPad above/below text inside preview (same as footerVerticalGap)
+                return CGFloat(lines) * 14 + Self.footerVerticalGap * 2
             }
             return 0
         }()
@@ -256,6 +257,10 @@ final class NativeArtifactCardView: NSView {
         super.layout()
         let b = bounds
         guard b.width > 2, b.height > 2 else { return }
+        if textPreviewField.superview != nil, textPreviewField.superview !== previewHost {
+            let w = textPreviewField.superview!.bounds.width
+            if w > 16 { textPreviewField.preferredMaxLayoutWidth = w - 16 }
+        }
         borderStrokeLayer?.frame = b
         let inset: CGFloat = 0.5
         let rect = CGRect(x: inset, y: inset, width: b.width - inset * 2, height: b.height - inset * 2)
@@ -589,7 +594,12 @@ final class NativeArtifactCardView: NSView {
         row.orientation = .horizontal
         row.spacing = 10
         row.translatesAutoresizingMaskIntoConstraints = false
-        row.edgeInsets = NSEdgeInsets(top: 10, left: 10, bottom: 10, right: 10)
+        row.edgeInsets = NSEdgeInsets(
+            top: Self.footerVerticalGap,
+            left: 8,
+            bottom: Self.footerVerticalGap,
+            right: 8
+        )
         row.wantsLayer = true
         row.layer?.cornerRadius = 8
         row.layer?.backgroundColor = NSColor(theme.tertiaryBackground).withAlphaComponent(0.4).cgColor
@@ -672,7 +682,12 @@ final class NativeArtifactCardView: NSView {
         row.orientation = .horizontal
         row.spacing = 8
         row.translatesAutoresizingMaskIntoConstraints = false
-        row.edgeInsets = NSEdgeInsets(top: 10, left: 10, bottom: 10, right: 10)
+        row.edgeInsets = NSEdgeInsets(
+            top: Self.footerVerticalGap,
+            left: 8,
+            bottom: Self.footerVerticalGap,
+            right: 8
+        )
         row.wantsLayer = true
         row.layer?.cornerRadius = 8
         row.layer?.backgroundColor = NSColor(theme.tertiaryBackground).withAlphaComponent(0.4).cgColor
@@ -716,16 +731,46 @@ final class NativeArtifactCardView: NSView {
         textPreviewField.textColor = NSColor(theme.secondaryText)
         textPreviewField.maximumNumberOfLines = 6
         textPreviewField.translatesAutoresizingMaskIntoConstraints = false
-        textPreviewField.wantsLayer = true
-        textPreviewField.layer?.backgroundColor = NSColor(theme.tertiaryBackground).withAlphaComponent(0.5).cgColor
-        textPreviewField.layer?.cornerRadius = 6
+        textPreviewField.isEditable = false
+        textPreviewField.isSelectable = true
+        textPreviewField.isBordered = false
+        textPreviewField.isBezeled = false
+        textPreviewField.drawsBackground = false
+        textPreviewField.focusRingType = .none
+        textPreviewField.wantsLayer = false
+        textPreviewField.lineBreakMode = .byWordWrapping
 
-        previewHost.addSubview(textPreviewField)
+        let container = NSView()
+        container.translatesAutoresizingMaskIntoConstraints = false
+        previewHost.addSubview(container)
+
+        let bg = NSView()
+        bg.wantsLayer = true
+        bg.layer?.backgroundColor = NSColor(theme.tertiaryBackground).withAlphaComponent(0.3).cgColor
+        bg.layer?.cornerRadius = 8
+        bg.layer?.masksToBounds = true
+        bg.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(bg)
+
+        container.addSubview(textPreviewField)
+
+        let hPad: CGFloat = 8
+        let vPad = Self.footerVerticalGap
         NSLayoutConstraint.activate([
-            textPreviewField.leadingAnchor.constraint(equalTo: previewHost.leadingAnchor),
-            textPreviewField.trailingAnchor.constraint(equalTo: previewHost.trailingAnchor),
-            textPreviewField.topAnchor.constraint(equalTo: previewHost.topAnchor),
-            previewHost.bottomAnchor.constraint(equalTo: textPreviewField.bottomAnchor),
+            container.leadingAnchor.constraint(equalTo: previewHost.leadingAnchor),
+            container.trailingAnchor.constraint(equalTo: previewHost.trailingAnchor),
+            container.topAnchor.constraint(equalTo: previewHost.topAnchor),
+            previewHost.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+
+            bg.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            bg.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            bg.topAnchor.constraint(equalTo: container.topAnchor),
+            bg.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+
+            textPreviewField.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: hPad),
+            textPreviewField.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -hPad),
+            textPreviewField.topAnchor.constraint(equalTo: container.topAnchor, constant: vPad),
+            textPreviewField.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -vPad),
         ])
     }
 
