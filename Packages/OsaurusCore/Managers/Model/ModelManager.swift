@@ -124,8 +124,6 @@ final class ModelManager: NSObject, ObservableObject {
     private var downloadTokens: [String: UUID] = [:]  // modelId -> token to gate progress/state updates
     private var cancellables = Set<AnyCancellable>()
     private var progressSamples: [String: [(timestamp: TimeInterval, completed: Int64)]] = [:]
-    /// Cached estimated total bytes for active downloads
-    private var downloadSizeEstimates: [String: Int64] = [:]
     /// Last non-zero speed per download, used as fallback during upstream stalls
     private var lastKnownSpeed: [String: Double] = [:]
     private var remoteSearchTask: Task<Void, Never>? = nil
@@ -453,8 +451,13 @@ final class ModelManager: NSObject, ObservableObject {
         let task = Task { [weak self] in
             guard let self = self else { return }
 
+            defer {
+                Task { @MainActor [weak self] in
+                    self?.activeDownloadTasks[model.id] = nil
+                }
+            }
+
             do {
-                // Fetch file manifest from HF tree API
                 guard
                     let files = await HuggingFaceService.shared.fetchMatchingFiles(
                         repoId: model.id,
@@ -466,6 +469,7 @@ final class ModelManager: NSObject, ObservableObject {
                             self.downloadStates[model.id] = .failed(
                                 error: "Could not retrieve file list from Hugging Face"
                             )
+                            self.clearDownloadTracking(for: model.id)
                         }
                     }
                     return
@@ -489,7 +493,6 @@ final class ModelManager: NSObject, ObservableObject {
 
                 await MainActor.run {
                     guard self.downloadTokens[model.id] == token else { return }
-                    self.downloadSizeEstimates[model.id] = totalBytes
                     let fraction = totalBytes > 0 ? Double(completedFileBytes) / Double(totalBytes) : 0
                     self.downloadStates[model.id] = .downloading(progress: fraction)
                     self.downloadMetrics[model.id] = DownloadMetrics(
@@ -534,6 +537,7 @@ final class ModelManager: NSObject, ObservableObject {
                     try await downloader.download(
                         from: downloadURL,
                         to: destination,
+                        expectedSize: file.size,
                         onProgress: onProgress
                     )
                     completedFileBytes += file.size
@@ -570,10 +574,6 @@ final class ModelManager: NSObject, ObservableObject {
                     }
                 }
             }
-
-            await MainActor.run {
-                self.activeDownloadTasks[model.id] = nil
-            }
         }
 
         activeDownloadTasks[model.id] = task
@@ -584,7 +584,6 @@ final class ModelManager: NSObject, ObservableObject {
         downloadTokens[modelId] = nil
         downloadMetrics[modelId] = nil
         progressSamples[modelId] = nil
-        downloadSizeEstimates[modelId] = nil
         lastKnownSpeed[modelId] = nil
     }
 
@@ -653,14 +652,19 @@ final class ModelManager: NSObject, ObservableObject {
 
         let fm = FileManager.default
 
-        // Remove local model files
-        let path = model.localDirectory.path
-        if fm.fileExists(atPath: path) {
-            try? fm.removeItem(atPath: path)
+        let localPath = model.localDirectory.path
+        if fm.fileExists(atPath: localPath) {
+            do {
+                try fm.removeItem(atPath: localPath)
+            } catch {
+                downloadStates[model.id] = .failed(
+                    error: "Could not delete model: \(error.localizedDescription)"
+                )
+                return
+            }
         }
 
-        // Remove any leftover HF cache entries from prior downloadSnapshot usage.
-        // The cache uses the convention: {cacheRoot}/models--{namespace}--{name}/
+        // Best-effort cleanup of legacy HF cache entries (non-fatal if these fail)
         let cacheDirName = "models--\(model.id.replacingOccurrences(of: "/", with: "--"))"
         for cacheRoot in Self.hfCacheRoots() {
             let cacheModelDir = cacheRoot.appendingPathComponent(cacheDirName)
@@ -669,7 +673,6 @@ final class ModelManager: NSObject, ObservableObject {
             }
         }
 
-        // Update state AFTER all files are removed so the re-render sees clean disk
         downloadStates[model.id] = .notStarted
         Self.invalidateLocalModelsCache()
         NotificationCenter.default.post(name: .localModelsChanged, object: nil)
@@ -1406,6 +1409,7 @@ private final class DirectDownloader: NSObject, URLSessionDownloadDelegate, @unc
     private let lock = NSLock()
     private var currentContinuation: CheckedContinuation<Void, Error>?
     private var currentDestination: URL?
+    private var currentExpectedSize: Int64?
     private var onProgress: (@Sendable (Int64, Int64) -> Void)?
     private var lastProgressTime: CFAbsoluteTime = 0
     private static let progressInterval: CFAbsoluteTime = 0.25
@@ -1417,6 +1421,7 @@ private final class DirectDownloader: NSObject, URLSessionDownloadDelegate, @unc
     func download(
         from url: URL,
         to destination: URL,
+        expectedSize: Int64,
         onProgress: @escaping @Sendable (Int64, Int64) -> Void
     ) async throws {
         let fm = FileManager.default
@@ -1428,6 +1433,7 @@ private final class DirectDownloader: NSObject, URLSessionDownloadDelegate, @unc
             lock.lock()
             self.currentContinuation = continuation
             self.currentDestination = destination
+            self.currentExpectedSize = expectedSize
             self.onProgress = onProgress
             self.lastProgressTime = 0
             lock.unlock()
@@ -1464,21 +1470,55 @@ private final class DirectDownloader: NSObject, URLSessionDownloadDelegate, @unc
 
     func urlSession(
         _: URLSession,
-        downloadTask _: URLSessionDownloadTask,
+        downloadTask: URLSessionDownloadTask,
         didFinishDownloadingTo location: URL
     ) {
         lock.lock()
         let continuation = currentContinuation
         let destination = currentDestination
+        let expectedSize = currentExpectedSize
         currentContinuation = nil
         currentDestination = nil
+        currentExpectedSize = nil
         onProgress = nil
         lock.unlock()
         guard let continuation, let destination else { return }
+
+        if let http = downloadTask.response as? HTTPURLResponse,
+            !(200 ..< 300).contains(http.statusCode)
+        {
+            continuation.resume(
+                throwing: URLError(
+                    .badServerResponse,
+                    userInfo: [NSLocalizedDescriptionKey: "HTTP \(http.statusCode)"]
+                )
+            )
+            return
+        }
+
         do {
             let fm = FileManager.default
             try? fm.removeItem(at: destination)
             try fm.moveItem(at: location, to: destination)
+
+            if let expectedSize, expectedSize > 0 {
+                let attrs = try fm.attributesOfItem(atPath: destination.path)
+                let actualSize = (attrs[.size] as? NSNumber)?.int64Value ?? 0
+                if actualSize != expectedSize {
+                    try? fm.removeItem(at: destination)
+                    continuation.resume(
+                        throwing: URLError(
+                            .cannotDecodeContentData,
+                            userInfo: [
+                                NSLocalizedDescriptionKey:
+                                    "Size mismatch: expected \(expectedSize), got \(actualSize)"
+                            ]
+                        )
+                    )
+                    return
+                }
+            }
+
             continuation.resume()
         } catch {
             continuation.resume(throwing: error)
@@ -1495,6 +1535,7 @@ private final class DirectDownloader: NSObject, URLSessionDownloadDelegate, @unc
         let continuation = currentContinuation
         currentContinuation = nil
         currentDestination = nil
+        currentExpectedSize = nil
         onProgress = nil
         lock.unlock()
         continuation?.resume(throwing: error)
