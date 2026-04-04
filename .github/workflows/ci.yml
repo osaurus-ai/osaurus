@@ -41,6 +41,7 @@ jobs:
         run: >-
           xcodebuild -resolvePackageDependencies
           -workspace $WORKSPACE
+          -scheme OsaurusCore
           -clonedSourcePackagesDirPath $SPM_CACHE
 
       - name: Test OsaurusCore
@@ -78,6 +79,7 @@ jobs:
         run: >-
           xcodebuild -resolvePackageDependencies
           -workspace $WORKSPACE
+          -scheme OsaurusCLITests
           -clonedSourcePackagesDirPath $SPM_CACHE
 
       - name: Test OsaurusCLI
