@@ -342,6 +342,30 @@ extension AgentManager {
         return agent.maxTokens
     }
 
+    /// Get the effective tool selection mode for an agent.
+    /// Default agent always uses .auto (controlled by global preflightSearchMode).
+    public func effectiveToolSelectionMode(for agentId: UUID) -> ToolSelectionMode {
+        guard let agent = agent(for: agentId) else { return .auto }
+        if agent.id == Agent.defaultId { return .auto }
+        return agent.toolSelectionMode ?? .auto
+    }
+
+    /// Get the manually selected tool names for an agent, or nil when not in manual mode.
+    public func effectiveManualToolNames(for agentId: UUID) -> [String]? {
+        guard let agent = agent(for: agentId) else { return nil }
+        if agent.id == Agent.defaultId { return nil }
+        guard agent.toolSelectionMode == .manual else { return nil }
+        return agent.manualToolNames
+    }
+
+    /// Get the manually selected skill names for an agent, or nil when not in manual mode.
+    public func effectiveManualSkillNames(for agentId: UUID) -> [String]? {
+        guard let agent = agent(for: agentId) else { return nil }
+        if agent.id == Agent.defaultId { return nil }
+        guard agent.toolSelectionMode == .manual else { return nil }
+        return agent.manualSkillNames
+    }
+
     /// Get the theme ID for an agent (nil if agent uses global theme)
     public func themeId(for agentId: UUID) -> UUID? {
         guard let agent = agent(for: agentId) else {

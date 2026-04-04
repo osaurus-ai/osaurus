@@ -656,6 +656,14 @@ struct AgentDetailView: View {
     @State private var workQuickActions: [AgentQuickAction]?
     @State private var editingQuickActionId: UUID?
     @State private var pluginInstructionsMap: [String: String] = [:]
+    @State private var toolSelectionMode: ToolSelectionMode = .auto
+    @State private var manualToolNames: Set<String> = []
+    @State private var manualSkillNames: Set<String> = []
+    @State private var toolSearchText: String = ""
+    @State private var cachedTools: [ToolRegistry.ToolEntry] = []
+    @State private var cachedSkills: [Skill] = []
+    @State private var displayedTools: [ToolRegistry.ToolEntry] = []
+    @State private var displayedSkills: [Skill] = []
 
     // MARK: - UI State
 
@@ -1037,6 +1045,7 @@ struct AgentDetailView: View {
         tabHelperText(DetailTab.configure.helperText)
         systemPromptSection
         generationSection
+        toolSelectionSection
         quickActionsSection
         themeSection
     }
@@ -1201,6 +1210,242 @@ struct AgentDetailView: View {
             .onChange(of: temperature) { debouncedSave() }
             .onChange(of: maxTokens) { debouncedSave() }
         }
+    }
+
+    // MARK: - Tool Selection
+
+    private func reloadToolsAndSkills() {
+        let hidden = ToolRegistry.shared.builtInToolNames
+            .union(ToolRegistry.shared.runtimeManagedToolNames)
+        cachedTools = ToolRegistry.shared.listTools().filter { $0.enabled && !hidden.contains($0.name) }
+        cachedSkills = SkillManager.shared.skills.filter { $0.enabled || !$0.isBuiltIn }
+        applyToolSearchFilter()
+    }
+
+    private func applyToolSearchFilter() {
+        guard !toolSearchText.isEmpty else {
+            displayedTools = cachedTools
+            displayedSkills = cachedSkills
+            return
+        }
+        let query = toolSearchText.lowercased()
+        displayedTools =
+            cachedTools
+            .compactMap { entry -> (ToolRegistry.ToolEntry, Int)? in
+                let score = fuzzyScore(query: query, name: entry.name, description: entry.description)
+                return score > 0 ? (entry, score) : nil
+            }
+            .sorted { $0.1 > $1.1 }
+            .map(\.0)
+        displayedSkills = cachedSkills.filter {
+            fuzzyScore(query: query, name: $0.name, description: $0.description) > 0
+        }
+    }
+
+    private func fuzzyScore(query: String, name: String, description: String) -> Int {
+        let n = name.lowercased()
+        let d = description.lowercased()
+        if n == query { return 100 }
+        if n.hasPrefix(query) { return 80 }
+        if n.contains(query) { return 60 }
+        if d.contains(query) { return 40 }
+        if SearchService.fuzzyMatch(query: query, in: n) { return 20 }
+        return 0
+    }
+
+    private var toolSelectionSection: some View {
+        AgentDetailSection(title: "Tools", icon: "wrench.and.screwdriver") {
+            VStack(alignment: .leading, spacing: 12) {
+                Picker("", selection: $toolSelectionMode) {
+                    Text("Auto").tag(ToolSelectionMode.auto)
+                    Text("Manual").tag(ToolSelectionMode.manual)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+
+                Text(
+                    toolSelectionMode == .auto
+                        ? "Tools are discovered automatically using pre-flight search."
+                        : "Core tools are always available. Select additional tools and skills below."
+                )
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+
+                if toolSelectionMode == .manual {
+                    manualSearchField
+                    manualToolList
+                    manualSkillList
+                    manualSelectionSummary
+                }
+            }
+            .onChange(of: toolSelectionMode) {
+                if toolSelectionMode == .manual { reloadToolsAndSkills() }
+                debouncedSave()
+            }
+            .task(id: toolSearchText) {
+                try? await Task.sleep(nanoseconds: 150_000_000)
+                guard !Task.isCancelled else { return }
+                applyToolSearchFilter()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .toolsListChanged)) { _ in
+                reloadToolsAndSkills()
+            }
+            .onAppear {
+                if toolSelectionMode == .manual { reloadToolsAndSkills() }
+            }
+        }
+    }
+
+    private var manualSearchField: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+            TextField("Search tools and skills...", text: $toolSearchText)
+                .font(.system(size: 12))
+                .textFieldStyle(.plain)
+                .foregroundColor(theme.primaryText)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(theme.inputBackground)
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(theme.inputBorder, lineWidth: 1))
+        )
+    }
+
+    @ViewBuilder
+    private var manualToolList: some View {
+        if !displayedTools.isEmpty {
+            selectableSection("Tools", maxHeight: 300) {
+                ForEach(displayedTools, id: \.name) { entry in
+                    selectableRow(
+                        title: entry.name,
+                        subtitle: entry.description,
+                        isSelected: manualToolNames.contains(entry.name),
+                        titleFont: .system(size: 12, weight: .medium, design: .monospaced)
+                    ) {
+                        manualToolNames.formSymmetricDifference([entry.name])
+                        debouncedSave()
+                    }
+                    if entry.name != displayedTools.last?.name {
+                        Divider().foregroundColor(theme.primaryBorder)
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var manualSkillList: some View {
+        if !displayedSkills.isEmpty {
+            selectableSection("Skills", maxHeight: 200) {
+                ForEach(displayedSkills, id: \.id) { skill in
+                    selectableRow(
+                        title: skill.name,
+                        subtitle: skill.description,
+                        isSelected: manualSkillNames.contains(skill.name),
+                        badge: skill.category
+                    ) {
+                        manualSkillNames.formSymmetricDifference([skill.name])
+                        debouncedSave()
+                    }
+                    if skill.id != displayedSkills.last?.id {
+                        Divider().foregroundColor(theme.primaryBorder)
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var manualSelectionSummary: some View {
+        let parts = [
+            pluralized("tool", count: manualToolNames.count),
+            pluralized("skill", count: manualSkillNames.count),
+        ].compactMap { $0 }
+
+        if !parts.isEmpty {
+            Text(parts.joined(separator: ", ") + " selected")
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+        }
+    }
+
+    private func pluralized(_ word: String, count: Int) -> String? {
+        guard count > 0 else { return nil }
+        return "\(count) \(word)\(count == 1 ? "" : "s")"
+    }
+
+    private func selectableSection<Content: View>(
+        _ title: String,
+        maxHeight: CGFloat,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(theme.secondaryText)
+                .textCase(.uppercase)
+
+            ScrollView {
+                VStack(spacing: 0) { content() }
+            }
+            .frame(maxHeight: maxHeight)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(theme.inputBackground)
+                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(theme.inputBorder, lineWidth: 1))
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+        }
+    }
+
+    private func selectableRow(
+        title: String,
+        subtitle: String,
+        isSelected: Bool,
+        titleFont: Font = .system(size: 12, weight: .medium),
+        badge: String? = nil,
+        onToggle: @escaping () -> Void
+    ) -> some View {
+        Button(action: onToggle) {
+            HStack(spacing: 10) {
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 14))
+                    .foregroundColor(isSelected ? theme.accentColor : theme.tertiaryText)
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text(title)
+                            .font(titleFont)
+                            .foregroundColor(theme.primaryText)
+                        if let badge {
+                            Text(badge)
+                                .font(.system(size: 9, weight: .medium))
+                                .foregroundColor(theme.tertiaryText)
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 1)
+                                .background(
+                                    Capsule().fill(theme.inputBackground)
+                                        .overlay(Capsule().stroke(theme.inputBorder, lineWidth: 0.5))
+                                )
+                        }
+                    }
+                    if !subtitle.isEmpty {
+                        Text(subtitle)
+                            .font(.system(size: 11))
+                            .foregroundColor(theme.tertiaryText)
+                            .lineLimit(2)
+                    }
+                }
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Plugin Tab Content
@@ -2512,6 +2757,9 @@ struct AgentDetailView: View {
         selectedThemeId = agent.themeId
         chatQuickActions = agent.chatQuickActions
         workQuickActions = agent.workQuickActions
+        toolSelectionMode = agent.toolSelectionMode ?? .auto
+        manualToolNames = Set(agent.manualToolNames ?? [])
+        manualSkillNames = Set(agent.manualSkillNames ?? [])
 
         var instrMap: [String: String] = [:]
         let overrides = agent.pluginInstructions ?? [:]
@@ -2575,7 +2823,10 @@ struct AgentDetailView: View {
             agentAddress: current.agentAddress,
             sandboxPlugins: current.sandboxPlugins,
             autonomousExec: current.autonomousExec,
-            pluginInstructions: effectivePluginInstructions
+            pluginInstructions: effectivePluginInstructions,
+            toolSelectionMode: toolSelectionMode,
+            manualToolNames: toolSelectionMode == .manual ? Array(manualToolNames) : nil,
+            manualSkillNames: toolSelectionMode == .manual ? Array(manualSkillNames) : nil
         )
 
         agentManager.update(updated)

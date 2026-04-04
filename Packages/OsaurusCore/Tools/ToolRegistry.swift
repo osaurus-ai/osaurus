@@ -536,11 +536,19 @@ final class ToolRegistry: ObservableObject {
         listTools().filter { runtimeManagedToolNames.contains($0.name) }
     }
 
+    static let capabilityToolNames: Set<String> = [
+        "capabilities_search", "capabilities_load", "methods_save", "methods_report",
+    ]
+
     /// Always-loaded tool specs: built-in + runtime-managed tools.
     /// These are always included when registered — mode exclusions handle
     /// which runtime tools are relevant. Plugin/MCP/sandbox-plugin tools
     /// load on demand via capabilities_search / capabilities_load.
-    func alwaysLoadedSpecs(mode: WorkExecutionMode) -> [Tool] {
+    ///
+    /// When `excludeCapabilityTools` is true (manual tool selection mode),
+    /// dynamic discovery tools are stripped so the model only sees
+    /// the user's explicitly chosen tools.
+    func alwaysLoadedSpecs(mode: WorkExecutionMode, excludeCapabilityTools: Bool = false) -> [Tool] {
         let builtInNames = Set(builtInToolNames)
         let runtimeNames = runtimeManagedToolNames
         let excluded = excludedToolNames(for: mode)
@@ -550,6 +558,7 @@ final class ToolRegistry: ObservableObject {
                 builtInNames.contains(tool.name) || runtimeNames.contains(tool.name)
             }
             .filter { !excluded.contains($0.name) }
+            .filter { !excludeCapabilityTools || !Self.capabilityToolNames.contains($0.name) }
             .sorted { $0.name < $1.name }
             .map { $0.asOpenAITool() }
     }

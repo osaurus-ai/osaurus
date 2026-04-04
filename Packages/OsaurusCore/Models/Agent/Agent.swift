@@ -41,6 +41,12 @@ public struct AgentQuickAction: Codable, Identifiable, Sendable, Equatable {
     ]
 }
 
+/// Controls whether tools are selected automatically via RAG or manually by the user
+public enum ToolSelectionMode: String, Codable, Sendable {
+    case auto
+    case manual
+}
+
 /// A customizable assistant agent for ChatView
 public struct Agent: Codable, Identifiable, Sendable, Equatable {
     /// Unique identifier for the agent
@@ -81,6 +87,12 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
     public var pluginInstructions: [String: String]?
     /// Whether this agent is advertised via Bonjour on the local network
     public var bonjourEnabled: Bool
+    /// Controls whether tools are selected automatically (RAG preflight) or manually by the user
+    public var toolSelectionMode: ToolSelectionMode?
+    /// Tool names explicitly selected by the user when toolSelectionMode is .manual
+    public var manualToolNames: [String]?
+    /// Skill names explicitly selected by the user when toolSelectionMode is .manual
+    public var manualSkillNames: [String]?
 
     public init(
         id: UUID = UUID(),
@@ -101,7 +113,10 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         sandboxPlugins: [String]? = nil,
         autonomousExec: AutonomousExecConfig? = nil,
         pluginInstructions: [String: String]? = nil,
-        bonjourEnabled: Bool = false
+        bonjourEnabled: Bool = false,
+        toolSelectionMode: ToolSelectionMode? = nil,
+        manualToolNames: [String]? = nil,
+        manualSkillNames: [String]? = nil
     ) {
         self.id = id
         self.name = name
@@ -122,6 +137,9 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         self.autonomousExec = autonomousExec
         self.pluginInstructions = pluginInstructions
         self.bonjourEnabled = bonjourEnabled
+        self.toolSelectionMode = toolSelectionMode
+        self.manualToolNames = manualToolNames
+        self.manualSkillNames = manualSkillNames
     }
 
     // MARK: - Built-in Agents
@@ -184,6 +202,9 @@ extension Agent {
         autonomousExec = try c.decodeIfPresent(AutonomousExecConfig.self, forKey: .autonomousExec)
         pluginInstructions = try c.decodeIfPresent([String: String].self, forKey: .pluginInstructions)
         bonjourEnabled = try c.decodeIfPresent(Bool.self, forKey: .bonjourEnabled) ?? false
+        toolSelectionMode = try c.decodeIfPresent(ToolSelectionMode.self, forKey: .toolSelectionMode)
+        manualToolNames = try c.decodeIfPresent([String].self, forKey: .manualToolNames)
+        manualSkillNames = try c.decodeIfPresent([String].self, forKey: .manualSkillNames)
     }
 }
 
@@ -248,7 +269,10 @@ extension Agent {
                 agentIndex: nil,
                 agentAddress: nil,
                 sandboxPlugins: exportedAgent.sandboxPlugins,
-                autonomousExec: exportedAgent.autonomousExec
+                autonomousExec: exportedAgent.autonomousExec,
+                toolSelectionMode: exportedAgent.toolSelectionMode,
+                manualToolNames: exportedAgent.manualToolNames,
+                manualSkillNames: exportedAgent.manualSkillNames
             )
         }
     }
