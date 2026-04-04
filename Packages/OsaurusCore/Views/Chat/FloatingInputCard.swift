@@ -52,8 +52,6 @@ struct FloatingInputCard: View {
     var cumulativeTokens: Int? = nil
     /// Compact mode (sidebar open) - hides secondary chip content
     var isCompact: Bool = false
-    /// Per-session tool overrides. nil = auto (RAG preflight), non-nil = use these tools explicitly.
-    @Binding var sessionToolNames: Set<String>?
 
     init(
         text: Binding<String>,
@@ -81,8 +79,7 @@ struct FloatingInputCard: View {
         onResume: (() -> Void)? = nil,
         canResume: Bool = false,
         cumulativeTokens: Int? = nil,
-        isCompact: Bool = false,
-        sessionToolNames: Binding<Set<String>?> = .constant(nil)
+        isCompact: Bool = false
     ) {
         self._text = text
         self._selectedModel = selectedModel
@@ -110,7 +107,6 @@ struct FloatingInputCard: View {
         self.canResume = canResume
         self.cumulativeTokens = cumulativeTokens
         self.isCompact = isCompact
-        self._sessionToolNames = sessionToolNames
     }
 
     // Observe managers for reactive updates
@@ -119,8 +115,6 @@ struct FloatingInputCard: View {
     @ObservedObject private var sandboxState = SandboxManager.State.shared
     @ObservedObject private var clipboardService = ClipboardService.shared
     @ObservedObject private var appConfig = AppConfiguration.shared
-
-    @ObservedObject private var toolRegistry = ToolRegistry.shared
 
     // Local state for text input to prevent parent re-renders on every keystroke
     @State private var localText: String = ""
@@ -131,8 +125,6 @@ struct FloatingInputCard: View {
     @State private var showModelPicker = false
     @State private var showModelOptionsPicker = false
     @State private var showContextBreakdown = false
-    @State private var showToolsPicker = false
-    @State private var isToolsHovered = false
     @State private var contextHoverTask: Task<Void, Never>?
     @State private var isSandboxHovered = false
     @State private var sandboxPulseAmount: CGFloat = 1.0
@@ -956,11 +948,6 @@ extension FloatingInputCard {
                 sandboxToggleChip
             }
 
-            // Tools chip (visible when plugin/MCP tools are installed)
-            if hasCapabilityTools {
-                toolsToggleChip
-            }
-
             // Clipboard chip (visible when there's something new on the clipboard and monitoring is enabled)
             if AppConfiguration.shared.chatConfig.enableClipboardMonitoring && clipboardService.hasNewContent {
                 clipboardToggleChip
@@ -1386,177 +1373,6 @@ extension FloatingInputCard {
                     lineWidth: 1
                 )
         }
-    }
-
-    // MARK: - Tools Chip
-
-    /// Whether there are any plugin/MCP tools available (beyond built-in and runtime)
-    private var hasCapabilityTools: Bool {
-        !capabilityToolEntries.isEmpty
-    }
-
-    /// List of non-built-in, non-runtime tools (plugin + MCP tools)
-    private var capabilityToolEntries: [ToolRegistry.ToolEntry] {
-        let hidden = ToolRegistry.shared.builtInToolNames
-            .union(ToolRegistry.shared.runtimeManagedToolNames)
-        return toolRegistry.listTools().filter { $0.enabled && !hidden.contains($0.name) }
-    }
-
-    private var hasSessionOverrides: Bool {
-        sessionToolNames != nil
-    }
-
-    private var sessionToolCount: Int {
-        sessionToolNames?.count ?? 0
-    }
-
-    private var toolsToggleChip: some View {
-        Button(action: { showToolsPicker.toggle() }) {
-            HStack(spacing: 4) {
-                Image(systemName: hasSessionOverrides ? "wrench.and.screwdriver.fill" : "wrench.and.screwdriver")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(
-                        hasSessionOverrides ? theme.accentColor : theme.tertiaryText
-                    )
-
-                if !isCompact {
-                    Text(hasSessionOverrides ? "Tools (\(sessionToolCount))" : "Tools")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(
-                            hasSessionOverrides ? theme.primaryText : theme.secondaryText
-                        )
-                }
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 5)
-            .background(
-                Capsule()
-                    .fill(theme.secondaryBackground.opacity(isToolsHovered || hasSessionOverrides ? 0.95 : 0.8))
-            )
-            .overlay(toolsChipBorder)
-            .shadow(
-                color: hasSessionOverrides
-                    ? theme.accentColor.opacity(0.12)
-                    : (isToolsHovered ? theme.accentColor.opacity(0.1) : .clear),
-                radius: 4,
-                x: 0,
-                y: 1
-            )
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.15)) {
-                isToolsHovered = hovering
-            }
-        }
-        .help(hasSessionOverrides ? "\(sessionToolCount) tool(s) selected" : "Select tools for this chat")
-        .popover(isPresented: $showToolsPicker, arrowEdge: .bottom) {
-            toolsPickerPopover
-        }
-    }
-
-    @ViewBuilder
-    private var toolsChipBorder: some View {
-        if hasSessionOverrides {
-            Capsule()
-                .strokeBorder(theme.accentColor.opacity(isToolsHovered ? 0.4 : 0.25), lineWidth: 1)
-        } else {
-            Capsule()
-                .strokeBorder(
-                    LinearGradient(
-                        colors: [
-                            theme.glassEdgeLight.opacity(isToolsHovered ? 0.25 : 0.15),
-                            theme.primaryBorder.opacity(isToolsHovered ? 0.2 : 0.12),
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ),
-                    lineWidth: 1
-                )
-        }
-    }
-
-    private var toolsPickerPopover: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("Tools")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-                Spacer()
-                if hasSessionOverrides {
-                    Button("Reset to Auto") {
-                        withAnimation { sessionToolNames = nil }
-                    }
-                    .font(.system(size: 11))
-                    .buttonStyle(.plain)
-                    .foregroundColor(theme.accentColor)
-                }
-            }
-
-            Text(
-                hasSessionOverrides
-                    ? "Selected tools are always available to the model."
-                    : "Auto — tools are discovered per message via search."
-            )
-            .font(.system(size: 11))
-            .foregroundColor(theme.tertiaryText)
-
-            Divider()
-
-            ScrollView {
-                VStack(spacing: 2) {
-                    ForEach(capabilityToolEntries, id: \.name) { entry in
-                        let isSelected = sessionToolNames?.contains(entry.name) == true
-                        Button(action: {
-                            withAnimation(.easeOut(duration: 0.15)) {
-                                toggleSessionTool(entry.name)
-                            }
-                        }) {
-                            HStack(spacing: 8) {
-                                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                                    .font(.system(size: 12))
-                                    .foregroundColor(isSelected ? theme.accentColor : theme.tertiaryText)
-
-                                VStack(alignment: .leading, spacing: 1) {
-                                    Text(entry.name)
-                                        .font(.system(size: 12, weight: .medium))
-                                        .foregroundColor(theme.primaryText)
-                                    if !entry.description.isEmpty {
-                                        Text(entry.description)
-                                            .font(.system(size: 10))
-                                            .foregroundColor(theme.tertiaryText)
-                                            .lineLimit(1)
-                                    }
-                                }
-
-                                Spacer()
-                            }
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 6)
-                            .background(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .fill(isSelected ? theme.accentColor.opacity(0.08) : Color.clear)
-                            )
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-            }
-            .frame(maxHeight: 300)
-        }
-        .padding(12)
-        .frame(width: 280)
-    }
-
-    private func toggleSessionTool(_ name: String) {
-        var current = sessionToolNames ?? Set<String>()
-        if current.contains(name) {
-            current.remove(name)
-        } else {
-            current.insert(name)
-        }
-        // Keep non-nil to preserve explicit override (empty = no capability tools, not auto)
-        sessionToolNames = current
     }
 
     // MARK: - Clipboard Chip
