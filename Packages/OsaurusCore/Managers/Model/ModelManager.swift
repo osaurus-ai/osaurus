@@ -455,9 +455,12 @@ final class ModelManager: NSObject, ObservableObject {
 
             do {
                 // Fetch file manifest from HF tree API
-                guard let files = await HuggingFaceService.shared.fetchMatchingFiles(
-                    repoId: model.id, patterns: patterns
-                ), !files.isEmpty else {
+                guard
+                    let files = await HuggingFaceService.shared.fetchMatchingFiles(
+                        repoId: model.id,
+                        patterns: patterns
+                    ), !files.isEmpty
+                else {
                     await MainActor.run {
                         if self.downloadTokens[model.id] == token {
                             self.downloadStates[model.id] = .failed(
@@ -503,12 +506,15 @@ final class ModelManager: NSObject, ObservableObject {
                 for file in filesToDownload {
                     try Task.checkCancellation()
 
-                    let encodedPath = file.path.addingPercentEncoding(
-                        withAllowedCharacters: .urlPathAllowed
-                    ) ?? file.path
-                    guard let downloadURL = URL(
-                        string: "https://huggingface.co/\(model.id)/resolve/main/\(encodedPath)"
-                    ) else { continue }
+                    let encodedPath =
+                        file.path.addingPercentEncoding(
+                            withAllowedCharacters: .urlPathAllowed
+                        ) ?? file.path
+                    guard
+                        let downloadURL = URL(
+                            string: "https://huggingface.co/\(model.id)/resolve/main/\(encodedPath)"
+                        )
+                    else { continue }
                     let destination = model.localDirectory.appendingPathComponent(file.path)
 
                     let baseCompleted = completedFileBytes
@@ -526,7 +532,9 @@ final class ModelManager: NSObject, ObservableObject {
                     }
 
                     try await downloader.download(
-                        from: downloadURL, to: destination, onProgress: onProgress
+                        from: downloadURL,
+                        to: destination,
+                        onProgress: onProgress
                     )
                     completedFileBytes += file.size
                 }
@@ -539,7 +547,8 @@ final class ModelManager: NSObject, ObservableObject {
                         self.clearDownloadTracking(for: model.id)
                         if completed {
                             NotificationService.shared.postModelReady(
-                                modelId: model.id, modelName: model.name
+                                modelId: model.id,
+                                modelName: model.name
                             )
                             Self.invalidateLocalModelsCache()
                             NotificationCenter.default.post(name: .localModelsChanged, object: nil)
@@ -581,11 +590,15 @@ final class ModelManager: NSObject, ObservableObject {
 
     /// Updates download progress, speed, and ETA for a single model.
     private func updateDownloadProgress(
-        modelId: String, token: UUID, completedBytes: Int64, totalBytes: Int64
+        modelId: String,
+        token: UUID,
+        completedBytes: Int64,
+        totalBytes: Int64
     ) {
         guard downloadTokens[modelId] == token else { return }
 
-        let fraction = totalBytes > 0
+        let fraction =
+            totalBytes > 0
             ? min(1.0, Double(completedBytes) / Double(totalBytes)) : 0
         downloadStates[modelId] = .downloading(progress: fraction)
 
@@ -1394,6 +1407,8 @@ private final class DirectDownloader: NSObject, URLSessionDownloadDelegate, @unc
     private var currentContinuation: CheckedContinuation<Void, Error>?
     private var currentDestination: URL?
     private var onProgress: (@Sendable (Int64, Int64) -> Void)?
+    private var lastProgressTime: CFAbsoluteTime = 0
+    private static let progressInterval: CFAbsoluteTime = 0.25
 
     private lazy var session: URLSession = {
         URLSession(configuration: .default, delegate: self, delegateQueue: nil)
@@ -1414,6 +1429,7 @@ private final class DirectDownloader: NSObject, URLSessionDownloadDelegate, @unc
             self.currentContinuation = continuation
             self.currentDestination = destination
             self.onProgress = onProgress
+            self.lastProgressTime = 0
             lock.unlock()
             let task = session.downloadTask(with: url)
             task.resume()
@@ -1431,7 +1447,16 @@ private final class DirectDownloader: NSObject, URLSessionDownloadDelegate, @unc
         totalBytesWritten: Int64,
         totalBytesExpectedToWrite: Int64
     ) {
+        let now = CFAbsoluteTimeGetCurrent()
         lock.lock()
+        let elapsed = now - lastProgressTime
+        let isFileComplete =
+            totalBytesExpectedToWrite > 0 && totalBytesWritten >= totalBytesExpectedToWrite
+        guard elapsed >= Self.progressInterval || isFileComplete else {
+            lock.unlock()
+            return
+        }
+        lastProgressTime = now
         let progress = onProgress
         lock.unlock()
         progress?(totalBytesWritten, totalBytesExpectedToWrite)
