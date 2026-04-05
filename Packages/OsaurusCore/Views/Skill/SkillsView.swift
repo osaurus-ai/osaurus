@@ -417,14 +417,16 @@ private struct ImportDropdownButton: View {
             VStack(alignment: .leading, spacing: 0) {
                 ImportMenuRow(icon: "link", title: "From GitHub") {
                     showMenu = false
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    Task { @MainActor in
+                        try? await Task.sleep(nanoseconds: 100_000_000)
                         onGitHub()
                     }
                 }
                 Divider().padding(.horizontal, 8)
                 ImportMenuRow(icon: "doc", title: "From File") {
                     showMenu = false
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    Task { @MainActor in
+                        try? await Task.sleep(nanoseconds: 100_000_000)
                         onLocal()
                     }
                 }

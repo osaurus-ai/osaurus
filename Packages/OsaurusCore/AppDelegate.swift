@@ -854,13 +854,52 @@ extension AppDelegate {
     }
 }
 
+// MARK: - Popover Helper
+extension AppDelegate {
+    @MainActor private func closePopoverAndPerform(_ action: @escaping @MainActor () -> Void) {
+        if let pop = popover, pop.isShown {
+            pop.performClose(nil)
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 200_000_000)
+                action()
+            }
+        } else {
+            action()
+        }
+    }
+}
+
 // MARK: - Chat Overlay Window
 extension AppDelegate {
     @MainActor private func toggleChatOverlay() {
-        // Use ChatWindowManager for multi-window support
-        ChatWindowManager.shared.toggleLastFocused()
+        closePopoverAndPerform {
+            // Use ChatWindowManager for multi-window support
+            ChatWindowManager.shared.toggleLastFocused()
 
-        if ChatWindowManager.shared.hasVisibleWindows {
+            if ChatWindowManager.shared.hasVisibleWindows {
+                // start clipboard monitoring and do an immediate check
+                ClipboardService.shared.startMonitoring()
+                ClipboardService.shared.checkPasteboard()
+
+                // Pause VAD when chat window is shown (like when VAD detects a agent)
+                // This allows voice input to work without competing for the microphone
+                Task {
+                    await VADService.shared.pause()
+                }
+                NotificationCenter.default.post(name: .chatOverlayActivated, object: nil)
+            } else {
+                // stop clipboard monitoring when overlay is hidden to save battery
+                ClipboardService.shared.stopMonitoring()
+            }
+        }
+    }
+
+    /// Show a new chat window (creates new window via ChatWindowManager)
+    @MainActor func showChatOverlay() {
+        closePopoverAndPerform {
+            print("[AppDelegate] Creating new chat window via ChatWindowManager...")
+            ChatWindowManager.shared.createWindow()
+
             // start clipboard monitoring and do an immediate check
             ClipboardService.shared.startMonitoring()
             ClipboardService.shared.checkPasteboard()
@@ -870,39 +909,21 @@ extension AppDelegate {
             Task {
                 await VADService.shared.pause()
             }
+
+            print("[AppDelegate] Chat window shown, count: \(ChatWindowManager.shared.windowCount)")
             NotificationCenter.default.post(name: .chatOverlayActivated, object: nil)
-        } else {
-            // stop clipboard monitoring when overlay is hidden to save battery
-            ClipboardService.shared.stopMonitoring()
         }
-    }
-
-    /// Show a new chat window (creates new window via ChatWindowManager)
-    @MainActor func showChatOverlay() {
-        print("[AppDelegate] Creating new chat window via ChatWindowManager...")
-        ChatWindowManager.shared.createWindow()
-
-        // start clipboard monitoring and do an immediate check
-        ClipboardService.shared.startMonitoring()
-        ClipboardService.shared.checkPasteboard()
-
-        // Pause VAD when chat window is shown (like when VAD detects a agent)
-        // This allows voice input to work without competing for the microphone
-        Task {
-            await VADService.shared.pause()
-        }
-
-        print("[AppDelegate] Chat window shown, count: \(ChatWindowManager.shared.windowCount)")
-        NotificationCenter.default.post(name: .chatOverlayActivated, object: nil)
     }
 
     /// Show a new chat window for a specific agent (used by VAD)
     @MainActor func showChatOverlay(forAgentId agentId: UUID) {
-        print("[AppDelegate] Creating new chat window for agent \(agentId) via ChatWindowManager...")
-        ChatWindowManager.shared.createWindow(agentId: agentId)
+        closePopoverAndPerform {
+            print("[AppDelegate] Creating new chat window for agent \(agentId) via ChatWindowManager...")
+            ChatWindowManager.shared.createWindow(agentId: agentId)
 
-        print("[AppDelegate] Chat window shown for agent, count: \(ChatWindowManager.shared.windowCount)")
-        NotificationCenter.default.post(name: .chatOverlayActivated, object: nil)
+            print("[AppDelegate] Chat window shown for agent, count: \(ChatWindowManager.shared.windowCount)")
+            NotificationCenter.default.post(name: .chatOverlayActivated, object: nil)
+        }
     }
 
     /// Close the last focused chat overlay (legacy API for backward compatibility)
@@ -924,35 +945,37 @@ extension AppDelegate {
     private static var acknowledgementsWindow: NSWindow?
 
     @MainActor public func showAcknowledgements() {
-        // Reuse existing window if already open
-        if let existingWindow = Self.acknowledgementsWindow, existingWindow.isVisible {
-            existingWindow.makeKeyAndOrderFront(nil)
+        closePopoverAndPerform {
+            // Reuse existing window if already open
+            if let existingWindow = Self.acknowledgementsWindow, existingWindow.isVisible {
+                existingWindow.makeKeyAndOrderFront(nil)
+                NSApp.activate(ignoringOtherApps: true)
+                return
+            }
+
+            let themeManager = ThemeManager.shared
+            let contentView = AcknowledgementsView()
+                .environment(\.theme, themeManager.currentTheme)
+
+            let hostingController = NSHostingController(rootView: contentView)
+
+            let window = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 600, height: 500),
+                styleMask: [.titled, .closable, .resizable],
+                backing: .buffered,
+                defer: false
+            )
+            window.title = "Acknowledgements"
+            window.contentViewController = hostingController
+            window.center()
+            window.isReleasedWhenClosed = false
+            window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+
+            Self.acknowledgementsWindow = window
+
+            window.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
-            return
         }
-
-        let themeManager = ThemeManager.shared
-        let contentView = AcknowledgementsView()
-            .environment(\.theme, themeManager.currentTheme)
-
-        let hostingController = NSHostingController(rootView: contentView)
-
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 600, height: 500),
-            styleMask: [.titled, .closable, .resizable],
-            backing: .buffered,
-            defer: false
-        )
-        window.title = "Acknowledgements"
-        window.contentViewController = hostingController
-        window.center()
-        window.isReleasedWhenClosed = false
-        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-
-        Self.acknowledgementsWindow = window
-
-        window.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
     }
 }
 
@@ -961,72 +984,75 @@ extension AppDelegate {
     private static var onboardingWindow: NSWindow?
 
     @MainActor public func showOnboardingWindow(forceShowIdentity: Bool = false) {
-        // Reuse existing window if already open (unless forcing full flow)
-        if !forceShowIdentity, let existingWindow = Self.onboardingWindow, existingWindow.isVisible {
-            existingWindow.makeKeyAndOrderFront(nil)
+        closePopoverAndPerform { [weak self] in
+            guard let self = self else { return }
+            // Reuse existing window if already open (unless forcing full flow)
+            if !forceShowIdentity, let existingWindow = Self.onboardingWindow, existingWindow.isVisible {
+                existingWindow.makeKeyAndOrderFront(nil)
+                NSApp.activate(ignoringOtherApps: true)
+                return
+            }
+
+            // Close existing window when forcing a fresh flow
+            if forceShowIdentity {
+                Self.onboardingWindow?.close()
+                Self.onboardingWindow = nil
+            }
+
+            let themeManager = ThemeManager.shared
+            let contentView = OnboardingView(forceShowIdentity: forceShowIdentity) { [weak self] in
+                // Close the onboarding window when complete
+                Self.onboardingWindow?.close()
+                Self.onboardingWindow = nil
+                // Invalidate model cache so fresh models are discovered
+                // This ensures any models downloaded during onboarding are visible
+                ModelPickerItemCache.shared.invalidateCache()
+                // Open ChatView after onboarding completes
+                self?.showChatOverlay()
+            }
+            .environment(\.theme, themeManager.currentTheme)
+
+            // Use NSHostingView directly in an NSView container to avoid auto-sizing issues
+            let windowWidth: CGFloat = OnboardingLayout.windowWidth
+            let windowHeight: CGFloat = OnboardingLayout.windowHeight
+
+            let hostingView = NSHostingView(rootView: contentView)
+            hostingView.translatesAutoresizingMaskIntoConstraints = false
+
+            let containerView = NSView(frame: NSRect(x: 0, y: 0, width: windowWidth, height: windowHeight))
+            containerView.addSubview(hostingView)
+
+            NSLayoutConstraint.activate([
+                hostingView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
+                hostingView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
+                hostingView.topAnchor.constraint(equalTo: containerView.topAnchor),
+                hostingView.bottomAnchor.constraint(equalTo: containerView.bottomAnchor),
+            ])
+
+            let window = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: windowWidth, height: windowHeight),
+                styleMask: [.titled, .closable, .fullSizeContentView],
+                backing: .buffered,
+                defer: false
+            )
+            window.title = ""
+            window.contentView = containerView
+            window.center()
+            window.isReleasedWhenClosed = false
+            window.titlebarAppearsTransparent = true
+            window.titleVisibility = .hidden
+            window.standardWindowButton(.closeButton)?.isHidden = true
+            window.standardWindowButton(.miniaturizeButton)?.isHidden = true
+            window.standardWindowButton(.zoomButton)?.isHidden = true
+            window.backgroundColor = NSColor(themeManager.currentTheme.primaryBackground)
+            window.isMovableByWindowBackground = true
+            window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+
+            Self.onboardingWindow = window
+
+            window.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
-            return
         }
-
-        // Close existing window when forcing a fresh flow
-        if forceShowIdentity {
-            Self.onboardingWindow?.close()
-            Self.onboardingWindow = nil
-        }
-
-        let themeManager = ThemeManager.shared
-        let contentView = OnboardingView(forceShowIdentity: forceShowIdentity) { [weak self] in
-            // Close the onboarding window when complete
-            Self.onboardingWindow?.close()
-            Self.onboardingWindow = nil
-            // Invalidate model cache so fresh models are discovered
-            // This ensures any models downloaded during onboarding are visible
-            ModelPickerItemCache.shared.invalidateCache()
-            // Open ChatView after onboarding completes
-            self?.showChatOverlay()
-        }
-        .environment(\.theme, themeManager.currentTheme)
-
-        // Use NSHostingView directly in an NSView container to avoid auto-sizing issues
-        let windowWidth: CGFloat = OnboardingLayout.windowWidth
-        let windowHeight: CGFloat = OnboardingLayout.windowHeight
-
-        let hostingView = NSHostingView(rootView: contentView)
-        hostingView.translatesAutoresizingMaskIntoConstraints = false
-
-        let containerView = NSView(frame: NSRect(x: 0, y: 0, width: windowWidth, height: windowHeight))
-        containerView.addSubview(hostingView)
-
-        NSLayoutConstraint.activate([
-            hostingView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
-            hostingView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
-            hostingView.topAnchor.constraint(equalTo: containerView.topAnchor),
-            hostingView.bottomAnchor.constraint(equalTo: containerView.bottomAnchor),
-        ])
-
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: windowWidth, height: windowHeight),
-            styleMask: [.titled, .closable, .fullSizeContentView],
-            backing: .buffered,
-            defer: false
-        )
-        window.title = ""
-        window.contentView = containerView
-        window.center()
-        window.isReleasedWhenClosed = false
-        window.titlebarAppearsTransparent = true
-        window.titleVisibility = .hidden
-        window.standardWindowButton(.closeButton)?.isHidden = true
-        window.standardWindowButton(.miniaturizeButton)?.isHidden = true
-        window.standardWindowButton(.zoomButton)?.isHidden = true
-        window.backgroundColor = NSColor(themeManager.currentTheme.primaryBackground)
-        window.isMovableByWindowBackground = true
-        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-
-        Self.onboardingWindow = window
-
-        window.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
     }
 }
 
@@ -1037,11 +1063,9 @@ extension AppDelegate {
         deeplinkModelId: String? = nil,
         deeplinkFile: String? = nil
     ) {
-        let windowManager = WindowManager.shared
-
-        let presentWindow: () -> Void = { [weak self] in
+        closePopoverAndPerform { [weak self] in
             guard let self = self else { return }
-
+            let windowManager = WindowManager.shared
             let themeManager = ThemeManager.shared
             let root = ManagementView(
                 initialTab: initialTab,
@@ -1070,16 +1094,6 @@ extension AppDelegate {
             // instead of being manually centered by the WindowManager on every show.
             windowManager.show(.management, center: false)
             NSLog("[Management] Created new window and presented")
-        }
-
-        if let pop = popover, pop.isShown {
-            pop.performClose(nil)
-            Task { @MainActor in
-                try? await Task.sleep(nanoseconds: 200_000_000)
-                presentWindow()
-            }
-        } else {
-            presentWindow()
         }
     }
 }
