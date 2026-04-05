@@ -75,7 +75,9 @@ public actor WorkExecutionEngine {
                 return nil
             }
 
-            let first = await group.next()!
+            guard let first = await group.next() else {
+                return "[TIMEOUT] Tool '\(toolName)' did not complete within \(timeout) seconds."
+            }
             group.cancelAll()
 
             if let result = first {

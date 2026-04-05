@@ -1202,7 +1202,9 @@ public actor RemoteProviderService: ToolCapableService {
                 try await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
                 return nil
             }
-            let first = try await group.next()!
+            guard let first = try await group.next() else {
+                return nil
+            }
             group.cancelAll()
             return first
         }

@@ -792,7 +792,9 @@ final class PluginHostContext: @unchecked Sendable {
                 try? await Task.sleep(nanoseconds: toolExecutionTimeout * 1_000_000_000)
                 return nil
             }
-            let first = await group.next()!
+            guard let first = await group.next() else {
+                return "[TIMEOUT] Tool '\(name)' did not complete within \(toolExecutionTimeout)s."
+            }
             group.cancelAll()
             return first ?? "[TIMEOUT] Tool '\(name)' did not complete within \(toolExecutionTimeout)s."
         }

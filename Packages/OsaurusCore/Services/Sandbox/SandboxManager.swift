@@ -760,7 +760,9 @@
                     return nil
                 }
 
-                let first = try await group.next()!
+                guard let first = try await group.next() else {
+                    throw SandboxError.timeout
+                }
                 group.cancelAll()
 
                 if let status = first {
