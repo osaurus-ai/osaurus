@@ -417,12 +417,16 @@ private struct ImportDropdownButton: View {
             VStack(alignment: .leading, spacing: 0) {
                 ImportMenuRow(icon: "link", title: "From GitHub") {
                     showMenu = false
-                    onGitHub()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        onGitHub()
+                    }
                 }
                 Divider().padding(.horizontal, 8)
                 ImportMenuRow(icon: "doc", title: "From File") {
                     showMenu = false
-                    onLocal()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        onLocal()
+                    }
                 }
             }
             .padding(.vertical, 6)

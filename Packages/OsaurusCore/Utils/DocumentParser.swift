@@ -206,15 +206,17 @@ enum DocumentParser {
 
             guard intWidth > 0, intHeight > 0, intWidth <= maxPixelsPerPage / intHeight else { continue }
 
-            guard let context = CGContext(
-                data: nil,
-                width: intWidth,
-                height: intHeight,
-                bitsPerComponent: 8,
-                bytesPerRow: 0,
-                space: colorSpace,
-                bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue
-            ) else { continue }
+            guard
+                let context = CGContext(
+                    data: nil,
+                    width: intWidth,
+                    height: intHeight,
+                    bitsPerComponent: 8,
+                    bytesPerRow: 0,
+                    space: colorSpace,
+                    bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue
+                )
+            else { continue }
 
             // White background
             context.setFillColor(CGColor.white)
