@@ -212,7 +212,7 @@ struct ModelPickerView: View {
             Button(action: {
                 onDismiss()
                 Task { @MainActor in
-                    try? await Task.sleep(nanoseconds: 100_000_000)
+                    try? await Task.sleepForPopoverDismiss()
                     AppDelegate.shared?.showManagementWindow(initialTab: .models)
                 }
             }) {

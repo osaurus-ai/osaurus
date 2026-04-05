@@ -418,7 +418,7 @@ private struct ImportDropdownButton: View {
                 ImportMenuRow(icon: "link", title: "From GitHub") {
                     showMenu = false
                     Task { @MainActor in
-                        try? await Task.sleep(nanoseconds: 100_000_000)
+                        try? await Task.sleepForPopoverDismiss()
                         onGitHub()
                     }
                 }
@@ -426,7 +426,7 @@ private struct ImportDropdownButton: View {
                 ImportMenuRow(icon: "doc", title: "From File") {
                     showMenu = false
                     Task { @MainActor in
-                        try? await Task.sleep(nanoseconds: 100_000_000)
+                        try? await Task.sleepForPopoverDismiss()
                         onLocal()
                     }
                 }

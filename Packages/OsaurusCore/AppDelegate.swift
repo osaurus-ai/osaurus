@@ -21,6 +21,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
 
     private var activityDot: NSView?
     private var vadDot: NSView?
+    private var pendingPopoverAction: (@MainActor () -> Void)?
 
     public func applicationDidFinishLaunching(_ notification: Notification) {
         AppDelegate.shared = self
@@ -702,6 +703,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         print("[AppDelegate] Popover closed, posting chatViewClosed notification")
         // Post notification so VAD can resume
         NotificationCenter.default.post(name: .chatViewClosed, object: nil)
+        
+        if let action = pendingPopoverAction {
+            pendingPopoverAction = nil
+            Task { @MainActor in
+                action()
+            }
+        }
     }
 
 }
@@ -858,11 +866,8 @@ extension AppDelegate {
 extension AppDelegate {
     @MainActor private func closePopoverAndPerform(_ action: @escaping @MainActor () -> Void) {
         if let pop = popover, pop.isShown {
+            self.pendingPopoverAction = action
             pop.performClose(nil)
-            Task { @MainActor in
-                try? await Task.sleep(nanoseconds: 200_000_000)
-                action()
-            }
         } else {
             action()
         }
