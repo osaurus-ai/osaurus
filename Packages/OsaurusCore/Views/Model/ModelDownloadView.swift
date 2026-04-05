@@ -707,7 +707,7 @@ private struct SystemStatusBar: View {
 
             ResourceGauge(
                 label: "Storage",
-                icon: "internaldrive",
+                icon: DirectoryPickerService.shared.hasValidDirectory ? "externaldrive" : "internaldrive",
                 usedFraction: totalStorageGB > 0
                     ? (totalStorageGB - availableStorageGB) / totalStorageGB : 0,
                 detail: String(

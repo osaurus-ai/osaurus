@@ -25,6 +25,7 @@ class SystemMonitorService: ObservableObject {
     @Published var availableStorageGB: Double = 0.0
     @Published var totalStorageGB: Double = 0.0
 
+    private var storagePath: String = NSHomeDirectory()
     private var timer: Timer?
     private var previousCPUInfo: host_cpu_load_info?
 
@@ -64,6 +65,12 @@ class SystemMonitorService: ObservableObject {
         let storageInfo = getStorageUsage()
         availableStorageGB = storageInfo.availableGB
         totalStorageGB = storageInfo.totalGB
+    }
+
+    /// Update the path used for storage monitoring (when user selects a custom models directory)
+    func updateStoragePath(_ path: String) {
+        storagePath = path
+        updateResourceUsage()
     }
 
     private func getCPUUsage() -> Double {
@@ -179,7 +186,7 @@ class SystemMonitorService: ObservableObject {
     private func getStorageUsage() -> (availableGB: Double, totalGB: Double) {
         let gb = 1024.0 * 1024.0 * 1024.0
         do {
-            let attrs = try FileManager.default.attributesOfFileSystem(forPath: NSHomeDirectory())
+            let attrs = try FileManager.default.attributesOfFileSystem(forPath: storagePath)
             let total = (attrs[.systemSize] as? NSNumber)?.doubleValue ?? 0
             let free = (attrs[.systemFreeSize] as? NSNumber)?.doubleValue ?? 0
             return (free / gb, total / gb)

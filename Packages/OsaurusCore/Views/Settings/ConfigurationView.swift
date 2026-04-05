@@ -16,6 +16,7 @@ struct ConfigurationView: View {
     @State private var cliInstallSuccess: Bool = false
     @State private var hasAppeared = false
     @State private var successMessage: String?
+    @State private var isResetting = false
 
     // Chat settings state
     @State private var tempChatHotkey: Hotkey? = nil
@@ -98,7 +99,11 @@ struct ConfigurationView: View {
                             "CLI",
                             "Command Line",
                             "Install",
-                            "Symlink"
+                            "Symlink",
+                            "Maintenance",
+                            "Reset",
+                            "Factory Reset",
+                            "Wipe"
                         ) {
                             SettingsSection(title: "General", icon: "gear") {
                                 VStack(alignment: .leading, spacing: 20) {
@@ -189,6 +194,28 @@ struct ConfigurationView: View {
                                     // Storage
                                     SettingsSubsection(label: "Storage") {
                                         DirectoryPickerView()
+                                    }
+
+                                    SettingsDivider()
+
+                                    // Maintenance
+                                    SettingsSubsection(label: "Maintenance") {
+                                        VStack(alignment: .leading, spacing: 12) {
+                                            Text(
+                                                "Troubleshoot or reset the application. A factory reset permanently deletes all data and settings."
+                                            )
+                                            .font(.system(size: 12))
+                                            .foregroundColor(theme.tertiaryText)
+
+                                            Button(role: .destructive, action: { showFactoryResetConfirmation() }) {
+                                                HStack(spacing: 6) {
+                                                    Image(systemName: "trash")
+                                                        .font(.system(size: 12))
+                                                    Text("Factory Reset…")
+                                                }
+                                            }
+                                            .buttonStyle(SettingsButtonStyle(isDestructive: true))
+                                        }
                                     }
                                 }
                             }
@@ -600,6 +627,44 @@ struct ConfigurationView: View {
                         .padding(.bottom, 20)
                 }
             }
+
+            // Factory reset loading overlay
+            if isResetting {
+                ZStack {
+                    Rectangle()
+                        .fill(.regularMaterial)
+                        .ignoresSafeArea()
+
+                    VStack(spacing: 24) {
+                        ProgressView()
+                            .scaleEffect(1.5)
+                            .tint(theme.accentColor)
+
+                        VStack(spacing: 8) {
+                            Text("Resetting Osaurus")
+                                .font(.system(size: 18, weight: .bold))
+                                .foregroundColor(theme.primaryText)
+
+                            Text("Deleting data and preferences. Please wait…")
+                                .font(.system(size: 14))
+                                .foregroundColor(theme.secondaryText)
+                        }
+                    }
+                    .padding(40)
+                    .background(
+                        RoundedRectangle(cornerRadius: 24)
+                            .fill(theme.cardBackground)
+                            .shadow(color: Color.black.opacity(0.2), radius: 20, x: 0, y: 10)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 24)
+                            .stroke(theme.cardBorder, lineWidth: 1)
+                    )
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .transition(.opacity.combined(with: .scale(scale: 0.95)))
+                .zIndex(100)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(theme.primaryBackground)
@@ -635,10 +700,10 @@ struct ConfigurationView: View {
             title: "Settings",
             subtitle: "Configure your Osaurus settings"
         ) {
-            HeaderSecondaryButton("Reset", icon: "arrow.counterclockwise") {
+            HeaderSecondaryButton("Restore View Defaults", icon: "arrow.counterclockwise") {
                 resetToDefaults()
             }
-            .help("Reset all settings to recommended defaults")
+            .help("Restore view-only settings to recommended defaults (does not affect saved configuration)")
             HeaderPrimaryButton("Save Changes", icon: "checkmark") {
                 saveConfiguration()
             }
@@ -741,7 +806,31 @@ struct ConfigurationView: View {
         tempPrefillStep = ""
         tempEvictionPolicy = serverDefaults.modelEvictionPolicy
 
-        showSuccess("Settings reset to defaults")
+        showSuccess("Settings restored to defaults")
+    }
+
+    // MARK: - Factory Reset
+
+    private func showFactoryResetConfirmation() {
+        let alert = NSAlert()
+        alert.messageText = "Factory Reset Osaurus?"
+        alert.informativeText =
+            "This will permanently delete all your data, including chat history, agents, memory, and your identity keys. This action cannot be undone and the application will close."
+        alert.alertStyle = .critical
+        alert.addButton(withTitle: "Factory Reset")
+        alert.addButton(withTitle: "Cancel")
+
+        let response = alert.runModal()
+        if response == .alertFirstButtonReturn {
+            Task { @MainActor in
+                withAnimation(.easeIn(duration: 0.3)) {
+                    isResetting = true
+                }
+                // Yield to allow UI to update before heavy deletion starts
+                try? await Task.sleep(nanoseconds: 100_000_000)
+                await OnboardingService.shared.performFactoryReset()
+            }
+        }
     }
 
     // MARK: - Configuration Saving
@@ -1717,15 +1806,21 @@ private struct SettingsDivider: View {
 private struct SettingsButtonStyle: ButtonStyle {
     @ObservedObject private var themeManager = ThemeManager.shared
     let isPrimary: Bool
+    let isDestructive: Bool
 
-    init(isPrimary: Bool = false) {
+    init(isPrimary: Bool = false, isDestructive: Bool = false) {
         self.isPrimary = isPrimary
+        self.isDestructive = isDestructive
     }
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: 13, weight: .medium))
-            .foregroundColor(isPrimary ? .white : themeManager.currentTheme.primaryText)
+            .foregroundColor(
+                isDestructive
+                    ? .red
+                    : (isPrimary ? .white : themeManager.currentTheme.primaryText)
+            )
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
             .background(

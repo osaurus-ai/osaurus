@@ -86,6 +86,7 @@ final class DirectoryPickerService: ObservableObject {
 
     private init() {
         loadSavedDirectory()
+        SystemMonitorService.shared.updateStoragePath(Self.effectiveModelsDirectory().path)
     }
 
     /// Load previously saved directory from security-scoped bookmark
@@ -273,6 +274,7 @@ final class DirectoryPickerService: ObservableObject {
     /// Notify the rest of the app that the models directory changed so local models are rescanned.
     private func notifyModelsDirectoryChanged() {
         ModelManager.invalidateLocalModelsCache()
+        SystemMonitorService.shared.updateStoragePath(Self.effectiveModelsDirectory().path)
         NotificationCenter.default.post(name: .localModelsChanged, object: nil)
     }
 
