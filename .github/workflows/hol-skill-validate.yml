@@ -1,0 +1,28 @@
+name: HOL Skill Validate
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Validate Skill
+        uses: hashgraph-online/skill-publish@96e6eb1e52ba479d15067aef9dde83ca94afb06a
+        with:
+          mode: validate
