@@ -15,6 +15,6 @@ extension Task where Success == Never, Failure == Never {
     /// If this becomes flaky on newer OS versions, consider increasing the delay or finding a non-timing-based workaround.
     @MainActor
     static func sleepForPopoverDismiss() async throws {
-        try await Task.sleep(nanoseconds: 100_000_000)
+        try await Task.sleep(nanoseconds: 300_000_000)
     }
 }

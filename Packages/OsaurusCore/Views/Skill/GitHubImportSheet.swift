@@ -523,7 +523,7 @@ struct GitHubImportSheet: View {
         activeTask?.cancel()
         importState = .loading
 
-        activeTask = Task {
+        activeTask = Task { @MainActor in
             do {
                 let result = try await gitHubService.fetchSkills(from: url)
                 guard !Task.isCancelled else { return }
@@ -548,7 +548,7 @@ struct GitHubImportSheet: View {
         activeTask?.cancel()
         importState = .importing(progress: 0, total: selectedPaths.count)
 
-        activeTask = Task {
+        activeTask = Task { @MainActor in
             var importedSkills: [Skill] = []
 
             for (index, path) in selectedPaths.enumerated() {
