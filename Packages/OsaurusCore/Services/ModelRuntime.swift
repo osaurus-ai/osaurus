@@ -470,12 +470,6 @@ actor ModelRuntime {
 
         genLog.info("generateEventStream: start model=\(modelName, privacy: .public)")
 
-        await MetalGate.shared.enterGeneration()
-        if Task.isCancelled {
-            await MetalGate.shared.exitGeneration()
-            throw CancellationError()
-        }
-
         let effectiveStopSequences = stopSequences
         let cfg = await getConfig()
         let holder = try await loadContainer(id: modelId, name: modelName)
@@ -528,6 +522,14 @@ actor ModelRuntime {
         genLog.info(
             "generateEventStream: prepareAndGenerate existingCache=\(existingCache != nil, privacy: .public) cachedTokens=\(cachedTokens?.count ?? 0, privacy: .public)"
         )
+
+        // Acquire exclusive Metal access after all throwing setup is complete.
+        // This ensures the gate is never left locked by a loadContainer failure.
+        await MetalGate.shared.enterGeneration()
+        if Task.isCancelled {
+            await MetalGate.shared.exitGeneration()
+            throw CancellationError()
+        }
 
         // Signal that a prefill is starting (count unknown until prepareAndGenerate returns).
         // The UI shows a spinner; once the first generated token arrives prefillDidFinish() clears it.
