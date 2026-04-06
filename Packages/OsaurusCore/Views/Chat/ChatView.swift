@@ -113,6 +113,17 @@ final class ChatSession: ObservableObject {
                     self.activeModelOptions = ModelProfileRegistry.defaults(for: model)
                 }
 
+                // Clear pending image attachments when switching to a non-VLM model
+                let newModelSupportsImages: Bool = {
+                    if model.lowercased() == "foundation" { return false }
+                    guard let option = self.pickerItems.first(where: { $0.id == model }) else { return false }
+                    if case .remote = option.source { return true }
+                    return option.isVLM
+                }()
+                if !newModelSupportsImages {
+                    self.pendingAttachments = []
+                }
+
                 Task { @MainActor in
                     let active = ChatWindowManager.shared.activeLocalModelNames()
                     await ModelRuntime.shared.unloadModelsNotIn(active)
@@ -946,7 +957,7 @@ final class ChatSession: ObservableObject {
                         )
                     case .user:
                         let messageText = Self.buildUserMessageText(content: t.content, attachments: t.attachments)
-                        let imageData = t.attachments.images
+                        let imageData = selectedModelSupportsImages ? t.attachments.images : []
                         if !imageData.isEmpty {
                             return ChatMessage(role: "user", text: messageText, imageData: imageData)
                         } else {

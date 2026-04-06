@@ -8,7 +8,6 @@
 import Combine
 import Foundation
 import MLXLLM
-import MLXVLM
 import SwiftUI
 
 extension Notification.Name {
@@ -1313,8 +1312,7 @@ extension ModelManager {
     ///
     /// Reads config.json from the local model directory and checks:
     /// 1. Structural keys (vision_config, image_processor, etc.)
-    /// 2. model_type against `VLMTypeRegistry.supportedModelTypes` from mlx-swift-lm
-    /// 3. preprocessor_config.json as a final fallback
+    /// 2. preprocessor_config.json as a final fallback
     nonisolated static func isVisionModel(modelId: String) -> Bool {
         guard let localDir = findLocalModelDirectory(forModelId: modelId) else {
             return false
@@ -1332,8 +1330,9 @@ extension ModelManager {
         }
 
         // Structural keys that indicate vision capability in config.json.
-        // Checked first to disambiguate dual-registered model types (e.g. gemma4
-        // appears in both VLM and LLM registries; vision_config distinguishes them).
+        // This is the primary signal — it correctly disambiguates dual-registered
+        // model types (e.g. gemma4 appears in both VLM and LLM registries, but only
+        // the VLM variant has vision_config).
         let visionKeys: Set<String> = [
             "vision_config",
             "image_processor",
@@ -1346,13 +1345,6 @@ extension ModelManager {
         ]
 
         if json.keys.contains(where: { visionKeys.contains($0) }) {
-            return true
-        }
-
-        // model_type check against the library's canonical VLM type registry.
-        if let modelType = json["model_type"] as? String,
-            VLMTypeRegistry.supportedModelTypes.contains(modelType)
-        {
             return true
         }
 
@@ -1391,13 +1383,6 @@ extension ModelManager {
         return nil
     }
 
-    /// Check if the currently selected model (by name) supports vision
-    nonisolated static func isVisionModel(named name: String) -> Bool {
-        guard let found = findInstalledModel(named: name) else {
-            return false
-        }
-        return isVisionModel(modelId: found.id)
-    }
 }
 
 // MARK: - Direct file downloader with session-level delegate

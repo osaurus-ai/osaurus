@@ -106,7 +106,9 @@ extension ModelPickerItem {
         )
     }
 
-    /// Create a local MLX model picker item from an MLXModel
+    /// Create a local MLX model picker item from an MLXModel.
+    /// Uses config.json-based detection for downloaded models; falls back to name
+    /// heuristics for models not yet on disk.
     static func fromMLXModel(_ model: MLXModel) -> ModelPickerItem {
         ModelPickerItem(
             id: model.id,
@@ -114,7 +116,7 @@ extension ModelPickerItem {
             source: .local,
             parameterCount: model.parameterCount,
             quantization: model.quantization,
-            isVLM: model.isLikelyVLM,
+            isVLM: ModelManager.isVisionModel(modelId: model.id) || model.isLikelyVLM,
             description: model.description
         )
     }
