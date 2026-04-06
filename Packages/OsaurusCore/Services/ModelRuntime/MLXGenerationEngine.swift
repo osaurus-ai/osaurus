@@ -16,14 +16,20 @@ import os.log
 private let engineLog = Logger(subsystem: "ai.osaurus", category: "Generation")
 private let engineSignposter = OSSignposter(subsystem: "ai.osaurus", category: "Generation")
 
-/// Returns the offset of the first KV cache layer that actually tracks position (i.e., not a
-/// MambaCache / ArraysCache layer whose `offset` is always 0). Hybrid models like Qwen3.5-27B
-/// interleave linear-attention (MambaCache) and full-attention (KVCacheSimple) layers; reading
-/// `cache.first?.offset` on those models always returns 0 even after a full prefill.
+/// Returns the effective offset of the first KV cache layer that actually tracks position
+/// (i.e., not a MambaCache / ArraysCache layer whose `offset` is always 0).
+///
+/// For RotatingKVCache layers that have wrapped past their sliding window, the raw `offset`
+/// reflects total tokens processed — not the number of tokens actually stored. We cap at
+/// `maxSize` so callers can safely use this value to index into token arrays.
 func effectiveCacheOffset(_ cache: [any KVCache]) -> Int {
     for layer in cache {
         // MambaCache (and its parent ArraysCache) never updates offset — skip them.
         if layer is ArraysCache { continue }
+        // Cap at maxSize for rotating caches that have wrapped past their window.
+        if let maxSize = layer.maxSize {
+            return min(layer.offset, maxSize)
+        }
         return layer.offset
     }
     // All layers are Mamba-style; fall back to first layer (offset will be 0 but that's correct).
