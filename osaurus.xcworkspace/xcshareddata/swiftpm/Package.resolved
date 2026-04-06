@@ -1,5 +1,5 @@
 {
-  "originHash" : "6d825c4d68c47e18f5d4607729be796d583f1ad7ace433a900815fdb0bf43c67",
+  "originHash" : "266302a3077981ebda9e27554191dd46a1a2291944bf6ed186eb954f4c12489a",
   "pins" : [
     {
       "identity" : "async-http-client",
@@ -70,7 +70,7 @@
       "location" : "https://github.com/osaurus-ai/mlx-swift-lm",
       "state" : {
         "branch" : "main",
-        "revision" : "5a44ba1ff11a8399e067541c42cb09625a738ed1"
+        "revision" : "e92a722800883f701ec962b134b6eaaf2b3c1ad4"
       }
     },
     {

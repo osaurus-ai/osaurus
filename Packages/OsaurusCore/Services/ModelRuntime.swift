@@ -254,7 +254,7 @@ actor ModelRuntime {
         // O(1) buffer accesses instead of O(n) graph replays.
         let arraysToEval = cache.flatMap { $0.state }
         if !arraysToEval.isEmpty {
-            eval(arraysToEval)
+            try? withError { eval(arraysToEval) }
         }
 
         kvCacheStore.putCache(sessionId: sessionId, cache: cache, tokens: promptTokens, modelName: modelName)
@@ -417,7 +417,7 @@ actor ModelRuntime {
             }
 
             let prefixArrays = cache.flatMap { $0.state }
-            if !prefixArrays.isEmpty { eval(prefixArrays) }
+            if !prefixArrays.isEmpty { try? withError { eval(prefixArrays) } }
 
             kvCacheStore.putPrefixCache(cache, tokens: newTokens, modelName: modelName, hash: hash)
             print("[ModelRuntime] Prefix cached for \(modelName) (hash: \(hash.prefix(8)))")
@@ -592,7 +592,7 @@ actor ModelRuntime {
                 snapTokensToStore = newTokens
             }
             let arraysToEval = snapCacheToStore.flatMap { $0.state }
-            if !arraysToEval.isEmpty { eval(arraysToEval) }
+            if !arraysToEval.isEmpty { try? withError { eval(arraysToEval) } }
             kvCacheStore.putCache(
                 sessionId: sid,
                 cache: snapCacheToStore,

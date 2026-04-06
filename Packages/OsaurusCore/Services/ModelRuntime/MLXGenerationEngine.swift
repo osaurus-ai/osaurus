@@ -358,9 +358,11 @@ struct MLXGenerationEngine {
                             isFirstChunk = false
                         } else {
                             let chunkText = LMInput.Text(tokens: MLXArray(chunk)[.newAxis])
-                            _ = contextWithEOS.model(chunkText, cache: cache.isEmpty ? nil : cache, state: nil)
+                            _ = try withError {
+                                contextWithEOS.model(chunkText, cache: cache.isEmpty ? nil : cache, state: nil)
+                            }
                         }
-                        eval(cache)
+                        try withError { eval(cache) }
                         remaining = remaining.dropFirst(prefillStep)
                     }
 
@@ -373,9 +375,11 @@ struct MLXGenerationEngine {
                             _ = try contextWithEOS.model.prepare(lastLMInput, cache: cache, windowSize: nil)
                         } else {
                             let lastText = LMInput.Text(tokens: MLXArray(lastChunk)[.newAxis])
-                            _ = contextWithEOS.model(lastText, cache: cache.isEmpty ? nil : cache, state: nil)
+                            _ = try withError {
+                                contextWithEOS.model(lastText, cache: cache.isEmpty ? nil : cache, state: nil)
+                            }
                         }
-                        eval(cache)
+                        try withError { eval(cache) }
                     }
                 }
 
@@ -389,22 +393,27 @@ struct MLXGenerationEngine {
                 // ── Phase 2: feed gen-prefix tokens, sample y0 ────────────────────────
                 let genPrefixTokens = Array(newPromptTokens[stableTokenCount...])
                 let genPrefixText = LMInput.Text(tokens: MLXArray(genPrefixTokens)[.newAxis])
-                let genPrefixOutput = contextWithEOS.model(
-                    genPrefixText,
-                    cache: cache.isEmpty ? nil : cache,
-                    state: nil
-                )
-                eval(cache)
+                let genPrefixOutput = try withError {
+                    let output = contextWithEOS.model(
+                        genPrefixText,
+                        cache: cache.isEmpty ? nil : cache,
+                        state: nil
+                    )
+                    eval(cache)
+                    return output
+                }
 
                 // Sample y0 from the logits of the last gen-prefix token.
                 let sampler = parameters.sampler()
                 var processor = parameters.processor()
-                processor?.prompt(MLXArray(newPromptTokens))
-                var genLogits = genPrefixOutput.logits[0, -1, 0...]
-                genLogits = processor?.process(logits: genLogits) ?? genLogits
-                let y0Array = sampler.sample(logits: genLogits)
-                processor?.didSample(token: y0Array)
-                let y0 = y0Array.item(Int.self)
+                let y0 = try withError {
+                    processor?.prompt(MLXArray(newPromptTokens))
+                    var genLogits = genPrefixOutput.logits[0..., -1, 0...]
+                    genLogits = processor?.process(logits: genLogits) ?? genLogits
+                    let y0Array = sampler.sample(logits: genLogits)
+                    processor?.didSample(token: y0Array)
+                    return y0Array.item(Int.self)
+                }
                 debugLog("[MLXGenerationEngine] twoPhase phase2: y0=\(y0) cacheOffset=\(effectiveCacheOffset(cache))")
 
                 let postPrefillOffset = effectiveCacheOffset(cache)
@@ -502,14 +511,25 @@ struct MLXGenerationEngine {
                             }
 
                             let inputArr = MLXArray([currentToken])[.newAxis]
-                            let logits = genCtx.model(inputArr, cache: genCtx.cache.isEmpty ? nil : genCtx.cache)
-                            eval(genCtx.cache)
+                            let nextToken: Int
+                            do {
+                                nextToken = try withError {
+                                    let logits = genCtx.model(
+                                        inputArr,
+                                        cache: genCtx.cache.isEmpty ? nil : genCtx.cache
+                                    )
+                                    eval(genCtx.cache)
 
-                            var nextLogits = logits[0, -1, 0...]
-                            nextLogits = genCtx.processor?.process(logits: nextLogits) ?? nextLogits
-                            let nextArr = genCtx.sampler.sample(logits: nextLogits)
-                            genCtx.processor?.didSample(token: nextArr)
-                            let nextToken = nextArr.item(Int.self)
+                                    var nextLogits = logits[0..., -1, 0...]
+                                    nextLogits = genCtx.processor?.process(logits: nextLogits) ?? nextLogits
+                                    let nextArr = genCtx.sampler.sample(logits: nextLogits)
+                                    genCtx.processor?.didSample(token: nextArr)
+                                    return nextArr.item(Int.self)
+                                }
+                            } catch {
+                                stopReason = .cancelled
+                                break
+                            }
 
                             let isStop =
                                 nextToken == genCtx.tokenizer.unknownTokenId
