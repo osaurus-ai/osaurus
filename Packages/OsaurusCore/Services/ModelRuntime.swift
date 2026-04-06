@@ -395,7 +395,8 @@ actor ModelRuntime {
                 generation: params,
                 runtime: runtimeConfig,
                 existingCache: nil,
-                cachedTokens: nil
+                cachedTokens: nil,
+                wiredMemoryTicket: nil
             )
             let (stream, cache, newTokens, genTask) = (
                 prefixResult.stream, prefixResult.cache, prefixResult.promptTokens, prefixResult.genTask
@@ -467,6 +468,12 @@ actor ModelRuntime {
         let cfg = await getConfig()
         let holder = try await loadContainer(id: modelId, name: modelName)
 
+        let wiredPolicy = MLXLMCommon.WiredSumPolicy()
+        let wiredTicket = wiredPolicy.ticket(
+            size: Int(holder.weightsSizeBytes),
+            kind: .active
+        )
+
         let sessionId = parameters.sessionId
         let chatMessages = chatBuilder()
         let systemContent = chatMessages.first(where: { $0.role == .system })?.content ?? ""
@@ -522,7 +529,8 @@ actor ModelRuntime {
                 generation: parameters,
                 runtime: cfg,
                 existingCache: existingCache,
-                cachedTokens: cachedTokens
+                cachedTokens: cachedTokens,
+                wiredMemoryTicket: wiredTicket
             )
             (rawStream, tokenizer, cache, newTokens, genTask, toolCallFormat) = (
                 genResult.stream, genResult.tokenizer, genResult.cache,
@@ -552,7 +560,8 @@ actor ModelRuntime {
                     generation: parameters,
                     runtime: cfg,
                     existingCache: nil,
-                    cachedTokens: nil
+                    cachedTokens: nil,
+                    wiredMemoryTicket: wiredTicket
                 )
                 (rawStream, tokenizer, cache, newTokens, genTask, toolCallFormat) = (
                     retryResult.stream, retryResult.tokenizer, retryResult.cache,

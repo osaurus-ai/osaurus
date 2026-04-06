@@ -5,11 +5,11 @@
 //  Encapsulates MLX message preparation and generation stream construction.
 //
 
+import CoreImage
 import Foundation
 import MLX
 import MLXLLM
 @preconcurrency import MLXLMCommon
-import CoreImage
 import MLXVLM
 import os.log
 
@@ -76,7 +76,8 @@ struct MLXGenerationEngine {
         generation: GenerationParameters,
         runtime: RuntimeConfig,
         existingCache: [any KVCache]?,
-        cachedTokens: [Int]?
+        cachedTokens: [Int]?,
+        wiredMemoryTicket: WiredMemoryTicket?
     ) async throws -> (
         stream: AsyncStream<MLXLMCommon.TokenGeneration>,
         tokenizer: any Tokenizer,
@@ -171,9 +172,6 @@ struct MLXGenerationEngine {
             let newPromptTokens = fullLMInput.text.tokens.asArray(Int.self)
             engineLog.info(
                 "prepareAndGenerate: promptTokens=\(newPromptTokens.count, privacy: .public) hasImage=\(fullLMInput.image != nil, privacy: .public)"
-            )
-            print(
-                "[MLXGenerationEngine] promptTokens=\(newPromptTokens.count) hasImage=\(fullLMInput.image != nil)"
             )
             guard !newPromptTokens.isEmpty else {
                 throw NSError(
@@ -324,9 +322,6 @@ struct MLXGenerationEngine {
             debugLog(
                 "[MLXGenerationEngine] twoPhase=\(useTwoPhase) genPrefixLen=\(genPrefixLen) stableTokens=\(stableTokenCount) canTrim=\(canTrimPromptCache(cache)) hasExisting=\(existingCache != nil)"
             )
-            print(
-                "[MLXGenerationEngine] twoPhase=\(useTwoPhase) genPrefixLen=\(genPrefixLen) stableTokens=\(stableTokenCount) hasExisting=\(existingCache != nil)"
-            )
 
             if useTwoPhase {
                 // ── Phase 1: prefill stableTokens ─────────────────────────────────────
@@ -396,7 +391,6 @@ struct MLXGenerationEngine {
                 debugLog(
                     "[MLXGenerationEngine] twoPhase post-prefill effectiveCacheOffset=\(postPrefillOffset)"
                 )
-                print("[MLXGenerationEngine] twoPhase post-prefill effectiveCacheOffset=\(postPrefillOffset)")
 
                 // Build stop-token set for EOS detection.
                 var stopTokenIDs: Set<Int> = contextWithEOS.configuration.eosTokenIds
@@ -428,66 +422,75 @@ struct MLXGenerationEngine {
 
                 let (genStream, genContinuation) = AsyncStream<MLXLMCommon.TokenGeneration>.makeStream()
                 let genTask = Task {
-                    let genStart = Date.timeIntervalSinceReferenceDate
-                    var tokenCount = 0
-                    var currentToken = y0
-                    var stopReason: MLXLMCommon.GenerateStopReason = .stop
+                    let performGeneration = {
+                        let genStart = Date.timeIntervalSinceReferenceDate
+                        var tokenCount = 0
+                        var currentToken = y0
+                        var stopReason: MLXLMCommon.GenerateStopReason = .stop
 
-                    let isY0Stop = currentToken == unknownTokenId || stopTokenIDs.contains(currentToken)
-                    if !isY0Stop {
-                        genContinuation.yield(.token(currentToken))
-                        tokenCount += 1
-                    }
-
-                    if !isY0Stop {
-                        while true {
-                            if Task.isCancelled { stopReason = .cancelled; break }
-                            if let max = maxTokens, tokenCount >= max { stopReason = .length; break }
-
-                            let nextToken: Int
-                            do {
-                                nextToken = try withError {
-                                    let logits = loop.model(
-                                        MLXArray([currentToken])[.newAxis],
-                                        cache: loop.cache.isEmpty ? nil : loop.cache
-                                    )
-                                    eval(loop.cache)
-                                    var nextLogits = logits[0..., -1, 0...]
-                                    nextLogits = loop.processor?.process(logits: nextLogits) ?? nextLogits
-                                    let nextArr = loop.sampler.sample(logits: nextLogits)
-                                    loop.processor?.didSample(token: nextArr)
-                                    return nextArr.item(Int.self)
-                                }
-                            } catch { stopReason = .cancelled; break }
-
-                            if nextToken == unknownTokenId || stopTokenIDs.contains(nextToken) {
-                                stopReason = .stop; break
-                            }
-
-                            genContinuation.yield(.token(nextToken))
+                        let isY0Stop = currentToken == unknownTokenId || stopTokenIDs.contains(currentToken)
+                        if !isY0Stop {
+                            genContinuation.yield(.token(currentToken))
                             tokenCount += 1
-                            currentToken = nextToken
                         }
-                    }
 
-                    let generateTime = Date.timeIntervalSinceReferenceDate - genStart
-                    genContinuation.yield(
-                        .info(
-                            MLXLMCommon.GenerateCompletionInfo(
-                                promptTokenCount: promptTokenCount,
-                                generationTokenCount: tokenCount,
-                                promptTime: 0,
-                                generationTime: generateTime,
-                                stopReason: stopReason
+                        if !isY0Stop {
+                            while true {
+                                if Task.isCancelled { stopReason = .cancelled; break }
+                                if let max = maxTokens, tokenCount >= max { stopReason = .length; break }
+
+                                let nextToken: Int
+                                do {
+                                    nextToken = try withError {
+                                        let logits = loop.model(
+                                            MLXArray([currentToken])[.newAxis],
+                                            cache: loop.cache.isEmpty ? nil : loop.cache
+                                        )
+                                        eval(loop.cache)
+                                        var nextLogits = logits[0..., -1, 0...]
+                                        nextLogits = loop.processor?.process(logits: nextLogits) ?? nextLogits
+                                        let nextArr = loop.sampler.sample(logits: nextLogits)
+                                        loop.processor?.didSample(token: nextArr)
+                                        return nextArr.item(Int.self)
+                                    }
+                                } catch { stopReason = .cancelled; break }
+
+                                if nextToken == unknownTokenId || stopTokenIDs.contains(nextToken) {
+                                    stopReason = .stop; break
+                                }
+
+                                genContinuation.yield(.token(nextToken))
+                                tokenCount += 1
+                                currentToken = nextToken
+                            }
+                        }
+
+                        let generateTime = Date.timeIntervalSinceReferenceDate - genStart
+                        genContinuation.yield(
+                            .info(
+                                MLXLMCommon.GenerateCompletionInfo(
+                                    promptTokenCount: promptTokenCount,
+                                    generationTokenCount: tokenCount,
+                                    promptTime: 0,
+                                    generationTime: generateTime,
+                                    stopReason: stopReason
+                                )
                             )
                         )
-                    )
-                    genContinuation.finish()
+                        genContinuation.finish()
+                    }
+
+                    if let ticket = wiredMemoryTicket {
+                        await WiredMemoryTicket.withWiredLimit(ticket) {
+                            performGeneration()
+                        }
+                    } else {
+                        performGeneration()
+                    }
                 }
                 genContinuation.onTermination = { @Sendable _ in genTask.cancel() }
 
                 engineLog.info("prepareAndGenerate: twoPhase stream created, returning")
-                print("[MLXGenerationEngine] twoPhase manual-loop stream created, returning")
 
                 let toolCallFormat = contextWithEOS.configuration.toolCallFormat ?? .json
                 return ResultBox(
@@ -503,12 +506,8 @@ struct MLXGenerationEngine {
             }
 
             // ── Single-phase (standard) path ──────────────────────────────────────────
-            // withError converts MLX C++ errors (e.g. shape mismatches from stale caches) to catchable Swift errors
             engineLog.info(
                 "prepareAndGenerate: constructing TokenIterator effectiveTokens=\(effectiveInput.text.tokens.dim(0), privacy: .public)"
-            )
-            print(
-                "[MLXGenerationEngine] constructing TokenIterator effectiveTokens=\(effectiveInput.text.tokens.dim(0))"
             )
             let iterator = try withError {
                 try TokenIterator(
@@ -522,7 +521,6 @@ struct MLXGenerationEngine {
             debugLog(
                 "[MLXGenerationEngine] post-prefill effectiveCacheOffset=\(postPrefillOffset) cacheCount=\(cache.count) cacheTypes=\(cache.prefix(4).map { type(of: $0) })"
             )
-            print("[MLXGenerationEngine] post-prefill effectiveCacheOffset=\(postPrefillOffset)")
             engineSignposter.emitEvent(
                 "prefillComplete",
                 id: engineSignposter.makeSignpostID(),
@@ -532,10 +530,10 @@ struct MLXGenerationEngine {
                 promptTokenCount: newPromptTokens.count,
                 modelConfiguration: contextWithEOS.configuration,
                 tokenizer: contextWithEOS.tokenizer,
-                iterator: iterator
+                iterator: iterator,
+                wiredMemoryTicket: wiredMemoryTicket
             )
             engineLog.info("prepareAndGenerate: generateTokenTask created, returning stream")
-            print("[MLXGenerationEngine] generateTokenTask created, returning stream")
 
             let toolCallFormat = contextWithEOS.configuration.toolCallFormat ?? .json
             return ResultBox(
