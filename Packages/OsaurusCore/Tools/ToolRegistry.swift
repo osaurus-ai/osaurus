@@ -98,6 +98,7 @@ final class ToolRegistry: ObservableObject {
             SearchSummariesTool(),
             SearchGraphTool(),
         ]
+        var configChanged = false
         for tool in builtIns {
             register(tool)
             builtInToolNames.insert(tool.name)
@@ -105,9 +106,12 @@ final class ToolRegistry: ObservableObject {
             // Preserves user's choice if they later disable it.
             if !configuration.enabled.keys.contains(tool.name) {
                 configuration.setEnabled(true, for: tool.name)
+                configChanged = true
             }
         }
-        ToolConfigurationStore.save(configuration)
+        if configChanged {
+            ToolConfigurationStore.save(configuration)
+        }
     }
 
     func register(_ tool: OsaurusTool) {

@@ -541,9 +541,13 @@ extension MessageTableRepresentable {
 
             // Deduplicate IDs to prevent NSDiffableDataSource assertion failure.
             // Duplicates can arise from stale BlockMemoizer cache during session restore.
+            // Keep the *last* occurrence of each ID so row position aligns with
+            // newLookup's last-write-wins dictionary semantics.
             var seenIds = Set<String>()
             seenIds.reserveCapacity(newIds.count)
-            let uniqueIds = newIds.filter { seenIds.insert($0).inserted }
+            let uniqueIds = Array(
+                newIds.reversed().filter { seenIds.insert($0).inserted }.reversed()
+            )
 
             blockLookup = newLookup
             blockIds = uniqueIds
