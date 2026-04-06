@@ -84,7 +84,9 @@ final class ToolRegistry: ObservableObject {
         registerBuiltInTools()
     }
 
-    /// Register built-in tools that are always available
+    /// Register built-in tools that are always available.
+    /// Auto-enables tools on first registration so the UI reflects their actual state
+    /// (built-in tools are always loaded regardless, but this keeps config consistent).
     private func registerBuiltInTools() {
         let builtIns: [OsaurusTool] = [
             CapabilitiesSearchTool(),
@@ -99,7 +101,13 @@ final class ToolRegistry: ObservableObject {
         for tool in builtIns {
             register(tool)
             builtInToolNames.insert(tool.name)
+            // Auto-enable on first registration (same as registerPluginTool).
+            // Preserves user's choice if they later disable it.
+            if !configuration.enabled.keys.contains(tool.name) {
+                configuration.setEnabled(true, for: tool.name)
+            }
         }
+        ToolConfigurationStore.save(configuration)
     }
 
     func register(_ tool: OsaurusTool) {

@@ -414,7 +414,10 @@ extension MessageTableRepresentable {
             }
 
             let newIds = blocks.map(\.id)
-            let newLookup = Dictionary(uniqueKeysWithValues: blocks.map { ($0.id, $0) })
+            // Use uniquingKeysWith instead of uniqueKeysWithValues to avoid a
+            // precondition crash if block IDs collide (e.g. stale memoizer cache
+            // during session restore). Last-write-wins preserves correct behavior.
+            let newLookup = Dictionary(blocks.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
             let newStreamingBlockId = Self.detectStreamingBlockId(in: blocks, isStreaming: isStreaming)
 
             // Detect streaming-ended transition before any state mutations.
@@ -536,11 +539,17 @@ extension MessageTableRepresentable {
             let oldLookup = blockLookup
             let oldIdSet = Set(blockIds)
 
+            // Deduplicate IDs to prevent NSDiffableDataSource assertion failure.
+            // Duplicates can arise from stale BlockMemoizer cache during session restore.
+            var seenIds = Set<String>()
+            seenIds.reserveCapacity(newIds.count)
+            let uniqueIds = newIds.filter { seenIds.insert($0).inserted }
+
             blockLookup = newLookup
-            blockIds = newIds
+            blockIds = uniqueIds
             streamingBlockId = newStreamingBlockId
 
-            let stableChangedIds = newIds.filter { id in
+            let stableChangedIds = uniqueIds.filter { id in
                 oldIdSet.contains(id) && newLookup[id] != oldLookup[id]
             }
 
@@ -549,7 +558,7 @@ extension MessageTableRepresentable {
 
             var snapshot = NSDiffableDataSourceSnapshot<MessageSection, String>()
             snapshot.appendSections([.main])
-            snapshot.appendItems(newIds, toSection: .main)
+            snapshot.appendItems(uniqueIds, toSection: .main)
 
             dataSource?.apply(snapshot, animatingDifferences: false) { [weak self] in
                 guard let self else { return }

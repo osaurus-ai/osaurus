@@ -854,8 +854,18 @@ final class NativeToolCallRowView: NSView {
 
     private func ensureResultView() -> NativeMarkdownView {
         if let v = resultView { return v }
-        guard let rt = resultSectionTitle, argsView != nil else {
-            fatalError("ensureResultView: call ensureResultSectionTitle before ensureResultView")
+        // Lazily create result section title if missing (defensive against unexpected
+        // call ordering during rapid cell reconfiguration or reuse).
+        if resultSectionTitle == nil || argsView == nil {
+            assertionFailure("ensureResultView: expected ensureResultSectionTitle to be called first")
+            _ = ensureResultSectionTitle(theme: LightTheme())
+        }
+        guard let rt = resultSectionTitle else {
+            // Should never reach here after the above, but return a detached view
+            // rather than crashing in production.
+            let v = NativeMarkdownView()
+            resultView = v
+            return v
         }
         let v = NativeMarkdownView()
         v.translatesAutoresizingMaskIntoConstraints = false

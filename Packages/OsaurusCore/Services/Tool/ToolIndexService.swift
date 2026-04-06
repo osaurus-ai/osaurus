@@ -16,16 +16,20 @@ public actor ToolIndexService {
     /// Populate tool_index from ToolRegistry. Called once at startup after
     /// ToolDatabase and ToolSearchService are both initialized.
     public func syncFromRegistry() async {
-        let (tools, sandboxNames, mcpNames, excludedNames):
+        let (tools, sandboxNames, mcpNames, builtInNames, excludedNames):
             (
-                [ToolRegistry.ToolEntry], Set<String>, Set<String>, Set<String>
+                [ToolRegistry.ToolEntry], Set<String>, Set<String>, Set<String>, Set<String>
             ) = await MainActor.run {
                 let all = ToolRegistry.shared.listTools()
                 let sandbox = Set(all.filter { ToolRegistry.shared.isSandboxTool($0.name) }.map(\.name))
                 let mcp = Set(all.filter { ToolRegistry.shared.isMCPTool($0.name) }.map(\.name))
-                let excluded = ToolRegistry.shared.builtInToolNames
+                let builtIn = ToolRegistry.shared.builtInToolNames
+                // Exclude capability infrastructure tools and runtime-managed tools from the
+                // search index, but allow user-facing built-in tools (e.g. search_*) to be
+                // indexed so capabilities_search can discover them.
+                let excluded = ToolRegistry.capabilityToolNames
                     .union(ToolRegistry.shared.runtimeManagedToolNames)
-                return (all, sandbox, mcp, excluded)
+                return (all, sandbox, mcp, builtIn, excluded)
             }
 
         let indexableTools = tools.filter { !excludedNames.contains($0.name) }
@@ -37,6 +41,8 @@ public actor ToolIndexService {
                 runtime = .sandbox
             } else if mcpNames.contains(tool.name) {
                 runtime = .mcp
+            } else if builtInNames.contains(tool.name) {
+                runtime = .builtin
             } else {
                 runtime = .native
             }

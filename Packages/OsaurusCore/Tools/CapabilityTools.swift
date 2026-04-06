@@ -240,13 +240,16 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
     }
 
     private func loadTool(_ toolId: String) async -> String {
-        let (isEnabled, toolSpec) = await MainActor.run {
+        let (isEnabled, isBuiltIn, toolSpec) = await MainActor.run {
             (
                 ToolRegistry.shared.isGlobalEnabled(toolId),
+                ToolRegistry.shared.builtInToolNames.contains(toolId),
                 ToolRegistry.shared.specs(forTools: [toolId])
             )
         }
-        guard isEnabled else {
+        // Built-in tools are always loaded via alwaysLoadedSpecs, so skip the
+        // enabled check — rejecting them here is misleading since they're callable.
+        guard isEnabled || isBuiltIn else {
             return "Error: Tool '\(toolId)' is disabled.\n"
         }
         guard let spec = toolSpec.first else {
