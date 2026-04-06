@@ -326,6 +326,10 @@ struct ModelDownloadView: View {
             } else {
                 ScrollView {
                     LazyVStack(spacing: 12) {
+                        if !modelManager.deprecationNotices.isEmpty {
+                            deprecationBanner
+                        }
+
                         if displayedModels.isEmpty {
                             emptyState
                         } else {
@@ -346,6 +350,85 @@ struct ModelDownloadView: View {
                 }
             }
         }
+    }
+
+    // MARK: - Deprecation Banner
+
+    private var deprecationBanner: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 14))
+                    .foregroundColor(.orange)
+
+                Text("Model updates available")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+            }
+
+            Text("Some downloaded models have been replaced with improved OsaurusAI versions that fix known bugs.")
+                .font(.system(size: 12))
+                .foregroundColor(theme.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+
+            ForEach(modelManager.deprecationNotices) { notice in
+                HStack(spacing: 10) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(Self.displayName(from: notice.oldId))
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(theme.tertiaryText)
+                            .strikethrough()
+
+                        HStack(spacing: 4) {
+                            Image(systemName: "arrow.right")
+                                .font(.system(size: 10))
+                                .foregroundColor(theme.accentColor)
+                            Text(Self.displayName(from: notice.newId))
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundColor(theme.primaryText)
+                        }
+                    }
+
+                    Spacer()
+
+                    Button(action: {
+                        modelManager.downloadModel(withRepoId: notice.newId)
+                    }) {
+                        Text(notice.isReplacementDownloaded ? "Ready" : "Download")
+                            .font(.system(size: 12, weight: .medium))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(notice.isReplacementDownloaded
+                                        ? theme.successColor.opacity(0.15)
+                                        : theme.accentColor)
+                            )
+                            .foregroundColor(notice.isReplacementDownloaded
+                                ? theme.successColor
+                                : .white)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(notice.isReplacementDownloaded)
+                }
+                .padding(.vertical, 4)
+            }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(theme.secondaryBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(Color.orange.opacity(0.3), lineWidth: 1)
+                )
+        )
+    }
+
+    private static func displayName(from repoId: String) -> String {
+        let repo = repoId.split(separator: "/").last.map(String.init) ?? repoId
+        return repo.replacingOccurrences(of: "-", with: " ")
+            .replacingOccurrences(of: "_", with: " ")
     }
 
     // MARK: - Loading State

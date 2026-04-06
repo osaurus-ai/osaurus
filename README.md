@@ -23,12 +23,14 @@
   <img src="https://img.shields.io/badge/Ollama%20API-compatible-0A7CFF" alt="Ollama API">
   <img src="https://img.shields.io/badge/MCP-server-0A7CFF" alt="MCP Server">
   <img src="https://img.shields.io/badge/Apple%20Foundation%20Models-supported-0A7CFF" alt="Foundation Models">
+  <a href="https://huggingface.co/OsaurusAI"><img src="https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-OsaurusAI-FFD21E" alt="Hugging Face"></a>
   <img src="https://img.shields.io/badge/PRs-welcome-brightgreen" alt="PRs Welcome">
 </p>
 
 <p align="center">
   <a href="https://github.com/osaurus-ai/osaurus/releases/latest/download/Osaurus.dmg">Download for Mac</a> ·
   <a href="https://docs.osaurus.ai">Docs</a> ·
+  <a href="https://huggingface.co/OsaurusAI">Models</a> ·
   <a href="https://discord.com/invite/dinoki">Discord</a> ·
   <a href="https://x.com/OsaurusAI">Twitter</a> ·
   <a href="https://github.com/osaurus-ai/osaurus-tools">Plugin Registry</a>
@@ -108,7 +110,7 @@ The harness is model-agnostic. Swap freely -- your agents, memory, and tools sta
 
 ### Local
 
-Run Llama, Qwen, Gemma, Mistral, DeepSeek, and more on Apple Silicon with optimized MLX inference. Models stored at `~/MLXModels` (override with `OSU_MODELS_DIR`). Fully private, fully offline.
+Run Gemma 4, Qwen3.5, GPT-OSS, Llama, and more on Apple Silicon with optimized MLX inference. Osaurus maintains its own [optimized model library on Hugging Face](https://huggingface.co/OsaurusAI) with curated quantizations for the best quality-to-size ratio on Apple Silicon. Models stored at `~/MLXModels` (override with `OSU_MODELS_DIR`). Fully private, fully offline.
 
 ### Liquid Foundation Models
 
@@ -271,6 +273,7 @@ Check out [Good First Issues](https://github.com/osaurus-ai/osaurus/issues?q=is%
 
 - [Discord](https://discord.com/invite/dinoki) -- chat, feedback, show-and-tell
 - [Twitter](https://x.com/OsaurusAI) -- updates and demos
+- [Hugging Face](https://huggingface.co/OsaurusAI) -- optimized models for Apple Silicon
 - [Community Calls](https://lu.ma/osaurus) -- bi-weekly, open to everyone
 - [Blog](https://osaurus.ai/blog) -- long-form thinking on personal AI
 - [Docs](https://docs.osaurus.ai) -- guides and tutorials

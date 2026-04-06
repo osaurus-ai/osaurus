@@ -300,16 +300,15 @@ Osaurus defers chat templating to MLX `ChatSession`, which uses the model's conf
 
 Models are automatically named based on their display names in ModelManager. The API converts the model names to lowercase and replaces spaces with hyphens. For example:
 
-| Downloaded Model         | API Model Name           |
-| ------------------------ | ------------------------ |
-| Llama 3.2 3B Instruct    | llama-3.2-3b-instruct    |
-| Llama 3.2 1B Instruct    | llama-3.2-1b-instruct    |
-| Qwen 2.5 7B Instruct     | qwen-2.5-7b-instruct     |
-| Qwen 2.5 3B Instruct     | qwen-2.5-3b-instruct     |
-| Gemma 2 9B Instruct      | gemma-2-9b-instruct      |
-| Gemma 2 2B Instruct      | gemma-2-2b-instruct      |
-| DeepSeek-R1 Distill 1.5B | deepseek-r1-distill-1.5b |
-| OpenELM 3B (GPT-style)   | openelm-3b-(gpt-style)   |
+| Downloaded Model                 | API Model Name                     |
+| -------------------------------- | ---------------------------------- |
+| Gemma 4 E2B it 4bit              | gemma-4-e2b-it-4bit                |
+| Gemma 4 E4B it 4bit              | gemma-4-e4b-it-4bit                |
+| Gemma 4 26B A4B it JANG 2L       | gemma-4-26b-a4b-it-jang_2l         |
+| Gemma 4 31B it JANG 4M           | gemma-4-31b-it-jang_4m             |
+| Qwen3.5 35B A3B JANG 2S          | qwen3.5-35b-a3b-jang_2s            |
+| Qwen3.5 122B A10B JANG 4K        | qwen3.5-122b-a10b-jang_4k          |
+| gpt oss 20b MLX 8bit             | gpt-oss-20b-mlx-8bit               |
 
 ## Usage with OpenAI Python Library
 
