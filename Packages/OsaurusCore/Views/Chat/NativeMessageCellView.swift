@@ -649,6 +649,58 @@ private final class UserMessageInlineEditView: NSView, NSTextViewDelegate {
     }
 }
 
+// MARK: - NativeStatsView
+
+/// Lightweight AppKit view that displays generation benchmarks (TTFT and tok/s).
+final class NativeStatsView: NSView {
+    private let label = NSTextField(labelWithString: "")
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.maximumNumberOfLines = 1
+        label.lineBreakMode = .byTruncatingTail
+        label.isSelectable = false
+        label.isEditable = false
+        addSubview(label)
+        NSLayoutConstraint.activate([
+            label.leadingAnchor.constraint(equalTo: leadingAnchor),
+            label.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor),
+            label.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    func configure(
+        ttft: TimeInterval?,
+        tokensPerSecond: Double?,
+        tokenCount: Int?,
+        theme: any ThemeProtocol
+    ) {
+        var parts: [String] = []
+        if let ttft {
+            if ttft < 0.01 {
+                parts.append(String(format: "TTFT %.0fms", ttft * 1000))
+            } else {
+                parts.append(String(format: "TTFT %.2fs", ttft))
+            }
+        }
+        if let tps = tokensPerSecond {
+            parts.append(String(format: "%.1f tok/s", tps))
+        }
+        if let count = tokenCount {
+            parts.append("\(count) tokens")
+        }
+        label.stringValue = parts.joined(separator: " \u{2022} ")
+        label.font = NSFont.monospacedDigitSystemFont(
+            ofSize: CGFloat(theme.captionSize) - 1,
+            weight: .regular
+        )
+        label.textColor = NSColor(theme.tertiaryText)
+    }
+}
+
 // MARK: - NativeMessageCellView
 
 final class NativeMessageCellView: NSTableCellView {
@@ -670,6 +722,7 @@ final class NativeMessageCellView: NSTableCellView {
     private var nativeTypingView: NativeTypingIndicatorView?
     private var nativeArtifactView: NativeArtifactCardView?
     private var nativePreflightView: NativePreflightCapabilitiesView?
+    private var nativeStatsView: NativeStatsView?
 
     /// inset stroke so rounded corners are not clipped by ancestor views
     private var userBubbleBorderLayer: CAShapeLayer?
@@ -808,6 +861,15 @@ final class NativeMessageCellView: NSTableCellView {
 
         case let .preflightCapabilities(items):
             configureAsPreflight(block: block, items: items, context: context, sameKind: sameKind)
+
+        case let .generationStats(ttft, tokensPerSecond, tokenCount):
+            configureAsStats(
+                ttft: ttft,
+                tokensPerSecond: tokensPerSecond,
+                tokenCount: tokenCount,
+                context: context,
+                sameKind: sameKind
+            )
 
         default:
             // last resort: no hosted fallback — render a compact unsupported-block placeholder
@@ -1285,6 +1347,37 @@ final class NativeMessageCellView: NSTableCellView {
         nativeTypingView?.configure(theme: context.theme)
     }
 
+    // MARK: - GenerationStats
+
+    private func configureAsStats(
+        ttft: TimeInterval?,
+        tokensPerSecond: Double?,
+        tokenCount: Int?,
+        context: CellRenderingContext,
+        sameKind: Bool
+    ) {
+        if !sameKind || nativeStatsView == nil {
+            removeAllContentViews()
+            let sv = NativeStatsView()
+            sv.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(sv)
+            NSLayoutConstraint.activate([
+                sv.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+                sv.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+                sv.topAnchor.constraint(equalTo: topAnchor),
+                sv.heightAnchor.constraint(equalToConstant: 24),
+                sv.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor),
+            ])
+            nativeStatsView = sv
+        }
+        nativeStatsView?.configure(
+            ttft: ttft,
+            tokensPerSecond: tokensPerSecond,
+            tokenCount: tokenCount,
+            theme: context.theme
+        )
+    }
+
     // MARK: - SharedArtifact
 
     private func configureAsArtifact(
@@ -1407,6 +1500,7 @@ final class NativeMessageCellView: NSTableCellView {
         nativeTypingView?.removeFromSuperview(); nativeTypingView = nil
         nativeArtifactView?.removeFromSuperview(); nativeArtifactView = nil
         nativePreflightView?.removeFromSuperview(); nativePreflightView = nil
+        nativeStatsView?.removeFromSuperview(); nativeStatsView = nil
         userMessageContainer?.removeFromSuperview(); userMessageContainer = nil
         userTextView = nil
         userInlineEditView = nil
@@ -1504,7 +1598,7 @@ private final class UserAttachmentThumbnailView: NSView {
 /// Lightweight discriminator used to detect kind changes without comparing full associated values.
 enum ContentBlockKindTag: Equatable {
     case header, paragraph, toolCallGroup, thinking, userMessage, pendingToolCall
-    case typingIndicator, groupSpacer, sharedArtifact, preflightCapabilities, other
+    case generationStats, typingIndicator, groupSpacer, sharedArtifact, preflightCapabilities, other
 }
 
 extension ContentBlockKind {
@@ -1516,6 +1610,7 @@ extension ContentBlockKind {
         case .thinking: return .thinking
         case .userMessage: return .userMessage
         case .pendingToolCall: return .pendingToolCall
+        case .generationStats: return .generationStats
         case .typingIndicator: return .typingIndicator
         case .groupSpacer: return .groupSpacer
         case .sharedArtifact: return .sharedArtifact
@@ -1543,6 +1638,9 @@ enum NativeCellHeightEstimator {
         case .header:
             // 12 top + 28 label + 12 bottom
             return 52
+
+        case .generationStats:
+            return 24
 
         case .typingIndicator:
             // 4 top + ~22 content + 6 bottom (tight to header / thinking row above)

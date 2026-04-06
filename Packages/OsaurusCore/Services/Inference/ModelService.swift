@@ -86,6 +86,27 @@ enum StreamingToolHint: Sendable {
     }
 }
 
+/// In-band signaling for generation benchmarks (tok/s, token count).
+/// Uses the same `\u{FFFE}` sentinel pattern as `StreamingToolHint`.
+enum StreamingStatsHint: Sendable {
+    private static let statsPrefix = "\u{FFFE}stats:"
+
+    static func encode(tokenCount: Int, tokensPerSecond: Double) -> String {
+        String(format: "%@%d,%.4f", statsPrefix, tokenCount, tokensPerSecond)
+    }
+
+    static func decode(_ delta: String) -> (tokenCount: Int, tokensPerSecond: Double)? {
+        guard delta.hasPrefix(statsPrefix) else { return nil }
+        let payload = delta.dropFirst(statsPrefix.count)
+        let parts = payload.split(separator: ",", maxSplits: 1)
+        guard parts.count == 2,
+            let count = Int(parts[0]),
+            let tps = Double(parts[1])
+        else { return nil }
+        return (count, tps)
+    }
+}
+
 protocol ModelService: Sendable {
     /// Stable identifier for the service (e.g., "foundation").
     var id: String { get }

@@ -168,6 +168,15 @@ final class ChatTurn: ObservableObject, Identifiable {
     /// Capabilities selected by preflight search (ephemeral, not persisted)
     var preflightCapabilities: [PreflightCapabilityItem]? = nil
 
+    // MARK: - Generation Benchmarks (ephemeral, not persisted)
+
+    /// Wall-clock time from request start to first visible token
+    var timeToFirstToken: TimeInterval?
+    /// Tokens generated per second (GPU-timed for MLX, UI-estimated for remote APIs)
+    var generationTokensPerSecond: Double?
+    /// Total tokens generated in this turn
+    var generationTokenCount: Int?
+
     private static let maxArgPreviewLength = 500
 
     /// Appends a tool-argument fragment to the preview, keeping only the trailing window.

@@ -226,6 +226,12 @@ struct StreamAccumulator: AsyncSequence, Sendable {
                     accumLog.info(
                         "[perf] mlxStats promptTokens=\(info.promptTokenCount, privacy: .public) promptTps=\(info.promptTokensPerSecond, privacy: .public) promptMs=\(Int(info.promptTime * 1000), privacy: .public) genTokens=\(info.generationTokenCount, privacy: .public) genTps=\(info.tokensPerSecond, privacy: .public) genMs=\(Int(info.generateTime * 1000), privacy: .public)"
                     )
+                    pendingEvents.append(
+                        .completionInfo(
+                            tokenCount: info.generationTokenCount,
+                            tokensPerSecond: info.tokensPerSecond
+                        )
+                    )
                     continue
                 }
 

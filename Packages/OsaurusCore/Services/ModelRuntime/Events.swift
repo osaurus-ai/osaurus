@@ -10,4 +10,5 @@ import Foundation
 enum ModelRuntimeEvent: Sendable {
     case tokens(String)
     case toolInvocation(name: String, argsJSON: String)
+    case completionInfo(tokenCount: Int, tokensPerSecond: Double)
 }

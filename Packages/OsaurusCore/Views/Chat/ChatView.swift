@@ -1013,6 +1013,7 @@ final class ChatSession: ObservableObject {
                     do {
                         let streamStartTime = Date()
                         var uiDeltaCount = 0
+                        var firstDeltaTime: Date?
 
                         let processor = StreamingDeltaProcessor(
                             turn: assistantTurn,
@@ -1045,7 +1046,13 @@ final class ChatSession: ObservableObject {
                                 }
                                 continue
                             }
+                            if let stats = StreamingStatsHint.decode(delta) {
+                                assistantTurn.generationTokenCount = stats.tokenCount
+                                assistantTurn.generationTokensPerSecond = stats.tokensPerSecond
+                                continue
+                            }
                             if !delta.isEmpty {
+                                if firstDeltaTime == nil { firstDeltaTime = Date() }
                                 uiDeltaCount += 1
                                 processor.receiveDelta(delta)
                             }
@@ -1053,6 +1060,18 @@ final class ChatSession: ObservableObject {
 
                         // Flush any remaining buffered content (including partial tags)
                         processor.finalize()
+
+                        if let first = firstDeltaTime {
+                            assistantTurn.timeToFirstToken = first.timeIntervalSince(streamStartTime)
+                            // Fall back to UI-level tok/s when MLX stats weren't propagated (remote APIs)
+                            if assistantTurn.generationTokensPerSecond == nil {
+                                let genTime = Date().timeIntervalSince(first)
+                                if genTime > 0 {
+                                    assistantTurn.generationTokenCount = uiDeltaCount
+                                    assistantTurn.generationTokensPerSecond = Double(uiDeltaCount) / genTime
+                                }
+                            }
+                        }
 
                         let totalTime = Date().timeIntervalSince(streamStartTime)
                         print(

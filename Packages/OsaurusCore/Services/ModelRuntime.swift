@@ -684,6 +684,8 @@ actor ModelRuntime {
                 accumulated += s
             case .toolInvocation(let name, let argsJSON):
                 throw ServiceToolInvocation(toolName: name, jsonArguments: argsJSON)
+            case .completionInfo:
+                break
             }
         }
         return accumulated
@@ -725,6 +727,13 @@ actor ModelRuntime {
                             throwing: ServiceToolInvocation(toolName: name, jsonArguments: argsJSON)
                         )
                         return
+                    case .completionInfo(let tokenCount, let tokensPerSecond):
+                        continuation.yield(
+                            StreamingStatsHint.encode(
+                                tokenCount: tokenCount,
+                                tokensPerSecond: tokensPerSecond
+                            )
+                        )
                     }
                 }
                 continuation.finish()

@@ -35,6 +35,7 @@ enum ContentBlockKind: Equatable {
     case sharedArtifact(artifact: SharedArtifact)
     case pendingToolCall(toolName: String, argPreview: String?, argSize: Int)
     case preflightCapabilities(items: [PreflightCapabilityItem])
+    case generationStats(ttft: TimeInterval?, tokensPerSecond: Double?, tokenCount: Int?)
     case typingIndicator
     case groupSpacer
 
@@ -75,6 +76,9 @@ enum ContentBlockKind: Equatable {
         case let (.preflightCapabilities(lItems), .preflightCapabilities(rItems)):
             return lItems == rItems
 
+        case let (.generationStats(lTtft, lTps, lCount), .generationStats(rTtft, rTps, rCount)):
+            return lTtft == rTtft && lTps == rTps && lCount == rCount
+
         case (.typingIndicator, .typingIndicator):
             return true
 
@@ -101,7 +105,7 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
         case let .header(role, _, _): return role
         case let .paragraph(_, _, _, role): return role
         case .toolCallGroup, .thinking, .sharedArtifact, .pendingToolCall, .preflightCapabilities,
-            .typingIndicator, .groupSpacer:
+            .generationStats, .typingIndicator, .groupSpacer:
             return .assistant
         case .userMessage: return .user
         }
@@ -221,6 +225,21 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
             id: "preflight-\(turnId.uuidString)",
             turnId: turnId,
             kind: .preflightCapabilities(items: items),
+            position: position
+        )
+    }
+
+    static func generationStats(
+        turnId: UUID,
+        ttft: TimeInterval?,
+        tokensPerSecond: Double?,
+        tokenCount: Int?,
+        position: BlockPosition
+    ) -> ContentBlock {
+        ContentBlock(
+            id: "stats-\(turnId.uuidString)",
+            turnId: turnId,
+            kind: .generationStats(ttft: ttft, tokensPerSecond: tokensPerSecond, tokenCount: tokenCount),
             position: position
         )
     }
@@ -372,6 +391,20 @@ extension ContentBlock {
                         toolName: pendingName,
                         argPreview: turn.pendingToolArgPreview,
                         argSize: turn.pendingToolArgSize,
+                        position: .middle
+                    )
+                )
+            }
+
+            if !isStreaming && turn.role == .assistant,
+                turn.timeToFirstToken != nil || turn.generationTokensPerSecond != nil
+            {
+                turnBlocks.append(
+                    .generationStats(
+                        turnId: turn.id,
+                        ttft: turn.timeToFirstToken,
+                        tokensPerSecond: turn.generationTokensPerSecond,
+                        tokenCount: turn.generationTokenCount,
                         position: .middle
                     )
                 )
