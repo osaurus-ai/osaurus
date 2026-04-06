@@ -17,28 +17,11 @@ public actor EmbeddingService {
     public static let embeddingDimension = 128
 
     /// Single shared embedder used by all VecturaKit indexes and the embedding API.
-    /// Using one instance prevents concurrent CoreML model loads that can SIGSEGV
-    /// on Apple Silicon (observed on M3, macOS 26.4).
-    public static let sharedEmbedder = SwiftEmbedder(modelSource: .default)
-
-    // MARK: - Startup GPU gate
-
-    /// Prevents concurrent CoreML (embedding) and MLX (inference) Metal
-    /// operations at startup.  AppDelegate registers the startup embedding
-    /// task; ModelRuntime awaits it before the first inference call.
-    private static let startupLock = NSLock()
-    private static nonisolated(unsafe) var _startupInitTask: Task<Void, Never>?
-
-    public nonisolated static func setStartupInitTask(_ task: Task<Void, Never>) {
-        startupLock.withLock { _startupInitTask = task }
-    }
-
-    public nonisolated static func awaitStartupInit() async {
-        let task = startupLock.withLock { _startupInitTask }
-        guard let task else { return }
-        await task.value
-        startupLock.withLock { _startupInitTask = nil }
-    }
+    /// Wrapped in MetalSafeEmbedder to prevent concurrent CoreML (embedding) and
+    /// MLX (inference) Metal operations that can SIGSEGV on Apple Silicon.
+    public static let sharedEmbedder: MetalSafeEmbedder = MetalSafeEmbedder(
+        inner: SwiftEmbedder(modelSource: .default)
+    )
 
     private static let logger = Logger(subsystem: "ai.osaurus", category: "EmbeddingService")
 

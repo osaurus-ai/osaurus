@@ -227,7 +227,6 @@ public final class SkillManager {
             await refresh()
 
             Task {
-                await EmbeddingService.awaitStartupInit()
                 for skill in imported {
                     await SkillSearchService.shared.indexSkill(skill)
                 }

@@ -380,6 +380,13 @@ actor ModelRuntime {
         _ = await activeGenerationTask?.value
         guard !Task.isCancelled else { return }
 
+        // Acquire exclusive Metal access for the prefix cache build.
+        await MetalGate.shared.enterGeneration()
+        guard !Task.isCancelled else {
+            await MetalGate.shared.exitGeneration()
+            return
+        }
+
         let tokenizerTools = Self.makeTokenizerTools(tools: tools, toolChoice: toolChoice)
         let messages: [MLXLMCommon.Chat.Message] = [
             .init(role: .system, content: systemContent, images: [], videos: []),
@@ -411,9 +418,13 @@ actor ModelRuntime {
                 genTask.cancel()
             }
 
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled else {
+                await MetalGate.shared.exitGeneration()
+                return
+            }
             guard cache.contains(where: { $0.offset > 0 }) else {
                 print("[ModelRuntime] Prefix cache incomplete, skipping persistence")
+                await MetalGate.shared.exitGeneration()
                 return
             }
 
@@ -425,6 +436,7 @@ actor ModelRuntime {
         } catch {
             print("[ModelRuntime] Failed to build prefix cache: \(error)")
         }
+        await MetalGate.shared.exitGeneration()
     }
 
     // MARK: - Driver helpers (actor-isolated)
@@ -458,11 +470,11 @@ actor ModelRuntime {
 
         genLog.info("generateEventStream: start model=\(modelName, privacy: .public)")
 
-        // Wait for any startup CoreML embedding work to finish before using the
-        // GPU for MLX inference.  Prevents concurrent Metal command submissions
-        // from CoreML and MLX that can SIGSEGV on Apple Silicon.
-        await EmbeddingService.awaitStartupInit()
-        if Task.isCancelled { throw CancellationError() }
+        await MetalGate.shared.enterGeneration()
+        if Task.isCancelled {
+            await MetalGate.shared.exitGeneration()
+            throw CancellationError()
+        }
 
         let effectiveStopSequences = stopSequences
         let cfg = await getConfig()
@@ -546,6 +558,7 @@ actor ModelRuntime {
             )
             guard existingCache != nil else {
                 InferenceProgressManager.shared.prefillDidFinishAsync()
+                await MetalGate.shared.exitGeneration()
                 throw error
             }
             genLog.warning("Cache incompatible, retrying: \(error.localizedDescription, privacy: .public)")
@@ -572,6 +585,7 @@ actor ModelRuntime {
                 }
             } catch {
                 InferenceProgressManager.shared.prefillDidFinishAsync()
+                await MetalGate.shared.exitGeneration()
                 throw error
             }
         }
@@ -580,7 +594,19 @@ actor ModelRuntime {
         // generation is warming up (the first token clears the indicator).
         InferenceProgressManager.shared.prefillWillStartAsync(tokenCount: newTokens.count)
 
-        activeGenerationTask = genTask
+        // Wrap genTask so the MetalGate is released when generation finishes
+        // (whether by completion or cancellation).  Propagate cancellation to the
+        // inner genTask so cancelActiveGeneration() stops Metal work promptly.
+        let innerGenTask = genTask
+        let gatedGenTask = Task<Void, Never> {
+            await withTaskCancellationHandler {
+                await innerGenTask.value
+            } onCancel: {
+                innerGenTask.cancel()
+            }
+            await MetalGate.shared.exitGeneration()
+        }
+        activeGenerationTask = gatedGenTask
 
         // Store a pre-generation snapshot of the cache immediately after prefill.
         //

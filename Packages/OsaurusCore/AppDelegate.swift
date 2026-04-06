@@ -145,11 +145,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             await ModelPickerItemCache.shared.prewarmModelCache()
         }
 
-        // All VecturaKit inits run sequentially in one Task to prevent concurrent
-        // CoreML model loads that can SIGSEGV on Apple Silicon.
-        // Memory DB opens first because MemorySearchService.initialize() needs it
-        // for reverse maps. Registered as startup init task so ModelRuntime can
-        // gate MLX inference until CoreML embedding work finishes.
+        // VecturaKit inits run sequentially. Memory DB opens first because
+        // MemorySearchService.initialize() needs it for reverse maps.
+        // MetalGate serializes CoreML/MLX at runtime; this task is only held
+        // for startup sequencing of orphan recovery + activity tracking below.
         let embeddingInitTask = Task {
             var memoryDBOpened = false
             for attempt in 1 ... 3 {
@@ -182,8 +181,6 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             await SkillSearchService.shared.rebuildIndex()
             await MethodSearchService.shared.rebuildIndex()
         }
-        EmbeddingService.setStartupInitTask(embeddingInitTask)
-
         // Start activity tracking and recover orphaned signals once DB is ready
         Task { @MainActor in
             await embeddingInitTask.value
