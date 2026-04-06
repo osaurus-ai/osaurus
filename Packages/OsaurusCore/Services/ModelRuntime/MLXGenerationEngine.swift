@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import Cmlx
 import MLX
 import MLXLLM
 @preconcurrency import MLXLMCommon
@@ -482,6 +483,20 @@ struct MLXGenerationEngine {
 
                 let (genStream, genContinuation) = AsyncStream<MLXLMCommon.TokenGeneration>.makeStream()
                 let genTask = Task {
+                    // Pin model weights in GPU VRAM via Cmlx.
+                    // Prevents macOS paging weights to SSD between tokens.
+                    var prevWired: size_t = 0
+                    #if canImport(Metal)
+                        let maxWired =
+                            GPU.maxRecommendedWorkingSetBytes() ?? Int(ProcessInfo.processInfo.physicalMemory)
+                    #else
+                        let maxWired = Int(ProcessInfo.processInfo.physicalMemory)
+                    #endif
+                    Cmlx.mlx_set_wired_limit(
+                        &prevWired,
+                        size_t(min(maxWired, Int(ProcessInfo.processInfo.physicalMemory) * 3 / 4))
+                    )
+
                     let genStart = Date.timeIntervalSinceReferenceDate
                     var tokenCount = 0
                     var currentToken = y0
@@ -546,6 +561,8 @@ struct MLXGenerationEngine {
                     }
 
                     let generateTime = Date.timeIntervalSinceReferenceDate - genStart
+                    Cmlx.mlx_set_wired_limit(&prevWired, prevWired)
+
                     let info = MLXLMCommon.GenerateCompletionInfo(
                         promptTokenCount: genCtx.promptTokenCount,
                         generationTokenCount: tokenCount,

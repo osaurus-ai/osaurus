@@ -2781,16 +2781,18 @@ struct AgentDetailView: View {
 
     // MARK: - Save
 
+    @MainActor
     private func debouncedSave() {
         guard isInitialLoadComplete else { return }
         saveDebounceTask?.cancel()
-        saveDebounceTask = Task {
+        saveDebounceTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: 500_000_000)
             guard !Task.isCancelled else { return }
             saveAgent()
         }
     }
 
+    @MainActor
     private func saveAgent() {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedName.isEmpty else { return }
@@ -2833,11 +2835,13 @@ struct AgentDetailView: View {
         showSaveIndicator()
     }
 
+    @MainActor
     private func showSaveIndicator() {
         withAnimation(.easeOut(duration: 0.2)) {
             saveIndicator = "Saved"
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
             withAnimation(.easeOut(duration: 0.3)) {
                 saveIndicator = nil
             }
@@ -3217,6 +3221,7 @@ private struct AgentEditorSheet: View {
         )
     }
 
+    @MainActor
     private func saveAgent() {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedName.isEmpty else { return }
