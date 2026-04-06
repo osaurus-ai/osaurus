@@ -248,6 +248,23 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                 try? await Task.sleep(nanoseconds: 300_000_000)  // 300ms
                 showOnboardingWindow()
             }
+        } else {
+            // fesh launch from terminated state: explicitly activate and show window
+            Task { @MainActor in
+                // delay slightly to ensure services are ready
+                try? await Task.sleep(nanoseconds: 300_000_000)
+                
+                // ensure app is unhidden and active
+                NSApp.unhide(nil)
+                NSApp.activate()
+                _ = NSRunningApplication.current.activate(options: .activateAllWindows)
+                
+                if ChatWindowManager.shared.windowCount == 0 && !WindowManager.shared.isVisible(.management) {
+                    showChatOverlay()
+                } else {
+                    ChatWindowManager.shared.focusAllWindows()
+                }
+            }
         }
     }
 
@@ -436,7 +453,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                 self.showChatOverlay()
             }
         }
-        return true
+        
+        return false
     }
 
     // MARK: - Dock Menu

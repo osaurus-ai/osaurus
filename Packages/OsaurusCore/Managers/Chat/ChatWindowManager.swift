@@ -182,9 +182,13 @@ public final class ChatWindowManager: NSObject, ObservableObject {
             window.deminiaturize(nil)
         }
 
-        // Activate and bring to front
-        NSApp.activate(ignoringOtherApps: true)
+        // Activate app and yank focus
+        NSApp.activate()
+        _ = NSRunningApplication.current.activate(options: .activateAllWindows)
+
         window.makeKeyAndOrderFront(nil)
+        window.orderFrontRegardless()
+        window.makeKey()
 
         // Update last focused
         lastFocusedWindowId = id
@@ -287,21 +291,25 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         guard !windows.isEmpty else { return }
 
         NSApp.unhide(nil)
-        NSApp.activate(ignoringOtherApps: true)
+        NSApp.activate()
+        _ = NSRunningApplication.current.activate(options: .activateAllWindows)
 
         // Bring all windows to front
         for (_, window) in nsWindows {
             if window.isMiniaturized {
                 window.deminiaturize(nil)
             }
-            window.orderFront(nil)
+            window.orderFrontRegardless()
+            window.makeKey()
         }
 
         // Make the last focused window key
         if let lastId = lastFocusedWindowId, let window = nsWindows[lastId] {
             window.makeKeyAndOrderFront(nil)
+            window.makeKey()
         } else if let firstWindow = nsWindows.values.first {
             firstWindow.makeKeyAndOrderFront(nil)
+            firstWindow.makeKey()
         }
 
         print("[ChatWindowManager] Focused all \(windows.count) windows")
