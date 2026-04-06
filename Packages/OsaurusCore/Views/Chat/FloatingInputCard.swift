@@ -1045,22 +1045,34 @@ extension FloatingInputCard {
         return pickerItems.first { $0.id == id }
     }
 
+    private var isSelectedModelDeprecated: Bool {
+        guard let id = selectedModel else { return false }
+        return ModelManager.replacementForDeprecatedModel(id) != nil
+    }
+
     private var modelSelectorChip: some View {
         SelectorChip(isActive: showModelPicker) {
             showModelPicker.toggle()
         } content: {
             HStack(spacing: 6) {
-                Circle()
-                    .fill(Color.green)
-                    .frame(width: 6, height: 6)
-                    .help("Model ready")
+                if isSelectedModelDeprecated {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(theme.font(size: CGFloat(theme.captionSize) - 2))
+                        .foregroundColor(.orange)
+                        .help("This model is outdated. Click to switch to a newer version.")
+                } else {
+                    Circle()
+                        .fill(Color.green)
+                        .frame(width: 6, height: 6)
+                        .help("Model ready")
+                }
 
                 // Model name with metadata badges
                 if let option = selectedPickerItem {
                     HStack(spacing: 4) {
                         Text(option.displayName)
                             .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                            .foregroundColor(theme.secondaryText)
+                            .foregroundColor(isSelectedModelDeprecated ? .orange : theme.secondaryText)
                             .lineLimit(1)
 
                         // Show VLM indicator

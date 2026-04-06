@@ -100,11 +100,10 @@ final class ModelManager: NSObject, ObservableObject {
         let id: String
         let oldId: String
         let newId: String
-        var isReplacementDownloaded: Bool
     }
 
     /// Maps deprecated model IDs to their recommended OsaurusAI replacements.
-    static let deprecatedModelReplacements: [String: String] = [
+    nonisolated static let deprecatedModelReplacements: [String: String] = [
         "mlx-community/gemma-4-31b-it-4bit": "OsaurusAI/Gemma-4-31B-it-JANG_4M",
         "mlx-community/gemma-4-26b-a4b-it-4bit": "OsaurusAI/Gemma-4-26B-A4B-it-JANG_2L",
         "mlx-community/gemma-4-e4b-it-8bit": "OsaurusAI/gemma-4-E4B-it-8bit",
@@ -194,20 +193,11 @@ final class ModelManager: NSObject, ObservableObject {
 
     /// Scans locally installed models for deprecated entries and populates deprecation notices.
     func checkForDeprecatedModels() {
-        var notices: [DeprecationNotice] = []
-        for (oldId, newId) in Self.deprecatedModelReplacements {
-            let oldModel = MLXModel(id: oldId, name: "", description: "", downloadURL: "")
-            if oldModel.isDownloaded {
-                let newModel = MLXModel(id: newId, name: "", description: "", downloadURL: "")
-                notices.append(DeprecationNotice(
-                    id: oldId,
-                    oldId: oldId,
-                    newId: newId,
-                    isReplacementDownloaded: newModel.isDownloaded
-                ))
-            }
+        deprecationNotices = Self.deprecatedModelReplacements.compactMap { oldId, newId in
+            let probe = MLXModel(id: oldId, name: "", description: "", downloadURL: "")
+            guard probe.isDownloaded else { return nil }
+            return DeprecationNotice(id: oldId, oldId: oldId, newId: newId)
         }
-        deprecationNotices = notices
     }
 
     /// Returns the replacement model ID if the given model is deprecated, nil otherwise.
@@ -361,6 +351,17 @@ final class ModelManager: NSObject, ObservableObject {
             downloadStates[localModel.id] = .completed
             return localModel
         }
+        // If already present in available or suggested (case-insensitive), return that instance.
+        // Check this before the MLX heuristic so curated OsaurusAI models are always resolvable.
+        if let existing = availableModels.first(where: { $0.id.lowercased() == trimmed.lowercased() }) {
+            return existing
+        }
+        if let existing = suggestedModels.first(where: { $0.id.lowercased() == trimmed.lowercased() }) {
+            availableModels.insert(existing, at: 0)
+            downloadStates[existing.id] = existing.isDownloaded ? .completed : .notStarted
+            return existing
+        }
+
         // Validate MLX compatibility heuristically: org contains "mlx" or id contains "mlx"
         let lower = trimmed.lowercased()
         guard lower.contains("mlx") || lower.hasPrefix("mlx-community/") || lower.contains("-mlx")
@@ -371,14 +372,6 @@ final class ModelManager: NSObject, ObservableObject {
         // Only allow models supported by the SDK
         let allow = Self.sdkSupportedModelIds()
         guard allow.contains(lower) else { return nil }
-
-        // If already present in available or suggested (case-insensitive), return that instance
-        if let existing = availableModels.first(where: { $0.id.lowercased() == trimmed.lowercased() }) {
-            return existing
-        }
-        if let existing = suggestedModels.first(where: { $0.id.lowercased() == trimmed.lowercased() }) {
-            return existing
-        }
 
         // Construct a minimal MLXModel entry
         let name = Self.friendlyName(from: trimmed)
@@ -884,7 +877,8 @@ extension ModelManager {
             name: friendlyName(from: "OsaurusAI/gemma-4-E2B-it-4bit"),
             description: "Smallest multimodal Gemma 4 model. Runs on any Mac.",
             downloadURL: "https://huggingface.co/OsaurusAI/gemma-4-E2B-it-4bit",
-            isTopSuggestion: true
+            isTopSuggestion: true,
+            downloadSizeBytes: 1_000_000_000
         ),
 
         MLXModel(
@@ -892,7 +886,8 @@ extension ModelManager {
             name: friendlyName(from: "OsaurusAI/gemma-4-E4B-it-4bit"),
             description: "Multimodal edge model. Handles images, video, and audio. 128K context.",
             downloadURL: "https://huggingface.co/OsaurusAI/gemma-4-E4B-it-4bit",
-            isTopSuggestion: true
+            isTopSuggestion: true,
+            downloadSizeBytes: 2_000_000_000
         ),
 
         MLXModel(
@@ -900,7 +895,8 @@ extension ModelManager {
             name: friendlyName(from: "OsaurusAI/Gemma-4-26B-A4B-it-JANG_2L"),
             description: "Efficient MoE vision model. Only 4B active params. 256K context.",
             downloadURL: "https://huggingface.co/OsaurusAI/Gemma-4-26B-A4B-it-JANG_2L",
-            isTopSuggestion: true
+            isTopSuggestion: true,
+            downloadSizeBytes: 3_000_000_000
         ),
 
         MLXModel(
@@ -932,7 +928,8 @@ extension ModelManager {
             id: "OsaurusAI/Gemma-4-31B-it-JANG_4M",
             name: friendlyName(from: "OsaurusAI/Gemma-4-31B-it-JANG_4M"),
             description: "Gemma 4 31B dense vision model. Top-tier quality with optimized quantization.",
-            downloadURL: "https://huggingface.co/OsaurusAI/Gemma-4-31B-it-JANG_4M"
+            downloadURL: "https://huggingface.co/OsaurusAI/Gemma-4-31B-it-JANG_4M",
+            downloadSizeBytes: 6_000_000_000
         ),
 
         // MARK: Vision Language Models (VLM)
@@ -941,42 +938,48 @@ extension ModelManager {
             id: "OsaurusAI/Gemma-4-26B-A4B-it-JANG_4M",
             name: friendlyName(from: "OsaurusAI/Gemma-4-26B-A4B-it-JANG_4M"),
             description: "Higher-quality MoE vision model. 4B active params with 256K context.",
-            downloadURL: "https://huggingface.co/OsaurusAI/Gemma-4-26B-A4B-it-JANG_4M"
+            downloadURL: "https://huggingface.co/OsaurusAI/Gemma-4-26B-A4B-it-JANG_4M",
+            downloadSizeBytes: 5_000_000_000
         ),
 
         MLXModel(
             id: "OsaurusAI/gemma-4-E4B-it-8bit",
             name: friendlyName(from: "OsaurusAI/gemma-4-E4B-it-8bit"),
             description: "Multimodal edge model at 8-bit precision. Best quality for the E4B family.",
-            downloadURL: "https://huggingface.co/OsaurusAI/gemma-4-E4B-it-8bit"
+            downloadURL: "https://huggingface.co/OsaurusAI/gemma-4-E4B-it-8bit",
+            downloadSizeBytes: 3_000_000_000
         ),
 
         MLXModel(
             id: "OsaurusAI/Qwen3.5-122B-A10B-JANG_4K",
             name: friendlyName(from: "OsaurusAI/Qwen3.5-122B-A10B-JANG_4K"),
             description: "Largest Qwen3.5 MoE vision model. 10B active params with top-tier reasoning.",
-            downloadURL: "https://huggingface.co/OsaurusAI/Qwen3.5-122B-A10B-JANG_4K"
+            downloadURL: "https://huggingface.co/OsaurusAI/Qwen3.5-122B-A10B-JANG_4K",
+            downloadSizeBytes: 18_000_000_000
         ),
 
         MLXModel(
             id: "OsaurusAI/Qwen3.5-122B-A10B-JANG_2S",
             name: friendlyName(from: "OsaurusAI/Qwen3.5-122B-A10B-JANG_2S"),
             description: "Qwen3.5 122B MoE vision model. Compact quantization, smaller download.",
-            downloadURL: "https://huggingface.co/OsaurusAI/Qwen3.5-122B-A10B-JANG_2S"
+            downloadURL: "https://huggingface.co/OsaurusAI/Qwen3.5-122B-A10B-JANG_2S",
+            downloadSizeBytes: 11_000_000_000
         ),
 
         MLXModel(
             id: "OsaurusAI/Qwen3.5-35B-A3B-JANG_4K",
             name: friendlyName(from: "OsaurusAI/Qwen3.5-35B-A3B-JANG_4K"),
             description: "Efficient Qwen3.5 MoE vision model. Only 3B active params.",
-            downloadURL: "https://huggingface.co/OsaurusAI/Qwen3.5-35B-A3B-JANG_4K"
+            downloadURL: "https://huggingface.co/OsaurusAI/Qwen3.5-35B-A3B-JANG_4K",
+            downloadSizeBytes: 5_000_000_000
         ),
 
         MLXModel(
             id: "OsaurusAI/Qwen3.5-35B-A3B-JANG_2S",
             name: friendlyName(from: "OsaurusAI/Qwen3.5-35B-A3B-JANG_2S"),
             description: "Compact Qwen3.5 MoE vision model. Fast and lightweight.",
-            downloadURL: "https://huggingface.co/OsaurusAI/Qwen3.5-35B-A3B-JANG_2S"
+            downloadURL: "https://huggingface.co/OsaurusAI/Qwen3.5-35B-A3B-JANG_2S",
+            downloadSizeBytes: 3_000_000_000
         ),
 
         // MARK: Compact Models
@@ -985,7 +988,8 @@ extension ModelManager {
             id: "OsaurusAI/gemma-4-E2B-it-8bit",
             name: friendlyName(from: "OsaurusAI/gemma-4-E2B-it-8bit"),
             description: "Smallest Gemma 4 at 8-bit precision. Better quality, still runs on any Mac.",
-            downloadURL: "https://huggingface.co/OsaurusAI/gemma-4-E2B-it-8bit"
+            downloadURL: "https://huggingface.co/OsaurusAI/gemma-4-E2B-it-8bit",
+            downloadSizeBytes: 2_000_000_000
         ),
 
     ]

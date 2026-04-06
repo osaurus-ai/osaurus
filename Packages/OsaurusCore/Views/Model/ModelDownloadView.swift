@@ -372,46 +372,7 @@ struct ModelDownloadView: View {
                 .fixedSize(horizontal: false, vertical: true)
 
             ForEach(modelManager.deprecationNotices) { notice in
-                HStack(spacing: 10) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(Self.displayName(from: notice.oldId))
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(theme.tertiaryText)
-                            .strikethrough()
-
-                        HStack(spacing: 4) {
-                            Image(systemName: "arrow.right")
-                                .font(.system(size: 10))
-                                .foregroundColor(theme.accentColor)
-                            Text(Self.displayName(from: notice.newId))
-                                .font(.system(size: 12, weight: .medium))
-                                .foregroundColor(theme.primaryText)
-                        }
-                    }
-
-                    Spacer()
-
-                    Button(action: {
-                        modelManager.downloadModel(withRepoId: notice.newId)
-                    }) {
-                        Text(notice.isReplacementDownloaded ? "Ready" : "Download")
-                            .font(.system(size: 12, weight: .medium))
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .background(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .fill(notice.isReplacementDownloaded
-                                        ? theme.successColor.opacity(0.15)
-                                        : theme.accentColor)
-                            )
-                            .foregroundColor(notice.isReplacementDownloaded
-                                ? theme.successColor
-                                : .white)
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(notice.isReplacementDownloaded)
-                }
-                .padding(.vertical, 4)
+                deprecationRow(for: notice)
             }
         }
         .padding(16)
@@ -425,10 +386,134 @@ struct ModelDownloadView: View {
         )
     }
 
+    private func deprecationRow(for notice: ModelManager.DeprecationNotice) -> some View {
+        let state = modelManager.downloadStates[notice.newId] ?? .notStarted
+        let metrics = modelManager.downloadMetrics[notice.newId]
+
+        return HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(Self.displayName(from: notice.oldId))
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(theme.tertiaryText)
+                    .strikethrough()
+
+                HStack(spacing: 4) {
+                    Image(systemName: "arrow.right")
+                        .font(.system(size: 10))
+                        .foregroundColor(theme.accentColor)
+                    Text(Self.displayName(from: notice.newId))
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(theme.primaryText)
+                }
+
+                if case .downloading(let progress) = state {
+                    downloadProgress(progress: progress, metrics: metrics)
+                }
+
+                if case .failed(let error) = state {
+                    Text(error)
+                        .font(.system(size: 10))
+                        .foregroundColor(.red)
+                        .lineLimit(1)
+                        .padding(.top, 2)
+                }
+            }
+
+            Spacer()
+
+            switch state {
+            case .completed:
+                pillButton("Remove old", icon: "trash", color: .red, bg: Color.red.opacity(0.12)) {
+                    let oldModel = MLXModel(id: notice.oldId, name: "", description: "", downloadURL: "")
+                    modelManager.deleteModel(oldModel)
+                }
+            case .downloading:
+                pillButton("Cancel", color: theme.secondaryText, bg: theme.tertiaryBackground) {
+                    modelManager.cancelDownload(notice.newId)
+                }
+            case .failed:
+                pillButton("Retry", color: .white, bg: theme.accentColor) {
+                    modelManager.downloadModel(withRepoId: notice.newId)
+                }
+            case .notStarted:
+                pillButton("Download", color: .white, bg: theme.accentColor) {
+                    modelManager.downloadModel(withRepoId: notice.newId)
+                }
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    // MARK: - Deprecation Helpers
+
+    private func downloadProgress(progress: Double, metrics: ModelManager.DownloadMetrics?) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            ProgressView(value: progress)
+                .progressViewStyle(.linear)
+                .tint(theme.accentColor)
+
+            HStack(spacing: 6) {
+                Text("\(Int(progress * 100))%")
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundColor(theme.secondaryText)
+
+                if let speed = metrics?.bytesPerSecond, speed > 0 {
+                    Text(Self.formatSpeed(speed))
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundColor(theme.tertiaryText)
+                }
+
+                if let eta = metrics?.etaSeconds, eta > 0, eta < 86400 {
+                    Text(Self.formatETA(eta))
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundColor(theme.tertiaryText)
+                }
+            }
+        }
+        .padding(.top, 2)
+    }
+
+    private func pillButton(
+        _ title: String,
+        icon: String? = nil,
+        color: Color,
+        bg: Color,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Group {
+                if let icon {
+                    Label(title, systemImage: icon)
+                } else {
+                    Text(title)
+                }
+            }
+            .font(.system(size: 12, weight: .medium))
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(RoundedRectangle(cornerRadius: 8).fill(bg))
+            .foregroundColor(color)
+        }
+        .buttonStyle(.plain)
+    }
+
     private static func displayName(from repoId: String) -> String {
-        let repo = repoId.split(separator: "/").last.map(String.init) ?? repoId
-        return repo.replacingOccurrences(of: "-", with: " ")
-            .replacingOccurrences(of: "_", with: " ")
+        repoId.split(separator: "/").last.map(String.init)?
+            .replacingOccurrences(of: "-", with: " ")
+            .replacingOccurrences(of: "_", with: " ") ?? repoId
+    }
+
+    private static func formatSpeed(_ bytesPerSecond: Double) -> String {
+        let formatter = ByteCountFormatter()
+        formatter.countStyle = .file
+        formatter.allowedUnits = [.useGB, .useMB]
+        return "\(formatter.string(fromByteCount: Int64(bytesPerSecond)))/s"
+    }
+
+    private static func formatETA(_ seconds: Double) -> String {
+        let mins = Int(seconds) / 60
+        let secs = Int(seconds) % 60
+        return mins > 0 ? "\(mins)m \(secs)s left" : "\(secs)s left"
     }
 
     // MARK: - Loading State

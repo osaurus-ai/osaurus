@@ -122,12 +122,21 @@ struct ModelPickerView: View {
 
     // MARK: - Body
 
+    private var selectedModelReplacement: String? {
+        guard let id = selectedModel else { return nil }
+        return ModelManager.replacementForDeprecatedModel(id)
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             header
             Divider().background(theme.primaryBorder.opacity(0.3))
             searchField
             Divider().background(theme.primaryBorder.opacity(0.3))
+
+            if let replacement = selectedModelReplacement {
+                deprecationBanner(replacement: replacement)
+            }
 
             if cachedFlattenedRows.isEmpty {
                 emptyState
@@ -264,6 +273,42 @@ struct ModelPickerView: View {
         .padding(.vertical, 10)
         .background(theme.secondaryBackground.opacity(theme.isDark ? 0.4 : 0.5))
         .animation(.easeOut(duration: 0.15), value: searchText.isEmpty)
+    }
+
+    // MARK: - Deprecation Banner
+
+    private func deprecationBanner(replacement: String) -> some View {
+        Button(action: {
+            onDismiss()
+            Task { @MainActor in
+                try? await Task.sleepForPopoverDismiss()
+                AppDelegate.shared?.showManagementWindow(initialTab: .models)
+            }
+        }) {
+            HStack(spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 11))
+                    .foregroundColor(.orange)
+
+                Text("Selected model is outdated.")
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.secondaryText)
+
+                Spacer()
+
+                Text("Update")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(theme.accentColor)
+
+                Image(systemName: "arrow.right")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(theme.accentColor)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(Color.orange.opacity(0.08))
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Empty State
