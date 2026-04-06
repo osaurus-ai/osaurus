@@ -90,15 +90,17 @@ enum StreamingToolHint: Sendable {
 /// Uses the same `\u{FFFE}` sentinel pattern as `StreamingToolHint`.
 enum StreamingStatsHint: Sendable {
     private static let statsPrefix = "\u{FFFE}stats:"
+    private static let posixLocale = Locale(identifier: "en_US_POSIX")
 
     static func encode(tokenCount: Int, tokensPerSecond: Double) -> String {
-        String(format: "%@%d,%.4f", statsPrefix, tokenCount, tokensPerSecond)
+        let tps = String(format: "%.4f", locale: posixLocale, tokensPerSecond)
+        return "\(statsPrefix)\(tokenCount);\(tps)"
     }
 
     static func decode(_ delta: String) -> (tokenCount: Int, tokensPerSecond: Double)? {
         guard delta.hasPrefix(statsPrefix) else { return nil }
         let payload = delta.dropFirst(statsPrefix.count)
-        let parts = payload.split(separator: ",", maxSplits: 1)
+        let parts = payload.split(separator: ";", maxSplits: 1)
         guard parts.count == 2,
             let count = Int(parts[0]),
             let tps = Double(parts[1])

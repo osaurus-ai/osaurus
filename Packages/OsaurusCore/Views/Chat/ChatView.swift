@@ -1063,12 +1063,15 @@ final class ChatSession: ObservableObject {
 
                         if let first = firstDeltaTime {
                             assistantTurn.timeToFirstToken = first.timeIntervalSince(streamStartTime)
-                            // Fall back to UI-level tok/s when MLX stats weren't propagated (remote APIs)
-                            if assistantTurn.generationTokensPerSecond == nil {
+                            // Fall back to estimated tok/s when MLX stats weren't propagated (remote APIs).
+                            // Use the codebase's chars/4 heuristic to approximate tokens from generated text
+                            // rather than raw delta count, which doesn't map 1:1 to tokens for most providers.
+                            if assistantTurn.generationTokensPerSecond == nil, !assistantTurn.contentIsEmpty {
                                 let genTime = Date().timeIntervalSince(first)
-                                if genTime > 0 {
-                                    assistantTurn.generationTokenCount = uiDeltaCount
-                                    assistantTurn.generationTokensPerSecond = Double(uiDeltaCount) / genTime
+                                let estimatedTokens = ContextBudgetManager.estimateTokens(for: assistantTurn.content)
+                                if genTime > 0 && estimatedTokens > 0 {
+                                    assistantTurn.generationTokenCount = estimatedTokens
+                                    assistantTurn.generationTokensPerSecond = Double(estimatedTokens) / genTime
                                 }
                             }
                         }

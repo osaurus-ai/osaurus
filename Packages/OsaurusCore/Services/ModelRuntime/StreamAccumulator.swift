@@ -202,7 +202,7 @@ struct StreamAccumulator: AsyncSequence, Sendable {
                     return pendingEvents.isEmpty ? nil : pendingEvents.removeFirst()
                 }
 
-                // Skip info events (just log them).
+                // Log info events and surface generation stats downstream.
                 if let info = event.info {
                     print(
                         String(
