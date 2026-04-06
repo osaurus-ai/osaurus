@@ -81,7 +81,7 @@ struct SkillsView: View {
                                     animationDelay: Double(index) * 0.03,
                                     hasAppeared: hasAppeared,
                                     onToggle: { enabled in
-                                        Task {
+                                        Task { @MainActor in
                                             isProcessing = true
                                             defer { isProcessing = false }
                                             await skillManager.setEnabled(enabled, for: skill.id)
@@ -94,7 +94,7 @@ struct SkillsView: View {
                                         exportingSkill = skill
                                     },
                                     onDelete: {
-                                        Task {
+                                        Task { @MainActor in
                                             isProcessing = true
                                             defer { isProcessing = false }
                                             await skillManager.delete(id: skill.id)
@@ -127,7 +127,7 @@ struct SkillsView: View {
             SkillEditorSheet(
                 mode: .create,
                 onSave: { skill in
-                    Task {
+                    Task { @MainActor in
                         isProcessing = true
                         defer { isProcessing = false }
                         await skillManager.create(
@@ -151,7 +151,7 @@ struct SkillsView: View {
             SkillEditorSheet(
                 mode: .edit(skill),
                 onSave: { updated in
-                    Task {
+                    Task { @MainActor in
                         isProcessing = true
                         defer { isProcessing = false }
                         await skillManager.update(updated)
@@ -167,7 +167,7 @@ struct SkillsView: View {
         .sheet(isPresented: $showGitHubImport) {
             GitHubImportSheet(
                 onImport: { skills in
-                    Task {
+                    Task { @MainActor in
                         isProcessing = true
                         defer { isProcessing = false }
                         let imported = await skillManager.importSkillsFromMarkdown(skills)
@@ -187,7 +187,7 @@ struct SkillsView: View {
         .onChange(of: isProcessing || skillManager.isRefreshing) { _, newValue in
             if newValue {
                 // Delay showing the progress bar to avoid flickering for fast operations
-                Task {
+                Task { @MainActor in
                     try? await Task.sleep(nanoseconds: 2_500_000_000)  // 2.5 seconds
                     if isProcessing || skillManager.isRefreshing {
                         withAnimation(.easeIn(duration: 0.2)) {
@@ -202,7 +202,7 @@ struct SkillsView: View {
             }
         }
         .onAppear {
-            Task {
+            Task { @MainActor in
                 await skillManager.refresh()
                 withAnimation(.easeOut(duration: 0.25).delay(0.05)) {
                     hasAppeared = true
@@ -219,14 +219,14 @@ struct SkillsView: View {
             ],
             allowsMultipleSelection: false
         ) { result in
-            Task {
+            Task { @MainActor in
                 await handleImport(result)
             }
         }
         .onChange(of: exportingSkill) { _, skill in
             if let skill = skill {
-                Task {
-                    await exportSkill(skill)
+                Task { @MainActor in
+                    exportSkill(skill)
                 }
             }
         }
@@ -234,6 +234,7 @@ struct SkillsView: View {
 
     // MARK: - Import/Export
 
+    @MainActor
     private func handleImport(_ result: Result<[URL], Error>) async {
         isProcessing = true
         defer { isProcessing = false }
@@ -284,7 +285,8 @@ struct SkillsView: View {
         }
     }
 
-    private func exportSkill(_ skill: Skill) async {
+    @MainActor
+    private func exportSkill(_ skill: Skill) {
         let panel = NSSavePanel()
 
         // If skill has associated files, export as ZIP; otherwise just SKILL.md
@@ -302,7 +304,7 @@ struct SkillsView: View {
 
         panel.begin { response in
             if response == .OK, let url = panel.url {
-                Task {
+                Task { @MainActor in
                     self.isProcessing = true
                     defer { self.isProcessing = false }
                     do {
@@ -311,27 +313,19 @@ struct SkillsView: View {
                             let zipURL = try await skillManager.exportSkillAsZip(skill)
                             try FileManager.default.copyItem(at: zipURL, to: url)
                             try? FileManager.default.removeItem(at: zipURL)
-                            DispatchQueue.main.async {
-                                self.showToast("Exported \"\(skill.name)\" as ZIP")
-                            }
+                            self.showToast("Exported \"\(skill.name)\" as ZIP")
                         } else {
                             // export as SKILL.md
                             let content = skillManager.exportSkillAsAgentSkills(skill)
                             try content.write(to: url, atomically: true, encoding: .utf8)
-                            DispatchQueue.main.async {
-                                self.showToast("Exported \"\(skill.name)\" as SKILL.md")
-                            }
+                            self.showToast("Exported \"\(skill.name)\" as SKILL.md")
                         }
                     } catch {
-                        DispatchQueue.main.async {
-                            self.showToast("Export failed: \(error.localizedDescription)", isError: true)
-                        }
+                        self.showToast("Export failed: \(error.localizedDescription)", isError: true)
                     }
                 }
             }
-            DispatchQueue.main.async {
-                exportingSkill = nil
-            }
+            self.exportingSkill = nil
         }
     }
 
@@ -344,7 +338,7 @@ struct SkillsView: View {
             count: skillManager.skills.isEmpty ? nil : skillManager.enabledCount
         ) {
             HeaderIconButton("arrow.clockwise", isLoading: skillManager.isRefreshing, help: "Refresh skills") {
-                Task {
+                Task { @MainActor in
                     await skillManager.refresh()
                 }
             }
@@ -363,11 +357,13 @@ struct SkillsView: View {
 
     // MARK: - Toast Helper
 
+    @MainActor
     private func showToast(_ message: String, isError: Bool = false) {
         withAnimation(theme.springAnimation()) {
             toastMessage = (message, isError)
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + (isError ? 3.5 : 2.5)) {
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: UInt64((isError ? 3.5 : 2.5) * 1_000_000_000))
             withAnimation(theme.animationQuick()) {
                 toastMessage = nil
             }
@@ -384,10 +380,17 @@ private struct ImportDropdownButton: View {
     let onLocal: () -> Void
 
     @State private var isHovering = false
-    @State private var showMenu = false
 
     var body: some View {
-        Button(action: { showMenu.toggle() }) {
+        Menu {
+            Button(action: onGitHub) {
+                Label("From GitHub", systemImage: "link")
+            }
+            Divider()
+            Button(action: onLocal) {
+                Label("From File", systemImage: "doc")
+            }
+        } label: {
             HStack(spacing: 6) {
                 Image(systemName: "square.and.arrow.down")
                     .font(.system(size: 12, weight: .medium))
@@ -407,68 +410,12 @@ private struct ImportDropdownButton: View {
                     .opacity(isHovering ? 0.8 : 1)
             )
         }
-        .buttonStyle(PlainButtonStyle())
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
         .onHover { hovering in
             withAnimation(.easeOut(duration: 0.15)) {
                 isHovering = hovering
             }
-        }
-        .popover(isPresented: $showMenu, arrowEdge: .bottom) {
-            VStack(alignment: .leading, spacing: 0) {
-                ImportMenuRow(icon: "link", title: "From GitHub") {
-                    showMenu = false
-                    Task { @MainActor in
-                        try? await Task.sleepForPopoverDismiss()
-                        onGitHub()
-                    }
-                }
-                Divider().padding(.horizontal, 8)
-                ImportMenuRow(icon: "doc", title: "From File") {
-                    showMenu = false
-                    Task { @MainActor in
-                        try? await Task.sleepForPopoverDismiss()
-                        onLocal()
-                    }
-                }
-            }
-            .padding(.vertical, 6)
-            .frame(width: 160)
-        }
-    }
-}
-
-private struct ImportMenuRow: View {
-    @Environment(\.theme) private var theme
-
-    let icon: String
-    let title: String
-    let action: () -> Void
-
-    @State private var isHovering = false
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 10) {
-                Image(systemName: icon)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
-                    .frame(width: 16)
-                Text(title)
-                    .font(.system(size: 13))
-                    .foregroundColor(theme.primaryText)
-                Spacer()
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(isHovering ? theme.secondaryBackground : Color.clear)
-            )
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(PlainButtonStyle())
-        .onHover { hovering in
-            isHovering = hovering
         }
     }
 }

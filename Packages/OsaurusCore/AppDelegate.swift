@@ -703,7 +703,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         print("[AppDelegate] Popover closed, posting chatViewClosed notification")
         // Post notification so VAD can resume
         NotificationCenter.default.post(name: .chatViewClosed, object: nil)
-        
+
         if let action = pendingPopoverAction {
             pendingPopoverAction = nil
             Task { @MainActor in

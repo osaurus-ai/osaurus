@@ -110,25 +110,25 @@ public final class OnboardingService: ObservableObject {
         let services = [
             // MasterKey
             "com.osaurus.account",
-            
+
             // AgentSecretsKeychain
             "ai.osaurus.agent-secrets",
-            
+
             // ToolSecretsKeychain
             "ai.osaurus.tools",
-            
+
             // MCPProviderKeychain
             "ai.osaurus.mcp",
-            
+
             // RemoteProviderKeychain
-            "ai.osaurus.remote"
+            "ai.osaurus.remote",
         ]
 
         for service in services {
             let query: [String: Any] = [
                 kSecClass as String: kSecClassGenericPassword,
                 kSecAttrService as String: service,
-                kSecAttrSynchronizable as String: kSecAttrSynchronizableAny
+                kSecAttrSynchronizable as String: kSecAttrSynchronizableAny,
             ]
 
             let status = SecItemDelete(query as CFDictionary)
