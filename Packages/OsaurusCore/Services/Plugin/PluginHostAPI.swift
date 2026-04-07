@@ -340,6 +340,18 @@ final class PluginHostContext: @unchecked Sendable {
                 executionMode: executionMode
             )
         }
+
+        func withSystemPrompt(_ newPrompt: String) -> AgentContext {
+            AgentContext(
+                agentId: agentId,
+                systemPrompt: newPrompt,
+                model: model,
+                temperature: temperature,
+                maxTokens: maxTokens,
+                tools: tools,
+                executionMode: executionMode
+            )
+        }
     }
 
     private struct InferenceOptions {
@@ -463,7 +475,7 @@ final class PluginHostContext: @unchecked Sendable {
             await SandboxToolRegistrar.shared.registerTools(for: agentId)
         }
 
-        var ctx: AgentContext = await MainActor.run {
+        var (ctx, composer): (AgentContext, SystemPromptComposer) = await MainActor.run {
             let mgr = AgentManager.shared
             let execMode = ToolRegistry.shared.resolveWorkExecutionMode(folderContext: nil)
             let isManual = mgr.effectiveToolSelectionMode(for: agentId) == .manual
@@ -480,24 +492,35 @@ final class PluginHostContext: @unchecked Sendable {
                 }
             }
 
-            var systemPrompt = mgr.effectiveSystemPrompt(for: agentId)
+            var comp = SystemPromptComposer()
+            comp.append(
+                .static(
+                    id: "base",
+                    label: "Agent Prompt",
+                    content: mgr.effectiveSystemPrompt(for: agentId)
+                )
+            )
             if execMode.usesSandboxTools {
                 let secretNames = Array(AgentSecretsKeychain.getAllSecrets(agentId: agentId).keys)
-                let section = WorkExecutionEngine.chatSandboxPromptSection(secretNames: secretNames)
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                if !section.isEmpty {
-                    systemPrompt = systemPrompt.isEmpty ? section : systemPrompt + "\n\n" + section
-                }
+                comp.append(
+                    .static(
+                        id: "sandbox",
+                        label: "Chat Sandbox",
+                        content: SystemPromptTemplates.sandbox(mode: .chat, compact: false, secretNames: secretNames)
+                    )
+                )
             }
 
-            return AgentContext(
-                agentId: agentId,
-                systemPrompt: systemPrompt,
-                model: mgr.effectiveModel(for: agentId),
-                temperature: mgr.effectiveTemperature(for: agentId),
-                maxTokens: mgr.effectiveMaxTokens(for: agentId),
-                tools: tools.isEmpty ? nil : tools,
-                executionMode: execMode
+            return (
+                AgentContext(
+                    agentId: agentId,
+                    systemPrompt: comp.render(),
+                    model: mgr.effectiveModel(for: agentId),
+                    temperature: mgr.effectiveTemperature(for: agentId),
+                    maxTokens: mgr.effectiveMaxTokens(for: agentId),
+                    tools: tools.isEmpty ? nil : tools,
+                    executionMode: execMode
+                ), comp
             )
         }
 
@@ -506,8 +529,10 @@ final class PluginHostContext: @unchecked Sendable {
             config: MemoryConfigurationStore.load()
         )
         if !memoryCtx.isEmpty {
-            ctx = ctx.prependingSystemContent(memoryCtx)
+            composer.append(.dynamic(id: "memory", label: "Memory", content: memoryCtx))
+            ctx = ctx.withSystemPrompt(composer.render())
         }
+        debugLog("[Context:Plugin] \(composer.manifest().debugDescription)")
         return ctx
     }
 

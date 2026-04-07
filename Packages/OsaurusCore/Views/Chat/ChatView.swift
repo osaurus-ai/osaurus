@@ -49,7 +49,7 @@ final class ChatSession: ObservableObject {
     private var _tokenCacheValid: Bool = false
     private var _lastTokenTurnsCount: Int = 0
     private var _lastTokenAttachmentsCount: Int = 0
-    private var _memoryContextTokens: Int = 0
+    private var cachedManifest: PromptManifest?
     private let budgetTracker = ContextBudgetTracker()
 
     /// Callback when session needs to be saved (called after streaming completes)
@@ -301,17 +301,14 @@ final class ChatSession: ObservableObject {
         let effectiveId = agentId ?? Agent.defaultId
         let executionMode = estimatedChatExecutionMode(agentId: effectiveId)
 
-        let compact = SystemPromptBuilder.isLocalModel(selectedModel)
-        let systemPrompt = buildSystemPrompt(
-            base: AgentManager.shared.effectiveSystemPrompt(for: effectiveId)
-                .trimmingCharacters(in: .whitespacesAndNewlines),
-            agentId: effectiveId,
-            executionMode: executionMode,
-            compact: compact
-        )
-        breakdown.systemPrompt = ContextBudgetManager.estimateTokens(for: systemPrompt)
-
-        breakdown.memory = _memoryContextTokens
+        let manifest: PromptManifest
+        if let cached = cachedManifest {
+            manifest = cached
+        } else {
+            manifest = buildPreviewManifest(agentId: effectiveId, executionMode: executionMode)
+        }
+        breakdown.systemPrompt = manifest.systemPromptTokens
+        breakdown.memory = manifest.memoryTokens
 
         let toolSpecs = buildToolSpecs(executionMode: executionMode)
         breakdown.tools = ToolRegistry.shared.totalEstimatedTokens(for: toolSpecs)
@@ -404,6 +401,7 @@ final class ChatSession: ObservableObject {
         // Clear caches
         blockMemoizer.clear()
         _tokenCacheValid = false
+        cachedManifest = nil
         visibleBlocks = []
         visibleBlocksGroupHeaderMap = [:]
 
@@ -432,6 +430,7 @@ final class ChatSession: ObservableObject {
     /// Invalidate the token cache (called when tools/skills change)
     func invalidateTokenCache() {
         _tokenCacheValid = false
+        cachedManifest = nil
         budgetTracker.clear()
         objectWillChange.send()
     }
@@ -526,18 +525,14 @@ final class ChatSession: ObservableObject {
 
     private func refreshMemoryTokens() async {
         let effectiveAgentId = agentId ?? Agent.defaultId
-        let config = MemoryConfigurationStore.load()
         let context = await MemoryContextAssembler.assembleContext(
             agentId: effectiveAgentId.uuidString,
-            config: config
+            config: MemoryConfigurationStore.load()
         )
-        updateMemoryTokens(fromContext: context)
-    }
-
-    private func updateMemoryTokens(fromContext context: String) {
-        let tokens = context.isEmpty ? 0 : max(1, context.count / MemoryConfiguration.charsPerToken)
-        guard tokens != _memoryContextTokens else { return }
-        _memoryContextTokens = tokens
+        let newTokens = ContextBudgetManager.estimateTokens(for: context)
+        let oldTokens = cachedManifest?.memoryTokens ?? 0
+        guard newTokens != oldTokens else { return }
+        cachedManifest = nil
         _tokenCacheValid = false
         objectWillChange.send()
     }
@@ -753,23 +748,55 @@ final class ChatSession: ObservableObject {
         return ToolRegistry.shared.resolveWorkExecutionMode(folderContext: nil)
     }
 
-    /// Build system prompt with execution-mode-specific sections (sandbox instructions, etc.).
-    func buildSystemPrompt(
+    /// Build the chat system prompt via the composer pipeline.
+    /// Returns the rendered prompt, the manifest, and the composer for cache hinting.
+    func buildChatSystemPrompt(
         base: String,
         agentId: UUID,
         executionMode: WorkExecutionMode,
-        compact: Bool = false
-    ) -> String {
-        let prompt = base.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        guard executionMode.usesSandboxTools else { return prompt }
-        let secretNames = Array(AgentSecretsKeychain.getAllSecrets(agentId: agentId).keys)
-        let sandboxSection = WorkExecutionEngine.chatSandboxPromptSection(compact: compact, secretNames: secretNames)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        if prompt.isEmpty {
-            return sandboxSection
+        compact: Bool = false,
+        memoryContext: String = "",
+        preflightSnippet: String = "",
+        skillSection: String? = nil
+    ) -> (prompt: String, manifest: PromptManifest) {
+        var composer = SystemPromptComposer()
+        composer.append(.static(id: "base", label: "Base Prompt", content: base))
+        if executionMode.usesSandboxTools {
+            let secretNames = Array(AgentSecretsKeychain.getAllSecrets(agentId: agentId).keys)
+            composer.append(
+                .static(
+                    id: "sandbox",
+                    label: "Chat Sandbox",
+                    content: SystemPromptTemplates.sandbox(mode: .chat, compact: compact, secretNames: secretNames)
+                )
+            )
         }
-        return prompt + "\n\n" + sandboxSection
+        composer.append(.dynamic(id: "memory", label: "Memory", content: memoryContext))
+        composer.append(.dynamic(id: "preflight", label: "Pre-flight RAG", content: preflightSnippet))
+        if let section = skillSection {
+            composer.append(.dynamic(id: "skills", label: "Skills", content: section))
+        }
+        return (composer.render(), composer.manifest())
+    }
+
+    /// Lightweight manifest for offline token estimation (popover).
+    private func buildPreviewManifest(
+        agentId: UUID,
+        executionMode: WorkExecutionMode,
+        memoryContext: String? = nil
+    ) -> PromptManifest {
+        let base = AgentManager.shared.effectiveSystemPrompt(for: agentId)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let compact = SystemPromptBuilder.isLocalModel(selectedModel)
+        let memory = memoryContext ?? ""
+        let (_, manifest) = buildChatSystemPrompt(
+            base: base,
+            agentId: agentId,
+            executionMode: executionMode,
+            compact: compact,
+            memoryContext: memory
+        )
+        return manifest
     }
 
     /// Build tool specifications: always-loaded set for chat mode.
@@ -855,10 +882,7 @@ final class ChatSession: ObservableObject {
                     config: memoryConfig
                 )
                 guard isRunActive(runId) else { return }
-                updateMemoryTokens(fromContext: memoryContext)
 
-                // Pre-flight RAG: search capabilities based on user's message.
-                // Skipped when disableTools is set or when the agent uses manual tool selection.
                 let toolsDisabled = chatCfg.disableTools
                 let toolMode = AgentManager.shared.effectiveToolSelectionMode(for: effectiveAgentId)
                 let preflight: PreflightResult
@@ -875,19 +899,25 @@ final class ChatSession: ObservableObject {
                 }
 
                 let isCompact = SystemPromptBuilder.isLocalModel(selectedModel)
-                var sys = buildSystemPrompt(
+                let isManualTools = toolMode == .manual
+
+                let manualSkillSection: String? =
+                    isManualTools
+                    ? await SkillManager.shared.manualSkillPromptSection(for: effectiveAgentId)
+                    : nil
+
+                let (sys, manifest) = buildChatSystemPrompt(
                     base: baseSystemPrompt,
                     agentId: effectiveAgentId,
                     executionMode: executionMode,
-                    compact: isCompact
+                    compact: isCompact,
+                    memoryContext: memoryContext,
+                    preflightSnippet: preflight.contextSnippet,
+                    skillSection: manualSkillSection
                 )
+                cachedManifest = manifest
+                debugLog("[Context] \(manifest.debugDescription)")
 
-                if !preflight.contextSnippet.isEmpty {
-                    sys += "\n\n" + preflight.contextSnippet
-                }
-
-                sys = SystemPromptBuilder.prependMemoryContext(memoryContext, to: sys)
-                let isManualTools = toolMode == .manual
                 var toolSpecs =
                     toolsDisabled
                     ? []
@@ -910,15 +940,8 @@ final class ChatSession: ObservableObject {
                     }
                 }
 
-                if isManualTools,
-                    let section = await SkillManager.shared.manualSkillPromptSection(for: effectiveAgentId)
-                {
-                    sys += "\n\n" + section
-                }
-
                 budgetTracker.snapshot(
-                    systemPromptChars: sys.count,
-                    memoryTokens: _memoryContextTokens,
+                    manifest: manifest,
                     toolTokens: ToolRegistry.shared.totalEstimatedTokens(for: toolSpecs)
                 )
 
@@ -1015,6 +1038,8 @@ final class ChatSession: ObservableObject {
                         tool_choice: toolSpecs.isEmpty ? nil : .auto,
                         session_id: sessionId?.uuidString
                     )
+                    let toolNames = toolSpecs.map { $0.function.name }
+                    req.cache_hint = manifest.staticPrefixHash(toolNames: toolNames)
                     req.modelOptions = activeModelOptions.isEmpty ? nil : activeModelOptions
                     debugLog(
                         "send: attempt=\(attempts) model=\(req.model) tools=\(req.tools?.count ?? 0) sessionId=\(req.session_id ?? "nil")"

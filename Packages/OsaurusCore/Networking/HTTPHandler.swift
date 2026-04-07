@@ -1316,13 +1316,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
         var enriched = request
 
+        let agentPrompt: String
         if let agentUUID = UUID(uuidString: agentId) {
-            let agentPrompt = await MainActor.run {
+            agentPrompt = await MainActor.run {
                 SystemPromptBuilder.effectiveBasePrompt(
                     AgentManager.shared.effectiveSystemPrompt(for: agentUUID)
                 )
             }
-            SystemPromptBuilder.injectSystemContent(agentPrompt, into: &enriched.messages)
+        } else {
+            agentPrompt = ""
         }
 
         let query = request.messages.last(where: { $0.role == "user" })?.content ?? ""
@@ -1331,7 +1333,16 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             config: MemoryConfigurationStore.load(),
             query: query
         )
-        SystemPromptBuilder.injectMemoryContext(memoryContext, into: &enriched.messages)
+
+        var composer = SystemPromptComposer()
+        composer.append(.static(id: "base", label: "Agent Prompt", content: agentPrompt))
+        composer.append(.dynamic(id: "memory", label: "Memory", content: memoryContext))
+        let composed = composer.render()
+        debugLog("[Context:HTTP] \(composer.manifest().debugDescription)")
+
+        if !composed.isEmpty {
+            SystemPromptBuilder.injectSystemContent(composed, into: &enriched.messages)
+        }
 
         return enriched
     }

@@ -33,19 +33,19 @@ struct ChatViewSandboxTests {
     func buildSystemPrompt_includesSandboxContextOnlyWhenExpected() {
         let session = ChatSession()
 
-        let standardPrompt = session.buildSystemPrompt(
+        let (standardPrompt, _) = session.buildChatSystemPrompt(
             base: "Base prompt",
             agentId: Agent.defaultId,
             executionMode: .none
         )
-        let sandboxPrompt = session.buildSystemPrompt(
+        let (sandboxPrompt, _) = session.buildChatSystemPrompt(
             base: "Base prompt",
             agentId: Agent.defaultId,
             executionMode: .sandbox
         )
 
-        #expect(standardPrompt.contains(WorkExecutionEngine.sandboxSectionHeading) == false)
-        #expect(sandboxPrompt.contains(WorkExecutionEngine.sandboxSectionHeading))
+        #expect(standardPrompt.contains(SystemPromptTemplates.sandboxSectionHeading) == false)
+        #expect(sandboxPrompt.contains(SystemPromptTemplates.sandboxSectionHeading))
         #expect(sandboxPrompt.contains("sandbox_run_script"))
     }
 

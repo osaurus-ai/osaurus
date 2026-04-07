@@ -2,29 +2,27 @@
 //  SystemPromptBuilder.swift
 //  osaurus
 //
-//  Centralized system prompt assembly. All entry points (ChatView, HTTPHandler,
-//  PluginHostAPI, WorkEngine) should use these helpers to ensure consistent
-//  ordering, heading hierarchy, and model-appropriate sizing.
+//  Legacy system prompt helpers. New code should use SystemPromptComposer
+//  to build prompts and SystemPromptTemplates for prompt text.
+//
+//  Retained helpers: effectiveBasePrompt, isLocalModel.
+//  Deprecated helpers: prependMemoryContext, injectSystemContent,
+//  injectMemoryContext, appendSystemContent — use SystemPromptComposer instead.
 //
 
 import Foundation
 
-/// Assembles system prompts from constituent parts in a consistent order.
+/// Legacy system prompt helpers retained for backward compatibility.
 ///
-/// Assembly order (top to bottom):
-/// 1. Memory context (user overrides, profile, remembered details, summaries, relationships)
-/// 2. Base prompt (user-configured or agent-configured identity/instructions)
-/// 3. Mode-specific instructions (Work Mode block, or capability catalog for chat)
-/// 4. Environment context (sandbox section or host folder context)
-/// 5. Active skills
+/// For new code, use `SystemPromptComposer` to assemble prompt sections and
+/// `SystemPromptTemplates` for prompt text constants.
 public enum SystemPromptBuilder {
 
-    static let defaultIdentity = "You are a helpful AI assistant."
+    static let defaultIdentity = SystemPromptTemplates.defaultIdentity
 
-    // MARK: - Memory Context Prepending
+    // MARK: - Deprecated Concat Helpers
 
-    /// Prepend memory context to an existing system prompt.
-    /// Uses a consistent `\n\n` separator when both parts are non-empty.
+    /// Use `SystemPromptComposer` instead.
     static func prependMemoryContext(_ memoryContext: String, to systemPrompt: String) -> String {
         let trimmedMemory = memoryContext.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedPrompt = systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -34,8 +32,7 @@ public enum SystemPromptBuilder {
         return trimmedMemory + "\n\n" + trimmedPrompt
     }
 
-    /// Inject memory context into a message array's existing system message,
-    /// or insert a new system message at position 0.
+    /// Use `SystemPromptComposer` instead.
     static func injectMemoryContext(
         _ memoryContext: String,
         into messages: inout [ChatMessage]
@@ -54,8 +51,7 @@ public enum SystemPromptBuilder {
         }
     }
 
-    /// Inject or prepend additional system-level content (e.g. agent prompt)
-    /// into a message array's existing system message.
+    /// Use `SystemPromptComposer` instead.
     static func injectSystemContent(
         _ content: String,
         into messages: inout [ChatMessage]
@@ -75,8 +71,7 @@ public enum SystemPromptBuilder {
         }
     }
 
-    /// Append additional content to the end of the existing system message
-    /// (e.g. preflight context snippets).
+    /// Use `SystemPromptComposer` instead.
     static func appendSystemContent(
         _ content: String,
         into messages: inout [ChatMessage]

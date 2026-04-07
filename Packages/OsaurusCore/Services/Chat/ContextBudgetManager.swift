@@ -353,11 +353,11 @@ final class ContextBudgetTracker {
     private var breakdown: ContextTokenBreakdown?
     private var cumulativeOutputTokens: Int = 0
 
-    /// Snapshot the fixed components of the actual request context.
-    func snapshot(systemPromptChars: Int, memoryTokens: Int, toolTokens: Int) {
+    /// Snapshot the fixed components from a prompt manifest and tool token estimate.
+    func snapshot(manifest: PromptManifest, toolTokens: Int) {
         var bd = ContextTokenBreakdown()
-        bd.systemPrompt = max(1, systemPromptChars / ContextBudgetManager.charsPerToken)
-        bd.memory = memoryTokens
+        bd.systemPrompt = manifest.systemPromptTokens
+        bd.memory = manifest.memoryTokens
         bd.tools = toolTokens
         breakdown = bd
     }

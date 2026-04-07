@@ -62,10 +62,10 @@ struct WorkExecutionEngineTests {
             executionMode: .sandbox
         )
 
-        #expect(prompt.contains(WorkExecutionEngine.sandboxScaffoldGuidance))
-        #expect(prompt.contains(WorkExecutionEngine.sandboxVerifyGuidance))
+        #expect(prompt.contains(SystemPromptTemplates.sandboxScaffoldGuidance))
+        #expect(prompt.contains(SystemPromptTemplates.sandboxVerifyGuidance))
         #expect(prompt.contains("call `complete_task`"))
-        #expect(prompt.contains(WorkExecutionEngine.sandboxReadFileHint))
+        #expect(prompt.contains(SystemPromptTemplates.sandboxReadFileHint))
     }
 
     @Test @MainActor
@@ -125,8 +125,8 @@ struct WorkExecutionEngineTests {
             return
         }
         #expect(summary == "done")
-        #expect(statuses.contains(WorkExecutionEngine.budgetRemainingStatus(remaining: 5, total: 15)))
-        #expect(statuses.contains(WorkExecutionEngine.budgetWarningStatus(remaining: 5)))
+        #expect(statuses.contains(SystemPromptTemplates.budgetRemainingStatus(remaining: 5, total: 15)))
+        #expect(statuses.contains(SystemPromptTemplates.budgetWarningStatus(remaining: 5)))
     }
 
     @Test @MainActor

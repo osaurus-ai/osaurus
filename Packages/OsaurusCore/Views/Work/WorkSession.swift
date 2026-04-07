@@ -76,6 +76,9 @@ public final class WorkSession: ObservableObject {
     /// Tracks the active request's token breakdown during execution.
     private let budgetTracker = ContextBudgetTracker()
 
+    /// Cached manifest from the last prompt composition for offline estimation.
+    private var cachedManifest: PromptManifest?
+
     // MARK: - Block Caching
 
     private let blockMemoizer = BlockMemoizer()
@@ -349,27 +352,33 @@ public final class WorkSession: ObservableObject {
     }
 
     func estimateContextBreakdown(for issue: Issue?) -> ContextTokenBreakdown {
-        let baseSystemPrompt = SystemPromptBuilder.effectiveBasePrompt(
-            windowState?.cachedSystemPrompt
-                ?? AgentManager.shared.effectiveSystemPrompt(for: agentId)
-        )
         let executionMode = estimatedExecutionModeForBudget()
         let toolSpecs = ToolRegistry.shared.alwaysLoadedSpecs(mode: executionMode)
 
+        let manifest: PromptManifest
+        if let cached = cachedManifest {
+            manifest = cached
+        } else {
+            let baseSystemPrompt = SystemPromptBuilder.effectiveBasePrompt(
+                windowState?.cachedSystemPrompt
+                    ?? AgentManager.shared.effectiveSystemPrompt(for: agentId)
+            )
+            let secretNames = Array(AgentSecretsKeychain.getAllSecrets(agentId: agentId).keys)
+            let (_, m) = WorkExecutionEngine.composeAgentSystemPrompt(
+                base: baseSystemPrompt,
+                executionMode: executionMode,
+                secretNames: secretNames
+            )
+            manifest = m
+        }
+
         var breakdown = ContextTokenBreakdown()
-        let secretNames = Array(AgentSecretsKeychain.getAllSecrets(agentId: agentId).keys)
-        let prompt = WorkExecutionEngine.buildAgentSystemPrompt(
-            base: baseSystemPrompt,
-            executionMode: executionMode,
-            secretNames: secretNames
-        )
-        breakdown.systemPrompt = ContextBudgetManager.estimateTokens(for: prompt)
-        breakdown.memory = windowState?.session.estimatedContextBreakdown.memory ?? 0
+        breakdown.systemPrompt = manifest.systemPromptTokens
+        breakdown.memory = manifest.memoryTokens
         breakdown.tools = ToolRegistry.shared.totalEstimatedTokens(for: toolSpecs)
 
         var conversationTokens = 0
 
-        // Add the initial message context (folder tree, task details) to the conversation tokens
         var firstMessageContent = ""
         switch executionMode {
         case .hostFolder(let ctx):
@@ -802,20 +811,25 @@ public final class WorkSession: ObservableObject {
             }
         }
 
-        var systemPrompt = config.systemPrompt
+        var composer = SystemPromptComposer()
+        composer.append(.static(id: "base", label: "System Prompt", content: config.systemPrompt))
         if !preflightSnippet.isEmpty {
-            systemPrompt += "\n\n" + preflightSnippet
+            composer.append(.dynamic(id: "preflight", label: "Pre-flight RAG", content: preflightSnippet))
         }
-
-        if isManualTools,
-            let section = await SkillManager.shared.manualSkillPromptSection(for: agentId)
-        {
-            systemPrompt += "\n\n" + section
+        let manualSkillContent: String? =
+            isManualTools
+            ? await SkillManager.shared.manualSkillPromptSection(for: agentId)
+            : nil
+        if let section = manualSkillContent {
+            composer.append(.dynamic(id: "skills", label: "Skills", content: section))
         }
+        let systemPrompt = composer.render()
+        let execManifest = composer.manifest()
+        cachedManifest = execManifest
+        debugLog("[Context] \(execManifest.debugDescription)")
 
         budgetTracker.snapshot(
-            systemPromptChars: systemPrompt.count,
-            memoryTokens: windowState?.session.estimatedContextBreakdown.memory ?? 0,
+            manifest: execManifest,
             toolTokens: ToolRegistry.shared.totalEstimatedTokens(for: tools)
         )
         objectWillChange.send()
@@ -856,6 +870,7 @@ public final class WorkSession: ObservableObject {
         deltaProcessor?.finalize()
         deltaProcessor = nil
         budgetTracker.clear()
+        cachedManifest = nil
         currentStep = 0
         let configuredMaxIterations =
             ChatConfigurationStore.load().workMaxIterations ?? WorkExecutionEngine.defaultMaxIterations
@@ -888,7 +903,11 @@ public final class WorkSession: ObservableObject {
             agentId: agentId.uuidString,
             config: memoryConfig
         )
-        let systemPrompt = SystemPromptBuilder.prependMemoryContext(memoryContext, to: baseSystemPrompt)
+
+        var composer = SystemPromptComposer()
+        composer.append(.static(id: "base", label: "Base Prompt", content: baseSystemPrompt))
+        composer.append(.dynamic(id: "memory", label: "Memory", content: memoryContext))
+        let systemPrompt = composer.render()
 
         let model =
             if let selected = selectedModel, !selected.isEmpty {
@@ -1367,20 +1386,22 @@ public final class WorkSession: ObservableObject {
             }
         }
 
-        var systemPrompt = config.systemPrompt
+        var resumeComposer = SystemPromptComposer()
+        resumeComposer.append(.static(id: "base", label: "System Prompt", content: config.systemPrompt))
         if !resumePreflightSnippet.isEmpty {
-            systemPrompt += "\n\n" + resumePreflightSnippet
+            resumeComposer.append(.dynamic(id: "preflight", label: "Pre-flight RAG", content: resumePreflightSnippet))
         }
-
         if resumeIsManual,
             let section = await SkillManager.shared.manualSkillPromptSection(for: agentId)
         {
-            systemPrompt += "\n\n" + section
+            resumeComposer.append(.dynamic(id: "skills", label: "Skills", content: section))
         }
+        let systemPrompt = resumeComposer.render()
+        let resumeManifest = resumeComposer.manifest()
+        cachedManifest = resumeManifest
 
         budgetTracker.snapshot(
-            systemPromptChars: systemPrompt.count,
-            memoryTokens: windowState?.session.estimatedContextBreakdown.memory ?? 0,
+            manifest: resumeManifest,
             toolTokens: ToolRegistry.shared.totalEstimatedTokens(for: tools)
         )
         objectWillChange.send()

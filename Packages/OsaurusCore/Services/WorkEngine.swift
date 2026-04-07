@@ -393,12 +393,14 @@ public actor WorkEngine {
             return Array(AgentSecretsKeychain.getAllSecrets(agentId: uuid).keys)
         }()
 
-        let agentSystemPrompt = WorkExecutionEngine.buildAgentSystemPrompt(
+        let (agentSystemPrompt, agentManifest) = WorkExecutionEngine.composeAgentSystemPrompt(
             base: systemPrompt,
             executionMode: resolvedExecutionMode,
             compact: compact,
             secretNames: secretNames
         )
+        let agentCacheHint = agentManifest.staticPrefixHash(toolNames: tools.map { $0.function.name })
+        debugLog("[Context] \(agentManifest.debugDescription)")
 
         // Log execution started
         _ = try? IssueStore.createEvent(
@@ -453,6 +455,7 @@ public actor WorkEngine {
                 executionMode: resolvedExecutionMode,
                 sandboxAgentName: sandboxAgentName,
                 agentId: agentId,
+                cacheHint: agentCacheHint,
                 shouldInterrupt: { await self.shouldInterruptExecution(for: issue.id) },
                 onIterationStart: { [weak self] iteration in
                     guard let self = self else { return }
