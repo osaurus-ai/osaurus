@@ -759,56 +759,6 @@ public actor WorkExecutionEngine {
         )
     }
 
-    // MARK: - Work System Prompt
-
-    /// Builds the work-mode system prompt, resolving the agent's base prompt internally.
-    @MainActor
-    static func composeAgentSystemPrompt(
-        agentId: UUID,
-        executionMode: WorkExecutionMode,
-        compact: Bool = false,
-        secretNames: [String] = []
-    ) -> (prompt: String, manifest: PromptManifest) {
-        let composer = SystemPromptComposer.forWork(
-            agentId: agentId,
-            executionMode: executionMode,
-            compact: compact,
-            secretNames: secretNames
-        )
-        return (composer.render(), composer.manifest())
-    }
-
-    /// Builds the work-mode system prompt from a pre-resolved base string (e.g. base+memory).
-    static func composeAgentSystemPrompt(
-        base: String,
-        executionMode: WorkExecutionMode,
-        compact: Bool = false,
-        secretNames: [String] = []
-    ) -> (prompt: String, manifest: PromptManifest) {
-        let composer = SystemPromptComposer.forWork(
-            base: base,
-            executionMode: executionMode,
-            compact: compact,
-            secretNames: secretNames
-        )
-        return (composer.render(), composer.manifest())
-    }
-
-    /// Convenience that returns only the prompt string.
-    static func buildAgentSystemPrompt(
-        base: String,
-        executionMode: WorkExecutionMode,
-        compact: Bool = false,
-        secretNames: [String] = []
-    ) -> String {
-        composeAgentSystemPrompt(
-            base: base,
-            executionMode: executionMode,
-            compact: compact,
-            secretNames: secretNames
-        ).prompt
-    }
-
     /// Extracts a completion summary from a text response
     private func extractCompletionSummary(from content: String) -> String {
         // Try to find a summary section

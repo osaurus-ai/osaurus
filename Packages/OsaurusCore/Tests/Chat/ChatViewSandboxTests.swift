@@ -31,13 +31,11 @@ struct ChatViewSandboxTests {
 
     @Test
     func buildSystemPrompt_includesSandboxContextOnlyWhenExpected() async {
-        let session = ChatSession()
-
-        let (standardPrompt, _) = await session.buildChatSystemPrompt(
+        let (standardPrompt, _) = await SystemPromptComposer.composeChatPrompt(
             agentId: Agent.defaultId,
             executionMode: .none
         )
-        let (sandboxPrompt, _) = await session.buildChatSystemPrompt(
+        let (sandboxPrompt, _) = await SystemPromptComposer.composeChatPrompt(
             agentId: Agent.defaultId,
             executionMode: .sandbox
         )

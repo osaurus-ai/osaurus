@@ -57,7 +57,7 @@ struct WorkExecutionEngineTests {
     }
 
     @Test func buildAgentSystemPrompt_sandboxIncludesWorkflowGuidance() async {
-        let prompt = WorkExecutionEngine.buildAgentSystemPrompt(
+        let (prompt, _) = SystemPromptComposer.composeWorkPrompt(
             base: "Base prompt",
             executionMode: .sandbox
         )

@@ -360,7 +360,7 @@ public final class WorkSession: ObservableObject {
             manifest = cached
         } else {
             let secretNames = Array(AgentSecretsKeychain.getAllSecrets(agentId: agentId).keys)
-            let (_, m) = WorkExecutionEngine.composeAgentSystemPrompt(
+            let (_, m) = SystemPromptComposer.composeWorkPrompt(
                 agentId: agentId,
                 executionMode: executionMode,
                 secretNames: secretNames
@@ -807,20 +807,15 @@ public final class WorkSession: ObservableObject {
             }
         }
 
-        var composer = SystemPromptComposer()
-        composer.append(.static(id: "base", label: "System Prompt", content: config.systemPrompt))
-        if !preflightSnippet.isEmpty {
-            composer.append(.dynamic(id: "preflight", label: "Pre-flight RAG", content: preflightSnippet))
-        }
         let manualSkillContent: String? =
             isManualTools
             ? await SkillManager.shared.manualSkillPromptSection(for: agentId)
             : nil
-        if let section = manualSkillContent {
-            composer.append(.dynamic(id: "skills", label: "Skills", content: section))
-        }
-        let systemPrompt = composer.render()
-        let execManifest = composer.manifest()
+        let (systemPrompt, execManifest) = SystemPromptComposer.composePrompt(
+            base: config.systemPrompt,
+            preflightSnippet: preflightSnippet,
+            skillSection: manualSkillContent
+        )
         cachedManifest = execManifest
         debugLog("[Context] \(execManifest.debugDescription)")
 
@@ -1371,18 +1366,15 @@ public final class WorkSession: ObservableObject {
             }
         }
 
-        var resumeComposer = SystemPromptComposer()
-        resumeComposer.append(.static(id: "base", label: "System Prompt", content: config.systemPrompt))
-        if !resumePreflightSnippet.isEmpty {
-            resumeComposer.append(.dynamic(id: "preflight", label: "Pre-flight RAG", content: resumePreflightSnippet))
-        }
-        if resumeIsManual,
-            let section = await SkillManager.shared.manualSkillPromptSection(for: agentId)
-        {
-            resumeComposer.append(.dynamic(id: "skills", label: "Skills", content: section))
-        }
-        let systemPrompt = resumeComposer.render()
-        let resumeManifest = resumeComposer.manifest()
+        let resumeSkillSection: String? =
+            resumeIsManual
+            ? await SkillManager.shared.manualSkillPromptSection(for: agentId)
+            : nil
+        let (systemPrompt, resumeManifest) = SystemPromptComposer.composePrompt(
+            base: config.systemPrompt,
+            preflightSnippet: resumePreflightSnippet,
+            skillSection: resumeSkillSection
+        )
         cachedManifest = resumeManifest
 
         budgetTracker.snapshot(

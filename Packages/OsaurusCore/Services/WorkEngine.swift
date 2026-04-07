@@ -393,7 +393,7 @@ public actor WorkEngine {
             return Array(AgentSecretsKeychain.getAllSecrets(agentId: uuid).keys)
         }()
 
-        let (agentSystemPrompt, agentManifest) = WorkExecutionEngine.composeAgentSystemPrompt(
+        let (agentSystemPrompt, agentManifest) = SystemPromptComposer.composeWorkPrompt(
             base: systemPrompt,
             executionMode: resolvedExecutionMode,
             compact: compact,

@@ -751,24 +751,6 @@ final class ChatSession: ObservableObject {
         return ToolRegistry.shared.resolveWorkExecutionMode(folderContext: nil)
     }
 
-    /// Build the chat system prompt via the composer pipeline.
-    /// Resolves the agent's base prompt and fetches memory internally.
-    func buildChatSystemPrompt(
-        agentId: UUID,
-        executionMode: WorkExecutionMode,
-        compact: Bool = false,
-        preflightSnippet: String = "",
-        skillSection: String? = nil
-    ) async -> (prompt: String, manifest: PromptManifest) {
-        var composer = SystemPromptComposer.forChat(agentId: agentId, executionMode: executionMode, compact: compact)
-        await composer.appendMemory(agentId: agentId.uuidString)
-        composer.append(.dynamic(id: "preflight", label: "Pre-flight RAG", content: preflightSnippet))
-        if let section = skillSection {
-            composer.append(.dynamic(id: "skills", label: "Skills", content: section))
-        }
-        return (composer.render(), composer.manifest())
-    }
-
     /// Synchronous manifest for offline token estimation (UI popover).
     private func buildPreviewManifest(
         agentId: UUID,
@@ -877,7 +859,7 @@ final class ChatSession: ObservableObject {
                     ? await SkillManager.shared.manualSkillPromptSection(for: effectiveAgentId)
                     : nil
 
-                let (sys, manifest) = await buildChatSystemPrompt(
+                let (sys, manifest) = await SystemPromptComposer.composeChatPrompt(
                     agentId: effectiveAgentId,
                     executionMode: executionMode,
                     compact: isCompact,
