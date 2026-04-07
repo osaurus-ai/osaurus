@@ -27,24 +27,6 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
     }
     struct EngineError: Error {}
 
-    private func enrichMessagesWithSystemPrompt(_ messages: [ChatMessage]) async -> [ChatMessage] {
-        debugLog("[ChatEngine] enrichMessages: start count=\(messages.count)")
-        if messages.contains(where: { $0.role == "system" }) {
-            debugLog("[ChatEngine] enrichMessages: already has system, returning early")
-            return messages
-        }
-
-        let systemPrompt = await MainActor.run {
-            ChatConfigurationStore.load().systemPrompt
-        }
-        debugLog("[ChatEngine] enrichMessages: got systemPrompt, injecting")
-
-        let effective = SystemPromptTemplates.effectiveBasePrompt(systemPrompt)
-        var enriched = messages
-        SystemPromptComposer.injectSystemContent(effective, into: &enriched)
-        return enriched
-    }
-
     /// Estimate input tokens from messages (rough heuristic: ~4 chars per token)
     private func estimateInputTokens(_ messages: [ChatMessage]) -> Int {
         let totalChars = messages.reduce(0) { sum, msg in
@@ -55,8 +37,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
 
     func streamChat(request: ChatCompletionRequest) async throws -> AsyncThrowingStream<String, Error> {
         debugLog("[ChatEngine] streamChat: start model=\(request.model)")
-        let messages = await enrichMessagesWithSystemPrompt(request.messages)
-        debugLog("[ChatEngine] streamChat: enriched messages count=\(messages.count), fetching remote services")
+        let messages = request.messages
+        debugLog("[ChatEngine] streamChat: messages count=\(messages.count), fetching remote services")
         let temperature = request.temperature
         let maxTokens = request.max_tokens ?? 16384
         let repPenalty: Float? = {
@@ -268,7 +250,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
 
     func completeChat(request: ChatCompletionRequest) async throws -> ChatCompletionResponse {
         let startTime = Date()
-        let messages = await enrichMessagesWithSystemPrompt(request.messages)
+        let messages = request.messages
         let inputTokens = estimateInputTokens(messages)
         let temperature = request.temperature
         let maxTokens = request.max_tokens ?? 16384

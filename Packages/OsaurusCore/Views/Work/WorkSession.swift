@@ -898,15 +898,9 @@ public final class WorkSession: ObservableObject {
                 ?? AgentManager.shared.effectiveSystemPrompt(for: agentId)
         )
 
-        let memoryConfig = MemoryConfigurationStore.load()
-        let memoryContext = await MemoryContextAssembler.assembleContext(
-            agentId: agentId.uuidString,
-            config: memoryConfig
-        )
-
         var composer = SystemPromptComposer()
         composer.append(.static(id: "base", label: "Base Prompt", content: baseSystemPrompt))
-        composer.append(.dynamic(id: "memory", label: "Memory", content: memoryContext))
+        await composer.appendMemory(agentId: agentId.uuidString)
         let systemPrompt = composer.render()
 
         let model =

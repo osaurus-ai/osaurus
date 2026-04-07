@@ -174,6 +174,29 @@ public struct SystemPromptComposer: Sendable {
         PromptManifest(sections: sections.filter { !$0.isEmpty })
     }
 
+    // MARK: - Memory Convenience
+
+    /// Fetch and append the memory context as a dynamic section.
+    /// Loads `MemoryConfiguration`, calls `MemoryContextAssembler`, and appends
+    /// the result. Pass `query` for query-aware retrieval (HTTP API path).
+    public mutating func appendMemory(agentId: String, query: String? = nil) async {
+        let config = MemoryConfigurationStore.load()
+        let context: String
+        if let query, !query.isEmpty {
+            context = await MemoryContextAssembler.assembleContext(
+                agentId: agentId,
+                config: config,
+                query: query
+            )
+        } else {
+            context = await MemoryContextAssembler.assembleContext(
+                agentId: agentId,
+                config: config
+            )
+        }
+        append(.dynamic(id: "memory", label: "Memory", content: context))
+    }
+
     // MARK: - Message Array Helpers
 
     /// Prepend content to the existing system message in a message array,

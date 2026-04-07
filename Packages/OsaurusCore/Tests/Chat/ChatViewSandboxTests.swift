@@ -30,15 +30,15 @@ struct ChatViewSandboxTests {
     }
 
     @Test
-    func buildSystemPrompt_includesSandboxContextOnlyWhenExpected() {
+    func buildSystemPrompt_includesSandboxContextOnlyWhenExpected() async {
         let session = ChatSession()
 
-        let (standardPrompt, _) = session.buildChatSystemPrompt(
+        let (standardPrompt, _) = await session.buildChatSystemPrompt(
             base: "Base prompt",
             agentId: Agent.defaultId,
             executionMode: .none
         )
-        let (sandboxPrompt, _) = session.buildChatSystemPrompt(
+        let (sandboxPrompt, _) = await session.buildChatSystemPrompt(
             base: "Base prompt",
             agentId: Agent.defaultId,
             executionMode: .sandbox

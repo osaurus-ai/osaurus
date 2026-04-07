@@ -524,14 +524,8 @@ final class PluginHostContext: @unchecked Sendable {
             )
         }
 
-        let memoryCtx = await MemoryContextAssembler.assembleContext(
-            agentId: agentId.uuidString,
-            config: MemoryConfigurationStore.load()
-        )
-        if !memoryCtx.isEmpty {
-            composer.append(.dynamic(id: "memory", label: "Memory", content: memoryCtx))
-            ctx = ctx.withSystemPrompt(composer.render())
-        }
+        await composer.appendMemory(agentId: agentId.uuidString)
+        ctx = ctx.withSystemPrompt(composer.render())
         debugLog("[Context:Plugin] \(composer.manifest().debugDescription)")
         return ctx
     }

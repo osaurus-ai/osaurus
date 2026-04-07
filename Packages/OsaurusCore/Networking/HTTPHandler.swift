@@ -1328,15 +1328,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         }
 
         let query = request.messages.last(where: { $0.role == "user" })?.content ?? ""
-        let memoryContext = await MemoryContextAssembler.assembleContext(
-            agentId: agentId,
-            config: MemoryConfigurationStore.load(),
-            query: query
-        )
-
         var composer = SystemPromptComposer()
         composer.append(.static(id: "base", label: "Agent Prompt", content: agentPrompt))
-        composer.append(.dynamic(id: "memory", label: "Memory", content: memoryContext))
+        await composer.appendMemory(agentId: agentId, query: query)
         let composed = composer.render()
         debugLog("[Context:HTTP] \(composer.manifest().debugDescription)")
 
