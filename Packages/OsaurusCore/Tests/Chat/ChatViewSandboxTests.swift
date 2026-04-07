@@ -8,10 +8,8 @@ import Testing
 struct ChatViewSandboxTests {
     @Test
     func buildToolSpecs_sandboxDisabledExcludesBuiltInSandboxTools() {
-        let session = ChatSession()
-
         withRegisteredSandboxBuiltins {
-            let specs = session.buildToolSpecs(executionMode: .none)
+            let specs = ToolRegistry.shared.alwaysLoadedSpecs(mode: .none)
 
             #expect(specs.contains(where: { $0.function.name == "sandbox_exec" }) == false)
             #expect(specs.contains(where: { $0.function.name == "sandbox_read_file" }) == false)
@@ -21,8 +19,7 @@ struct ChatViewSandboxTests {
     @Test
     func buildToolSpecs_sandboxEnabledIncludesBuiltIns() {
         withRegisteredSandboxBuiltins {
-            let session = ChatSession()
-            let specs = session.buildToolSpecs(executionMode: .sandbox)
+            let specs = ToolRegistry.shared.alwaysLoadedSpecs(mode: .sandbox)
 
             #expect(specs.contains(where: { $0.function.name == "capabilities_search" }))
             #expect(specs.contains(where: { $0.function.name == "capabilities_load" }))
@@ -31,14 +28,16 @@ struct ChatViewSandboxTests {
 
     @Test
     func buildSystemPrompt_includesSandboxContextOnlyWhenExpected() async {
-        let (standardPrompt, _) = await SystemPromptComposer.composeChatPrompt(
+        let standardCtx = await SystemPromptComposer.composeChatContext(
             agentId: Agent.defaultId,
             executionMode: .none
         )
-        let (sandboxPrompt, _) = await SystemPromptComposer.composeChatPrompt(
+        let sandboxCtx = await SystemPromptComposer.composeChatContext(
             agentId: Agent.defaultId,
             executionMode: .sandbox
         )
+        let standardPrompt = standardCtx.prompt
+        let sandboxPrompt = sandboxCtx.prompt
 
         #expect(standardPrompt.contains(SystemPromptTemplates.sandboxSectionHeading) == false)
         #expect(sandboxPrompt.contains(SystemPromptTemplates.sandboxSectionHeading))
@@ -116,7 +115,7 @@ struct ChatViewSandboxTests {
         #expect(inactiveMode.usesSandboxTools == false)
         #expect(sandboxMode.usesSandboxTools)
 
-        let specs = session.buildToolSpecs(executionMode: sandboxMode)
+        let specs = ToolRegistry.shared.alwaysLoadedSpecs(mode: sandboxMode)
         #expect(specs.contains(where: { $0.function.name == "sandbox_exec" }))
 
         ToolRegistry.shared.unregisterAllSandboxTools()

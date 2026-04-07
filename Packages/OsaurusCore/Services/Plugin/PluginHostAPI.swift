@@ -475,42 +475,25 @@ final class PluginHostContext: @unchecked Sendable {
             await SandboxToolRegistrar.shared.registerTools(for: agentId)
         }
 
-        var (ctx, composer): (AgentContext, SystemPromptComposer) = await MainActor.run {
+        let execMode = await MainActor.run {
+            ToolRegistry.shared.resolveWorkExecutionMode(folderContext: nil)
+        }
+        let context = await SystemPromptComposer.composeChatContext(
+            agentId: agentId,
+            executionMode: execMode
+        )
+        return await MainActor.run {
             let mgr = AgentManager.shared
-            let execMode = ToolRegistry.shared.resolveWorkExecutionMode(folderContext: nil)
-            let isManual = mgr.effectiveToolSelectionMode(for: agentId) == .manual
-            var tools = ToolRegistry.shared.alwaysLoadedSpecs(
-                mode: execMode,
-                excludeCapabilityTools: isManual
-            )
-
-            if isManual, let manualNames = mgr.effectiveManualToolNames(for: agentId) {
-                let manualSpecs = ToolRegistry.shared.specs(forTools: manualNames)
-                for spec in manualSpecs
-                where !tools.contains(where: { $0.function.name == spec.function.name }) {
-                    tools.append(spec)
-                }
-            }
-
-            let comp = SystemPromptComposer.forChat(agentId: agentId, executionMode: execMode)
-
-            return (
-                AgentContext(
-                    agentId: agentId,
-                    systemPrompt: comp.render(),
-                    model: mgr.effectiveModel(for: agentId),
-                    temperature: mgr.effectiveTemperature(for: agentId),
-                    maxTokens: mgr.effectiveMaxTokens(for: agentId),
-                    tools: tools.isEmpty ? nil : tools,
-                    executionMode: execMode
-                ), comp
+            return AgentContext(
+                agentId: agentId,
+                systemPrompt: context.prompt,
+                model: mgr.effectiveModel(for: agentId),
+                temperature: mgr.effectiveTemperature(for: agentId),
+                maxTokens: mgr.effectiveMaxTokens(for: agentId),
+                tools: context.tools.isEmpty ? nil : context.tools,
+                executionMode: execMode
             )
         }
-
-        await composer.appendMemory(agentId: agentId.uuidString)
-        ctx = ctx.withSystemPrompt(composer.render())
-        debugLog("[Context:Plugin] \(composer.manifest().debugDescription)")
-        return ctx
     }
 
     // MARK: Request Enrichment

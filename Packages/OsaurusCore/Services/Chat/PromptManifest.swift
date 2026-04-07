@@ -122,3 +122,15 @@ public struct PromptManifest: Sendable {
         return lines.joined(separator: "\n")
     }
 }
+
+// MARK: - ComposedContext
+
+/// Complete output from a high-level compose call -- everything a caller needs
+/// to build a chat request and feed the budget tracker.
+struct ComposedContext: Sendable {
+    let prompt: String
+    let manifest: PromptManifest
+    let tools: [Tool]
+    let toolTokens: Int
+    let preflightItems: [PreflightCapabilityItem]
+}

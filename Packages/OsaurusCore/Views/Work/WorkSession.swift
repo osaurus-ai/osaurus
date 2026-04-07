@@ -777,44 +777,31 @@ public final class WorkSession: ObservableObject {
         resetExecutionState(for: issue)
 
         let config = await buildExecutionConfig()
+        let issueQuery = [issue.title, issue.description].compactMap { $0 }.joined(separator: " ")
+
+        let preflight: PreflightResult
         let toolMode = AgentManager.shared.effectiveToolSelectionMode(for: agentId)
-        let isManualTools = toolMode == .manual
-        var tools = ToolRegistry.shared.alwaysLoadedSpecs(
-            mode: config.executionMode,
-            excludeCapabilityTools: isManualTools
-        )
-
-        // Pre-flight RAG: search capabilities based on issue (skipped in manual mode)
-        var preflightSnippet = ""
-        if isManualTools {
-            if let manualNames = AgentManager.shared.effectiveManualToolNames(for: agentId) {
-                let manualSpecs = ToolRegistry.shared.specs(forTools: manualNames)
-                for spec in manualSpecs
-                where !tools.contains(where: { $0.function.name == spec.function.name }) {
-                    tools.append(spec)
-                }
-            }
-        } else {
-            let preflightMode = ChatConfigurationStore.load().preflightSearchMode ?? .balanced
-            let preflightQuery = [issue.title, issue.description].compactMap { $0 }.joined(separator: " ")
-            let preflight = await PreflightCapabilitySearch.search(query: preflightQuery, mode: preflightMode)
+        if toolMode == .auto {
+            let mode = ChatConfigurationStore.load().preflightSearchMode ?? .balanced
+            preflight = await PreflightCapabilitySearch.search(query: issueQuery, mode: mode)
             pendingPreflightCapabilities = preflight.items.isEmpty ? nil : preflight.items
-            preflightSnippet = preflight.contextSnippet
-
-            for spec in preflight.toolSpecs
-            where !tools.contains(where: { $0.function.name == spec.function.name }) {
-                tools.append(spec)
-            }
+        } else {
+            preflight = .empty
         }
 
-        let manualSkillContent: String? =
-            isManualTools
+        let tools = SystemPromptComposer.resolveTools(
+            agentId: agentId,
+            executionMode: config.executionMode,
+            preflight: preflight
+        )
+        let skillSection: String? =
+            toolMode == .manual
             ? await SkillManager.shared.manualSkillPromptSection(for: agentId)
             : nil
         let (systemPrompt, execManifest) = SystemPromptComposer.composePrompt(
             base: config.systemPrompt,
-            preflightSnippet: preflightSnippet,
-            skillSection: manualSkillContent
+            preflightSnippet: preflight.contextSnippet,
+            skillSection: skillSection
         )
         cachedManifest = execManifest
         debugLog("[Context] \(execManifest.debugDescription)")
@@ -1337,42 +1324,30 @@ public final class WorkSession: ObservableObject {
         }
 
         let config = await buildExecutionConfig()
+        let resumeQuery = [issue.title, issue.description].compactMap { $0 }.joined(separator: " ")
+
+        let resumePreflight: PreflightResult
         let resumeToolMode = AgentManager.shared.effectiveToolSelectionMode(for: agentId)
-        let resumeIsManual = resumeToolMode == .manual
-        var tools = ToolRegistry.shared.alwaysLoadedSpecs(
-            mode: config.executionMode,
-            excludeCapabilityTools: resumeIsManual
-        )
-
-        var resumePreflightSnippet = ""
-        if resumeIsManual {
-            if let manualNames = AgentManager.shared.effectiveManualToolNames(for: agentId) {
-                let manualSpecs = ToolRegistry.shared.specs(forTools: manualNames)
-                for spec in manualSpecs
-                where !tools.contains(where: { $0.function.name == spec.function.name }) {
-                    tools.append(spec)
-                }
-            }
+        if resumeToolMode == .auto {
+            let mode = ChatConfigurationStore.load().preflightSearchMode ?? .balanced
+            resumePreflight = await PreflightCapabilitySearch.search(query: resumeQuery, mode: mode)
+            pendingPreflightCapabilities = resumePreflight.items.isEmpty ? nil : resumePreflight.items
         } else {
-            let preflightMode = ChatConfigurationStore.load().preflightSearchMode ?? .balanced
-            let preflightQuery = [issue.title, issue.description].compactMap { $0 }.joined(separator: " ")
-            let preflight = await PreflightCapabilitySearch.search(query: preflightQuery, mode: preflightMode)
-            pendingPreflightCapabilities = preflight.items.isEmpty ? nil : preflight.items
-            resumePreflightSnippet = preflight.contextSnippet
-
-            for spec in preflight.toolSpecs
-            where !tools.contains(where: { $0.function.name == spec.function.name }) {
-                tools.append(spec)
-            }
+            resumePreflight = .empty
         }
 
+        let tools = SystemPromptComposer.resolveTools(
+            agentId: agentId,
+            executionMode: config.executionMode,
+            preflight: resumePreflight
+        )
         let resumeSkillSection: String? =
-            resumeIsManual
+            resumeToolMode == .manual
             ? await SkillManager.shared.manualSkillPromptSection(for: agentId)
             : nil
         let (systemPrompt, resumeManifest) = SystemPromptComposer.composePrompt(
             base: config.systemPrompt,
-            preflightSnippet: resumePreflightSnippet,
+            preflightSnippet: resumePreflight.contextSnippet,
             skillSection: resumeSkillSection
         )
         cachedManifest = resumeManifest

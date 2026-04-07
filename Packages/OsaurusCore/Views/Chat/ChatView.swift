@@ -310,8 +310,9 @@ final class ChatSession: ObservableObject {
         breakdown.systemPrompt = manifest.systemPromptTokens
         breakdown.memory = manifest.memoryTokens
 
-        let toolSpecs = buildToolSpecs(executionMode: executionMode)
-        breakdown.tools = ToolRegistry.shared.totalEstimatedTokens(for: toolSpecs)
+        breakdown.tools = ToolRegistry.shared.totalEstimatedTokens(
+            for: ToolRegistry.shared.alwaysLoadedSpecs(mode: executionMode)
+        )
         breakdown.output = ContextBudgetManager.estimateOutputTokens(for: turns)
         breakdown.conversation = ContextBudgetManager.estimateTokens(for: turns) - breakdown.output
 
@@ -766,11 +767,6 @@ final class ChatSession: ObservableObject {
         return composer.manifest()
     }
 
-    /// Build tool specifications: always-loaded set for chat mode.
-    func buildToolSpecs(executionMode: WorkExecutionMode, excludeCapabilityTools: Bool = false) -> [Tool] {
-        ToolRegistry.shared.alwaysLoadedSpecs(mode: executionMode, excludeCapabilityTools: excludeCapabilityTools)
-    }
-
     func send(_ text: String, attachments: [Attachment] = []) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let hasContent = !trimmed.isEmpty || !attachments.isEmpty
@@ -839,64 +835,27 @@ final class ChatSession: ObservableObject {
                 let executionMode = await prepareChatExecutionMode(agentId: effectiveAgentId)
                 guard isRunActive(runId) else { return }
 
-                let toolsDisabled = chatCfg.disableTools
-                let toolMode = AgentManager.shared.effectiveToolSelectionMode(for: effectiveAgentId)
-                let preflight: PreflightResult
-                if !toolsDisabled && toolMode == .auto {
-                    let preflightMode = chatCfg.preflightSearchMode ?? .balanced
-                    preflight = await PreflightCapabilitySearch.search(query: trimmed, mode: preflightMode)
-                } else {
-                    preflight = PreflightResult(toolSpecs: [], contextSnippet: "", items: [])
-                }
-                guard isRunActive(runId) else { return }
-
-                if !preflight.items.isEmpty {
-                    assistantTurn.preflightCapabilities = preflight.items
-                }
-
-                let isManualTools = toolMode == .manual
-
-                let manualSkillSection: String? =
-                    isManualTools
-                    ? await SkillManager.shared.manualSkillPromptSection(for: effectiveAgentId)
-                    : nil
-
-                let (sys, manifest) = await SystemPromptComposer.composeChatPrompt(
+                let context = await SystemPromptComposer.composeChatContext(
                     agentId: effectiveAgentId,
                     executionMode: executionMode,
                     model: selectedModel,
-                    preflightSnippet: preflight.contextSnippet,
-                    skillSection: manualSkillSection
+                    query: trimmed,
+                    toolsDisabled: chatCfg.disableTools
                 )
                 guard isRunActive(runId) else { return }
-                cachedManifest = manifest
-                debugLog("[Context] \(manifest.debugDescription)")
 
-                var toolSpecs =
-                    toolsDisabled
-                    ? []
-                    : buildToolSpecs(executionMode: executionMode, excludeCapabilityTools: isManualTools)
+                let sys = context.prompt
+                var toolSpecs = context.tools
+                let isManualTools = AgentManager.shared.effectiveToolSelectionMode(for: effectiveAgentId) == .manual
+                cachedManifest = context.manifest
 
-                if !toolsDisabled {
-                    if isManualTools {
-                        if let manualNames = AgentManager.shared.effectiveManualToolNames(for: effectiveAgentId) {
-                            let manualSpecs = ToolRegistry.shared.specs(forTools: manualNames)
-                            for spec in manualSpecs
-                            where !toolSpecs.contains(where: { $0.function.name == spec.function.name }) {
-                                toolSpecs.append(spec)
-                            }
-                        }
-                    } else {
-                        for spec in preflight.toolSpecs
-                        where !toolSpecs.contains(where: { $0.function.name == spec.function.name }) {
-                            toolSpecs.append(spec)
-                        }
-                    }
+                if !context.preflightItems.isEmpty {
+                    assistantTurn.preflightCapabilities = context.preflightItems
                 }
 
                 budgetTracker.snapshot(
-                    manifest: manifest,
-                    toolTokens: ToolRegistry.shared.totalEstimatedTokens(for: toolSpecs)
+                    manifest: context.manifest,
+                    toolTokens: context.toolTokens
                 )
 
                 let effectiveMaxTokensForAgent = AgentManager.shared.effectiveMaxTokens(for: effectiveAgentId)
@@ -993,7 +952,7 @@ final class ChatSession: ObservableObject {
                         session_id: sessionId?.uuidString
                     )
                     let toolNames = toolSpecs.map { $0.function.name }
-                    req.cache_hint = manifest.staticPrefixHash(toolNames: toolNames)
+                    req.cache_hint = context.manifest.staticPrefixHash(toolNames: toolNames)
                     req.modelOptions = activeModelOptions.isEmpty ? nil : activeModelOptions
                     debugLog(
                         "send: attempt=\(attempts) model=\(req.model) tools=\(req.tools?.count ?? 0) sessionId=\(req.session_id ?? "nil")"

@@ -4,7 +4,7 @@
 //
 //  Builder for structured system prompt assembly. Provides both low-level
 //  section-by-section composition and high-level single-call methods
-//  (composeChatPrompt, composeWorkPrompt) that handle the full pipeline.
+//  (composeChatContext, composeWorkPrompt) that handle the full pipeline.
 //
 //  Compact prompt selection is automatic: pass the model ID and the composer
 //  resolves whether to use compact or full prompt variants via isLocalModel.
@@ -67,23 +67,92 @@ public struct SystemPromptComposer: Sendable {
 
     // MARK: - High-Level API
 
-    /// Compose the full chat system prompt: base + sandbox + memory + preflight + skills.
-    /// Compact mode is auto-detected from the model (falls back to agent's default model).
+    /// Compose the full chat context: prompt + tools + manifest in one call.
+    /// Handles base prompt, sandbox, memory, preflight RAG, manual skills,
+    /// tool selection (built-in + preflight/manual, deduped), and token estimation.
     @MainActor
-    public static func composeChatPrompt(
+    static func composeChatContext(
         agentId: UUID,
         executionMode: WorkExecutionMode,
         model: String? = nil,
-        preflightSnippet: String = "",
-        skillSection: String? = nil
-    ) async -> (prompt: String, manifest: PromptManifest) {
+        query: String = "",
+        toolsDisabled: Bool = false
+    ) async -> ComposedContext {
+        let toolMode = AgentManager.shared.effectiveToolSelectionMode(for: agentId)
+        let isManual = toolMode == .manual
+
+        let preflight: PreflightResult
+        if !toolsDisabled && toolMode == .auto && !query.isEmpty {
+            let mode = ChatConfigurationStore.load().preflightSearchMode ?? .balanced
+            preflight = await PreflightCapabilitySearch.search(query: query, mode: mode)
+        } else {
+            preflight = .empty
+        }
+
+        let skillSection: String? =
+            isManual
+            ? await SkillManager.shared.manualSkillPromptSection(for: agentId)
+            : nil
+
         var composer = forChat(agentId: agentId, executionMode: executionMode, model: model)
         await composer.appendMemory(agentId: agentId.uuidString)
-        composer.append(.dynamic(id: "preflight", label: "Pre-flight RAG", content: preflightSnippet))
+        composer.append(.dynamic(id: "preflight", label: "Pre-flight RAG", content: preflight.contextSnippet))
         if let section = skillSection {
             composer.append(.dynamic(id: "skills", label: "Skills", content: section))
         }
-        return (composer.render(), composer.manifest())
+
+        let tools = resolveTools(
+            agentId: agentId,
+            executionMode: executionMode,
+            toolsDisabled: toolsDisabled,
+            preflight: preflight
+        )
+        let manifest = composer.manifest()
+        debugLog("[Context] \(manifest.debugDescription)")
+
+        return ComposedContext(
+            prompt: composer.render(),
+            manifest: manifest,
+            tools: tools,
+            toolTokens: ToolRegistry.shared.totalEstimatedTokens(for: tools),
+            preflightItems: preflight.items
+        )
+    }
+
+    /// Resolve the full tool set for a request: built-in + preflight/manual, deduped.
+    @MainActor
+    static func resolveTools(
+        agentId: UUID,
+        executionMode: WorkExecutionMode,
+        toolsDisabled: Bool = false,
+        preflight: PreflightResult = .empty
+    ) -> [Tool] {
+        guard !toolsDisabled else { return [] }
+
+        let toolMode = AgentManager.shared.effectiveToolSelectionMode(for: agentId)
+        let isManual = toolMode == .manual
+
+        var tools = ToolRegistry.shared.alwaysLoadedSpecs(
+            mode: executionMode,
+            excludeCapabilityTools: isManual
+        )
+        var seen = Set(tools.map { $0.function.name })
+
+        if isManual {
+            if let manualNames = AgentManager.shared.effectiveManualToolNames(for: agentId) {
+                for spec in ToolRegistry.shared.specs(forTools: manualNames)
+                where seen.insert(spec.function.name).inserted {
+                    tools.append(spec)
+                }
+            }
+        } else {
+            for spec in preflight.toolSpecs
+            where seen.insert(spec.function.name).inserted {
+                tools.append(spec)
+            }
+        }
+
+        return tools
     }
 
     /// Compose the full work system prompt: base + workMode + sandbox.

@@ -59,6 +59,8 @@ struct PreflightResult: Sendable {
     let toolSpecs: [Tool]
     let contextSnippet: String
     let items: [PreflightCapabilityItem]
+
+    static let empty = PreflightResult(toolSpecs: [], contextSnippet: "", items: [])
 }
 
 // MARK: - Shared Capability Search
