@@ -125,7 +125,7 @@ final class ModelManager: NSObject, ObservableObject {
     /// Maps deprecated model IDs to their recommended OsaurusAI replacements.
     nonisolated static let deprecatedModelReplacements: [String: String] = [
         "mlx-community/gemma-4-31b-it-4bit": "OsaurusAI/Gemma-4-31B-it-JANG_4M",
-        "mlx-community/gemma-4-26b-a4b-it-4bit": "OsaurusAI/Gemma-4-26B-A4B-it-JANG_2L",
+        "mlx-community/gemma-4-26b-a4b-it-4bit": "OsaurusAI/gemma-4-26B-A4B-it-mxfp4",
         "mlx-community/gemma-4-e4b-it-8bit": "OsaurusAI/gemma-4-E4B-it-8bit",
         "mlx-community/gemma-4-e2b-it-4bit": "OsaurusAI/gemma-4-E2B-it-4bit",
         "mlx-community/Qwen3.5-27B-4bit": "OsaurusAI/Qwen3.5-122B-A10B-JANG_2S",
@@ -458,7 +458,7 @@ extension ModelManager {
             description: "Smallest multimodal Gemma 4 model. Runs on any Mac.",
             downloadURL: "https://huggingface.co/OsaurusAI/gemma-4-E2B-it-4bit",
             isTopSuggestion: true,
-            downloadSizeBytes: 1_000_000_000,
+            downloadSizeBytes: 4_392_120_539,
             modelType: "gemma4"
         ),
 
@@ -468,17 +468,17 @@ extension ModelManager {
             description: "Multimodal edge model. Handles images, video, and audio. 128K context.",
             downloadURL: "https://huggingface.co/OsaurusAI/gemma-4-E4B-it-4bit",
             isTopSuggestion: true,
-            downloadSizeBytes: 2_000_000_000,
+            downloadSizeBytes: 6_901_389_946,
             modelType: "gemma4"
         ),
 
         MLXModel(
-            id: "OsaurusAI/Gemma-4-26B-A4B-it-JANG_2L",
-            name: ModelMetadataParser.friendlyName(from: "OsaurusAI/Gemma-4-26B-A4B-it-JANG_2L"),
-            description: "Efficient MoE vision model. Only 4B active params. 256K context.",
-            downloadURL: "https://huggingface.co/OsaurusAI/Gemma-4-26B-A4B-it-JANG_2L",
+            id: "OsaurusAI/gemma-4-26B-A4B-it-mxfp4",
+            name: ModelMetadataParser.friendlyName(from: "OsaurusAI/gemma-4-26B-A4B-it-mxfp4"),
+            description: "Best all-around vision model. MoE with only 4B active params. 128K context.",
+            downloadURL: "https://huggingface.co/OsaurusAI/gemma-4-26B-A4B-it-mxfp4",
             isTopSuggestion: true,
-            downloadSizeBytes: 3_000_000_000,
+            downloadSizeBytes: 14_869_637_520,
             modelType: "gemma4"
         ),
 
@@ -512,18 +512,36 @@ extension ModelManager {
             name: ModelMetadataParser.friendlyName(from: "OsaurusAI/Gemma-4-31B-it-JANG_4M"),
             description: "Gemma 4 31B dense vision model. Top-tier quality with optimized quantization.",
             downloadURL: "https://huggingface.co/OsaurusAI/Gemma-4-31B-it-JANG_4M",
-            downloadSizeBytes: 6_000_000_000,
+            downloadSizeBytes: 22_692_183_936,
             modelType: "gemma4"
         ),
 
         // MARK: Vision Language Models (VLM)
 
         MLXModel(
+            id: "OsaurusAI/gemma-4-26B-A4B-it-4bit",
+            name: ModelMetadataParser.friendlyName(from: "OsaurusAI/gemma-4-26B-A4B-it-4bit"),
+            description: "MoE vision model with standard 4-bit quantization. 4B active params.",
+            downloadURL: "https://huggingface.co/OsaurusAI/gemma-4-26B-A4B-it-4bit",
+            downloadSizeBytes: 15_641_238_761,
+            modelType: "gemma4"
+        ),
+
+        MLXModel(
+            id: "OsaurusAI/Gemma-4-26B-A4B-it-JANG_2L",
+            name: ModelMetadataParser.friendlyName(from: "OsaurusAI/Gemma-4-26B-A4B-it-JANG_2L"),
+            description: "Efficient MoE vision model. Only 4B active params. 256K context.",
+            downloadURL: "https://huggingface.co/OsaurusAI/Gemma-4-26B-A4B-it-JANG_2L",
+            downloadSizeBytes: 10_676_011_439,
+            modelType: "gemma4"
+        ),
+
+        MLXModel(
             id: "OsaurusAI/Gemma-4-26B-A4B-it-JANG_4M",
             name: ModelMetadataParser.friendlyName(from: "OsaurusAI/Gemma-4-26B-A4B-it-JANG_4M"),
             description: "Higher-quality MoE vision model. 4B active params with 256K context.",
             downloadURL: "https://huggingface.co/OsaurusAI/Gemma-4-26B-A4B-it-JANG_4M",
-            downloadSizeBytes: 5_000_000_000,
+            downloadSizeBytes: 16_200_957_903,
             modelType: "gemma4"
         ),
 
@@ -532,7 +550,7 @@ extension ModelManager {
             name: ModelMetadataParser.friendlyName(from: "OsaurusAI/gemma-4-E4B-it-8bit"),
             description: "Multimodal edge model at 8-bit precision. Best quality for the E4B family.",
             downloadURL: "https://huggingface.co/OsaurusAI/gemma-4-E4B-it-8bit",
-            downloadSizeBytes: 3_000_000_000,
+            downloadSizeBytes: 8_997_820_763,
             modelType: "gemma4"
         ),
 
@@ -541,7 +559,7 @@ extension ModelManager {
             name: ModelMetadataParser.friendlyName(from: "OsaurusAI/Qwen3.5-122B-A10B-JANG_4K"),
             description: "Largest Qwen3.5 MoE vision model. 10B active params with top-tier reasoning.",
             downloadURL: "https://huggingface.co/OsaurusAI/Qwen3.5-122B-A10B-JANG_4K",
-            downloadSizeBytes: 18_000_000_000,
+            downloadSizeBytes: 66_458_339_463,
             modelType: "qwen3_5_moe"
         ),
 
@@ -550,7 +568,7 @@ extension ModelManager {
             name: ModelMetadataParser.friendlyName(from: "OsaurusAI/Qwen3.5-122B-A10B-JANG_2S"),
             description: "Qwen3.5 122B MoE vision model. Compact quantization, smaller download.",
             downloadURL: "https://huggingface.co/OsaurusAI/Qwen3.5-122B-A10B-JANG_2S",
-            downloadSizeBytes: 11_000_000_000,
+            downloadSizeBytes: 37_770_467_212,
             modelType: "qwen3_5_moe"
         ),
 
@@ -559,7 +577,7 @@ extension ModelManager {
             name: ModelMetadataParser.friendlyName(from: "OsaurusAI/Qwen3.5-35B-A3B-JANG_4K"),
             description: "Efficient Qwen3.5 MoE vision model. Only 3B active params.",
             downloadURL: "https://huggingface.co/OsaurusAI/Qwen3.5-35B-A3B-JANG_4K",
-            downloadSizeBytes: 5_000_000_000,
+            downloadSizeBytes: 19_667_902_931,
             modelType: "qwen3_5_moe"
         ),
 
@@ -568,7 +586,7 @@ extension ModelManager {
             name: ModelMetadataParser.friendlyName(from: "OsaurusAI/Qwen3.5-35B-A3B-JANG_2S"),
             description: "Compact Qwen3.5 MoE vision model. Fast and lightweight.",
             downloadURL: "https://huggingface.co/OsaurusAI/Qwen3.5-35B-A3B-JANG_2S",
-            downloadSizeBytes: 3_000_000_000,
+            downloadSizeBytes: 11_665_353_755,
             modelType: "qwen3_5_moe"
         ),
 
@@ -579,7 +597,7 @@ extension ModelManager {
             name: ModelMetadataParser.friendlyName(from: "OsaurusAI/gemma-4-E2B-it-8bit"),
             description: "Smallest Gemma 4 at 8-bit precision. Better quality, still runs on any Mac.",
             downloadURL: "https://huggingface.co/OsaurusAI/gemma-4-E2B-it-8bit",
-            downloadSizeBytes: 2_000_000_000,
+            downloadSizeBytes: 5_932_058_274,
             modelType: "gemma4"
         ),
 
