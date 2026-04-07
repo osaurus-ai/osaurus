@@ -90,27 +90,23 @@ struct ThemedBackgroundLayer: View {
                     .frame(width: geo.size.width, height: geo.size.height)
                     .opacity(opacity)
             case .tile:
-                tiledImage(image: image, size: geo.size)
+                TiledImageView(image: image)
                     .opacity(opacity)
             }
         }
     }
 
-    private func tiledImage(image: NSImage, size: CGSize) -> some View {
-        let imageSize = image.size
-        let cols = Int(ceil(size.width / imageSize.width))
-        let rows = Int(ceil(size.height / imageSize.height))
+    private struct TiledImageView: NSViewRepresentable {
+        let image: NSImage
 
-        return VStack(spacing: 0) {
-            ForEach(0 ..< rows, id: \.self) { _ in
-                HStack(spacing: 0) {
-                    ForEach(0 ..< cols, id: \.self) { _ in
-                        Image(nsImage: image)
-                    }
-                }
-            }
+        func makeNSView(context: Context) -> NSView {
+            let view = NSView()
+            view.wantsLayer = true
+            return view
         }
-        .frame(width: size.width, height: size.height)
-        .clipped()
+
+        func updateNSView(_ nsView: NSView, context: Context) {
+            nsView.layer?.backgroundColor = NSColor(patternImage: image).cgColor
+        }
     }
 }
