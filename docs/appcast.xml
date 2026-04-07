@@ -3,6 +3,27 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.16.5</title>
+            <pubDate>Tue, 07 Apr 2026 13:39:50 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.16.5</sparkle:version>
+            <sparkle:shortVersionString>0.16.5</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.16.5/Osaurus-0.16.5.dmg" length="32851734" type="application/octet-stream" sparkle:edSignature="kNztijA8o3NHRM5tIS2Ok5hGrekBKOyEgPJ/KRwr90T3XLKla3F9uH6Kwbc9SeC0rOGTPdMo1J7QF33vS5wWCA=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- fix: bonjour agent calls now run tools on the server (#767) by @ritave
+
+## 🧰 Maintenance
+
+- cleaned up model manager (#805) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.16.4...0.16.5
+]]></description>
+        </item>
+        <item>
             <title>0.16.4</title>
             <pubDate>Tue, 07 Apr 2026 01:01:08 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
