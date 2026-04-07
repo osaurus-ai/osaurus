@@ -493,13 +493,7 @@ final class PluginHostContext: @unchecked Sendable {
             }
 
             var comp = SystemPromptComposer()
-            comp.append(
-                .static(
-                    id: "base",
-                    label: "Agent Prompt",
-                    content: mgr.effectiveSystemPrompt(for: agentId)
-                )
-            )
+            comp.appendBasePrompt(agentId: agentId)
             if execMode.usesSandboxTools {
                 let secretNames = Array(AgentSecretsKeychain.getAllSecrets(agentId: agentId).keys)
                 comp.append(

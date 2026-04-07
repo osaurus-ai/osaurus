@@ -753,13 +753,12 @@ final class ChatSession: ObservableObject {
 
     /// Creates a composer pre-loaded with the static chat sections (base prompt + sandbox).
     private func chatComposer(
-        base: String,
         agentId: UUID,
         executionMode: WorkExecutionMode,
         compact: Bool
     ) -> SystemPromptComposer {
         var composer = SystemPromptComposer()
-        composer.append(.static(id: "base", label: "Base Prompt", content: base))
+        composer.appendBasePrompt(agentId: agentId)
         if executionMode.usesSandboxTools {
             let secretNames = Array(AgentSecretsKeychain.getAllSecrets(agentId: agentId).keys)
             composer.append(
@@ -774,16 +773,15 @@ final class ChatSession: ObservableObject {
     }
 
     /// Build the chat system prompt via the composer pipeline.
-    /// Fetches memory context internally via `appendMemory`.
+    /// Resolves the agent's base prompt and fetches memory internally.
     func buildChatSystemPrompt(
-        base: String,
         agentId: UUID,
         executionMode: WorkExecutionMode,
         compact: Bool = false,
         preflightSnippet: String = "",
         skillSection: String? = nil
     ) async -> (prompt: String, manifest: PromptManifest) {
-        var composer = chatComposer(base: base, agentId: agentId, executionMode: executionMode, compact: compact)
+        var composer = chatComposer(agentId: agentId, executionMode: executionMode, compact: compact)
         await composer.appendMemory(agentId: agentId.uuidString)
         composer.append(.dynamic(id: "preflight", label: "Pre-flight RAG", content: preflightSnippet))
         if let section = skillSection {
@@ -798,11 +796,8 @@ final class ChatSession: ObservableObject {
         executionMode: WorkExecutionMode,
         memoryContext: String = ""
     ) -> PromptManifest {
-        let base = SystemPromptTemplates.effectiveBasePrompt(
-            AgentManager.shared.effectiveSystemPrompt(for: agentId)
-        )
         let compact = SystemPromptTemplates.isLocalModel(selectedModel)
-        var composer = chatComposer(base: base, agentId: agentId, executionMode: executionMode, compact: compact)
+        var composer = chatComposer(agentId: agentId, executionMode: executionMode, compact: compact)
         composer.append(.dynamic(id: "memory", label: "Memory", content: memoryContext))
         return composer.manifest()
     }
@@ -880,10 +875,6 @@ final class ChatSession: ObservableObject {
                 let executionMode = await prepareChatExecutionMode(agentId: effectiveAgentId)
                 guard isRunActive(runId) else { return }
 
-                let baseSystemPrompt = SystemPromptTemplates.effectiveBasePrompt(
-                    AgentManager.shared.effectiveSystemPrompt(for: effectiveAgentId)
-                )
-
                 let toolsDisabled = chatCfg.disableTools
                 let toolMode = AgentManager.shared.effectiveToolSelectionMode(for: effectiveAgentId)
                 let preflight: PreflightResult
@@ -908,7 +899,6 @@ final class ChatSession: ObservableObject {
                     : nil
 
                 let (sys, manifest) = await buildChatSystemPrompt(
-                    base: baseSystemPrompt,
                     agentId: effectiveAgentId,
                     executionMode: executionMode,
                     compact: isCompact,

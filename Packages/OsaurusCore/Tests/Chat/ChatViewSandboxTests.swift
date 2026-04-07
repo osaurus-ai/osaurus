@@ -34,12 +34,10 @@ struct ChatViewSandboxTests {
         let session = ChatSession()
 
         let (standardPrompt, _) = await session.buildChatSystemPrompt(
-            base: "Base prompt",
             agentId: Agent.defaultId,
             executionMode: .none
         )
         let (sandboxPrompt, _) = await session.buildChatSystemPrompt(
-            base: "Base prompt",
             agentId: Agent.defaultId,
             executionMode: .sandbox
         )

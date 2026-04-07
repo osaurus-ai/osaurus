@@ -359,13 +359,9 @@ public final class WorkSession: ObservableObject {
         if let cached = cachedManifest {
             manifest = cached
         } else {
-            let baseSystemPrompt = SystemPromptTemplates.effectiveBasePrompt(
-                windowState?.cachedSystemPrompt
-                    ?? AgentManager.shared.effectiveSystemPrompt(for: agentId)
-            )
             let secretNames = Array(AgentSecretsKeychain.getAllSecrets(agentId: agentId).keys)
             let (_, m) = WorkExecutionEngine.composeAgentSystemPrompt(
-                base: baseSystemPrompt,
+                agentId: agentId,
                 executionMode: executionMode,
                 secretNames: secretNames
             )
@@ -893,13 +889,8 @@ public final class WorkSession: ObservableObject {
         systemPrompt: String,
         executionMode: WorkExecutionMode
     ) {
-        let baseSystemPrompt = SystemPromptTemplates.effectiveBasePrompt(
-            windowState?.cachedSystemPrompt
-                ?? AgentManager.shared.effectiveSystemPrompt(for: agentId)
-        )
-
         var composer = SystemPromptComposer()
-        composer.append(.static(id: "base", label: "Base Prompt", content: baseSystemPrompt))
+        composer.appendBasePrompt(agentId: agentId)
         await composer.appendMemory(agentId: agentId.uuidString)
         let systemPrompt = composer.render()
 

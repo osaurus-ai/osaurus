@@ -1316,20 +1316,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
         var enriched = request
 
-        let agentPrompt: String
-        if let agentUUID = UUID(uuidString: agentId) {
-            agentPrompt = await MainActor.run {
-                SystemPromptTemplates.effectiveBasePrompt(
-                    AgentManager.shared.effectiveSystemPrompt(for: agentUUID)
-                )
-            }
-        } else {
-            agentPrompt = ""
-        }
-
         let query = request.messages.last(where: { $0.role == "user" })?.content ?? ""
         var composer = SystemPromptComposer()
-        composer.append(.static(id: "base", label: "Agent Prompt", content: agentPrompt))
+        if let agentUUID = UUID(uuidString: agentId) {
+            await MainActor.run { composer.appendBasePrompt(agentId: agentUUID) }
+        }
         await composer.appendMemory(agentId: agentId, query: query)
         let composed = composer.render()
         debugLog("[Context:HTTP] \(composer.manifest().debugDescription)")

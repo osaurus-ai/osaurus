@@ -154,11 +154,6 @@ public struct SystemPromptComposer: Sendable {
         sections.append(section)
     }
 
-    public mutating func prepend(_ section: PromptSection) {
-        guard !section.isEmpty else { return }
-        sections.insert(section, at: 0)
-    }
-
     // MARK: Output
 
     /// Concatenated system prompt string with `\n\n` separators.
@@ -172,6 +167,17 @@ public struct SystemPromptComposer: Sendable {
     /// Structured manifest for budget tracking, caching, and debug output.
     public func manifest() -> PromptManifest {
         PromptManifest(sections: sections.filter { !$0.isEmpty })
+    }
+
+    // MARK: - Agent Base Prompt
+
+    /// Resolve the agent's system prompt and append it as a static "Base Prompt" section.
+    /// Falls back to the default identity when the agent has no custom prompt.
+    @MainActor
+    public mutating func appendBasePrompt(agentId: UUID) {
+        let raw = AgentManager.shared.effectiveSystemPrompt(for: agentId)
+        let effective = SystemPromptTemplates.effectiveBasePrompt(raw)
+        append(.static(id: "base", label: "Base Prompt", content: effective))
     }
 
     // MARK: - Memory Convenience

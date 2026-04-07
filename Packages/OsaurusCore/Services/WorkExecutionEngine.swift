@@ -761,8 +761,25 @@ public actor WorkExecutionEngine {
 
     // MARK: - Work System Prompt
 
-    /// Builds the complete work-mode system prompt using the composer pipeline.
-    /// Returns both the rendered prompt and its manifest for budget tracking.
+    /// Builds the work-mode system prompt, resolving the agent's base prompt internally.
+    @MainActor
+    static func composeAgentSystemPrompt(
+        agentId: UUID,
+        executionMode: WorkExecutionMode,
+        compact: Bool = false,
+        secretNames: [String] = []
+    ) -> (prompt: String, manifest: PromptManifest) {
+        let raw = AgentManager.shared.effectiveSystemPrompt(for: agentId)
+        let base = SystemPromptTemplates.effectiveBasePrompt(raw)
+        return composeAgentSystemPrompt(
+            base: base,
+            executionMode: executionMode,
+            compact: compact,
+            secretNames: secretNames
+        )
+    }
+
+    /// Builds the work-mode system prompt from a pre-resolved base string (e.g. base+memory).
     static func composeAgentSystemPrompt(
         base: String,
         executionMode: WorkExecutionMode,
