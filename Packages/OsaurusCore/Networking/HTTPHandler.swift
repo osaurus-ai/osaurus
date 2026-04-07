@@ -1319,7 +1319,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let agentPrompt: String
         if let agentUUID = UUID(uuidString: agentId) {
             agentPrompt = await MainActor.run {
-                SystemPromptBuilder.effectiveBasePrompt(
+                SystemPromptTemplates.effectiveBasePrompt(
                     AgentManager.shared.effectiveSystemPrompt(for: agentUUID)
                 )
             }
@@ -1341,7 +1341,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         debugLog("[Context:HTTP] \(composer.manifest().debugDescription)")
 
         if !composed.isEmpty {
-            SystemPromptBuilder.injectSystemContent(composed, into: &enriched.messages)
+            SystemPromptComposer.injectSystemContent(composed, into: &enriched.messages)
         }
 
         return enriched

@@ -39,9 +39,9 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         }
         debugLog("[ChatEngine] enrichMessages: got systemPrompt, injecting")
 
-        let effective = SystemPromptBuilder.effectiveBasePrompt(systemPrompt)
+        let effective = SystemPromptTemplates.effectiveBasePrompt(systemPrompt)
         var enriched = messages
-        SystemPromptBuilder.injectSystemContent(effective, into: &enriched)
+        SystemPromptComposer.injectSystemContent(effective, into: &enriched)
         return enriched
     }
 

@@ -385,7 +385,7 @@ public actor WorkEngine {
                 WorkExecutionSession(issueId: issue.id, messages: initialMessages)
             }
 
-        let compact = SystemPromptBuilder.isLocalModel(model)
+        let compact = SystemPromptTemplates.isLocalModel(model)
         let secretNames: [String] = {
             guard let name = sandboxAgentName,
                 let uuid = SandboxAgentMap.resolve(linuxName: name)

@@ -359,7 +359,7 @@ public final class WorkSession: ObservableObject {
         if let cached = cachedManifest {
             manifest = cached
         } else {
-            let baseSystemPrompt = SystemPromptBuilder.effectiveBasePrompt(
+            let baseSystemPrompt = SystemPromptTemplates.effectiveBasePrompt(
                 windowState?.cachedSystemPrompt
                     ?? AgentManager.shared.effectiveSystemPrompt(for: agentId)
             )
@@ -893,7 +893,7 @@ public final class WorkSession: ObservableObject {
         systemPrompt: String,
         executionMode: WorkExecutionMode
     ) {
-        let baseSystemPrompt = SystemPromptBuilder.effectiveBasePrompt(
+        let baseSystemPrompt = SystemPromptTemplates.effectiveBasePrompt(
             windowState?.cachedSystemPrompt
                 ?? AgentManager.shared.effectiveSystemPrompt(for: agentId)
         )

@@ -173,4 +173,48 @@ public struct SystemPromptComposer: Sendable {
     public func manifest() -> PromptManifest {
         PromptManifest(sections: sections.filter { !$0.isEmpty })
     }
+
+    // MARK: - Message Array Helpers
+
+    /// Prepend content to the existing system message in a message array,
+    /// or insert a new system message at position 0.
+    static func injectSystemContent(
+        _ content: String,
+        into messages: inout [ChatMessage]
+    ) {
+        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        if let idx = messages.firstIndex(where: { $0.role == "system" }),
+            let existing = messages[idx].content, !existing.isEmpty
+        {
+            messages[idx] = ChatMessage(
+                role: "system",
+                content: trimmed + "\n\n" + existing
+            )
+        } else {
+            messages.insert(ChatMessage(role: "system", content: trimmed), at: 0)
+        }
+    }
+
+    /// Append content to the end of the existing system message in a message array,
+    /// or insert a new system message at position 0.
+    static func appendSystemContent(
+        _ content: String,
+        into messages: inout [ChatMessage]
+    ) {
+        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        if let idx = messages.firstIndex(where: { $0.role == "system" }),
+            let existing = messages[idx].content, !existing.isEmpty
+        {
+            messages[idx] = ChatMessage(
+                role: "system",
+                content: existing + "\n\n" + trimmed
+            )
+        } else {
+            messages.insert(ChatMessage(role: "system", content: trimmed), at: 0)
+        }
+    }
 }

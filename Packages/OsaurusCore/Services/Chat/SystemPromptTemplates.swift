@@ -15,6 +15,13 @@ public enum SystemPromptTemplates {
 
     public static let defaultIdentity = "You are a helpful AI assistant."
 
+    /// Returns the effective base prompt, falling back to `defaultIdentity`
+    /// when the user has not configured one.
+    public static func effectiveBasePrompt(_ basePrompt: String) -> String {
+        let trimmed = basePrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? defaultIdentity : trimmed
+    }
+
     // MARK: - Work Mode
 
     public enum WorkModeVariant {
@@ -370,5 +377,20 @@ public enum SystemPromptTemplates {
 
     public static func budgetWarningStatus(remaining: Int) -> String {
         "Warning: \(remaining) iterations remaining"
+    }
+
+    // MARK: - Model Classification
+
+    /// Returns true when the model identifier refers to a local model
+    /// (Foundation or MLX) that benefits from shorter/compact prompts.
+    public static func isLocalModel(_ modelId: String?) -> Bool {
+        let trimmed = (modelId ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if trimmed.isEmpty || trimmed == "default" || trimmed == "foundation" {
+            return true
+        }
+        if trimmed.contains("/") {
+            return false
+        }
+        return ModelManager.findInstalledModel(named: trimmed) != nil
     }
 }

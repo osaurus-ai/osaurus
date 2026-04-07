@@ -424,7 +424,7 @@ final class PluginHostContext: @unchecked Sendable {
                 return PluginManager.shared.loadedPlugin(for: pid)?.plugin.manifest.instructions
             }
             if let instructions {
-                SystemPromptBuilder.appendSystemContent(instructions, into: &enriched.request.messages)
+                SystemPromptComposer.appendSystemContent(instructions, into: &enriched.request.messages)
             }
         }
         let resolvedAgentId = agentCtx?.agentId ?? Agent.defaultId
@@ -442,7 +442,7 @@ final class PluginHostContext: @unchecked Sendable {
         if isManual,
             let section = await SkillManager.shared.manualSkillPromptSection(for: resolvedAgentId)
         {
-            SystemPromptBuilder.appendSystemContent(section, into: &enriched.request.messages)
+            SystemPromptComposer.appendSystemContent(section, into: &enriched.request.messages)
         }
 
         let engine = ChatEngine(source: .plugin)
@@ -556,7 +556,7 @@ final class PluginHostContext: @unchecked Sendable {
         }
 
         var messages = request.messages
-        SystemPromptBuilder.injectSystemContent(ctx.systemPrompt, into: &messages)
+        SystemPromptComposer.injectSystemContent(ctx.systemPrompt, into: &messages)
 
         let effectiveTools: [Tool]?
         if let explicit = request.tools, !explicit.isEmpty {
@@ -700,7 +700,7 @@ final class PluginHostContext: @unchecked Sendable {
 
         var messages = inference.request.messages
         if !preflight.contextSnippet.isEmpty {
-            SystemPromptBuilder.appendSystemContent(preflight.contextSnippet, into: &messages)
+            SystemPromptComposer.appendSystemContent(preflight.contextSnippet, into: &messages)
         }
 
         let effectiveTools = tools.isEmpty ? nil : tools

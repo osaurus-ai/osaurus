@@ -787,7 +787,7 @@ final class ChatSession: ObservableObject {
     ) -> PromptManifest {
         let base = AgentManager.shared.effectiveSystemPrompt(for: agentId)
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        let compact = SystemPromptBuilder.isLocalModel(selectedModel)
+        let compact = SystemPromptTemplates.isLocalModel(selectedModel)
         let memory = memoryContext ?? ""
         let (_, manifest) = buildChatSystemPrompt(
             base: base,
@@ -872,7 +872,7 @@ final class ChatSession: ObservableObject {
                 let executionMode = await prepareChatExecutionMode(agentId: effectiveAgentId)
                 guard isRunActive(runId) else { return }
 
-                let baseSystemPrompt = SystemPromptBuilder.effectiveBasePrompt(
+                let baseSystemPrompt = SystemPromptTemplates.effectiveBasePrompt(
                     AgentManager.shared.effectiveSystemPrompt(for: effectiveAgentId)
                 )
 
@@ -898,7 +898,7 @@ final class ChatSession: ObservableObject {
                     assistantTurn.preflightCapabilities = preflight.items
                 }
 
-                let isCompact = SystemPromptBuilder.isLocalModel(selectedModel)
+                let isCompact = SystemPromptTemplates.isLocalModel(selectedModel)
                 let isManualTools = toolMode == .manual
 
                 let manualSkillSection: String? =
