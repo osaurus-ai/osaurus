@@ -811,7 +811,8 @@ actor ModelRuntime {
         kvGroup: Int,
         quantStart: Int,
         maxKV: Int?,
-        prefillStep: Int
+        prefillStep: Int,
+        turboQuant: Bool
     ) -> MLXLMCommon.GenerateParameters {
         var p = MLXLMCommon.GenerateParameters(
             maxTokens: maxTokens,
@@ -819,6 +820,7 @@ actor ModelRuntime {
             kvBits: kvBits,
             kvGroupSize: kvGroup,
             quantizedKVStart: quantStart,
+            kvMode: turboQuant ? .turboQuant(keyBits: 3, valueBits: 3) : .none,
             temperature: temperature,
             topP: topP,
             repetitionPenalty: repetitionPenalty,

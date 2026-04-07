@@ -58,6 +58,8 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
     public var genMaxKVSize: Int?
     /// Prefill step size (tokens per prefill chunk); nil for auto-detect based on RAM
     public var genPrefillStepSize: Int?
+    /// TurboQuant KV cache compression; nil = auto-detect based on RAM, true = on, false = off
+    public var genTurboQuant: Bool?
 
     /// List of allowed origins for CORS. Empty disables CORS. Use "*" to allow any origin.
     public var allowedOrigins: [String]
@@ -79,6 +81,7 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
         case genQuantizedKVStart
         case genMaxKVSize
         case genPrefillStepSize
+        case genTurboQuant
         case allowedOrigins
         case modelEvictionPolicy
     }
@@ -107,6 +110,7 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
             ?? defaults.genQuantizedKVStart
         self.genMaxKVSize = try container.decodeIfPresent(Int.self, forKey: .genMaxKVSize)
         self.genPrefillStepSize = try container.decodeIfPresent(Int.self, forKey: .genPrefillStepSize)
+        self.genTurboQuant = try container.decodeIfPresent(Bool.self, forKey: .genTurboQuant)
         self.allowedOrigins =
             try container.decodeIfPresent([String].self, forKey: .allowedOrigins)
             ?? defaults.allowedOrigins
@@ -129,6 +133,7 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
         genQuantizedKVStart: Int,
         genMaxKVSize: Int?,
         genPrefillStepSize: Int?,
+        genTurboQuant: Bool? = nil,
         allowedOrigins: [String] = [],
         modelEvictionPolicy: ModelEvictionPolicy = .strictSingleModel
     ) {
@@ -145,6 +150,7 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
         self.genQuantizedKVStart = genQuantizedKVStart
         self.genMaxKVSize = genMaxKVSize
         self.genPrefillStepSize = genPrefillStepSize
+        self.genTurboQuant = genTurboQuant
         self.allowedOrigins = allowedOrigins
         self.modelEvictionPolicy = modelEvictionPolicy
     }

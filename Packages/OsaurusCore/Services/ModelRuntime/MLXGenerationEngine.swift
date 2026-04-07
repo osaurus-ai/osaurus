@@ -145,7 +145,8 @@ struct MLXGenerationEngine {
                 kvGroup: runtime.kvGroup,
                 quantStart: runtime.quantStart,
                 maxKV: runtime.maxKV,
-                prefillStep: runtime.prefillStep
+                prefillStep: runtime.prefillStep,
+                turboQuant: runtime.turboQuant
             )
             let additionalContext: [String: any Sendable]? =
                 generation.modelOptions["disableThinking"]?.boolValue == true

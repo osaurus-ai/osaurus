@@ -49,6 +49,7 @@ struct ConfigurationView: View {
     @State private var tempQuantStart: String = ""
     @State private var tempMaxKV: String = ""
     @State private var tempPrefillStep: String = ""
+    @State private var tempTurboQuant: Bool? = nil
     @State private var tempEvictionPolicy: ModelEvictionPolicy = .strictSingleModel
 
     // Toast settings state
@@ -420,6 +421,7 @@ struct ConfigurationView: View {
                             "Sampling",
                             "Top P",
                             "KV Cache",
+                            "TurboQuant",
                             "Quantization",
                             "Prefill",
                             "Max KV",
@@ -459,6 +461,15 @@ struct ConfigurationView: View {
                                                 range: 1024 ... 131072,
                                                 step: 1024,
                                                 defaultValue: 8192
+                                            )
+                                            SettingsToggle(
+                                                title: "TurboQuant",
+                                                description:
+                                                    "KV cache compression for ~5x memory savings. Auto-detected based on available RAM.",
+                                                badge: tempTurboQuant == nil
+                                                    ? (turboQuantAutoEnabled ? "(Auto-Enabled)" : "(Auto-Disabled)")
+                                                    : nil,
+                                                isOn: turboQuantBinding
                                             )
                                             DisclosureGroup("Advanced") {
                                                 VStack(alignment: .leading, spacing: 12) {
@@ -710,6 +721,24 @@ struct ConfigurationView: View {
         }
     }
 
+    // MARK: - TurboQuant Helpers
+
+    /// Rough estimate of whether auto-detection would enable TurboQuant.
+    /// Uses the same headroom < 16 GB heuristic as RuntimeConfig but without
+    /// model weights (assumes ~8 GB model as a conservative estimate).
+    private var turboQuantAutoEnabled: Bool {
+        let systemRAM = Int64(ProcessInfo.processInfo.physicalMemory)
+        let estimatedHeadroom = systemRAM - 8 * 1024 * 1024 * 1024
+        return estimatedHeadroom < 16 * 1024 * 1024 * 1024
+    }
+
+    private var turboQuantBinding: Binding<Bool> {
+        Binding(
+            get: { tempTurboQuant ?? turboQuantAutoEnabled },
+            set: { tempTurboQuant = $0 }
+        )
+    }
+
     // MARK: - Configuration Loading
 
     private func loadConfiguration() {
@@ -750,6 +779,7 @@ struct ConfigurationView: View {
             ? "" : String(configuration.genQuantizedKVStart)
         tempMaxKV = configuration.genMaxKVSize.map(String.init) ?? ""
         tempPrefillStep = configuration.genPrefillStepSize.map(String.init) ?? ""
+        tempTurboQuant = configuration.genTurboQuant
         tempAllowedOrigins = configuration.allowedOrigins.joined(separator: ", ")
         tempEvictionPolicy = configuration.modelEvictionPolicy
 
@@ -804,6 +834,7 @@ struct ConfigurationView: View {
         tempQuantStart = ""
         tempMaxKV = ""
         tempPrefillStep = ""
+        tempTurboQuant = nil
         tempEvictionPolicy = serverDefaults.modelEvictionPolicy
 
         showSuccess("Settings restored to defaults")
@@ -877,6 +908,7 @@ struct ConfigurationView: View {
 
         let trimmedPrefillStep = tempPrefillStep.trimmingCharacters(in: .whitespacesAndNewlines)
         configuration.genPrefillStepSize = trimmedPrefillStep.isEmpty ? nil : Int(trimmedPrefillStep)
+        configuration.genTurboQuant = tempTurboQuant
 
         configuration.modelEvictionPolicy = tempEvictionPolicy
 
@@ -1762,14 +1794,22 @@ private struct SettingsToggle: View {
 
     let title: String
     let description: String
+    var badge: String? = nil
     @Binding var isOn: Bool
 
     var body: some View {
         HStack {
             VStack(alignment: .leading, spacing: 3) {
-                Text(title)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(themeManager.currentTheme.primaryText)
+                HStack(spacing: 6) {
+                    Text(title)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(themeManager.currentTheme.primaryText)
+                    if let badge {
+                        Text(badge)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(themeManager.currentTheme.accentColor)
+                    }
+                }
                 Text(description)
                     .font(.system(size: 11))
                     .foregroundStyle(themeManager.currentTheme.tertiaryText)

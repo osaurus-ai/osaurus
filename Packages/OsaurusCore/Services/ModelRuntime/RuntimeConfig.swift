@@ -14,6 +14,7 @@ struct RuntimeConfig: Sendable {
     let quantStart: Int
     let maxKV: Int?
     let prefillStep: Int
+    let turboQuant: Bool
 
     /// Captures a generation config snapshot. User settings from ServerConfiguration
     /// take precedence; nil/unset values fall through to auto-detection based on
@@ -28,13 +29,20 @@ struct RuntimeConfig: Sendable {
         } else {
             effectiveQuantStart = effectiveKVBits != nil ? 512 : 0
         }
+        let effectiveTurboQuant: Bool
+        if let explicit = cfg?.genTurboQuant {
+            effectiveTurboQuant = explicit
+        } else {
+            effectiveTurboQuant = Self.autoTurboQuant(modelWeightsBytes: modelWeightsBytes)
+        }
         return RuntimeConfig(
             topP: cfg?.genTopP ?? 1.0,
             kvBits: effectiveKVBits,
             kvGroup: cfg?.genKVGroupSize ?? 64,
             quantStart: effectiveQuantStart,
             maxKV: cfg?.genMaxKVSize ?? Self.defaultMaxKV(),
-            prefillStep: cfg?.genPrefillStepSize ?? Self.defaultPrefillStep()
+            prefillStep: cfg?.genPrefillStepSize ?? Self.defaultPrefillStep(),
+            turboQuant: effectiveTurboQuant
         )
     }
 
@@ -46,6 +54,15 @@ struct RuntimeConfig: Sendable {
         let systemRAM = Int64(ProcessInfo.processInfo.physicalMemory)
         let headroom = systemRAM - modelWeightsBytes
         return headroom < 16 * 1024 * 1024 * 1024 ? 8 : nil
+    }
+
+    /// Auto-enable TurboQuant when the headroom after model weights is less
+    /// than 16 GB. Uses the same threshold as autoKVBits.
+    private static func autoTurboQuant(modelWeightsBytes: Int64) -> Bool {
+        guard modelWeightsBytes > 0 else { return false }
+        let systemRAM = Int64(ProcessInfo.processInfo.physicalMemory)
+        let headroom = systemRAM - modelWeightsBytes
+        return headroom < 16 * 1024 * 1024 * 1024
     }
 
     /// Auto-detect a reasonable maxKV default based on available system RAM.
