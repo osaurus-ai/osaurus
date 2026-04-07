@@ -9,46 +9,102 @@
 
 import Foundation
 
-/// Per-category token breakdown for the context window, displayed in the
-/// context budget hover popover.
-public struct ContextTokenBreakdown: Equatable, Sendable {
-    public var systemPrompt: Int = 0
-    public var memory: Int = 0
-    public var tools: Int = 0
-    public var conversation: Int = 0
-    public var input: Int = 0
-    public var output: Int = 0
+/// Dynamic token breakdown for the context window, displayed in the
+/// context budget hover popover. Entries are derived from the composer's
+/// manifest sections rather than hardcoded fields.
+public struct ContextBreakdown: Equatable, Sendable {
+
+    public struct Entry: Identifiable, Equatable, Sendable {
+        public let id: String
+        public let label: String
+        public var tokens: Int
+        public let tint: Tint
+    }
+
+    public enum Tint: String, Sendable {
+        case purple, blue, orange, green, gray, cyan, teal, indigo
+    }
+
+    /// Prompt sections + tools
+    public var context: [Entry]
+    /// Conversation + input + output
+    public var messages: [Entry]
 
     public var total: Int {
-        systemPrompt + memory + tools + conversation + input + output
+        context.reduce(0) { $0 + $1.tokens } + messages.reduce(0) { $0 + $1.tokens }
     }
 
-    public static let zero = ContextTokenBreakdown()
+    public var allEntries: [Entry] { context + messages }
 
-    /// Non-zero categories with their display metadata.
-    public var categories: [Category] {
-        Category.all(from: self).filter { $0.tokens > 0 }
+    public static let zero = ContextBreakdown(context: [], messages: [])
+
+    /// Tint for a given prompt section ID.
+    static func tint(for sectionId: String) -> Tint {
+        switch sectionId {
+        case "base": return .purple
+        case "workMode": return .indigo
+        case "sandbox": return .teal
+        case "memory": return .blue
+        case "preflight": return .cyan
+        case "skills": return .orange
+        default: return .gray
+        }
     }
 
-    public struct Category: Identifiable {
-        public let label: String
-        public let tokens: Int
-        public let tint: Tint
-        public var id: String { label }
+    /// Build a breakdown from a `ComposedContext` with optional message token counts.
+    static func from(
+        context composed: ComposedContext,
+        conversationTokens: Int = 0,
+        inputTokens: Int = 0,
+        outputTokens: Int = 0
+    ) -> ContextBreakdown {
+        .from(
+            manifest: composed.manifest,
+            toolTokens: composed.toolTokens,
+            conversationTokens: conversationTokens,
+            inputTokens: inputTokens,
+            outputTokens: outputTokens
+        )
+    }
 
-        public enum Tint: String {
-            case purple, blue, orange, green, gray, cyan
+    /// Build a breakdown from a manifest + tool tokens.
+    public static func from(
+        manifest: PromptManifest,
+        toolTokens: Int = 0,
+        conversationTokens: Int = 0,
+        inputTokens: Int = 0,
+        outputTokens: Int = 0
+    ) -> ContextBreakdown {
+        var ctx: [Entry] = manifest.sections
+            .filter { $0.estimatedTokens > 0 }
+            .map { Entry(id: $0.id, label: $0.label, tokens: $0.estimatedTokens, tint: tint(for: $0.id)) }
+        if toolTokens > 0 {
+            ctx.append(Entry(id: "tools", label: "Tools", tokens: toolTokens, tint: .orange))
         }
 
-        static func all(from b: ContextTokenBreakdown) -> [Category] {
-            [
-                Category(label: "System Prompt", tokens: b.systemPrompt, tint: .purple),
-                Category(label: "Memory", tokens: b.memory, tint: .blue),
-                Category(label: "Tools", tokens: b.tools, tint: .orange),
-                Category(label: "Conversation", tokens: b.conversation, tint: .gray),
-                Category(label: "Input", tokens: b.input, tint: .cyan),
-                Category(label: "Output", tokens: b.output, tint: .green),
-            ]
+        var msgs: [Entry] = []
+        if conversationTokens > 0 {
+            msgs.append(Entry(id: "conversation", label: "Conversation", tokens: conversationTokens, tint: .gray))
+        }
+        if inputTokens > 0 { msgs.append(Entry(id: "input", label: "Input", tokens: inputTokens, tint: .cyan)) }
+        if outputTokens > 0 { msgs.append(Entry(id: "output", label: "Output", tokens: outputTokens, tint: .green)) }
+
+        return ContextBreakdown(context: ctx, messages: msgs)
+    }
+
+    /// Update the token count for an entry by ID, or append it if not present.
+    public mutating func setTokens(
+        for id: String,
+        in group: WritableKeyPath<ContextBreakdown, [Entry]>,
+        tokens: Int,
+        label: String = "",
+        tint: Tint = .gray
+    ) {
+        if let idx = self[keyPath: group].firstIndex(where: { $0.id == id }) {
+            let existing = self[keyPath: group][idx]
+            self[keyPath: group][idx] = Entry(id: id, label: existing.label, tokens: tokens, tint: existing.tint)
+        } else if tokens > 0 {
+            self[keyPath: group].append(Entry(id: id, label: label, tokens: tokens, tint: tint))
         }
     }
 }
@@ -344,47 +400,45 @@ public struct ContextBudgetManager: Sendable {
 /// Tracks the active request's token breakdown during streaming/execution.
 ///
 /// Both `ChatSession` and `WorkSession` own an instance. The lifecycle is:
-/// 1. `snapshot()` — after preflight, captures the actual system prompt, memory, and tool tokens
-/// 2. `updateConversation()` — at each agent-loop iteration, updates conversation tokens
-/// 3. `activeBreakdown()` — O(1) read returning the snapshot + live output tokens
+/// 1. `snapshot()` — captures context from ComposedContext or manifest
+/// 2. `updateConversation()` — at each agent-loop iteration, updates conversation + output tokens
+/// 3. `activeBreakdown()` — O(1) read returning the snapshot with live message tokens
 /// 4. `clear()` — on completion/error/cancellation
 @MainActor
 final class ContextBudgetTracker {
-    private var breakdown: ContextTokenBreakdown?
+    private var breakdown: ContextBreakdown?
     private var cumulativeOutputTokens: Int = 0
 
-    /// Snapshot the fixed components from a prompt manifest and tool token estimate.
+    /// Snapshot from a ComposedContext (chat path).
+    func snapshot(context: ComposedContext) {
+        breakdown = .from(context: context)
+    }
+
+    /// Snapshot from a manifest + tool tokens (work path where ComposedContext isn't available).
     func snapshot(manifest: PromptManifest, toolTokens: Int) {
-        var bd = ContextTokenBreakdown()
-        bd.systemPrompt = manifest.systemPromptTokens
-        bd.memory = manifest.memoryTokens
-        bd.tools = toolTokens
-        breakdown = bd
+        breakdown = .from(manifest: manifest, toolTokens: toolTokens)
     }
 
     /// Update conversation tokens at each agent-loop iteration start.
-    /// Accumulates the finished turn's output before starting a new iteration
-    /// so the `output` category reflects total model output across all turns.
     func updateConversation(tokens: Int, finishedOutputTurn: ChatTurn? = nil) {
         if let turn = finishedOutputTurn, turn.role == .assistant {
             cumulativeOutputTokens += ContextBudgetManager.estimateOutputTokens(for: turn)
         }
-        breakdown?.conversation = tokens
+        breakdown?.setTokens(for: "conversation", in: \.messages, tokens: tokens, label: "Conversation", tint: .gray)
     }
 
-    /// Returns the snapshot with live output tokens appended, or nil if
-    /// no snapshot is active (caller falls back to full recomputation).
-    func activeBreakdown(isActive: Bool, outputTurn: ChatTurn?) -> ContextTokenBreakdown? {
+    /// Returns the snapshot with live output tokens, or nil if no snapshot is active.
+    func activeBreakdown(isActive: Bool, outputTurn: ChatTurn?) -> ContextBreakdown? {
         guard var bd = breakdown, isActive else { return nil }
         var currentTurnOutput = 0
         if let turn = outputTurn, turn.role == .assistant {
             currentTurnOutput = ContextBudgetManager.estimateOutputTokens(for: turn)
         }
-        bd.output = cumulativeOutputTokens + currentTurnOutput
+        let totalOutput = cumulativeOutputTokens + currentTurnOutput
+        bd.setTokens(for: "output", in: \.messages, tokens: totalOutput, label: "Output", tint: .green)
         return bd
     }
 
-    /// Clear the active snapshot. Next read falls back to full recomputation.
     func clear() {
         breakdown = nil
         cumulativeOutputTokens = 0

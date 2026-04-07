@@ -72,9 +72,14 @@ struct ChatViewSandboxTests {
             let inactiveBreakdown = inactiveSession.estimatedContextBreakdown
             let sandboxBreakdown = sandboxSession.estimatedContextBreakdown
 
-            #expect(sandboxBreakdown.systemPrompt > inactiveBreakdown.systemPrompt)
-            #expect(sandboxBreakdown.tools > inactiveBreakdown.tools)
-            #expect(sandboxBreakdown.tools >= ToolRegistry.shared.estimatedTokens(for: "sandbox_exec"))
+            let inactiveContextTokens = inactiveBreakdown.context.reduce(0) { $0 + $1.tokens }
+            let sandboxContextTokens = sandboxBreakdown.context.reduce(0) { $0 + $1.tokens }
+            #expect(sandboxContextTokens > inactiveContextTokens)
+
+            let sandboxToolTokens = sandboxBreakdown.context.first { $0.id == "tools" }?.tokens ?? 0
+            let inactiveToolTokens = inactiveBreakdown.context.first { $0.id == "tools" }?.tokens ?? 0
+            #expect(sandboxToolTokens > inactiveToolTokens)
+            #expect(sandboxToolTokens >= ToolRegistry.shared.estimatedTokens(for: "sandbox_exec"))
         }
     }
 
@@ -154,9 +159,14 @@ struct ChatViewSandboxTests {
             let sandboxBreakdown = sandboxSession.estimateContextBreakdown(for: issue)
             let sandboxTools = ToolRegistry.shared.alwaysLoadedSpecs(mode: .sandbox)
 
-            #expect(sandboxBreakdown.systemPrompt > inactiveBreakdown.systemPrompt)
-            #expect(sandboxBreakdown.tools > inactiveBreakdown.tools)
-            #expect(sandboxBreakdown.tools == ToolRegistry.shared.totalEstimatedTokens(for: sandboxTools))
+            let inactiveContextTokens = inactiveBreakdown.context.reduce(0) { $0 + $1.tokens }
+            let sandboxContextTokens = sandboxBreakdown.context.reduce(0) { $0 + $1.tokens }
+            #expect(sandboxContextTokens > inactiveContextTokens)
+
+            let sandboxToolTokens = sandboxBreakdown.context.first { $0.id == "tools" }?.tokens ?? 0
+            let inactiveToolTokens = inactiveBreakdown.context.first { $0.id == "tools" }?.tokens ?? 0
+            #expect(sandboxToolTokens > inactiveToolTokens)
+            #expect(sandboxToolTokens == ToolRegistry.shared.totalEstimatedTokens(for: sandboxTools))
         }
     }
 }

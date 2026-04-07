@@ -45,11 +45,7 @@ final class ChatSession: ObservableObject {
 
     // MARK: - Memoization Cache
     private let blockMemoizer = BlockMemoizer()
-    private var _cachedBreakdown: ContextTokenBreakdown = .zero
-    private var _tokenCacheValid: Bool = false
-    private var _lastTokenTurnsCount: Int = 0
-    private var _lastTokenAttachmentsCount: Int = 0
-    private var cachedManifest: PromptManifest?
+    private var cachedContext: ComposedContext?
     private let budgetTracker = ContextBudgetTracker()
 
     /// Callback when session needs to be saved (called after streaming completes)
@@ -281,9 +277,9 @@ final class ChatSession: ObservableObject {
     }
 
     /// Per-category breakdown of estimated context tokens.
-    /// During streaming, returns the snapshot from the active request with live
-    /// output tokens (O(1)). Otherwise uses cached full recomputation.
-    var estimatedContextBreakdown: ContextTokenBreakdown {
+    /// During streaming, returns the active snapshot with live output tokens.
+    /// Otherwise derives from the cached `ComposedContext` or a preview manifest.
+    var estimatedContextBreakdown: ContextBreakdown {
         if let active = budgetTracker.activeBreakdown(
             isActive: isStreaming,
             outputTurn: turns.last
@@ -291,46 +287,35 @@ final class ChatSession: ObservableObject {
             return active
         }
 
-        if _tokenCacheValid && !isStreaming && turns.count == _lastTokenTurnsCount
-            && pendingAttachments.count == _lastTokenAttachmentsCount
-        {
-            return _cachedBreakdown
-        }
-
-        var breakdown = ContextTokenBreakdown()
         let effectiveId = agentId ?? Agent.defaultId
         let executionMode = estimatedChatExecutionMode(agentId: effectiveId)
 
-        let manifest: PromptManifest
-        if let cached = cachedManifest {
-            manifest = cached
-        } else {
-            manifest = buildPreviewManifest(agentId: effectiveId, executionMode: executionMode)
-        }
-        breakdown.systemPrompt = manifest.systemPromptTokens
-        breakdown.memory = manifest.memoryTokens
+        let outputTokens = ContextBudgetManager.estimateOutputTokens(for: turns)
+        let conversationTokens = ContextBudgetManager.estimateTokens(for: turns) - outputTokens
+        var inputTokens = 0
+        if !input.isEmpty { inputTokens += ContextBudgetManager.estimateTokens(for: input) }
+        for attachment in pendingAttachments { inputTokens += attachment.estimatedTokens }
 
-        breakdown.tools = ToolRegistry.shared.totalEstimatedTokens(
+        if let ctx = cachedContext {
+            return .from(
+                context: ctx,
+                conversationTokens: conversationTokens,
+                inputTokens: inputTokens,
+                outputTokens: outputTokens
+            )
+        }
+
+        let manifest = buildPreviewManifest(agentId: effectiveId, executionMode: executionMode)
+        let toolTokens = ToolRegistry.shared.totalEstimatedTokens(
             for: ToolRegistry.shared.alwaysLoadedSpecs(mode: executionMode)
         )
-        breakdown.output = ContextBudgetManager.estimateOutputTokens(for: turns)
-        breakdown.conversation = ContextBudgetManager.estimateTokens(for: turns) - breakdown.output
-
-        var inputTokens = 0
-        if !input.isEmpty {
-            inputTokens += ContextBudgetManager.estimateTokens(for: input)
-        }
-        for attachment in pendingAttachments {
-            inputTokens += attachment.estimatedTokens
-        }
-        breakdown.input = inputTokens
-
-        _cachedBreakdown = breakdown
-        _tokenCacheValid = true
-        _lastTokenTurnsCount = turns.count
-        _lastTokenAttachmentsCount = pendingAttachments.count
-
-        return breakdown
+        return .from(
+            manifest: manifest,
+            toolTokens: toolTokens,
+            conversationTokens: conversationTokens,
+            inputTokens: inputTokens,
+            outputTokens: outputTokens
+        )
     }
 
     /// Builds the full user message text, prepending any attached document contents wrapped in XML tags.
@@ -401,8 +386,7 @@ final class ChatSession: ObservableObject {
 
         // Clear caches
         blockMemoizer.clear()
-        _tokenCacheValid = false
-        cachedManifest = nil
+        cachedContext = nil
         visibleBlocks = []
         visibleBlocksGroupHeaderMap = [:]
 
@@ -430,8 +414,7 @@ final class ChatSession: ObservableObject {
 
     /// Invalidate the token cache (called when tools/skills change)
     func invalidateTokenCache() {
-        _tokenCacheValid = false
-        cachedManifest = nil
+        cachedContext = nil
         budgetTracker.clear()
         objectWillChange.send()
     }
@@ -518,7 +501,7 @@ final class ChatSession: ObservableObject {
         isDirty = false  // Fresh load, not dirty
         // Clear caches to force a clean block rebuild for the new session
         blockMemoizer.clear()
-        _tokenCacheValid = false
+        cachedContext = nil
         rebuildVisibleBlocks()
 
         Task { [weak self] in await self?.refreshMemoryTokens() }
@@ -530,14 +513,10 @@ final class ChatSession: ObservableObject {
             agentId: effectiveAgentId.uuidString,
             config: MemoryConfigurationStore.load()
         )
-        let manifest = buildPreviewManifest(
-            agentId: effectiveAgentId,
-            executionMode: estimatedChatExecutionMode(agentId: effectiveAgentId),
-            memoryContext: context
-        )
-        guard manifest.memoryTokens != cachedManifest?.memoryTokens else { return }
-        cachedManifest = manifest
-        _tokenCacheValid = false
+        let newTokens = ContextBudgetManager.estimateTokens(for: context)
+        let oldTokens = cachedContext?.manifest.memoryTokens ?? 0
+        guard newTokens != oldTokens else { return }
+        cachedContext = nil
         objectWillChange.send()
     }
 
@@ -648,7 +627,6 @@ final class ChatSession: ObservableObject {
         currentTask = nil
         isStreaming = false
         budgetTracker.clear()
-        _tokenCacheValid = false
         ServerController.signalGenerationEnd()
         trimTrailingEmptyAssistantTurn()
         consolidateAssistantTurns()
@@ -847,16 +825,13 @@ final class ChatSession: ObservableObject {
                 let sys = context.prompt
                 var toolSpecs = context.tools
                 let isManualTools = AgentManager.shared.effectiveToolSelectionMode(for: effectiveAgentId) == .manual
-                cachedManifest = context.manifest
+                cachedContext = context
 
                 if !context.preflightItems.isEmpty {
                     assistantTurn.preflightCapabilities = context.preflightItems
                 }
 
-                budgetTracker.snapshot(
-                    manifest: context.manifest,
-                    toolTokens: context.toolTokens
-                )
+                budgetTracker.snapshot(context: context)
 
                 let effectiveMaxTokensForAgent = AgentManager.shared.effectiveMaxTokens(for: effectiveAgentId)
 

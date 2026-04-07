@@ -78,6 +78,7 @@ public final class WorkSession: ObservableObject {
 
     /// Cached manifest from the last prompt composition for offline estimation.
     private var cachedManifest: PromptManifest?
+    private var cachedToolTokens: Int = 0
 
     // MARK: - Block Caching
 
@@ -339,9 +340,7 @@ public final class WorkSession: ObservableObject {
     }
 
     /// Per-category context token breakdown for the current work-mode request context.
-    /// During execution, returns the snapshot from the active request with live
-    /// output tokens (O(1)). Otherwise falls back to full recomputation.
-    var estimatedContextBreakdown: ContextTokenBreakdown {
+    var estimatedContextBreakdown: ContextBreakdown {
         if let active = budgetTracker.activeBreakdown(
             isActive: isExecuting,
             outputTurn: liveExecutionTurns.last
@@ -351,13 +350,14 @@ public final class WorkSession: ObservableObject {
         return estimateContextBreakdown(for: activeIssue ?? selectedIssue)
     }
 
-    func estimateContextBreakdown(for issue: Issue?) -> ContextTokenBreakdown {
+    func estimateContextBreakdown(for issue: Issue?) -> ContextBreakdown {
         let executionMode = estimatedExecutionModeForBudget()
-        let toolSpecs = ToolRegistry.shared.alwaysLoadedSpecs(mode: executionMode)
 
         let manifest: PromptManifest
+        let toolTokens: Int
         if let cached = cachedManifest {
             manifest = cached
+            toolTokens = cachedToolTokens
         } else {
             let secretNames = Array(AgentSecretsKeychain.getAllSecrets(agentId: agentId).keys)
             let (_, m) = SystemPromptComposer.composeWorkPrompt(
@@ -366,48 +366,40 @@ public final class WorkSession: ObservableObject {
                 secretNames: secretNames
             )
             manifest = m
+            toolTokens = ToolRegistry.shared.totalEstimatedTokens(
+                for: ToolRegistry.shared.alwaysLoadedSpecs(mode: executionMode)
+            )
         }
 
-        var breakdown = ContextTokenBreakdown()
-        breakdown.systemPrompt = manifest.systemPromptTokens
-        breakdown.memory = manifest.memoryTokens
-        breakdown.tools = ToolRegistry.shared.totalEstimatedTokens(for: toolSpecs)
-
         var conversationTokens = 0
-
         var firstMessageContent = ""
         switch executionMode {
         case .hostFolder(let ctx):
             firstMessageContent += WorkExecutionEngine.buildFolderContextSection(from: ctx)
         default: break
         }
-
         if let issue {
             if let context = issue.context {
                 firstMessageContent += "\n[Prior Context]:\n\(context)\n"
             }
             firstMessageContent += "\n**Goal:** \(issue.title)\n"
-            if let desc = issue.description {
-                firstMessageContent += "\(desc)\n"
-            }
+            if let desc = issue.description { firstMessageContent += "\(desc)\n" }
         }
-
         conversationTokens += ContextBudgetManager.estimateTokens(for: firstMessageContent)
-
         conversationTokens += ContextBudgetManager.estimateTokens(for: currentTurns)
-        breakdown.output = ContextBudgetManager.estimateOutputTokens(for: currentTurns)
-        breakdown.conversation = conversationTokens - breakdown.output
 
+        let outputTokens = ContextBudgetManager.estimateOutputTokens(for: currentTurns)
         var inputTokens = 0
-        if !input.isEmpty {
-            inputTokens += ContextBudgetManager.estimateTokens(for: input)
-        }
-        for attachment in pendingAttachments {
-            inputTokens += attachment.estimatedTokens
-        }
-        breakdown.input = inputTokens
+        if !input.isEmpty { inputTokens += ContextBudgetManager.estimateTokens(for: input) }
+        for attachment in pendingAttachments { inputTokens += attachment.estimatedTokens }
 
-        return breakdown
+        return .from(
+            manifest: manifest,
+            toolTokens: toolTokens,
+            conversationTokens: conversationTokens - outputTokens,
+            inputTokens: inputTokens,
+            outputTokens: outputTokens
+        )
     }
 
     // MARK: - Cumulative Token Usage
@@ -804,12 +796,10 @@ public final class WorkSession: ObservableObject {
             skillSection: skillSection
         )
         cachedManifest = execManifest
+        cachedToolTokens = ToolRegistry.shared.totalEstimatedTokens(for: tools)
         debugLog("[Context] \(execManifest.debugDescription)")
 
-        budgetTracker.snapshot(
-            manifest: execManifest,
-            toolTokens: ToolRegistry.shared.totalEstimatedTokens(for: tools)
-        )
+        budgetTracker.snapshot(manifest: execManifest, toolTokens: cachedToolTokens)
         objectWillChange.send()
 
         executionTask = Task { [weak self, engine] in
@@ -1351,11 +1341,9 @@ public final class WorkSession: ObservableObject {
             skillSection: resumeSkillSection
         )
         cachedManifest = resumeManifest
+        cachedToolTokens = ToolRegistry.shared.totalEstimatedTokens(for: tools)
 
-        budgetTracker.snapshot(
-            manifest: resumeManifest,
-            toolTokens: ToolRegistry.shared.totalEstimatedTokens(for: tools)
-        )
+        budgetTracker.snapshot(manifest: resumeManifest, toolTokens: cachedToolTokens)
         objectWillChange.send()
 
         executionTask = Task { [weak self, engine] in

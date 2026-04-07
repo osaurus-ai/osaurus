@@ -25,7 +25,7 @@ struct FloatingInputCard: View {
     /// Current estimated context token count for the session
     let estimatedContextTokens: Int
     /// Per-category breakdown of context token usage
-    var contextBreakdown: ContextTokenBreakdown = .zero
+    var contextBreakdown: ContextBreakdown = .zero
     let onSend: (String?) -> Void
     let onStop: () -> Void
     /// Trigger to focus the input field (increment to focus)
@@ -65,7 +65,7 @@ struct FloatingInputCard: View {
         isStreaming: Bool,
         supportsImages: Bool,
         estimatedContextTokens: Int,
-        contextBreakdown: ContextTokenBreakdown = .zero,
+        contextBreakdown: ContextBreakdown = .zero,
         onSend: @escaping (String?) -> Void,
         onStop: @escaping () -> Void,
         focusTrigger: Int = 0,
@@ -189,10 +189,17 @@ struct FloatingInputCard: View {
     }
 
     /// Breakdown augmented with real-time typing tokens
-    private var displayContextBreakdown: ContextTokenBreakdown {
+    private var displayContextBreakdown: ContextBreakdown {
         var bd = contextBreakdown
         if !localText.isEmpty {
-            bd.input += max(1, localText.count / 4)
+            let typingTokens = max(1, localText.count / 4)
+            bd.setTokens(
+                for: "input",
+                in: \.messages,
+                tokens: (bd.messages.first { $0.id == "input" }?.tokens ?? 0) + typingTokens,
+                label: "Input",
+                tint: .cyan
+            )
         }
         return bd
     }
@@ -2313,7 +2320,7 @@ extension NSImage {
 // MARK: - Context Breakdown Popover
 
 private struct ContextBreakdownPopover: View {
-    let breakdown: ContextTokenBreakdown
+    let breakdown: ContextBreakdown
     let maxTokens: Int?
     let isStreaming: Bool
     let cumulativeTokens: Int?
@@ -2323,7 +2330,7 @@ private struct ContextBreakdownPopover: View {
 
     private var budgetCap: Int { maxTokens ?? breakdown.total }
 
-    private func color(for tint: ContextTokenBreakdown.Category.Tint) -> Color {
+    private func color(for tint: ContextBreakdown.Tint) -> Color {
         switch tint {
         case .purple: return theme.isDark ? Color(red: 0.68, green: 0.52, blue: 1.0) : .purple
         case .blue: return theme.isDark ? Color(red: 0.45, green: 0.68, blue: 1.0) : .blue
@@ -2331,16 +2338,9 @@ private struct ContextBreakdownPopover: View {
         case .green: return theme.isDark ? Color(red: 0.45, green: 0.85, blue: 0.55) : .green
         case .gray: return theme.isDark ? Color(red: 0.58, green: 0.62, blue: 0.68) : Color(white: 0.55)
         case .cyan: return theme.isDark ? Color(red: 0.35, green: 0.82, blue: 0.9) : .cyan
+        case .teal: return theme.isDark ? Color(red: 0.3, green: 0.75, blue: 0.75) : .teal
+        case .indigo: return theme.isDark ? Color(red: 0.55, green: 0.48, blue: 0.95) : .indigo
         }
-    }
-
-    /// Categories split into input context vs output for visual grouping.
-    private var inputCategories: [ContextTokenBreakdown.Category] {
-        breakdown.categories.filter { $0.tint != .green }
-    }
-
-    private var outputCategory: ContextTokenBreakdown.Category? {
-        breakdown.categories.first { $0.tint == .green }
     }
 
     // MARK: - Body
@@ -2365,12 +2365,14 @@ private struct ContextBreakdownPopover: View {
                 .padding(.horizontal, 12)
                 .padding(.bottom, 10)
 
-            divider
-            inputLegend.padding(.horizontal, 12).padding(.vertical, 8)
-
-            if let output = outputCategory {
+            if !breakdown.context.isEmpty {
                 divider
-                categoryRow(output, highlighted: true).padding(.horizontal, 12).padding(.vertical, 8)
+                entryGroup(breakdown.context).padding(.horizontal, 12).padding(.vertical, 8)
+            }
+
+            if !breakdown.messages.isEmpty {
+                divider
+                entryGroup(breakdown.messages, highlightOutput: true).padding(.horizontal, 12).padding(.vertical, 8)
             }
 
             divider
@@ -2392,12 +2394,13 @@ private struct ContextBreakdownPopover: View {
 
     private var barChart: some View {
         let scale = budgetCap > 0 ? budgetCap : 1
+        let entries = breakdown.allEntries.filter { $0.tokens > 0 }
         return GeometryReader { geo in
             HStack(spacing: 1) {
-                ForEach(breakdown.categories) { cat in
-                    let fraction = CGFloat(cat.tokens) / CGFloat(scale)
+                ForEach(entries) { entry in
+                    let fraction = CGFloat(entry.tokens) / CGFloat(scale)
                     RoundedRectangle(cornerRadius: 2)
-                        .fill(color(for: cat.tint).opacity(0.85))
+                        .fill(color(for: entry.tint).opacity(0.85))
                         .frame(width: max(fraction * geo.size.width, fraction > 0 ? 3 : 0))
                 }
                 if maxTokens != nil { Spacer(minLength: 0) }
@@ -2410,33 +2413,33 @@ private struct ContextBreakdownPopover: View {
 
     // MARK: - Legend
 
-    private var inputLegend: some View {
+    private func entryGroup(_ entries: [ContextBreakdown.Entry], highlightOutput: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            ForEach(inputCategories) { cat in
-                categoryRow(cat)
+            ForEach(entries) { entry in
+                entryRow(entry, highlighted: highlightOutput && entry.id == "output")
             }
         }
     }
 
-    private func categoryRow(_ cat: ContextTokenBreakdown.Category, highlighted: Bool = false) -> some View {
+    private func entryRow(_ entry: ContextBreakdown.Entry, highlighted: Bool = false) -> some View {
         HStack(spacing: 0) {
             RoundedRectangle(cornerRadius: 1.5)
-                .fill(color(for: cat.tint).opacity(0.85))
+                .fill(color(for: entry.tint).opacity(0.85))
                 .frame(width: 3, height: 12)
                 .padding(.trailing, 8)
 
-            Text(cat.label)
+            Text(entry.label)
                 .font(.system(size: 11))
                 .foregroundColor(theme.secondaryText)
 
             Spacer()
 
-            Text(formatTokenCount(cat.tokens))
+            Text(formatTokenCount(entry.tokens))
                 .font(.system(size: 11, weight: .medium, design: .monospaced))
-                .foregroundColor(highlighted ? color(for: cat.tint) : theme.primaryText)
+                .foregroundColor(highlighted ? color(for: entry.tint) : theme.primaryText)
                 .contentTransition(highlighted ? .numericText() : .identity)
 
-            Text(budgetCap > 0 ? "\(cat.tokens * 100 / budgetCap)%" : "0%")
+            Text(budgetCap > 0 ? "\(entry.tokens * 100 / budgetCap)%" : "0%")
                 .font(.system(size: 10, design: .monospaced))
                 .foregroundColor(theme.tertiaryText)
                 .frame(width: 32, alignment: .trailing)
