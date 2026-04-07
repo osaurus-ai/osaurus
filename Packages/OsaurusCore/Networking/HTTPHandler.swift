@@ -1587,7 +1587,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
         // Extract agent ID: /agents/{id}
         let components = path.split(separator: "/")
-        guard components.count == 2, components[0] == "agents", let agentId = UUID(uuidString: String(components[1])) else {
+        guard components.count == 2, components[0] == "agents", let agentId = UUID(uuidString: String(components[1]))
+        else {
             hop {
                 var headers = [("Content-Type", "application/json; charset=utf-8")]
                 headers.append(contentsOf: cors)
