@@ -26,7 +26,7 @@ struct ModelRowView: View {
     let downloadState: DownloadState
 
     /// Optional download metrics (speed, ETA, bytes transferred)
-    let metrics: ModelManager.DownloadMetrics?
+    let metrics: ModelDownloadService.DownloadMetrics?
 
     /// Total system unified memory in GB, used for compatibility assessment
     var totalMemoryGB: Double = 0
@@ -206,23 +206,15 @@ struct ModelRowView: View {
 
     /// Badge showing whether model is LLM or VLM
     private var modelTypeBadge: some View {
-        let isVLM: Bool = {
-            // For downloaded models, check config.json for accurate detection
-            if model.isDownloaded {
-                return ModelManager.isVisionModel(modelId: model.id)
-            }
-            // For non-downloaded models, use name heuristics
-            return model.isLikelyVLM
-        }()
-
-        let type = isVLM ? MLXModel.ModelType.vlm : MLXModel.ModelType.llm
+        let isVLM = model.isVLM
+        let typeLabel = isVLM ? "VLM" : "LLM"
         let color: Color = isVLM ? .purple : theme.accentColor
         let icon = isVLM ? "eye" : "text.bubble"
 
         return HStack(spacing: 3) {
             Image(systemName: icon)
                 .font(.system(size: 8, weight: .semibold))
-            Text(type.rawValue)
+            Text(typeLabel)
                 .font(.system(size: 10, weight: .semibold))
         }
         .foregroundColor(color)
@@ -325,47 +317,7 @@ struct ModelRowView: View {
     ///
     /// - Returns: Formatted string with available metrics, or nil if no metrics exist
     private func formattedMetricsLine() -> String? {
-        guard let metrics = metrics else { return nil }
-
-        var parts: [String] = []
-
-        if let received = metrics.bytesReceived {
-            let receivedStr = ByteCountFormatter.string(fromByteCount: received, countStyle: .file)
-            if let total = metrics.totalBytes, total > 0 {
-                let totalStr = ByteCountFormatter.string(fromByteCount: total, countStyle: .file)
-                parts.append("\(receivedStr) / \(totalStr)")
-            } else {
-                parts.append(receivedStr)
-            }
-        }
-
-        if let bps = metrics.bytesPerSecond {
-            let speedStr = ByteCountFormatter.string(fromByteCount: Int64(bps), countStyle: .file)
-            parts.append("\(speedStr)/s")
-        }
-
-        if let eta = metrics.etaSeconds, eta.isFinite, eta > 0 {
-            parts.append("ETA \(formatETA(seconds: eta))")
-        }
-
-        guard !parts.isEmpty else { return nil }
-        return parts.joined(separator: " • ")
-    }
-
-    /// Formats estimated time remaining into a readable string
-    ///
-    /// - Parameter seconds: Total seconds remaining
-    /// - Returns: Formatted string like "3:45" for times under an hour, or "1:23:45" for longer
-    private func formatETA(seconds: Double) -> String {
-        let total = Int(seconds.rounded())
-        let hours = total / 3600
-        let minutes = (total % 3600) / 60
-        let secs = total % 60
-        if hours > 0 {
-            return String(format: "%d:%02d:%02d", hours, minutes, secs)
-        } else {
-            return String(format: "%d:%02d", minutes, secs)
-        }
+        metrics?.formattedLine
     }
 }
 

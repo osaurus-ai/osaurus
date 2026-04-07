@@ -38,7 +38,7 @@ final class ModelPickerItemCache: ObservableObject {
     }
 
     @discardableResult
-    func buildModelPickerItems() async -> [ModelPickerItem] {
+    func buildModelPickerItems(includeRemote: Bool = true) async -> [ModelPickerItem] {
         var options: [ModelPickerItem] = []
 
         if AppConfiguration.shared.foundationModelAvailable {
@@ -53,17 +53,18 @@ final class ModelPickerItemCache: ObservableObject {
             options.append(.fromMLXModel(model))
         }
 
-        let remoteModels = RemoteProviderManager.shared.cachedAvailableModels()
-
-        for providerInfo in remoteModels {
-            for modelId in providerInfo.models {
-                options.append(
-                    .fromRemoteModel(
-                        modelId: modelId,
-                        providerName: providerInfo.providerName,
-                        providerId: providerInfo.providerId
+        if includeRemote {
+            let remoteModels = RemoteProviderManager.shared.cachedAvailableModels()
+            for providerInfo in remoteModels {
+                for modelId in providerInfo.models {
+                    options.append(
+                        .fromRemoteModel(
+                            modelId: modelId,
+                            providerName: providerInfo.providerName,
+                            providerId: providerInfo.providerId
+                        )
                     )
-                )
+                }
             }
         }
 
@@ -77,22 +78,7 @@ final class ModelPickerItemCache: ObservableObject {
     }
 
     func prewarmLocalModelsOnly() {
-        Task {
-            let localModels = await Task.detached(priority: .userInitiated) {
-                ModelManager.discoverLocalModels()
-            }.value
-
-            var options: [ModelPickerItem] = []
-            if AppConfiguration.shared.foundationModelAvailable {
-                options.append(.foundation())
-            }
-            for model in localModels {
-                options.append(.fromMLXModel(model))
-            }
-
-            items = options
-            isLoaded = true
-        }
+        Task { await buildModelPickerItems(includeRemote: false) }
     }
 
     func invalidateCache() {

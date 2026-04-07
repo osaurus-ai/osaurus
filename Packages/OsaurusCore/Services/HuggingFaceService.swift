@@ -191,11 +191,11 @@ actor HuggingFaceService {
             let tags = raw.tags ?? []
             let license = raw.cardData?.license ?? extractLicenseFromTags(tags)
 
-            // Determine if VLM based on tags or pipeline
-            let isVLM = detectVLMFromMetadata(tags: tags, pipelineTag: raw.pipeline_tag)
-
             // Extract model type from config or cardData
             let modelType = raw.config?.model_type ?? raw.cardData?.model_type
+
+            // VLM detection via model_type against VLMTypeRegistry
+            let isVLM = modelType.map { VLMDetection.isVLM(modelType: $0) } ?? false
 
             return ModelDetails(
                 id: raw.id,
@@ -231,30 +231,6 @@ actor HuggingFaceService {
             }
         }
         return nil
-    }
-
-    /// Detect if model is a VLM based on HF metadata
-    private func detectVLMFromMetadata(tags: [String], pipelineTag: String?) -> Bool {
-        // Check pipeline tag
-        if let pipeline = pipelineTag?.lowercased() {
-            let vlmPipelines = [
-                "image-to-text", "visual-question-answering", "image-text-to-text", "document-question-answering",
-            ]
-            if vlmPipelines.contains(pipeline) {
-                return true
-            }
-        }
-
-        // Check tags for VLM indicators
-        let lowerTags = tags.map { $0.lowercased() }
-        let vlmTags = ["vision", "multimodal", "vlm", "image-text", "llava", "vqa", "image-to-text"]
-        for vlmTag in vlmTags {
-            if lowerTags.contains(where: { $0.contains(vlmTag) }) {
-                return true
-            }
-        }
-
-        return false
     }
 
     // MARK: - Private helpers

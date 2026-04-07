@@ -214,10 +214,10 @@ struct ModelDetailView: View, Identifiable {
     /// Badge showing whether model is LLM or VLM
     private var modelTypeBadge: some View {
         let isVLM = detectIsVLM()
-        let type = isVLM ? MLXModel.ModelType.vlm : MLXModel.ModelType.llm
+        let typeLabel = isVLM ? "VLM" : "LLM"
         let color: Color = isVLM ? .purple : theme.accentColor
 
-        return Text(type.rawValue)
+        return Text(typeLabel)
             .font(.system(size: 11, weight: .semibold))
             .foregroundColor(color)
             .padding(.horizontal, 8)
@@ -230,13 +230,11 @@ struct ModelDetailView: View, Identifiable {
 
     /// Detect if model is VLM
     private func detectIsVLM() -> Bool {
-        if model.isDownloaded {
-            return ModelManager.isVisionModel(modelId: model.id)
+        if model.isDownloaded { return model.isVLM }
+        if let details = hfDetails, let mt = details.modelType {
+            return VLMDetection.isVLM(modelType: mt)
         }
-        if let details = hfDetails {
-            return details.isVLM
-        }
-        return model.isLikelyVLM
+        return model.isVLM
     }
 
     // MARK: - Stats Grid
@@ -561,46 +559,8 @@ struct ModelDetailView: View, Identifiable {
         }
     }
 
-    /// Formats download metrics into a human-readable string
     private func formattedMetricsLine() -> String? {
-        guard let metrics = modelManager.downloadMetrics[model.id] else { return nil }
-
-        var parts: [String] = []
-
-        if let received = metrics.bytesReceived {
-            let receivedStr = ByteCountFormatter.string(fromByteCount: received, countStyle: .file)
-            if let total = metrics.totalBytes, total > 0 {
-                let totalStr = ByteCountFormatter.string(fromByteCount: total, countStyle: .file)
-                parts.append("\(receivedStr) / \(totalStr)")
-            } else {
-                parts.append(receivedStr)
-            }
-        }
-
-        if let bps = metrics.bytesPerSecond {
-            let speedStr = ByteCountFormatter.string(fromByteCount: Int64(bps), countStyle: .file)
-            parts.append("\(speedStr)/s")
-        }
-
-        if let eta = metrics.etaSeconds, eta.isFinite, eta > 0 {
-            parts.append("ETA \(formatETA(seconds: eta))")
-        }
-
-        guard !parts.isEmpty else { return nil }
-        return parts.joined(separator: " • ")
-    }
-
-    /// Formats ETA seconds into a human-readable time string
-    private func formatETA(seconds: Double) -> String {
-        let total = Int(seconds.rounded())
-        let hours = total / 3600
-        let minutes = (total % 3600) / 60
-        let secs = total % 60
-        if hours > 0 {
-            return String(format: "%d:%02d:%02d", hours, minutes, secs)
-        } else {
-            return String(format: "%d:%02d", minutes, secs)
-        }
+        modelManager.downloadMetrics[model.id]?.formattedLine
     }
 }
 
@@ -856,7 +816,7 @@ private struct RequiredFilesSection: View {
 
             if isExpanded {
                 VStack(alignment: .leading, spacing: 3) {
-                    ForEach(ModelManager.downloadFilePatterns, id: \.self) { pattern in
+                    ForEach(ModelDownloadService.downloadFilePatterns, id: \.self) { pattern in
                         Text(pattern)
                             .font(.system(size: 11, design: .monospaced))
                             .foregroundColor(theme.tertiaryText)

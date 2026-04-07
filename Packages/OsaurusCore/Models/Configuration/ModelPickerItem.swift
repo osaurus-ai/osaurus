@@ -107,8 +107,6 @@ extension ModelPickerItem {
     }
 
     /// Create a local MLX model picker item from an MLXModel.
-    /// Uses config.json-based detection for downloaded models; falls back to name
-    /// heuristics for models not yet on disk.
     static func fromMLXModel(_ model: MLXModel) -> ModelPickerItem {
         ModelPickerItem(
             id: model.id,
@@ -116,25 +114,8 @@ extension ModelPickerItem {
             source: .local,
             parameterCount: model.parameterCount,
             quantization: model.quantization,
-            isVLM: ModelManager.isVisionModel(modelId: model.id) || model.isLikelyVLM,
+            isVLM: model.isVLM,
             description: model.description
-        )
-    }
-
-    /// Create a local MLX model picker item from just the model name (fallback)
-    static func fromLocalModelName(_ name: String, fullId: String) -> ModelPickerItem {
-        // Try to extract metadata from the name
-        let paramCount = extractParameterCount(from: fullId)
-        let quant = extractQuantization(from: fullId)
-        let isVLM = detectVLM(from: fullId)
-
-        return ModelPickerItem(
-            id: fullId,
-            displayName: formatDisplayName(name),
-            source: .local,
-            parameterCount: paramCount,
-            quantization: quant,
-            isVLM: isVLM
         )
     }
 
@@ -159,86 +140,6 @@ extension ModelPickerItem {
         )
     }
 
-    // MARK: - Private Helpers
-
-    private static func formatDisplayName(_ name: String) -> String {
-        // Convert repo name to readable format
-        let spaced = name.replacingOccurrences(of: "-", with: " ")
-        return
-            spaced
-            .replacingOccurrences(of: "llama", with: "Llama", options: .caseInsensitive)
-            .replacingOccurrences(of: "qwen", with: "Qwen", options: .caseInsensitive)
-            .replacingOccurrences(of: "gemma", with: "Gemma", options: .caseInsensitive)
-            .replacingOccurrences(of: "deepseek", with: "DeepSeek", options: .caseInsensitive)
-            .replacingOccurrences(of: "mistral", with: "Mistral", options: .caseInsensitive)
-            .replacingOccurrences(of: "phi", with: "Phi", options: .caseInsensitive)
-    }
-
-    private static func extractParameterCount(from text: String) -> String? {
-        let lowered = text.lowercased()
-        let patterns = [
-            #"(\d+\.?\d*)[bm](?:-|$|\s|[^a-z])"#,
-            #"(\d+\.?\d*)b-"#,
-            #"-(\d+\.?\d*)[bm]-"#,
-            #"[- ](\d+\.?\d*)[bm]$"#,
-            #"e(\d+)[bm]"#,
-            #"a(\d+)[bm]"#,
-        ]
-
-        for pattern in patterns {
-            if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) {
-                let range = NSRange(lowered.startIndex..., in: lowered)
-                if let match = regex.firstMatch(in: lowered, options: [], range: range) {
-                    if let numRange = Range(match.range(at: 1), in: lowered) {
-                        let number = String(lowered[numRange])
-                        let fullMatch = String(lowered[Range(match.range, in: lowered)!]).uppercased()
-                        let unit = fullMatch.contains("M") ? "M" : "B"
-                        return "\(number)\(unit)"
-                    }
-                }
-            }
-        }
-        return nil
-    }
-
-    private static func extractQuantization(from text: String) -> String? {
-        let lowered = text.lowercased()
-
-        if let regex = try? NSRegularExpression(pattern: #"(\d+)-?bit"#, options: .caseInsensitive) {
-            let range = NSRange(lowered.startIndex..., in: lowered)
-            if let match = regex.firstMatch(in: lowered, options: [], range: range) {
-                if let numRange = Range(match.range(at: 1), in: lowered) {
-                    return "\(lowered[numRange])-bit"
-                }
-            }
-        }
-
-        if lowered.contains("fp16") { return "FP16" }
-        if lowered.contains("bf16") { return "BF16" }
-        if lowered.contains("fp32") { return "FP32" }
-
-        return nil
-    }
-
-    private static func detectVLM(from text: String) -> Bool {
-        let lowered = text.lowercased()
-        let indicators = [
-            "-vl-", "-vl", "vl-",
-            "llava",
-            "pixtral",
-            "paligemma",
-            "idefics",
-            "internvl",
-            "cogvlm",
-            "minicpm-v",
-            "phi3-v", "phi-3-v",
-            "florence",
-            "blip",
-            "instructblip",
-            "vision",
-        ]
-        return indicators.contains { lowered.contains($0) }
-    }
 }
 
 // MARK: - Grouping

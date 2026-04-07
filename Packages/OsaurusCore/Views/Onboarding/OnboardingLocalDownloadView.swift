@@ -360,7 +360,7 @@ private struct ModelSelectionCard: View {
                             .fill(isSelected ? theme.accentColor : theme.cardBackground)
                             .frame(width: 44, height: 44)
 
-                        Image(systemName: model.modelType == .vlm ? "eye" : "cpu")
+                        Image(systemName: model.isVLM ? "eye" : "cpu")
                             .font(.system(size: 18, weight: .medium))
                             .foregroundColor(isSelected ? .white : theme.secondaryText)
                     }
@@ -380,7 +380,7 @@ private struct ModelSelectionCard: View {
                                 } else if let size = model.formattedDownloadSize {
                                     BadgeView(text: size)
                                 }
-                                BadgeView(text: model.modelType.rawValue)
+                                BadgeView(text: model.isVLM ? "VLM" : "LLM")
                             }
                         }
 

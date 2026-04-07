@@ -202,20 +202,18 @@ public struct ShowCommand: Command {
         // Quantization
         let quantization = details?.quantizationLevel
 
-        // Determine capabilities
+        // Determine capabilities from model_info keys set by the server
         var capabilities: [String] = ["completion"]
-        // Check if it's a VLM based on architecture or family
         if let arch = architecture?.lowercased() {
-            let vlmIndicators = ["vl", "vision", "llava", "pixtral", "paligemma", "vlm"]
-            if vlmIndicators.contains(where: { arch.contains($0) }) {
+            let vlmArchitectures = [
+                "paligemma", "qwen2_vl", "qwen2_5_vl", "qwen3_vl",
+                "qwen3_5", "qwen3_5_moe", "idefics3", "gemma3", "gemma4",
+                "smolvlm", "fastvlm", "llava_qwen2", "pixtral", "mistral3",
+                "lfm2_vl", "lfm2-vl", "glm_ocr",
+            ]
+            if vlmArchitectures.contains(arch) {
                 capabilities.append("vision")
             }
-        }
-        // Also check model name
-        let lowerModelArg = modelArg.lowercased()
-        let vlmNameIndicators = ["-vl-", "-vl", "vl-", "llava", "pixtral", "paligemma", "vision"]
-        if vlmNameIndicators.contains(where: { lowerModelArg.contains($0) }) && !capabilities.contains("vision") {
-            capabilities.append("vision")
         }
 
         // Print Model section

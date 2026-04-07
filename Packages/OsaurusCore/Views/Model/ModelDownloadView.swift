@@ -215,11 +215,11 @@ struct ModelDownloadView: View {
                 Group {
                     FilterSection(title: "Model Type") {
                         HStack(spacing: 8) {
-                            FilterChip(label: "LLM", isSelected: filterState.type == .llm) {
-                                filterState.type = filterState.type == .llm ? nil : .llm
+                            FilterChip(label: "LLM", isSelected: filterState.isVLMFilter == false) {
+                                filterState.isVLMFilter = filterState.isVLMFilter == false ? nil : false
                             }
-                            FilterChip(label: "VLM", isSelected: filterState.type == .vlm) {
-                                filterState.type = filterState.type == .vlm ? nil : .vlm
+                            FilterChip(label: "VLM", isSelected: filterState.isVLMFilter == true) {
+                                filterState.isVLMFilter = filterState.isVLMFilter == true ? nil : true
                             }
                         }
                     }
@@ -446,7 +446,7 @@ struct ModelDownloadView: View {
 
     // MARK: - Deprecation Helpers
 
-    private func downloadProgress(progress: Double, metrics: ModelManager.DownloadMetrics?) -> some View {
+    private func downloadProgress(progress: Double, metrics: ModelDownloadService.DownloadMetrics?) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             ProgressView(value: progress)
                 .progressViewStyle(.linear)
@@ -511,9 +511,7 @@ struct ModelDownloadView: View {
     }
 
     private static func formatETA(_ seconds: Double) -> String {
-        let mins = Int(seconds) / 60
-        let secs = Int(seconds) % 60
-        return mins > 0 ? "\(mins)m \(secs)s left" : "\(secs)s left"
+        ModelDownloadService.DownloadMetrics.formatETA(seconds: seconds)
     }
 
     // MARK: - Loading State
@@ -579,33 +577,9 @@ struct ModelDownloadView: View {
 
     // MARK: - Model Filtering
 
-    /// Helper to apply current filter state to a list of models
-    private func applyFilters(to models: [MLXModel]) -> [MLXModel] {
-        models.filter { model in
-            // Type filter
-            if let type = filterState.type, model.modelType != type { return false }
-
-            // Size filter
-            if let sizeCat = filterState.sizeCategory, !sizeCat.matches(bytes: model.totalSizeEstimateBytes) {
-                return false
-            }
-
-            // Family filter
-            if let family = filterState.family, model.family != family { return false }
-
-            // Params filter
-            if let paramCat = filterState.paramCategory, !paramCat.matches(billions: model.parameterCountBillions) {
-                return false
-            }
-
-            return true
-        }
-    }
-
-    /// All available models filtered by current search text and filters
     private var filteredModels: [MLXModel] {
         let searched = SearchService.filterModels(modelManager.availableModels, with: searchText)
-        let filtered = applyFilters(to: searched)
+        let filtered = filterState.apply(to: searched)
         return filtered.sorted { lhs, rhs in
             lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
         }
@@ -614,7 +588,7 @@ struct ModelDownloadView: View {
     /// Suggested (curated) models filtered by current search text and filters
     private var filteredSuggestedModels: [MLXModel] {
         let searched = SearchService.filterModels(modelManager.suggestedModels, with: searchText)
-        let filtered = applyFilters(to: searched)
+        let filtered = filterState.apply(to: searched)
         return filtered.sorted { lhs, rhs in
             // Top suggestions first
             if lhs.isTopSuggestion != rhs.isTopSuggestion {
@@ -627,24 +601,7 @@ struct ModelDownloadView: View {
 
     /// Downloaded tab contents: include active downloads at the top, then completed ones
     private var filteredDownloadedModels: [MLXModel] {
-        // Prefer curated (suggested) variants over auto-discovered ones when deduplicating
-        let combined = modelManager.suggestedModels + modelManager.availableModels
-        var byLowerId: [String: MLXModel] = [:]
-        for m in combined {
-            let key = m.id.lowercased()
-            if let existing = byLowerId[key] {
-                // Prefer entries that are not the generic discovery description
-                let existingIsDiscovered = existing.description == "Discovered on Hugging Face"
-                let currentIsDiscovered = m.description == "Discovered on Hugging Face"
-                if existingIsDiscovered && !currentIsDiscovered {
-                    byLowerId[key] = m
-                }
-            } else {
-                byLowerId[key] = m
-            }
-        }
-
-        let all = Array(byLowerId.values)
+        let all = modelManager.deduplicatedModels()
         // Active: in-progress downloads regardless of on-disk completion
         let active: [MLXModel] = all.filter { m in
             switch modelManager.downloadStates[m.id] ?? .notStarted {
@@ -666,7 +623,7 @@ struct ModelDownloadView: View {
         }
         // Apply search filter
         let searched = SearchService.filterModels(merged, with: searchText)
-        let filtered = applyFilters(to: searched)
+        let filtered = filterState.apply(to: searched)
 
         // Sort: active first, then by name
         return filtered.sorted { lhs, rhs in
@@ -685,21 +642,9 @@ struct ModelDownloadView: View {
 
     /// Count of completed (on-disk) downloaded models respecting current search and filters
     private var completedDownloadedModelsCount: Int {
-        let combined = modelManager.suggestedModels + modelManager.availableModels
-        var byLowerId: [String: MLXModel] = [:]
-        for m in combined {
-            let key = m.id.lowercased()
-            if let existing = byLowerId[key] {
-                let existingIsDiscovered = existing.description == "Discovered on Hugging Face"
-                let currentIsDiscovered = m.description == "Discovered on Hugging Face"
-                if existingIsDiscovered && !currentIsDiscovered { byLowerId[key] = m }
-            } else {
-                byLowerId[key] = m
-            }
-        }
-        let completed = byLowerId.values.filter { $0.isDownloaded }
+        let completed = modelManager.deduplicatedModels().filter { $0.isDownloaded }
         let searched = SearchService.filterModels(Array(completed), with: searchText)
-        let filtered = applyFilters(to: searched)
+        let filtered = filterState.apply(to: searched)
         return filtered.count
     }
 

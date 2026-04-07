@@ -87,15 +87,12 @@ extension ModelInfo {
         // Extract embedding length (hidden size)
         let embeddingLength = extractEmbeddingLength(from: config)
 
-        // Extract parameter count from model name or compute from config
-        let parameterCount = extractParameterCount(from: modelId, config: config)
-
-        // Extract quantization from model name
-        let quantization = extractQuantization(from: modelId)
+        let parameterCount = ModelMetadataParser.parameterCount(from: modelId)
+        let quantization = ModelMetadataParser.quantizationOllama(from: modelId)
 
         // Detect capabilities
         var capabilities = ["completion"]
-        if ModelManager.isVisionModel(at: directory) {
+        if VLMDetection.isVLM(at: directory) {
             capabilities.append("vision")
         }
 
@@ -238,70 +235,6 @@ extension ModelInfo {
         if let textConfig = config["text_config"] as? [String: Any] {
             if let hiddenSize = textConfig["hidden_size"] as? Int {
                 return hiddenSize
-            }
-        }
-
-        return nil
-    }
-
-    private static func extractParameterCount(from modelId: String, config: [String: Any]) -> String? {
-        let lowerId = modelId.lowercased()
-
-        // Try to extract from model name/id using regex patterns
-        let patterns = [
-            #"(\d+\.?\d*)[bm](?:-|$|\s|[^a-z])"#,  // Standard: 7b, 1.7b, 270m
-            #"(\d+\.?\d*)b-"#,  // With suffix: 7b-instruct
-            #"-(\d+\.?\d*)[bm]-"#,  // Middle: llama-7b-instruct
-            #"[- ](\d+\.?\d*)[bm]$"#,  // End: model-7b
-            #"e(\d+)[bm]"#,  // Gemma style: E4B
-            #"a(\d+)[bm]"#,  // MoE active: A22B
-        ]
-
-        for pattern in patterns {
-            if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) {
-                let range = NSRange(lowerId.startIndex..., in: lowerId)
-                if let match = regex.firstMatch(in: lowerId, options: [], range: range) {
-                    if let numRange = Range(match.range(at: 1), in: lowerId) {
-                        let number = String(lowerId[numRange])
-                        // Determine unit (B or M)
-                        let fullMatch = String(lowerId[Range(match.range, in: lowerId)!]).uppercased()
-                        let unit = fullMatch.contains("M") ? "M" : "B"
-                        return "\(number)\(unit)"
-                    }
-                }
-            }
-        }
-
-        return nil
-    }
-
-    private static func extractQuantization(from modelId: String) -> String? {
-        let lowerId = modelId.lowercased()
-
-        // Check for bit patterns: 4bit, 4-bit, 8bit, 8-bit, etc.
-        if let regex = try? NSRegularExpression(pattern: #"(\d+)-?bit"#, options: .caseInsensitive) {
-            let range = NSRange(lowerId.startIndex..., in: lowerId)
-            if let match = regex.firstMatch(in: lowerId, options: [], range: range) {
-                if let numRange = Range(match.range(at: 1), in: lowerId) {
-                    return "Q\(lowerId[numRange])_0"
-                }
-            }
-        }
-
-        // Check for GGUF-style quantization patterns
-        let quantPatterns = [
-            ("q4_0", "Q4_0"),
-            ("q4_k_m", "Q4_K_M"),
-            ("q8_0", "Q8_0"),
-            ("q8_k_m", "Q8_K_M"),
-            ("fp16", "FP16"),
-            ("bf16", "BF16"),
-            ("fp32", "FP32"),
-        ]
-
-        for (pattern, result) in quantPatterns {
-            if lowerId.contains(pattern) {
-                return result
             }
         }
 
