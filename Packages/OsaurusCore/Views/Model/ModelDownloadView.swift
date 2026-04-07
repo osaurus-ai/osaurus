@@ -215,11 +215,11 @@ struct ModelDownloadView: View {
                 Group {
                     FilterSection(title: "Model Type") {
                         HStack(spacing: 8) {
-                            FilterChip(label: "LLM", isSelected: filterState.isVLMFilter == false) {
-                                filterState.isVLMFilter = filterState.isVLMFilter == false ? nil : false
+                            FilterChip(label: "LLM", isSelected: filterState.typeFilter.isLLM) {
+                                filterState.typeFilter = filterState.typeFilter.isLLM ? .all : .llm
                             }
-                            FilterChip(label: "VLM", isSelected: filterState.isVLMFilter == true) {
-                                filterState.isVLMFilter = filterState.isVLMFilter == true ? nil : true
+                            FilterChip(label: "VLM", isSelected: filterState.typeFilter.isVLM) {
+                                filterState.typeFilter = filterState.typeFilter.isVLM ? .all : .vlm
                             }
                         }
                     }

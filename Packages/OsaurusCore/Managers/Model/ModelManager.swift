@@ -39,8 +39,14 @@ final class ModelManager: NSObject, ObservableObject {
 
     /// State for filtering the model list
     struct ModelFilterState: Equatable {
-        /// nil = show all, true = VLM only, false = LLM only
-        var isVLMFilter: Bool? = nil
+        enum ModelTypeFilter: Equatable {
+            case all, llm, vlm
+
+            var isVLM: Bool { self == .vlm }
+            var isLLM: Bool { self == .llm }
+        }
+
+        var typeFilter: ModelTypeFilter = .all
         var sizeCategory: SizeCategory? = nil
         var family: String? = nil
         var paramCategory: ParamCategory? = nil
@@ -79,11 +85,11 @@ final class ModelManager: NSObject, ObservableObject {
         }
 
         var isActive: Bool {
-            isVLMFilter != nil || sizeCategory != nil || family != nil || paramCategory != nil
+            typeFilter != .all || sizeCategory != nil || family != nil || paramCategory != nil
         }
 
         mutating func reset() {
-            isVLMFilter = nil
+            typeFilter = .all
             sizeCategory = nil
             family = nil
             paramCategory = nil
@@ -91,7 +97,11 @@ final class ModelManager: NSObject, ObservableObject {
 
         func apply(to models: [MLXModel]) -> [MLXModel] {
             models.filter { model in
-                if let wantVLM = isVLMFilter, model.isVLM != wantVLM { return false }
+                switch typeFilter {
+                case .all: break
+                case .vlm: if !model.isVLM { return false }
+                case .llm: if model.isVLM { return false }
+                }
                 if let sizeCat = sizeCategory, !sizeCat.matches(bytes: model.totalSizeEstimateBytes) {
                     return false
                 }

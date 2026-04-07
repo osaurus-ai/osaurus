@@ -43,9 +43,8 @@ struct ModelManagerTests {
     @Test func cancelDownload_resetsStateWithoutTask() async throws {
         let manager = await MainActor.run { ModelManager() }
 
-        // Use a test model ID instead of relying on fetched models
         let testModelId = "test-model-id"
-        await MainActor.run { manager.downloadStates[testModelId] = .downloading(progress: 0.5) }
+        await MainActor.run { manager.downloadService.downloadStates[testModelId] = .downloading(progress: 0.5) }
         await MainActor.run { manager.cancelDownload(testModelId) }
         let state = await MainActor.run { manager.downloadStates[testModelId] }
         #expect(state == .notStarted)
@@ -56,15 +55,15 @@ struct ModelManagerTests {
         let manager = await MainActor.run { ModelManager() }
         let testModelId = "test-model-id"
 
-        await MainActor.run { manager.downloadStates[testModelId] = .notStarted }
+        await MainActor.run { manager.downloadService.downloadStates[testModelId] = .notStarted }
         var p = await MainActor.run { manager.downloadProgress(for: testModelId) }
         #expect(p == 0.0)
 
-        await MainActor.run { manager.downloadStates[testModelId] = .downloading(progress: 0.25) }
+        await MainActor.run { manager.downloadService.downloadStates[testModelId] = .downloading(progress: 0.25) }
         p = await MainActor.run { manager.downloadProgress(for: testModelId) }
         #expect(abs(p - 0.25) < 0.0001)
 
-        await MainActor.run { manager.downloadStates[testModelId] = .completed }
+        await MainActor.run { manager.downloadService.downloadStates[testModelId] = .completed }
         p = await MainActor.run { manager.downloadProgress(for: testModelId) }
         #expect(p == 1.0)
 
@@ -107,7 +106,7 @@ struct ModelManagerTests {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         try Data("dummy".utf8).write(to: dir.appendingPathComponent("file.txt"))
 
-        await MainActor.run { manager.downloadStates[testModel.id] = .completed }
+        await MainActor.run { manager.downloadService.downloadStates[testModel.id] = .completed }
         await MainActor.run { manager.deleteModel(testModel) }
 
         // Directory should no longer exist and state should reset
