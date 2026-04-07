@@ -475,22 +475,17 @@ final class PluginHostContext: @unchecked Sendable {
             await SandboxToolRegistrar.shared.registerTools(for: agentId)
         }
 
-        let execMode = await MainActor.run {
-            ToolRegistry.shared.resolveWorkExecutionMode(folderContext: nil)
-        }
-        let context = await SystemPromptComposer.composeChatContext(
-            agentId: agentId,
-            executionMode: execMode
-        )
+        let execMode = await MainActor.run { ToolRegistry.shared.resolveWorkExecutionMode(folderContext: nil) }
+        let composed = await SystemPromptComposer.composeChatContext(agentId: agentId, executionMode: execMode)
         return await MainActor.run {
             let mgr = AgentManager.shared
             return AgentContext(
                 agentId: agentId,
-                systemPrompt: context.prompt,
+                systemPrompt: composed.prompt,
                 model: mgr.effectiveModel(for: agentId),
                 temperature: mgr.effectiveTemperature(for: agentId),
                 maxTokens: mgr.effectiveMaxTokens(for: agentId),
-                tools: context.tools.isEmpty ? nil : context.tools,
+                tools: composed.tools.isEmpty ? nil : composed.tools,
                 executionMode: execMode
             )
         }
