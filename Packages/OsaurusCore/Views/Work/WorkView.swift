@@ -185,54 +185,10 @@ struct WorkView: View {
     // MARK: - Background
 
     private var agentBackground: some View {
-        baseBackgroundLayer
-            .clipShape(backgroundShape)
-    }
-
-    private var backgroundShape: UnevenRoundedRectangle {
-        UnevenRoundedRectangle(
-            topLeadingRadius: windowState.showSidebar ? 0 : 24,
-            bottomLeadingRadius: windowState.showSidebar ? 0 : 24,
-            bottomTrailingRadius: 24,
-            topTrailingRadius: 24,
-            style: .continuous
+        ThemedBackgroundLayer(
+            cachedBackgroundImage: windowState.cachedBackgroundImage,
+            showSidebar: windowState.showSidebar
         )
-    }
-
-    @ViewBuilder
-    private var baseBackgroundLayer: some View {
-        if let customTheme = theme.customThemeConfig {
-            switch customTheme.background.type {
-            case .solid:
-                Color(themeHex: customTheme.background.solidColor ?? customTheme.colors.primaryBackground)
-
-            case .gradient:
-                let colors = (customTheme.background.gradientColors ?? ["#000000", "#333333"])
-                    .map { Color(themeHex: $0) }
-                LinearGradient(
-                    colors: colors,
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-
-            case .image:
-                if let image = windowState.cachedBackgroundImage {
-                    ZStack {
-                        Image(nsImage: image)
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                            .opacity(customTheme.background.imageOpacity ?? 1.0)
-
-                        // Overlay tint for contrast
-                        theme.primaryBackground.opacity(0.7)
-                    }
-                } else {
-                    theme.primaryBackground
-                }
-            }
-        } else {
-            theme.primaryBackground
-        }
     }
 
     // MARK: - Header
