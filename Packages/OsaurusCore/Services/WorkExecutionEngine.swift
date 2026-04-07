@@ -769,14 +769,13 @@ public actor WorkExecutionEngine {
         compact: Bool = false,
         secretNames: [String] = []
     ) -> (prompt: String, manifest: PromptManifest) {
-        let raw = AgentManager.shared.effectiveSystemPrompt(for: agentId)
-        let base = SystemPromptTemplates.effectiveBasePrompt(raw)
-        return composeAgentSystemPrompt(
-            base: base,
+        let composer = SystemPromptComposer.forWork(
+            agentId: agentId,
             executionMode: executionMode,
             compact: compact,
             secretNames: secretNames
         )
+        return (composer.render(), composer.manifest())
     }
 
     /// Builds the work-mode system prompt from a pre-resolved base string (e.g. base+memory).
@@ -786,28 +785,12 @@ public actor WorkExecutionEngine {
         compact: Bool = false,
         secretNames: [String] = []
     ) -> (prompt: String, manifest: PromptManifest) {
-        let variant: SystemPromptTemplates.WorkModeVariant = compact ? .compact : .full
-        var composer = SystemPromptComposer()
-        composer.append(.static(id: "base", label: "Base Prompt", content: base))
-        composer.append(
-            .static(
-                id: "workMode",
-                label: "Work Mode",
-                content: SystemPromptTemplates.workMode(variant)
-            )
+        let composer = SystemPromptComposer.forWork(
+            base: base,
+            executionMode: executionMode,
+            compact: compact,
+            secretNames: secretNames
         )
-        switch executionMode {
-        case .sandbox:
-            composer.append(
-                .static(
-                    id: "sandbox",
-                    label: "Sandbox",
-                    content: SystemPromptTemplates.sandbox(mode: .work, compact: compact, secretNames: secretNames)
-                )
-            )
-        case .hostFolder, .none:
-            break
-        }
         return (composer.render(), composer.manifest())
     }
 

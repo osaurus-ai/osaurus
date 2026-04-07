@@ -492,18 +492,7 @@ final class PluginHostContext: @unchecked Sendable {
                 }
             }
 
-            var comp = SystemPromptComposer()
-            comp.appendBasePrompt(agentId: agentId)
-            if execMode.usesSandboxTools {
-                let secretNames = Array(AgentSecretsKeychain.getAllSecrets(agentId: agentId).keys)
-                comp.append(
-                    .static(
-                        id: "sandbox",
-                        label: "Chat Sandbox",
-                        content: SystemPromptTemplates.sandbox(mode: .chat, compact: false, secretNames: secretNames)
-                    )
-                )
-            }
+            let comp = SystemPromptComposer.forChat(agentId: agentId, executionMode: execMode)
 
             return (
                 AgentContext(

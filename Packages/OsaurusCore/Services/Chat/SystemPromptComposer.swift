@@ -180,6 +180,97 @@ public struct SystemPromptComposer: Sendable {
         append(.static(id: "base", label: "Base Prompt", content: effective))
     }
 
+    // MARK: - Factory Methods
+
+    /// Pre-loaded composer for chat mode: base prompt + chat sandbox (if sandbox execution).
+    @MainActor
+    public static func forChat(
+        agentId: UUID,
+        executionMode: WorkExecutionMode,
+        compact: Bool = false
+    ) -> SystemPromptComposer {
+        var composer = SystemPromptComposer()
+        composer.appendBasePrompt(agentId: agentId)
+        if executionMode.usesSandboxTools {
+            let secretNames = Array(AgentSecretsKeychain.getAllSecrets(agentId: agentId).keys)
+            composer.append(
+                .static(
+                    id: "sandbox",
+                    label: "Chat Sandbox",
+                    content: SystemPromptTemplates.sandbox(mode: .chat, compact: compact, secretNames: secretNames)
+                )
+            )
+        }
+        return composer
+    }
+
+    /// Pre-loaded composer for work mode: base prompt + work instructions + work sandbox (if sandbox execution).
+    @MainActor
+    public static func forWork(
+        agentId: UUID,
+        executionMode: WorkExecutionMode,
+        compact: Bool = false,
+        secretNames: [String] = []
+    ) -> SystemPromptComposer {
+        var composer = SystemPromptComposer()
+        composer.appendBasePrompt(agentId: agentId)
+        return composer.withWorkSections(executionMode: executionMode, compact: compact, secretNames: secretNames)
+    }
+
+    /// Pre-loaded composer for work mode from a pre-resolved base string (e.g. base+memory).
+    public static func forWork(
+        base: String,
+        executionMode: WorkExecutionMode,
+        compact: Bool = false,
+        secretNames: [String] = []
+    ) -> SystemPromptComposer {
+        var composer = SystemPromptComposer()
+        composer.append(.static(id: "base", label: "Base Prompt", content: base))
+        return composer.withWorkSections(executionMode: executionMode, compact: compact, secretNames: secretNames)
+    }
+
+    private func withWorkSections(
+        executionMode: WorkExecutionMode,
+        compact: Bool,
+        secretNames: [String]
+    ) -> SystemPromptComposer {
+        let variant: SystemPromptTemplates.WorkModeVariant = compact ? .compact : .full
+        var result = self
+        result.append(
+            .static(
+                id: "workMode",
+                label: "Work Mode",
+                content: SystemPromptTemplates.workMode(variant)
+            )
+        )
+        if case .sandbox = executionMode {
+            result.append(
+                .static(
+                    id: "sandbox",
+                    label: "Sandbox",
+                    content: SystemPromptTemplates.sandbox(mode: .work, compact: compact, secretNames: secretNames)
+                )
+            )
+        }
+        return result
+    }
+
+    /// Compose agent context (base prompt + memory) and inject into an existing message array.
+    @MainActor
+    static func injectAgentContext(
+        agentId: UUID,
+        query: String = "",
+        into messages: inout [ChatMessage]
+    ) async {
+        var composer = forChat(agentId: agentId, executionMode: .none)
+        await composer.appendMemory(agentId: agentId.uuidString, query: query.isEmpty ? nil : query)
+        let rendered = composer.render()
+        debugLog("[Context:inject] \(composer.manifest().debugDescription)")
+        if !rendered.isEmpty {
+            injectSystemContent(rendered, into: &messages)
+        }
+    }
+
     // MARK: - Memory Convenience
 
     /// Fetch and append the memory context as a dynamic section.

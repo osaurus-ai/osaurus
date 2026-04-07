@@ -1312,23 +1312,17 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         _ request: ChatCompletionRequest,
         agentId: String?
     ) async -> ChatCompletionRequest {
-        guard let agentId, !agentId.isEmpty else { return request }
+        guard let agentId, !agentId.isEmpty,
+            let agentUUID = UUID(uuidString: agentId)
+        else { return request }
 
         var enriched = request
-
         let query = request.messages.last(where: { $0.role == "user" })?.content ?? ""
-        var composer = SystemPromptComposer()
-        if let agentUUID = UUID(uuidString: agentId) {
-            await MainActor.run { composer.appendBasePrompt(agentId: agentUUID) }
-        }
-        await composer.appendMemory(agentId: agentId, query: query)
-        let composed = composer.render()
-        debugLog("[Context:HTTP] \(composer.manifest().debugDescription)")
-
-        if !composed.isEmpty {
-            SystemPromptComposer.injectSystemContent(composed, into: &enriched.messages)
-        }
-
+        await SystemPromptComposer.injectAgentContext(
+            agentId: agentUUID,
+            query: query,
+            into: &enriched.messages
+        )
         return enriched
     }
 

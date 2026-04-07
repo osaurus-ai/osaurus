@@ -751,27 +751,6 @@ final class ChatSession: ObservableObject {
         return ToolRegistry.shared.resolveWorkExecutionMode(folderContext: nil)
     }
 
-    /// Creates a composer pre-loaded with the static chat sections (base prompt + sandbox).
-    private func chatComposer(
-        agentId: UUID,
-        executionMode: WorkExecutionMode,
-        compact: Bool
-    ) -> SystemPromptComposer {
-        var composer = SystemPromptComposer()
-        composer.appendBasePrompt(agentId: agentId)
-        if executionMode.usesSandboxTools {
-            let secretNames = Array(AgentSecretsKeychain.getAllSecrets(agentId: agentId).keys)
-            composer.append(
-                .static(
-                    id: "sandbox",
-                    label: "Chat Sandbox",
-                    content: SystemPromptTemplates.sandbox(mode: .chat, compact: compact, secretNames: secretNames)
-                )
-            )
-        }
-        return composer
-    }
-
     /// Build the chat system prompt via the composer pipeline.
     /// Resolves the agent's base prompt and fetches memory internally.
     func buildChatSystemPrompt(
@@ -781,7 +760,7 @@ final class ChatSession: ObservableObject {
         preflightSnippet: String = "",
         skillSection: String? = nil
     ) async -> (prompt: String, manifest: PromptManifest) {
-        var composer = chatComposer(agentId: agentId, executionMode: executionMode, compact: compact)
+        var composer = SystemPromptComposer.forChat(agentId: agentId, executionMode: executionMode, compact: compact)
         await composer.appendMemory(agentId: agentId.uuidString)
         composer.append(.dynamic(id: "preflight", label: "Pre-flight RAG", content: preflightSnippet))
         if let section = skillSection {
@@ -797,7 +776,7 @@ final class ChatSession: ObservableObject {
         memoryContext: String = ""
     ) -> PromptManifest {
         let compact = SystemPromptTemplates.isLocalModel(selectedModel)
-        var composer = chatComposer(agentId: agentId, executionMode: executionMode, compact: compact)
+        var composer = SystemPromptComposer.forChat(agentId: agentId, executionMode: executionMode, compact: compact)
         composer.append(.dynamic(id: "memory", label: "Memory", content: memoryContext))
         return composer.manifest()
     }
