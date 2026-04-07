@@ -757,8 +757,11 @@ final class ChatSession: ObservableObject {
         executionMode: WorkExecutionMode,
         memoryContext: String = ""
     ) -> PromptManifest {
-        let compact = SystemPromptTemplates.isLocalModel(selectedModel)
-        var composer = SystemPromptComposer.forChat(agentId: agentId, executionMode: executionMode, compact: compact)
+        var composer = SystemPromptComposer.forChat(
+            agentId: agentId,
+            executionMode: executionMode,
+            model: selectedModel
+        )
         composer.append(.dynamic(id: "memory", label: "Memory", content: memoryContext))
         return composer.manifest()
     }
@@ -851,7 +854,6 @@ final class ChatSession: ObservableObject {
                     assistantTurn.preflightCapabilities = preflight.items
                 }
 
-                let isCompact = SystemPromptTemplates.isLocalModel(selectedModel)
                 let isManualTools = toolMode == .manual
 
                 let manualSkillSection: String? =
@@ -862,7 +864,7 @@ final class ChatSession: ObservableObject {
                 let (sys, manifest) = await SystemPromptComposer.composeChatPrompt(
                     agentId: effectiveAgentId,
                     executionMode: executionMode,
-                    compact: isCompact,
+                    model: selectedModel,
                     preflightSnippet: preflight.contextSnippet,
                     skillSection: manualSkillSection
                 )

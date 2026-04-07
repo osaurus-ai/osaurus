@@ -385,7 +385,6 @@ public actor WorkEngine {
                 WorkExecutionSession(issueId: issue.id, messages: initialMessages)
             }
 
-        let compact = SystemPromptTemplates.isLocalModel(model)
         let secretNames: [String] = {
             guard let name = sandboxAgentName,
                 let uuid = SandboxAgentMap.resolve(linuxName: name)
@@ -396,7 +395,7 @@ public actor WorkEngine {
         let (agentSystemPrompt, agentManifest) = SystemPromptComposer.composeWorkPrompt(
             base: systemPrompt,
             executionMode: resolvedExecutionMode,
-            compact: compact,
+            model: model,
             secretNames: secretNames
         )
         let agentCacheHint = agentManifest.staticPrefixHash(toolNames: tools.map { $0.function.name })

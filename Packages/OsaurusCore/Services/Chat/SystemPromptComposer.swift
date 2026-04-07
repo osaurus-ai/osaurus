@@ -6,6 +6,9 @@
 //  section-by-section composition and high-level single-call methods
 //  (composeChatPrompt, composeWorkPrompt) that handle the full pipeline.
 //
+//  Compact prompt selection is automatic: pass the model ID and the composer
+//  resolves whether to use compact or full prompt variants via isLocalModel.
+//
 
 import Foundation
 
@@ -65,15 +68,16 @@ public struct SystemPromptComposer: Sendable {
     // MARK: - High-Level API
 
     /// Compose the full chat system prompt: base + sandbox + memory + preflight + skills.
+    /// Compact mode is auto-detected from the model (falls back to agent's default model).
     @MainActor
     public static func composeChatPrompt(
         agentId: UUID,
         executionMode: WorkExecutionMode,
-        compact: Bool = false,
+        model: String? = nil,
         preflightSnippet: String = "",
         skillSection: String? = nil
     ) async -> (prompt: String, manifest: PromptManifest) {
-        var composer = forChat(agentId: agentId, executionMode: executionMode, compact: compact)
+        var composer = forChat(agentId: agentId, executionMode: executionMode, model: model)
         await composer.appendMemory(agentId: agentId.uuidString)
         composer.append(.dynamic(id: "preflight", label: "Pre-flight RAG", content: preflightSnippet))
         if let section = skillSection {
@@ -87,9 +91,10 @@ public struct SystemPromptComposer: Sendable {
     public static func composeWorkPrompt(
         agentId: UUID,
         executionMode: WorkExecutionMode,
-        compact: Bool = false,
+        model: String? = nil,
         secretNames: [String] = []
     ) -> (prompt: String, manifest: PromptManifest) {
+        let compact = resolveCompact(model: model, agentId: agentId)
         let composer = forWork(
             agentId: agentId,
             executionMode: executionMode,
@@ -103,9 +108,10 @@ public struct SystemPromptComposer: Sendable {
     public static func composeWorkPrompt(
         base: String,
         executionMode: WorkExecutionMode,
-        compact: Bool = false,
+        model: String? = nil,
         secretNames: [String] = []
     ) -> (prompt: String, manifest: PromptManifest) {
+        let compact = model.map { SystemPromptTemplates.isLocalModel($0) } ?? false
         let composer = forWork(base: base, executionMode: executionMode, compact: compact, secretNames: secretNames)
         return (composer.render(), composer.manifest())
     }
@@ -141,14 +147,37 @@ public struct SystemPromptComposer: Sendable {
         }
     }
 
-    // MARK: - Factory Methods (internal)
+    // MARK: - Compact Resolution
 
-    /// Pre-loaded composer for chat mode: base prompt + chat sandbox.
+    /// Resolve whether to use compact prompts from an explicit model ID,
+    /// falling back to the agent's configured default model.
+    @MainActor
+    static func resolveCompact(model: String? = nil, agentId: UUID? = nil) -> Bool {
+        if let model { return SystemPromptTemplates.isLocalModel(model) }
+        if let agentId, let agentModel = AgentManager.shared.effectiveModel(for: agentId) {
+            return SystemPromptTemplates.isLocalModel(agentModel)
+        }
+        return false
+    }
+
+    // MARK: - Factory Methods
+
+    /// Pre-loaded composer for chat mode. Compact is auto-resolved from model/agent.
     @MainActor
     public static func forChat(
         agentId: UUID,
         executionMode: WorkExecutionMode,
-        compact: Bool = false
+        model: String? = nil
+    ) -> SystemPromptComposer {
+        let compact = resolveCompact(model: model, agentId: agentId)
+        return forChat(agentId: agentId, executionMode: executionMode, compact: compact)
+    }
+
+    @MainActor
+    static func forChat(
+        agentId: UUID,
+        executionMode: WorkExecutionMode,
+        compact: Bool
     ) -> SystemPromptComposer {
         var composer = SystemPromptComposer()
         composer.appendBasePrompt(agentId: agentId)
@@ -165,12 +194,11 @@ public struct SystemPromptComposer: Sendable {
         return composer
     }
 
-    /// Pre-loaded composer for work mode: base prompt + work instructions + work sandbox.
     @MainActor
     static func forWork(
         agentId: UUID,
         executionMode: WorkExecutionMode,
-        compact: Bool = false,
+        compact: Bool,
         secretNames: [String] = []
     ) -> SystemPromptComposer {
         var composer = SystemPromptComposer()
@@ -178,11 +206,10 @@ public struct SystemPromptComposer: Sendable {
         return composer.withWorkSections(executionMode: executionMode, compact: compact, secretNames: secretNames)
     }
 
-    /// Work mode from a pre-resolved base string.
     static func forWork(
         base: String,
         executionMode: WorkExecutionMode,
-        compact: Bool = false,
+        compact: Bool,
         secretNames: [String] = []
     ) -> SystemPromptComposer {
         var composer = SystemPromptComposer()
@@ -218,7 +245,6 @@ public struct SystemPromptComposer: Sendable {
 
     // MARK: - Message Array Helpers
 
-    /// Prepend content to the existing system message, or insert a new one at position 0.
     static func injectSystemContent(
         _ content: String,
         into messages: inout [ChatMessage]
@@ -234,7 +260,6 @@ public struct SystemPromptComposer: Sendable {
         }
     }
 
-    /// Append content to the end of the existing system message, or insert a new one at position 0.
     static func appendSystemContent(
         _ content: String,
         into messages: inout [ChatMessage]
