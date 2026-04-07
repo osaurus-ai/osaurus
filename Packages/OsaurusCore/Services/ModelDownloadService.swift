@@ -8,7 +8,7 @@
 
 import Foundation
 
-/// Manages MLX model downloads and storage
+/// Manages MLX model file downloads, cancellation, deletion, and progress tracking.
 @MainActor
 final class ModelDownloadService: ObservableObject {
     static let shared = ModelDownloadService()
@@ -345,17 +345,9 @@ final class ModelDownloadService: ObservableObject {
 
     // MARK: - State Management
 
-    func initializeStates(for models: [MLXModel]) {
-        for model in models {
-            if activeDownloadTasks[model.id] == nil {
-                downloadStates[model.id] = model.isDownloaded ? .completed : .notStarted
-            }
-        }
-    }
-
-    func refreshStates(for models: [MLXModel]) {
-        for model in models {
-            if activeDownloadTasks[model.id] != nil { continue }
+    /// Sync download states for models, skipping any with active downloads.
+    func syncStates(for models: [MLXModel]) {
+        for model in models where activeDownloadTasks[model.id] == nil {
             downloadStates[model.id] = model.isDownloaded ? .completed : .notStarted
         }
     }

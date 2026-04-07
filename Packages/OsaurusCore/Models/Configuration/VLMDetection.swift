@@ -15,46 +15,44 @@ enum VLMDetection {
     /// Uses vision_config key presence in config.json as the definitive signal,
     /// disambiguating model types registered in both LLM and VLM factories
     /// (e.g. gemma4 has both text-only and vision variants).
-    nonisolated static func isVLM(at directory: URL) -> Bool {
-        let configURL = directory.appendingPathComponent("config.json")
-        guard let data = try? Data(contentsOf: configURL),
-            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        else { return false }
+    static func isVLM(at directory: URL) -> Bool {
+        guard let json = readConfigJSON(at: directory) else { return false }
         return json["vision_config"] != nil
     }
 
     /// Check if a model_type string is a known VLM architecture.
-    /// Uses VLMTypeRegistry from mlx-swift-lm as the source of truth.
-    nonisolated static func isVLM(modelType: String) -> Bool {
+    static func isVLM(modelType: String) -> Bool {
         VLMTypeRegistry.supportedModelTypes.contains(modelType)
     }
 
     /// Best-effort check for a model by its Hugging Face repo ID.
-    /// Reads config.json from the local model directory if downloaded.
-    nonisolated static func isVLM(modelId: String) -> Bool {
+    /// Returns false if the model is not downloaded locally.
+    static func isVLM(modelId: String) -> Bool {
         guard let dir = findLocalModelDirectory(forModelId: modelId) else { return false }
         return isVLM(at: dir)
     }
 
     /// Read model_type from a model's local config.json.
-    nonisolated static func readModelType(at directory: URL) -> String? {
+    static func readModelType(at directory: URL) -> String? {
+        readConfigJSON(at: directory)?["model_type"] as? String
+    }
+
+    // MARK: - Private
+
+    private static func readConfigJSON(at directory: URL) -> [String: Any]? {
         let configURL = directory.appendingPathComponent("config.json")
         guard let data = try? Data(contentsOf: configURL),
             let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return nil }
-        return json["model_type"] as? String
+        return json
     }
 
-    nonisolated private static func findLocalModelDirectory(forModelId id: String) -> URL? {
+    private static func findLocalModelDirectory(forModelId id: String) -> URL? {
         let parts = id.split(separator: "/").map(String.init)
         let base = DirectoryPickerService.effectiveModelsDirectory()
-        let url = parts.reduce(base) { partial, component in
-            partial.appendingPathComponent(component, isDirectory: true)
-        }
-        let fm = FileManager.default
-        if fm.fileExists(atPath: url.appendingPathComponent("config.json").path) {
-            return url
-        }
-        return nil
+        let url = parts.reduce(base) { $0.appendingPathComponent($1, isDirectory: true) }
+        guard FileManager.default.fileExists(atPath: url.appendingPathComponent("config.json").path)
+        else { return nil }
+        return url
     }
 }

@@ -167,7 +167,7 @@ final class ModelManager: NSObject, ObservableObject {
 
         suggestedModels = curated
         availableModels = curated
-        downloadService.initializeStates(for: availableModels + suggestedModels)
+        downloadService.syncStates(for: availableModels + suggestedModels)
         let registry = Self.registryModels()
         mergeAvailable(with: registry)
         let localModels = Self.discoverLocalModels()
@@ -196,7 +196,7 @@ final class ModelManager: NSObject, ObservableObject {
     /// effective models directory. Called when the user changes the storage
     /// location so the UI reflects which models exist at the new path.
     func refreshDownloadStates() {
-        downloadService.refreshStates(for: availableModels + suggestedModels)
+        downloadService.syncStates(for: availableModels + suggestedModels)
         let localModels = Self.discoverLocalModels()
         mergeAvailable(with: localModels)
         checkForDeprecatedModels()
@@ -214,30 +214,18 @@ final class ModelManager: NSObject, ObservableObject {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
 
         // If user pasted a direct HF URL or "org/repo", immediately surface it without requiring SDK allowlist
-        if let directId = Self.parseHuggingFaceRepoId(from: query), !directId.isEmpty {
-            let exists = (availableModels + suggestedModels)
-                .contains { $0.id.caseInsensitiveCompare(directId) == .orderedSame }
-            if !exists {
-                let friendly = Self.friendlyName(from: directId)
-                var desc = "Imported from input"
-                var model = MLXModel(
-                    id: directId,
-                    name: friendly,
-                    description: desc,
-                    downloadURL: "https://huggingface.co/\(directId)"
-                )
-                if model.isDownloaded {
-                    desc = "Local model (detected)"
-                    model = MLXModel(
-                        id: directId,
-                        name: friendly,
-                        description: desc,
-                        downloadURL: "https://huggingface.co/\(directId)"
-                    )
-                }
-                availableModels.insert(model, at: 0)
-                downloadService.downloadStates[model.id] = model.isDownloaded ? .completed : .notStarted
-            }
+        if let directId = Self.parseHuggingFaceRepoId(from: query), !directId.isEmpty,
+            !findExistingModel(id: directId).found
+        {
+            let probe = MLXModel(id: directId, name: "", description: "", downloadURL: "")
+            let model = MLXModel(
+                id: directId,
+                name: ModelMetadataParser.friendlyName(from: directId),
+                description: probe.isDownloaded ? "Local model (detected)" : "Imported from input",
+                downloadURL: "https://huggingface.co/\(directId)"
+            )
+            availableModels.insert(model, at: 0)
+            downloadService.downloadStates[model.id] = model.isDownloaded ? .completed : .notStarted
         }
 
         remoteSearchTask = Task { [weak self] in
@@ -281,7 +269,7 @@ final class ModelManager: NSObject, ObservableObject {
                 guard allow.contains(hf.id.lowercased()) else { return nil }
                 return MLXModel(
                     id: hf.id,
-                    name: Self.friendlyName(from: hf.id),
+                    name: ModelMetadataParser.friendlyName(from: hf.id),
                     description: "Discovered on Hugging Face",
                     downloadURL: "https://huggingface.co/\(hf.id)"
                 )
@@ -301,100 +289,79 @@ final class ModelManager: NSObject, ObservableObject {
         let trimmed = repoId.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
 
-        // If the model exists locally, allow it regardless of allowlist membership
-        let localModel = MLXModel(
-            id: trimmed,
-            name: Self.friendlyName(from: trimmed),
-            description: "Local model (detected)",
-            downloadURL: "https://huggingface.co/\(trimmed)"
-        )
-        if localModel.isDownloaded {
-            if let existing = availableModels.first(where: {
-                $0.id.caseInsensitiveCompare(trimmed) == .orderedSame
-            }) {
-                return existing
-            }
-            if let existing = suggestedModels.first(where: {
-                $0.id.caseInsensitiveCompare(trimmed) == .orderedSame
-            }) {
-                return existing
-            }
-            availableModels.insert(localModel, at: 0)
-            downloadService.downloadStates[localModel.id] = .completed
+        let probe = MLXModel(id: trimmed, name: "", description: "", downloadURL: "")
+        if probe.isDownloaded {
+            if let existing = findExistingModel(id: trimmed).model { return existing }
+            let localModel = MLXModel(
+                id: trimmed,
+                name: ModelMetadataParser.friendlyName(from: trimmed),
+                description: "Local model (detected)",
+                downloadURL: "https://huggingface.co/\(trimmed)"
+            )
+            insertModel(localModel)
             return localModel
         }
-        // If already present in available or suggested (case-insensitive), return that instance.
-        // Check this before the MLX heuristic so curated OsaurusAI models are always resolvable.
-        if let existing = availableModels.first(where: { $0.id.lowercased() == trimmed.lowercased() }) {
-            return existing
-        }
-        if let existing = suggestedModels.first(where: { $0.id.lowercased() == trimmed.lowercased() }) {
-            availableModels.insert(existing, at: 0)
-            downloadService.downloadStates[existing.id] = existing.isDownloaded ? .completed : .notStarted
+
+        if let existing = findExistingModel(id: trimmed).model {
+            if !availableModels.contains(where: { $0.id.caseInsensitiveCompare(trimmed) == .orderedSame }) {
+                insertModel(existing)
+            }
             return existing
         }
 
-        // Validate MLX compatibility heuristically: org contains "mlx" or id contains "mlx"
         let lower = trimmed.lowercased()
         guard lower.contains("mlx") || lower.hasPrefix("mlx-community/") || lower.contains("-mlx")
-        else {
-            return nil
-        }
+        else { return nil }
+        guard Self.sdkSupportedModelIds().contains(lower) else { return nil }
 
-        // Only allow models supported by the SDK
-        let allow = Self.sdkSupportedModelIds()
-        guard allow.contains(lower) else { return nil }
-
-        // Construct a minimal MLXModel entry
-        let name = Self.friendlyName(from: trimmed)
         let model = MLXModel(
             id: trimmed,
-            name: name,
+            name: ModelMetadataParser.friendlyName(from: trimmed),
             description: "Imported from deeplink",
             downloadURL: "https://huggingface.co/\(trimmed)"
         )
-        availableModels.insert(model, at: 0)
-        downloadService.downloadStates[model.id] = model.isDownloaded ? .completed : .notStarted
+        insertModel(model)
         return model
     }
 
     /// Resolve a model only if the Hugging Face repository is MLX-compatible.
     /// Uses network metadata from Hugging Face for a reliable determination.
-    /// Returns the existing or newly inserted `MLXModel` when compatible; otherwise nil.
     func resolveModelIfMLXCompatible(byRepoId repoId: String) async -> MLXModel? {
         let trimmed = repoId.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
+        guard Self.sdkSupportedModelIds().contains(trimmed.lowercased()) else { return nil }
 
-        // Only allow models supported by the SDK
-        let allow = Self.sdkSupportedModelIds()
-        guard allow.contains(trimmed.lowercased()) else { return nil }
+        if let existing = findExistingModel(id: trimmed).model { return existing }
 
-        // If already present, return immediately
-        if let existing = availableModels.first(where: {
-            $0.id.caseInsensitiveCompare(trimmed) == .orderedSame
-        }) {
-            return existing
-        }
-        if let existing = suggestedModels.first(where: {
-            $0.id.caseInsensitiveCompare(trimmed) == .orderedSame
-        }) {
-            return existing
-        }
+        guard await HuggingFaceService.shared.isMLXCompatible(repoId: trimmed) else { return nil }
 
-        // Ask HF for definitive compatibility
-        let isCompatible = await HuggingFaceService.shared.isMLXCompatible(repoId: trimmed)
-        guard isCompatible else { return nil }
-
-        // Insert minimal entry so it appears in UI and can be downloaded
         let model = MLXModel(
             id: trimmed,
-            name: Self.friendlyName(from: trimmed),
+            name: ModelMetadataParser.friendlyName(from: trimmed),
             description: "Imported from deeplink",
             downloadURL: "https://huggingface.co/\(trimmed)"
         )
+        insertModel(model)
+        return model
+    }
+
+    // MARK: - Model Lookup
+
+    /// Search available and suggested models for a match (case-insensitive).
+    private func findExistingModel(id: String) -> (model: MLXModel?, found: Bool) {
+        if let m = availableModels.first(where: { $0.id.caseInsensitiveCompare(id) == .orderedSame }) {
+            return (m, true)
+        }
+        if let m = suggestedModels.first(where: { $0.id.caseInsensitiveCompare(id) == .orderedSame }) {
+            return (m, true)
+        }
+        return (nil, false)
+    }
+
+    /// Insert a model into the catalog and initialize its download state.
+    private func insertModel(_ model: MLXModel) {
         availableModels.insert(model, at: 0)
         downloadService.downloadStates[model.id] = model.isDownloaded ? .completed : .notStarted
-        return model
     }
 
     // MARK: - Download Forwarding (delegates to ModelDownloadService)
@@ -460,7 +427,7 @@ final class ModelManager: NSObject, ObservableObject {
             let id = cfg.name
             return MLXModel(
                 id: id,
-                name: friendlyName(from: id),
+                name: ModelMetadataParser.friendlyName(from: id),
                 description: "From MLX registry",
                 downloadURL: "https://huggingface.co/\(id)"
             )
@@ -477,7 +444,7 @@ extension ModelManager {
 
         MLXModel(
             id: "OsaurusAI/gemma-4-E2B-it-4bit",
-            name: friendlyName(from: "OsaurusAI/gemma-4-E2B-it-4bit"),
+            name: ModelMetadataParser.friendlyName(from: "OsaurusAI/gemma-4-E2B-it-4bit"),
             description: "Smallest multimodal Gemma 4 model. Runs on any Mac.",
             downloadURL: "https://huggingface.co/OsaurusAI/gemma-4-E2B-it-4bit",
             isTopSuggestion: true,
@@ -487,7 +454,7 @@ extension ModelManager {
 
         MLXModel(
             id: "OsaurusAI/gemma-4-E4B-it-4bit",
-            name: friendlyName(from: "OsaurusAI/gemma-4-E4B-it-4bit"),
+            name: ModelMetadataParser.friendlyName(from: "OsaurusAI/gemma-4-E4B-it-4bit"),
             description: "Multimodal edge model. Handles images, video, and audio. 128K context.",
             downloadURL: "https://huggingface.co/OsaurusAI/gemma-4-E4B-it-4bit",
             isTopSuggestion: true,
@@ -497,7 +464,7 @@ extension ModelManager {
 
         MLXModel(
             id: "OsaurusAI/Gemma-4-26B-A4B-it-JANG_2L",
-            name: friendlyName(from: "OsaurusAI/Gemma-4-26B-A4B-it-JANG_2L"),
+            name: ModelMetadataParser.friendlyName(from: "OsaurusAI/Gemma-4-26B-A4B-it-JANG_2L"),
             description: "Efficient MoE vision model. Only 4B active params. 256K context.",
             downloadURL: "https://huggingface.co/OsaurusAI/Gemma-4-26B-A4B-it-JANG_2L",
             isTopSuggestion: true,
@@ -507,7 +474,7 @@ extension ModelManager {
 
         MLXModel(
             id: "LiquidAI/LFM2-24B-A2B-MLX-8bit",
-            name: friendlyName(from: "LiquidAI/LFM2-24B-A2B-MLX-8bit"),
+            name: ModelMetadataParser.friendlyName(from: "LiquidAI/LFM2-24B-A2B-MLX-8bit"),
             description: "Liquid AI's 24B MoE model. Only ~2B active params per token. 128K context.",
             downloadURL: "https://huggingface.co/LiquidAI/LFM2-24B-A2B-MLX-8bit",
             isTopSuggestion: true,
@@ -518,21 +485,21 @@ extension ModelManager {
 
         MLXModel(
             id: "lmstudio-community/gpt-oss-20b-MLX-8bit",
-            name: friendlyName(from: "lmstudio-community/gpt-oss-20b-MLX-8bit"),
+            name: ModelMetadataParser.friendlyName(from: "lmstudio-community/gpt-oss-20b-MLX-8bit"),
             description: "OpenAI's open-source release. Strong all-around performance.",
             downloadURL: "https://huggingface.co/lmstudio-community/gpt-oss-20b-MLX-8bit"
         ),
 
         MLXModel(
             id: "lmstudio-community/gpt-oss-120b-MLX-8bit",
-            name: friendlyName(from: "lmstudio-community/gpt-oss-120b-MLX-8bit"),
+            name: ModelMetadataParser.friendlyName(from: "lmstudio-community/gpt-oss-120b-MLX-8bit"),
             description: "OpenAI's largest open model. Premium quality, requires 64GB+ unified memory.",
             downloadURL: "https://huggingface.co/lmstudio-community/gpt-oss-120b-MLX-8bit"
         ),
 
         MLXModel(
             id: "OsaurusAI/Gemma-4-31B-it-JANG_4M",
-            name: friendlyName(from: "OsaurusAI/Gemma-4-31B-it-JANG_4M"),
+            name: ModelMetadataParser.friendlyName(from: "OsaurusAI/Gemma-4-31B-it-JANG_4M"),
             description: "Gemma 4 31B dense vision model. Top-tier quality with optimized quantization.",
             downloadURL: "https://huggingface.co/OsaurusAI/Gemma-4-31B-it-JANG_4M",
             downloadSizeBytes: 6_000_000_000,
@@ -543,7 +510,7 @@ extension ModelManager {
 
         MLXModel(
             id: "OsaurusAI/Gemma-4-26B-A4B-it-JANG_4M",
-            name: friendlyName(from: "OsaurusAI/Gemma-4-26B-A4B-it-JANG_4M"),
+            name: ModelMetadataParser.friendlyName(from: "OsaurusAI/Gemma-4-26B-A4B-it-JANG_4M"),
             description: "Higher-quality MoE vision model. 4B active params with 256K context.",
             downloadURL: "https://huggingface.co/OsaurusAI/Gemma-4-26B-A4B-it-JANG_4M",
             downloadSizeBytes: 5_000_000_000,
@@ -552,7 +519,7 @@ extension ModelManager {
 
         MLXModel(
             id: "OsaurusAI/gemma-4-E4B-it-8bit",
-            name: friendlyName(from: "OsaurusAI/gemma-4-E4B-it-8bit"),
+            name: ModelMetadataParser.friendlyName(from: "OsaurusAI/gemma-4-E4B-it-8bit"),
             description: "Multimodal edge model at 8-bit precision. Best quality for the E4B family.",
             downloadURL: "https://huggingface.co/OsaurusAI/gemma-4-E4B-it-8bit",
             downloadSizeBytes: 3_000_000_000,
@@ -561,7 +528,7 @@ extension ModelManager {
 
         MLXModel(
             id: "OsaurusAI/Qwen3.5-122B-A10B-JANG_4K",
-            name: friendlyName(from: "OsaurusAI/Qwen3.5-122B-A10B-JANG_4K"),
+            name: ModelMetadataParser.friendlyName(from: "OsaurusAI/Qwen3.5-122B-A10B-JANG_4K"),
             description: "Largest Qwen3.5 MoE vision model. 10B active params with top-tier reasoning.",
             downloadURL: "https://huggingface.co/OsaurusAI/Qwen3.5-122B-A10B-JANG_4K",
             downloadSizeBytes: 18_000_000_000,
@@ -570,7 +537,7 @@ extension ModelManager {
 
         MLXModel(
             id: "OsaurusAI/Qwen3.5-122B-A10B-JANG_2S",
-            name: friendlyName(from: "OsaurusAI/Qwen3.5-122B-A10B-JANG_2S"),
+            name: ModelMetadataParser.friendlyName(from: "OsaurusAI/Qwen3.5-122B-A10B-JANG_2S"),
             description: "Qwen3.5 122B MoE vision model. Compact quantization, smaller download.",
             downloadURL: "https://huggingface.co/OsaurusAI/Qwen3.5-122B-A10B-JANG_2S",
             downloadSizeBytes: 11_000_000_000,
@@ -579,7 +546,7 @@ extension ModelManager {
 
         MLXModel(
             id: "OsaurusAI/Qwen3.5-35B-A3B-JANG_4K",
-            name: friendlyName(from: "OsaurusAI/Qwen3.5-35B-A3B-JANG_4K"),
+            name: ModelMetadataParser.friendlyName(from: "OsaurusAI/Qwen3.5-35B-A3B-JANG_4K"),
             description: "Efficient Qwen3.5 MoE vision model. Only 3B active params.",
             downloadURL: "https://huggingface.co/OsaurusAI/Qwen3.5-35B-A3B-JANG_4K",
             downloadSizeBytes: 5_000_000_000,
@@ -588,7 +555,7 @@ extension ModelManager {
 
         MLXModel(
             id: "OsaurusAI/Qwen3.5-35B-A3B-JANG_2S",
-            name: friendlyName(from: "OsaurusAI/Qwen3.5-35B-A3B-JANG_2S"),
+            name: ModelMetadataParser.friendlyName(from: "OsaurusAI/Qwen3.5-35B-A3B-JANG_2S"),
             description: "Compact Qwen3.5 MoE vision model. Fast and lightweight.",
             downloadURL: "https://huggingface.co/OsaurusAI/Qwen3.5-35B-A3B-JANG_2S",
             downloadSizeBytes: 3_000_000_000,
@@ -599,7 +566,7 @@ extension ModelManager {
 
         MLXModel(
             id: "OsaurusAI/gemma-4-E2B-it-8bit",
-            name: friendlyName(from: "OsaurusAI/gemma-4-E2B-it-8bit"),
+            name: ModelMetadataParser.friendlyName(from: "OsaurusAI/gemma-4-E2B-it-8bit"),
             description: "Smallest Gemma 4 at 8-bit precision. Better quality, still runs on any Mac.",
             downloadURL: "https://huggingface.co/OsaurusAI/gemma-4-E2B-it-8bit",
             downloadSizeBytes: 2_000_000_000,
@@ -608,9 +575,6 @@ extension ModelManager {
 
     ]
 
-    nonisolated fileprivate static func friendlyName(from repoId: String) -> String {
-        ModelMetadataParser.friendlyName(from: repoId)
-    }
 }
 
 // MARK: - Installed models helpers for services
@@ -711,7 +675,7 @@ extension ModelManager {
         }
         guard !appended.isEmpty else { return }
         availableModels.append(contentsOf: appended)
-        downloadService.initializeStates(for: appended)
+        downloadService.syncStates(for: appended)
     }
 }
 
@@ -829,7 +793,7 @@ extension ModelManager {
                 let id = "\(org)/\(repo)"
                 let model = MLXModel(
                     id: id,
-                    name: friendlyName(from: id),
+                    name: ModelMetadataParser.friendlyName(from: id),
                     description: "Local model (detected)",
                     downloadURL: "https://huggingface.co/\(id)"
                 )

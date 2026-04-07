@@ -139,7 +139,6 @@ extension ModelPickerItem {
             source: .remote(providerName: providerName, providerId: providerId)
         )
     }
-
 }
 
 // MARK: - Grouping
