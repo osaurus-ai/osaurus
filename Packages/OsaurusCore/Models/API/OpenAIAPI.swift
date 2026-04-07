@@ -387,6 +387,7 @@ struct ChatCompletionRequest: Codable, Sendable {
             cache_hint: cache_hint
         )
         copy.modelOptions = modelOptions
+        copy.staticPrefix = staticPrefix
         return copy
     }
 }

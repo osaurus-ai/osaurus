@@ -798,7 +798,9 @@ public final class WorkSession: ObservableObject {
                             systemPrompt: workCtx.prompt,
                             tools: workCtx.tools,
                             executionMode: executionMode,
-                            images: images
+                            images: images,
+                            cacheHint: workCtx.cacheHint,
+                            staticPrefix: workCtx.staticPrefix
                         )
                     } else {
                         try await engine.resume(
@@ -806,7 +808,9 @@ public final class WorkSession: ObservableObject {
                             model: model,
                             systemPrompt: workCtx.prompt,
                             tools: workCtx.tools,
-                            executionMode: executionMode
+                            executionMode: executionMode,
+                            cacheHint: workCtx.cacheHint,
+                            staticPrefix: workCtx.staticPrefix
                         )
                     }
                 await MainActor.run { self?.handleExecutionResult(result) }
@@ -1305,7 +1309,9 @@ public final class WorkSession: ObservableObject {
                     model: model,
                     systemPrompt: resumeCtx.prompt,
                     tools: resumeCtx.tools,
-                    executionMode: executionMode
+                    executionMode: executionMode,
+                    cacheHint: resumeCtx.cacheHint,
+                    staticPrefix: resumeCtx.staticPrefix
                 )
                 await MainActor.run { self?.handleExecutionResult(result) }
             } catch {
