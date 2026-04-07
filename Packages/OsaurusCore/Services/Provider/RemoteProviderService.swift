@@ -144,6 +144,22 @@ public actor RemoteProviderService: ToolCapableService {
         parameters: GenerationParameters,
         requestedModel: String?
     ) async throws -> String {
+        // Native Osaurus agents only support the streaming /agents/{id}/run endpoint.
+        // Consume the SSE stream and concatenate all text deltas into a single string.
+        if provider.providerType == .osaurus {
+            let stream = try await streamDeltas(
+                messages: messages,
+                parameters: parameters,
+                requestedModel: requestedModel,
+                stopSequences: []
+            )
+            var result = ""
+            for try await chunk in stream {
+                result += chunk
+            }
+            return result
+        }
+
         guard let modelName = extractModelName(requestedModel) else {
             throw RemoteProviderServiceError.noModelsAvailable
         }
@@ -612,7 +628,8 @@ public actor RemoteProviderService: ToolCapableService {
         toolChoice: ToolChoiceOption?,
         requestedModel: String?
     ) async throws -> String {
-        // Native Osaurus agents run tools server-side — route through generateOneShot
+        // Native Osaurus agents run tools server-side and only expose a streaming endpoint.
+        // Route through generateOneShot, which consumes the SSE stream for .osaurus.
         if provider.providerType == .osaurus {
             return try await generateOneShot(
                 messages: messages,

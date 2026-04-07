@@ -1668,11 +1668,15 @@ struct ChatView: View {
             $0.providerType == .osaurus && $0.remoteAgentId == agent.id
         }) {
             providerId = existing.id
+            var updated = existing
+            updated.host = host
+            updated.port = agent.port
+            updated.enabled = true
             if !token.isEmpty {
-                var updated = existing
                 updated.authType = .apiKey
-                updated.enabled = true
                 manager.updateProvider(updated, apiKey: token)
+            } else {
+                manager.updateProvider(updated, apiKey: nil)
             }
             Task { try? await manager.connect(providerId: existing.id) }
         } else {

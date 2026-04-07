@@ -1587,7 +1587,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
         // Extract agent ID: /agents/{id}
         let components = path.split(separator: "/")
-        guard components.count >= 2, let agentId = UUID(uuidString: String(components[1])) else {
+        guard components.count == 2, components[0] == "agents", let agentId = UUID(uuidString: String(components[1])) else {
             hop {
                 var headers = [("Content-Type", "application/json; charset=utf-8")]
                 headers.append(contentsOf: cors)
@@ -1688,6 +1688,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 headers: [("Content-Type", "text/plain; charset=utf-8")],
                 body: "Invalid request format"
             )
+            logRequest(
+                method: "POST",
+                path: path,
+                userAgent: userAgent,
+                requestBody: requestBodyString,
+                responseStatus: 400,
+                startTime: startTime,
+                errorMessage: "Invalid request format"
+            )
             return
         }
 
@@ -1764,7 +1773,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     model: model,
                     messages: messages,
                     temperature: req.temperature,
-                    max_tokens: req.max_tokens,
+                    max_tokens: req.resolvedMaxTokens,
                     stream: true,
                     top_p: req.top_p,
                     frequency_penalty: req.frequency_penalty,
