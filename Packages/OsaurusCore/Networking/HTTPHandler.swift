@@ -1318,11 +1318,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
         var enriched = request
         let query = request.messages.last(where: { $0.role == "user" })?.content ?? ""
-        await SystemPromptComposer.injectAgentContext(
+        let (hint, prefix) = await SystemPromptComposer.injectAgentContext(
             agentId: agentUUID,
             query: query,
             into: &enriched.messages
         )
+        if enriched.cache_hint == nil {
+            enriched.cache_hint = hint
+            enriched.staticPrefix = prefix
+        }
         return enriched
     }
 

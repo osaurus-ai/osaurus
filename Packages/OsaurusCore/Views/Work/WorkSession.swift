@@ -768,38 +768,24 @@ public final class WorkSession: ObservableObject {
 
         resetExecutionState(for: issue)
 
-        let config = await buildExecutionConfig()
+        let executionMode = ToolRegistry.shared.resolveWorkExecutionMode(
+            folderContext: WorkFolderContextService.shared.currentContext
+        )
+        let model = resolveModel()
         let issueQuery = [issue.title, issue.description].compactMap { $0 }.joined(separator: " ")
 
-        let preflight: PreflightResult
-        let toolMode = AgentManager.shared.effectiveToolSelectionMode(for: agentId)
-        if toolMode == .auto {
-            let mode = ChatConfigurationStore.load().preflightSearchMode ?? .balanced
-            preflight = await PreflightCapabilitySearch.search(query: issueQuery, mode: mode)
-            pendingPreflightCapabilities = preflight.items.isEmpty ? nil : preflight.items
-        } else {
-            preflight = .empty
-        }
-
-        let tools = SystemPromptComposer.resolveTools(
+        let workCtx = await SystemPromptComposer.composeWorkContext(
             agentId: agentId,
-            executionMode: config.executionMode,
-            preflight: preflight
+            executionMode: executionMode,
+            model: model,
+            secretNames: Array(AgentSecretsKeychain.getAllSecrets(agentId: agentId).keys),
+            query: issueQuery
         )
-        let skillSection: String? =
-            toolMode == .manual
-            ? await SkillManager.shared.manualSkillPromptSection(for: agentId)
-            : nil
-        let (systemPrompt, execManifest) = SystemPromptComposer.composePrompt(
-            base: config.systemPrompt,
-            preflightSnippet: preflight.contextSnippet,
-            skillSection: skillSection
-        )
-        cachedManifest = execManifest
-        cachedToolTokens = ToolRegistry.shared.totalEstimatedTokens(for: tools)
-        debugLog("[Context] \(execManifest.debugDescription)")
+        pendingPreflightCapabilities = workCtx.preflightItems.isEmpty ? nil : workCtx.preflightItems
+        cachedManifest = workCtx.manifest
+        cachedToolTokens = workCtx.toolTokens
 
-        budgetTracker.snapshot(manifest: execManifest, toolTokens: cachedToolTokens)
+        budgetTracker.snapshot(manifest: workCtx.manifest, toolTokens: workCtx.toolTokens)
         objectWillChange.send()
 
         executionTask = Task { [weak self, engine] in
@@ -808,19 +794,19 @@ public final class WorkSession: ObservableObject {
                     if withRetry {
                         try await engine.executeWithRetry(
                             issueId: issue.id,
-                            model: config.model,
-                            systemPrompt: systemPrompt,
-                            tools: tools,
-                            executionMode: config.executionMode,
+                            model: model,
+                            systemPrompt: workCtx.prompt,
+                            tools: workCtx.tools,
+                            executionMode: executionMode,
                             images: images
                         )
                     } else {
                         try await engine.resume(
                             issueId: issue.id,
-                            model: config.model,
-                            systemPrompt: systemPrompt,
-                            tools: tools,
-                            executionMode: config.executionMode
+                            model: model,
+                            systemPrompt: workCtx.prompt,
+                            tools: workCtx.tools,
+                            executionMode: executionMode
                         )
                     }
                 await MainActor.run { self?.handleExecutionResult(result) }
@@ -855,31 +841,10 @@ public final class WorkSession: ObservableObject {
         pausedExecutionReason = nil
     }
 
-    /// Builds execution configuration from current state
-    private func buildExecutionConfig() async -> (
-        model: String,
-        systemPrompt: String,
-        executionMode: WorkExecutionMode
-    ) {
-        var composer = SystemPromptComposer()
-        composer.appendBasePrompt(agentId: agentId)
-        await composer.appendMemory(agentId: agentId.uuidString)
-        let systemPrompt = composer.render()
-
-        let model =
-            if let selected = selectedModel, !selected.isEmpty {
-                selected
-            } else if let wsModel = windowState?.session.selectedModel, !wsModel.isEmpty {
-                wsModel
-            } else {
-                AgentManager.shared.agent(for: agentId)?.defaultModel ?? "default"
-            }
-
-        let executionMode = ToolRegistry.shared.resolveWorkExecutionMode(
-            folderContext: WorkFolderContextService.shared.currentContext
-        )
-
-        return (model, systemPrompt, executionMode)
+    private func resolveModel() -> String {
+        if let selected = selectedModel, !selected.isEmpty { return selected }
+        if let wsModel = windowState?.session.selectedModel, !wsModel.isEmpty { return wsModel }
+        return AgentManager.shared.agent(for: agentId)?.defaultModel ?? "default"
     }
 
     private func estimatedExecutionModeForBudget() -> WorkExecutionMode {
@@ -1313,47 +1278,34 @@ public final class WorkSession: ObservableObject {
             return
         }
 
-        let config = await buildExecutionConfig()
+        let executionMode = ToolRegistry.shared.resolveWorkExecutionMode(
+            folderContext: WorkFolderContextService.shared.currentContext
+        )
+        let model = resolveModel()
         let resumeQuery = [issue.title, issue.description].compactMap { $0 }.joined(separator: " ")
 
-        let resumePreflight: PreflightResult
-        let resumeToolMode = AgentManager.shared.effectiveToolSelectionMode(for: agentId)
-        if resumeToolMode == .auto {
-            let mode = ChatConfigurationStore.load().preflightSearchMode ?? .balanced
-            resumePreflight = await PreflightCapabilitySearch.search(query: resumeQuery, mode: mode)
-            pendingPreflightCapabilities = resumePreflight.items.isEmpty ? nil : resumePreflight.items
-        } else {
-            resumePreflight = .empty
-        }
-
-        let tools = SystemPromptComposer.resolveTools(
+        let resumeCtx = await SystemPromptComposer.composeWorkContext(
             agentId: agentId,
-            executionMode: config.executionMode,
-            preflight: resumePreflight
+            executionMode: executionMode,
+            model: model,
+            secretNames: Array(AgentSecretsKeychain.getAllSecrets(agentId: agentId).keys),
+            query: resumeQuery
         )
-        let resumeSkillSection: String? =
-            resumeToolMode == .manual
-            ? await SkillManager.shared.manualSkillPromptSection(for: agentId)
-            : nil
-        let (systemPrompt, resumeManifest) = SystemPromptComposer.composePrompt(
-            base: config.systemPrompt,
-            preflightSnippet: resumePreflight.contextSnippet,
-            skillSection: resumeSkillSection
-        )
-        cachedManifest = resumeManifest
-        cachedToolTokens = ToolRegistry.shared.totalEstimatedTokens(for: tools)
+        pendingPreflightCapabilities = resumeCtx.preflightItems.isEmpty ? nil : resumeCtx.preflightItems
+        cachedManifest = resumeCtx.manifest
+        cachedToolTokens = resumeCtx.toolTokens
 
-        budgetTracker.snapshot(manifest: resumeManifest, toolTokens: cachedToolTokens)
+        budgetTracker.snapshot(manifest: resumeCtx.manifest, toolTokens: resumeCtx.toolTokens)
         objectWillChange.send()
 
         executionTask = Task { [weak self, engine] in
             do {
                 let result = try await engine.resume(
                     issueId: issue.id,
-                    model: config.model,
-                    systemPrompt: systemPrompt,
-                    tools: tools,
-                    executionMode: config.executionMode
+                    model: model,
+                    systemPrompt: resumeCtx.prompt,
+                    tools: resumeCtx.tools,
+                    executionMode: executionMode
                 )
                 await MainActor.run { self?.handleExecutionResult(result) }
             } catch {

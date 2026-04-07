@@ -391,6 +391,7 @@ public actor WorkExecutionEngine {
         sandboxAgentName: String? = nil,
         agentId: UUID? = nil,
         cacheHint: String? = nil,
+        staticPrefix: String? = nil,
         shouldInterrupt: @escaping InterruptCheckCallback = { false },
         onIterationStart: @escaping IterationStartCallback,
         onDelta: @escaping IterationStreamingCallback,
@@ -525,6 +526,7 @@ public actor WorkExecutionEngine {
                 session_id: issue.id
             )
             request.cache_hint = cacheHint
+            request.staticPrefix = staticPrefix
 
             // Stream response
             var responseContent = ""

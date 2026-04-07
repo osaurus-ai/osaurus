@@ -21,6 +21,11 @@ struct GenerationParameters: Sendable {
     /// Explicit prefix cache key override (API callers can use this to share a
     /// prefix cache across requests with varying system prompts).
     let cacheHint: String?
+    /// Static system prompt content for prefix cache building.
+    /// When set, the prefix cache is built from this content only (excluding
+    /// dynamic sections like memory), producing a KV cache that exactly matches
+    /// the reusable portion across requests.
+    let staticPrefix: String?
 
     init(
         temperature: Float?,
@@ -29,7 +34,8 @@ struct GenerationParameters: Sendable {
         repetitionPenalty: Float? = nil,
         modelOptions: [String: ModelOptionValue] = [:],
         sessionId: String? = nil,
-        cacheHint: String? = nil
+        cacheHint: String? = nil,
+        staticPrefix: String? = nil
     ) {
         self.temperature = temperature
         self.maxTokens = maxTokens
@@ -38,6 +44,7 @@ struct GenerationParameters: Sendable {
         self.modelOptions = modelOptions
         self.sessionId = sessionId
         self.cacheHint = cacheHint
+        self.staticPrefix = staticPrefix
     }
 }
 

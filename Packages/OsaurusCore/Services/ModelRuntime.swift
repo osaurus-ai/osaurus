@@ -676,7 +676,7 @@ actor ModelRuntime {
             composedStream = wrapWithPrefixCacheBuild(
                 composedStream,
                 holder: holder,
-                systemContent: systemContent,
+                systemContent: parameters.staticPrefix ?? systemContent,
                 tools: tools,
                 toolChoice: toolChoice,
                 modelName: modelName,

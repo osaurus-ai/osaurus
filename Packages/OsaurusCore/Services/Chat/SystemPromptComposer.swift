@@ -68,8 +68,6 @@ public struct SystemPromptComposer: Sendable {
     // MARK: - High-Level API
 
     /// Compose the full chat context: prompt + tools + manifest in one call.
-    /// Handles base prompt, sandbox, memory, preflight RAG, manual skills,
-    /// tool selection (built-in + preflight/manual, deduped), and token estimation.
     @MainActor
     static func composeChatContext(
         agentId: UUID,
@@ -78,9 +76,29 @@ public struct SystemPromptComposer: Sendable {
         query: String = "",
         toolsDisabled: Bool = false
     ) async -> ComposedContext {
-        let toolMode = AgentManager.shared.effectiveToolSelectionMode(for: agentId)
-        let isManual = toolMode == .manual
+        let composer = forChat(agentId: agentId, executionMode: executionMode, model: model)
+        return await finalizeContext(
+            composer: composer,
+            agentId: agentId,
+            executionMode: executionMode,
+            query: query,
+            toolsDisabled: toolsDisabled
+        )
+    }
 
+    /// Shared pipeline: append memory + preflight + skills + resolve tools + build ComposedContext.
+    @MainActor
+    private static func finalizeContext(
+        composer: SystemPromptComposer,
+        agentId: UUID,
+        executionMode: WorkExecutionMode,
+        query: String,
+        toolsDisabled: Bool
+    ) async -> ComposedContext {
+        var comp = composer
+        await comp.appendMemory(agentId: agentId.uuidString)
+
+        let toolMode = AgentManager.shared.effectiveToolSelectionMode(for: agentId)
         let preflight: PreflightResult
         if !toolsDisabled && toolMode == .auto && !query.isEmpty {
             let mode = ChatConfigurationStore.load().preflightSearchMode ?? .balanced
@@ -88,17 +106,12 @@ public struct SystemPromptComposer: Sendable {
         } else {
             preflight = .empty
         }
+        comp.append(.dynamic(id: "preflight", label: "Pre-flight RAG", content: preflight.contextSnippet))
 
-        let skillSection: String? =
-            isManual
-            ? await SkillManager.shared.manualSkillPromptSection(for: agentId)
-            : nil
-
-        var composer = forChat(agentId: agentId, executionMode: executionMode, model: model)
-        await composer.appendMemory(agentId: agentId.uuidString)
-        composer.append(.dynamic(id: "preflight", label: "Pre-flight RAG", content: preflight.contextSnippet))
-        if let section = skillSection {
-            composer.append(.dynamic(id: "skills", label: "Skills", content: section))
+        if toolMode == .manual,
+            let section = await SkillManager.shared.manualSkillPromptSection(for: agentId)
+        {
+            comp.append(.dynamic(id: "skills", label: "Skills", content: section))
         }
 
         let tools = resolveTools(
@@ -107,15 +120,18 @@ public struct SystemPromptComposer: Sendable {
             toolsDisabled: toolsDisabled,
             preflight: preflight
         )
-        let manifest = composer.manifest()
+        let manifest = comp.manifest()
+        let toolNames = tools.map { $0.function.name }
         debugLog("[Context] \(manifest.debugDescription)")
 
         return ComposedContext(
-            prompt: composer.render(),
+            prompt: comp.render(),
             manifest: manifest,
             tools: tools,
             toolTokens: ToolRegistry.shared.totalEstimatedTokens(for: tools),
-            preflightItems: preflight.items
+            preflightItems: preflight.items,
+            cacheHint: manifest.staticPrefixHash(toolNames: toolNames),
+            staticPrefix: manifest.staticPrefixContent
         )
     }
 
@@ -185,6 +201,33 @@ public struct SystemPromptComposer: Sendable {
         return (composer.render(), composer.manifest())
     }
 
+    /// Full work context: base + workMode + sandbox + memory + tools.
+    /// Memory is correctly classified as dynamic for prefix cache optimization.
+    @MainActor
+    static func composeWorkContext(
+        agentId: UUID,
+        executionMode: WorkExecutionMode,
+        model: String? = nil,
+        secretNames: [String] = [],
+        query: String = "",
+        toolsDisabled: Bool = false
+    ) async -> ComposedContext {
+        let compact = resolveCompact(model: model, agentId: agentId)
+        let composer = forWork(
+            agentId: agentId,
+            executionMode: executionMode,
+            compact: compact,
+            secretNames: secretNames
+        )
+        return await finalizeContext(
+            composer: composer,
+            agentId: agentId,
+            executionMode: executionMode,
+            query: query,
+            toolsDisabled: toolsDisabled
+        )
+    }
+
     /// Compose from a pre-resolved base with optional dynamic sections (preflight, skills).
     public static func composePrompt(
         base: String,
@@ -201,19 +244,23 @@ public struct SystemPromptComposer: Sendable {
     }
 
     /// Compose agent context (base prompt + memory) and inject into an existing message array.
+    /// Returns `(cacheHint, staticPrefix)` for the caller to set on the request.
     @MainActor
+    @discardableResult
     static func injectAgentContext(
         agentId: UUID,
         query: String = "",
         into messages: inout [ChatMessage]
-    ) async {
+    ) async -> (cacheHint: String, staticPrefix: String) {
         var composer = forChat(agentId: agentId, executionMode: .none)
         await composer.appendMemory(agentId: agentId.uuidString, query: query.isEmpty ? nil : query)
+        let manifest = composer.manifest()
         let rendered = composer.render()
-        debugLog("[Context:inject] \(composer.manifest().debugDescription)")
+        debugLog("[Context:inject] \(manifest.debugDescription)")
         if !rendered.isEmpty {
             injectSystemContent(rendered, into: &messages)
         }
+        return (manifest.staticPrefixHash(toolNames: []), manifest.staticPrefixContent)
     }
 
     // MARK: - Compact Resolution

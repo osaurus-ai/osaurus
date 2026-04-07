@@ -398,7 +398,9 @@ public actor WorkEngine {
             model: model,
             secretNames: secretNames
         )
-        let agentCacheHint = agentManifest.staticPrefixHash(toolNames: tools.map { $0.function.name })
+        let toolNames = tools.map { $0.function.name }
+        let agentCacheHint = agentManifest.staticPrefixHash(toolNames: toolNames)
+        let agentStaticPrefix = agentManifest.staticPrefixContent
         debugLog("[Context] \(agentManifest.debugDescription)")
 
         // Log execution started
@@ -455,6 +457,7 @@ public actor WorkEngine {
                 sandboxAgentName: sandboxAgentName,
                 agentId: agentId,
                 cacheHint: agentCacheHint,
+                staticPrefix: agentStaticPrefix,
                 shouldInterrupt: { await self.shouldInterruptExecution(for: issue.id) },
                 onIterationStart: { [weak self] iteration in
                     guard let self = self else { return }

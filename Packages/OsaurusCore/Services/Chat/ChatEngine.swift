@@ -54,7 +54,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             repetitionPenalty: repPenalty,
             modelOptions: request.modelOptions ?? [:],
             sessionId: request.session_id,
-            cacheHint: request.cache_hint
+            cacheHint: request.cache_hint,
+            staticPrefix: request.staticPrefix
         )
 
         // Candidate services and installed models (injected for testability)
@@ -266,7 +267,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             repetitionPenalty: repPenalty2,
             modelOptions: request.modelOptions ?? [:],
             sessionId: request.session_id,
-            cacheHint: request.cache_hint
+            cacheHint: request.cache_hint,
+            staticPrefix: request.staticPrefix
         )
 
         let services = self.services

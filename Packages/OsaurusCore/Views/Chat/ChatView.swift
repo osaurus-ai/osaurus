@@ -926,8 +926,8 @@ final class ChatSession: ObservableObject {
                         tool_choice: toolSpecs.isEmpty ? nil : .auto,
                         session_id: sessionId?.uuidString
                     )
-                    let toolNames = toolSpecs.map { $0.function.name }
-                    req.cache_hint = context.manifest.staticPrefixHash(toolNames: toolNames)
+                    req.cache_hint = context.cacheHint
+                    req.staticPrefix = context.staticPrefix
                     req.modelOptions = activeModelOptions.isEmpty ? nil : activeModelOptions
                     debugLog(
                         "send: attempt=\(attempts) model=\(req.model) tools=\(req.tools?.count ?? 0) sessionId=\(req.session_id ?? "nil")"

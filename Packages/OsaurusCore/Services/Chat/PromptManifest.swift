@@ -87,19 +87,21 @@ public struct PromptManifest: Sendable {
         sections.first { $0.id == id }
     }
 
-    /// Hash of static prefix content + tool names for cache key.
-    public func staticPrefixHash(toolNames: [String]) -> String {
-        var staticContent = ""
+    /// Rendered content of only the static sections (before the first dynamic section).
+    public var staticPrefixContent: String {
+        var parts: [String] = []
         for section in sections {
             if section.cacheability == .dynamic { break }
             let trimmed = section.content.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty {
-                if !staticContent.isEmpty { staticContent += "\n\n" }
-                staticContent += trimmed
-            }
+            if !trimmed.isEmpty { parts.append(trimmed) }
         }
+        return parts.joined(separator: "\n\n")
+    }
+
+    /// Hash of static prefix content + tool names for cache key.
+    public func staticPrefixHash(toolNames: [String]) -> String {
         let tools = toolNames.sorted().joined(separator: "\0")
-        let combined = staticContent + "\0" + tools
+        let combined = staticPrefixContent + "\0" + tools
         let digest = SHA256.hash(data: Data(combined.utf8))
         return digest.prefix(16).map { String(format: "%02x", $0) }.joined()
     }
@@ -133,4 +135,10 @@ struct ComposedContext: Sendable {
     let tools: [Tool]
     let toolTokens: Int
     let preflightItems: [PreflightCapabilityItem]
+    /// Hash of the static prefix + tool names for KV cache lookup.
+    let cacheHint: String
+    /// Rendered static-only system content for prefix cache building.
+    /// The prefix cache should be built from this content (not the full prompt)
+    /// so the cached KV exactly matches the reusable portion across requests.
+    let staticPrefix: String
 }
