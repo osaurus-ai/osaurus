@@ -777,9 +777,10 @@ final class NativeMessageCellView: NSTableCellView {
         // user message: container is not pinned to cell bottom, so compute height manually.
         if userDocumentStack != nil || userImageStack != nil || userMessageContainer != nil {
             // Attachments above bubble (fixed heights)
-            let attachOffset: CGFloat = userAttachmentsHeight > 0
-                ? 8 + userAttachmentsHeight + 6   // outerTopGap + attachments + gap to bubble
-                : 8                                // outerTopGap only
+            let attachOffset: CGFloat =
+                userAttachmentsHeight > 0
+                ? 8 + userAttachmentsHeight + 6  // outerTopGap + attachments + gap to bubble
+                : 8  // outerTopGap only
 
             if let container = userMessageContainer {
                 var widthPin: NSLayoutConstraint?
@@ -1105,7 +1106,8 @@ final class NativeMessageCellView: NSTableCellView {
         let maxBubbleWidth = floor(innerWidth * 0.65)
         let bubbleWidth: CGFloat = {
             guard !text.isEmpty && !wantsInlineEdit else { return maxBubbleWidth }
-            let font = NSFont(name: theme.primaryFontName, size: CGFloat(theme.bodySize))
+            let font =
+                NSFont(name: theme.primaryFontName, size: CGFloat(theme.bodySize))
                 ?? NSFont.systemFont(ofSize: CGFloat(theme.bodySize))
             let measured = (text as NSString).boundingRect(
                 with: NSSize(width: maxBubbleWidth - 24, height: .greatestFiniteMagnitude),
@@ -1161,7 +1163,10 @@ final class NativeMessageCellView: NSTableCellView {
                 addSubview(stack)
                 NSLayoutConstraint.activate([
                     stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
-                    stack.topAnchor.constraint(equalTo: cellTopAnchor, constant: documents.isEmpty ? outerTopGap : docGap),
+                    stack.topAnchor.constraint(
+                        equalTo: cellTopAnchor,
+                        constant: documents.isEmpty ? outerTopGap : docGap
+                    ),
                     stack.heightAnchor.constraint(equalToConstant: 96),
                     stack.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 16),
                 ])
