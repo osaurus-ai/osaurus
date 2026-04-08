@@ -236,6 +236,7 @@ extension MessageTableRepresentable {
         /// Last known scroll view width. Used to detect actual frame changes from AppKit layout
         private var lastKnownFrameWidth: CGFloat = 0
         private var frameObserver: NSObjectProtocol?
+        private var frameDebounceWork: DispatchWorkItem?
 
         // MARK: Block State
 
@@ -335,18 +336,23 @@ extension MessageTableRepresentable {
         }
 
         private func handleScrollViewFrameChange() {
-            guard let scrollView, let tableView else { return }
+            guard let scrollView else { return }
             let newWidth = scrollView.contentView.bounds.width
             guard abs(newWidth - lastKnownFrameWidth) > 1.0 else { return }
             lastKnownFrameWidth = newWidth
 
-            // update ctx.width to match the real frame so height estimates are correct
-            ctx.width = newWidth
-            heightCache.removeAll()
-            tableView.sizeLastColumnToFit()
-
-            // reconfigure all visible cells with the corrected width
-            reconfigureAllCellsFromLookup(blockLookup)
+            // only reconfigure after the frame stops changing
+            // to avoid expensive per-frame work
+            frameDebounceWork?.cancel()
+            let work = DispatchWorkItem { [weak self] in
+                guard let self, let tableView else { return }
+                self.ctx.width = self.lastKnownFrameWidth
+                self.heightCache.removeAll()
+                tableView.sizeLastColumnToFit()
+                self.reconfigureAllCellsFromLookup(self.blockLookup)
+            }
+            frameDebounceWork = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
         }
 
         func setupHoverTracking(on tableView: HoverTrackingTableView) {
