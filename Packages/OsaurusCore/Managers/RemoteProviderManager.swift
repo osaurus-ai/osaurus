@@ -69,7 +69,7 @@ public final class RemoteProviderManager: ObservableObject {
         }
     }
 
-    /// One-time migration: upgrade api.openai.com providers from .openaiCompatible (/chat/completions)
+    /// One-time migration: upgrade api.openai.com providers from .openaiLegacy (/chat/completions)
     /// to .openai (/responses API), introduced when the two types were split.
     private func migrateOpenAIProvidersToNativeIfNeeded() {
         guard !UserDefaults.standard.bool(forKey: Self.openaiNativeMigratedKey) else { return }
@@ -77,10 +77,10 @@ public final class RemoteProviderManager: ObservableObject {
         var didChange = false
         for i in configuration.providers.indices {
             let host = configuration.providers[i].host.lowercased()
-            if configuration.providers[i].providerType == .openaiCompatible
+            if configuration.providers[i].providerType == .openaiLegacy
                 && host.contains("openai.com")
             {
-                configuration.providers[i].providerType = .openai
+                configuration.providers[i].providerType = .openResponses
                 didChange = true
             }
         }
@@ -368,7 +368,7 @@ public final class RemoteProviderManager: ObservableObject {
         port: Int?,
         basePath: String,
         authType: RemoteProviderAuthType,
-        providerType: RemoteProviderType = .openaiCompatible,
+        providerType: RemoteProviderType = .openaiLegacy,
         apiKey: String?,
         headers: [String: String]
     ) async throws -> [String] {
@@ -403,7 +403,7 @@ public final class RemoteProviderManager: ObservableObject {
                 if testHeaders["x-goog-api-key"] == nil {
                     testHeaders["x-goog-api-key"] = apiKey
                 }
-            case .openaiCompatible, .openai, .openResponses, .osaurus:
+            case .openaiLegacy, .openResponses, .osaurus:
                 if testHeaders["Authorization"] == nil {
                     testHeaders["Authorization"] = "Bearer \(apiKey)"
                 }

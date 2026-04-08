@@ -456,7 +456,7 @@ public actor RemoteProviderService: ToolCapableService {
                                                 break
                                             }
                                         }
-                                    } else if providerType == .openResponses || providerType == .openai {
+                                    } else if providerType == .openResponses {
                                         // Parse Open Responses SSE event
                                         if let eventType = try? JSONDecoder().decode(
                                             OpenResponsesSSEEvent.self,
@@ -1012,7 +1012,7 @@ public actor RemoteProviderService: ToolCapableService {
                                                 break
                                             }
                                         }
-                                    } else if providerType == .openResponses || providerType == .openai {
+                                    } else if providerType == .openResponses {
                                         // Parse Open Responses SSE event
                                         if let eventType = try? JSONDecoder().decode(
                                             OpenResponsesSSEEvent.self,
@@ -1383,7 +1383,7 @@ public actor RemoteProviderService: ToolCapableService {
         toolChoice: ToolChoiceOption?
     ) -> RemoteChatRequest {
         let effortValue = parameters.modelOptions["reasoningEffort"]?.stringValue
-        let isOfficialOpenAI = provider.providerType == .openai
+        let isOfficialOpenAI = provider.host.lowercased().contains("openai.com")
         let isReasoningModel = OpenAIReasoningProfile.matches(modelId: model)
 
         return RemoteChatRequest(
@@ -1606,11 +1606,8 @@ public actor RemoteProviderService: ToolCapableService {
         case .anthropic:
             let anthropicRequest = request.toAnthropicRequest()
             bodyData = try encoder.encode(anthropicRequest)
-        case .openaiCompatible:
+        case .openaiLegacy:
             bodyData = try encoder.encode(request)
-        case .openai:
-            let openResponsesRequest = request.toOpenResponsesRequest()
-            bodyData = try encoder.encode(openResponsesRequest)
         case .openResponses:
             let openResponsesRequest = request.toOpenResponsesRequest()
             bodyData = try encoder.encode(openResponsesRequest)
@@ -1652,14 +1649,12 @@ public actor RemoteProviderService: ToolCapableService {
 
             return (textContent.isEmpty ? nil : textContent, toolCalls.isEmpty ? nil : toolCalls)
 
-        case .openaiCompatible:
+        case .openaiLegacy:
             let response = try JSONDecoder().decode(ChatCompletionResponse.self, from: data)
             let content = response.choices.first?.message.content
             let toolCalls = response.choices.first?.message.tool_calls
             return (content, toolCalls)
 
-        case .openai:
-            fallthrough
         case .openResponses:
             let response = try JSONDecoder().decode(OpenResponsesResponse.self, from: data)
             var textContent = ""

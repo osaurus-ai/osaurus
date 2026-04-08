@@ -426,7 +426,7 @@ struct OnboardingAPISetupView: View {
                 host: customHost,
                 port: customPort.isEmpty ? nil : Int(customPort),
                 basePath: customBasePath.isEmpty ? "/v1" : customBasePath,
-                providerType: .openaiCompatible,
+                providerType: .openaiLegacy,
                 providerProtocol: customProtocol
             )
         } else {

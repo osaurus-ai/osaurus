@@ -802,7 +802,7 @@ private struct AddProviderFlow: View {
                     port: port,
                     basePath: trimmedBasePath.isEmpty ? "/v1" : trimmedBasePath,
                     authType: customAuthType,
-                    providerType: .openaiCompatible,
+                    providerType: .openaiLegacy,
                     apiKey: testApiKey,
                     headers: HeaderEntry.buildHeaders(from: customHeaders)
                 )
@@ -835,7 +835,7 @@ private struct AddProviderFlow: View {
             basePath: trimmedBasePath.isEmpty ? "/v1" : trimmedBasePath,
             customHeaders: regularHeaders,
             authType: customAuthType,
-            providerType: .openaiCompatible,
+            providerType: .openaiLegacy,
             enabled: true,
             autoConnect: true,
             timeout: timeout,
@@ -878,7 +878,7 @@ private struct EditProviderFlow: View {
     @State private var portString: String = ""
     @State private var basePath: String = "/v1"
     @State private var authType: RemoteProviderAuthType = .none
-    @State private var providerType: RemoteProviderType = .openaiCompatible
+    @State private var providerType: RemoteProviderType = .openaiLegacy
 
     // Editable fields
     @State private var apiKey: String = ""
