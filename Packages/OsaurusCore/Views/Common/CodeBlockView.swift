@@ -229,7 +229,11 @@ struct CodeContentView: NSViewRepresentable {
             let fullRange = NSRange(location: 0, length: result.length)
             result.enumerateAttribute(.font, in: fullRange, options: []) { value, range, _ in
                 let isBold = (value as? NSFont)?.fontDescriptor.symbolicTraits.contains(.bold) ?? false
-                result.addAttribute(.font, value: monoFont(size: fontSize, weight: isBold ? .semibold : .regular), range: range)
+                result.addAttribute(
+                    .font,
+                    value: monoFont(size: fontSize, weight: isBold ? .semibold : .regular),
+                    range: range
+                )
             }
         } else {
             result = NSMutableAttributedString(
