@@ -906,29 +906,23 @@ struct ThemeChatPreview: View {
     }
 
     private func previewUserMessage(_ content: String) -> some View {
-        let radius = CGFloat(theme.messages.bubbleCornerRadius)
+        let radius: CGFloat = 10
         let opacity = theme.messages.userBubbleOpacity
 
-        return VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Text("You")
-                    .font(primaryFont(size: captionSize + 1, weight: .semibold))
-                    .foregroundColor(c(theme.colors.accentColor))
-                Spacer()
-            }
-
-            Text(content)
-                .font(bodyFont)
-                .foregroundColor(c(theme.colors.primaryText))
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: radius, style: .continuous)
-                .fill(userBubbleColor.opacity(opacity))
-        )
-        .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+        return Text(content)
+            .font(bodyFont)
+            .foregroundColor(c(theme.colors.primaryText))
+            .padding(.horizontal, 12)
+            .padding(.top, 10)
+            .padding(.bottom, 10)
+            .background(
+                RoundedRectangle(cornerRadius: radius, style: .continuous)
+                    .fill(userBubbleColor.opacity(opacity))
+            )
+            .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .trailing)
     }
 
     private func previewAssistantMessage() -> some View {
