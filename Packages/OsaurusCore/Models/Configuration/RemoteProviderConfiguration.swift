@@ -142,7 +142,8 @@ public struct RemoteProvider: Codable, Identifiable, Sendable, Equatable {
         basePath = try container.decodeIfPresent(String.self, forKey: .basePath) ?? "/v1"
         customHeaders = try container.decodeIfPresent([String: String].self, forKey: .customHeaders) ?? [:]
         authType = try container.decodeIfPresent(RemoteProviderAuthType.self, forKey: .authType) ?? .none
-        providerType = try container.decodeIfPresent(RemoteProviderType.self, forKey: .providerType) ?? .openaiCompatible
+        providerType =
+            try container.decodeIfPresent(RemoteProviderType.self, forKey: .providerType) ?? .openaiCompatible
         enabled = try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
         autoConnect = try container.decodeIfPresent(Bool.self, forKey: .autoConnect) ?? true
         timeout = try container.decodeIfPresent(TimeInterval.self, forKey: .timeout) ?? 60
