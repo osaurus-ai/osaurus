@@ -718,6 +718,7 @@ final class NativeMessageCellView: NSTableCellView {
     private var userTextView: NativeMarkdownView?
     private var userInlineEditView: UserMessageInlineEditView?
     private var userImageStack: NSStackView?
+    private var userDocumentStack: NSStackView?
     private var nativePendingView: NativePendingToolCallView?
     private var nativeTypingView: NativeTypingIndicatorView?
     private var nativeArtifactView: NativeArtifactCardView?
@@ -1073,6 +1074,7 @@ final class NativeMessageCellView: NSTableCellView {
         sameKind: Bool
     ) {
         let images = attachments.filter(\.isImage)
+        let documents = attachments.filter(\.isDocument)
         let theme = context.theme
         let innerWidth = max(context.width - 32, 100)
 
@@ -1127,6 +1129,7 @@ final class NativeMessageCellView: NSTableCellView {
                 userInlineEditView = ev
                 userMessageInlineEditActive = true
                 userImageStack = nil
+                userDocumentStack = nil
                 userTextView = nil
             } else {
                 userMessageInlineEditActive = false
@@ -1134,6 +1137,24 @@ final class NativeMessageCellView: NSTableCellView {
 
                 var anchorBelowHeader = hv.bottomAnchor
                 let topGapAfterHeader: CGFloat = 6
+
+                if !documents.isEmpty {
+                    let stack = NSStackView()
+                    stack.orientation = .horizontal
+                    stack.spacing = 6
+                    stack.translatesAutoresizingMaskIntoConstraints = false
+                    container.addSubview(stack)
+                    NSLayoutConstraint.activate([
+                        stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12),
+                        stack.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -12),
+                        stack.topAnchor.constraint(equalTo: anchorBelowHeader, constant: topGapAfterHeader),
+                    ])
+                    stack.alignment = .centerY
+                    userDocumentStack = stack
+                    anchorBelowHeader = stack.bottomAnchor
+                } else {
+                    userDocumentStack = nil
+                }
 
                 if !images.isEmpty {
                     let stack = NSStackView()
@@ -1173,9 +1194,13 @@ final class NativeMessageCellView: NSTableCellView {
                     NSLayoutConstraint.activate([
                         container.bottomAnchor.constraint(equalTo: mv.bottomAnchor, constant: 16)
                     ])
-                } else if userImageStack != nil, let stack = userImageStack {
+                } else if let stack = userImageStack {
                     NSLayoutConstraint.activate([
                         container.bottomAnchor.constraint(equalTo: stack.bottomAnchor, constant: 16)
+                    ])
+                } else if let stack = userDocumentStack {
+                    NSLayoutConstraint.activate([
+                        container.bottomAnchor.constraint(equalTo: stack.bottomAnchor, constant: 12)
                     ])
                 } else {
                     NSLayoutConstraint.activate([
@@ -1294,6 +1319,24 @@ final class NativeMessageCellView: NSTableCellView {
                         context.onHeightMeasured?(self.measureFittedRowHeight(), block.id)
                     }
                 }
+            }
+        }
+
+        if let stack = userDocumentStack {
+            while stack.arrangedSubviews.count < documents.count {
+                let chip = UserDocumentChipView()
+                chip.translatesAutoresizingMaskIntoConstraints = false
+                stack.addArrangedSubview(chip)
+            }
+            while stack.arrangedSubviews.count > documents.count {
+                let last = stack.arrangedSubviews.last!
+                stack.removeArrangedSubview(last)
+                last.removeFromSuperview()
+            }
+
+            for (index, attachment) in documents.enumerated() {
+                guard let chip = stack.arrangedSubviews[index] as? UserDocumentChipView else { continue }
+                chip.configure(attachment: attachment, theme: theme)
             }
         }
 
@@ -1593,6 +1636,91 @@ private final class UserAttachmentThumbnailView: NSView {
     }
 }
 
+// MARK: - User Document Chip (native AppKit)
+
+private final class UserDocumentChipView: NSView {
+    override var isFlipped: Bool { true }
+
+    private let iconField = NSTextField(labelWithString: "")
+    private let nameField = NSTextField(labelWithString: "")
+    private let sizeField = NSTextField(labelWithString: "")
+
+    override var intrinsicContentSize: NSSize {
+        let iconW: CGFloat = 14
+        let nameW = nameField.intrinsicContentSize.width
+        let sizeW = sizeField.intrinsicContentSize.width
+        let w = 8 + iconW + 5 + nameW + 5 + sizeW + 8
+        return NSSize(width: min(w, 220), height: 26)
+    }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.cornerRadius = 8
+
+        for field in [iconField, nameField, sizeField] {
+            field.translatesAutoresizingMaskIntoConstraints = false
+            field.isEditable = false
+            field.isBordered = false
+            field.drawsBackground = false
+            field.lineBreakMode = .byTruncatingMiddle
+            field.maximumNumberOfLines = 1
+            addSubview(field)
+        }
+
+        iconField.font = NSFont.systemFont(ofSize: 11, weight: .medium)
+        nameField.font = NSFont.systemFont(ofSize: 11, weight: .medium)
+        sizeField.font = NSFont.systemFont(ofSize: 9, weight: .regular)
+
+        NSLayoutConstraint.activate([
+            heightAnchor.constraint(equalToConstant: 26),
+
+            iconField.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            iconField.centerYAnchor.constraint(equalTo: centerYAnchor),
+            iconField.widthAnchor.constraint(equalToConstant: 14),
+
+            nameField.leadingAnchor.constraint(equalTo: iconField.trailingAnchor, constant: 5),
+            nameField.centerYAnchor.constraint(equalTo: centerYAnchor),
+            nameField.widthAnchor.constraint(lessThanOrEqualToConstant: 130),
+
+            sizeField.leadingAnchor.constraint(equalTo: nameField.trailingAnchor, constant: 5),
+            sizeField.centerYAnchor.constraint(equalTo: centerYAnchor),
+            sizeField.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -8),
+        ])
+
+        nameField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
+    func configure(attachment: Attachment, theme: any ThemeProtocol) {
+        layer?.backgroundColor = NSColor(theme.secondaryBackground).withAlphaComponent(0.7).cgColor
+
+        // Icon - use SF Symbol name from attachment
+        let symbolName = attachment.fileIcon
+        if let img = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil) {
+            let config = NSImage.SymbolConfiguration(pointSize: 11, weight: .medium)
+            iconField.attributedStringValue = NSAttributedString(
+                attachment: {
+                    let cell = NSTextAttachment()
+                    cell.image = img.withSymbolConfiguration(config)
+                    return cell
+                }()
+            )
+        }
+        iconField.textColor = NSColor(theme.accentColor)
+
+        nameField.stringValue = attachment.filename ?? "Document"
+        nameField.textColor = NSColor(theme.primaryText)
+
+        sizeField.stringValue = attachment.fileSizeFormatted ?? ""
+        sizeField.textColor = NSColor(theme.tertiaryText)
+
+        invalidateIntrinsicContentSize()
+    }
+}
+
 // MARK: - ContentBlockKindTag
 
 /// Lightweight discriminator used to detect kind changes without comparing full associated values.
@@ -1683,6 +1811,10 @@ enum NativeCellHeightEstimator {
                     let lines = max(1, (text.count + chars - 1) / chars)
                     h += CGFloat(lines) * 22 + 16
                 }
+            }
+            let docCount = attachments.filter(\.isDocument).count
+            if docCount > 0 {
+                h += 30 + 6  // chip height (~24) + padding + gap
             }
             h += CGFloat(attachments.filter(\.isImage).count) * 120
             return max(h, 64)
