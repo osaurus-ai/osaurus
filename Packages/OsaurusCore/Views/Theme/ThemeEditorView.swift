@@ -235,9 +235,6 @@ struct ThemeEditorView: View {
                     currentTheme.tertiaryText
                 ).textCase(.uppercase)
                 sliderRow("Corner Radius", value: $editingTheme.messages.bubbleCornerRadius, range: 0 ... 40)
-                sliderRow("Border Width", value: $editingTheme.messages.borderWidth, range: 0 ... 4)
-                Toggle("Edge Light", isOn: $editingTheme.messages.showEdgeLight)
-                    .font(.system(size: 13))
             }
         }
     }
@@ -911,7 +908,6 @@ struct ThemeChatPreview: View {
     private func previewUserMessage(_ content: String) -> some View {
         let radius = CGFloat(theme.messages.bubbleCornerRadius)
         let opacity = theme.messages.userBubbleOpacity
-        let borderWidth = CGFloat(theme.messages.borderWidth)
 
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
@@ -931,24 +927,6 @@ struct ThemeChatPreview: View {
         .background(
             RoundedRectangle(cornerRadius: radius, style: .continuous)
                 .fill(userBubbleColor.opacity(opacity))
-        )
-        .overlay(
-            Group {
-                if theme.messages.showEdgeLight {
-                    RoundedRectangle(cornerRadius: radius, style: .continuous)
-                        .strokeBorder(
-                            LinearGradient(
-                                colors: [
-                                    c(theme.colors.primaryBorder),
-                                    c(theme.colors.primaryBorder).opacity(0.4),
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            ),
-                            lineWidth: borderWidth
-                        )
-                }
-            }
         )
         .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
     }
