@@ -545,6 +545,22 @@ final class ToolRegistry: ObservableObject {
         listTools().filter { runtimeManagedToolNames.contains($0.name) }
     }
 
+    /// Dynamic tools eligible for on-demand loading (MCP, plugin, sandbox-plugin).
+    /// Excludes built-in and runtime-managed tools which are always loaded.
+    func listDynamicTools() -> [ToolEntry] {
+        let alwaysLoaded = builtInToolNames.union(runtimeManagedToolNames)
+        return listTools().filter { $0.enabled && !alwaysLoaded.contains($0.name) }
+    }
+
+    /// Returns the plugin or provider name that a tool belongs to, if any.
+    func groupName(for toolName: String) -> String? {
+        guard let tool = toolsByName[toolName] else { return nil }
+        if let ext = tool as? ExternalTool { return ext.pluginId }
+        if let mcp = tool as? MCPProviderTool { return mcp.providerName }
+        if let sandbox = tool as? SandboxPluginTool { return sandbox.plugin.id }
+        return nil
+    }
+
     static let capabilityToolNames: Set<String> = [
         "capabilities_search", "capabilities_load", "methods_save", "methods_report",
     ]
