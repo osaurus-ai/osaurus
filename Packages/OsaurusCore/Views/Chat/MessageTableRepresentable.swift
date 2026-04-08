@@ -120,6 +120,9 @@ struct MessageTableRepresentable: NSViewRepresentable {
             lastAssistantTurnId: lastAssistantTurnId,
             autoScrollEnabled: autoScrollEnabled
         )
+
+        // ensure the table column fills the scroll view width after layout changes
+        coordinator.tableView?.sizeLastColumnToFit()
     }
 
     // MARK: - View Factory Helpers
@@ -193,6 +196,8 @@ struct MessageTableRepresentable: NSViewRepresentable {
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("MessageColumn"))
         column.resizingMask = .autoresizingMask
         tv.addTableColumn(column)
+        tv.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
+        tv.sizeLastColumnToFit()
         return tv
     }
 
@@ -227,6 +232,10 @@ extension MessageTableRepresentable {
         let scrollAnchor = ScrollAnchorManager()
         /// Tracks the last observed trigger value so we only scroll once per tap.
         var lastScrollToBottomTrigger: Int = 0
+
+        /// Last known scroll view width. Used to detect actual frame changes from AppKit layout
+        private var lastKnownFrameWidth: CGFloat = 0
+        private var frameObserver: NSObjectProtocol?
 
         // MARK: Block State
 
@@ -310,7 +319,36 @@ extension MessageTableRepresentable {
             scrollAnchor.onScrolledToBottom = onScrolledToBottom
             scrollAnchor.onScrolledAwayFromBottom = onScrolledAwayFromBottom
             scrollAnchor.attach(to: scrollView, tableView: tableView)
+
+            // observe actual frame changes from AppKit layout (fires after
+            // SwiftUI has resized the hosting scroll view like sidebar toggle)
+            scrollView.postsFrameChangedNotifications = true
+            frameObserver = NotificationCenter.default.addObserver(
+                forName: NSView.frameDidChangeNotification,
+                object: scrollView,
+                queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    self?.handleScrollViewFrameChange()
+                }
+            }
         }
+
+        private func handleScrollViewFrameChange() {
+            guard let scrollView, let tableView else { return }
+            let newWidth = scrollView.contentView.bounds.width
+            guard abs(newWidth - lastKnownFrameWidth) > 1.0 else { return }
+            lastKnownFrameWidth = newWidth
+
+            // update ctx.width to match the real frame so height estimates are correct
+            ctx.width = newWidth
+            heightCache.removeAll()
+            tableView.sizeLastColumnToFit()
+
+            // reconfigure all visible cells with the corrected width
+            reconfigureAllCellsFromLookup(blockLookup)
+        }
+
 
         func setupHoverTracking(on tableView: HoverTrackingTableView) {
             tableView.onMouseMoved = { [weak self] event in

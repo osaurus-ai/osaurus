@@ -13,7 +13,7 @@ import QuartzCore
 
 /// Passed to NativeMessageCellView.configure() — bundles all rendering inputs.
 struct CellRenderingContext {
-    let width: CGFloat
+    var width: CGFloat
     let agentName: String
     let isStreaming: Bool
     let lastAssistantTurnId: UUID?
