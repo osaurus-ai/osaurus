@@ -349,7 +349,6 @@ extension MessageTableRepresentable {
             reconfigureAllCellsFromLookup(blockLookup)
         }
 
-
         func setupHoverTracking(on tableView: HoverTrackingTableView) {
             tableView.onMouseMoved = { [weak self] event in
                 self?.handleMouseMoved(with: event)
