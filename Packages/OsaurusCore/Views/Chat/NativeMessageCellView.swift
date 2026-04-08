@@ -45,7 +45,6 @@ struct CellRenderingContext {
 final class NativeHeaderView: NSView {
 
     private let nameLabel = NSTextField(labelWithString: "")
-    private let editingBadge = NSTextField(labelWithString: "Editing")
     private let actionStack = NSStackView()
     private var isEditing = false
 
@@ -74,11 +73,6 @@ final class NativeHeaderView: NSView {
         nameLabel.lineBreakMode = .byTruncatingTail
         addSubview(nameLabel)
 
-        editingBadge.translatesAutoresizingMaskIntoConstraints = false
-        editingBadge.isSelectable = true
-        editingBadge.isHidden = true
-        addSubview(editingBadge)
-
         actionStack.translatesAutoresizingMaskIntoConstraints = false
         actionStack.orientation = .horizontal
         actionStack.spacing = 4
@@ -91,8 +85,6 @@ final class NativeHeaderView: NSView {
         NSLayoutConstraint.activate([
             nameLabel.leadingAnchor.constraint(equalTo: leadingAnchor),
             nameLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
-            editingBadge.leadingAnchor.constraint(equalTo: nameLabel.trailingAnchor, constant: 6),
-            editingBadge.centerYAnchor.constraint(equalTo: centerYAnchor),
             actionStack.trailingAnchor.constraint(equalTo: trailingAnchor),
             actionStack.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
@@ -124,11 +116,6 @@ final class NativeHeaderView: NSView {
         nameLabel.stringValue = name
         nameLabel.font = NSFont.systemFont(ofSize: CGFloat(theme.captionSize) + 1, weight: .semibold)
         nameLabel.textColor = role == .user ? NSColor(theme.accentColor) : NSColor(theme.secondaryText)
-
-        editingBadge.stringValue = "Editing"
-        editingBadge.font = NSFont.systemFont(ofSize: CGFloat(theme.captionSize) - 1, weight: .medium)
-        editingBadge.textColor = NSColor(theme.accentColor).withAlphaComponent(0.7)
-        editingBadge.isHidden = !isEditing
 
         rebuildActionButtons(role: role, theme: theme, onCancelEdit: onCancelEdit)
         invalidateIntrinsicContentSize()
