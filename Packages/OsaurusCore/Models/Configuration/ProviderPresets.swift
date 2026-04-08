@@ -162,7 +162,7 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
                 port: nil,
                 basePath: "/v1",
                 authType: .apiKey,
-                providerType: .openai
+                providerType: .openai  // uses /responses API
             )
         case .google:
             return ProviderPresetConfiguration(
@@ -182,7 +182,7 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
                 port: nil,
                 basePath: "/v1",
                 authType: .apiKey,
-                providerType: .openai
+                providerType: .openaiCompatible
             )
         case .venice:
             return ProviderPresetConfiguration(
@@ -192,7 +192,7 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
                 port: nil,
                 basePath: "/api/v1",
                 authType: .apiKey,
-                providerType: .openai
+                providerType: .openaiCompatible
             )
         case .openrouter:
             return ProviderPresetConfiguration(
@@ -202,7 +202,7 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
                 port: nil,
                 basePath: "/api/v1",
                 authType: .apiKey,
-                providerType: .openai
+                providerType: .openaiCompatible
             )
         case .custom:
             return ProviderPresetConfiguration(
@@ -212,7 +212,7 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
                 port: nil,
                 basePath: "/v1",
                 authType: .apiKey,
-                providerType: .openai
+                providerType: .openaiCompatible
             )
         }
     }

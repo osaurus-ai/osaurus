@@ -34,15 +34,17 @@ public enum RemoteProviderAuthType: String, Codable, Sendable, CaseIterable {
 
 /// Type of remote provider (determines API format)
 public enum RemoteProviderType: String, Codable, Sendable, CaseIterable {
-    case openai = "openai"  // OpenAI-compatible API (default)
+    case openaiCompatible = "openai"  // OpenAI-compatible /chat/completions (third-party servers, backward compat)
+    case openai = "openaiNative"  // OpenAI via /responses API (official OpenAI endpoint)
     case anthropic = "anthropic"  // Anthropic Messages API
-    case openResponses = "openResponses"  // Open Responses API
+    case openResponses = "openResponses"  // Open Responses API (generic, any provider implementing the spec)
     case gemini = "gemini"  // Google Gemini API
     case osaurus = "osaurus"  // Native Osaurus agent — full server-side execution via /agents/{id}/run
 
     public var displayName: String {
         switch self {
-        case .openai: return "OpenAI Compatible"
+        case .openaiCompatible: return "OpenAI Compatible"
+        case .openai: return "OpenAI"
         case .anthropic: return "Anthropic"
         case .openResponses: return "Open Responses"
         case .gemini: return "Google Gemini"
@@ -52,7 +54,8 @@ public enum RemoteProviderType: String, Codable, Sendable, CaseIterable {
 
     public var chatEndpoint: String {
         switch self {
-        case .openai: return "/chat/completions"
+        case .openaiCompatible: return "/chat/completions"
+        case .openai: return "/responses"
         case .anthropic: return "/messages"
         case .openResponses: return "/responses"
         case .gemini: return "/models"  // Actual URL is built dynamically: /models/{model}:generateContent
@@ -104,7 +107,7 @@ public struct RemoteProvider: Codable, Identifiable, Sendable, Equatable {
         basePath: String = "/v1",
         customHeaders: [String: String] = [:],
         authType: RemoteProviderAuthType = .none,
-        providerType: RemoteProviderType = .openai,
+        providerType: RemoteProviderType = .openaiCompatible,
         enabled: Bool = true,
         autoConnect: Bool = true,
         timeout: TimeInterval = 60,
@@ -139,7 +142,7 @@ public struct RemoteProvider: Codable, Identifiable, Sendable, Equatable {
         basePath = try container.decodeIfPresent(String.self, forKey: .basePath) ?? "/v1"
         customHeaders = try container.decodeIfPresent([String: String].self, forKey: .customHeaders) ?? [:]
         authType = try container.decodeIfPresent(RemoteProviderAuthType.self, forKey: .authType) ?? .none
-        providerType = try container.decodeIfPresent(RemoteProviderType.self, forKey: .providerType) ?? .openai
+        providerType = try container.decodeIfPresent(RemoteProviderType.self, forKey: .providerType) ?? .openaiCompatible
         enabled = try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
         autoConnect = try container.decodeIfPresent(Bool.self, forKey: .autoConnect) ?? true
         timeout = try container.decodeIfPresent(TimeInterval.self, forKey: .timeout) ?? 60
@@ -250,7 +253,7 @@ public struct RemoteProvider: Codable, Identifiable, Sendable, Equatable {
                 if headers["x-goog-api-key"] == nil {
                     headers["x-goog-api-key"] = apiKey
                 }
-            case .openai, .openResponses, .osaurus:
+            case .openaiCompatible, .openai, .openResponses, .osaurus:
                 if headers["Authorization"] == nil {
                     headers["Authorization"] = "Bearer \(apiKey)"
                 }

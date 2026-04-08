@@ -57,13 +57,38 @@ public final class RemoteProviderManager: ObservableObject {
     /// Provider IDs created from Bonjour discovery — not persisted to disk
     private var ephemeralProviderIds: Set<UUID> = []
 
+    private static let openaiNativeMigratedKey = "remoteProvider.openaiNativeMigrated"
+
     private init() {
         self.configuration = RemoteProviderConfigurationStore.load()
+        migrateOpenAIProvidersToNativeIfNeeded()
 
         // Initialize states for all providers
         for provider in configuration.providers {
             providerStates[provider.id] = RemoteProviderState(providerId: provider.id)
         }
+    }
+
+    /// One-time migration: upgrade api.openai.com providers from .openaiCompatible (/chat/completions)
+    /// to .openai (/responses API), introduced when the two types were split.
+    private func migrateOpenAIProvidersToNativeIfNeeded() {
+        guard !UserDefaults.standard.bool(forKey: Self.openaiNativeMigratedKey) else { return }
+
+        var didChange = false
+        for i in configuration.providers.indices {
+            let host = configuration.providers[i].host.lowercased()
+            if configuration.providers[i].providerType == .openaiCompatible
+                && host.contains("openai.com")
+            {
+                configuration.providers[i].providerType = .openai
+                didChange = true
+            }
+        }
+
+        if didChange {
+            RemoteProviderConfigurationStore.save(configuration)
+        }
+        UserDefaults.standard.set(true, forKey: Self.openaiNativeMigratedKey)
     }
 
     // MARK: - Provider Management
@@ -343,7 +368,7 @@ public final class RemoteProviderManager: ObservableObject {
         port: Int?,
         basePath: String,
         authType: RemoteProviderAuthType,
-        providerType: RemoteProviderType = .openai,
+        providerType: RemoteProviderType = .openaiCompatible,
         apiKey: String?,
         headers: [String: String]
     ) async throws -> [String] {
@@ -378,7 +403,7 @@ public final class RemoteProviderManager: ObservableObject {
                 if testHeaders["x-goog-api-key"] == nil {
                     testHeaders["x-goog-api-key"] = apiKey
                 }
-            case .openai, .openResponses, .osaurus:
+            case .openaiCompatible, .openai, .openResponses, .osaurus:
                 if testHeaders["Authorization"] == nil {
                     testHeaders["Authorization"] = "Bearer \(apiKey)"
                 }
