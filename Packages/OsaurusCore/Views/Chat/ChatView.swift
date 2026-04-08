@@ -1336,8 +1336,8 @@ struct ChatView: View {
 
             HStack(alignment: .top, spacing: 0) {
                 // Sidebar
-                if windowState.showSidebar {
-                    VStack(alignment: .leading, spacing: 0) {
+                VStack(alignment: .leading, spacing: 0) {
+                    if windowState.showSidebar {
                         ChatSessionSidebar(
                             sessions: windowState.filteredSessions,
                             currentSessionId: session.sessionId,
@@ -1369,12 +1369,11 @@ struct ChatView: View {
                             }
                         )
                     }
-                    .frame(width: 240, alignment: .top)
-                    .frame(maxHeight: .infinity, alignment: .top)
-                    .padding(.top, 0)
-                    .zIndex(1)
-                    .transition(.move(edge: .leading).combined(with: .opacity))
                 }
+                .frame(width: sidebarWidth, alignment: .top)
+                .frame(maxHeight: .infinity, alignment: .top)
+                .clipped()
+                .zIndex(1)
 
                 // Main chat area
                 ZStack {
