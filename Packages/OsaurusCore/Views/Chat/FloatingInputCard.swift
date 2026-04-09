@@ -119,6 +119,7 @@ struct FloatingInputCard: View {
     // Local state for text input to prevent parent re-renders on every keystroke
     @State private var localText: String = ""
     @State private var isFocused: Bool = false
+    @State private var isComposing: Bool = false
     @Environment(\.theme) private var theme
     @Environment(\.colorScheme) private var colorScheme
     @State private var isDragOver = false
@@ -180,7 +181,7 @@ struct FloatingInputCard: View {
     }
 
     private var showPlaceholder: Bool {
-        localText.isEmpty && pendingAttachments.isEmpty
+        localText.isEmpty && pendingAttachments.isEmpty && !isComposing
     }
 
     /// Context tokens including what's currently being typed (localText may differ from text binding)
@@ -1917,6 +1918,7 @@ extension FloatingInputCard {
             textColor: theme.primaryText,
             cursorColor: theme.cursorColor,
             isFocused: $isFocused,
+            isComposing: $isComposing,
             maxHeight: maxHeight,
             onCommit: {
                 syncAndSend()

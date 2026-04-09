@@ -15,6 +15,7 @@ struct EditableTextView: NSViewRepresentable {
     let textColor: Color
     let cursorColor: Color
     @Binding var isFocused: Bool
+    @Binding var isComposing: Bool
     var maxHeight: CGFloat = .infinity
     var onCommit: (() -> Void)? = nil
     var onShiftCommit: (() -> Void)? = nil
@@ -57,6 +58,11 @@ struct EditableTextView: NSViewRepresentable {
         textView.isAutomaticQuoteSubstitutionEnabled = false
         textView.isAutomaticDashSubstitutionEnabled = false
         textView.isAutomaticTextReplacementEnabled = false
+
+        let coordinator = context.coordinator
+        textView.onMarkedTextChanged = { [weak coordinator] composing in
+            coordinator?.parent.isComposing = composing
+        }
 
         scrollView.documentView = textView
 
@@ -156,6 +162,7 @@ struct EditableTextView: NSViewRepresentable {
 
         func textDidEndEditing(_ notification: Notification) {
             parent.isFocused = false
+            parent.isComposing = false
         }
 
         func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
@@ -188,6 +195,18 @@ final class AutoSizingScrollView: NSScrollView {
 // Custom NSTextView to handle cursor color and sizing
 final class CustomNSTextView: NSTextView {
     var maxHeight: CGFloat = .infinity
+    /// Called when IME marked-text state changes (composing / not composing)
+    var onMarkedTextChanged: ((Bool) -> Void)?
+
+    override func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
+        super.setMarkedText(string, selectedRange: selectedRange, replacementRange: replacementRange)
+        onMarkedTextChanged?(hasMarkedText())
+    }
+
+    override func unmarkText() {
+        super.unmarkText()
+        onMarkedTextChanged?(false)
+    }
 
     /// Total height required to display the content without scrolling
     var contentHeight: CGFloat {
