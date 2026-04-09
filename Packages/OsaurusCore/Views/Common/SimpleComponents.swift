@@ -509,11 +509,11 @@ struct SystemResourceMonitor: View {
                     Image(systemName: "cpu")
                         .font(.system(size: 11, weight: .medium))
                         .foregroundColor(theme.secondaryText)
-                    Text("CPU")
+                    Text("CPU", bundle: .module)
                         .font(.system(size: 11, weight: .medium))
                         .foregroundColor(theme.secondaryText)
                     Spacer()
-                    Text("\(Int(monitor.cpuUsage))%")
+                    Text("\(Int(monitor.cpuUsage))%", bundle: .module)
                         .font(.system(size: 11, weight: .semibold, design: .monospaced))
                         .foregroundColor(colorForUsage(monitor.cpuUsage))
                         .contentTransition(.numericText())
@@ -522,14 +522,14 @@ struct SystemResourceMonitor: View {
                 ProgressView(value: monitor.cpuUsage / 100.0)
                     .progressViewStyle(MinimalProgressViewStyle(color: colorForUsage(monitor.cpuUsage)))
                     .frame(height: 4)
-                    .help("CPU Usage: \(String(format: "%.1f", monitor.cpuUsage))%")
+                    .help(Text("CPU Usage: \(String(format: "%.1f", monitor.cpuUsage))%", bundle: .module))
                     .onHover { hovering in
                         isHoveringCPU = hovering
                     }
                     .overlay(
                         Group {
                             if isHoveringCPU {
-                                Text("\(String(format: "%.1f", monitor.cpuUsage))%")
+                                Text("\(String(format: "%.1f", monitor.cpuUsage))%", bundle: .module)
                                     .font(.system(size: 10, weight: .medium, design: .monospaced))
                                     .foregroundColor(theme.primaryText)
                                     .padding(.horizontal, 8)
@@ -557,7 +557,7 @@ struct SystemResourceMonitor: View {
                     Image(systemName: "memorychip")
                         .font(.system(size: 11, weight: .medium))
                         .foregroundColor(theme.secondaryText)
-                    Text("RAM")
+                    Text("RAM", bundle: .module)
                         .font(.system(size: 11, weight: .medium))
                         .foregroundColor(theme.secondaryText)
 
@@ -568,7 +568,7 @@ struct SystemResourceMonitor: View {
                                 .font(.system(size: 9, weight: .medium))
 
                             if cachedModelCount > 0 {
-                                Text("\(cachedModelCount)")
+                                Text("\(cachedModelCount)", bundle: .module)
                                     .font(.system(size: 9, weight: .semibold, design: .monospaced))
                                     .contentTransition(.numericText())
                             }
@@ -594,11 +594,11 @@ struct SystemResourceMonitor: View {
                             isHoveringModels = hovering
                         }
                     }
-                    .help("Loaded Models\(cachedModelCount > 0 ? " (\(cachedModelCount))" : "")")
+                    .help(Text("Loaded Models\(cachedModelCount > 0 ? " (\(cachedModelCount))" : "")", bundle: .module))
 
                     Spacer()
 
-                    Text("\(Int(monitor.memoryUsage))%")
+                    Text("\(Int(monitor.memoryUsage))%", bundle: .module)
                         .font(.system(size: 11, weight: .semibold, design: .monospaced))
                         .foregroundColor(colorForUsage(monitor.memoryUsage))
                         .contentTransition(.numericText())
@@ -608,7 +608,7 @@ struct SystemResourceMonitor: View {
                     .progressViewStyle(MinimalProgressViewStyle(color: colorForUsage(monitor.memoryUsage)))
                     .frame(height: 4)
                     .help(
-                        "Memory: \(String(format: "%.1f", monitor.usedMemoryGB)) GB / \(String(format: "%.1f", monitor.totalMemoryGB)) GB"
+                        Text("Memory: \(String(format: "%.1f", monitor.usedMemoryGB)) GB / \(String(format: "%.1f", monitor.totalMemoryGB)) GB", bundle: .module)
                     )
                     .onHover { hovering in
                         isHoveringRAM = hovering
@@ -617,7 +617,7 @@ struct SystemResourceMonitor: View {
                         Group {
                             if isHoveringRAM {
                                 Text(
-                                    "\(String(format: "%.1f", monitor.usedMemoryGB)) / \(String(format: "%.1f", monitor.totalMemoryGB)) GB"
+                                    "\(String(format: "%.1f", monitor.usedMemoryGB)) / \(String(format: "%.1f", monitor.totalMemoryGB)) GB", bundle: .module
                                 )
                                 .font(.system(size: 10, weight: .medium, design: .monospaced))
                                 .foregroundColor(theme.primaryText)

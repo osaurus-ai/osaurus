@@ -85,7 +85,7 @@ struct ChatEmptyState: View {
                         .offset(y: hasAppeared ? 0 : 20)
                         .animation(theme.springAnimation().delay(0.1), value: hasAppeared)
 
-                    Text("How can I help you today?")
+                    Text("How can I help you today?", bundle: .module)
                         .font(theme.font(size: CGFloat(theme.bodySize) + 2))
                         .foregroundColor(theme.secondaryText)
                         .opacity(hasAppeared ? 1 : 0)
@@ -147,10 +147,10 @@ struct ChatEmptyState: View {
     private var greeting: String {
         let hour = Calendar.current.component(.hour, from: Date())
         switch hour {
-        case 5 ..< 12: return "Good morning"
-        case 12 ..< 17: return "Good afternoon"
-        case 17 ..< 22: return "Good evening"
-        default: return "Hello"
+        case 5 ..< 12: return L("Good morning")
+        case 12 ..< 17: return L("Good afternoon")
+        case 17 ..< 22: return L("Good evening")
+        default: return L("Hello")
         }
     }
 }
@@ -236,14 +236,14 @@ private struct ChatEmptyStateNoModels: View {
                 .animation(theme.springAnimation().delay(0.0), value: hasAppeared)
 
             VStack(spacing: 8) {
-                Text("One more step")
+                Text("One more step", bundle: .module)
                     .font(theme.font(size: CGFloat(theme.titleSize) + 4, weight: .semibold))
                     .foregroundColor(theme.primaryText)
                     .opacity(hasAppeared ? 1 : 0)
                     .offset(y: hasAppeared ? 0 : 20)
                     .animation(theme.springAnimation().delay(0.1), value: hasAppeared)
 
-                Text("Osaurus needs an AI to work — either a cloud provider or a local model.")
+                Text("Osaurus needs an AI to work — either a cloud provider or a local model.", bundle: .module)
                     .font(theme.font(size: CGFloat(theme.bodySize) + 2))
                     .foregroundColor(theme.secondaryText)
                     .multilineTextAlignment(.center)
@@ -273,7 +273,7 @@ private struct ChatEmptyStateNoModels: View {
                 .animation(theme.springAnimation().delay(0.0), value: hasAppeared)
 
             VStack(spacing: 8) {
-                Text("Almost ready...")
+                Text("Almost ready...", bundle: .module)
                     .font(theme.font(size: CGFloat(theme.titleSize) + 4, weight: .semibold))
                     .foregroundColor(theme.primaryText)
                     .opacity(hasAppeared ? 1 : 0)
@@ -281,7 +281,7 @@ private struct ChatEmptyStateNoModels: View {
                     .animation(theme.springAnimation().delay(0.1), value: hasAppeared)
 
                 if let name = downloadingModelName {
-                    Text("Downloading \(name)")
+                    Text("Downloading \(name)", bundle: .module)
                         .font(theme.font(size: CGFloat(theme.bodySize) + 2))
                         .foregroundColor(theme.secondaryText)
                         .multilineTextAlignment(.center)
@@ -306,7 +306,7 @@ private struct ChatEmptyStateNoModels: View {
                                 .foregroundColor(theme.tertiaryText)
                         }
                         Spacer()
-                        Text("\(Int(progress * 100))%")
+                        Text("\(Int(progress * 100))%", bundle: .module)
                             .font(theme.font(size: 12, weight: .medium).monospaced())
                             .foregroundColor(theme.tertiaryText)
                     }
@@ -392,7 +392,7 @@ private struct GetStartedButton: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 8) {
-                Text("Finish setup")
+                Text("Finish setup", bundle: .module)
                     .font(.system(size: 14, weight: .semibold))
 
                 Image(systemName: "arrow.right")

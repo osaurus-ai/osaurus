@@ -152,7 +152,7 @@ private extension ManagementView {
         case .settings:
             ConfigurationView(searchText: $searchText)
         case .none:
-            Text("Unknown tab")
+            Text("Unknown tab", bundle: .module)
         }
     }
 }

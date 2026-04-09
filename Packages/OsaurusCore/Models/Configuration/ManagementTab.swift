@@ -54,23 +54,23 @@ public enum ManagementTab: String, CaseIterable, Identifiable {
 
     public var label: String {
         switch self {
-        case .models: "Models"
-        case .providers: "Providers"
-        case .agents: "Agents"
-        case .plugins: "Plugins"
-        case .sandbox: "Sandbox"
-        case .tools: "Tools"
-        case .skills: "Skills"
-        case .memory: "Memory"
-        case .schedules: "Schedules"
-        case .watchers: "Watchers"
-        case .voice: "Voice"
-        case .themes: "Themes"
-        case .insights: "Insights"
-        case .server: "Server"
-        case .permissions: "Permissions"
-        case .identity: "Identity"
-        case .settings: "Settings"
+        case .models: L("Models")
+        case .providers: L("Providers")
+        case .agents: L("Agents")
+        case .plugins: L("Plugins")
+        case .sandbox: L("Sandbox")
+        case .tools: L("Tools")
+        case .skills: L("Skills")
+        case .memory: L("Memory")
+        case .schedules: L("Schedules")
+        case .watchers: L("Watchers")
+        case .voice: L("Voice")
+        case .themes: L("Themes")
+        case .insights: L("Insights")
+        case .server: L("Server")
+        case .permissions: L("Permissions")
+        case .identity: L("Identity")
+        case .settings: L("Settings")
         }
     }
 

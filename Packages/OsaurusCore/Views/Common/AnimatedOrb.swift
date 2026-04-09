@@ -236,19 +236,19 @@ private struct OrbShaderContent: View {
                 HStack(spacing: 30) {
                     VStack {
                         AnimatedOrb(color: .blue, size: .tiny)
-                        Text("Tiny").font(.caption)
+                        Text("Tiny", bundle: .module).font(.caption)
                     }
                     VStack {
                         AnimatedOrb(color: .purple, size: .small, seed: "Toast")
-                        Text("Small").font(.caption)
+                        Text("Small", bundle: .module).font(.caption)
                     }
                     VStack {
                         AnimatedOrb(color: .orange, size: .medium, seed: "Default")
-                        Text("Medium").font(.caption)
+                        Text("Medium", bundle: .module).font(.caption)
                     }
                     VStack {
                         AnimatedOrb(color: .green, size: .large, seed: "Hero")
-                        Text("Large").font(.caption)
+                        Text("Large", bundle: .module).font(.caption)
                     }
                 }
 

@@ -136,7 +136,7 @@ struct MarkdownImageView: View {
             ProgressView()
                 .scaleEffect(0.8)
                 .progressViewStyle(CircularProgressViewStyle(tint: theme.tertiaryText))
-            Text("Loading image...")
+            Text("Loading image...", bundle: .module)
                 .font(.system(size: 12))
                 .foregroundColor(theme.tertiaryText)
         }
@@ -149,7 +149,7 @@ struct MarkdownImageView: View {
                 .foregroundColor(theme.tertiaryText)
 
             VStack(spacing: 4) {
-                Text("Failed to load image")
+                Text("Failed to load image", bundle: .module)
                     .font(.system(size: 13, weight: .medium))
                     .foregroundColor(theme.secondaryText)
                 if !altText.isEmpty {
@@ -164,7 +164,7 @@ struct MarkdownImageView: View {
                 HStack(spacing: 4) {
                     Image(systemName: "arrow.clockwise")
                         .font(.system(size: 11, weight: .medium))
-                    Text("Retry")
+                    Text("Retry", bundle: .module)
                         .font(.system(size: 12, weight: .medium))
                 }
                 .foregroundColor(theme.accentColor)
@@ -302,18 +302,18 @@ struct ImageContextMenuItems: View {
         Button {
             ImageActions.saveImageToFile(image)
         } label: {
-            Label("Save Image\u{2026}", systemImage: "arrow.down.to.line")
+            Label { Text("Save Image\u{2026}", bundle: .module) } icon: { Image(systemName: "arrow.down.to.line") }
         }
         Button {
             ImageActions.copyImageToClipboard(image)
         } label: {
-            Label("Copy Image", systemImage: "doc.on.doc")
+            Label { Text("Copy Image", bundle: .module) } icon: { Image(systemName: "doc.on.doc") }
         }
         Divider()
         Button {
             onFullScreen()
         } label: {
-            Label("Open Full Screen", systemImage: "arrow.up.left.and.arrow.down.right")
+            Label { Text("Open Full Screen", bundle: .module) } icon: { Image(systemName: "arrow.up.left.and.arrow.down.right") }
         }
     }
 }
@@ -433,7 +433,7 @@ struct ImageFullScreenView: View {
                                 .shadow(radius: 4)
                         }
                         .buttonStyle(.plain)
-                        .help("Save Image")
+                        .help(Text("Save Image", bundle: .module))
                     }
                     Button(action: { close() }) {
                         Image(systemName: "xmark.circle.fill")

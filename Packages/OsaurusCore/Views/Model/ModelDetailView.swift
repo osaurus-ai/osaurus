@@ -182,7 +182,7 @@ struct ModelDetailView: View, Identifiable {
                     HStack(spacing: 5) {
                         Text("🤗")
                             .font(.system(size: 12))
-                        Text("View on Hugging Face")
+                        Text("View on Hugging Face", bundle: .module)
                             .font(.system(size: 12, weight: .medium))
                         Image(systemName: "arrow.up.right")
                             .font(.system(size: 9, weight: .semibold))
@@ -284,7 +284,7 @@ struct ModelDetailView: View, Identifiable {
     private var modelDetailsCard: some View {
         VStack(alignment: .leading, spacing: 14) {
             // Card Header
-            Text("Model Details")
+            Text("Model Details", bundle: .module)
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundColor(theme.primaryText)
 
@@ -334,7 +334,7 @@ struct ModelDetailView: View, Identifiable {
     private var downloadInfoCard: some View {
         VStack(alignment: .leading, spacing: 14) {
             // Card Header
-            Text("Download")
+            Text("Download", bundle: .module)
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundColor(theme.primaryText)
 
@@ -344,7 +344,7 @@ struct ModelDetailView: View, Identifiable {
                     Image(systemName: "internaldrive.fill")
                         .font(.system(size: 12))
                         .foregroundColor(theme.secondaryText)
-                    Text("Estimated Size")
+                    Text("Estimated Size", bundle: .module)
                         .font(.system(size: 13))
                         .foregroundColor(theme.secondaryText)
                 }
@@ -367,7 +367,7 @@ struct ModelDetailView: View, Identifiable {
                                 .foregroundColor(theme.accentColor)
                         }
                         .buttonStyle(PlainButtonStyle())
-                        .help("Recalculate size")
+                        .help(Text("Recalculate size", bundle: .module))
                     }
                 }
             }
@@ -418,7 +418,7 @@ struct ModelDetailView: View, Identifiable {
     private var notStartedFooter: some View {
         HStack(spacing: 12) {
             Button(action: { dismiss() }) {
-                Text("Cancel")
+                Text("Cancel", bundle: .module)
                     .font(.system(size: 13, weight: .medium))
                     .foregroundColor(theme.secondaryText)
             }
@@ -433,7 +433,7 @@ struct ModelDetailView: View, Identifiable {
                 HStack(spacing: 6) {
                     Image(systemName: "arrow.down.circle")
                         .font(.system(size: 13))
-                    Text("Download")
+                    Text("Download", bundle: .module)
                         .font(.system(size: 14, weight: .semibold))
                 }
                 .foregroundColor(.white)
@@ -465,7 +465,7 @@ struct ModelDetailView: View, Identifiable {
 
             // Info row
             HStack {
-                Text("\(Int(progress * 100))%")
+                Text("\(Int(progress * 100))%", bundle: .module)
                     .font(.system(size: 12, weight: .semibold, design: .monospaced))
                     .foregroundColor(theme.primaryText)
 
@@ -480,7 +480,7 @@ struct ModelDetailView: View, Identifiable {
                 Spacer()
 
                 Button(action: { modelManager.cancelDownload(model.id) }) {
-                    Text("Cancel")
+                    Text("Cancel", bundle: .module)
                         .font(.system(size: 12, weight: .medium))
                         .foregroundColor(theme.errorColor)
                 }
@@ -495,7 +495,7 @@ struct ModelDetailView: View, Identifiable {
                 modelManager.deleteModel(model)
                 dismiss()
             }) {
-                Text("Delete Model")
+                Text("Delete Model", bundle: .module)
                     .font(.system(size: 13, weight: .medium))
                     .foregroundColor(theme.errorColor)
             }
@@ -504,7 +504,7 @@ struct ModelDetailView: View, Identifiable {
             Spacer()
 
             Button(action: { dismiss() }) {
-                Text("Done")
+                Text("Done", bundle: .module)
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(.white)
                     .padding(.horizontal, 18)
@@ -542,7 +542,7 @@ struct ModelDetailView: View, Identifiable {
         if let s = estimatedSize, s > 0 {
             return ByteCountFormatter.string(fromByteCount: s, countStyle: .file)
         }
-        return "Unknown"
+        return L("Unknown")
     }
 
     /// Fetches download size estimation from the model manager if not already calculated
@@ -675,7 +675,7 @@ private struct CopyModelIdButton: View {
         .onHover { hovering in
             isHovering = hovering
         }
-        .help("Copy '\(modelId)' for API usage")
+        .help(Text("Copy '\(modelId)' for API usage", bundle: .module))
     }
 
     private func copyModelId() {
@@ -798,7 +798,7 @@ private struct RequiredFilesSection: View {
                 }
             }) {
                 HStack {
-                    Text("Required Files")
+                    Text("Required Files", bundle: .module)
                         .font(.system(size: 12))
                         .foregroundColor(theme.secondaryText)
 

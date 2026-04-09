@@ -1861,11 +1861,11 @@ private struct BonjourTokenSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             VStack(alignment: .leading, spacing: 6) {
-                Text("Connect to \(agentName)")
+                Text("Connect to \(agentName)", bundle: .module)
                     .font(theme.font(size: 16, weight: .semibold))
                     .foregroundColor(theme.primaryText)
 
-                Text("Enter the server token for this agent, or leave blank if none is required.")
+                Text("Enter the server token for this agent, or leave blank if none is required.", bundle: .module)
                     .font(theme.font(size: 13))
                     .foregroundColor(theme.secondaryText)
                     .fixedSize(horizontal: false, vertical: true)
@@ -1876,10 +1876,10 @@ private struct BonjourTokenSheet: View {
                 .font(theme.font(size: 13))
 
             HStack {
-                Button("Cancel") { onCancel() }
+                Button { onCancel() } label: { Text("Cancel", bundle: .module) }
                     .keyboardShortcut(.cancelAction)
                 Spacer()
-                Button("Connect") { onConnect(token) }
+                Button { onConnect(token) } label: { Text("Connect", bundle: .module) }
                     .keyboardShortcut(.defaultAction)
                     .buttonStyle(.borderedProminent)
             }

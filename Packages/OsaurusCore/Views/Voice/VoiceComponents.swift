@@ -427,10 +427,10 @@ public enum VoiceState: Equatable {
 
     var label: String {
         switch self {
-        case .idle: return "Ready"
-        case .listening: return "Listening"
-        case .processing: return "Processing"
-        case .ready: return "Done"
+        case .idle: return L("Ready")
+        case .listening: return L("Listening")
+        case .processing: return L("Processing")
+        case .ready: return L("Done")
         case .error(let message): return message
         }
     }
@@ -606,7 +606,7 @@ public struct CountdownRingButton: View {
                         .animation(.linear(duration: 0.1), value: progress)
 
                     // Number
-                    Text("\(currentSecond)")
+                    Text("\(currentSecond)", bundle: .module)
                         .font(.system(size: 14, weight: .semibold, design: .monospaced))
                         .foregroundColor(theme.primaryText)
                         .contentTransition(.numericText())
@@ -614,10 +614,10 @@ public struct CountdownRingButton: View {
 
                 // Label
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Sending...")
+                    Text("Sending...", bundle: .module)
                         .font(.system(size: 13, weight: .medium))
                         .foregroundColor(theme.primaryText)
-                    Text("Tap to cancel")
+                    Text("Tap to cancel", bundle: .module)
                         .font(.system(size: 11))
                         .foregroundColor(theme.tertiaryText)
                 }
@@ -735,7 +735,7 @@ public struct PauseDetectionRing: View {
             }
 
             if !isSpeaking {
-                Text("Pause to send")
+                Text("Pause to send", bundle: .module)
                     .font(.system(size: 11))
                     .foregroundColor(theme.tertiaryText)
             }
@@ -825,7 +825,7 @@ public struct SilenceTimeoutIndicator: View {
             HStack(spacing: 4) {
                 Image(systemName: "clock")
                     .font(.system(size: 9))
-                Text("Closing in \(Int(remainingTime))s")
+                Text("Closing in \(Int(remainingTime))s", bundle: .module)
                     .font(.system(size: 10, weight: .medium))
                     .contentTransition(.numericText())
             }
@@ -914,7 +914,7 @@ public struct CountdownTimerView: View {
                     .rotationEffect(.degrees(-90))
                     .animation(.linear(duration: 0.1), value: progress)
 
-                Text("\(Int(ceil(remaining)))")
+                Text("\(Int(ceil(remaining)))", bundle: .module)
                     .font(.system(size: 12, weight: .bold, design: .monospaced))
                     .foregroundColor(theme.primaryText)
                     .contentTransition(.numericText())
@@ -925,7 +925,7 @@ public struct CountdownTimerView: View {
                     .font(.system(size: 13, weight: .medium))
                     .foregroundColor(theme.primaryText)
 
-                Text("Tap to cancel")
+                Text("Tap to cancel", bundle: .module)
                     .font(.system(size: 11))
                     .foregroundColor(theme.tertiaryText)
             }
@@ -1005,7 +1005,7 @@ public struct CountdownTimerView: View {
 
                 // Pause detection indicator
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Pause Detection")
+                    Text("Pause Detection", bundle: .module)
                         .font(.system(size: 11, weight: .medium))
                         .foregroundColor(.gray)
 
@@ -1026,7 +1026,7 @@ public struct CountdownTimerView: View {
 
                 // Countdown button
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Countdown")
+                    Text("Countdown", bundle: .module)
                         .font(.system(size: 11, weight: .medium))
                         .foregroundColor(.gray)
 
@@ -1038,7 +1038,7 @@ public struct CountdownTimerView: View {
 
                 // Silence timeout
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Silence Timeout")
+                    Text("Silence Timeout", bundle: .module)
                         .font(.system(size: 11, weight: .medium))
                         .foregroundColor(.gray)
 

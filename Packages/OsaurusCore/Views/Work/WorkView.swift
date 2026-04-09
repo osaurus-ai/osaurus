@@ -429,7 +429,7 @@ private struct WorkStatusButton: View {
         HStack(spacing: 3) {
             Image(systemName: systemName)
                 .font(.system(size: 9, weight: .medium))
-            Text("\(count)")
+            Text("\(count)", bundle: .module)
                 .font(.system(size: 10, weight: .medium, design: .rounded))
         }
         .foregroundColor(theme.tertiaryText)
@@ -519,11 +519,11 @@ extension WorkView {
                 .font(theme.font(size: 32, weight: .regular))
                 .foregroundColor(theme.tertiaryText)
 
-            Text("No execution history")
+            Text("No execution history", bundle: .module)
                 .font(theme.font(size: CGFloat(theme.bodySize) + 1, weight: .medium))
                 .foregroundColor(theme.secondaryText)
 
-            Text("Select an issue to view its details, or run it to see live execution.")
+            Text("Select an issue to view its details, or run it to see live execution.", bundle: .module)
                 .font(theme.font(size: CGFloat(theme.captionSize), weight: .regular))
                 .foregroundColor(theme.tertiaryText)
                 .multilineTextAlignment(.center)
@@ -592,7 +592,7 @@ extension WorkView {
                     HStack(spacing: 6) {
                         Image(systemName: "arrow.clockwise")
                             .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .semibold))
-                        Text("Retry")
+                        Text("Retry", bundle: .module)
                             .font(theme.font(size: CGFloat(theme.captionSize), weight: .semibold))
                     }
                     .foregroundColor(.white)
@@ -914,7 +914,7 @@ struct ArtifactViewerSheet: View {
         }
         .buttonStyle(.plain)
         .fixedSize()
-        .help("Copy content to clipboard")
+        .help(Text("Copy content to clipboard", bundle: .module))
         .onHover { isHoveringCopy = $0 }
         .animation(.easeOut(duration: 0.15), value: isHoveringCopy)
         .animation(.easeOut(duration: 0.2), value: isCopied)
@@ -927,7 +927,7 @@ struct ArtifactViewerSheet: View {
             HStack(spacing: 6) {
                 Image(systemName: "arrow.up.forward.app")
                     .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                Text("Open with\u{2026}")
+                Text("Open with\u{2026}", bundle: .module)
                     .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .medium))
             }
             .fixedSize(horizontal: true, vertical: false)
@@ -945,7 +945,7 @@ struct ArtifactViewerSheet: View {
         }
         .buttonStyle(.plain)
         .fixedSize()
-        .help("Open with default application")
+        .help(Text("Open with default application", bundle: .module))
         .onHover { isHoveringOpen = $0 }
         .animation(.easeOut(duration: 0.15), value: isHoveringOpen)
     }
@@ -960,7 +960,7 @@ struct ArtifactViewerSheet: View {
                     HStack(spacing: 6) {
                         Image(systemName: "folder")
                             .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                        Text("Reveal in Finder")
+                        Text("Reveal in Finder", bundle: .module)
                             .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .medium))
                     }
                     .foregroundColor(isHoveringDownload ? theme.primaryText : theme.secondaryText)
@@ -989,7 +989,7 @@ struct ArtifactViewerSheet: View {
                     .strokeBorder(theme.primaryBorder.opacity(isHoveringDownload ? 0.2 : 0.1), lineWidth: 1)
             )
             .fixedSize()
-            .help("Reveal in Finder or export as PDF")
+            .help(Text("Reveal in Finder or export as PDF", bundle: .module))
             .onHover { isHoveringDownload = $0 }
             .animation(.easeOut(duration: 0.15), value: isHoveringDownload)
         } else {
@@ -999,7 +999,7 @@ struct ArtifactViewerSheet: View {
                 HStack(spacing: 6) {
                     Image(systemName: "folder")
                         .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                    Text("Reveal in Finder")
+                    Text("Reveal in Finder", bundle: .module)
                         .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .medium))
                 }
                 .fixedSize(horizontal: true, vertical: false)
@@ -1016,7 +1016,7 @@ struct ArtifactViewerSheet: View {
             }
             .buttonStyle(.plain)
             .fixedSize()
-            .help("Reveal in Finder")
+            .help(Text("Reveal in Finder", bundle: .module))
             .onHover { isHoveringDownload = $0 }
             .animation(.easeOut(duration: 0.15), value: isHoveringDownload)
         }
@@ -1094,7 +1094,7 @@ struct ArtifactViewerSheet: View {
                 HStack(spacing: 6) {
                     Image(systemName: "folder")
                         .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                    Text("Reveal in Finder")
+                    Text("Reveal in Finder", bundle: .module)
                         .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
                 }
                 .foregroundColor(theme.accentColor)
@@ -1114,7 +1114,7 @@ struct ArtifactViewerSheet: View {
         return HStack(alignment: .top, spacing: 0) {
             LazyVStack(alignment: .trailing, spacing: 0) {
                 ForEach(Array(lines.enumerated()), id: \.offset) { index, _ in
-                    Text("\(index + 1)")
+                    Text("\(index + 1)", bundle: .module)
                         .font(.system(size: CGFloat(theme.captionSize), design: .monospaced))
                         .foregroundColor(theme.tertiaryText.opacity(0.5))
                         .frame(height: 20)
@@ -1711,7 +1711,7 @@ private struct AudioPlayerView: View {
                                 .font(.system(size: 10, weight: .medium, design: .monospaced))
                                 .foregroundColor(theme.tertiaryText)
                             Spacer()
-                            Text("-\(formatTime(max(0, duration - currentTime)))")
+                            Text("-\(formatTime(max(0, duration - currentTime)))", bundle: .module)
                                 .font(.system(size: 10, weight: .medium, design: .monospaced))
                                 .foregroundColor(theme.tertiaryText)
                         }

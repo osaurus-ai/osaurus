@@ -78,7 +78,7 @@ struct ThemesView: View {
                             // Built-in themes
                             if !builtInThemes.isEmpty {
                                 themesSection(
-                                    title: "Built-in Themes",
+                                    title: L("Built-in Themes"),
                                     count: builtInThemes.count,
                                     themes: builtInThemes
                                 )
@@ -188,8 +188,8 @@ struct ThemesView: View {
 
     private var headerView: some View {
         ManagerHeaderWithActions(
-            title: "Themes",
-            subtitle: "Customize the look and feel of your chat interface",
+            title: L("Themes"),
+            subtitle: L("Customize the look and feel of your chat interface"),
             count: isLoading || installedThemes.isEmpty ? nil : installedThemes.count
         ) {
             HeaderIconButton("arrow.clockwise", help: "Refresh themes") {
@@ -210,7 +210,7 @@ struct ThemesView: View {
         VStack(spacing: 16) {
             ProgressView()
                 .scaleEffect(1.2)
-            Text("Loading themes...")
+            Text("Loading themes...", bundle: .module)
                 .font(.system(size: 14))
                 .foregroundColor(theme.secondaryText)
         }
@@ -224,7 +224,7 @@ struct ThemesView: View {
                 .foregroundColor(theme.warningColor)
 
             VStack(spacing: 4) {
-                Text("Failed to Load Themes")
+                Text("Failed to Load Themes", bundle: .module)
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundColor(theme.primaryText)
 
@@ -236,7 +236,7 @@ struct ThemesView: View {
 
             HStack(spacing: 12) {
                 Button(action: { loadThemes() }) {
-                    Label("Retry", systemImage: "arrow.clockwise")
+                    Label { Text("Retry", bundle: .module) } icon: { Image(systemName: "arrow.clockwise") }
                         .font(.system(size: 13, weight: .medium))
                 }
                 .buttonStyle(.borderedProminent)
@@ -244,7 +244,7 @@ struct ThemesView: View {
                 Button(action: {
                     themeManager.forceReinstallBuiltInThemes(); loadThemes()
                 }) {
-                    Label("Reinstall Built-ins", systemImage: "arrow.triangle.2.circlepath")
+                    Label { Text("Reinstall Built-ins", bundle: .module) } icon: { Image(systemName: "arrow.triangle.2.circlepath") }
                         .font(.system(size: 13, weight: .medium))
                 }
                 .buttonStyle(.bordered)
@@ -261,11 +261,11 @@ struct ThemesView: View {
                 .foregroundColor(theme.tertiaryText)
 
             VStack(spacing: 4) {
-                Text("No Themes Found")
+                Text("No Themes Found", bundle: .module)
                     .font(.system(size: 18, weight: .semibold))
                     .foregroundColor(theme.primaryText)
 
-                Text("Themes could not be loaded. Try reinstalling the built-in themes.")
+                Text("Themes could not be loaded. Try reinstalling the built-in themes.", bundle: .module)
                     .font(.system(size: 13))
                     .foregroundColor(theme.secondaryText)
                     .multilineTextAlignment(.center)
@@ -274,7 +274,7 @@ struct ThemesView: View {
             Button(action: {
                 themeManager.forceReinstallBuiltInThemes(); loadThemes()
             }) {
-                Label("Install Built-in Themes", systemImage: "arrow.down.circle")
+                Label { Text("Install Built-in Themes", bundle: .module) } icon: { Image(systemName: "arrow.down.circle") }
                     .font(.system(size: 13, weight: .medium))
             }
             .buttonStyle(.borderedProminent)
@@ -323,7 +323,7 @@ struct ThemesView: View {
                         .font(.system(size: 14))
                         .foregroundColor(theme.successColor)
 
-                    Text("Currently Active")
+                    Text("Currently Active", bundle: .module)
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundColor(theme.primaryText)
 
@@ -347,7 +347,7 @@ struct ThemesView: View {
                     HStack(spacing: 4) {
                         Image(systemName: "arrow.uturn.backward")
                             .font(.system(size: 10, weight: .semibold))
-                        Text("Reset to Default")
+                        Text("Reset to Default", bundle: .module)
                             .font(.system(size: 12, weight: .medium))
                     }
                     .foregroundColor(theme.secondaryText)
@@ -381,7 +381,7 @@ struct ThemesView: View {
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundColor(theme.primaryText)
 
-                Text("\(count)")
+                Text("\(count)", bundle: .module)
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(theme.secondaryText)
                     .padding(.horizontal, 6)
@@ -442,11 +442,11 @@ struct ThemesView: View {
             }
 
             VStack(spacing: 6) {
-                Text("Create Your First Custom Theme")
+                Text("Create Your First Custom Theme", bundle: .module)
                     .font(.system(size: 17, weight: .semibold))
                     .foregroundColor(theme.primaryText)
 
-                Text("Design a unique look for your chat interface with custom colors, fonts, and effects")
+                Text("Design a unique look for your chat interface with custom colors, fonts, and effects", bundle: .module)
                     .font(.system(size: 13))
                     .foregroundColor(theme.secondaryText)
                     .multilineTextAlignment(.center)
@@ -458,7 +458,7 @@ struct ThemesView: View {
                     HStack(spacing: 6) {
                         Image(systemName: "square.and.arrow.down")
                             .font(.system(size: 12, weight: .medium))
-                        Text("Import")
+                        Text("Import", bundle: .module)
                             .font(.system(size: 13, weight: .medium))
                     }
                     .foregroundColor(theme.primaryText)
@@ -479,7 +479,7 @@ struct ThemesView: View {
                     HStack(spacing: 6) {
                         Image(systemName: "plus")
                             .font(.system(size: 12, weight: .semibold))
-                        Text("Create Theme")
+                        Text("Create Theme", bundle: .module)
                             .font(.system(size: 13, weight: .medium))
                     }
                     .foregroundColor(.white)
@@ -651,7 +651,7 @@ struct ThemePreviewCard: View {
                             }
 
                             if theme.isBuiltIn {
-                                Text("Built-in")
+                                Text("Built-in", bundle: .module)
                                     .font(.system(size: 10, weight: .medium))
                                     .foregroundColor(currentTheme.secondaryText)
                                     .padding(.horizontal, 6)
@@ -663,7 +663,7 @@ struct ThemePreviewCard: View {
                             }
                         }
 
-                        Text("by \(theme.metadata.author)")
+                        Text("by \(theme.metadata.author)", bundle: .module)
                             .font(.system(size: 11))
                             .foregroundColor(currentTheme.tertiaryText)
                             .lineLimit(1)
@@ -675,22 +675,22 @@ struct ThemePreviewCard: View {
                     Menu {
                         if !isActive {
                             Button(action: onApply) {
-                                Label("Apply Theme", systemImage: "checkmark")
+                                Label { Text("Apply Theme", bundle: .module) } icon: { Image(systemName: "checkmark") }
                             }
                         }
                         Button(action: onEdit) {
-                            Label("Edit", systemImage: "pencil")
+                            Label { Text("Edit", bundle: .module) } icon: { Image(systemName: "pencil") }
                         }
                         Button(action: onDuplicate) {
-                            Label("Duplicate", systemImage: "doc.on.doc")
+                            Label { Text("Duplicate", bundle: .module) } icon: { Image(systemName: "doc.on.doc") }
                         }
                         Button(action: onExport) {
-                            Label("Export", systemImage: "square.and.arrow.up")
+                            Label { Text("Export", bundle: .module) } icon: { Image(systemName: "square.and.arrow.up") }
                         }
                         if let onDelete = onDelete {
                             Divider()
                             Button(role: .destructive, action: onDelete) {
-                                Label("Delete", systemImage: "trash")
+                                Label { Text("Delete", bundle: .module) } icon: { Image(systemName: "trash") }
                             }
                         }
                     } label: {

@@ -46,7 +46,7 @@ struct OnboardingCompleteView: View {
             Spacer().frame(height: 20)
 
             // Headline
-            Text("Ready to go")
+            Text("Ready to go", bundle: .module)
                 .font(theme.font(size: 24, weight: .semibold))
                 .foregroundColor(theme.primaryText)
                 .multilineTextAlignment(.center)
@@ -133,12 +133,12 @@ private struct CompleteOptionCard: View {
 
                     // Text
                     VStack(alignment: .leading, spacing: 3) {
-                        Text(title)
+                        Text(LocalizedStringKey(title))
                             .font(theme.font(size: 14, weight: .semibold))
                             .foregroundColor(theme.primaryText)
 
                         if !description.isEmpty {
-                            Text(description)
+                            Text(LocalizedStringKey(description))
                                 .font(theme.font(size: 12))
                                 .foregroundColor(theme.secondaryText)
                         }

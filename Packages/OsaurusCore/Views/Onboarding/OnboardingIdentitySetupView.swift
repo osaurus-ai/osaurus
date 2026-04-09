@@ -81,7 +81,7 @@ struct OnboardingIdentitySetupView: View {
 
             Spacer().frame(height: 24)
 
-            Text("Create Your Identity")
+            Text("Create Your Identity", bundle: .module)
                 .font(theme.font(size: 24, weight: .semibold))
                 .foregroundColor(theme.primaryText)
                 .multilineTextAlignment(.center)
@@ -91,7 +91,7 @@ struct OnboardingIdentitySetupView: View {
 
             Spacer().frame(height: 14)
 
-            Text("Generate a cryptographic identity for you and your\nagents. Stored securely in iCloud Keychain.")
+            Text("Generate a cryptographic identity for you and your\nagents. Stored securely in iCloud Keychain.", bundle: .module)
                 .font(theme.font(size: 13))
                 .foregroundColor(theme.secondaryText)
                 .multilineTextAlignment(.center)
@@ -143,7 +143,7 @@ struct OnboardingIdentitySetupView: View {
 
             Spacer().frame(height: 20)
 
-            Text("Generating identity...")
+            Text("Generating identity...", bundle: .module)
                 .font(theme.font(size: 15, weight: .medium))
                 .foregroundColor(theme.secondaryText)
 
@@ -162,7 +162,7 @@ struct OnboardingIdentitySetupView: View {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(theme.warningColor)
-                Text("Save this recovery code. It won't be shown again.")
+                Text("Save this recovery code. It won't be shown again.", bundle: .module)
                     .font(theme.font(size: 13, weight: .semibold))
                     .foregroundColor(theme.warningColor)
             }
@@ -171,7 +171,7 @@ struct OnboardingIdentitySetupView: View {
 
             OnboardingGlassCard {
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("RECOVERY CODE")
+                    Text("RECOVERY CODE", bundle: .module)
                         .font(.system(size: 10, weight: .bold, design: .monospaced))
                         .foregroundColor(theme.tertiaryText)
                         .tracking(1)
@@ -185,7 +185,7 @@ struct OnboardingIdentitySetupView: View {
                         .background(theme.secondaryBorder)
 
                     HStack(spacing: 6) {
-                        Text("Master Address")
+                        Text("Master Address", bundle: .module)
                             .font(.system(size: 11, weight: .medium))
                             .foregroundColor(theme.tertiaryText)
                         Text(info.osaurusId)
@@ -196,9 +196,9 @@ struct OnboardingIdentitySetupView: View {
                     }
 
                     VStack(alignment: .leading, spacing: 3) {
-                        recoveryBullet("Single-use — consumed on recovery")
-                        recoveryBullet("Store in a safe place")
-                        recoveryBullet("Cannot be retrieved by Osaurus")
+                        recoveryBullet(L("Single-use — consumed on recovery"))
+                        recoveryBullet(L("Store in a safe place"))
+                        recoveryBullet(L("Cannot be retrieved by Osaurus"))
                     }
                     .padding(.top, 2)
                 }

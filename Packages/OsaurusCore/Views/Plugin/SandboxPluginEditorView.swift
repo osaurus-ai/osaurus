@@ -104,15 +104,15 @@ private extension SandboxPluginEditorView {
     var editorFooter: some View {
         HStack {
             if !isNew {
-                Label("Editing \"\(originalId)\"", systemImage: "pencil")
+                Label { Text("Editing \"\(originalId)\"", bundle: .module) } icon: { Image(systemName: "pencil") }
                     .font(.system(size: 11))
                     .foregroundColor(theme.tertiaryText)
             }
             Spacer()
             HStack(spacing: 12) {
-                Button("Cancel") {
+                Button {
                     dismiss(); onDismiss()
-                }
+                } label: { Text("Cancel", bundle: .module) }
                 .buttonStyle(.bordered)
                 Button(action: savePlugin) {
                     HStack(spacing: 4) {
@@ -146,7 +146,7 @@ private extension SandboxPluginEditorView {
 
     var dependenciesSection: some View {
         editorSection("Dependencies", itemCount: plugin.dependencies?.count) {
-            Text("System packages installed via apk")
+            Text("System packages installed via apk", bundle: .module)
                 .font(.system(size: 11))
                 .foregroundColor(theme.tertiaryText)
             stringListEditor(
@@ -161,7 +161,7 @@ private extension SandboxPluginEditorView {
 
     var setupSection: some View {
         editorSection("Setup Command") {
-            Text("Shell command run after dependencies are installed")
+            Text("Shell command run after dependencies are installed", bundle: .module)
                 .font(.system(size: 11))
                 .foregroundColor(theme.tertiaryText)
             codeField(
@@ -181,14 +181,14 @@ private extension SandboxPluginEditorView {
                     toolCard(index: index, tool: tool)
                 }
             }
-            Button(action: addTool) { Label("Add Tool", systemImage: "plus") }
+            Button(action: addTool) { Label { Text("Add Tool", bundle: .module) } icon: { Image(systemName: "plus") } }
                 .buttonStyle(.bordered)
         }
     }
 
     var filesSection: some View {
         editorSection("Files", itemCount: plugin.files?.count) {
-            Text("Files seeded into the plugin directory")
+            Text("Files seeded into the plugin directory", bundle: .module)
                 .font(.system(size: 11))
                 .foregroundColor(theme.tertiaryText)
 
@@ -197,14 +197,14 @@ private extension SandboxPluginEditorView {
                 fileCard(path: path)
             }
 
-            Button(action: addFile) { Label("Add File", systemImage: "plus") }
+            Button(action: addFile) { Label { Text("Add File", bundle: .module) } icon: { Image(systemName: "plus") } }
                 .buttonStyle(.bordered)
         }
     }
 
     var metadataSection: some View {
         editorSection("Metadata", itemCount: plugin.metadata?.count) {
-            Text("Custom JSON data preserved across exports and imports")
+            Text("Custom JSON data preserved across exports and imports", bundle: .module)
                 .font(.system(size: 11))
                 .foregroundColor(theme.tertiaryText)
 
@@ -221,7 +221,7 @@ private extension SandboxPluginEditorView {
                 HStack(spacing: 4) {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .font(.system(size: 10))
-                    Text("Invalid JSON")
+                    Text("Invalid JSON", bundle: .module)
                         .font(.system(size: 11))
                 }
                 .foregroundColor(theme.errorColor)
@@ -274,11 +274,11 @@ private extension SandboxPluginEditorView {
     func parametersEditor(toolIndex: Int) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text("Parameters")
+                Text("Parameters", bundle: .module)
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(theme.secondaryText)
                 Spacer()
-                Button(action: { addParameter(to: toolIndex) }) { Label("Add", systemImage: "plus") }
+                Button(action: { addParameter(to: toolIndex) }) { Label { Text("Add", bundle: .module) } icon: { Image(systemName: "plus") } }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
             }
@@ -315,15 +315,15 @@ private extension SandboxPluginEditorView {
             }
             labeledField("Type") {
                 Picker("", selection: parameterTypeBinding(key: key, toolIndex: toolIndex)) {
-                    Text("string").tag("string")
-                    Text("number").tag("number")
-                    Text("boolean").tag("boolean")
+                    Text("string", bundle: .module).tag("string")
+                    Text("number", bundle: .module).tag("number")
+                    Text("boolean", bundle: .module).tag("boolean")
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
             }
             HStack {
-                Text("Optional")
+                Text("Optional", bundle: .module)
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(theme.secondaryText)
                 Spacer()
@@ -379,11 +379,11 @@ private extension SandboxPluginEditorView {
     var previewPanel: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("JSON Preview")
+                Text("JSON Preview", bundle: .module)
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(theme.primaryText)
                 Spacer()
-                Text("Updates as you edit")
+                Text("Updates as you edit", bundle: .module)
                     .font(.system(size: 11))
                     .foregroundColor(theme.tertiaryText)
             }
@@ -600,7 +600,7 @@ private extension SandboxPluginEditorView {
                         .foregroundColor(theme.secondaryText)
                         .textCase(.uppercase)
                     if isCollapsed, let count = itemCount {
-                        Text("\(count)")
+                        Text("\(count)", bundle: .module)
                             .font(.system(size: 10, weight: .medium))
                             .foregroundColor(theme.tertiaryText)
                             .padding(.horizontal, 6)
@@ -706,7 +706,7 @@ private extension SandboxPluginEditorView {
                     .buttonStyle(PlainButtonStyle())
                 }
             }
-            Button(action: { binding.wrappedValue.append("") }) { Label("Add", systemImage: "plus") }
+            Button(action: { binding.wrappedValue.append("") }) { Label { Text("Add", bundle: .module) } icon: { Image(systemName: "plus") } }
                 .buttonStyle(.bordered)
         }
     }

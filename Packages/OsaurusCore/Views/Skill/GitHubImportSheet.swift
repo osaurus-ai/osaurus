@@ -125,21 +125,21 @@ struct GitHubImportSheet: View {
 
     private var headerTitle: String {
         switch importState {
-        case .urlInput: return "Import from GitHub"
-        case .loading: return "Connecting..."
+        case .urlInput: return L("Import from GitHub")
+        case .loading: return L("Connecting...")
         case .skillSelection(let result): return result.repoName
-        case .importing: return "Importing..."
-        case .error: return "Import Failed"
+        case .importing: return L("Importing...")
+        case .error: return L("Import Failed")
         }
     }
 
     private var headerSubtitle: String {
         switch importState {
-        case .urlInput: return "Paste a repository URL to get started"
-        case .loading: return "Fetching repository information"
+        case .urlInput: return L("Paste a repository URL to get started")
+        case .loading: return L("Fetching repository information")
         case .skillSelection(let result):
-            return "\(result.skills.count) skill\(result.skills.count == 1 ? "" : "s") available"
-        case .importing(let progress, let total): return "Importing skill \(progress) of \(total)"
+            return L("\(result.skills.count) skills available")
+        case .importing(let progress, let total): return L("Importing skill \(progress) of \(total)")
         case .error(let error): return error.localizedDescription
         }
     }
@@ -185,11 +185,11 @@ struct GitHubImportSheet: View {
                 }
 
                 VStack(spacing: 8) {
-                    Text("Enter Repository URL")
+                    Text("Enter Repository URL", bundle: .module)
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundColor(theme.primaryText)
 
-                    Text("Import skills from any GitHub repository")
+                    Text("Import skills from any GitHub repository", bundle: .module)
                         .font(.system(size: 13))
                         .foregroundColor(theme.secondaryText)
                 }
@@ -214,7 +214,7 @@ struct GitHubImportSheet: View {
                     .font(.system(size: 13))
                     .foregroundColor(theme.primaryText)
                     .placeholder(when: urlInput.isEmpty) {
-                        Text("github.com/owner/repository")
+                        Text("github.com/owner/repository", bundle: .module)
                             .font(.system(size: 13))
                             .foregroundColor(theme.placeholderText)
                     }
@@ -260,7 +260,7 @@ struct GitHubImportSheet: View {
                 .scaleEffect(1.0)
                 .progressViewStyle(CircularProgressViewStyle(tint: theme.accentColor))
 
-            Text("Fetching skills...")
+            Text("Fetching skills...", bundle: .module)
                 .font(.system(size: 13))
                 .foregroundColor(theme.secondaryText)
 
@@ -300,7 +300,7 @@ struct GitHubImportSheet: View {
 
                 Spacer()
 
-                Text("\(selectedSkillPaths.count) selected")
+                Text("\(selectedSkillPaths.count) selected", bundle: .module)
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(theme.accentColor)
                     .padding(.horizontal, 8)
@@ -341,7 +341,7 @@ struct GitHubImportSheet: View {
                             selectedSkillPaths.count == result.skills.count ? theme.accentColor : theme.tertiaryText
                         )
 
-                        Text("Select All")
+                        Text("Select All", bundle: .module)
                             .font(.system(size: 12, weight: .medium))
                             .foregroundColor(theme.primaryText)
                     }
@@ -350,7 +350,7 @@ struct GitHubImportSheet: View {
 
                 Spacer()
 
-                Text("\(result.skills.count) skill\(result.skills.count == 1 ? "" : "s")")
+                Text("\(result.skills.count) skill\(result.skills.count == 1 ? "" : "s")", bundle: .module)
                     .font(.system(size: 11))
                     .foregroundColor(theme.tertiaryText)
             }
@@ -399,17 +399,17 @@ struct GitHubImportSheet: View {
                     .rotationEffect(.degrees(-90))
                     .animation(.easeInOut(duration: 0.3), value: progress)
 
-                Text("\(progress)")
+                Text("\(progress)", bundle: .module)
                     .font(.system(size: 16, weight: .semibold, design: .rounded))
                     .foregroundColor(theme.primaryText)
             }
 
             VStack(spacing: 4) {
-                Text("Importing Skills")
+                Text("Importing Skills", bundle: .module)
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundColor(theme.primaryText)
 
-                Text("Fetching skill \(progress) of \(total)...")
+                Text("Fetching skill \(progress) of \(total)...", bundle: .module)
                     .font(.system(size: 12))
                     .foregroundColor(theme.secondaryText)
             }
@@ -435,7 +435,7 @@ struct GitHubImportSheet: View {
             }
 
             VStack(spacing: 6) {
-                Text("Something went wrong")
+                Text("Something went wrong", bundle: .module)
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundColor(theme.primaryText)
 
@@ -450,7 +450,7 @@ struct GitHubImportSheet: View {
                 HStack(spacing: 5) {
                     Image(systemName: "arrow.counterclockwise")
                         .font(.system(size: 11, weight: .medium))
-                    Text("Try Again")
+                    Text("Try Again", bundle: .module)
                         .font(.system(size: 12, weight: .medium))
                 }
                 .foregroundColor(theme.accentColor)
@@ -473,22 +473,22 @@ struct GitHubImportSheet: View {
         HStack(spacing: 10) {
             Spacer()
 
-            Button("Cancel", action: cancel)
+            Button( action: cancel) { Text("Cancel", bundle: .module) }
                 .buttonStyle(GitHubSecondaryButtonStyle())
 
             switch importState {
             case .urlInput:
-                Button("Continue") { fetchSkills() }
+                Button { fetchSkills() } label: { Text("Continue", bundle: .module) }
                     .buttonStyle(GitHubPrimaryButtonStyle())
                     .disabled(urlInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     .keyboardShortcut(.return, modifiers: .command)
 
             case .skillSelection:
-                Button("Import \(selectedSkillPaths.count) Skill\(selectedSkillPaths.count == 1 ? "" : "s")") {
+                Button {
                     if case .skillSelection(let result) = importState {
                         importSelectedSkills(from: result)
                     }
-                }
+                } label: { Text("Import \(selectedSkillPaths.count) Skill\(selectedSkillPaths.count == 1 ? "" : "s")", bundle: .module) }
                 .buttonStyle(GitHubPrimaryButtonStyle())
                 .disabled(selectedSkillPaths.isEmpty)
                 .keyboardShortcut(.return, modifiers: .command)

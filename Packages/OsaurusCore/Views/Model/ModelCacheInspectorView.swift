@@ -42,7 +42,7 @@ struct ModelCacheInspectorView: View {
                             .strokeBorder(theme.accentColor.opacity(0.2), lineWidth: 1)
                     )
 
-                    Text("Loaded Models")
+                    Text("Loaded Models", bundle: .module)
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundColor(theme.primaryText)
                 }
@@ -61,7 +61,7 @@ struct ModelCacheInspectorView: View {
                         .font(.system(size: 24, weight: .light))
                         .foregroundColor(theme.tertiaryText)
 
-                    Text("No models currently cached.")
+                    Text("No models currently cached.", bundle: .module)
                         .font(.system(size: 12))
                         .foregroundColor(theme.secondaryText)
                 }
@@ -111,7 +111,7 @@ struct ModelCacheInspectorView: View {
 
                 // Model count badge
                 if !items.isEmpty {
-                    Text("\(items.count) model\(items.count == 1 ? "" : "s")")
+                    Text("\(items.count) model\(items.count == 1 ? "" : "s")", bundle: .module)
                         .font(.system(size: 11, weight: .medium))
                         .foregroundColor(theme.secondaryText)
                 }
@@ -186,7 +186,7 @@ private struct RefreshButton: View {
                 isHovered = hovering
             }
         }
-        .help("Refresh")
+        .help(Text("Refresh", bundle: .module))
     }
 }
 
@@ -213,7 +213,7 @@ private struct ModelCacheRow: View {
                             Circle()
                                 .fill(theme.successColor)
                                 .frame(width: 5, height: 5)
-                            Text("Active")
+                            Text("Active", bundle: .module)
                                 .font(.system(size: 9, weight: .semibold))
                                 .foregroundColor(theme.successColor)
                         }
@@ -239,7 +239,7 @@ private struct ModelCacheRow: View {
 
             // Unload button
             Button(action: onUnload) {
-                Text("Unload")
+                Text("Unload", bundle: .module)
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(isUnloadHovered ? theme.errorColor : theme.secondaryText)
                     .padding(.horizontal, 10)
@@ -338,7 +338,7 @@ private struct ClearAllButton: View {
                     Image(systemName: "trash")
                         .font(.system(size: 11, weight: .medium))
                 }
-                Text("Clear All")
+                Text("Clear All", bundle: .module)
                     .font(.system(size: 11, weight: .medium))
             }
             .foregroundColor(isHovered ? .white : theme.errorColor)

@@ -100,7 +100,7 @@ struct IssueTrackerPanel: View {
                 Image(systemName: "doc.text.fill")
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(theme.successColor)
-                Text("Result")
+                Text("Result", bundle: .module)
                     .font(.system(size: 13, weight: .medium))
                     .foregroundColor(theme.primaryText)
                 Spacer()
@@ -114,7 +114,7 @@ struct IssueTrackerPanel: View {
                         .frame(width: 24, height: 24)
                         .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain).help("View artifact")
+                .buttonStyle(.plain).help(Text("View artifact", bundle: .module))
 
                 Button {
                     onArtifactOpen(artifact)
@@ -125,7 +125,7 @@ struct IssueTrackerPanel: View {
                         .frame(width: 24, height: 24)
                         .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain).help("Reveal in Finder")
+                .buttonStyle(.plain).help(Text("Reveal in Finder", bundle: .module))
             }
             .padding(.horizontal, 14)
             .padding(.bottom, 8)
@@ -144,7 +144,7 @@ struct IssueTrackerPanel: View {
                 Image(systemName: "doc.on.doc")
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(theme.secondaryText)
-                Text("Artifacts")
+                Text("Artifacts", bundle: .module)
                     .font(.system(size: 13, weight: .medium))
                     .foregroundColor(theme.secondaryText)
                 Spacer()
@@ -176,7 +176,7 @@ struct IssueTrackerPanel: View {
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(theme.secondaryText)
 
-                Text("Changed Files")
+                Text("Changed Files", bundle: .module)
                     .font(.system(size: 13, weight: .medium))
                     .foregroundColor(theme.secondaryText)
 
@@ -188,7 +188,7 @@ struct IssueTrackerPanel: View {
                     HStack(spacing: 4) {
                         Image(systemName: "arrow.uturn.backward")
                             .font(.system(size: 9, weight: .semibold))
-                        Text("Undo All")
+                        Text("Undo All", bundle: .module)
                             .font(.system(size: 10, weight: .medium))
                     }
                     .foregroundColor(theme.warningColor)
@@ -200,7 +200,7 @@ struct IssueTrackerPanel: View {
                     )
                 }
                 .buttonStyle(.plain)
-                .help("Undo all file changes")
+                .help(Text("Undo all file changes", bundle: .module))
             }
             .padding(.horizontal, 14)
             .padding(.bottom, 10)
@@ -234,7 +234,7 @@ struct IssueTrackerPanel: View {
 
     private var headerView: some View {
         HStack {
-            Text("Progress")
+            Text("Progress", bundle: .module)
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundColor(theme.primaryText)
 
@@ -250,7 +250,7 @@ struct IssueTrackerPanel: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help("Close progress panel")
+            .help(Text("Close progress panel", bundle: .module))
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 14)
@@ -264,7 +264,7 @@ struct IssueTrackerPanel: View {
                 .font(.system(size: 28))
                 .foregroundColor(theme.tertiaryText.opacity(0.6))
 
-            Text("Ready to start")
+            Text("Ready to start", bundle: .module)
                 .font(.system(size: 12))
                 .foregroundColor(theme.tertiaryText)
         }
@@ -434,7 +434,7 @@ private struct IssueRow: View {
                     .contentShape(Circle())
             }
             .buttonStyle(.plain)
-            .help("Close")
+            .help(Text("Close", bundle: .module))
         }
         .padding(6)
     }
@@ -585,7 +585,7 @@ private struct ArtifactRow: View {
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .help("View")
+                    .help(Text("View", bundle: .module))
 
                     Button(action: onOpen) {
                         Image(systemName: "folder")
@@ -595,7 +595,7 @@ private struct ArtifactRow: View {
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .help("Reveal in Finder")
+                    .help(Text("Reveal in Finder", bundle: .module))
                 }
                 .opacity(isHovered ? 1 : 0)
                 .animation(.easeOut(duration: 0.15), value: isHovered)
@@ -665,7 +665,7 @@ private struct FileOperationRow: View {
                         .foregroundColor(theme.tertiaryText)
 
                     if operationCount > 1 {
-                        Text("\u{00B7} \(operationCount) changes")
+                        Text("\u{00B7} \(operationCount) changes", bundle: .module)
                             .font(.system(size: 10))
                             .foregroundColor(theme.tertiaryText)
                     }
@@ -684,7 +684,7 @@ private struct FileOperationRow: View {
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .help("Open file")
+                    .help(Text("Open file", bundle: .module))
                 }
 
                 Button(action: onUndo) {
@@ -695,7 +695,7 @@ private struct FileOperationRow: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .help("Undo this change")
+                .help(Text("Undo this change", bundle: .module))
             }
             .opacity(isHovered ? 1 : 0)
             .animation(.easeOut(duration: 0.15), value: isHovered)
@@ -725,19 +725,19 @@ private struct FileOperationRow: View {
                 Button {
                     openFile()
                 } label: {
-                    Label("Open File", systemImage: "arrow.up.forward.square")
+                    Label { Text("Open File", bundle: .module) } icon: { Image(systemName: "arrow.up.forward.square") }
                 }
                 Button {
                     revealInFinder()
                 } label: {
-                    Label("Reveal in Finder", systemImage: "folder")
+                    Label { Text("Reveal in Finder", bundle: .module) } icon: { Image(systemName: "folder") }
                 }
                 Divider()
             }
             Button {
                 onUndo()
             } label: {
-                Label("Undo Change", systemImage: "arrow.uturn.backward")
+                Label { Text("Undo Change", bundle: .module) } icon: { Image(systemName: "arrow.uturn.backward") }
             }
         }
     }

@@ -80,13 +80,13 @@ private struct AnimatedTabButton<Tab: AnimatedTabItem>: View {
                     .foregroundColor(isSelected ? theme.primaryText : theme.secondaryText)
 
                 if let count = count {
-                    Text("(\(count))")
+                    Text("(\(count))", bundle: .module)
                         .font(.system(size: 12, weight: .medium, design: .rounded))
                         .foregroundColor(isSelected ? theme.secondaryText : theme.tertiaryText)
                 }
 
                 if let badge = badge, badge > 0 {
-                    Text("\(badge)")
+                    Text("\(badge)", bundle: .module)
                         .font(.system(size: 10, weight: .bold, design: .rounded))
                         .foregroundColor(.white)
                         .padding(.horizontal, 5)

@@ -34,22 +34,22 @@ struct SchedulesView: View {
                 if scheduleManager.schedules.isEmpty {
                     SettingsEmptyState(
                         icon: "calendar.badge.clock",
-                        title: "Create Your First Schedule",
-                        subtitle: "Set up automated AI tasks that run on your schedule.",
+                        title: L("Create Your First Schedule"),
+                        subtitle: L("Set up automated AI tasks that run on your schedule."),
                         examples: [
                             .init(
                                 icon: "sun.max",
-                                title: "Morning Briefing",
+                                title: L("Morning Briefing"),
                                 description: "Get a daily summary every morning"
                             ),
                             .init(
                                 icon: "chart.bar",
-                                title: "Weekly Report",
+                                title: L("Weekly Report"),
                                 description: "Generate insights on a schedule"
                             ),
                             .init(
                                 icon: "bell",
-                                title: "Reminders",
+                                title: L("Reminders"),
                                 description: "Automated notifications at set times"
                             ),
                         ],
@@ -157,8 +157,8 @@ struct SchedulesView: View {
 
     private var headerView: some View {
         ManagerHeaderWithActions(
-            title: "Schedules",
-            subtitle: "Automate recurring AI tasks with custom schedules",
+            title: L("Schedules"),
+            subtitle: L("Automate recurring AI tasks with custom schedules"),
             count: scheduleManager.schedules.isEmpty ? nil : scheduleManager.schedules.count
         ) {
             HeaderIconButton("arrow.clockwise", help: "Refresh schedules") {
@@ -264,10 +264,10 @@ private struct ScheduleCard: View {
 
                     Menu {
                         Button(action: onEdit) {
-                            Label("Edit", systemImage: "pencil")
+                            Label { Text("Edit", bundle: .module) } icon: { Image(systemName: "pencil") }
                         }
                         Button(action: onRunNow) {
-                            Label("Run Now", systemImage: "play.fill")
+                            Label { Text("Run Now", bundle: .module) } icon: { Image(systemName: "play.fill") }
                         }
                         .disabled(isRunning)
                         Divider()
@@ -283,7 +283,7 @@ private struct ScheduleCard: View {
                         Button(role: .destructive) {
                             showDeleteConfirm = true
                         } label: {
-                            Label("Delete", systemImage: "trash")
+                            Label { Text("Delete", bundle: .module) } icon: { Image(systemName: "trash") }
                         }
                     } label: {
                         Image(systemName: "ellipsis")
@@ -1664,7 +1664,7 @@ struct ScheduleEditorSheet: View {
         ScheduleEditorSection(title: "Schedule Info", icon: "info.circle.fill") {
             VStack(alignment: .leading, spacing: 16) {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Name")
+                    Text("Name", bundle: .module)
                         .font(.system(size: 11, weight: .medium))
                         .foregroundColor(theme.secondaryText)
 
@@ -1685,7 +1685,7 @@ struct ScheduleEditorSheet: View {
                             )
 
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("Enabled")
+                            Text("Enabled", bundle: .module)
                                 .font(.system(size: 13, weight: .medium))
                                 .foregroundColor(theme.primaryText)
                             Text(isEnabled ? "Schedule is active" : "Schedule is paused")
@@ -1816,7 +1816,7 @@ struct ScheduleEditorSheet: View {
                                 .truncationMode(.middle)
                         }
                     } else {
-                        Text("No folder selected")
+                        Text("No folder selected", bundle: .module)
                             .font(.system(size: 13))
                             .foregroundColor(theme.placeholderText)
                     }
@@ -1838,7 +1838,7 @@ struct ScheduleEditorSheet: View {
                     }
 
                     Button(action: selectFolder) {
-                        Text("Browse")
+                        Text("Browse", bundle: .module)
                             .font(.system(size: 12, weight: .medium))
                             .foregroundColor(theme.accentColor)
                             .padding(.horizontal, 12)
@@ -1860,7 +1860,7 @@ struct ScheduleEditorSheet: View {
                         )
                 )
 
-                Text("The AI will use this folder as its working directory.")
+                Text("The AI will use this folder as its working directory.", bundle: .module)
                     .font(.system(size: 11))
                     .foregroundColor(theme.tertiaryText)
             }
@@ -1900,7 +1900,7 @@ struct ScheduleEditorSheet: View {
             VStack(alignment: .leading, spacing: 8) {
                 ZStack(alignment: .topLeading) {
                     if instructions.isEmpty {
-                        Text("What should the AI do when this runs?")
+                        Text("What should the AI do when this runs?", bundle: .module)
                             .font(.system(size: 13))
                             .foregroundColor(theme.placeholderText)
                             .padding(.top, 12)
@@ -1924,7 +1924,7 @@ struct ScheduleEditorSheet: View {
                         )
                 )
 
-                Text("These instructions will be sent to the AI when the schedule runs.")
+                Text("These instructions will be sent to the AI when the schedule runs.", bundle: .module)
                     .font(.system(size: 11))
                     .foregroundColor(theme.tertiaryText)
             }
@@ -1968,7 +1968,7 @@ struct ScheduleEditorSheet: View {
     private var cronOptions: some View {
         VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 6) {
-                Text("Cron Expression")
+                Text("Cron Expression", bundle: .module)
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(theme.secondaryText)
 
@@ -1979,11 +1979,11 @@ struct ScheduleEditorSheet: View {
                 )
             }
 
-            Text("Format: minute hour day-of-month month day-of-week")
+            Text("Format: minute hour day-of-month month day-of-week", bundle: .module)
                 .font(.system(size: 10, weight: .medium))
                 .foregroundColor(theme.secondaryText)
 
-            Text("Supports standard 5 field format with * , - and / operators")
+            Text("Supports standard 5 field format with * , - and / operators", bundle: .module)
                 .font(.system(size: 10))
                 .foregroundColor(theme.tertiaryText)
 
@@ -2006,7 +2006,7 @@ struct ScheduleEditorSheet: View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 16) {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Date")
+                    Text("Date", bundle: .module)
                         .font(.system(size: 11, weight: .medium))
                         .foregroundColor(theme.secondaryText)
 
@@ -2014,7 +2014,7 @@ struct ScheduleEditorSheet: View {
                 }
 
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Time")
+                    Text("Time", bundle: .module)
                         .font(.system(size: 11, weight: .medium))
                         .foregroundColor(theme.secondaryText)
 
@@ -2035,7 +2035,7 @@ struct ScheduleEditorSheet: View {
                 .foregroundColor(theme.accentColor)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("Scheduled for")
+                Text("Scheduled for", bundle: .module)
                     .font(.system(size: 10, weight: .medium))
                     .foregroundColor(theme.tertiaryText)
                 Text(formattedOnceDate)
@@ -2078,7 +2078,7 @@ struct ScheduleEditorSheet: View {
     private var everyNMinutesOptions: some View {
         VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 8) {
-                Text("Interval")
+                Text("Interval", bundle: .module)
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(theme.secondaryText)
 
@@ -2089,7 +2089,7 @@ struct ScheduleEditorSheet: View {
                                 selectedIntervalMinutes = interval
                             }
                         } label: {
-                            Text("\(interval)m")
+                            Text("\(interval)m", bundle: .module)
                                 .font(
                                     .system(size: 12, weight: selectedIntervalMinutes == interval ? .semibold : .medium)
                                 )
@@ -2135,7 +2135,7 @@ struct ScheduleEditorSheet: View {
     private var hourlyOptions: some View {
         VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 6) {
-                Text("Minute of Hour")
+                Text("Minute of Hour", bundle: .module)
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(theme.secondaryText)
 
@@ -2155,7 +2155,7 @@ struct ScheduleEditorSheet: View {
     private var dailyOptions: some View {
         VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 6) {
-                Text("Time")
+                Text("Time", bundle: .module)
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(theme.secondaryText)
 
@@ -2183,7 +2183,7 @@ struct ScheduleEditorSheet: View {
     private var weeklyOptions: some View {
         VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 8) {
-                Text("Day of Week")
+                Text("Day of Week", bundle: .module)
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(theme.secondaryText)
 
@@ -2203,7 +2203,7 @@ struct ScheduleEditorSheet: View {
             }
 
             VStack(alignment: .leading, spacing: 6) {
-                Text("Time")
+                Text("Time", bundle: .module)
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(theme.secondaryText)
 
@@ -2233,7 +2233,7 @@ struct ScheduleEditorSheet: View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 16) {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Day of Month")
+                    Text("Day of Month", bundle: .module)
                         .font(.system(size: 11, weight: .medium))
                         .foregroundColor(theme.secondaryText)
 
@@ -2241,7 +2241,7 @@ struct ScheduleEditorSheet: View {
                 }
 
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Time")
+                    Text("Time", bundle: .module)
                         .font(.system(size: 11, weight: .medium))
                         .foregroundColor(theme.secondaryText)
 
@@ -2251,7 +2251,7 @@ struct ScheduleEditorSheet: View {
                 Spacer()
             }
 
-            Text("If the day doesn't exist in a month, it will run on the last day.")
+            Text("If the day doesn't exist in a month, it will run on the last day.", bundle: .module)
                 .font(.system(size: 10))
                 .foregroundColor(theme.tertiaryText)
                 .padding(.horizontal, 4)
@@ -2288,7 +2288,7 @@ struct ScheduleEditorSheet: View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Month")
+                    Text("Month", bundle: .module)
                         .font(.system(size: 11, weight: .medium))
                         .foregroundColor(theme.secondaryText)
 
@@ -2296,7 +2296,7 @@ struct ScheduleEditorSheet: View {
                 }
 
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Day")
+                    Text("Day", bundle: .module)
                         .font(.system(size: 11, weight: .medium))
                         .foregroundColor(theme.secondaryText)
 
@@ -2304,7 +2304,7 @@ struct ScheduleEditorSheet: View {
                 }
 
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Time")
+                    Text("Time", bundle: .module)
                         .font(.system(size: 11, weight: .medium))
                         .foregroundColor(theme.secondaryText)
 
@@ -2378,7 +2378,7 @@ struct ScheduleEditorSheet: View {
                 )
                 .frame(maxWidth: .infinity)
 
-                Text("The agent determines the AI's behavior and available tools.")
+                Text("The agent determines the AI's behavior and available tools.", bundle: .module)
                     .font(.system(size: 11))
                     .foregroundColor(theme.tertiaryText)
             }
@@ -2392,7 +2392,7 @@ struct ScheduleEditorSheet: View {
         HStack(spacing: 12) {
             Spacer()
 
-            Button("Cancel", action: onCancel)
+            Button( action: onCancel) { Text("Cancel", bundle: .module) }
                 .buttonStyle(ScheduleSecondaryButtonStyle())
 
             Button(isEditing ? "Save Changes" : "Create Schedule") {

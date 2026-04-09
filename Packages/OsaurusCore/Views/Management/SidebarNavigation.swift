@@ -341,7 +341,7 @@ private struct SidebarItemView: View {
     }
 
     private func expandedBadge(count: Int) -> some View {
-        Text("\(count)")
+        Text("\(count)", bundle: .module)
             .font(.system(size: 10, weight: .semibold, design: .rounded))
             .foregroundColor(item.badgeHighlight ? .white : theme.secondaryText)
             .padding(.horizontal, 5)
@@ -410,7 +410,7 @@ private struct SettingsSidebarSearchField: View {
     private var textField: some View {
         ZStack(alignment: .leading) {
             if text.isEmpty {
-                Text("Search Settings")
+                Text("Search Settings", bundle: .module)
                     .font(.system(size: 12))
                     .foregroundColor(theme.secondaryText)
                     .allowsHitTesting(false)
@@ -484,10 +484,10 @@ struct SidebarUpdateButton: View {
                 .font(.system(size: 16, weight: .medium))
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("Update Available")
+                Text("Update Available", bundle: .module)
                     .font(.system(size: 12, weight: .semibold, design: .rounded))
                 if let version = availableVersion {
-                    Text("v\(version)")
+                    Text("v\(version)", bundle: .module)
                         .font(.system(size: 10, weight: .medium, design: .monospaced))
                         .opacity(0.8)
                 }
@@ -510,7 +510,7 @@ struct SidebarUpdateButton: View {
             Image(systemName: "arrow.up.circle")
                 .font(.system(size: 14, weight: .medium))
 
-            Text("Check for Updates")
+            Text("Check for Updates", bundle: .module)
                 .font(.system(size: 12, weight: .medium))
 
             Spacer()
@@ -543,7 +543,7 @@ struct SidebarUpdateButton: View {
                     SidebarItemData(id: "settings", icon: "gearshape.fill", label: "Settings"),
                 ]
             ) { selected in
-                Text("Content for \(selected)")
+                Text("Content for \(selected)", bundle: .module)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             .frame(width: 800, height: 600)

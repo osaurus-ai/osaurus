@@ -51,7 +51,7 @@ struct OnboardingWelcomeView: View {
                         .frame(height: geometry.size.height * 0.42)
 
                     // Headline
-                    Text("Own your AI.")
+                    Text("Own your AI.", bundle: .module)
                         .font(theme.font(size: 28, weight: .bold))
                         .foregroundColor(theme.primaryText)
                         .multilineTextAlignment(.center)
@@ -63,7 +63,7 @@ struct OnboardingWelcomeView: View {
 
                     // Body
                     Text(
-                        "Agents, memory, tools, and identity that live on your Mac.\nModels are interchangeable — everything else compounds, stays with you."
+                        "Agents, memory, tools, and identity that live on your Mac.\nModels are interchangeable — everything else compounds, stays with you.", bundle: .module
                     )
                     .font(theme.font(size: 13))
                     .foregroundColor(theme.secondaryText)

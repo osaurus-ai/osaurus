@@ -578,7 +578,7 @@ struct GroupHeaderCell: View {
                         HStack(spacing: 2) {
                             Image(systemName: "wrench.and.screwdriver")
                                 .font(.system(size: 8))
-                            Text("\(toolCount)")
+                            Text("\(toolCount)", bundle: .module)
                                 .font(.system(size: 9, weight: .medium))
                         }
                         .foregroundColor(theme.tertiaryText)
@@ -594,7 +594,7 @@ struct GroupHeaderCell: View {
                         HStack(spacing: 2) {
                             Image(systemName: "lightbulb")
                                 .font(.system(size: 8))
-                            Text("\(skillCount)")
+                            Text("\(skillCount)", bundle: .module)
                                 .font(.system(size: 9, weight: .medium))
                         }
                         .foregroundColor(theme.tertiaryText)
@@ -609,7 +609,7 @@ struct GroupHeaderCell: View {
                         HStack(spacing: 2) {
                             Image(systemName: "network")
                                 .font(.system(size: 8))
-                            Text("Routes")
+                            Text("Routes", bundle: .module)
                                 .font(.system(size: 9, weight: .medium))
                         }
                         .foregroundColor(theme.tertiaryText)
@@ -623,7 +623,7 @@ struct GroupHeaderCell: View {
                 Button {
                     onEnableAll()
                 } label: {
-                    Text("All")
+                    Text("All", bundle: .module)
                         .font(.system(size: 9, weight: allEnabled ? .bold : .medium))
                         .foregroundColor(allEnabled ? theme.accentColor : theme.tertiaryText)
                 }
@@ -631,7 +631,7 @@ struct GroupHeaderCell: View {
                 Button {
                     onDisableAll()
                 } label: {
-                    Text("None")
+                    Text("None", bundle: .module)
                         .font(.system(size: 9, weight: noneEnabled ? .bold : .medium))
                         .foregroundColor(noneEnabled ? theme.accentColor : theme.tertiaryText)
                 }
@@ -772,7 +772,7 @@ struct SkillRowCell: View {
             Spacer()
 
             TokenBadge(count: estimatedTokens)
-                .help("~\(estimatedTokens) tokens")
+                .help(Text("~\(estimatedTokens) tokens", bundle: .module))
         }
         .padding(.leading, 32)
         .padding(.trailing, 12)
@@ -835,8 +835,8 @@ private struct TokenBadge: View {
 
     var body: some View {
         HStack(spacing: 2) {
-            Text("~\(count)").font(.system(size: 10, weight: .medium, design: .monospaced))
-            Text("tokens").font(.system(size: 9)).opacity(0.6)
+            Text("~\(count)", bundle: .module).font(.system(size: 10, weight: .medium, design: .monospaced))
+            Text("tokens", bundle: .module).font(.system(size: 9)).opacity(0.6)
         }
         .foregroundColor(theme.tertiaryText)
         .padding(.horizontal, 6)
@@ -878,7 +878,7 @@ private struct CountBadge: View {
     @Environment(\.theme) private var theme
 
     var body: some View {
-        Text("\(enabled)/\(total)")
+        Text("\(enabled)/\(total)", bundle: .module)
             .font(.system(size: 10, weight: .medium))
             .foregroundColor(enabled > 0 ? theme.accentColor : theme.tertiaryText)
             .padding(.horizontal, 8)

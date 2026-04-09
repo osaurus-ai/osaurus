@@ -71,7 +71,7 @@ struct OnboardingAPISetupView: View {
         }
     }
 
-    private var buttonLoadingTitle: String {
+    private var buttonLoadingTitle: LocalizedStringKey {
         isSaving ? "Connecting..." : "Testing..."
     }
 
@@ -127,7 +127,7 @@ struct OnboardingAPISetupView: View {
                 Spacer().frame(height: 20)
 
                 // Headline
-                Text("Connect a provider")
+                Text("Connect a provider", bundle: .module)
                     .font(theme.font(size: 26, weight: .semibold))
                     .foregroundColor(theme.primaryText)
                     .multilineTextAlignment(.center)
@@ -156,7 +156,7 @@ struct OnboardingAPISetupView: View {
                 Spacer().frame(height: 28)
 
                 // Footer
-                Text("Your key never leaves your device.")
+                Text("Your key never leaves your device.", bundle: .module)
                     .font(theme.font(size: 13))
                     .foregroundColor(theme.tertiaryText)
                     .opacity(hasAppeared ? 1 : 0)
@@ -182,7 +182,7 @@ struct OnboardingAPISetupView: View {
                 Spacer().frame(height: 30)
 
                 // Headline
-                Text("Connect \(selectedProvider?.name ?? "Provider")")
+                Text("Connect \(selectedProvider?.name ?? "Provider")", bundle: .module)
                     .font(theme.font(size: 26, weight: .semibold))
                     .foregroundColor(theme.primaryText)
                     .multilineTextAlignment(.center)
@@ -230,7 +230,7 @@ struct OnboardingAPISetupView: View {
                 Spacer().frame(height: 24)
 
                 // Headline
-                Text("Connect custom provider")
+                Text("Connect custom provider", bundle: .module)
                     .font(theme.font(size: 26, weight: .semibold))
                     .foregroundColor(theme.primaryText)
                     .multilineTextAlignment(.center)
@@ -251,7 +251,7 @@ struct OnboardingAPISetupView: View {
                         HStack(spacing: 12) {
                             // Protocol toggle
                             VStack(alignment: .leading, spacing: 6) {
-                                Text("PROTOCOL")
+                                Text("PROTOCOL", bundle: .module)
                                     .font(theme.font(size: 10, weight: .bold))
                                     .foregroundColor(theme.tertiaryText)
                                     .tracking(0.5)
@@ -371,7 +371,7 @@ struct OnboardingAPISetupView: View {
     private func helpSection(for preset: ProviderPreset) -> some View {
         OnboardingGlassCard {
             VStack(alignment: .leading, spacing: 12) {
-                Text("Don't have a key?")
+                Text("Don't have a key?", bundle: .module)
                     .font(theme.font(size: 14, weight: .medium))
                     .foregroundColor(theme.secondaryText)
 
@@ -426,7 +426,7 @@ struct OnboardingAPISetupView: View {
                 host: customHost,
                 port: customPort.isEmpty ? nil : Int(customPort),
                 basePath: customBasePath.isEmpty ? "/v1" : customBasePath,
-                providerType: .openai,
+                providerType: .openaiLegacy,
                 providerProtocol: customProtocol
             )
         } else {
@@ -560,12 +560,12 @@ private struct OnboardingProviderCard: View {
 
     /// Display name override for custom preset in onboarding context
     private var displayName: String {
-        preset == .custom ? "Any OpenAI-compatible API" : preset.name
+        preset == .custom ? L("Any OpenAI-compatible API") : preset.name
     }
 
     /// Description override for custom preset in onboarding context
     private var displayDescription: String {
-        preset == .custom ? "OpenRouter, MiniMax, etc." : preset.description
+        preset == .custom ? L("OpenRouter, MiniMax, etc.") : preset.description
     }
 
     var body: some View {
@@ -632,7 +632,7 @@ private struct HelpStep: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
-            Text("\(number).")
+            Text("\(number).", bundle: .module)
                 .font(.system(size: 12, weight: .medium, design: .monospaced))
                 .foregroundColor(theme.tertiaryText)
                 .frame(width: 16, alignment: .trailing)

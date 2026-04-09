@@ -303,11 +303,11 @@ struct SidebarNoResultsView: View {
                 .foregroundColor(theme.secondaryText.opacity(0.4))
 
             VStack(spacing: 4) {
-                Text("No matches found")
+                Text("No matches found", bundle: .module)
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(theme.secondaryText.opacity(0.8))
 
-                Text("for \"\(searchQuery)\"")
+                Text("for \"\(searchQuery)\"", bundle: .module)
                     .font(.system(size: 11))
                     .foregroundColor(theme.secondaryText.opacity(0.6))
                     .lineLimit(1)
@@ -315,7 +315,7 @@ struct SidebarNoResultsView: View {
             }
 
             Button(action: onClear) {
-                Text("Clear search")
+                Text("Clear search", bundle: .module)
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(theme.accentColor)
                     .padding(.horizontal, 12)

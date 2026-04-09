@@ -74,7 +74,7 @@ struct ThemeEditorView: View {
     private var editorHeader: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text("Theme Editor")
+                Text("Theme Editor", bundle: .module)
                     .font(.system(size: 18, weight: .bold))
                     .foregroundColor(currentTheme.primaryText)
 
@@ -101,7 +101,7 @@ struct ThemeEditorView: View {
     private var editorFooter: some View {
         HStack {
             if editingTheme.isBuiltIn {
-                Label("Built-in themes cannot be modified directly", systemImage: "info.circle")
+                Label { Text("Built-in themes cannot be modified directly", bundle: .module) } icon: { Image(systemName: "info.circle") }
                     .font(.system(size: 11))
                     .foregroundColor(currentTheme.warningColor)
             }
@@ -109,9 +109,9 @@ struct ThemeEditorView: View {
             Spacer()
 
             HStack(spacing: 12) {
-                Button("Cancel") {
+                Button {
                     dismiss(); onDismiss()
-                }
+                } label: { Text("Cancel", bundle: .module) }
                 .buttonStyle(.bordered)
 
                 Button(action: saveTheme) {
@@ -136,23 +136,23 @@ struct ThemeEditorView: View {
                 colorRow("Accent Light", hex: $editingTheme.colors.accentColorLight)
 
                 HStack {
-                    Text("Mode")
+                    Text("Mode", bundle: .module)
                         .font(.system(size: 13))
                         .foregroundColor(currentTheme.primaryText)
                     Spacer()
                     Picker("", selection: $editingTheme.isDark) {
-                        Text("Dark").tag(true)
-                        Text("Light").tag(false)
+                        Text("Dark", bundle: .module).tag(true)
+                        Text("Light", bundle: .module).tag(false)
                     }
                     .pickerStyle(.segmented)
                     .frame(width: 140)
                 }
 
-                Picker("Background", selection: $editingTheme.background.type) {
-                    Text("Solid").tag(ThemeBackground.BackgroundType.solid)
-                    Text("Gradient").tag(ThemeBackground.BackgroundType.gradient)
-                    Text("Image").tag(ThemeBackground.BackgroundType.image)
-                }
+                Picker(selection: $editingTheme.background.type) {
+                    Text("Solid", bundle: .module).tag(ThemeBackground.BackgroundType.solid)
+                    Text("Gradient", bundle: .module).tag(ThemeBackground.BackgroundType.gradient)
+                    Text("Image", bundle: .module).tag(ThemeBackground.BackgroundType.image)
+                } label: { Text("Background", bundle: .module) }
                 .pickerStyle(.segmented)
             }
         }
@@ -177,19 +177,19 @@ struct ThemeEditorView: View {
             editorSection("Advanced Colors", itemCount: 18) {
                 colorRowOptional("Placeholder", hex: $editingTheme.colors.placeholderText)
 
-                Text("Sidebar").font(.system(size: 11, weight: .semibold)).foregroundColor(currentTheme.tertiaryText)
+                Text("Sidebar", bundle: .module).font(.system(size: 11, weight: .semibold)).foregroundColor(currentTheme.tertiaryText)
                     .textCase(.uppercase)
                 colorRow("Sidebar BG", hex: $editingTheme.colors.sidebarBackground)
                 colorRow("Sidebar Selected", hex: $editingTheme.colors.sidebarSelectedBackground)
 
-                Text("Status").font(.system(size: 11, weight: .semibold)).foregroundColor(currentTheme.tertiaryText)
+                Text("Status", bundle: .module).font(.system(size: 11, weight: .semibold)).foregroundColor(currentTheme.tertiaryText)
                     .textCase(.uppercase)
                 colorRow("Success", hex: $editingTheme.colors.successColor)
                 colorRow("Warning", hex: $editingTheme.colors.warningColor)
                 colorRow("Error", hex: $editingTheme.colors.errorColor)
                 colorRow("Info", hex: $editingTheme.colors.infoColor)
 
-                Text("Components").font(.system(size: 11, weight: .semibold)).foregroundColor(currentTheme.tertiaryText)
+                Text("Components", bundle: .module).font(.system(size: 11, weight: .semibold)).foregroundColor(currentTheme.tertiaryText)
                     .textCase(.uppercase)
                 colorRow("Card BG", hex: $editingTheme.colors.cardBackground)
                 colorRow("Card Border", hex: $editingTheme.colors.cardBorder)
@@ -198,7 +198,7 @@ struct ThemeEditorView: View {
                 colorRow("Input BG", hex: $editingTheme.colors.inputBackground)
                 colorRow("Input Border", hex: $editingTheme.colors.inputBorder)
 
-                Text("Code & Selection").font(.system(size: 11, weight: .semibold)).foregroundColor(
+                Text("Code & Selection", bundle: .module).font(.system(size: 11, weight: .semibold)).foregroundColor(
                     currentTheme.tertiaryText
                 ).textCase(.uppercase)
                 colorRow("Glass Tint", hex: $editingTheme.colors.glassTintOverlay)
@@ -215,7 +215,7 @@ struct ThemeEditorView: View {
     private var messagesSection: some View {
         VStack(alignment: .leading, spacing: 16) {
             editorSection("Messages") {
-                Text("User Bubble").font(.system(size: 11, weight: .semibold)).foregroundColor(
+                Text("User Bubble", bundle: .module).font(.system(size: 11, weight: .semibold)).foregroundColor(
                     currentTheme.tertiaryText
                 ).textCase(.uppercase)
                 colorRowOptional("Bubble Color", hex: $editingTheme.messages.userBubbleColor)
@@ -223,7 +223,7 @@ struct ThemeEditorView: View {
 
                 Divider().opacity(0.3)
 
-                Text("Assistant Bubble").font(.system(size: 11, weight: .semibold)).foregroundColor(
+                Text("Assistant Bubble", bundle: .module).font(.system(size: 11, weight: .semibold)).foregroundColor(
                     currentTheme.tertiaryText
                 ).textCase(.uppercase)
                 colorRowOptional("Bubble Color", hex: $editingTheme.messages.assistantBubbleColor)
@@ -231,7 +231,7 @@ struct ThemeEditorView: View {
 
                 Divider().opacity(0.3)
 
-                Text("Bubble Style").font(.system(size: 11, weight: .semibold)).foregroundColor(
+                Text("Bubble Style", bundle: .module).font(.system(size: 11, weight: .semibold)).foregroundColor(
                     currentTheme.tertiaryText
                 ).textCase(.uppercase)
                 sliderRow("Corner Radius", value: $editingTheme.messages.bubbleCornerRadius, range: 0 ... 40)
@@ -263,7 +263,7 @@ struct ThemeEditorView: View {
     private var bordersAndEffectsSection: some View {
         VStack(alignment: .leading, spacing: 16) {
             editorSection("Borders & Effects") {
-                Text("Borders").font(.system(size: 11, weight: .semibold)).foregroundColor(currentTheme.tertiaryText)
+                Text("Borders", bundle: .module).font(.system(size: 11, weight: .semibold)).foregroundColor(currentTheme.tertiaryText)
                     .textCase(.uppercase)
                 colorRow("Border Color", hex: $editingTheme.colors.primaryBorder)
                 colorRow("Secondary Border", hex: $editingTheme.colors.secondaryBorder)
@@ -273,7 +273,7 @@ struct ThemeEditorView: View {
 
                 Divider().opacity(0.3)
 
-                Text("Corner Radius").font(.system(size: 11, weight: .semibold)).foregroundColor(
+                Text("Corner Radius", bundle: .module).font(.system(size: 11, weight: .semibold)).foregroundColor(
                     currentTheme.tertiaryText
                 ).textCase(.uppercase)
                 sliderRow("Card Radius", value: $editingTheme.borders.cardCornerRadius, range: 0 ... 30)
@@ -281,7 +281,7 @@ struct ThemeEditorView: View {
 
                 Divider().opacity(0.3)
 
-                Text("Shadows").font(.system(size: 11, weight: .semibold)).foregroundColor(currentTheme.tertiaryText)
+                Text("Shadows", bundle: .module).font(.system(size: 11, weight: .semibold)).foregroundColor(currentTheme.tertiaryText)
                     .textCase(.uppercase)
                 sliderRow("Shadow Opacity", value: $editingTheme.shadows.shadowOpacity, range: 0 ... 1)
                 sliderRow("Card Shadow", value: $editingTheme.shadows.cardShadowRadius, range: 0 ... 30)
@@ -295,7 +295,7 @@ struct ThemeEditorView: View {
     private var advancedSection: some View {
         VStack(alignment: .leading, spacing: 16) {
             editorSection("Advanced") {
-                Text("Animation").font(.system(size: 11, weight: .semibold)).foregroundColor(currentTheme.tertiaryText)
+                Text("Animation", bundle: .module).font(.system(size: 11, weight: .semibold)).foregroundColor(currentTheme.tertiaryText)
                     .textCase(.uppercase)
 
                 VStack(spacing: 12) {
@@ -317,7 +317,7 @@ struct ThemeEditorView: View {
                     .padding(.horizontal, 8)
                     .background(RoundedRectangle(cornerRadius: 8).fill(currentTheme.tertiaryBackground.opacity(0.5)))
 
-                    Button("Test Animation") { animationPreviewTrigger.toggle() }
+                    Button { animationPreviewTrigger.toggle() } label: { Text("Test Animation", bundle: .module) }
                         .buttonStyle(.bordered)
                 }
 
@@ -330,7 +330,7 @@ struct ThemeEditorView: View {
                 if editingTheme.background.type == .solid {
                     Divider().opacity(0.3)
 
-                    Text("Solid Background").font(.system(size: 11, weight: .semibold)).foregroundColor(
+                    Text("Solid Background", bundle: .module).font(.system(size: 11, weight: .semibold)).foregroundColor(
                         currentTheme.tertiaryText
                     ).textCase(.uppercase)
                     colorRow(
@@ -345,7 +345,7 @@ struct ThemeEditorView: View {
                 if editingTheme.background.type == .gradient {
                     Divider().opacity(0.3)
 
-                    Text("Gradient").font(.system(size: 11, weight: .semibold)).foregroundColor(
+                    Text("Gradient", bundle: .module).font(.system(size: 11, weight: .semibold)).foregroundColor(
                         currentTheme.tertiaryText
                     ).textCase(.uppercase)
                     VStack(spacing: 8) {
@@ -376,12 +376,12 @@ struct ThemeEditorView: View {
                                 var colors = editingTheme.background.gradientColors ?? ["#000000", "#333333"]
                                 colors.append("#000000")
                                 editingTheme.background.gradientColors = colors
-                            }) { Label("Add Color", systemImage: "plus") }
+                            }) { Label { Text("Add Color", bundle: .module) } icon: { Image(systemName: "plus") } }
                             .buttonStyle(.bordered)
 
                             if (editingTheme.background.gradientColors?.count ?? 0) > 2 {
                                 Button(action: { editingTheme.background.gradientColors?.removeLast() }) {
-                                    Label("Remove", systemImage: "minus")
+                                    Label { Text("Remove", bundle: .module) } icon: { Image(systemName: "minus") }
                                 }
                                 .buttonStyle(.bordered)
                             }
@@ -401,7 +401,7 @@ struct ThemeEditorView: View {
                 if editingTheme.background.type == .image {
                     Divider().opacity(0.3)
 
-                    Text("Background Image").font(.system(size: 11, weight: .semibold)).foregroundColor(
+                    Text("Background Image", bundle: .module).font(.system(size: 11, weight: .semibold)).foregroundColor(
                         currentTheme.tertiaryText
                     ).textCase(.uppercase)
                     VStack(spacing: 12) {
@@ -419,13 +419,13 @@ struct ThemeEditorView: View {
                                         .stroke(currentTheme.primaryBorder, lineWidth: 1)
                                 )
 
-                            Button("Remove Image") { editingTheme.background.imageData = nil }
+                            Button { editingTheme.background.imageData = nil } label: { Text("Remove Image", bundle: .module) }
                                 .buttonStyle(.bordered)
                         } else {
                             Button(action: { showImagePicker = true }) {
                                 VStack(spacing: 8) {
                                     Image(systemName: "photo.badge.plus").font(.system(size: 24))
-                                    Text("Choose Image").font(.system(size: 13, weight: .medium))
+                                    Text("Choose Image", bundle: .module).font(.system(size: 13, weight: .medium))
                                 }
                                 .frame(maxWidth: .infinity)
                                 .frame(height: 80)
@@ -447,25 +447,22 @@ struct ThemeEditorView: View {
                             range: 0 ... 1
                         )
 
-                        Picker(
-                            "Fit",
-                            selection: Binding(
+                        Picker(selection: Binding(
                                 get: { editingTheme.background.imageFit ?? .fill },
                                 set: { editingTheme.background.imageFit = $0 }
-                            )
-                        ) {
-                            Text("Fill").tag(ThemeBackground.ImageFit.fill)
-                            Text("Fit").tag(ThemeBackground.ImageFit.fit)
-                            Text("Stretch").tag(ThemeBackground.ImageFit.stretch)
-                            Text("Tile").tag(ThemeBackground.ImageFit.tile)
-                        }
+                            )) {
+                            Text("Fill", bundle: .module).tag(ThemeBackground.ImageFit.fill)
+                            Text("Fit", bundle: .module).tag(ThemeBackground.ImageFit.fit)
+                            Text("Stretch", bundle: .module).tag(ThemeBackground.ImageFit.stretch)
+                            Text("Tile", bundle: .module).tag(ThemeBackground.ImageFit.tile)
+                        } label: { Text("Fit", bundle: .module) }
                         .pickerStyle(.segmented)
                     }
                 }
 
                 Divider().opacity(0.3)
 
-                Text("Overlay").font(.system(size: 11, weight: .semibold)).foregroundColor(currentTheme.tertiaryText)
+                Text("Overlay", bundle: .module).font(.system(size: 11, weight: .semibold)).foregroundColor(currentTheme.tertiaryText)
                     .textCase(.uppercase)
                 colorRowOptional("Color", hex: $editingTheme.background.overlayColor)
                 sliderRow(
@@ -479,7 +476,7 @@ struct ThemeEditorView: View {
 
                 Divider().opacity(0.3)
 
-                Text("Shadow Position").font(.system(size: 11, weight: .semibold)).foregroundColor(
+                Text("Shadow Position", bundle: .module).font(.system(size: 11, weight: .semibold)).foregroundColor(
                     currentTheme.tertiaryText
                 ).textCase(.uppercase)
                 sliderRow("Card Y Offset", value: $editingTheme.shadows.cardShadowY, range: 0 ... 20)
@@ -493,11 +490,11 @@ struct ThemeEditorView: View {
     private var previewPanel: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("Live Preview")
+                Text("Live Preview", bundle: .module)
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(currentTheme.primaryText)
                 Spacer()
-                Text("Changes are reflected in real-time")
+                Text("Changes are reflected in real-time", bundle: .module)
                     .font(.system(size: 11))
                     .foregroundColor(currentTheme.tertiaryText)
             }
@@ -564,7 +561,7 @@ struct ThemeEditorView: View {
                         .textCase(.uppercase)
 
                     if isCollapsed, let count = itemCount {
-                        Text("\(count)")
+                        Text("\(count)", bundle: .module)
                             .font(.system(size: 10, weight: .medium))
                             .foregroundColor(currentTheme.tertiaryText)
                             .padding(.horizontal, 6)
@@ -648,7 +645,7 @@ struct ThemeEditorView: View {
                 .buttonStyle(PlainButtonStyle())
             } else {
                 Button(action: { hex.wrappedValue = "#000000" }) {
-                    Text("Add")
+                    Text("Add", bundle: .module)
                         .font(.system(size: 12, weight: .medium))
                         .foregroundColor(currentTheme.accentColor)
                 }
@@ -927,21 +924,21 @@ struct ThemeChatPreview: View {
 
     private func previewAssistantMessage() -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Assistant")
+            Text("Assistant", bundle: .module)
                 .font(primaryFont(size: captionSize + 1, weight: .semibold))
                 .foregroundColor(c(theme.colors.secondaryText))
 
-            Text("Sure! Here's an example:")
+            Text("Sure! Here's an example:", bundle: .module)
                 .font(bodyFont)
                 .foregroundColor(c(theme.colors.primaryText))
 
             VStack(alignment: .leading, spacing: 4) {
-                Text("swift")
+                Text("swift", bundle: .module)
                     .font(monoFont(size: captionSize, weight: .medium))
                     .foregroundColor(c(theme.colors.tertiaryText))
                     .padding(.horizontal, 10).padding(.top, 8)
 
-                Text("print(\"Hello, World!\")")
+                Text("print(\"Hello, World!\")", bundle: .module)
                     .font(codeFont)
                     .foregroundColor(c(theme.colors.primaryText))
                     .padding(.horizontal, 10).padding(.bottom, 10)
@@ -1039,7 +1036,7 @@ struct ThemeChatPreview: View {
             // Model badge
             HStack(spacing: 5) {
                 Circle().fill(c(theme.colors.successColor)).frame(width: 6, height: 6)
-                Text("gpt-4")
+                Text("gpt-4", bundle: .module)
                     .font(primaryFont(size: captionSize - 1, weight: .medium))
                     .foregroundColor(c(theme.colors.secondaryText))
             }
@@ -1078,27 +1075,27 @@ struct ThemeChatPreview: View {
             HStack(spacing: 10) {
                 selectorChip {
                     Circle().fill(c(theme.colors.successColor)).frame(width: 6, height: 6)
-                    Text("gpt-4").font(primaryFont(size: captionSize - 1, weight: .medium))
+                    Text("gpt-4", bundle: .module).font(primaryFont(size: captionSize - 1, weight: .medium))
                     Image(systemName: "chevron.up.chevron.down").font(.system(size: 8, weight: .semibold))
                 }
 
                 selectorChip {
                     Image(systemName: "sparkles").font(.system(size: 9, weight: .medium))
-                    Text("3 tools").font(primaryFont(size: captionSize - 1, weight: .medium))
+                    Text("3 tools", bundle: .module).font(primaryFont(size: captionSize - 1, weight: .medium))
                 }
 
                 Spacer()
 
                 HStack(spacing: 3) {
                     Text("⏎").font(primaryFont(size: captionSize - 2, weight: .medium))
-                    Text("to send").font(primaryFont(size: captionSize - 1))
+                    Text("to send", bundle: .module).font(primaryFont(size: captionSize - 1))
                 }
                 .foregroundColor(c(theme.colors.tertiaryText).opacity(0.6))
             }
 
             // Input card
             VStack(alignment: .leading, spacing: 0) {
-                Text("Message or paste image...")
+                Text("Message or paste image...", bundle: .module)
                     .font(bodyFont)
                     .foregroundColor(c(theme.colors.placeholderText ?? theme.colors.tertiaryText))
                     .padding(.horizontal, 14)

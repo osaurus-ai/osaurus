@@ -86,16 +86,16 @@ struct OnboardingLocalDownloadView: View {
                 let minutes = Int(eta) / 60
                 let seconds = Int(eta) % 60
                 if minutes > 0 {
-                    parts.append("\(minutes)m \(seconds)s remaining")
+                    parts.append(L("\(minutes)m \(seconds)s remaining"))
                 } else {
-                    parts.append("\(seconds)s remaining")
+                    parts.append(L("\(seconds)s remaining"))
                 }
             }
 
             return parts.joined(separator: " · ")
         }
 
-        return "Preparing download..."
+        return L("Preparing download...")
     }
 
     var body: some View {
@@ -134,13 +134,13 @@ struct OnboardingLocalDownloadView: View {
                 showError = true
             }
         }
-        .alert("Download Failed", isPresented: $showError) {
-            Button("Try Again") {
+        .alert(Text("Download Failed", bundle: .module), isPresented: $showError) {
+            Button {
                 startDownload()
-            }
-            Button("Skip") {
+            } label: { Text("Try Again", bundle: .module) }
+            Button {
                 onSkip()
-            }
+            } label: { Text("Skip", bundle: .module) }
         } message: {
             Text(errorMessage)
         }
@@ -173,7 +173,7 @@ struct OnboardingLocalDownloadView: View {
             Spacer().frame(height: 20)
 
             // Headline
-            Text("Choose a local model")
+            Text("Choose a local model", bundle: .module)
                 .font(theme.font(size: 22, weight: .semibold))
                 .foregroundColor(theme.primaryText)
                 .multilineTextAlignment(.center)
@@ -213,7 +213,7 @@ struct OnboardingLocalDownloadView: View {
             Spacer().frame(height: 16)
 
             // Info text
-            Text("Runs entirely on your Mac. No data leaves your computer.")
+            Text("Runs entirely on your Mac. No data leaves your computer.", bundle: .module)
                 .font(theme.font(size: 14))
                 .foregroundColor(theme.secondaryText)
                 .multilineTextAlignment(.center)
@@ -255,7 +255,7 @@ struct OnboardingLocalDownloadView: View {
             Spacer().frame(height: 60)
 
             // Headline
-            Text("Almost ready...")
+            Text("Almost ready...", bundle: .module)
                 .font(theme.font(size: 24, weight: .semibold))
                 .foregroundColor(theme.primaryText)
                 .multilineTextAlignment(.center)
@@ -286,7 +286,7 @@ struct OnboardingLocalDownloadView: View {
 
             // Info text
             Text(
-                "Once this finishes, you'll have an AI running entirely on your Mac — no account, no cloud, no data leaving your machine."
+                "Once this finishes, you'll have an AI running entirely on your Mac — no account, no cloud, no data leaving your machine.", bundle: .module
             )
             .font(theme.font(size: 13))
             .foregroundColor(theme.secondaryText)
@@ -446,7 +446,7 @@ private struct DownloadedBadgeView: View {
         HStack(spacing: 3) {
             Image(systemName: "checkmark.circle.fill")
                 .font(.system(size: 9, weight: .medium))
-            Text("Downloaded")
+            Text("Downloaded", bundle: .module, comment: "Badge label for already-downloaded models")
                 .font(theme.font(size: 10, weight: .medium))
         }
         .foregroundColor(.green)

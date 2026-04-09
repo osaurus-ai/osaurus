@@ -16,17 +16,17 @@ enum OnboardingSetupPath: String, CaseIterable {
 
     var title: String {
         switch self {
-        case .appleFoundation: return "Use Apple Intelligence"
-        case .local: return "Download a Local Model"
-        case .apiProvider: return "Connect an AI Provider"
+        case .appleFoundation: return L("Use Apple Intelligence")
+        case .local: return L("Download a Local Model")
+        case .apiProvider: return L("Connect an AI Provider")
         }
     }
 
     var description: String {
         switch self {
-        case .appleFoundation: return "Built into macOS. Private, fast, and ready to use."
-        case .local: return "Runs entirely on your Mac. No account needed."
-        case .apiProvider: return "Use OpenAI, Anthropic, xAI, or another provider you trust. Requires an API key."
+        case .appleFoundation: return L("Built into macOS. Private, fast, and ready to use.")
+        case .local: return L("Runs entirely on your Mac. No account needed.")
+        case .apiProvider: return L("Use OpenAI, Anthropic, xAI, or another provider you trust. Requires an API key.")
         }
     }
 
@@ -53,7 +53,7 @@ struct OnboardingChoosePathView: View {
 
     private var helpContent: String {
         if foundationAvailable {
-            return """
+            return L("""
                 Apple Intelligence is built into macOS and runs privately on your device. It's ready to use immediately.
 
                 Local models run on your Mac using your hardware. They're private and free to use, but require a download.
@@ -61,15 +61,15 @@ struct OnboardingChoosePathView: View {
                 Cloud providers like Claude and ChatGPT are more powerful but require an account and charge per use.
 
                 Not sure? Apple Intelligence is recommended for most users.
-                """
+                """)
         } else {
-            return """
+            return L("""
                 Local models run on your Mac using your hardware. They're private and free to use, but less capable than cloud models for complex tasks.
 
                 Cloud providers like Claude and ChatGPT are more powerful but require an account and charge per use.
 
                 Not sure? Start local. You can add providers later.
-                """
+                """)
         }
     }
 
@@ -79,7 +79,7 @@ struct OnboardingChoosePathView: View {
                 Spacer().frame(height: OnboardingStyle.headerTopPadding + 15)
 
                 // Headline
-                Text("How do you want to power Osaurus?")
+                Text("How do you want to power Osaurus?", bundle: .module)
                     .font(theme.font(size: 22, weight: .semibold))
                     .foregroundColor(theme.primaryText)
                     .multilineTextAlignment(.center)
@@ -148,7 +148,7 @@ struct OnboardingChoosePathView: View {
                     HStack(spacing: 6) {
                         Image(systemName: "questionmark.circle")
                             .font(.system(size: 13))
-                        Text("What's the difference?")
+                        Text("What's the difference?", bundle: .module)
                             .font(theme.font(size: 13, weight: .medium))
                     }
                     .foregroundColor(theme.secondaryText)
@@ -156,7 +156,7 @@ struct OnboardingChoosePathView: View {
                 .buttonStyle(.plain)
                 .popover(isPresented: $showHelpPopover, arrowEdge: .bottom) {
                     VStack(alignment: .leading, spacing: 12) {
-                        Text("What's the difference?")
+                        Text("What's the difference?", bundle: .module)
                             .font(theme.font(size: 14, weight: .semibold))
                             .foregroundColor(theme.primaryText)
 

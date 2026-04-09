@@ -73,8 +73,8 @@ struct ServerView: View {
 
     private var headerView: some View {
         ManagerHeaderWithTabs(
-            title: "Server",
-            subtitle: "Developer tools and API reference"
+            title: L("Server"),
+            subtitle: L("Developer tools and API reference")
         ) {
             EmptyView()
         } tabsRow: {
@@ -117,13 +117,13 @@ private struct ServerStatusCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Label("Status", systemImage: "antenna.radiowaves.left.and.right")
+            Label { Text("Status", bundle: .module) } icon: { Image(systemName: "antenna.radiowaves.left.and.right") }
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundColor(theme.primaryText)
 
             HStack(spacing: 16) {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Server URL")
+                    Text("Server URL", bundle: .module)
                         .font(.system(size: 12, weight: .medium))
                         .foregroundColor(theme.secondaryText)
 
@@ -156,14 +156,14 @@ private struct ServerStatusCard: View {
                                 )
                         }
                         .buttonStyle(PlainButtonStyle())
-                        .help("Copy URL")
+                        .help(Text("Copy URL", bundle: .module))
                     }
                 }
 
                 Spacer()
 
                 VStack(alignment: .trailing, spacing: 8) {
-                    Text("Status")
+                    Text("Status", bundle: .module)
                         .font(.system(size: 12, weight: .medium))
                         .foregroundColor(theme.secondaryText)
 
@@ -176,7 +176,7 @@ private struct ServerStatusCard: View {
                     HStack(spacing: 8) {
                         Image(systemName: "play.fill")
                             .font(.system(size: 11, weight: .semibold))
-                        Text("Start Server")
+                        Text("Start Server", bundle: .module)
                             .font(.system(size: 13, weight: .semibold))
                     }
                     .foregroundColor(.white)
@@ -216,7 +216,7 @@ private struct AccessKeysSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
-                Label("Access Keys", systemImage: "key.horizontal")
+                Label { Text("Access Keys", bundle: .module) } icon: { Image(systemName: "key.horizontal") }
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(theme.primaryText)
 
@@ -227,7 +227,7 @@ private struct AccessKeysSection: View {
                         HStack(spacing: 6) {
                             Image(systemName: "plus")
                                 .font(.system(size: 10, weight: .semibold))
-                            Text("Generate Key")
+                            Text("Generate Key", bundle: .module)
                                 .font(.system(size: 12, weight: .semibold))
                         }
                         .foregroundColor(.white)
@@ -252,12 +252,12 @@ private struct AccessKeysSection: View {
                         Image(systemName: "lock.shield.fill")
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundColor(theme.warningColor)
-                        Text("Server is locked")
+                        Text("Server is locked", bundle: .module)
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundColor(theme.warningColor)
                     }
                     Text(
-                        "All API endpoints are restricted until you create an access key. Click \"Generate Key\" above to get started."
+                        "All API endpoints are restricted until you create an access key. Click \"Generate Key\" above to get started.", bundle: .module
                     )
                     .font(.system(size: 12))
                     .foregroundColor(theme.secondaryText)
@@ -312,7 +312,7 @@ private struct AccessKeysSection: View {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundColor(theme.warningColor)
-                Text("Copy this key now. It won't be shown again.")
+                Text("Copy this key now. It won't be shown again.", bundle: .module)
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundColor(theme.warningColor)
             }
@@ -333,7 +333,7 @@ private struct AccessKeysSection: View {
                     HStack(spacing: 4) {
                         Image(systemName: "doc.on.doc")
                             .font(.system(size: 10, weight: .medium))
-                        Text("Copy")
+                        Text("Copy", bundle: .module)
                             .font(.system(size: 11, weight: .medium))
                     }
                     .foregroundColor(.white)
@@ -413,7 +413,7 @@ private struct AccessKeysSection: View {
                         .font(.system(size: 11, design: .monospaced))
                         .foregroundColor(theme.tertiaryText)
 
-                    Text("Created \(sharedMediumDateFormatter.string(from: key.createdAt))")
+                    Text("Created \(sharedMediumDateFormatter.string(from: key.createdAt))", bundle: .module)
                         .font(.system(size: 10))
                         .foregroundColor(theme.tertiaryText)
 
@@ -437,7 +437,7 @@ private struct AccessKeysSection: View {
                     reloadAccessKeys()
                     restartServerForKeyChange()
                 }) {
-                    Text("Revoke")
+                    Text("Revoke", bundle: .module)
                         .font(.system(size: 11, weight: .medium))
                         .foregroundColor(theme.errorColor)
                         .padding(.horizontal, 10)
@@ -511,11 +511,11 @@ private struct RelaysSectionView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Label("Relays", systemImage: "globe")
+            Label { Text("Relays", bundle: .module) } icon: { Image(systemName: "globe") }
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundColor(theme.primaryText)
 
-            Text("Expose agents to the public internet via relay tunnels.")
+            Text("Expose agents to the public internet via relay tunnels.", bundle: .module)
                 .font(.system(size: 12))
                 .foregroundColor(theme.secondaryText)
 
@@ -526,7 +526,7 @@ private struct RelaysSectionView: View {
                     Image(systemName: "person.crop.circle.badge.questionmark")
                         .font(.system(size: 14))
                         .foregroundColor(theme.tertiaryText)
-                    Text("No agents configured. Create an agent first.")
+                    Text("No agents configured. Create an agent first.", bundle: .module)
                         .font(.system(size: 12))
                         .foregroundColor(theme.tertiaryText)
                 }
@@ -549,19 +549,19 @@ private struct RelaysSectionView: View {
             RoundedRectangle(cornerRadius: 12)
                 .fill(theme.secondaryBackground)
         )
-        .alert("Expose Agent to Internet?", isPresented: $showRelayConfirmation) {
-            Button("Enable Tunnel", role: .destructive) {
+        .alert(Text("Expose Agent to Internet?", bundle: .module), isPresented: $showRelayConfirmation) {
+            Button(role: .destructive) {
                 if let id = pendingRelayAgentId {
                     relayManager.setTunnelEnabled(true, for: id)
                 }
                 pendingRelayAgentId = nil
-            }
-            Button("Cancel", role: .cancel) {
+            } label: { Text("Enable Tunnel", bundle: .module) }
+            Button(role: .cancel) {
                 pendingRelayAgentId = nil
-            }
+            } label: { Text("Cancel", bundle: .module) }
         } message: {
             Text(
-                "This will create a public URL for this agent via agent.osaurus.ai. Anyone with the URL can send requests to your local server. Your access keys still protect the API endpoints."
+                "This will create a public URL for this agent via agent.osaurus.ai. Anyone with the URL can send requests to your local server. Your access keys still protect the API endpoints.", bundle: .module
             )
         }
         .task {
@@ -587,7 +587,7 @@ private struct RelaysSectionView: View {
                         .foregroundColor(theme.primaryText)
 
                     if agent.isBuiltIn {
-                        Text("Built-in")
+                        Text("Built-in", bundle: .module)
                             .font(.system(size: 9, weight: .bold))
                             .foregroundColor(theme.tertiaryText)
                             .padding(.horizontal, 6)
@@ -602,7 +602,7 @@ private struct RelaysSectionView: View {
                         .font(.system(size: 11, design: .monospaced))
                         .foregroundColor(theme.tertiaryText)
                 } else {
-                    Text("No identity set up")
+                    Text("No identity set up", bundle: .module)
                         .font(.system(size: 11))
                         .foregroundColor(theme.warningColor)
                 }
@@ -627,7 +627,7 @@ private struct RelaysSectionView: View {
                                 .foregroundColor(copiedRelayURL == agent.id ? theme.successColor : theme.tertiaryText)
                         }
                         .buttonStyle(PlainButtonStyle())
-                        .help("Copy relay URL")
+                        .help(Text("Copy relay URL", bundle: .module))
                     }
                 }
 
@@ -661,12 +661,12 @@ private struct RelaysSectionView: View {
                 Button(action: {
                     AppDelegate.shared?.showManagementWindow(initialTab: .identity)
                 }) {
-                    Text("Identity →")
+                    Text("Identity →", bundle: .module)
                         .font(.system(size: 11, weight: .medium))
                         .foregroundColor(theme.accentColor)
                 }
                 .buttonStyle(PlainButtonStyle())
-                .help("Set up this agent's identity in the Identity tab")
+                .help(Text("Set up this agent's identity in the Identity tab", bundle: .module))
             }
         }
         .padding(.horizontal, 12)
@@ -760,10 +760,10 @@ private struct APIReferenceTabContent: View {
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundColor(theme.warningColor)
             VStack(alignment: .leading, spacing: 2) {
-                Text("Server is not running")
+                Text("Server is not running", bundle: .module)
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundColor(theme.warningColor)
-                Text("Start the server from the Overview tab to test endpoints.")
+                Text("Start the server from the Overview tab to test endpoints.", bundle: .module)
                     .font(.system(size: 11))
                     .foregroundColor(theme.secondaryText)
             }
@@ -782,11 +782,11 @@ private struct APIReferenceTabContent: View {
 
     private var endpointsCard: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Label("API Endpoints", systemImage: "arrow.left.arrow.right")
+            Label { Text("API Endpoints", bundle: .module) } icon: { Image(systemName: "arrow.left.arrow.right") }
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundColor(theme.primaryText)
 
-            Text("Available endpoints on your Osaurus server. Expand to test directly.")
+            Text("Available endpoints on your Osaurus server. Expand to test directly.", bundle: .module)
                 .font(.system(size: 12))
                 .foregroundColor(theme.secondaryText)
 
@@ -797,7 +797,7 @@ private struct APIReferenceTabContent: View {
                     Image(systemName: "magnifyingglass")
                         .font(.system(size: 14))
                         .foregroundColor(theme.tertiaryText)
-                    Text("No endpoints match \"\(searchText)\"")
+                    Text("No endpoints match \"\(searchText)\"", bundle: .module)
                         .font(.system(size: 12))
                         .foregroundColor(theme.tertiaryText)
                 }
@@ -876,11 +876,11 @@ private struct APIReferenceTabContent: View {
 
     private var documentationSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Label("Documentation", systemImage: "book")
+            Label { Text("Documentation", bundle: .module) } icon: { Image(systemName: "book") }
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundColor(theme.primaryText)
 
-            Text("Learn how to integrate Osaurus into your applications.")
+            Text("Learn how to integrate Osaurus into your applications.", bundle: .module)
                 .font(.system(size: 12))
                 .foregroundColor(theme.secondaryText)
 
@@ -892,7 +892,7 @@ private struct APIReferenceTabContent: View {
                 HStack(spacing: 8) {
                     Image(systemName: "arrow.up.right.square")
                         .font(.system(size: 12, weight: .medium))
-                    Text("Open Documentation")
+                    Text("Open Documentation", bundle: .module)
                         .font(.system(size: 13, weight: .medium))
                 }
                 .foregroundColor(.white)
@@ -1050,7 +1050,7 @@ private struct AccessKeyGeneratorSheet: View {
     var body: some View {
         VStack(spacing: 20) {
             HStack {
-                Text("Generate Access Key")
+                Text("Generate Access Key", bundle: .module)
                     .font(.system(size: 16, weight: .bold))
                     .foregroundColor(theme.primaryText)
                 Spacer()
@@ -1063,10 +1063,10 @@ private struct AccessKeyGeneratorSheet: View {
             }
 
             VStack(alignment: .leading, spacing: 6) {
-                Text("Label")
+                Text("Label", bundle: .module)
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(theme.secondaryText)
-                TextField("e.g. Cursor, CLI, my-app", text: $label)
+                TextField(text: $label, prompt: Text("e.g. Cursor, CLI, my-app", bundle: .module)) { Text("e.g. Cursor, CLI, my-app", bundle: .module) }
                     .textFieldStyle(.plain)
                     .font(.system(size: 13))
                     .padding(10)
@@ -1081,7 +1081,7 @@ private struct AccessKeyGeneratorSheet: View {
             }
 
             VStack(alignment: .leading, spacing: 6) {
-                Text("Expiration")
+                Text("Expiration", bundle: .module)
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(theme.secondaryText)
                 HStack(spacing: 8) {
@@ -1117,7 +1117,7 @@ private struct AccessKeyGeneratorSheet: View {
 
             HStack(spacing: 12) {
                 Button(action: onCancel) {
-                    Text("Cancel")
+                    Text("Cancel", bundle: .module)
                         .font(.system(size: 13, weight: .medium))
                         .foregroundColor(theme.primaryText)
                         .padding(.horizontal, 20)
@@ -1143,7 +1143,7 @@ private struct AccessKeyGeneratorSheet: View {
                             Image(systemName: "key.fill")
                                 .font(.system(size: 11, weight: .semibold))
                         }
-                        Text("Generate")
+                        Text("Generate", bundle: .module)
                             .font(.system(size: 13, weight: .semibold))
                     }
                     .foregroundColor(.white)
@@ -1642,7 +1642,7 @@ private struct EndpointRowHeader: View {
                         .scaleEffect(0.6)
                         .frame(width: 20, height: 20)
                 } else if let resp = response {
-                    Text("\(resp.statusCode)")
+                    Text("\(resp.statusCode)", bundle: .module)
                         .font(.system(size: 10, weight: .bold, design: .monospaced))
                         .foregroundColor(.white)
                         .padding(.horizontal, 6)
@@ -1705,7 +1705,7 @@ private struct ResponsePanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Label("Response", systemImage: "arrow.down.circle.fill")
+                Label { Text("Response", bundle: .module) } icon: { Image(systemName: "arrow.down.circle.fill") }
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundColor(theme.secondaryText)
 
@@ -1725,7 +1725,7 @@ private struct ResponsePanel: View {
                             .foregroundColor(theme.tertiaryText)
                     }
                     .buttonStyle(PlainButtonStyle())
-                    .help("Copy response")
+                    .help(Text("Copy response", bundle: .module))
 
                     Button(action: onClearResponse) {
                         Image(systemName: "xmark")
@@ -1733,14 +1733,14 @@ private struct ResponsePanel: View {
                             .foregroundColor(theme.tertiaryText)
                     }
                     .buttonStyle(PlainButtonStyle())
-                    .help("Clear response")
+                    .help(Text("Clear response", bundle: .module))
                 }
             }
 
             if isLoading {
                 VStack {
                     ProgressView().scaleEffect(0.8)
-                    Text("Waiting for response...")
+                    Text("Waiting for response...", bundle: .module)
                         .font(.system(size: 11))
                         .foregroundColor(theme.tertiaryText)
                 }
@@ -1852,13 +1852,13 @@ private struct EndpointRow: View {
     private var requestPanel: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Label("Request", systemImage: "arrow.up.circle.fill")
+                Label { Text("Request", bundle: .module) } icon: { Image(systemName: "arrow.up.circle.fill") }
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundColor(theme.secondaryText)
                 Spacer()
                 if endpoint.examplePayload != nil, !endpoint.hasPathParameters {
                     Button(action: { editablePayload = endpoint.examplePayload ?? "{}" }) {
-                        Text("Reset")
+                        Text("Reset", bundle: .module)
                             .font(.system(size: 10, weight: .medium))
                             .foregroundColor(theme.tertiaryText)
                     }
@@ -1868,7 +1868,7 @@ private struct EndpointRow: View {
 
             if endpoint.hasPathParameters {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("\(endpoint.method) \(serverURL)\(endpoint.path)")
+                    Text("\(endpoint.method) \(serverURL)\(endpoint.path)", bundle: .module)
                         .font(.system(size: 11, design: .monospaced))
                         .foregroundColor(theme.primaryText)
                         .textSelection(.enabled)
@@ -1889,7 +1889,7 @@ private struct EndpointRow: View {
                 HStack(spacing: 6) {
                     Image(systemName: "info.circle")
                         .font(.system(size: 10))
-                    Text("Replace path parameters with real values. Test via curl or your HTTP client.")
+                    Text("Replace path parameters with real values. Test via curl or your HTTP client.", bundle: .module)
                         .font(.system(size: 10))
                 }
                 .foregroundColor(theme.tertiaryText)
@@ -1909,7 +1909,7 @@ private struct EndpointRow: View {
                     )
                     .foregroundColor(theme.primaryText)
             } else {
-                Text("\(endpoint.method) \(serverURL)\(endpoint.path)")
+                Text("\(endpoint.method) \(serverURL)\(endpoint.path)", bundle: .module)
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundColor(theme.primaryText)
                     .textSelection(.enabled)
@@ -2013,12 +2013,12 @@ private struct TranscriptionTestRow: View {
 
     private var requestPanel: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Label("Request", systemImage: "arrow.up.circle.fill")
+            Label { Text("Request", bundle: .module) } icon: { Image(systemName: "arrow.up.circle.fill") }
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundColor(theme.secondaryText)
 
             VStack(alignment: .leading, spacing: 6) {
-                Text("Model")
+                Text("Model", bundle: .module)
                     .font(.system(size: 10, weight: .medium))
                     .foregroundColor(theme.tertiaryText)
 
@@ -2032,7 +2032,7 @@ private struct TranscriptionTestRow: View {
                             .font(.system(size: 12, weight: .medium))
                             .foregroundColor(theme.primaryText)
                     } else {
-                        Text("No model selected")
+                        Text("No model selected", bundle: .module)
                             .font(.system(size: 12, weight: .medium))
                             .foregroundColor(theme.tertiaryText)
                             .italic()
@@ -2057,7 +2057,7 @@ private struct TranscriptionTestRow: View {
                 Button(action: selectFile) {
                     HStack(spacing: 6) {
                         Image(systemName: "folder").font(.system(size: 10))
-                        Text("Choose File").font(.system(size: 11, weight: .medium))
+                        Text("Choose File", bundle: .module).font(.system(size: 11, weight: .medium))
                     }
                     .foregroundColor(theme.secondaryText)
                     .padding(.horizontal, 12)
@@ -2096,7 +2096,7 @@ private struct TranscriptionTestRow: View {
     @ViewBuilder
     private var audioFileField: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Audio File")
+            Text("Audio File", bundle: .module)
                 .font(.system(size: 10, weight: .medium))
                 .foregroundColor(theme.tertiaryText)
 
@@ -2110,7 +2110,7 @@ private struct TranscriptionTestRow: View {
                         .foregroundColor(theme.primaryText)
                         .lineLimit(1)
                     if let data = audioData {
-                        Text("(\(sharedByteCountFormatter.string(fromByteCount: Int64(data.count))))")
+                        Text("(\(sharedByteCountFormatter.string(fromByteCount: Int64(data.count))))", bundle: .module)
                             .font(.system(size: 11))
                             .foregroundColor(theme.tertiaryText)
                     }
@@ -2121,7 +2121,7 @@ private struct TranscriptionTestRow: View {
                             .foregroundColor(theme.tertiaryText)
                     }
                     .buttonStyle(PlainButtonStyle())
-                    .help("Remove file")
+                    .help(Text("Remove file", bundle: .module))
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 10)
@@ -2135,12 +2135,12 @@ private struct TranscriptionTestRow: View {
                     Image(systemName: "doc.badge.plus")
                         .font(.system(size: 12))
                         .foregroundColor(theme.tertiaryText)
-                    Text("No file selected")
+                    Text("No file selected", bundle: .module)
                         .font(.system(size: 12))
                         .foregroundColor(theme.tertiaryText)
                         .italic()
                     Spacer()
-                    Text("WAV, MP3, M4A")
+                    Text("WAV, MP3, M4A", bundle: .module)
                         .font(.system(size: 10))
                         .foregroundColor(theme.tertiaryText.opacity(0.7))
                 }

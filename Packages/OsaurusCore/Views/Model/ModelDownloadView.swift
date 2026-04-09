@@ -117,7 +117,7 @@ struct ModelDownloadView: View {
 
     private var headerView: some View {
         ManagerHeaderWithTabs(
-            title: "Models",
+            title: L("Models"),
             subtitle: "\(completedDownloadedModelsCount) downloaded • \(modelManager.totalDownloadedSizeString)"
         ) {
             HStack(spacing: 12) {
@@ -131,7 +131,7 @@ struct ModelDownloadView: View {
                                 ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle"
                         )
                         .font(.system(size: 13))
-                        Text("Filter")
+                        Text("Filter", bundle: .module)
                             .font(.system(size: 13, weight: .medium))
                         if filterState.isActive {
                             Circle()
@@ -192,7 +192,7 @@ struct ModelDownloadView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 HStack {
-                    Text("Filters")
+                    Text("Filters", bundle: .module)
                         .font(.system(size: 14, weight: .bold))
                     Spacer()
                     if filterState.isActive {
@@ -202,7 +202,7 @@ struct ModelDownloadView: View {
                             HStack(spacing: 4) {
                                 Image(systemName: "arrow.counterclockwise")
                                     .font(.system(size: 10, weight: .bold))
-                                Text("Reset")
+                                Text("Reset", bundle: .module)
                                     .font(.system(size: 12, weight: .medium))
                             }
                         }
@@ -246,7 +246,7 @@ struct ModelDownloadView: View {
                     FilterSection(title: "Model Family") {
                         let families = Array(Set(modelManager.availableModels.map { $0.family })).sorted()
                         if families.isEmpty {
-                            Text("No families found")
+                            Text("No families found", bundle: .module)
                                 .font(.system(size: 11))
                                 .foregroundColor(theme.tertiaryText)
                         } else {
@@ -361,12 +361,12 @@ struct ModelDownloadView: View {
                     .font(.system(size: 14))
                     .foregroundColor(.orange)
 
-                Text("Model updates available")
+                Text("Model updates available", bundle: .module)
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(theme.primaryText)
             }
 
-            Text("Some downloaded models have been replaced with improved OsaurusAI versions that fix known bugs.")
+            Text("Some downloaded models have been replaced with improved OsaurusAI versions that fix known bugs.", bundle: .module)
                 .font(.system(size: 12))
                 .foregroundColor(theme.secondaryText)
                 .fixedSize(horizontal: false, vertical: true)
@@ -453,7 +453,7 @@ struct ModelDownloadView: View {
                 .tint(theme.accentColor)
 
             HStack(spacing: 6) {
-                Text("\(Int(progress * 100))%")
+                Text("\(Int(progress * 100))%", bundle: .module)
                     .font(.system(size: 10, weight: .medium, design: .monospaced))
                     .foregroundColor(theme.secondaryText)
 
@@ -541,7 +541,7 @@ struct ModelDownloadView: View {
 
             if !searchText.isEmpty {
                 Button(action: { searchText = "" }) {
-                    Text("Clear search")
+                    Text("Clear search", bundle: .module)
                         .font(.system(size: 13, weight: .medium))
                         .foregroundColor(theme.accentColor)
                 }
@@ -563,15 +563,15 @@ struct ModelDownloadView: View {
 
     private var emptyStateTitle: String {
         if !searchText.isEmpty {
-            return "No models match your search"
+            return L("No models match your search")
         }
         switch selectedTab {
         case .all:
-            return "No models available"
+            return L("No models available")
         case .suggested:
-            return "No recommended models"
+            return L("No recommended models")
         case .downloaded:
-            return "No downloaded models"
+            return L("No downloaded models")
         }
     }
 
@@ -772,7 +772,7 @@ private struct DownloadStatusIndicator: View {
                         .foregroundColor(theme.accentColor)
                 }
 
-                Text("Downloading")
+                Text("Downloading", bundle: .module)
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(theme.secondaryText)
             }
@@ -790,7 +790,7 @@ private struct DownloadStatusIndicator: View {
                 isHovering = hovering
             }
         }
-        .help("Downloading \(activeCount) model\(activeCount == 1 ? "" : "s") – Click to view")
+        .help(Text("Downloading \(activeCount) model\(activeCount == 1 ? "" : "s") – Click to view", bundle: .module))
     }
 }
 

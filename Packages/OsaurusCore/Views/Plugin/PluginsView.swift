@@ -174,8 +174,8 @@ struct PluginsView: View {
 
     private var headerBar: some View {
         ManagerHeaderWithTabs(
-            title: "Plugins",
-            subtitle: "Browse and manage plugins"
+            title: L("Plugins"),
+            subtitle: L("Browse and manage plugins")
         ) {
             HeaderIconButton(
                 "arrow.clockwise",
@@ -213,7 +213,7 @@ struct PluginsView: View {
             if installedPlugins.isEmpty {
                 emptyState(
                     icon: "puzzlepiece.extension",
-                    title: "No plugins installed",
+                    title: L("No plugins installed"),
                     subtitle: searchText.isEmpty
                         ? "Browse the repository to install plugins"
                         : "Try a different search term"
@@ -344,7 +344,7 @@ struct PluginsView: View {
         VStack(spacing: 16) {
             ProgressView()
                 .scaleEffect(1.2)
-            Text("Loading repository...")
+            Text("Loading repository...", bundle: .module)
                 .font(.system(size: 14))
                 .foregroundColor(theme.secondaryText)
         }
@@ -371,7 +371,7 @@ struct PluginsView: View {
                     isRefreshButtonLoading = false
                 }
             }) {
-                Text("Retry")
+                Text("Retry", bundle: .module)
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(theme.accentColor)
             }
@@ -536,7 +536,7 @@ private struct PluginCard: View {
 
                         HStack(spacing: 6) {
                             if let version = plugin.installedVersion ?? plugin.latestVersion {
-                                Text("v\(version.description)")
+                                Text("v\(version.description)", bundle: .module)
                                     .font(.system(size: 10, weight: .medium))
                                     .foregroundColor(theme.tertiaryText)
                                     .padding(.horizontal, 5)
@@ -696,7 +696,7 @@ private struct PluginCard: View {
         } else {
             Menu {
                 Button(action: onSelect) {
-                    Label("View Details", systemImage: "info.circle")
+                    Label { Text("View Details", bundle: .module) } icon: { Image(systemName: "info.circle") }
                 }
                 if plugin.hasUpdate, let onUpgrade {
                     Button {
@@ -704,7 +704,7 @@ private struct PluginCard: View {
                             do { try await onUpgrade() } catch { handleInstallError(error) }
                         }
                     } label: {
-                        Label("Update", systemImage: "arrow.up.circle.fill")
+                        Label { Text("Update", bundle: .module) } icon: { Image(systemName: "arrow.up.circle.fill") }
                     }
                 }
                 if !cachedSecrets.isEmpty {
@@ -723,7 +723,7 @@ private struct PluginCard: View {
                             do { try await onInstall() } catch { handleInstallError(error) }
                         }
                     } label: {
-                        Label("Install", systemImage: "arrow.down.circle.fill")
+                        Label { Text("Install", bundle: .module) } icon: { Image(systemName: "arrow.down.circle.fill") }
                     }
                 }
                 if plugin.isInstalled, let onUninstall {
@@ -736,7 +736,7 @@ private struct PluginCard: View {
                             }
                         }
                     } label: {
-                        Label("Uninstall", systemImage: "trash")
+                        Label { Text("Uninstall", bundle: .module) } icon: { Image(systemName: "trash") }
                     }
                 }
             } label: {
@@ -978,7 +978,7 @@ private struct PluginDetailView: View {
                 HStack(spacing: 6) {
                     Image(systemName: "chevron.left")
                         .font(.system(size: 12, weight: .semibold))
-                    Text("Plugins")
+                    Text("Plugins", bundle: .module)
                         .font(.system(size: 13, weight: .medium))
                 }
                 .foregroundColor(theme.accentColor)
@@ -999,7 +999,7 @@ private struct PluginDetailView: View {
                             .background(Circle().fill(theme.errorColor.opacity(0.1)))
                     }
                     .buttonStyle(PlainButtonStyle())
-                    .help("Uninstall")
+                    .help(Text("Uninstall", bundle: .module))
                 }
             }
         }
@@ -1048,7 +1048,7 @@ private struct PluginDetailView: View {
                         .foregroundColor(theme.primaryText)
 
                     if let version = plugin.installedVersion ?? plugin.latestVersion {
-                        Text("v\(version.description)")
+                        Text("v\(version.description)", bundle: .module)
                             .font(.system(size: 12, weight: .medium))
                             .foregroundColor(theme.tertiaryText)
                             .padding(.horizontal, 8)
@@ -1106,7 +1106,7 @@ private struct PluginDetailView: View {
                     } label: {
                         HStack(spacing: 5) {
                             Image(systemName: "arrow.up.circle.fill").font(.system(size: 12))
-                            Text("Update").font(.system(size: 13, weight: .semibold))
+                            Text("Update", bundle: .module).font(.system(size: 13, weight: .semibold))
                         }
                         .foregroundColor(.white)
                         .padding(.horizontal, 16)
@@ -1122,7 +1122,7 @@ private struct PluginDetailView: View {
                     } label: {
                         HStack(spacing: 5) {
                             Image(systemName: "arrow.down.circle.fill").font(.system(size: 12))
-                            Text("Install").font(.system(size: 13, weight: .semibold))
+                            Text("Install", bundle: .module).font(.system(size: 13, weight: .semibold))
                         }
                         .foregroundColor(.white)
                         .padding(.horizontal, 16)
@@ -1142,7 +1142,7 @@ private struct PluginDetailView: View {
                     } label: {
                         HStack(spacing: 5) {
                             Image(systemName: "globe").font(.system(size: 12))
-                            Text("Open Web App").font(.system(size: 13, weight: .semibold))
+                            Text("Open Web App", bundle: .module).font(.system(size: 13, weight: .semibold))
                         }
                         .foregroundColor(theme.accentColor)
                         .padding(.horizontal, 16)
@@ -1182,10 +1182,10 @@ private struct PluginDetailView: View {
                                 .foregroundColor(theme.warningColor)
 
                             VStack(alignment: .leading, spacing: 2) {
-                                Text("Approval Required")
+                                Text("Approval Required", bundle: .module)
                                     .font(.system(size: 14, weight: .semibold))
                                     .foregroundColor(theme.primaryText)
-                                Text("This plugin needs your approval before it can load.")
+                                Text("This plugin needs your approval before it can load.", bundle: .module)
                                     .font(.system(size: 12))
                                     .foregroundColor(theme.secondaryText)
                             }
@@ -1206,7 +1206,7 @@ private struct PluginDetailView: View {
                             } label: {
                                 HStack(spacing: 4) {
                                     Image(systemName: "checkmark.shield.fill").font(.system(size: 10))
-                                    Text("Approve").font(.system(size: 12, weight: .semibold))
+                                    Text("Approve", bundle: .module).font(.system(size: 12, weight: .semibold))
                                 }
                                 .foregroundColor(.white)
                                 .padding(.horizontal, 12)
@@ -1224,7 +1224,7 @@ private struct PluginDetailView: View {
                                 .foregroundColor(.red)
 
                             VStack(alignment: .leading, spacing: 2) {
-                                Text("Failed to load plugin")
+                                Text("Failed to load plugin", bundle: .module)
                                     .font(.system(size: 14, weight: .semibold))
                                     .foregroundColor(.red)
                                 Text(loadError)
@@ -1243,7 +1243,7 @@ private struct PluginDetailView: View {
                             } label: {
                                 HStack(spacing: 4) {
                                     Image(systemName: "arrow.clockwise").font(.system(size: 11))
-                                    Text("Retry").font(.system(size: 12, weight: .semibold))
+                                    Text("Retry", bundle: .module).font(.system(size: 12, weight: .semibold))
                                 }
                                 .foregroundColor(.white)
                                 .padding(.horizontal, 12)
@@ -1268,10 +1268,10 @@ private struct PluginDetailView: View {
                     .foregroundColor(theme.warningColor)
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("API Keys Required")
+                    Text("API Keys Required", bundle: .module)
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundColor(theme.primaryText)
-                    Text("This plugin requires credentials to function properly.")
+                    Text("This plugin requires credentials to function properly.", bundle: .module)
                         .font(.system(size: 12))
                         .foregroundColor(theme.secondaryText)
                 }
@@ -1283,7 +1283,7 @@ private struct PluginDetailView: View {
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: "key.fill").font(.system(size: 10))
-                        Text("Configure").font(.system(size: 12, weight: .semibold))
+                        Text("Configure", bundle: .module).font(.system(size: 12, weight: .semibold))
                     }
                     .foregroundColor(.white)
                     .padding(.horizontal, 12)
@@ -1306,10 +1306,10 @@ private struct PluginDetailView: View {
                         .foregroundColor(theme.warningColor)
 
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("System Permissions Required")
+                        Text("System Permissions Required", bundle: .module)
                             .font(.system(size: 14, weight: .semibold))
                             .foregroundColor(theme.primaryText)
-                        Text("Grant the following permissions to use all features:")
+                        Text("Grant the following permissions to use all features:", bundle: .module)
                             .font(.system(size: 12))
                             .foregroundColor(theme.secondaryText)
                     }
@@ -1325,7 +1325,7 @@ private struct PluginDetailView: View {
                         } label: {
                             HStack(spacing: 6) {
                                 Image(systemName: perm.systemIconName).font(.system(size: 11))
-                                Text("Grant \(perm.displayName)").font(.system(size: 11, weight: .medium))
+                                Text("Grant \(perm.displayName)", bundle: .module).font(.system(size: 11, weight: .medium))
                             }
                             .foregroundColor(.white)
                             .padding(.horizontal, 12)
@@ -1344,7 +1344,7 @@ private struct PluginDetailView: View {
                     } label: {
                         HStack(spacing: 4) {
                             Image(systemName: "gear").font(.system(size: 10))
-                            Text("Open Settings").font(.system(size: 11, weight: .medium))
+                            Text("Open Settings", bundle: .module).font(.system(size: 11, weight: .medium))
                         }
                         .foregroundColor(theme.secondaryText)
                         .padding(.horizontal, 10)
@@ -1566,7 +1566,7 @@ private struct PluginCapabilitiesBadge: View {
                     HStack(spacing: 3) {
                         Image(systemName: "wrench.and.screwdriver")
                             .font(.system(size: 9))
-                        Text("\(toolCount)")
+                        Text("\(toolCount)", bundle: .module)
                             .font(.system(size: 11, weight: .medium))
                     }
                 }
@@ -1579,7 +1579,7 @@ private struct PluginCapabilitiesBadge: View {
                     HStack(spacing: 3) {
                         Image(systemName: "lightbulb")
                             .font(.system(size: 9))
-                        Text("\(skillCount)")
+                        Text("\(skillCount)", bundle: .module)
                             .font(.system(size: 11, weight: .medium))
                     }
                 }
@@ -1702,7 +1702,7 @@ private struct PluginRoutesSummary: View {
                                 .fill(theme.accentColor.opacity(0.12))
                         )
 
-                    Text("/plugins/\(pluginId)\(route.path)")
+                    Text("/plugins/\(pluginId)\(route.path)", bundle: .module)
                         .font(.system(size: 11, design: .monospaced))
                         .foregroundColor(theme.primaryText)
                         .lineLimit(1)

@@ -83,8 +83,8 @@ struct ToolsManagerView: View {
 
     private var headerBar: some View {
         ManagerHeaderWithTabs(
-            title: "Tools",
-            subtitle: "Manage and discover tools"
+            title: L("Tools"),
+            subtitle: L("Manage and discover tools")
         ) {
             HeaderIconButton(
                 "arrow.clockwise",
@@ -118,7 +118,7 @@ struct ToolsManagerView: View {
         ScrollView {
             LazyVStack(spacing: 16) {
                 SectionHeader(
-                    title: "Available Tools",
+                    title: L("Available Tools"),
                     description: "Tools from installed plugins and connected providers"
                 )
 
@@ -128,7 +128,7 @@ struct ToolsManagerView: View {
                 if plugins.isEmpty && remoteTools.isEmpty {
                     emptyState(
                         icon: "wrench.and.screwdriver",
-                        title: "No tools available",
+                        title: L("No tools available"),
                         subtitle: searchText.isEmpty
                             ? "Install plugins or connect to remote providers to add tools"
                             : "Try a different search term"
@@ -349,7 +349,7 @@ private struct SandboxPluginsTabContent: View {
         ScrollView {
             LazyVStack(spacing: 16) {
                 SectionHeader(
-                    title: "Sandbox Plugins",
+                    title: L("Sandbox Plugins"),
                     description:
                         "Plugins run inside the sandbox container. They are auto-provisioned when any agent uses them."
                 )
@@ -361,7 +361,7 @@ private struct SandboxPluginsTabContent: View {
                         HStack(spacing: 6) {
                             Image(systemName: "square.and.arrow.down")
                                 .font(.system(size: 11))
-                            Text("Import")
+                            Text("Import", bundle: .module)
                                 .font(.system(size: 12, weight: .medium))
                         }
                         .foregroundColor(theme.primaryText)
@@ -382,7 +382,7 @@ private struct SandboxPluginsTabContent: View {
                         HStack(spacing: 6) {
                             Image(systemName: "plus")
                                 .font(.system(size: 11))
-                            Text("Create Plugin")
+                            Text("Create Plugin", bundle: .module)
                                 .font(.system(size: 12, weight: .medium))
                         }
                         .foregroundColor(.white)
@@ -432,28 +432,28 @@ private struct SandboxPluginsTabContent: View {
                 onDismiss: { editingPlugin = nil }
             )
         }
-        .alert("Remove Plugin?", isPresented: $showDeleteConfirm) {
-            Button("Cancel", role: .cancel) { pluginToDelete = nil }
-            Button("Remove", role: .destructive) {
+        .alert(Text("Remove Plugin?", bundle: .module), isPresented: $showDeleteConfirm) {
+            Button(role: .cancel) { pluginToDelete = nil } label: { Text("Cancel", bundle: .module) }
+            Button(role: .destructive) {
                 if let p = pluginToDelete {
                     pluginLibrary.delete(id: p.id)
                     ToolRegistry.shared.unregisterSandboxPluginTools(pluginId: p.id)
                     pluginToDelete = nil
                 }
-            }
+            } label: { Text("Remove", bundle: .module) }
         } message: {
             if let p = pluginToDelete {
-                Text("Remove \"\(p.name)\" from the library? This will also unregister its tools.")
+                Text("Remove \"\(p.name)\" from the library? This will also unregister its tools.", bundle: .module)
             }
         }
         .alert(
-            "Error",
+            Text("Error", bundle: .module),
             isPresented: Binding(
                 get: { actionError != nil },
                 set: { if !$0 { actionError = nil } }
             )
         ) {
-            Button("OK", role: .cancel) { actionError = nil }
+            Button(role: .cancel) { actionError = nil } label: { Text("OK", bundle: .module) }
         } message: {
             if let error = actionError {
                 Text(error)
@@ -467,12 +467,12 @@ private struct SandboxPluginsTabContent: View {
                 .font(.system(size: 40, weight: .light))
                 .foregroundColor(theme.tertiaryText)
 
-            Text("No sandbox plugins")
+            Text("No sandbox plugins", bundle: .module)
                 .font(.system(size: 15, weight: .medium))
                 .foregroundColor(theme.secondaryText)
 
             Text(
-                "Create a plugin or import a JSON recipe. Plugins are automatically provisioned when any agent uses them."
+                "Create a plugin or import a JSON recipe. Plugins are automatically provisioned when any agent uses them.", bundle: .module
             )
             .font(.system(size: 13))
             .foregroundColor(theme.tertiaryText)
@@ -572,7 +572,7 @@ private struct SandboxPluginToolCard: View {
                             HStack(spacing: 4) {
                                 Image(systemName: "wrench.and.screwdriver")
                                     .font(.system(size: 10))
-                                Text("\(toolCount) tool\(toolCount == 1 ? "" : "s")")
+                                Text("\(toolCount) tool\(toolCount == 1 ? "" : "s")", bundle: .module)
                                     .font(.system(size: 11, weight: .medium))
                             }
                             .foregroundColor(theme.secondaryText)
@@ -592,17 +592,17 @@ private struct SandboxPluginToolCard: View {
 
                 Menu {
                     Button(action: onEdit) {
-                        Label("Edit", systemImage: "pencil")
+                        Label { Text("Edit", bundle: .module) } icon: { Image(systemName: "pencil") }
                     }
                     Button(action: onDuplicate) {
-                        Label("Duplicate", systemImage: "plus.square.on.square")
+                        Label { Text("Duplicate", bundle: .module) } icon: { Image(systemName: "plus.square.on.square") }
                     }
                     Button(action: onExport) {
-                        Label("Export", systemImage: "square.and.arrow.up")
+                        Label { Text("Export", bundle: .module) } icon: { Image(systemName: "square.and.arrow.up") }
                     }
                     Divider()
                     Button(role: .destructive, action: onDelete) {
-                        Label("Remove", systemImage: "trash")
+                        Label { Text("Remove", bundle: .module) } icon: { Image(systemName: "trash") }
                     }
                 } label: {
                     Image(systemName: "ellipsis.circle")
@@ -635,7 +635,7 @@ private struct SandboxPluginToolCard: View {
                         Image(systemName: "info.circle")
                             .font(.system(size: 12))
                             .foregroundColor(theme.tertiaryText)
-                        Text("No tools defined in this plugin")
+                        Text("No tools defined in this plugin", bundle: .module)
                             .font(.system(size: 12))
                             .foregroundColor(theme.tertiaryText)
                     }
@@ -647,7 +647,7 @@ private struct SandboxPluginToolCard: View {
                         Image(systemName: "shippingbox")
                             .font(.system(size: 10))
                             .foregroundColor(theme.tertiaryText)
-                        Text("Dependencies: \(deps.joined(separator: ", "))")
+                        Text("Dependencies: \(deps.joined(separator: ", "))", bundle: .module)
                             .font(.system(size: 11))
                             .foregroundColor(theme.tertiaryText)
                     }
@@ -737,10 +737,10 @@ struct ToolPermissionBanner: View {
             }
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("\(count) plugin\(count == 1 ? "" : "s") need\(count == 1 ? "s" : "") system permissions")
+                Text("\(count) plugin\(count == 1 ? "" : "s") need\(count == 1 ? "s" : "") system permissions", bundle: .module)
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(theme.primaryText)
-                Text("Expand each plugin to grant the required permissions")
+                Text("Expand each plugin to grant the required permissions", bundle: .module)
                     .font(.system(size: 11))
                     .foregroundColor(theme.secondaryText)
             }
@@ -755,7 +755,7 @@ struct ToolPermissionBanner: View {
                 HStack(spacing: 4) {
                     Image(systemName: "gear")
                         .font(.system(size: 11))
-                    Text("System Settings")
+                    Text("System Settings", bundle: .module)
                         .font(.system(size: 12, weight: .medium))
                 }
                 .foregroundColor(theme.accentColor)
@@ -852,7 +852,7 @@ private struct ToolPluginCard: View {
                                     HStack(spacing: 4) {
                                         Image(systemName: "exclamationmark.triangle.fill")
                                             .font(.system(size: 10))
-                                        Text("Error")
+                                        Text("Error", bundle: .module)
                                             .font(.system(size: 10, weight: .semibold))
                                     }
                                     .padding(.horizontal, 8)
@@ -876,7 +876,7 @@ private struct ToolPluginCard: View {
                             HStack(spacing: 4) {
                                 Image(systemName: "wrench.and.screwdriver")
                                     .font(.system(size: 10))
-                                Text("\(tools.count) tool\(tools.count == 1 ? "" : "s")")
+                                Text("\(tools.count) tool\(tools.count == 1 ? "" : "s")", bundle: .module)
                                     .font(.system(size: 11, weight: .medium))
                             }
                             .foregroundColor(theme.secondaryText)
@@ -905,7 +905,7 @@ private struct ToolPluginCard: View {
                         .foregroundColor(.red)
 
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Failed to load plugin")
+                        Text("Failed to load plugin", bundle: .module)
                             .font(.system(size: 13, weight: .medium))
                             .foregroundColor(.red)
                         Text(loadError)
@@ -1006,7 +1006,7 @@ private struct RemoteProviderToolsCard: View {
                                     Circle()
                                         .fill(theme.successColor)
                                         .frame(width: 6, height: 6)
-                                    Text("Connected")
+                                    Text("Connected", bundle: .module)
                                         .font(.system(size: 10, weight: .medium))
                                         .foregroundColor(theme.successColor)
                                 }
@@ -1026,7 +1026,7 @@ private struct RemoteProviderToolsCard: View {
                         HStack(spacing: 4) {
                             Image(systemName: "wrench.and.screwdriver")
                                 .font(.system(size: 10))
-                            Text("\(tools.count) tool\(tools.count == 1 ? "" : "s")")
+                            Text("\(tools.count) tool\(tools.count == 1 ? "" : "s")", bundle: .module)
                                 .font(.system(size: 11, weight: .medium))
                         }
                         .foregroundColor(theme.secondaryText)
@@ -1045,7 +1045,7 @@ private struct RemoteProviderToolsCard: View {
 
                 Menu {
                     Button(action: onDisconnect) {
-                        Label("Disconnect", systemImage: "bolt.slash")
+                        Label { Text("Disconnect", bundle: .module) } icon: { Image(systemName: "bolt.slash") }
                     }
                 } label: {
                     Image(systemName: "ellipsis.circle")
@@ -1264,7 +1264,7 @@ struct ToolEntryRow: View {
                     .foregroundColor(theme.primaryText)
 
                 if hasMissingSystemPermissions {
-                    Text("Needs Permission")
+                    Text("Needs Permission", bundle: .module)
                         .font(.system(size: 9, weight: .medium))
                         .foregroundColor(theme.warningColor)
                         .padding(.horizontal, 5)

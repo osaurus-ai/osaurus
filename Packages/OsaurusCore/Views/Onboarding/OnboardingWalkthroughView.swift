@@ -26,34 +26,34 @@ private enum WalkthroughStepType: Int, CaseIterable {
 
     var title: String {
         switch self {
-        case .modes: return "Chat or let it run"
-        case .tools: return "Tools, skills, and plugins"
-        case .sandbox: return "Safe, isolated execution"
-        case .personalization: return "Agents, voice, and themes"
-        case .memory: return "Gets smarter over time"
-        case .privacy: return "Private by default"
+        case .modes: return L("Chat or let it run")
+        case .tools: return L("Tools, skills, and plugins")
+        case .sandbox: return L("Safe, isolated execution")
+        case .personalization: return L("Agents, voice, and themes")
+        case .memory: return L("Gets smarter over time")
+        case .privacy: return L("Private by default")
         }
     }
 
     var body: String {
         switch self {
         case .modes:
-            return
-                "Chat Mode — Talk back and forth, like a conversation.\nWork Mode — Give it a task and let it work in the background."
+            return L(
+"Chat Mode — Talk back and forth, like a conversation.\nWork Mode — Give it a task and let it work in the background.")
         case .tools:
-            return
-                "20+ built-in plugins for Mail, Calendar, Browser, Files, and more. Import skills from GitHub. Connect MCP servers. All with your permission."
+            return L(
+"20+ built-in plugins for Mail, Calendar, Browser, Files, and more. Import skills from GitHub. Connect MCP servers. All with your permission.")
         case .sandbox:
-            return
-                "The Sandbox runs code in a Linux container on your Mac. Agents can execute commands, install packages, and work with files — fully isolated from your system."
+            return L(
+"The Sandbox runs code in a Linux container on your Mac. Agents can execute commands, install packages, and work with files — fully isolated from your system.")
         case .personalization:
-            return
-                "Create different agents for different tasks. Talk hands-free with voice. Customize how everything looks."
+            return L(
+"Create different agents for different tasks. Talk hands-free with voice. Customize how everything looks.")
         case .memory:
-            return
-                "Osaurus builds a layered memory from your conversations — profile, working context, summaries, and a knowledge graph. Agents recall relevant facts automatically. Your memory stays with you, not a provider."
+            return L(
+"Osaurus builds a layered memory from your conversations — profile, working context, summaries, and a knowledge graph. Agents recall relevant facts automatically. Your memory stays with you, not a provider.")
         case .privacy:
-            return "Conversations stay on your Mac. Switch providers anytime — your history comes with you."
+            return L("Conversations stay on your Mac. Switch providers anytime — your history comes with you.")
         }
     }
 
@@ -376,8 +376,8 @@ private struct WalkthroughModesIllustration: View {
             windowCard(
                 id: "chat",
                 icon: "bubble.left.and.bubble.right",
-                label: "Chat",
-                sublabel: "Conversation",
+                label: L("Chat"),
+                sublabel: L("Conversation"),
                 rotation: -6,
                 offsetX: -40,
                 offsetY: 8,
@@ -388,8 +388,8 @@ private struct WalkthroughModesIllustration: View {
             windowCard(
                 id: "work",
                 icon: "bolt.fill",
-                label: "Work",
-                sublabel: "Background",
+                label: L("Work"),
+                sublabel: L("Background"),
                 rotation: 5,
                 offsetX: 40,
                 offsetY: -4,
@@ -625,7 +625,7 @@ private struct WalkthroughSandboxIllustration: View {
                     Circle().fill(Color.yellow.opacity(0.7)).frame(width: 6, height: 6)
                     Circle().fill(Color.green.opacity(0.7)).frame(width: 6, height: 6)
                     Spacer()
-                    Text("sandbox")
+                    Text("sandbox", bundle: .module)
                         .font(.system(size: 8, weight: .semibold, design: .monospaced))
                         .foregroundColor(theme.tertiaryText)
                     Spacer()
@@ -640,7 +640,7 @@ private struct WalkthroughSandboxIllustration: View {
                     HStack(spacing: 4) {
                         Text("$")
                             .foregroundColor(stepColor)
-                        Text("pip install numpy")
+                        Text("pip install numpy", bundle: .module)
                             .foregroundColor(theme.secondaryText)
                     }
                     .font(.system(size: 10, design: .monospaced))
@@ -648,7 +648,7 @@ private struct WalkthroughSandboxIllustration: View {
                     HStack(spacing: 4) {
                         Text("$")
                             .foregroundColor(stepColor)
-                        Text("python run.py")
+                        Text("python run.py", bundle: .module)
                             .foregroundColor(theme.secondaryText)
 
                         Rectangle()

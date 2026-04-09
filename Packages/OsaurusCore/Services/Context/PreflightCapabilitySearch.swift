@@ -2,9 +2,9 @@
 //  PreflightCapabilitySearch.swift
 //  osaurus
 //
-//  Runs RAG across methods, tools, and skills before the agent loop starts.
-//  Returns tool specs to merge into the active tool set and context snippets
-//  to inject into the system prompt.
+//  Selects dynamic tools to inject before the agent loop starts.
+//  Uses a single LLM call to pick relevant tools from the full catalog.
+//  Methods and skills remain accessible via capabilities_search / capabilities_load.
 //
 
 import Foundation
@@ -12,30 +12,31 @@ import os
 
 private let logger = Logger(subsystem: "ai.osaurus", category: "PreflightSearch")
 
-public enum PreflightSearchMode: String, Codable, CaseIterable, Sendable {
-    case off
-    case narrow
-    case balanced
-    case wide
+// MARK: - Search Mode
 
-    var topKValues: (methods: Int, tools: Int, skills: Int) {
+public enum PreflightSearchMode: String, Codable, CaseIterable, Sendable {
+    case off, narrow, balanced, wide
+
+    var toolCap: Int {
         switch self {
-        case .off: return (0, 0, 0)
-        case .narrow: return (1, 2, 0)
-        case .balanced: return (3, 5, 1)
-        case .wide: return (5, 8, 2)
+        case .off: return 0
+        case .narrow: return 3
+        case .balanced: return 8
+        case .wide: return 15
         }
     }
 
     public var helpText: String {
         switch self {
         case .off: return "Disable pre-flight search. Only explicit tool calls are used."
-        case .narrow: return "Minimal context injection. Fewer methods, tools, and skills loaded."
-        case .balanced: return "Default. Loads a moderate set of relevant capabilities."
-        case .wide: return "Aggressive search. More context loaded, may increase prompt size."
+        case .narrow: return "Minimal tool injection. Up to 3 tools loaded."
+        case .balanced: return "Default. Up to 8 relevant tools loaded."
+        case .wide: return "Aggressive search. Up to 15 tools loaded, may increase prompt size."
         }
     }
 }
+
+// MARK: - Result Types
 
 struct PreflightCapabilityItem: Equatable, Sendable {
     enum CapabilityType: String, Equatable, Sendable {
@@ -63,7 +64,7 @@ struct PreflightResult: Sendable {
     static let empty = PreflightResult(toolSpecs: [], contextSnippet: "", items: [])
 }
 
-// MARK: - Shared Capability Search
+// MARK: - Capability Search (used by capabilities_search tool)
 
 struct CapabilitySearchResults {
     let methods: [MethodSearchResult]
@@ -84,19 +85,13 @@ enum CapabilitySearch {
     ) async -> CapabilitySearchResults {
         let threshold = minimumRelevanceScore
         async let methodHits = MethodSearchService.shared.search(
-            query: query,
-            topK: topK.methods,
-            threshold: threshold
+            query: query, topK: topK.methods, threshold: threshold
         )
         async let toolHits = ToolSearchService.shared.search(
-            query: query,
-            topK: topK.tools,
-            threshold: threshold
+            query: query, topK: topK.tools, threshold: threshold
         )
         async let skillHits = SkillSearchService.shared.search(
-            query: query,
-            topK: topK.skills,
-            threshold: threshold
+            query: query, topK: topK.skills, threshold: threshold
         )
 
         return CapabilitySearchResults(
@@ -114,132 +109,178 @@ enum CapabilitySearch {
     }
 }
 
-// MARK: - Preflight Capability Search
+// MARK: - Preflight Tool Selection
 
 enum PreflightCapabilitySearch {
 
-    private static let searchTermExtractionPrompt = """
-        Given a user's request, identify what tools or capabilities would be needed to accomplish it. \
-        Output 3-5 short capability descriptions, one per line. \
-        Focus on the type of action or tool required, not the subject matter of the request. \
-        No numbering, no explanations, no extra text.
-        """
+    private static let selectionTimeout: TimeInterval = 8
 
-    private static let extractionTimeoutSeconds: TimeInterval = 5
+    // MARK: Search
 
-    /// Uses the core model to translate a raw user query into capability-oriented search terms.
-    /// Returns nil when no core model is configured or extraction fails — callers should
-    /// skip the search entirely since raw queries produce too many false positives.
-    private static func extractSearchTerms(from query: String) async -> String? {
+    static func search(query: String, mode: PreflightSearchMode = .balanced) async -> PreflightResult {
+        guard mode != .off,
+              !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else { return .empty }
+
+        let (catalog, groups) = await MainActor.run {
+            let tools = ToolRegistry.shared.listDynamicTools()
+            let groupMap = Dictionary(
+                uniqueKeysWithValues: tools.compactMap { tool in
+                    ToolRegistry.shared.groupName(for: tool.name).map { (tool.name, $0) }
+                }
+            )
+            let sorted = tools.sorted { (groupMap[$0.name] ?? "") < (groupMap[$1.name] ?? "") }
+            return (sorted, groupMap)
+        }
+
+        guard !catalog.isEmpty else { return .empty }
+
+        let selectedNames = await selectTools(
+            query: query, catalog: catalog, groups: groups, cap: mode.toolCap
+        )
+
+        if selectedNames.isEmpty {
+            return await sandboxPluginCreatorFallback()
+        }
+
+        let (toolSpecs, items) = await MainActor.run {
+            let specs = ToolRegistry.shared.specs(forTools: selectedNames)
+            let nameToDesc = Dictionary(uniqueKeysWithValues: catalog.map { ($0.name, $0.description) })
+            let items = selectedNames.compactMap { name -> PreflightCapabilityItem? in
+                guard let desc = nameToDesc[name] else { return nil }
+                return .init(type: .tool, name: name, description: desc)
+            }
+            return (specs, items)
+        }
+
+        logger.info("Pre-flight loaded \(toolSpecs.count) tools")
+        return PreflightResult(toolSpecs: toolSpecs, contextSnippet: "", items: items)
+    }
+
+    // MARK: LLM Tool Selection
+
+    private static func selectTools(
+        query: String,
+        catalog: [ToolRegistry.ToolEntry],
+        groups: [String: String],
+        cap: Int
+    ) async -> [String] {
+        guard !catalog.isEmpty else { return [] }
+
+        let catalogText = formatCatalog(catalog, groups: groups)
+        let systemPrompt = """
+            Output ONLY tool names, comma-separated. No explanation.
+            Max \(cap). If none relevant: NONE
+
+            Example input: "play some jazz"
+            Example output: play,search_songs
+
+            \(catalogText)
+            """
+
         do {
             let response = try await CoreModelService.shared.generate(
                 prompt: query,
-                systemPrompt: searchTermExtractionPrompt,
+                systemPrompt: systemPrompt,
                 temperature: 0.0,
-                maxTokens: 128,
-                timeout: extractionTimeoutSeconds
+                maxTokens: 256,
+                timeout: selectionTimeout
             )
-            let terms = response.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !terms.isEmpty else { return nil }
-            logger.info("Pre-flight extracted search terms: \(terms)")
-            return terms
+            return parseToolNames(from: response, catalog: catalog, cap: cap)
         } catch {
-            logger.info("Pre-flight search term extraction skipped: \(error)")
-            return nil
+            logger.info("Pre-flight tool selection skipped: \(error)")
+            return []
         }
     }
 
-    static func search(query: String, mode: PreflightSearchMode = .balanced) async -> PreflightResult {
-        let empty = PreflightResult(toolSpecs: [], contextSnippet: "", items: [])
+    // MARK: Catalog Formatting
 
-        guard mode != .off else { return empty }
-        guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return empty
-        }
-        guard let searchQuery = await extractSearchTerms(from: query) else {
-            return empty
-        }
+    private static func formatCatalog(
+        _ catalog: [ToolRegistry.ToolEntry],
+        groups: [String: String]
+    ) -> String {
+        var sections: [(group: String, tools: [ToolRegistry.ToolEntry])] = []
+        var currentGroup = ""
+        var currentTools: [ToolRegistry.ToolEntry] = []
 
-        let hits = await CapabilitySearch.search(query: searchQuery, topK: mode.topKValues)
-
-        if hits.isEmpty {
-            guard await CapabilitySearch.canCreatePlugins() else { return empty }
-            let skill = await MainActor.run {
-                SkillManager.shared.skill(named: "Sandbox Plugin Creator")
+        for entry in catalog {
+            let group = groups[entry.name] ?? ""
+            if group != currentGroup {
+                if !currentTools.isEmpty { sections.append((currentGroup, currentTools)) }
+                currentGroup = group
+                currentTools = []
             }
-            guard let skill else { return empty }
-            logger.info("Pre-flight: no results, injected Sandbox Plugin Creator skill")
-            return PreflightResult(
-                toolSpecs: [],
-                contextSnippet: """
-                    ## No existing tools match this request
-
-                    You can create new tools by writing a sandbox plugin.
-                    Follow the instructions below.
-
-                    ## Skill: \(skill.name)
-                    \(skill.instructions)
-                    """,
-                items: [.init(type: .skill, name: skill.name, description: skill.description)]
-            )
+            currentTools.append(entry)
         }
+        if !currentTools.isEmpty { sections.append((currentGroup, currentTools)) }
 
-        // Collect tool specs in a single MainActor hop:
-        // direct tool hits + method-cascaded references (enabled only)
-        let toolSpecs = await MainActor.run { () -> [Tool] in
-            let enabled = Set(
-                ToolRegistry.shared.listTools().filter { $0.enabled }.map { $0.name }
-            )
-            var names: [String] = []
-            var seen: Set<String> = []
+        return sections.map { group, tools in
+            let header = group.isEmpty ? "" : "# \(group)\n"
+            let lines = tools.map { "- \($0.name): \($0.description)" }
+            return header + lines.joined(separator: "\n")
+        }.joined(separator: "\n")
+    }
 
-            for name in hits.tools.map({ $0.entry.name })
-            where seen.insert(name).inserted {
-                names.append(name)
-            }
-            for r in hits.methods {
-                for name in r.method.toolsUsed
-                where enabled.contains(name) && seen.insert(name).inserted {
-                    names.append(name)
-                }
-            }
-            return ToolRegistry.shared.specs(forTools: names)
-        }
+    // MARK: Response Parsing
 
-        var sections: [String] = []
-        if !hits.methods.isEmpty {
-            sections.append("## Pre-loaded Methods\n")
-            for result in hits.methods {
-                let m = result.method
-                sections.append("### \(m.name)\n")
-                sections.append("*\(m.description)*\n")
-                if !m.toolsUsed.isEmpty {
-                    sections.append("Tools: \(m.toolsUsed.joined(separator: ", "))\n")
-                }
-                sections.append("\n\(m.body)\n")
-            }
-        }
-        if !hits.skills.isEmpty {
-            sections.append("## Available Skills\n")
-            sections.append("Use `capabilities_load` with a skill ID to load its full instructions.\n")
-            for result in hits.skills {
-                sections.append("- skill/\(result.skill.name): \(result.skill.description)\n")
+    private static func parseToolNames(
+        from response: String,
+        catalog: [ToolRegistry.ToolEntry],
+        cap: Int
+    ) -> [String] {
+        let trimmed = response.trimmingCharacters(in: .whitespacesAndNewlines)
+        logger.info("Pre-flight: raw LLM response: \(trimmed)")
+
+        if trimmed.isEmpty || trimmed.uppercased() == "NONE" { return [] }
+
+        let validNames = Dictionary(uniqueKeysWithValues: catalog.map { ($0.name.lowercased(), $0.name) })
+
+        var selected: [String] = []
+        var seen: Set<String> = []
+
+        let tokens = trimmed
+            .components(separatedBy: CharacterSet(charactersIn: ",\n"))
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        for token in tokens {
+            let cleaned = token
+                .replacingOccurrences(of: "^[-•*]\\s*", with: "", options: .regularExpression)
+                .trimmingCharacters(in: .whitespaces)
+
+            if let canonical = validNames[cleaned.lowercased()],
+               seen.insert(canonical).inserted {
+                selected.append(canonical)
             }
         }
 
-        let items: [PreflightCapabilityItem] =
-            hits.methods.map { .init(type: .method, name: $0.method.name, description: $0.method.description) }
-            + hits.tools.map { .init(type: .tool, name: $0.entry.name, description: $0.entry.description) }
-            + hits.skills.map { .init(type: .skill, name: $0.skill.name, description: $0.skill.description) }
+        let capped = Array(selected.prefix(cap))
+        logger.info("Pre-flight: LLM selected \(capped.count) tools: \(capped.joined(separator: ", "))")
+        return capped
+    }
 
-        logger.info(
-            "Pre-flight loaded \(toolSpecs.count) tools, \(hits.methods.count) methods, \(hits.skills.count) skills"
-        )
+    // MARK: Fallback
 
+    private static func sandboxPluginCreatorFallback() async -> PreflightResult {
+        guard await CapabilitySearch.canCreatePlugins() else { return .empty }
+        let skill = await MainActor.run {
+            SkillManager.shared.skill(named: "Sandbox Plugin Creator")
+        }
+        guard let skill else { return .empty }
+
+        logger.info("Pre-flight: no tools selected, injected Sandbox Plugin Creator skill")
         return PreflightResult(
-            toolSpecs: toolSpecs,
-            contextSnippet: sections.joined(separator: "\n"),
-            items: items
+            toolSpecs: [],
+            contextSnippet: """
+                ## No existing tools match this request
+
+                You can create new tools by writing a sandbox plugin.
+                Follow the instructions below.
+
+                ## Skill: \(skill.name)
+                \(skill.instructions)
+                """,
+            items: [.init(type: .skill, name: skill.name, description: skill.description)]
         )
     }
 }

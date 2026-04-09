@@ -183,7 +183,7 @@ struct SkillEditorSheet: View {
                     VStack(alignment: .leading, spacing: 16) {
                         // Name
                         VStack(alignment: .leading, spacing: 6) {
-                            Text("Name")
+                            Text("Name", bundle: .module)
                                 .font(.system(size: 11, weight: .medium))
                                 .foregroundColor(themeManager.currentTheme.secondaryText)
 
@@ -197,7 +197,7 @@ struct SkillEditorSheet: View {
 
                         // Description
                         VStack(alignment: .leading, spacing: 6) {
-                            Text("Description")
+                            Text("Description", bundle: .module)
                                 .font(.system(size: 11, weight: .medium))
                                 .foregroundColor(themeManager.currentTheme.secondaryText)
 
@@ -217,7 +217,7 @@ struct SkillEditorSheet: View {
                         HStack(spacing: 12) {
                             // Category
                             VStack(alignment: .leading, spacing: 6) {
-                                Text("Category")
+                                Text("Category", bundle: .module)
                                     .font(.system(size: 11, weight: .medium))
                                     .foregroundColor(themeManager.currentTheme.secondaryText)
 
@@ -231,7 +231,7 @@ struct SkillEditorSheet: View {
 
                             // Version
                             VStack(alignment: .leading, spacing: 6) {
-                                Text("Version")
+                                Text("Version", bundle: .module)
                                     .font(.system(size: 11, weight: .medium))
                                     .foregroundColor(themeManager.currentTheme.secondaryText)
 
@@ -247,7 +247,7 @@ struct SkillEditorSheet: View {
 
                         // Author
                         VStack(alignment: .leading, spacing: 6) {
-                            Text("Author")
+                            Text("Author", bundle: .module)
                                 .font(.system(size: 11, weight: .medium))
                                 .foregroundColor(themeManager.currentTheme.secondaryText)
 
@@ -274,7 +274,7 @@ struct SkillEditorSheet: View {
                                 )
 
                             VStack(alignment: .leading, spacing: 2) {
-                                Text("Enabled")
+                                Text("Enabled", bundle: .module)
                                     .font(.system(size: 13, weight: .medium))
                                     .foregroundColor(themeManager.currentTheme.primaryText)
                                 Text(enabled ? "Skill is available for use" : "Skill is hidden")
@@ -321,14 +321,14 @@ struct SkillEditorSheet: View {
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundColor(themeManager.currentTheme.accentColor)
 
-                Text("INSTRUCTIONS")
+                Text("INSTRUCTIONS", bundle: .module)
                     .font(.system(size: 11, weight: .bold))
                     .foregroundColor(themeManager.currentTheme.secondaryText)
                     .tracking(0.5)
 
                 Spacer()
 
-                Text("\(instructions.count) characters")
+                Text("\(instructions.count) characters", bundle: .module)
                     .font(.system(size: 11))
                     .foregroundColor(themeManager.currentTheme.tertiaryText)
             }
@@ -340,7 +340,7 @@ struct SkillEditorSheet: View {
             ZStack(alignment: .topLeading) {
                 if instructions.isEmpty && !isBuiltIn {
                     Text(
-                        "Write guidance for the AI...\n\nExample:\n## When to use this skill\n- Describe scenarios\n\n## Guidelines\n- Add specific guidance"
+                        "Write guidance for the AI...\n\nExample:\n## When to use this skill\n- Describe scenarios\n\n## Guidelines\n- Add specific guidance", bundle: .module
                     )
                     .font(.system(size: 13, design: .monospaced))
                     .foregroundColor(themeManager.currentTheme.placeholderText)
@@ -394,7 +394,7 @@ struct SkillEditorSheet: View {
                             RoundedRectangle(cornerRadius: 4)
                                 .fill(themeManager.currentTheme.tertiaryBackground)
                         )
-                    Text("+ Enter to save")
+                    Text("+ Enter to save", bundle: .module)
                         .font(.system(size: 11))
                 }
                 .foregroundColor(themeManager.currentTheme.tertiaryText)
@@ -404,7 +404,7 @@ struct SkillEditorSheet: View {
                 HStack(spacing: 6) {
                     Image(systemName: "lock.fill")
                         .font(.system(size: 11))
-                    Text("Built-in skills are read-only")
+                    Text("Built-in skills are read-only", bundle: .module)
                         .font(.system(size: 12))
                 }
                 .foregroundColor(themeManager.currentTheme.tertiaryText)

@@ -168,7 +168,7 @@ struct ToolPermissionView: View {
     private var argumentsBlock: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Label("Arguments", systemImage: "curlybraces")
+                Label { Text("Arguments", bundle: .module) } icon: { Image(systemName: "curlybraces") }
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(theme.secondaryText)
 
@@ -315,7 +315,7 @@ private struct AlwaysAllowButton: View {
 
     var body: some View {
         Button(action: action) {
-            Label("Always Allow", systemImage: "checkmark.circle")
+            Label { Text("Always Allow", bundle: .module) } icon: { Image(systemName: "checkmark.circle") }
                 .font(.system(size: 12, weight: .medium))
                 .foregroundColor(isHovered ? theme.primaryText : theme.secondaryText)
                 .padding(.horizontal, 12)

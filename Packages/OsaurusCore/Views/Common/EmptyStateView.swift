@@ -43,7 +43,7 @@ struct EmptyStateView: View {
 
                 if !searchText.isEmpty {
                     Button(action: onClearSearch) {
-                        Text("Clear search")
+                        Text("Clear search", bundle: .module)
                             .font(.system(size: 13))
                             .foregroundColor(theme.accentColor)
                     }
@@ -65,32 +65,32 @@ struct EmptyStateView: View {
     /// Title text that adapts to search state and selected tab
     private var title: String {
         if !searchText.isEmpty {
-            return "No models found"
+            return L("No models found")
         }
 
         switch selectedTab {
         case .all:
-            return "No models available"
+            return L("No models available")
         case .suggested:
-            return "No suggested models"
+            return L("No suggested models")
         case .downloaded:
-            return "No downloaded models"
+            return L("No downloaded models")
         }
     }
 
     /// Description text that provides helpful context
     private var description: String {
         if !searchText.isEmpty {
-            return "Try adjusting your search terms"
+            return L("Try adjusting your search terms")
         }
 
         switch selectedTab {
         case .all:
-            return "Language models will appear here"
+            return L("Language models will appear here")
         case .suggested:
-            return "Suggested models will appear here"
+            return L("Suggested models will appear here")
         case .downloaded:
-            return "Downloaded models will appear here"
+            return L("Downloaded models will appear here")
         }
     }
 }

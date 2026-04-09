@@ -81,7 +81,7 @@ private extension SandboxView {
 
     var headerBar: some View {
         ManagerHeaderWithTabs(
-            title: "Sandbox",
+            title: L("Sandbox"),
             subtitle: sandboxSubtitle
         ) {
             EmptyView()
@@ -146,27 +146,27 @@ private extension SandboxView {
     var unavailableEmptyState: some View {
         SettingsEmptyState(
             icon: "shippingbox",
-            title: "Sandbox Unavailable",
+            title: L("Sandbox Unavailable"),
             subtitle: sandboxState.availability.reason ?? "Sandbox requires macOS 26 or later.",
             examples: [
                 .init(
                     icon: "lock.shield",
-                    title: "Isolated Execution",
+                    title: L("Isolated Execution"),
                     description: "Run code in a secure Linux container"
                 ),
                 .init(
                     icon: "puzzlepiece.extension",
-                    title: "Plugin Runtime",
+                    title: L("Plugin Runtime"),
                     description: "Install and run sandbox plugins"
                 ),
                 .init(
                     icon: "bolt.fill",
-                    title: "Autonomous Agents",
+                    title: L("Autonomous Agents"),
                     description: "Agents execute commands safely"
                 ),
             ],
             primaryAction: .init(
-                title: "Learn More",
+                title: L("Learn More"),
                 icon: "questionmark.circle",
                 handler: {}
             ),
@@ -181,27 +181,27 @@ private extension SandboxView {
         } else {
             SettingsEmptyState(
                 icon: "shippingbox",
-                title: "Set Up Sandbox",
-                subtitle: "Run isolated Linux containers for agent plugins and autonomous execution.",
+                title: L("Set Up Sandbox"),
+                subtitle: L("Run isolated Linux containers for agent plugins and autonomous execution."),
                 examples: [
                     .init(
                         icon: "puzzlepiece.extension",
-                        title: "Sandbox Plugins",
+                        title: L("Sandbox Plugins"),
                         description: "Install tools that run inside the VM"
                     ),
                     .init(
                         icon: "terminal",
-                        title: "Autonomous Exec",
+                        title: L("Autonomous Exec"),
                         description: "Agents run shell commands safely"
                     ),
                     .init(
                         icon: "lock.shield",
-                        title: "Full Isolation",
+                        title: L("Full Isolation"),
                         description: "Separate filesystem per agent"
                     ),
                 ],
                 primaryAction: .init(
-                    title: "Set Up Sandbox",
+                    title: L("Set Up Sandbox"),
                     icon: "shippingbox",
                     handler: { showProvisionSheet = true }
                 ),
@@ -227,7 +227,7 @@ private extension SandboxView {
             }
 
             VStack(spacing: 8) {
-                Text("Setting Up Sandbox")
+                Text("Setting Up Sandbox", bundle: .module)
                     .font(.system(size: 22, weight: .bold, design: .rounded))
                     .foregroundColor(theme.primaryText)
 
@@ -235,7 +235,7 @@ private extension SandboxView {
                     HStack(spacing: 6) {
                         Text(phase)
                         if let progress = sandboxState.provisioningProgress {
-                            Text("\(Int(progress * 100))%")
+                            Text("\(Int(progress * 100))%", bundle: .module)
                                 .monospacedDigit()
                                 .contentTransition(.numericText())
                         }
@@ -259,7 +259,7 @@ private extension SandboxView {
                     .foregroundColor(theme.warningColor)
 
                     Button(action: performProvision) {
-                        Label("Retry", systemImage: "arrow.clockwise")
+                        Label { Text("Retry", bundle: .module) } icon: { Image(systemName: "arrow.clockwise") }
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundColor(.white)
                             .padding(.horizontal, 18)
@@ -424,7 +424,7 @@ private struct SandboxLogConsoleCard: View {
                 Image(systemName: "terminal")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundColor(theme.accentColor)
-                Text("Logs")
+                Text("Logs", bundle: .module)
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(theme.primaryText)
             }
@@ -432,7 +432,7 @@ private struct SandboxLogConsoleCard: View {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 8) {
                     Button(action: { logLevelFilter = nil }) {
-                        Text("ALL")
+                        Text("ALL", bundle: .module)
                             .font(.system(size: 10, weight: .semibold))
                             .foregroundColor(logLevelFilter == nil ? .white : theme.secondaryText)
                             .padding(.horizontal, 8)
@@ -475,7 +475,7 @@ private struct SandboxLogConsoleCard: View {
                             let filtered = filteredLogEntries
                             if filtered.isEmpty {
                                 Text(
-                                    "No log entries yet. Command output and container activity will stream here in real time."
+                                    "No log entries yet. Command output and container activity will stream here in real time.", bundle: .module
                                 )
                                 .font(.system(size: 11))
                                 .foregroundColor(theme.tertiaryText)
@@ -598,7 +598,7 @@ private extension SandboxView {
                     .buttonStyle(PlainButtonStyle())
                     .disabled(isRunningDiag)
 
-                    Text("Tests exec, NAT networking, agent users, apk, and vsock bridge")
+                    Text("Tests exec, NAT networking, agent users, apk, and vsock bridge", bundle: .module)
                         .font(.system(size: 11))
                         .foregroundColor(theme.tertiaryText)
                         .lineLimit(2)
@@ -655,7 +655,7 @@ private extension SandboxView {
                 memoryStepper
 
                 toggleRow(
-                    title: "Network Access",
+                    title: L("Network Access"),
                     description: "Allow outbound network from container",
                     isOn: Binding(
                         get: { pendingConfig.network == "outbound" },
@@ -664,7 +664,7 @@ private extension SandboxView {
                 )
 
                 toggleRow(
-                    title: "Auto-Start",
+                    title: L("Auto-Start"),
                     description: "Start container when Osaurus launches",
                     isOn: $pendingConfig.autoStart
                 )
@@ -690,7 +690,7 @@ private extension SandboxView {
     var dangerZoneCard: some View {
         sectionCard(title: "Danger Zone", icon: "exclamationmark.triangle") {
             VStack(alignment: .leading, spacing: 12) {
-                Text("Resetting destroys all installed sandbox packages. Agent workspace files on the host persist.")
+                Text("Resetting destroys all installed sandbox packages. Agent workspace files on the host persist.", bundle: .module)
                     .font(.system(size: 11))
                     .foregroundColor(theme.tertiaryText)
 
@@ -698,23 +698,23 @@ private extension SandboxView {
                     destructiveButton("Reset Container", icon: "arrow.counterclockwise") {
                         showResetConfirm = true
                     }
-                    .alert("Reset Container?", isPresented: $showResetConfirm) {
-                        Button("Cancel", role: .cancel) {}
-                        Button("Reset", role: .destructive) { performReset() }
+                    .alert(Text("Reset Container?", bundle: .module), isPresented: $showResetConfirm) {
+                        Button(role: .cancel) {} label: { Text("Cancel", bundle: .module) }
+                        Button(role: .destructive) { performReset() } label: { Text("Reset", bundle: .module) }
                     } message: {
                         Text(
-                            "This will destroy the container and re-provision from scratch. Installed packages and sandbox plugin state will be lost."
+                            "This will destroy the container and re-provision from scratch. Installed packages and sandbox plugin state will be lost.", bundle: .module
                         )
                     }
 
                     destructiveButton("Remove Container", icon: "trash") {
                         showRemoveConfirm = true
                     }
-                    .alert("Remove Container?", isPresented: $showRemoveConfirm) {
-                        Button("Cancel", role: .cancel) {}
-                        Button("Remove", role: .destructive) { performRemove() }
+                    .alert(Text("Remove Container?", bundle: .module), isPresented: $showRemoveConfirm) {
+                        Button(role: .cancel) {} label: { Text("Cancel", bundle: .module) }
+                        Button(role: .destructive) { performRemove() } label: { Text("Remove", bundle: .module) }
                     } message: {
-                        Text("This will stop and remove the container entirely. You can set it up again later.")
+                        Text("This will stop and remove the container entirely. You can set it up again later.", bundle: .module)
                     }
                 }
             }
@@ -890,7 +890,7 @@ private extension SandboxView {
 
     var cpuStepper: some View {
         HStack {
-            Text("CPUs")
+            Text("CPUs", bundle: .module)
                 .font(.system(size: 13, weight: .medium))
                 .foregroundColor(theme.secondaryText)
             Spacer()
@@ -905,7 +905,7 @@ private extension SandboxView {
 
     var memoryStepper: some View {
         HStack {
-            Text("Memory")
+            Text("Memory", bundle: .module)
                 .font(.system(size: 13, weight: .medium))
                 .foregroundColor(theme.secondaryText)
             Spacer()
@@ -970,7 +970,7 @@ private struct SandboxProvisionSheet: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("Set Up Sandbox")
+                Text("Set Up Sandbox", bundle: .module)
                     .font(.system(size: 16, weight: .bold))
                     .foregroundColor(theme.primaryText)
                 Spacer()
@@ -986,18 +986,18 @@ private struct SandboxProvisionSheet: View {
             Divider().foregroundColor(theme.cardBorder)
 
             VStack(alignment: .leading, spacing: 20) {
-                Text("Configure resources for the Linux container. These can be changed later.")
+                Text("Configure resources for the Linux container. These can be changed later.", bundle: .module)
                     .font(.system(size: 13))
                     .foregroundColor(theme.secondaryText)
 
                 VStack(alignment: .leading, spacing: 14) {
-                    Text("RESOURCES")
+                    Text("RESOURCES", bundle: .module)
                         .font(.system(size: 11, weight: .bold))
                         .foregroundColor(theme.secondaryText)
                         .tracking(0.5)
 
                     HStack {
-                        Text("CPUs")
+                        Text("CPUs", bundle: .module)
                             .font(.system(size: 13, weight: .medium))
                             .foregroundColor(theme.primaryText)
                         Spacer()
@@ -1010,7 +1010,7 @@ private struct SandboxProvisionSheet: View {
                     }
 
                     HStack {
-                        Text("Memory")
+                        Text("Memory", bundle: .module)
                             .font(.system(size: 13, weight: .medium))
                             .foregroundColor(theme.primaryText)
                         Spacer()
@@ -1039,7 +1039,7 @@ private struct SandboxProvisionSheet: View {
             Divider().foregroundColor(theme.cardBorder)
 
             HStack {
-                Button("Cancel") { dismiss() }
+                Button { dismiss() } label: { Text("Cancel", bundle: .module) }
                     .buttonStyle(.plain)
                     .foregroundColor(theme.secondaryText)
                     .font(.system(size: 13, weight: .medium))
@@ -1051,7 +1051,7 @@ private struct SandboxProvisionSheet: View {
                     dismiss()
                     onConfirm()
                 }) {
-                    Label("Set Up Sandbox", systemImage: "shippingbox")
+                    Label { Text("Set Up Sandbox", bundle: .module) } icon: { Image(systemName: "shippingbox") }
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundColor(.white)
                         .padding(.horizontal, 18)
@@ -1153,10 +1153,10 @@ private struct SandboxAgentsView: View {
                 .font(.system(size: 32, weight: .light))
                 .foregroundColor(theme.tertiaryText)
             VStack(spacing: 6) {
-                Text("No Agents")
+                Text("No Agents", bundle: .module)
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundColor(theme.secondaryText)
-                Text("Create an agent to configure sandbox access, plugins, and secrets.")
+                Text("Create an agent to configure sandbox access, plugins, and secrets.", bundle: .module)
                     .font(.system(size: 12))
                     .foregroundColor(theme.tertiaryText)
                     .multilineTextAlignment(.center)
@@ -1253,8 +1253,8 @@ private struct SandboxAgentsView: View {
             } else {
                 VStack(spacing: 0) {
                     execToggleRow(
-                        title: "Autonomous Execution",
-                        subtitle: "Allow agent to run commands in the sandbox",
+                        title: L("Autonomous Execution"),
+                        subtitle: L("Allow agent to run commands in the sandbox"),
                         isLoading: isProvisioning,
                         loadingLabel: execConfig?.enabled == true ? "Disabling\u{2026}" : "Setting up\u{2026}",
                         isOn: Binding(
@@ -1269,8 +1269,8 @@ private struct SandboxAgentsView: View {
                         insetDivider
 
                         execToggleRow(
-                            title: "Plugin Creation",
-                            subtitle: "Agent can create its own tools as plugins",
+                            title: L("Plugin Creation"),
+                            subtitle: L("Agent can create its own tools as plugins"),
                             isOn: Binding(
                                 get: { execConfig?.pluginCreate ?? false },
                                 set: { create in
@@ -1382,7 +1382,7 @@ private struct SandboxAgentsView: View {
                 .foregroundColor(theme.secondaryText)
                 .tracking(0.5)
             if count > 0 {
-                Text("\(count)")
+                Text("\(count)", bundle: .module)
                     .font(.system(size: 10, weight: .semibold, design: .rounded))
                     .foregroundColor(theme.tertiaryText)
                     .padding(.horizontal, 6)
@@ -1396,7 +1396,7 @@ private struct SandboxAgentsView: View {
         Button(action: action) {
             HStack(spacing: 4) {
                 Image(systemName: "plus").font(.system(size: 10, weight: .bold))
-                Text("Add").font(.system(size: 11, weight: .semibold))
+                Text("Add", bundle: .module).font(.system(size: 11, weight: .semibold))
             }
             .foregroundColor(theme.accentColor)
             .padding(.horizontal, 10)
@@ -1575,7 +1575,7 @@ private struct SecretEntryRow: View {
             visibilityButton
             iconButton("checkmark", color: .white, bg: theme.accentColor) { onCommit(editKey, editValue) }
             iconButton("trash", color: theme.errorColor, bg: theme.errorColor.opacity(0.1), action: onDelete)
-                .help("Delete secret")
+                .help(Text("Delete secret", bundle: .module))
         }
     }
 
@@ -1605,7 +1605,7 @@ private struct SecretEntryRow: View {
                 iconButton("pencil", color: theme.secondaryText, bg: theme.tertiaryBackground, action: onStartEditing)
                     .transition(.opacity.combined(with: .scale(scale: 0.8)))
                 iconButton("trash", color: theme.errorColor, bg: theme.errorColor.opacity(0.1), action: onDelete)
-                    .help("Delete secret")
+                    .help(Text("Delete secret", bundle: .module))
                     .transition(.opacity.combined(with: .scale(scale: 0.8)))
             }
         }

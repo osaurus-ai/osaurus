@@ -86,7 +86,7 @@ struct VoiceView: View {
 
     private var headerView: some View {
         ManagerHeaderWithTabs(
-            title: "Voice",
+            title: L("Voice"),
             subtitle: headerSubtitle
         ) {
             statusIndicator
@@ -102,11 +102,11 @@ struct VoiceView: View {
 
     private var headerSubtitle: String {
         if !isSetupComplete {
-            return "Complete setup to enable voice"
+            return L("Complete setup to enable voice")
         } else if modelManager.downloadedModelsCount > 0 {
             return "\(modelManager.downloadedModelsCount) models • \(modelManager.totalDownloadedSizeString)"
         } else {
-            return "Voice transcription ready"
+            return L("Voice transcription ready")
         }
     }
 
@@ -116,7 +116,7 @@ struct VoiceView: View {
             HStack(spacing: 6) {
                 ProgressView()
                     .scaleEffect(0.6)
-                Text("Loading...")
+                Text("Loading...", bundle: .module)
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(theme.secondaryText)
             }
@@ -131,7 +131,7 @@ struct VoiceView: View {
                 Circle()
                     .fill(theme.successColor)
                     .frame(width: 8, height: 8)
-                Text("Ready")
+                Text("Ready", bundle: .module)
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(theme.successColor)
             }
@@ -146,7 +146,7 @@ struct VoiceView: View {
                 Circle()
                     .fill(theme.warningColor)
                     .frame(width: 8, height: 8)
-                Text("Setup Required")
+                Text("Setup Required", bundle: .module)
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(theme.warningColor)
             }
@@ -202,7 +202,7 @@ private struct VoiceModelsTab: View {
                 // Recommended section
                 if !recommendedModels.isEmpty {
                     VStack(alignment: .leading, spacing: 12) {
-                        Text("RECOMMENDED")
+                        Text("RECOMMENDED", bundle: .module)
                             .font(.system(size: 11, weight: .bold))
                             .foregroundColor(theme.secondaryText)
                             .tracking(0.5)
@@ -220,7 +220,7 @@ private struct VoiceModelsTab: View {
                 // Other models section
                 if !otherModels.isEmpty {
                     VStack(alignment: .leading, spacing: 12) {
-                        Text("ALL MODELS")
+                        Text("ALL MODELS", bundle: .module)
                             .font(.system(size: 11, weight: .bold))
                             .foregroundColor(theme.secondaryText)
                             .tracking(0.5)
@@ -256,12 +256,12 @@ private struct LegacyWhisperBanner: View {
                 .foregroundColor(theme.warningColor)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("Legacy WhisperKit models found")
+                Text("Legacy WhisperKit models found", bundle: .module)
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(theme.primaryText)
 
                 Text(
-                    "These models are no longer used. Delete to free up \(modelManager.legacyWhisperModelsSizeString ?? "disk space")."
+                    "These models are no longer used. Delete to free up \(modelManager.legacyWhisperModelsSizeString ?? "disk space").", bundle: .module
                 )
                 .font(.system(size: 12))
                 .foregroundColor(theme.secondaryText)
@@ -278,7 +278,7 @@ private struct LegacyWhisperBanner: View {
                     ProgressView()
                         .controlSize(.small)
                 } else {
-                    Text("Delete")
+                    Text("Delete", bundle: .module)
                         .font(.system(size: 13, weight: .medium))
                         .foregroundColor(.white)
                         .padding(.horizontal, 14)
@@ -342,7 +342,7 @@ private struct SpeechModelRow: View {
                         .foregroundColor(theme.primaryText)
 
                     if model.isEnglishOnly {
-                        Text("EN")
+                        Text("EN", bundle: .module)
                             .font(.system(size: 9, weight: .bold))
                             .foregroundColor(theme.secondaryText)
                             .padding(.horizontal, 5)
@@ -351,7 +351,7 @@ private struct SpeechModelRow: View {
                     }
 
                     if isSelected {
-                        Text("Default")
+                        Text("Default", bundle: .module)
                             .font(.system(size: 9, weight: .bold))
                             .foregroundColor(theme.successColor)
                             .padding(.horizontal, 5)
@@ -426,7 +426,7 @@ private struct SpeechModelRow: View {
         switch downloadState {
         case .notStarted, .failed:
             Button(action: { modelManager.downloadModel(model) }) {
-                Text("Download")
+                Text("Download", bundle: .module)
                     .font(.system(size: 13, weight: .medium))
                     .foregroundColor(theme.isDark ? theme.primaryBackground : .white)
                     .padding(.horizontal, 16)
@@ -452,7 +452,7 @@ private struct SpeechModelRow: View {
                 }
                 .frame(width: 28, height: 28)
 
-                Text("\(Int(progress * 100))%")
+                Text("\(Int(progress * 100))%", bundle: .module)
                     .font(.system(size: 12, weight: .medium, design: .monospaced))
                     .foregroundColor(theme.secondaryText)
                     .frame(width: 40)
@@ -469,7 +469,7 @@ private struct SpeechModelRow: View {
             HStack(spacing: 8) {
                 if !isSelected {
                     Button(action: { modelManager.setDefaultModel(model.id) }) {
-                        Text("Set Default")
+                        Text("Set Default", bundle: .module)
                             .font(.system(size: 12, weight: .medium))
                             .foregroundColor(theme.accentColor)
                             .padding(.horizontal, 12)

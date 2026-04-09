@@ -69,8 +69,8 @@ struct InsightsView: View {
 
     private var headerView: some View {
         ManagerHeaderWithActions(
-            title: "Insights",
-            subtitle: "Monitor API requests and performance"
+            title: L("Insights"),
+            subtitle: L("Monitor API requests and performance")
         ) {
             HeaderSecondaryButton("Clear", icon: "trash") {
                 showClearConfirmation = true
@@ -90,7 +90,7 @@ struct InsightsView: View {
                     .font(.system(size: 12))
                     .foregroundColor(theme.tertiaryText)
 
-                TextField("Search path or model...", text: $insightsService.searchFilter)
+                TextField(text: $insightsService.searchFilter, prompt: Text("Search path or model...", bundle: .module)) { Text("Search path or model...", bundle: .module) }
                     .textFieldStyle(.plain)
                     .font(.system(size: 13))
                     .foregroundColor(theme.primaryText)
@@ -125,7 +125,7 @@ struct InsightsView: View {
             Spacer()
 
             // Total count
-            Text("\(insightsService.totalRequestCount) requests")
+            Text("\(insightsService.totalRequestCount) requests", bundle: .module)
                 .font(.system(size: 11, weight: .medium))
                 .foregroundColor(theme.tertiaryText)
         }
@@ -222,17 +222,17 @@ struct InsightsView: View {
         VStack(spacing: 0) {
             // Table header
             HStack(spacing: 0) {
-                Text("TIME")
+                Text("TIME", bundle: .module)
                     .frame(width: 70, alignment: .leading)
-                Text("SOURCE")
+                Text("SOURCE", bundle: .module)
                     .frame(width: 50, alignment: .leading)
-                Text("METHOD")
+                Text("METHOD", bundle: .module)
                     .frame(width: 55, alignment: .leading)
-                Text("PATH")
+                Text("PATH", bundle: .module)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                Text("STATUS")
+                Text("STATUS", bundle: .module)
                     .frame(width: 60, alignment: .center)
-                Text("DURATION")
+                Text("DURATION", bundle: .module)
                     .frame(width: 80, alignment: .trailing)
                 Text("")
                     .frame(width: 30)
@@ -284,12 +284,12 @@ struct InsightsView: View {
                 .font(.system(size: 48))
                 .foregroundColor(theme.tertiaryText.opacity(0.3))
 
-            Text("No Requests Yet")
+            Text("No Requests Yet", bundle: .module)
                 .font(.system(size: 18, weight: .semibold, design: .rounded))
                 .foregroundColor(theme.secondaryText)
 
             Text(
-                "API request activity will appear here.\nTest endpoints from Server tab or connect an app via the API."
+                "API request activity will appear here.\nTest endpoints from Server tab or connect an app via the API.", bundle: .module
             )
             .font(.system(size: 13))
             .foregroundColor(theme.tertiaryText)
@@ -485,7 +485,7 @@ private struct RequestLogRow: View {
                     Image(systemName: "puzzlepiece.extension.fill")
                         .font(.system(size: 10))
                         .foregroundColor(.teal.opacity(0.8))
-                    Text("Plugin: \(pluginId)")
+                    Text("Plugin: \(pluginId)", bundle: .module)
                         .font(.system(size: 11, weight: .medium))
                         .foregroundColor(.teal)
                 }
@@ -520,7 +520,7 @@ private struct RequestLogRow: View {
                     // Request panel
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
-                            Label("Request", systemImage: "arrow.up.circle.fill")
+                            Label { Text("Request", bundle: .module) } icon: { Image(systemName: "arrow.up.circle.fill") }
                                 .font(.system(size: 11, weight: .semibold))
                                 .foregroundColor(theme.secondaryText)
                             Spacer()
@@ -541,7 +541,7 @@ private struct RequestLogRow: View {
                                     .fill(theme.codeBlockBackground)
                             )
                         } else {
-                            Text("No request body")
+                            Text("No request body", bundle: .module)
                                 .font(.system(size: 11))
                                 .foregroundColor(theme.tertiaryText)
                                 .padding(10)
@@ -557,7 +557,7 @@ private struct RequestLogRow: View {
                     // Response panel
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
-                            Label("Response", systemImage: "arrow.down.circle.fill")
+                            Label { Text("Response", bundle: .module) } icon: { Image(systemName: "arrow.down.circle.fill") }
                                 .font(.system(size: 11, weight: .semibold))
                                 .foregroundColor(theme.secondaryText)
                             Spacer()
@@ -572,7 +572,7 @@ private struct RequestLogRow: View {
                                         .foregroundColor(theme.tertiaryText)
                                 }
                                 .buttonStyle(PlainButtonStyle())
-                                .help("Copy response")
+                                .help(Text("Copy response", bundle: .module))
                             }
                         }
 
@@ -598,7 +598,7 @@ private struct RequestLogRow: View {
                                     )
                             )
                         } else {
-                            Text("No response body")
+                            Text("No response body", bundle: .module)
                                 .font(.system(size: 11))
                                 .foregroundColor(theme.tertiaryText)
                                 .padding(10)
@@ -641,7 +641,7 @@ private struct RequestLogRow: View {
             // Tool calls
             if let toolCalls = log.toolCalls, !toolCalls.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Tool Calls")
+                    Text("Tool Calls", bundle: .module)
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundColor(theme.tertiaryText)
 
@@ -660,7 +660,7 @@ private struct RequestLogRow: View {
     @ViewBuilder
     private var inferenceDetails: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Label("Inference Details", systemImage: "bolt.fill")
+            Label { Text("Inference Details", bundle: .module) } icon: { Image(systemName: "bolt.fill") }
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundColor(.purple.opacity(0.8))
 
@@ -782,7 +782,7 @@ private struct HTTPStatusBadge: View {
     let statusCode: Int
 
     var body: some View {
-        Text("\(statusCode)")
+        Text("\(statusCode)", bundle: .module)
             .font(.system(size: 10, weight: .bold, design: .monospaced))
             .foregroundColor(.white)
             .padding(.horizontal, 8)

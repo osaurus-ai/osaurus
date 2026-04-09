@@ -80,7 +80,7 @@ struct ChatSessionSidebar: View {
 
     private var sidebarHeader: some View {
         HStack {
-            Text("History")
+            Text("History", bundle: .module)
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundColor(theme.primaryText)
 
@@ -92,7 +92,7 @@ struct ChatSessionSidebar: View {
                     .foregroundColor(theme.secondaryText)
             }
             .buttonStyle(.plain)
-            .help("New Chat")
+            .help(Text("New Chat", bundle: .module))
         }
         .padding(.horizontal, 16)
         .padding(.top, 20)
@@ -107,7 +107,7 @@ struct ChatSessionSidebar: View {
             Image(systemName: "bubble.left.and.bubble.right")
                 .font(.system(size: 28))
                 .foregroundColor(theme.secondaryText.opacity(0.5))
-            Text("No conversations yet")
+            Text("No conversations yet", bundle: .module)
                 .font(.system(size: 12))
                 .foregroundColor(theme.secondaryText.opacity(0.7))
             Spacer()
@@ -272,12 +272,12 @@ private struct SessionRow: View {
                     Button {
                         openInNewWindow()
                     } label: {
-                        Label("Open in New Window", systemImage: "macwindow.badge.plus")
+                        Label { Text("Open in New Window", bundle: .module) } icon: { Image(systemName: "macwindow.badge.plus") }
                     }
                     Divider()
                 }
-                Button("Rename", action: onStartRename)
-                Button("Delete", role: .destructive, action: onDelete)
+                Button( action: onStartRename) { Text("Rename", bundle: .module) }
+                Button(role: .destructive, action: onDelete) { Text("Delete", bundle: .module) }
             }
         }
     }
@@ -293,7 +293,7 @@ private struct SessionRow: View {
                 .font(.system(size: 10, weight: .medium))
                 .foregroundColor(theme.secondaryText.opacity(0.8))
         }
-        .help("Default")
+        .help(Text("Default", bundle: .module))
     }
 
     @ViewBuilder
@@ -311,7 +311,10 @@ private struct SessionRow: View {
     }
 
     private var editingView: some View {
-        TextField("Title", text: $editingTitle, onCommit: onConfirmRename)
+        TextField(text: $editingTitle, prompt: Text("Title", bundle: .module)) {
+            Text("Title", bundle: .module)
+        }
+        .onSubmit(onConfirmRename)
             .textFieldStyle(.plain)
             .font(.system(size: 12, weight: .medium))
             .foregroundColor(theme.primaryText)

@@ -109,7 +109,7 @@ struct TranscriptionModeSettingsTab: View {
                 .frame(width: 48, height: 48)
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Transcription Mode")
+                    Text("Transcription Mode", bundle: .module)
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundColor(theme.primaryText)
 
@@ -141,7 +141,7 @@ struct TranscriptionModeSettingsTab: View {
                     .foregroundColor(theme.accentColor)
 
                 Text(
-                    "When enabled, press the hotkey to start transcribing. Your voice will be typed directly into the focused text field in any application."
+                    "When enabled, press the hotkey to start transcribing. Your voice will be typed directly into the focused text field in any application.", bundle: .module
                 )
                 .font(.system(size: 12))
                 .foregroundColor(theme.secondaryText)
@@ -181,11 +181,11 @@ struct TranscriptionModeSettingsTab: View {
                 .frame(width: 48, height: 48)
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Setup Required")
+                    Text("Setup Required", bundle: .module)
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundColor(theme.primaryText)
 
-                    Text("Complete these steps to enable Transcription Mode")
+                    Text("Complete these steps to enable Transcription Mode", bundle: .module)
                         .font(.system(size: 12))
                         .foregroundColor(theme.secondaryText)
                 }
@@ -255,11 +255,11 @@ struct TranscriptionModeSettingsTab: View {
                 .frame(width: 48, height: 48)
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Activation Hotkey")
+                    Text("Activation Hotkey", bundle: .module)
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundColor(theme.primaryText)
 
-                    Text("Press this shortcut to start/stop transcription")
+                    Text("Press this shortcut to start/stop transcription", bundle: .module)
                         .font(.system(size: 12))
                         .foregroundColor(theme.secondaryText)
                 }
@@ -268,7 +268,7 @@ struct TranscriptionModeSettingsTab: View {
             }
 
             VStack(alignment: .leading, spacing: 8) {
-                Text("Global Hotkey")
+                Text("Global Hotkey", bundle: .module)
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(theme.secondaryText)
 
@@ -278,7 +278,7 @@ struct TranscriptionModeSettingsTab: View {
                     }
 
                 if hotkey == nil {
-                    Text("Set a hotkey to enable transcription mode")
+                    Text("Set a hotkey to enable transcription mode", bundle: .module)
                         .font(.system(size: 11))
                         .foregroundColor(theme.warningColor)
                 }
@@ -310,11 +310,11 @@ struct TranscriptionModeSettingsTab: View {
                 .frame(width: 48, height: 48)
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Transcription Delivery")
+                    Text("Transcription Delivery", bundle: .module)
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundColor(theme.primaryText)
 
-                    Text("How transcribed text is sent to the active field")
+                    Text("How transcribed text is sent to the active field", bundle: .module)
                         .font(.system(size: 12))
                         .foregroundColor(theme.secondaryText)
                 }
@@ -338,7 +338,7 @@ struct TranscriptionModeSettingsTab: View {
     private var testAreaCard: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
-                Text("Test Transcription")
+                Text("Test Transcription", bundle: .module)
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundColor(theme.primaryText)
 
@@ -350,7 +350,7 @@ struct TranscriptionModeSettingsTab: View {
                             .fill(theme.errorColor)
                             .frame(width: 8, height: 8)
                             .modifier(PulsingIndicatorModifier())
-                        Text("TRANSCRIBING")
+                        Text("TRANSCRIBING", bundle: .module)
                             .font(.system(size: 10, weight: .bold))
                             .foregroundColor(theme.errorColor)
                     }
@@ -363,12 +363,14 @@ struct TranscriptionModeSettingsTab: View {
                 }
             }
 
-            Text("Test transcription mode here. Text will be typed into the field below.")
+            Text("Test transcription mode here. Text will be typed into the field below.", bundle: .module)
                 .font(.system(size: 12))
                 .foregroundColor(theme.secondaryText)
 
             // Test text field
-            TextField("Transcribed text will appear here...", text: .constant(""))
+            TextField(text: .constant(""), prompt: Text("Transcribed text will appear here...", bundle: .module)) {
+                Text("Transcribed text will appear here...", bundle: .module)
+            }
                 .textFieldStyle(.plain)
                 .font(.system(size: 14))
                 .foregroundColor(theme.primaryText)
@@ -425,7 +427,7 @@ struct TranscriptionModeSettingsTab: View {
                 .disabled(!speechService.isModelLoaded || transcriptionService.state == .starting)
 
                 if let hk = hotkey {
-                    Text("or press \(hk.displayString)")
+                    Text("or press \(hk.displayString)", bundle: .module)
                         .font(.system(size: 12))
                         .foregroundColor(theme.tertiaryText)
                 }
@@ -475,7 +477,7 @@ private struct RequirementRowView: View {
 
             if !isComplete, let action = action {
                 Button(action: action) {
-                    Text("Fix")
+                    Text("Fix", bundle: .module)
                         .font(.system(size: 12, weight: .medium))
                         .foregroundColor(theme.accentColor)
                         .padding(.horizontal, 12)

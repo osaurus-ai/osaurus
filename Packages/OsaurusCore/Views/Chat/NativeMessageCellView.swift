@@ -150,29 +150,29 @@ final class NativeHeaderView: NSView {
             v.removeFromSuperview()
         }
 
-        addBtn(icon: "doc.on.doc", help: "Copy", theme: theme, tint: nil) { [weak self] in
+        addBtn(icon: "doc.on.doc", help: L("Copy"), theme: theme, tint: nil) { [weak self] in
             guard let self else { return }
             self.onCopy?(self.turnId)
         }
 
         if role == .assistant {
-            addBtn(icon: "arrow.counterclockwise", help: "Regenerate", theme: theme, tint: nil) { [weak self] in
+            addBtn(icon: "arrow.counterclockwise", help: L("Regenerate"), theme: theme, tint: nil) { [weak self] in
                 guard let self else { return }
                 self.onRegenerate?(self.turnId)
             }
         } else {
-            addBtn(icon: "pencil", help: "Edit", theme: theme, tint: nil) { [weak self] in
+            addBtn(icon: "pencil", help: L("Edit"), theme: theme, tint: nil) { [weak self] in
                 guard let self else { return }
                 self.onEdit?(self.turnId)
             }
-            addBtn(icon: "trash", help: "Delete", theme: theme, tint: nil) { [weak self] in
+            addBtn(icon: "trash", help: L("Delete"), theme: theme, tint: nil) { [weak self] in
                 guard let self else { return }
                 self.onDelete?(self.turnId)
             }
         }
 
         if isEditing, let onCancelEdit {
-            addBtn(icon: "xmark", help: "Cancel edit", theme: theme, tint: nil, action: onCancelEdit)
+            addBtn(icon: "xmark", help: L("Cancel edit"), theme: theme, tint: nil, action: onCancelEdit)
         }
     }
 

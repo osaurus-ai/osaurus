@@ -48,7 +48,8 @@ let package = Package(
                 .product(name: "Highlightr", package: "Highlightr"),
             ],
             path: ".",
-            exclude: ["Tests"]
+            exclude: ["Tests"],
+            resources: [.process("Resources")]
         ),
         .testTarget(
             name: "OsaurusCoreTests",

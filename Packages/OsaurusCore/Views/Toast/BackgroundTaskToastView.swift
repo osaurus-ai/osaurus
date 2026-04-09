@@ -177,7 +177,7 @@ struct BackgroundTaskToastView: View {
                 )
                 .fixedSize()
             } else if taskState.progress >= 0 {
-                Text("\(Int(taskState.progress * 100))%")
+                Text("\(Int(taskState.progress * 100))%", bundle: .module)
                     .font(.system(size: 11, weight: .medium, design: .monospaced))
                     .foregroundColor(theme.tertiaryText)
                     .contentTransition(.numericText())
@@ -207,7 +207,7 @@ struct BackgroundTaskToastView: View {
             if items.isEmpty {
                 HStack(spacing: 8) {
                     ConfigurableTypingIndicator(color: theme.tertiaryText.opacity(0.6), dotSize: 5, spacing: 3)
-                    Text("Starting…")
+                    Text("Starting…", bundle: .module)
                         .font(.system(size: 11))
                         .foregroundColor(theme.tertiaryText)
                 }
@@ -299,7 +299,7 @@ struct BackgroundTaskToastView: View {
                     Circle()
                         .fill(theme.warningColor.opacity(0.9))
                         .frame(width: 7, height: 7)
-                    Text("Needs input")
+                    Text("Needs input", bundle: .module)
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundColor(theme.tertiaryText)
                 }
@@ -381,7 +381,7 @@ struct BackgroundTaskToastView: View {
             }
         } label: {
             HStack(spacing: 4) {
-                Text("Continue")
+                Text("Continue", bundle: .module)
                     .font(.system(size: 11, weight: .semibold))
                 Image(systemName: "arrow.right")
                     .font(.system(size: 10, weight: .semibold))
@@ -404,7 +404,7 @@ struct BackgroundTaskToastView: View {
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: "keyboard").font(.system(size: 11))
-                Text("Click to respond").font(.system(size: 11, weight: .medium))
+                Text("Click to respond", bundle: .module).font(.system(size: 11, weight: .medium))
             }
             .foregroundColor(theme.isDark ? theme.primaryBackground : .white)
             .padding(.horizontal, 12)
@@ -451,7 +451,7 @@ struct BackgroundTaskToastView: View {
     private var cancelledContent: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
-                Text("Task was cancelled")
+                Text("Task was cancelled", bundle: .module)
                     .font(.system(size: 11.5, weight: .medium))
                     .foregroundColor(theme.secondaryText)
 
@@ -461,7 +461,7 @@ struct BackgroundTaskToastView: View {
                     BackgroundTaskManager.shared.finalizeTask(taskState.id)
                     onDismiss()
                 } label: {
-                    Text("Dismiss")
+                    Text("Dismiss", bundle: .module)
                         .font(.system(size: 11, weight: .medium))
                         .foregroundColor(theme.tertiaryText)
                 }
@@ -553,7 +553,7 @@ private struct ActivityRow: View {
     struct BackgroundTaskToastView_Previews: PreviewProvider {
         static var previews: some View {
             VStack(spacing: 16) {
-                Text("Preview requires runtime BackgroundTaskState")
+                Text("Preview requires runtime BackgroundTaskState", bundle: .module)
                     .foregroundColor(.secondary)
             }
             .padding()

@@ -84,7 +84,7 @@ public struct TranscriptionOverlayView: View {
             .onHover { hovering in
                 isCloseHovered = hovering
             }
-            .help("Done (Esc)")
+            .help(Text("Done (Esc)", bundle: .module))
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)

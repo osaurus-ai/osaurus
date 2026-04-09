@@ -61,7 +61,7 @@ struct IdentityView: View {
 
     private var headerView: some View {
         ManagerHeaderWithActions(
-            title: "Identity",
+            title: L("Identity"),
             subtitle: subtitleText
         ) {
             EmptyView()
@@ -150,11 +150,11 @@ private struct IdentitySetupCard: View {
                 .foregroundStyle(theme.accentColor)
 
             VStack(spacing: 8) {
-                Text("Create Your Osaurus Identity")
+                Text("Create Your Osaurus Identity", bundle: .module)
                     .font(.system(size: 22, weight: .bold, design: .rounded))
                     .foregroundColor(theme.primaryText)
 
-                Text("Generate a cryptographic identity stored securely\nin your iCloud Keychain and Secure Enclave.")
+                Text("Generate a cryptographic identity stored securely\nin your iCloud Keychain and Secure Enclave.", bundle: .module)
                     .font(.system(size: 14))
                     .foregroundColor(theme.secondaryText)
                     .multilineTextAlignment(.center)
@@ -183,7 +183,7 @@ private struct IdentitySetupCard: View {
                         Image(systemName: "key.fill")
                             .font(.system(size: 13, weight: .semibold))
                     }
-                    Text("Generate Identity")
+                    Text("Generate Identity", bundle: .module)
                         .font(.system(size: 14, weight: .semibold))
                 }
                 .foregroundColor(.white)
@@ -246,7 +246,7 @@ private struct RecoveryPromptCard: View {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(theme.warningColor)
-                Text("Print this now. It won't be shown again.")
+                Text("Print this now. It won't be shown again.", bundle: .module)
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(theme.warningColor)
             }
@@ -258,7 +258,7 @@ private struct RecoveryPromptCard: View {
                     HStack(spacing: 6) {
                         Image(systemName: "printer.fill")
                             .font(.system(size: 12, weight: .semibold))
-                        Text("Print")
+                        Text("Print", bundle: .module)
                             .font(.system(size: 13, weight: .semibold))
                     }
                     .foregroundColor(.white)
@@ -272,7 +272,7 @@ private struct RecoveryPromptCard: View {
                 .buttonStyle(PlainButtonStyle())
 
                 Button(action: dismiss) {
-                    Text("I've saved it")
+                    Text("I've saved it", bundle: .module)
                         .font(.system(size: 13, weight: .medium))
                         .foregroundColor(theme.primaryText)
                         .padding(.horizontal, 20)
@@ -303,7 +303,7 @@ private struct RecoveryPromptCard: View {
 
     private var recoveryCard: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("OSAURUS IDENTITY RECOVERY")
+            Text("OSAURUS IDENTITY RECOVERY", bundle: .module)
                 .font(.system(size: 12, weight: .bold, design: .monospaced))
                 .foregroundColor(theme.primaryText)
                 .tracking(1)
@@ -322,7 +322,7 @@ private struct RecoveryPromptCard: View {
                 bulletPoint("Cannot be retrieved by Osaurus")
             }
 
-            Text("Generated: \(formattedDate)")
+            Text("Generated: \(formattedDate)", bundle: .module)
                 .font(.system(size: 11))
                 .foregroundColor(theme.tertiaryText)
         }
@@ -352,7 +352,7 @@ private struct RecoveryPromptCard: View {
 
     private func bulletPoint(_ text: String) -> some View {
         HStack(alignment: .top, spacing: 6) {
-            Text("\u{2022}")
+            Text("\u{2022}", bundle: .module)
                 .font(.system(size: 11))
                 .foregroundColor(theme.tertiaryText)
             Text(text)
@@ -416,7 +416,7 @@ private struct MasterAddressSection: View {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Master Address")
+                        Text("Master Address", bundle: .module)
                             .font(.system(size: 11, weight: .medium))
                             .foregroundColor(theme.secondaryText)
                         Text(osaurusId)
@@ -506,7 +506,7 @@ private struct AgentAddressesSection: View {
         IdentitySection(title: "AGENT ADDRESSES", icon: "person.2.badge.key.fill") {
             VStack(alignment: .leading, spacing: 8) {
                 if customAgents.isEmpty {
-                    Text("No agents yet — create one in the Agents tab")
+                    Text("No agents yet — create one in the Agents tab", bundle: .module)
                         .font(.system(size: 12))
                         .foregroundColor(theme.tertiaryText)
                         .padding(.vertical, 4)
@@ -544,7 +544,7 @@ private struct AgentAddressesSection: View {
                         .textSelection(.enabled)
                         .lineLimit(1)
                 } else {
-                    Text("No address")
+                    Text("No address", bundle: .module)
                         .font(.system(size: 11))
                         .foregroundColor(theme.tertiaryText)
                 }
@@ -570,7 +570,7 @@ private struct AgentAddressesSection: View {
                     HStack(spacing: 4) {
                         Image(systemName: "key.fill")
                             .font(.system(size: 9, weight: .semibold))
-                        Text("Generate")
+                        Text("Generate", bundle: .module)
                             .font(.system(size: 11, weight: .semibold))
                     }
                     .foregroundColor(.white)
@@ -636,11 +636,11 @@ private struct DeviceSection: View {
                         Text(Host.current().localizedName ?? "This Mac")
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundColor(theme.primaryText)
-                        Text("(this device)")
+                        Text("(this device)", bundle: .module)
                             .font(.system(size: 11))
                             .foregroundColor(theme.tertiaryText)
                     }
-                    Text("Device ID: \(deviceId)")
+                    Text("Device ID: \(deviceId)", bundle: .module)
                         .font(.system(size: 11, design: .monospaced))
                         .foregroundColor(theme.secondaryText)
                 }
@@ -651,7 +651,7 @@ private struct DeviceSection: View {
                     Circle()
                         .fill(theme.successColor)
                         .frame(width: 6, height: 6)
-                    Text("Active")
+                    Text("Active", bundle: .module)
                         .font(.system(size: 11, weight: .medium))
                         .foregroundColor(theme.successColor)
                 }

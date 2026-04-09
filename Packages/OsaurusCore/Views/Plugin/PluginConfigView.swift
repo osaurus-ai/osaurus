@@ -53,7 +53,7 @@ struct PluginConfigView: View {
                             withAnimation { saveIndicator = nil }
                         }
                     } label: {
-                        Text("Save Changes")
+                        Text("Save Changes", bundle: .module)
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundColor(.white)
                             .padding(.horizontal, 16)
@@ -441,7 +441,7 @@ struct PluginConfigView: View {
                             .foregroundColor(theme.tertiaryText)
                     }
                     .buttonStyle(.plain)
-                    .help("Copy to clipboard")
+                    .help(Text("Copy to clipboard", bundle: .module))
                 }
             }
             .padding(.horizontal, 12)
@@ -499,7 +499,7 @@ struct PluginConfigView: View {
                         }
                         isDirty = false
                     } label: {
-                        Text("Disconnect")
+                        Text("Disconnect", bundle: .module)
                             .font(.system(size: 12, weight: .medium))
                             .foregroundColor(.red)
                             .padding(.horizontal, 12)
@@ -521,7 +521,7 @@ struct PluginConfigView: View {
                         let url = URL(string: "\(base)/plugins/\(pluginId)/\(routeId)")!
                         NSWorkspace.shared.open(url)
                     } label: {
-                        Text("Connect")
+                        Text("Connect", bundle: .module)
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundColor(.white)
                             .padding(.horizontal, 14)

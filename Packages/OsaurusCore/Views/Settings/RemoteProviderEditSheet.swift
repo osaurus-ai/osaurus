@@ -138,10 +138,10 @@ private struct AddProviderFlow: View {
             .frame(width: 40, height: 40)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("Add Provider")
+                Text("Add Provider", bundle: .module)
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundColor(theme.primaryText)
-                Text("Connect to a remote API provider")
+                Text("Connect to a remote API provider", bundle: .module)
                     .font(.system(size: 12))
                     .foregroundColor(theme.secondaryText)
             }
@@ -177,7 +177,7 @@ private struct AddProviderFlow: View {
     private var providerSelectionStep: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                Text("Choose a provider")
+                Text("Choose a provider", bundle: .module)
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundColor(theme.primaryText)
                     .padding(.horizontal, 4)
@@ -195,7 +195,7 @@ private struct AddProviderFlow: View {
                 HStack(spacing: 4) {
                     Image(systemName: "lock.fill")
                         .font(.system(size: 10))
-                    Text("Your API key never leaves your device.")
+                    Text("Your API key never leaves your device.", bundle: .module)
                         .font(.system(size: 12))
                 }
                 .foregroundColor(theme.tertiaryText)
@@ -231,7 +231,7 @@ private struct AddProviderFlow: View {
                                 .foregroundColor(.white)
                         }
 
-                        Text("Connect \(selectedPreset?.name ?? "Provider")")
+                        Text("Connect \(selectedPreset?.name ?? "Provider")", bundle: .module)
                             .font(.system(size: 20, weight: .semibold))
                             .foregroundColor(theme.primaryText)
                     }
@@ -271,7 +271,7 @@ private struct AddProviderFlow: View {
                     backToSelectionButton
 
                     // Title
-                    Text("Connect custom provider")
+                    Text("Connect custom provider", bundle: .module)
                         .font(.system(size: 20, weight: .semibold))
                         .foregroundColor(theme.primaryText)
 
@@ -287,7 +287,7 @@ private struct AddProviderFlow: View {
                                 Image(systemName: "key.fill")
                                     .font(.system(size: 12, weight: .semibold))
                                     .foregroundColor(theme.accentColor)
-                                Text("AUTHENTICATION")
+                                Text("AUTHENTICATION", bundle: .module)
                                     .font(.system(size: 11, weight: .bold))
                                     .foregroundColor(theme.secondaryText)
                                     .tracking(0.5)
@@ -359,7 +359,7 @@ private struct AddProviderFlow: View {
             HStack(spacing: 6) {
                 Image(systemName: "chevron.left")
                     .font(.system(size: 11, weight: .semibold))
-                Text("Back")
+                Text("Back", bundle: .module)
                     .font(.system(size: 13, weight: .medium))
             }
             .foregroundColor(theme.secondaryText)
@@ -370,7 +370,7 @@ private struct AddProviderFlow: View {
     private var apiKeySection: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text("API KEY")
+                Text("API KEY", bundle: .module)
                     .font(.system(size: 10, weight: .bold))
                     .foregroundColor(theme.tertiaryText)
                     .tracking(0.5)
@@ -378,7 +378,7 @@ private struct AddProviderFlow: View {
                 HStack(spacing: 4) {
                     Image(systemName: "lock.fill")
                         .font(.system(size: 9))
-                    Text("Stored in Keychain")
+                    Text("Stored in Keychain", bundle: .module)
                         .font(.system(size: 10))
                 }
                 .foregroundColor(theme.tertiaryText)
@@ -391,7 +391,7 @@ private struct AddProviderFlow: View {
 
     private func helpSection(for preset: ProviderPreset) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Don't have a key?")
+            Text("Don't have a key?", bundle: .module)
                 .font(.system(size: 14, weight: .medium))
                 .foregroundColor(theme.secondaryText)
 
@@ -422,7 +422,7 @@ private struct AddProviderFlow: View {
 
     private func helpStep(number: Int, text: String) -> some View {
         HStack(alignment: .top, spacing: 10) {
-            Text("\(number).")
+            Text("\(number).", bundle: .module)
                 .font(.system(size: 12, weight: .medium, design: .monospaced))
                 .foregroundColor(theme.tertiaryText)
                 .frame(width: 16, alignment: .trailing)
@@ -440,7 +440,7 @@ private struct AddProviderFlow: View {
                 Image(systemName: "network")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundColor(theme.accentColor)
-                Text("CONNECTION")
+                Text("CONNECTION", bundle: .module)
                     .font(.system(size: 11, weight: .bold))
                     .foregroundColor(theme.secondaryText)
                     .tracking(0.5)
@@ -450,7 +450,7 @@ private struct AddProviderFlow: View {
 
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("PROTOCOL")
+                    Text("PROTOCOL", bundle: .module)
                         .font(.system(size: 10, weight: .bold))
                         .foregroundColor(theme.tertiaryText)
                         .tracking(0.5)
@@ -561,12 +561,12 @@ private struct AddProviderFlow: View {
                     // Timeout
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
-                            Text("REQUEST TIMEOUT")
+                            Text("REQUEST TIMEOUT", bundle: .module)
                                 .font(.system(size: 10, weight: .bold))
                                 .foregroundColor(theme.tertiaryText)
                                 .tracking(0.5)
                             Spacer()
-                            Text("\(Int(timeout))s")
+                            Text("\(Int(timeout))s", bundle: .module)
                                 .font(.system(size: 12, weight: .medium, design: .monospaced))
                                 .foregroundColor(theme.secondaryText)
                                 .padding(.horizontal, 8)
@@ -583,7 +583,7 @@ private struct AddProviderFlow: View {
                     // Custom headers
                     VStack(alignment: .leading, spacing: 10) {
                         HStack {
-                            Text("CUSTOM HEADERS")
+                            Text("CUSTOM HEADERS", bundle: .module)
                                 .font(.system(size: 10, weight: .bold))
                                 .foregroundColor(theme.tertiaryText)
                                 .tracking(0.5)
@@ -601,7 +601,7 @@ private struct AddProviderFlow: View {
                         }
 
                         if customHeaders.isEmpty {
-                            Text("No custom headers configured")
+                            Text("No custom headers configured", bundle: .module)
                                 .font(.system(size: 12))
                                 .foregroundColor(theme.tertiaryText)
                                 .padding(.vertical, 6)
@@ -628,7 +628,7 @@ private struct AddProviderFlow: View {
 
             Spacer()
 
-            Button("Cancel") { dismiss() }
+            Button { dismiss() } label: { Text("Cancel", bundle: .module) }
                 .font(.system(size: 13, weight: .medium))
                 .foregroundColor(theme.primaryText)
                 .padding(.horizontal, 16)
@@ -685,7 +685,7 @@ private struct AddProviderFlow: View {
                     Image(systemName: "checkmark.circle.fill")
                         .font(.system(size: 12))
                         .foregroundColor(theme.successColor)
-                    Text("\(models.count) model\(models.count == 1 ? "" : "s") found")
+                    Text("\(models.count) model\(models.count == 1 ? "" : "s") found", bundle: .module)
                         .font(.system(size: 12, weight: .medium))
                         .foregroundColor(theme.successColor)
                 case .failure(let error):
@@ -708,10 +708,10 @@ private struct AddProviderFlow: View {
     }
 
     private var actionButtonTitle: String {
-        if isTesting { return "Testing..." }
-        if testResult?.isSuccess == true { return "Add Provider" }
-        if case .failure = testResult { return "Retry" }
-        return "Test Connection"
+        if isTesting { return L("Testing...") }
+        if testResult?.isSuccess == true { return L("Add Provider") }
+        if case .failure = testResult { return L("Retry") }
+        return L("Test Connection")
     }
 
     private var actionButtonColor: Color {
@@ -802,7 +802,7 @@ private struct AddProviderFlow: View {
                     port: port,
                     basePath: trimmedBasePath.isEmpty ? "/v1" : trimmedBasePath,
                     authType: customAuthType,
-                    providerType: .openai,
+                    providerType: .openaiLegacy,
                     apiKey: testApiKey,
                     headers: HeaderEntry.buildHeaders(from: customHeaders)
                 )
@@ -835,7 +835,7 @@ private struct AddProviderFlow: View {
             basePath: trimmedBasePath.isEmpty ? "/v1" : trimmedBasePath,
             customHeaders: regularHeaders,
             authType: customAuthType,
-            providerType: .openai,
+            providerType: .openaiLegacy,
             enabled: true,
             autoConnect: true,
             timeout: timeout,
@@ -878,7 +878,7 @@ private struct EditProviderFlow: View {
     @State private var portString: String = ""
     @State private var basePath: String = "/v1"
     @State private var authType: RemoteProviderAuthType = .none
-    @State private var providerType: RemoteProviderType = .openai
+    @State private var providerType: RemoteProviderType = .openaiLegacy
 
     // Editable fields
     @State private var apiKey: String = ""
@@ -967,10 +967,10 @@ private struct EditProviderFlow: View {
             }
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("Edit \(provider.name)")
+                Text("Edit \(provider.name)", bundle: .module)
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundColor(theme.primaryText)
-                Text("Modify your API connection")
+                Text("Modify your API connection", bundle: .module)
                     .font(.system(size: 12))
                     .foregroundColor(theme.secondaryText)
             }
@@ -1008,7 +1008,7 @@ private struct EditProviderFlow: View {
             // API Key section
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
-                    Text("API KEY")
+                    Text("API KEY", bundle: .module)
                         .font(.system(size: 10, weight: .bold))
                         .foregroundColor(theme.tertiaryText)
                         .tracking(0.5)
@@ -1016,7 +1016,7 @@ private struct EditProviderFlow: View {
                     HStack(spacing: 4) {
                         Image(systemName: "lock.fill")
                             .font(.system(size: 9))
-                        Text("Stored in Keychain")
+                        Text("Stored in Keychain", bundle: .module)
                             .font(.system(size: 10))
                     }
                     .foregroundColor(theme.tertiaryText)
@@ -1051,7 +1051,7 @@ private struct EditProviderFlow: View {
                         Image(systemName: "key.fill")
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundColor(theme.accentColor)
-                        Text("AUTHENTICATION")
+                        Text("AUTHENTICATION", bundle: .module)
                             .font(.system(size: 11, weight: .bold))
                             .foregroundColor(theme.secondaryText)
                             .tracking(0.5)
@@ -1092,7 +1092,7 @@ private struct EditProviderFlow: View {
                 Image(systemName: "network")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundColor(theme.accentColor)
-                Text("CONNECTION")
+                Text("CONNECTION", bundle: .module)
                     .font(.system(size: 11, weight: .bold))
                     .foregroundColor(theme.secondaryText)
                     .tracking(0.5)
@@ -1102,7 +1102,7 @@ private struct EditProviderFlow: View {
 
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("PROTOCOL")
+                    Text("PROTOCOL", bundle: .module)
                         .font(.system(size: 10, weight: .bold))
                         .foregroundColor(theme.tertiaryText)
                         .tracking(0.5)
@@ -1175,7 +1175,7 @@ private struct EditProviderFlow: View {
 
     private func helpSection(for preset: ProviderPreset) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Need a new key?")
+            Text("Need a new key?", bundle: .module)
                 .font(.system(size: 14, weight: .medium))
                 .foregroundColor(theme.secondaryText)
 
@@ -1248,12 +1248,12 @@ private struct EditProviderFlow: View {
                     // Timeout
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
-                            Text("REQUEST TIMEOUT")
+                            Text("REQUEST TIMEOUT", bundle: .module)
                                 .font(.system(size: 10, weight: .bold))
                                 .foregroundColor(theme.tertiaryText)
                                 .tracking(0.5)
                             Spacer()
-                            Text("\(Int(timeout))s")
+                            Text("\(Int(timeout))s", bundle: .module)
                                 .font(.system(size: 12, weight: .medium, design: .monospaced))
                                 .foregroundColor(theme.secondaryText)
                                 .padding(.horizontal, 8)
@@ -1270,7 +1270,7 @@ private struct EditProviderFlow: View {
                     // Custom headers
                     VStack(alignment: .leading, spacing: 10) {
                         HStack {
-                            Text("CUSTOM HEADERS")
+                            Text("CUSTOM HEADERS", bundle: .module)
                                 .font(.system(size: 10, weight: .bold))
                                 .foregroundColor(theme.tertiaryText)
                                 .tracking(0.5)
@@ -1288,7 +1288,7 @@ private struct EditProviderFlow: View {
                         }
 
                         if customHeaders.isEmpty {
-                            Text("No custom headers configured")
+                            Text("No custom headers configured", bundle: .module)
                                 .font(.system(size: 12))
                                 .foregroundColor(theme.tertiaryText)
                                 .padding(.vertical, 6)
@@ -1316,7 +1316,7 @@ private struct EditProviderFlow: View {
 
             Spacer()
 
-            Button("Cancel") { dismiss() }
+            Button { dismiss() } label: { Text("Cancel", bundle: .module) }
                 .font(.system(size: 13, weight: .medium))
                 .foregroundColor(theme.primaryText)
                 .padding(.horizontal, 16)
@@ -1332,7 +1332,7 @@ private struct EditProviderFlow: View {
                 .buttonStyle(PlainButtonStyle())
 
             Button(action: save) {
-                Text("Save Changes")
+                Text("Save Changes", bundle: .module)
                     .font(.system(size: 13, weight: .medium))
                     .foregroundColor(.white)
                     .padding(.horizontal, 18)
@@ -1394,14 +1394,14 @@ private struct EditProviderFlow: View {
     }
 
     private var testButtonLabel: String {
-        if isTesting { return "Testing..." }
+        if isTesting { return L("Testing...") }
         if let result = testResult {
             switch result {
             case .success(let models): return "\(models.count) models"
-            case .failure: return "Retry"
+            case .failure: return L("Retry")
             }
         }
-        return "Test"
+        return L("Test")
     }
 
     private var testButtonColor: Color {
@@ -1686,7 +1686,9 @@ private struct CompactHeaderRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            TextField("Key", text: $header.key)
+            TextField(text: $header.key, prompt: Text("Key", bundle: .module)) {
+                Text("Key", bundle: .module)
+            }
                 .textFieldStyle(.plain)
                 .font(.system(size: 12, design: .monospaced))
                 .padding(.horizontal, 10)
@@ -1706,7 +1708,9 @@ private struct CompactHeaderRow: View {
                 if header.isSecret {
                     SecureField("Value", text: $header.value)
                 } else {
-                    TextField("Value", text: $header.value)
+                    TextField(text: $header.value, prompt: Text("Value", bundle: .module)) {
+                        Text("Value", bundle: .module)
+                    }
                 }
             }
             .textFieldStyle(.plain)

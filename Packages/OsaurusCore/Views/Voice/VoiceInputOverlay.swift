@@ -157,7 +157,7 @@ public struct VoiceInputOverlay: View {
                             )
                     }
                     .buttonStyle(.plain)
-                    .help("Cancel voice input")
+                    .help(Text("Cancel voice input", bundle: .module))
                 }
 
                 // Live transcription area
@@ -202,12 +202,12 @@ public struct VoiceInputOverlay: View {
                 // Full text with styling
                 if useClipboardPaste && state == .recording {
                     // In clipboard mode, hide live jitter but show indicator
-                    Text("Listening...")
+                    Text("Listening...", bundle: .module)
                         .font(.system(size: 15))
                         .foregroundColor(theme.tertiaryText)
                         .italic()
                 } else if fullText.isEmpty {
-                    Text("Listening...")
+                    Text("Listening...", bundle: .module)
                         .font(.system(size: 15))
                         .foregroundColor(theme.tertiaryText)
                         .italic()
@@ -262,7 +262,7 @@ public struct VoiceInputOverlay: View {
                     HStack(spacing: 5) {
                         Image(systemName: "pencil")
                             .font(.system(size: 12, weight: .medium))
-                        Text("Edit")
+                        Text("Edit", bundle: .module)
                             .font(.system(size: 13, weight: .medium))
                     }
                     .foregroundColor(theme.secondaryText)
@@ -288,7 +288,7 @@ public struct VoiceInputOverlay: View {
                         HStack(spacing: 6) {
                             Image(systemName: "stop.fill")
                                 .font(.system(size: 12, weight: .bold))
-                            Text("Stop")
+                            Text("Stop", bundle: .module)
                                 .font(.system(size: 13, weight: .bold))
                         }
                         .foregroundColor(.white)
@@ -329,7 +329,7 @@ public struct VoiceInputOverlay: View {
             HStack(spacing: 8) {
                 ProgressView()
                     .scaleEffect(0.8)
-                Text("Sending...")
+                Text("Sending...", bundle: .module)
                     .font(.system(size: 13, weight: .medium))
                     .foregroundColor(theme.secondaryText)
             }

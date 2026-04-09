@@ -145,13 +145,13 @@ struct VoiceSetupTab: View {
             }
             .frame(width: 20, height: 20)
 
-            Text("Microphone")
+            Text("Microphone", bundle: .module)
                 .font(.system(size: 13, weight: .medium))
                 .foregroundColor(speechService.microphonePermissionGranted ? theme.primaryText : theme.secondaryText)
 
             if !speechService.microphonePermissionGranted {
                 Button(action: requestMicrophonePermission) {
-                    Text("Grant")
+                    Text("Grant", bundle: .module)
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundColor(theme.accentColor)
                 }
@@ -171,7 +171,7 @@ struct VoiceSetupTab: View {
                 .frame(width: 20, height: 20)
 
             // Label
-            Text("Speech Model")
+            Text("Speech Model", bundle: .module)
                 .font(.system(size: 13, weight: .medium))
                 .foregroundColor(hasModel ? theme.primaryText : theme.secondaryText)
 
@@ -213,13 +213,13 @@ struct VoiceSetupTab: View {
             }
         } else if isDownloading {
             if let progress = downloadProgress {
-                Text("\(Int(progress * 100))%")
+                Text("\(Int(progress * 100))%", bundle: .module)
                     .font(.system(size: 11, weight: .medium, design: .monospaced))
                     .foregroundColor(theme.accentColor)
             }
         } else if let recommendedModel = modelManager.availableModels.first(where: { $0.isRecommended }) {
             Button(action: { modelManager.downloadModel(recommendedModel) }) {
-                Text("Download")
+                Text("Download", bundle: .module)
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundColor(theme.accentColor)
             }
@@ -374,7 +374,7 @@ struct VoiceSetupTab: View {
                 .font(.system(size: 10))
                 .foregroundColor(theme.tertiaryText)
 
-            Text("All processing happens on your Mac")
+            Text("All processing happens on your Mac", bundle: .module)
                 .font(.system(size: 11))
                 .foregroundColor(theme.tertiaryText)
         }

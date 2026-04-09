@@ -402,13 +402,13 @@ struct AnimatedStepCounter: View {
 
     var body: some View {
         HStack(spacing: 2) {
-            Text("\(current)")
+            Text("\(current)", bundle: .module)
                 .contentTransition(.numericText())
                 .animation(.spring(response: 0.3, dampingFraction: 0.8), value: current)
 
             Text("/")
 
-            Text("\(total)")
+            Text("\(total)", bundle: .module)
         }
         .font(.system(size: 11, weight: .medium, design: .monospaced))
         .foregroundColor(color)
@@ -444,21 +444,21 @@ extension View {
             VStack(spacing: 24) {
                 // Shimmer Progress
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Shimmer Progress Bar")
+                    Text("Shimmer Progress Bar", bundle: .module)
                         .font(.caption)
                     ShimmerProgressBar(progress: 0.6, color: .blue)
                 }
 
                 // Indeterminate Progress
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Indeterminate Progress")
+                    Text("Indeterminate Progress", bundle: .module)
                         .font(.caption)
                     IndeterminateShimmerProgress(color: .blue)
                 }
 
                 // Typing Indicator
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Typing Indicator")
+                    Text("Typing Indicator", bundle: .module)
                         .font(.caption)
                     ConfigurableTypingIndicator(color: .blue)
                 }
@@ -467,19 +467,19 @@ extension View {
                 HStack(spacing: 20) {
                     VStack {
                         MorphingStatusIcon(state: .pending, accentColor: .blue)
-                        Text("Pending").font(.caption2)
+                        Text("Pending", bundle: .module).font(.caption2)
                     }
                     VStack {
                         MorphingStatusIcon(state: .active, accentColor: .blue)
-                        Text("Active").font(.caption2)
+                        Text("Active", bundle: .module).font(.caption2)
                     }
                     VStack {
                         MorphingStatusIcon(state: .completed, accentColor: .green)
-                        Text("Done").font(.caption2)
+                        Text("Done", bundle: .module).font(.caption2)
                     }
                     VStack {
                         MorphingStatusIcon(state: .failed, accentColor: .red)
-                        Text("Failed").font(.caption2)
+                        Text("Failed", bundle: .module).font(.caption2)
                     }
                 }
             }

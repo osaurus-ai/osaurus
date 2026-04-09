@@ -65,10 +65,10 @@ struct PreflightCapabilitySearchTests {
         #expect(Set(names).count == names.count)
     }
 
-    @Test func topKValuesAreCorrect() {
-        #expect(PreflightSearchMode.off.topKValues == (0, 0, 0))
-        #expect(PreflightSearchMode.narrow.topKValues == (1, 2, 0))
-        #expect(PreflightSearchMode.balanced.topKValues == (3, 5, 1))
-        #expect(PreflightSearchMode.wide.topKValues == (5, 8, 2))
+    @Test func toolCapValuesAreCorrect() {
+        #expect(PreflightSearchMode.off.toolCap == 0)
+        #expect(PreflightSearchMode.narrow.toolCap == 3)
+        #expect(PreflightSearchMode.balanced.toolCap == 8)
+        #expect(PreflightSearchMode.wide.toolCap == 15)
     }
 }

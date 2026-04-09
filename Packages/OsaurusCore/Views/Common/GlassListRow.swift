@@ -65,7 +65,7 @@ struct GlassListRow<Content: View>: View {
         ForEach(0 ..< 3) { index in
             GlassListRow(animationIndex: index) {
                 HStack {
-                    Text("Item \(index + 1)")
+                    Text("Item \(index + 1)", bundle: .module)
                     Spacer()
                     Image(systemName: "chevron.right")
                 }

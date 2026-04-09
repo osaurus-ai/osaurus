@@ -68,7 +68,7 @@ struct RemoteProvidersView: View {
 
     private var headerView: some View {
         ManagerHeaderWithActions(
-            title: "Providers",
+            title: L("Providers"),
             subtitle: subtitleText
         ) {
             HeaderPrimaryButton("Add Provider", icon: "plus") {
@@ -82,7 +82,7 @@ struct RemoteProvidersView: View {
         let totalCount = manager.configuration.providers.count
 
         if totalCount == 0 {
-            return "Connect to remote API providers"
+            return L("Connect to remote API providers")
         } else if connectedCount == 0 {
             return "\(totalCount) provider\(totalCount == 1 ? "" : "s") configured"
         } else {
@@ -112,11 +112,11 @@ struct RemoteProvidersView: View {
             }
 
             VStack(spacing: 8) {
-                Text("No Remote Providers")
+                Text("No Remote Providers", bundle: .module)
                     .font(.system(size: 18, weight: .semibold))
                     .foregroundColor(theme.primaryText)
 
-                Text("Connect a provider to access remote models.")
+                Text("Connect a provider to access remote models.", bundle: .module)
                     .font(.system(size: 14))
                     .foregroundColor(theme.secondaryText)
                     .multilineTextAlignment(.center)
@@ -139,7 +139,7 @@ struct RemoteProvidersView: View {
             HStack(spacing: 4) {
                 Image(systemName: "lock.fill")
                     .font(.system(size: 10))
-                Text("Your API keys are stored securely in Keychain.")
+                Text("Your API keys are stored securely in Keychain.", bundle: .module)
                     .font(.system(size: 12))
             }
             .foregroundColor(theme.tertiaryText)
@@ -307,7 +307,7 @@ private struct ProviderCardView: View {
                         .foregroundColor(theme.tertiaryText)
 
                     if isConnected, let modelCount = state?.modelCount, modelCount > 0 {
-                        Text("\(modelCount) model\(modelCount == 1 ? "" : "s") available")
+                        Text("\(modelCount) model\(modelCount == 1 ? "" : "s") available", bundle: .module)
                             .font(.system(size: 12))
                             .foregroundColor(theme.secondaryText)
                     }
@@ -430,7 +430,7 @@ private struct ProviderCardView: View {
                 ProgressView()
                     .scaleEffect(0.5)
                     .frame(width: 12, height: 12)
-                Text("Connecting...")
+                Text("Connecting...", bundle: .module)
                     .font(.system(size: 11, weight: .medium))
             }
             .foregroundColor(theme.accentColor)

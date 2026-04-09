@@ -104,7 +104,7 @@ struct VoiceInputSettingsTab: View {
                 .frame(width: 48, height: 48)
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Voice Input in Chat")
+                    Text("Voice Input in Chat", bundle: .module)
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundColor(theme.primaryText)
 
@@ -132,7 +132,7 @@ struct VoiceInputSettingsTab: View {
                     Image(systemName: "info.circle")
                         .font(.system(size: 12))
                         .foregroundColor(theme.accentColor)
-                    Text("A microphone button will appear in the chat input when voice is ready")
+                    Text("A microphone button will appear in the chat input when voice is ready", bundle: .module)
                         .font(.system(size: 12))
                         .foregroundColor(theme.secondaryText)
                 }
@@ -172,11 +172,11 @@ struct VoiceInputSettingsTab: View {
                 .frame(width: 48, height: 48)
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Transcription Delivery")
+                    Text("Transcription Delivery", bundle: .module)
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundColor(theme.primaryText)
 
-                    Text("How transcribed text is sent to the active field")
+                    Text("How transcribed text is sent to the active field", bundle: .module)
                         .font(.system(size: 12))
                         .foregroundColor(theme.secondaryText)
                 }
@@ -186,7 +186,7 @@ struct VoiceInputSettingsTab: View {
 
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Paste via Clipboard (Recommended)")
+                    Text("Paste via Clipboard (Recommended)", bundle: .module)
                         .font(.system(size: 13, weight: .medium))
                         .foregroundColor(theme.primaryText)
 
@@ -235,11 +235,11 @@ struct VoiceInputSettingsTab: View {
                 .frame(width: 48, height: 48)
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Voice Transcription")
+                    Text("Voice Transcription", bundle: .module)
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundColor(theme.primaryText)
 
-                    Text("Configure how voice messages are handled")
+                    Text("Configure how voice messages are handled", bundle: .module)
                         .font(.system(size: 12))
                         .foregroundColor(theme.secondaryText)
                 }
@@ -250,11 +250,11 @@ struct VoiceInputSettingsTab: View {
             // Voice Stop Mode Picker
             VStack(alignment: .leading, spacing: 10) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Stop Mode")
+                    Text("Stop Mode", bundle: .module)
                         .font(.system(size: 13, weight: .medium))
                         .foregroundColor(theme.primaryText)
 
-                    Text("Choose how the app knows when you've finished speaking.")
+                    Text("Choose how the app knows when you've finished speaking.", bundle: .module)
                         .font(.system(size: 11))
                         .foregroundColor(theme.tertiaryText)
                 }
@@ -280,7 +280,7 @@ struct VoiceInputSettingsTab: View {
             // Pause Duration Slider
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
-                    Text("Pause Detection")
+                    Text("Pause Detection", bundle: .module)
                         .font(.system(size: 13, weight: .medium))
                         .foregroundColor(theme.primaryText)
 
@@ -303,7 +303,7 @@ struct VoiceInputSettingsTab: View {
                     }
 
                 if transcriptionStopMode == .manual {
-                    Text("Auto-send is disabled in manual stop mode.")
+                    Text("Auto-send is disabled in manual stop mode.", bundle: .module)
                         .font(.system(size: 11))
                         .foregroundColor(theme.tertiaryText)
                 } else {
@@ -323,7 +323,7 @@ struct VoiceInputSettingsTab: View {
             // Confirmation Delay Slider
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
-                    Text("Confirmation Delay")
+                    Text("Confirmation Delay", bundle: .module)
                         .font(.system(size: 13, weight: .medium))
                         .foregroundColor(theme.primaryText)
 
@@ -342,7 +342,7 @@ struct VoiceInputSettingsTab: View {
                         saveSettings()
                     }
 
-                Text("Time to cancel before message is automatically sent")
+                Text("Time to cancel before message is automatically sent", bundle: .module)
                     .font(.system(size: 11))
                     .foregroundColor(theme.tertiaryText)
             }
@@ -353,7 +353,7 @@ struct VoiceInputSettingsTab: View {
             // Silence Timeout Slider
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
-                    Text("Silence Timeout")
+                    Text("Silence Timeout", bundle: .module)
                         .font(.system(size: 13, weight: .medium))
                         .foregroundColor(theme.primaryText)
 
@@ -370,7 +370,7 @@ struct VoiceInputSettingsTab: View {
                         saveSettings()
                     }
 
-                Text("Auto-send or close voice input after this duration of silence")
+                Text("Auto-send or close voice input after this duration of silence", bundle: .module)
                     .font(.system(size: 11))
                     .foregroundColor(theme.tertiaryText)
             }

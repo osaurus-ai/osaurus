@@ -150,7 +150,7 @@ struct VADModeSettingsTab: View {
                 )
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("VAD Mode")
+                    Text("VAD Mode", bundle: .module)
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundColor(theme.primaryText)
 
@@ -222,7 +222,7 @@ struct VADModeSettingsTab: View {
                     .foregroundColor(theme.accentColor)
 
                 Text(
-                    "When enabled, Osaurus will continuously listen for agent names. Say a agent's name to automatically open a chat with that agent."
+                    "When enabled, Osaurus will continuously listen for agent names. Say a agent's name to automatically open a chat with that agent.", bundle: .module
                 )
                 .font(.system(size: 12))
                 .foregroundColor(theme.secondaryText)
@@ -258,11 +258,11 @@ struct VADModeSettingsTab: View {
                 CardIconBox(icon: "exclamationmark.triangle.fill", color: theme.warningColor)
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Setup Required")
+                    Text("Setup Required", bundle: .module)
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundColor(theme.primaryText)
 
-                    Text("Complete these steps to enable VAD mode")
+                    Text("Complete these steps to enable VAD mode", bundle: .module)
                         .font(.system(size: 12))
                         .foregroundColor(theme.secondaryText)
                 }
@@ -306,11 +306,11 @@ struct VADModeSettingsTab: View {
                 CardIconBox(icon: "person.2.fill", color: theme.accentColor)
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Activated Agents")
+                    Text("Activated Agents", bundle: .module)
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundColor(theme.primaryText)
 
-                    Text("Select which agents can be activated by voice")
+                    Text("Select which agents can be activated by voice", bundle: .module)
                         .font(.system(size: 12))
                         .foregroundColor(theme.secondaryText)
                 }
@@ -323,7 +323,7 @@ struct VADModeSettingsTab: View {
                     Image(systemName: "info.circle")
                         .font(.system(size: 12))
                         .foregroundColor(theme.warningColor)
-                    Text("Select at least one agent to enable VAD")
+                    Text("Select at least one agent to enable VAD", bundle: .module)
                         .font(.system(size: 12))
                         .foregroundColor(theme.warningColor)
                 }
@@ -370,11 +370,11 @@ struct VADModeSettingsTab: View {
                 CardIconBox(icon: "text.bubble.fill", color: theme.accentColor)
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Wake Word Settings")
+                    Text("Wake Word Settings", bundle: .module)
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundColor(theme.primaryText)
 
-                    Text("Configure how wake words are detected")
+                    Text("Configure how wake words are detected", bundle: .module)
                         .font(.system(size: 12))
                         .foregroundColor(theme.secondaryText)
                 }
@@ -384,11 +384,11 @@ struct VADModeSettingsTab: View {
 
             // Custom wake phrase
             VStack(alignment: .leading, spacing: 8) {
-                Text("Custom Wake Phrase (Optional)")
+                Text("Custom Wake Phrase (Optional)", bundle: .module)
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(theme.secondaryText)
 
-                TextField("e.g., Hey Osaurus", text: $customWakePhrase)
+                TextField(text: $customWakePhrase, prompt: Text("e.g., Hey Osaurus", bundle: .module)) { Text("e.g., Hey Osaurus", bundle: .module) }
                     .textFieldStyle(.plain)
                     .font(.system(size: 14))
                     .foregroundColor(theme.primaryText)
@@ -405,7 +405,7 @@ struct VADModeSettingsTab: View {
                         saveSettings()
                     }
 
-                Text("Leave empty to only use agent names as wake words")
+                Text("Leave empty to only use agent names as wake words", bundle: .module)
                     .font(.system(size: 11))
                     .foregroundColor(theme.tertiaryText)
             }
@@ -415,7 +415,7 @@ struct VADModeSettingsTab: View {
                 Image(systemName: "info.circle")
                     .font(.system(size: 12))
                     .foregroundColor(theme.accentColor)
-                Text("Detection sensitivity is configured in the Audio tab")
+                Text("Detection sensitivity is configured in the Audio tab", bundle: .module)
                     .font(.system(size: 11))
                     .foregroundColor(theme.secondaryText)
             }
@@ -441,11 +441,11 @@ struct VADModeSettingsTab: View {
                 CardIconBox(icon: "gearshape.fill", color: theme.accentColor)
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Behavior")
+                    Text("Behavior", bundle: .module)
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundColor(theme.primaryText)
 
-                    Text("Configure what happens when a wake word is detected")
+                    Text("Configure what happens when a wake word is detected", bundle: .module)
                         .font(.system(size: 12))
                         .foregroundColor(theme.secondaryText)
                 }
@@ -470,7 +470,7 @@ struct VADModeSettingsTab: View {
     private var testAreaCard: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
-                Text("Test Wake Word Detection")
+                Text("Test Wake Word Detection", bundle: .module)
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundColor(theme.primaryText)
 
@@ -481,7 +481,7 @@ struct VADModeSettingsTab: View {
                         Circle()
                             .fill(theme.errorColor)
                             .frame(width: 8, height: 8)
-                        Text("LISTENING")
+                        Text("LISTENING", bundle: .module)
                             .font(.system(size: 10, weight: .bold))
                             .foregroundColor(theme.errorColor)
                     }
@@ -498,7 +498,7 @@ struct VADModeSettingsTab: View {
                 }
             }
 
-            Text("Speak an agent name to test detection")
+            Text("Speak an agent name to test detection", bundle: .module)
                 .font(.system(size: 12))
                 .foregroundColor(theme.secondaryText)
 
@@ -557,10 +557,10 @@ struct VADModeSettingsTab: View {
                         .foregroundColor(theme.successColor)
 
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Detected: \(detection.agentName)")
+                        Text("Detected: \(detection.agentName)", bundle: .module)
                             .font(.system(size: 14, weight: .semibold))
                             .foregroundColor(theme.successColor)
-                        Text("Confidence: \(Int(detection.confidence * 100))%")
+                        Text("Confidence: \(Int(detection.confidence * 100))%", bundle: .module)
                             .font(.system(size: 12))
                             .foregroundColor(theme.secondaryText)
                     }
@@ -599,7 +599,7 @@ struct VADModeSettingsTab: View {
 
                 if testDetection != nil || !testTranscription.isEmpty {
                     Button(action: clearTest) {
-                        Text("Clear")
+                        Text("Clear", bundle: .module)
                             .font(.system(size: 13, weight: .medium))
                             .foregroundColor(theme.secondaryText)
                             .padding(.horizontal, 16)
@@ -728,7 +728,7 @@ private struct RequirementRow: View {
 
             if !isComplete, let action = action {
                 Button(action: action) {
-                    Text("Fix")
+                    Text("Fix", bundle: .module)
                         .font(.system(size: 12, weight: .medium))
                         .foregroundColor(isHovered ? .white : theme.accentColor)
                         .padding(.horizontal, 12)

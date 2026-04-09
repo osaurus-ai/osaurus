@@ -144,8 +144,8 @@ struct AgentsView: View {
             if customAgents.isEmpty {
                 SettingsEmptyState(
                     icon: "theatermasks.fill",
-                    title: "Create Your First Agent",
-                    subtitle: "Custom AI assistants with unique prompts, tools, and styles.",
+                    title: L("Create Your First Agent"),
+                    subtitle: L("Custom AI assistants with unique prompts, tools, and styles."),
                     examples: [
                         .init(icon: "calendar", title: "Daily Planner", description: "Manage your schedule"),
                         .init(icon: "message.fill", title: "Message Assistant", description: "Draft and send texts"),
@@ -153,7 +153,7 @@ struct AgentsView: View {
                     ],
                     primaryAction: .init(title: "Create Agent", icon: "plus", handler: { isCreating = true }),
                     secondaryAction: .init(
-                        title: "Import",
+                        title: L("Import"),
                         icon: "square.and.arrow.down",
                         handler: { showImportPicker = true }
                     ),
@@ -202,8 +202,8 @@ struct AgentsView: View {
 
     private var headerView: some View {
         ManagerHeaderWithActions(
-            title: "Agents",
-            subtitle: "Create custom assistant personalities with unique behaviors",
+            title: L("Agents"),
+            subtitle: L("Create custom assistant personalities with unique behaviors"),
             count: customAgents.isEmpty ? nil : customAgents.count
         ) {
             HeaderIconButton("arrow.clockwise", help: "Refresh agents") {
@@ -404,7 +404,7 @@ private struct AgentCard: View {
                                 .lineLimit(1)
 
                             if isActive {
-                                Text("Active")
+                                Text("Active", bundle: .module)
                                     .font(.system(size: 9, weight: .bold))
                                     .foregroundColor(theme.successColor)
                                     .padding(.horizontal, 6)
@@ -428,19 +428,19 @@ private struct AgentCard: View {
 
                     Menu {
                         Button(action: onSelect) {
-                            Label("Open", systemImage: "arrow.right.circle")
+                            Label { Text("Open", bundle: .module) } icon: { Image(systemName: "arrow.right.circle") }
                         }
                         Button(action: onDuplicate) {
-                            Label("Duplicate", systemImage: "doc.on.doc")
+                            Label { Text("Duplicate", bundle: .module) } icon: { Image(systemName: "doc.on.doc") }
                         }
                         Button(action: onExport) {
-                            Label("Export", systemImage: "square.and.arrow.up")
+                            Label { Text("Export", bundle: .module) } icon: { Image(systemName: "square.and.arrow.up") }
                         }
                         Divider()
                         Button(role: .destructive) {
                             showDeleteConfirm = true
                         } label: {
-                            Label("Delete", systemImage: "trash")
+                            Label { Text("Delete", bundle: .module) } icon: { Image(systemName: "trash") }
                         }
                     } label: {
                         Image(systemName: "ellipsis")
@@ -840,7 +840,7 @@ struct AgentDetailView: View {
                 HStack(spacing: 6) {
                     Image(systemName: "chevron.left")
                         .font(.system(size: 12, weight: .semibold))
-                    Text("Agents")
+                    Text("Agents", bundle: .module)
                         .font(.system(size: 13, weight: .medium))
                 }
                 .foregroundColor(theme.accentColor)
@@ -871,7 +871,7 @@ struct AgentDetailView: View {
                         .background(Circle().fill(theme.tertiaryBackground))
                 }
                 .buttonStyle(PlainButtonStyle())
-                .help("Export")
+                .help(Text("Export", bundle: .module))
 
                 Button {
                     showDeleteConfirm = true
@@ -883,7 +883,7 @@ struct AgentDetailView: View {
                         .background(Circle().fill(theme.errorColor.opacity(0.1)))
                 }
                 .buttonStyle(PlainButtonStyle())
-                .help("Delete")
+                .help(Text("Delete", bundle: .module))
             }
         }
         .padding(.horizontal, 24)
@@ -938,7 +938,7 @@ struct AgentDetailView: View {
                     Image(systemName: "calendar")
                         .font(.system(size: 9, weight: .medium))
                         .foregroundColor(theme.tertiaryText)
-                    Text("Created \(agent.createdAt.formatted(date: .abbreviated, time: .omitted))")
+                    Text("Created \(agent.createdAt.formatted(date: .abbreviated, time: .omitted))", bundle: .module)
                         .font(.system(size: 10, weight: .medium))
                         .foregroundColor(theme.tertiaryText)
                 }
@@ -1001,7 +1001,7 @@ struct AgentDetailView: View {
                         .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
 
                     if let count = tabBadgeCount(for: tab) {
-                        Text("\(count)")
+                        Text("\(count)", bundle: .module)
                             .font(.system(size: 9, weight: .bold, design: .rounded))
                             .foregroundColor(isSelected ? theme.accentColor : theme.tertiaryText)
                             .padding(.horizontal, 5)
@@ -1080,7 +1080,7 @@ struct AgentDetailView: View {
             VStack(alignment: .leading, spacing: 8) {
                 ZStack(alignment: .topLeading) {
                     if systemPrompt.isEmpty {
-                        Text("Enter instructions for this agent...")
+                        Text("Enter instructions for this agent...", bundle: .module)
                             .font(.system(size: 13, design: .monospaced))
                             .foregroundColor(theme.placeholderText)
                             .padding(.top, 12)
@@ -1104,7 +1104,7 @@ struct AgentDetailView: View {
                         )
                 )
 
-                Text("Instructions that define this agent's behavior. Leave empty to use global settings.")
+                Text("Instructions that define this agent's behavior. Leave empty to use global settings.", bundle: .module)
                     .font(.system(size: 11))
                     .foregroundColor(theme.tertiaryText)
             }
@@ -1116,7 +1116,7 @@ struct AgentDetailView: View {
         AgentDetailSection(title: "Generation", icon: "cpu") {
             VStack(spacing: 16) {
                 VStack(alignment: .leading, spacing: 6) {
-                    Label("Default Model", systemImage: "cube.fill")
+                    Label { Text("Default Model", bundle: .module) } icon: { Image(systemName: "cube.fill") }
                         .font(.system(size: 11, weight: .medium))
                         .foregroundColor(theme.secondaryText)
 
@@ -1130,7 +1130,7 @@ struct AgentDetailView: View {
                                     .foregroundColor(theme.primaryText)
                                     .lineLimit(1)
                             } else {
-                                Text("Default (from global settings)")
+                                Text("Default (from global settings)", bundle: .module)
                                     .font(.system(size: 13))
                                     .foregroundColor(theme.placeholderText)
                             }
@@ -1176,7 +1176,7 @@ struct AgentDetailView: View {
                             HStack(spacing: 4) {
                                 Image(systemName: "arrow.uturn.backward")
                                     .font(.system(size: 10))
-                                Text("Reset to default")
+                                Text("Reset to default", bundle: .module)
                                     .font(.system(size: 11, weight: .medium))
                             }
                             .foregroundColor(theme.accentColor)
@@ -1187,7 +1187,7 @@ struct AgentDetailView: View {
 
                 HStack(spacing: 16) {
                     VStack(alignment: .leading, spacing: 6) {
-                        Label("Temperature", systemImage: "thermometer.medium")
+                        Label { Text("Temperature", bundle: .module) } icon: { Image(systemName: "thermometer.medium") }
                             .font(.system(size: 11, weight: .medium))
                             .foregroundColor(theme.secondaryText)
 
@@ -1195,7 +1195,7 @@ struct AgentDetailView: View {
                     }
 
                     VStack(alignment: .leading, spacing: 6) {
-                        Label("Max Tokens", systemImage: "number")
+                        Label { Text("Max Tokens", bundle: .module) } icon: { Image(systemName: "number") }
                             .font(.system(size: 11, weight: .medium))
                             .foregroundColor(theme.secondaryText)
 
@@ -1203,7 +1203,7 @@ struct AgentDetailView: View {
                     }
                 }
 
-                Text("Leave empty to use default values from global settings.")
+                Text("Leave empty to use default values from global settings.", bundle: .module)
                     .font(.system(size: 11))
                     .foregroundColor(theme.tertiaryText)
             }
@@ -1257,8 +1257,8 @@ struct AgentDetailView: View {
         AgentDetailSection(title: "Tools", icon: "wrench.and.screwdriver") {
             VStack(alignment: .leading, spacing: 12) {
                 Picker("", selection: $toolSelectionMode) {
-                    Text("Auto").tag(ToolSelectionMode.auto)
-                    Text("Manual").tag(ToolSelectionMode.manual)
+                    Text("Auto", bundle: .module).tag(ToolSelectionMode.auto)
+                    Text("Manual", bundle: .module).tag(ToolSelectionMode.manual)
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
@@ -1301,7 +1301,9 @@ struct AgentDetailView: View {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 11))
                 .foregroundColor(theme.tertiaryText)
-            TextField("Search tools and skills...", text: $toolSearchText)
+            TextField(text: $toolSearchText, prompt: Text("Search tools and skills...", bundle: .module)) {
+                Text("Search tools and skills...", bundle: .module)
+            }
                 .font(.system(size: 12))
                 .textFieldStyle(.plain)
                 .foregroundColor(theme.primaryText)
@@ -1485,7 +1487,7 @@ struct AgentDetailView: View {
         AgentDetailSection(title: "Instructions", icon: "text.bubble") {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
-                    Text("Customize how the AI uses this plugin.")
+                    Text("Customize how the AI uses this plugin.", bundle: .module)
                         .font(.system(size: 12))
                         .foregroundColor(theme.secondaryText)
 
@@ -1500,7 +1502,7 @@ struct AgentDetailView: View {
                             pluginInstructionsMap[pid] = manifestDefault
                             debouncedSave()
                         } label: {
-                            Text("Reset to Default")
+                            Text("Reset to Default", bundle: .module)
                                 .font(.system(size: 11, weight: .medium))
                         }
                         .buttonStyle(.plain)
@@ -1510,7 +1512,7 @@ struct AgentDetailView: View {
 
                 ZStack(alignment: .topLeading) {
                     if (pluginInstructionsMap[pid] ?? "").isEmpty {
-                        Text("Custom instructions for this plugin...")
+                        Text("Custom instructions for this plugin...", bundle: .module)
                             .font(.system(size: 12))
                             .foregroundColor(theme.placeholderText)
                             .padding(.top, 10)
@@ -1567,7 +1569,7 @@ struct AgentDetailView: View {
                         Image(systemName: "info.circle")
                             .font(.system(size: 10))
                             .foregroundColor(theme.tertiaryText)
-                        Text("Enable relay in the Sandbox tab to get a public URL.")
+                        Text("Enable relay in the Sandbox tab to get a public URL.", bundle: .module)
                             .font(.system(size: 11))
                             .foregroundColor(theme.tertiaryText)
                     }
@@ -1741,7 +1743,7 @@ struct AgentDetailView: View {
         }()
 
         AgentDetailSection(
-            title: "Sandbox",
+            title: L("Sandbox"),
             icon: "shippingbox",
             subtitle: sandboxSubtitle
         ) {
@@ -1751,7 +1753,7 @@ struct AgentDetailView: View {
                         Image(systemName: "info.circle")
                             .font(.system(size: 12))
                             .foregroundColor(theme.tertiaryText)
-                        Text("Sandbox requires macOS 26+. Native plugins work normally.")
+                        Text("Sandbox requires macOS 26+. Native plugins work normally.", bundle: .module)
                             .font(.system(size: 12))
                             .foregroundColor(theme.secondaryText)
                     }
@@ -1760,17 +1762,17 @@ struct AgentDetailView: View {
                         Image(systemName: "info.circle")
                             .font(.system(size: 12))
                             .foregroundColor(theme.tertiaryText)
-                        Text("Start the sandbox container to enable these options.")
+                        Text("Start the sandbox container to enable these options.", bundle: .module)
                             .font(.system(size: 12))
                             .foregroundColor(theme.secondaryText)
                     }
                 } else {
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("Autonomous Execution")
+                            Text("Autonomous Execution", bundle: .module)
                                 .font(.system(size: 12, weight: .medium))
                                 .foregroundColor(theme.primaryText)
-                            Text("Allow agent to run arbitrary commands in the sandbox")
+                            Text("Allow agent to run arbitrary commands in the sandbox", bundle: .module)
                                 .font(.system(size: 11))
                                 .foregroundColor(theme.tertiaryText)
                         }
@@ -1791,10 +1793,10 @@ struct AgentDetailView: View {
                     if execConfig?.enabled == true {
                         HStack {
                             VStack(alignment: .leading, spacing: 2) {
-                                Text("Plugin Creation")
+                                Text("Plugin Creation", bundle: .module)
                                     .font(.system(size: 12, weight: .medium))
                                     .foregroundColor(theme.primaryText)
-                                Text("Agent can create its own tools as plugins")
+                                Text("Agent can create its own tools as plugins", bundle: .module)
                                     .font(.system(size: 11))
                                     .foregroundColor(theme.tertiaryText)
                             }
@@ -1823,17 +1825,17 @@ struct AgentDetailView: View {
         AgentDetailSection(title: "Bonjour", icon: "antenna.radiowaves.left.and.right") {
             VStack(alignment: .leading, spacing: 12) {
                 Text(
-                    "Advertise this agent on your local network via Bonjour so nearby devices can discover it automatically."
+                    "Advertise this agent on your local network via Bonjour so nearby devices can discover it automatically.", bundle: .module
                 )
                 .font(.system(size: 12))
                 .foregroundColor(theme.secondaryText)
 
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Local Network Discovery")
+                        Text("Local Network Discovery", bundle: .module)
                             .font(.system(size: 12, weight: .medium))
                             .foregroundColor(theme.primaryText)
-                        Text("Broadcast this agent as a \(BonjourAdvertiser.serviceType) service")
+                        Text("Broadcast this agent as a \(BonjourAdvertiser.serviceType) service", bundle: .module)
                             .font(.system(size: 11))
                             .foregroundColor(theme.tertiaryText)
                     }
@@ -1870,7 +1872,7 @@ struct AgentDetailView: View {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .font(.system(size: 11))
                             .foregroundColor(theme.warningColor)
-                        Text("Your server is exposed to the local network while Bonjour is enabled.")
+                        Text("Your server is exposed to the local network while Bonjour is enabled.", bundle: .module)
                             .font(.system(size: 11))
                             .foregroundColor(theme.secondaryText)
                     }
@@ -1889,7 +1891,7 @@ struct AgentDetailView: View {
             AgentDetailSection(title: "Relay", icon: "globe") {
                 VStack(alignment: .leading, spacing: 12) {
                     Text(
-                        "Expose this agent to the public internet via a relay tunnel so external services can reach it."
+                        "Expose this agent to the public internet via a relay tunnel so external services can reach it.", bundle: .module
                     )
                     .font(.system(size: 12))
                     .foregroundColor(theme.secondaryText)
@@ -1926,7 +1928,7 @@ struct AgentDetailView: View {
                                             .foregroundColor(copiedRelayURL ? theme.successColor : theme.tertiaryText)
                                     }
                                     .buttonStyle(PlainButtonStyle())
-                                    .help("Copy relay URL")
+                                    .help(Text("Copy relay URL", bundle: .module))
                                 }
                             }
 
@@ -2017,11 +2019,11 @@ struct AgentDetailView: View {
 
     private var quickActionsSection: some View {
         AgentDetailSection(
-            title: "Quick Actions",
+            title: L("Quick Actions"),
             icon: "bolt.fill"
         ) {
             VStack(alignment: .leading, spacing: 16) {
-                Text("Prompt shortcuts shown in the empty state. Customize each mode independently.")
+                Text("Prompt shortcuts shown in the empty state. Customize each mode independently.", bundle: .module)
                     .font(.system(size: 11))
                     .foregroundColor(theme.tertiaryText)
 
@@ -2125,7 +2127,7 @@ struct AgentDetailView: View {
                         HStack(spacing: 4) {
                             Image(systemName: "plus")
                                 .font(.system(size: 10, weight: .semibold))
-                            Text("Add")
+                            Text("Add", bundle: .module)
                                 .font(.system(size: 12, weight: .medium))
                         }
                         .foregroundColor(theme.accentColor)
@@ -2141,7 +2143,7 @@ struct AgentDetailView: View {
                             HStack(spacing: 4) {
                                 Image(systemName: "arrow.uturn.backward")
                                     .font(.system(size: 10))
-                                Text("Reset to Defaults")
+                                Text("Reset to Defaults", bundle: .module)
                                     .font(.system(size: 12, weight: .medium))
                             }
                             .foregroundColor(theme.secondaryText)
@@ -2315,7 +2317,7 @@ struct AgentDetailView: View {
             VStack(alignment: .leading, spacing: 12) {
                 themePickerGrid
 
-                Text("Optionally assign a visual theme to this agent.")
+                Text("Optionally assign a visual theme to this agent.", bundle: .module)
                     .font(.system(size: 11))
                     .foregroundColor(theme.tertiaryText)
             }
@@ -2355,7 +2357,7 @@ struct AgentDetailView: View {
 
     private var schedulesSection: some View {
         AgentDetailSection(
-            title: "Schedules",
+            title: L("Schedules"),
             icon: "clock.fill",
             subtitle: linkedSchedules.isEmpty ? "None" : "\(linkedSchedules.count)"
         ) {
@@ -2365,7 +2367,7 @@ struct AgentDetailView: View {
                         Image(systemName: "clock.badge.questionmark")
                             .font(.system(size: 24))
                             .foregroundColor(theme.tertiaryText)
-                        Text("No schedules linked to this agent")
+                        Text("No schedules linked to this agent", bundle: .module)
                             .font(.system(size: 12))
                             .foregroundColor(theme.secondaryText)
                     }
@@ -2389,7 +2391,7 @@ struct AgentDetailView: View {
                                         .foregroundColor(theme.secondaryText)
 
                                     if let nextRun = schedule.nextRunDescription {
-                                        Text("Next: \(nextRun)")
+                                        Text("Next: \(nextRun)", bundle: .module)
                                             .font(.system(size: 10))
                                             .foregroundColor(theme.tertiaryText)
                                     }
@@ -2428,7 +2430,7 @@ struct AgentDetailView: View {
                     HStack(spacing: 4) {
                         Image(systemName: "plus.circle")
                             .font(.system(size: 11))
-                        Text("Create Schedule")
+                        Text("Create Schedule", bundle: .module)
                             .font(.system(size: 11, weight: .medium))
                     }
                     .foregroundColor(theme.accentColor)
@@ -2440,7 +2442,7 @@ struct AgentDetailView: View {
 
     private var watchersSection: some View {
         AgentDetailSection(
-            title: "Watchers",
+            title: L("Watchers"),
             icon: "eye.fill",
             subtitle: linkedWatchers.isEmpty ? "None" : "\(linkedWatchers.count)"
         ) {
@@ -2450,7 +2452,7 @@ struct AgentDetailView: View {
                         Image(systemName: "eye.slash")
                             .font(.system(size: 24))
                             .foregroundColor(theme.tertiaryText)
-                        Text("No watchers linked to this agent")
+                        Text("No watchers linked to this agent", bundle: .module)
                             .font(.system(size: 12))
                             .foregroundColor(theme.secondaryText)
                     }
@@ -2468,7 +2470,7 @@ struct AgentDetailView: View {
                     HStack(spacing: 4) {
                         Image(systemName: "plus.circle")
                             .font(.system(size: 11))
-                        Text("Create Watcher")
+                        Text("Create Watcher", bundle: .module)
                             .font(.system(size: 11, weight: .medium))
                     }
                     .foregroundColor(theme.accentColor)
@@ -2498,7 +2500,7 @@ struct AgentDetailView: View {
                     }
 
                     if let lastTriggered = watcher.lastTriggeredAt {
-                        Text("Last: \(lastTriggered.formatted(date: .abbreviated, time: .shortened))")
+                        Text("Last: \(lastTriggered.formatted(date: .abbreviated, time: .shortened))", bundle: .module)
                             .font(.system(size: 10))
                             .foregroundColor(theme.tertiaryText)
                     }
@@ -2532,7 +2534,7 @@ struct AgentDetailView: View {
 
     private var historySection: some View {
         AgentDetailSection(
-            title: "History",
+            title: L("History"),
             icon: "clock.arrow.circlepath",
             subtitle:
                 "\(chatSessions.count) chat\(chatSessions.count == 1 ? "" : "s"), \(workTasks.count) task\(workTasks.count == 1 ? "" : "s")"
@@ -2544,7 +2546,7 @@ struct AgentDetailView: View {
                             Image(systemName: "bubble.left.and.bubble.right")
                                 .font(.system(size: 10, weight: .medium))
                                 .foregroundColor(theme.accentColor)
-                            Text("RECENT CHATS")
+                            Text("RECENT CHATS", bundle: .module)
                                 .font(.system(size: 10, weight: .bold))
                                 .foregroundColor(theme.secondaryText)
                                 .tracking(0.3)
@@ -2556,7 +2558,7 @@ struct AgentDetailView: View {
                             HStack(spacing: 3) {
                                 Image(systemName: "plus")
                                     .font(.system(size: 9, weight: .semibold))
-                                Text("New Chat")
+                                Text("New Chat", bundle: .module)
                                     .font(.system(size: 10, weight: .medium))
                             }
                             .foregroundColor(theme.accentColor)
@@ -2565,7 +2567,7 @@ struct AgentDetailView: View {
                     }
 
                     if chatSessions.isEmpty {
-                        Text("No chat sessions yet")
+                        Text("No chat sessions yet", bundle: .module)
                             .font(.system(size: 12))
                             .foregroundColor(theme.tertiaryText)
                             .padding(.vertical, 8)
@@ -2590,7 +2592,7 @@ struct AgentDetailView: View {
                                     }
                                     Spacer()
                                     HStack(spacing: 4) {
-                                        Text("\(session.turns.count) turns")
+                                        Text("\(session.turns.count) turns", bundle: .module)
                                             .font(.system(size: 10))
                                             .foregroundColor(theme.tertiaryText)
                                         Image(systemName: "arrow.up.right")
@@ -2601,7 +2603,7 @@ struct AgentDetailView: View {
                             }
                         }
                         if chatSessions.count > 5 {
-                            Text("and \(chatSessions.count - 5) more...")
+                            Text("and \(chatSessions.count - 5) more...", bundle: .module)
                                 .font(.system(size: 11))
                                 .foregroundColor(theme.tertiaryText)
                                 .padding(.leading, 4)
@@ -2618,14 +2620,14 @@ struct AgentDetailView: View {
                         Image(systemName: "checklist")
                             .font(.system(size: 10, weight: .medium))
                             .foregroundColor(theme.accentColor)
-                        Text("RECENT TASKS")
+                        Text("RECENT TASKS", bundle: .module)
                             .font(.system(size: 10, weight: .bold))
                             .foregroundColor(theme.secondaryText)
                             .tracking(0.3)
                     }
 
                     if workTasks.isEmpty {
-                        Text("No work tasks yet")
+                        Text("No work tasks yet", bundle: .module)
                             .font(.system(size: 12))
                             .foregroundColor(theme.tertiaryText)
                             .padding(.vertical, 8)
@@ -2659,7 +2661,7 @@ struct AgentDetailView: View {
                             )
                         }
                         if workTasks.count > 5 {
-                            Text("and \(workTasks.count - 5) more...")
+                            Text("and \(workTasks.count - 5) more...", bundle: .module)
                                 .font(.system(size: 11))
                                 .foregroundColor(theme.tertiaryText)
                                 .padding(.leading, 4)
@@ -2672,12 +2674,12 @@ struct AgentDetailView: View {
 
     private var workingMemorySection: some View {
         AgentDetailSection(
-            title: "Working Memory",
+            title: L("Working Memory"),
             icon: "brain.head.profile",
             subtitle: memoryEntries.isEmpty ? "None" : "\(memoryEntries.count)"
         ) {
             if memoryEntries.isEmpty {
-                Text("No working memory entries yet. Memories are automatically extracted from conversations.")
+                Text("No working memory entries yet. Memories are automatically extracted from conversations.", bundle: .module)
                     .font(.system(size: 12))
                     .foregroundColor(theme.tertiaryText)
                     .padding(.vertical, 8)
@@ -2694,12 +2696,12 @@ struct AgentDetailView: View {
 
     private var conversationSummariesSection: some View {
         AgentDetailSection(
-            title: "Summaries",
+            title: L("Summaries"),
             icon: "doc.text",
             subtitle: conversationSummaries.isEmpty ? "None" : "\(conversationSummaries.count)"
         ) {
             if conversationSummaries.isEmpty {
-                Text("No conversation summaries yet.")
+                Text("No conversation summaries yet.", bundle: .module)
                     .font(.system(size: 12))
                     .foregroundColor(theme.tertiaryText)
                     .padding(.vertical, 8)
@@ -3001,7 +3003,7 @@ private struct AgentEditorSheet: View {
                         VStack(alignment: .leading, spacing: 8) {
                             ZStack(alignment: .topLeading) {
                                 if systemPrompt.isEmpty {
-                                    Text("Enter instructions for this agent...")
+                                    Text("Enter instructions for this agent...", bundle: .module)
                                         .font(.system(size: 13, design: .monospaced))
                                         .foregroundColor(theme.placeholderText)
                                         .padding(.top, 12)
@@ -3026,7 +3028,7 @@ private struct AgentEditorSheet: View {
                             )
 
                             Text(
-                                "Instructions that define this agent's behavior. Leave empty to use global settings."
+                                "Instructions that define this agent's behavior. Leave empty to use global settings.", bundle: .module
                             )
                             .font(.system(size: 11))
                             .foregroundColor(theme.tertiaryText)
@@ -3037,7 +3039,7 @@ private struct AgentEditorSheet: View {
                         VStack(spacing: 16) {
                             HStack(spacing: 16) {
                                 VStack(alignment: .leading, spacing: 6) {
-                                    Label("Temperature", systemImage: "thermometer.medium")
+                                    Label { Text("Temperature", bundle: .module) } icon: { Image(systemName: "thermometer.medium") }
                                         .font(.system(size: 11, weight: .medium))
                                         .foregroundColor(theme.secondaryText)
 
@@ -3049,7 +3051,7 @@ private struct AgentEditorSheet: View {
                                 }
 
                                 VStack(alignment: .leading, spacing: 6) {
-                                    Label("Max Tokens", systemImage: "number")
+                                    Label { Text("Max Tokens", bundle: .module) } icon: { Image(systemName: "number") }
                                         .font(.system(size: 11, weight: .medium))
                                         .foregroundColor(theme.secondaryText)
 
@@ -3061,7 +3063,7 @@ private struct AgentEditorSheet: View {
                                 }
                             }
 
-                            Text("Leave empty to use default values from global settings.")
+                            Text("Leave empty to use default values from global settings.", bundle: .module)
                                 .font(.system(size: 11))
                                 .foregroundColor(theme.tertiaryText)
                         }
@@ -3091,7 +3093,7 @@ private struct AgentEditorSheet: View {
                                 }
                             }
 
-                            Text("Optionally assign a visual theme to this agent.")
+                            Text("Optionally assign a visual theme to this agent.", bundle: .module)
                                 .font(.system(size: 11))
                                 .foregroundColor(theme.tertiaryText)
                         }
@@ -3143,11 +3145,11 @@ private struct AgentEditorSheet: View {
             .frame(width: 40, height: 40)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("Create Agent")
+                Text("Create Agent", bundle: .module)
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundColor(theme.primaryText)
 
-                Text("Build your custom AI assistant")
+                Text("Build your custom AI assistant", bundle: .module)
                     .font(.system(size: 12))
                     .foregroundColor(theme.secondaryText)
             }
@@ -3183,7 +3185,7 @@ private struct AgentEditorSheet: View {
     private var footerView: some View {
         HStack(spacing: 12) {
             HStack(spacing: 4) {
-                Text("\u{2318}")
+                Text("\u{2318}", bundle: .module)
                     .font(.system(size: 10, weight: .medium, design: .rounded))
                     .padding(.horizontal, 4)
                     .padding(.vertical, 2)
@@ -3191,19 +3193,19 @@ private struct AgentEditorSheet: View {
                         RoundedRectangle(cornerRadius: 4)
                             .fill(theme.tertiaryBackground)
                     )
-                Text("+ Enter to save")
+                Text("+ Enter to save", bundle: .module)
                     .font(.system(size: 11))
             }
             .foregroundColor(theme.tertiaryText)
 
             Spacer()
 
-            Button("Cancel", action: onCancel)
+            Button( action: onCancel) { Text("Cancel", bundle: .module) }
                 .buttonStyle(SecondaryButtonStyle())
 
-            Button("Create Agent") {
+            Button {
                 saveAgent()
-            }
+            } label: { Text("Create Agent", bundle: .module) }
             .buttonStyle(PrimaryButtonStyle())
             .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             .keyboardShortcut(.return, modifiers: .command)

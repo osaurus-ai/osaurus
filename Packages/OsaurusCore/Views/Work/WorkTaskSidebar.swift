@@ -55,7 +55,7 @@ struct WorkTaskSidebar: View {
 
     private var sidebarHeader: some View {
         HStack {
-            Text("Tasks")
+            Text("Tasks", bundle: .module)
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundColor(theme.primaryText)
 
@@ -63,7 +63,7 @@ struct WorkTaskSidebar: View {
 
             // Task count badge
             if !tasks.isEmpty {
-                Text("\(tasks.count)")
+                Text("\(tasks.count)", bundle: .module)
                     .font(.system(size: 10, weight: .medium))
                     .foregroundColor(theme.tertiaryText)
                     .padding(.horizontal, 6)
@@ -87,7 +87,7 @@ struct WorkTaskSidebar: View {
             Image(systemName: "bolt.circle")
                 .font(.system(size: 28))
                 .foregroundColor(theme.secondaryText.opacity(0.5))
-            Text("No tasks yet")
+            Text("No tasks yet", bundle: .module)
                 .font(.system(size: 12))
                 .foregroundColor(theme.secondaryText.opacity(0.7))
             Spacer()
@@ -183,9 +183,9 @@ private struct TaskRow: View {
             onSelect()
         }
         .contextMenu {
-            Button("Delete", role: .destructive) {
+            Button(role: .destructive) {
                 onDelete()
-            }
+            } label: { Text("Delete", bundle: .module) }
         }
         .animation(theme.springAnimation(responseMultiplier: 0.8), value: isHovered)
         .animation(theme.springAnimation(responseMultiplier: 0.8), value: isSelected)

@@ -205,11 +205,11 @@ struct ModelPickerView: View {
 
     private var header: some View {
         HStack(spacing: 8) {
-            Text("Available Models")
+            Text("Available Models", bundle: .module)
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundColor(theme.primaryText)
 
-            Text("\(displayOptions.count)")
+            Text("\(displayOptions.count)", bundle: .module)
                 .font(.system(size: 11, weight: .medium))
                 .foregroundColor(theme.secondaryText)
                 .padding(.horizontal, 8)
@@ -228,7 +228,7 @@ struct ModelPickerView: View {
                 HStack(spacing: 4) {
                     Image(systemName: "plus")
                         .font(.system(size: 10, weight: .bold))
-                    Text("Add Model")
+                    Text("Add Model", bundle: .module)
                         .font(.system(size: 11, weight: .medium))
                 }
                 .foregroundColor(theme.accentColor)
@@ -254,7 +254,7 @@ struct ModelPickerView: View {
                 .font(.system(size: 13))
                 .foregroundColor(theme.tertiaryText)
 
-            TextField("Search models...", text: $searchText)
+            TextField(text: $searchText, prompt: Text("Search models...", bundle: .module)) { Text("Search models...", bundle: .module) }
                 .textFieldStyle(.plain)
                 .font(.system(size: 13))
                 .foregroundColor(theme.primaryText)
@@ -290,13 +290,13 @@ struct ModelPickerView: View {
                     .font(.system(size: 11))
                     .foregroundColor(.orange)
 
-                Text("Selected model is outdated.")
+                Text("Selected model is outdated.", bundle: .module)
                     .font(.system(size: 11))
                     .foregroundColor(theme.secondaryText)
 
                 Spacer()
 
-                Text("Update")
+                Text("Update", bundle: .module)
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(theme.accentColor)
 
@@ -318,7 +318,7 @@ struct ModelPickerView: View {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 24))
                 .foregroundColor(theme.tertiaryText)
-            Text("No models found")
+            Text("No models found", bundle: .module)
                 .font(.system(size: 13))
                 .foregroundColor(theme.secondaryText)
         }
@@ -359,7 +359,7 @@ struct ModelPickerView: View {
                 VStack(spacing: 0) {
                     // toggle for mock data
                     HStack {
-                        Toggle("Use Mock Data (\(mockModels.count) models)", isOn: $useMockData)
+                        Toggle(isOn: $useMockData) { Text("Use Mock Data (\(mockModels.count) models)", bundle: .module) }
                             .padding()
                         Spacer()
                     }

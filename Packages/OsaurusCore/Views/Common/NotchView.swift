@@ -430,7 +430,7 @@ struct NotchView: View {
             AnimatedStepCounter(current: ls.iteration, total: ls.maxIterations, color: accentColor)
                 .fixedSize()
         } else if task.progress >= 0 {
-            Text("\(Int(task.progress * 100))%")
+            Text("\(Int(task.progress * 100))%", bundle: .module)
                 .font(.system(size: 10, weight: .medium, design: .monospaced))
                 .foregroundColor(notchTertiaryText)
                 .contentTransition(.numericText())
@@ -474,7 +474,7 @@ struct NotchView: View {
 
     private func expandedCancelledBody(task: BackgroundTaskState) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Task was cancelled")
+            Text("Task was cancelled", bundle: .module)
                 .font(.system(size: 11, weight: .medium))
                 .foregroundColor(notchSecondaryText)
             if hasActivityItems { expandedActivityFeed(task: task) }
@@ -522,7 +522,7 @@ struct NotchView: View {
                             .foregroundColor(notchPrimaryText)
                             .lineLimit(1)
                         Spacer(minLength: 4)
-                        Text("Needs input")
+                        Text("Needs input", bundle: .module)
                             .font(.system(size: 9.5, weight: .semibold))
                             .foregroundColor(theme.warningColor)
                     }
@@ -601,7 +601,7 @@ struct NotchView: View {
             }
         } label: {
             HStack(spacing: 4) {
-                Text("Continue").font(.system(size: 10.5, weight: .semibold))
+                Text("Continue", bundle: .module).font(.system(size: 10.5, weight: .semibold))
                 Image(systemName: "arrow.right").font(.system(size: 9, weight: .semibold))
             }
             .foregroundColor(canSubmit ? .white : notchTertiaryText)
@@ -622,7 +622,7 @@ struct NotchView: View {
         } label: {
             HStack(spacing: 5) {
                 Image(systemName: "keyboard").font(.system(size: 10))
-                Text("Click to respond").font(.system(size: 10.5, weight: .medium))
+                Text("Click to respond", bundle: .module).font(.system(size: 10.5, weight: .medium))
             }
             .foregroundColor(.white)
             .padding(.horizontal, 10)
@@ -867,7 +867,7 @@ struct NotchContentView: View {
     struct NotchView_Previews: PreviewProvider {
         static var previews: some View {
             VStack(spacing: 16) {
-                Text("NotchView requires runtime BackgroundTaskState")
+                Text("NotchView requires runtime BackgroundTaskState", bundle: .module)
                     .foregroundColor(.secondary)
             }
             .padding()

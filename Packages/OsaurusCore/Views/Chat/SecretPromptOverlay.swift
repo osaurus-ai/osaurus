@@ -133,7 +133,7 @@ private struct SecretPromptCard: View {
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundColor(theme.accentColor)
 
-                Text("Secret Required")
+                Text("Secret Required", bundle: .module)
                     .font(theme.font(size: CGFloat(theme.captionSize), weight: .semibold))
                     .foregroundColor(theme.accentColor)
             }
@@ -147,7 +147,7 @@ private struct SecretPromptCard: View {
             Spacer()
 
             Button(action: onCancel) {
-                Text("Cancel")
+                Text("Cancel", bundle: .module)
                     .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .medium))
                     .foregroundColor(theme.tertiaryText)
             }
@@ -176,7 +176,7 @@ private struct SecretPromptCard: View {
             HStack(spacing: 4) {
                 Image(systemName: "shield.lefthalf.filled")
                     .font(.system(size: 10))
-                Text("Stored securely in Keychain as \(state.key)")
+                Text("Stored securely in Keychain as \(state.key)", bundle: .module)
                     .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .regular))
             }
             .foregroundColor(theme.tertiaryText.opacity(0.7))
@@ -217,7 +217,7 @@ private struct SecretPromptCard: View {
                 .padding(.vertical, 9)
                 .overlay(alignment: .topLeading) {
                     if secretValue.isEmpty {
-                        Text("Paste your \(state.key) here...")
+                        Text("Paste your \(state.key) here...", bundle: .module)
                             .font(theme.font(size: CGFloat(theme.bodySize) - 1, weight: .regular))
                             .foregroundColor(theme.placeholderText)
                             .padding(.leading, 12)

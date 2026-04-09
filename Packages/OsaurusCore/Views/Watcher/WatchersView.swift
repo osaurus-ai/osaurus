@@ -34,22 +34,22 @@ struct WatchersView: View {
                 if watcherManager.watchers.isEmpty {
                     SettingsEmptyState(
                         icon: "eye.fill",
-                        title: "Create Your First Watcher",
-                        subtitle: "Monitor folders for changes and trigger work tasks automatically.",
+                        title: L("Create Your First Watcher"),
+                        subtitle: L("Monitor folders for changes and trigger work tasks automatically."),
                         examples: [
                             .init(
                                 icon: "arrow.down.circle",
-                                title: "Downloads Organizer",
+                                title: L("Downloads Organizer"),
                                 description: "Auto-sort files into folders by type"
                             ),
                             .init(
                                 icon: "camera",
-                                title: "Screenshot Manager",
+                                title: L("Screenshot Manager"),
                                 description: "Rename and organize screenshots"
                             ),
                             .init(
                                 icon: "externaldrive.connected.to.line.below",
-                                title: "Dropbox Automation",
+                                title: L("Dropbox Automation"),
                                 description: "Process shared files on change"
                             ),
                         ],
@@ -157,8 +157,8 @@ struct WatchersView: View {
 
     private var headerView: some View {
         ManagerHeaderWithActions(
-            title: "Watchers",
-            subtitle: "Monitor folders for changes and trigger work tasks automatically",
+            title: L("Watchers"),
+            subtitle: L("Monitor folders for changes and trigger work tasks automatically"),
             count: watcherManager.watchers.isEmpty ? nil : watcherManager.watchers.count
         ) {
             HeaderIconButton("arrow.clockwise", help: "Refresh watchers") {
@@ -263,10 +263,10 @@ private struct WatcherCard: View {
 
                     Menu {
                         Button(action: onEdit) {
-                            Label("Edit", systemImage: "pencil")
+                            Label { Text("Edit", bundle: .module) } icon: { Image(systemName: "pencil") }
                         }
                         Button(action: onRunNow) {
-                            Label("Trigger Now", systemImage: "play.fill")
+                            Label { Text("Trigger Now", bundle: .module) } icon: { Image(systemName: "play.fill") }
                         }
                         .disabled(isRunning)
                         Divider()
@@ -282,7 +282,7 @@ private struct WatcherCard: View {
                         Button(role: .destructive) {
                             showDeleteConfirm = true
                         } label: {
-                            Label("Delete", systemImage: "trash")
+                            Label { Text("Delete", bundle: .module) } icon: { Image(systemName: "trash") }
                         }
                     } label: {
                         Image(systemName: "ellipsis")
@@ -628,7 +628,7 @@ struct WatcherEditorSheet: View {
 
     private var watcherNameField: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Name")
+            Text("Name", bundle: .module)
                 .font(.system(size: 11, weight: .medium))
                 .foregroundColor(theme.secondaryText)
 
@@ -678,7 +678,7 @@ struct WatcherEditorSheet: View {
                                 .truncationMode(.middle)
                         }
                     } else {
-                        Text("No folder selected")
+                        Text("No folder selected", bundle: .module)
                             .font(.system(size: 13))
                             .foregroundColor(theme.placeholderText)
                     }
@@ -700,7 +700,7 @@ struct WatcherEditorSheet: View {
                     }
 
                     Button(action: selectWatchFolder) {
-                        Text("Browse")
+                        Text("Browse", bundle: .module)
                             .font(.system(size: 12, weight: .medium))
                             .foregroundColor(theme.accentColor)
                             .padding(.horizontal, 12)
@@ -722,7 +722,7 @@ struct WatcherEditorSheet: View {
                         )
                 )
 
-                Text("The AI will be triggered when files in this folder change.")
+                Text("The AI will be triggered when files in this folder change.", bundle: .module)
                     .font(.system(size: 11))
                     .foregroundColor(theme.tertiaryText)
             }
@@ -763,7 +763,7 @@ struct WatcherEditorSheet: View {
                 ZStack(alignment: .topLeading) {
                     if instructions.isEmpty {
                         Text(
-                            "What should the AI do when changes are detected?"
+                            "What should the AI do when changes are detected?", bundle: .module
                         )
                         .font(.system(size: 13))
                         .foregroundColor(theme.placeholderText)
@@ -789,7 +789,7 @@ struct WatcherEditorSheet: View {
                 )
 
                 Text(
-                    "The AI will receive these instructions along with a list of changed files."
+                    "The AI will receive these instructions along with a list of changed files.", bundle: .module
                 )
                 .font(.system(size: 11))
                 .foregroundColor(theme.tertiaryText)
@@ -814,7 +814,7 @@ struct WatcherEditorSheet: View {
                     )
                     .frame(width: 16)
 
-                    Text("Recursive monitoring")
+                    Text("Recursive monitoring", bundle: .module)
                         .font(.system(size: 13, weight: .medium))
                         .foregroundColor(theme.primaryText)
 
@@ -828,15 +828,15 @@ struct WatcherEditorSheet: View {
 
                 // Responsiveness picker
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Responsiveness")
+                    Text("Responsiveness", bundle: .module)
                         .font(.system(size: 11, weight: .medium))
                         .foregroundColor(theme.secondaryText)
 
-                    Picker("Responsiveness", selection: $responsiveness) {
+                    Picker(selection: $responsiveness) {
                         ForEach(Responsiveness.allCases, id: \.self) { level in
                             Text(level.displayName).tag(level)
                         }
-                    }
+                    } label: { Text("Responsiveness", bundle: .module) }
                     .pickerStyle(.segmented)
                     .labelsHidden()
 
@@ -860,7 +860,7 @@ struct WatcherEditorSheet: View {
                 )
                 .frame(maxWidth: .infinity)
 
-                Text("The agent determines the AI's behavior and available tools.")
+                Text("The agent determines the AI's behavior and available tools.", bundle: .module)
                     .font(.system(size: 11))
                     .foregroundColor(theme.tertiaryText)
             }
@@ -874,7 +874,7 @@ struct WatcherEditorSheet: View {
         HStack(spacing: 12) {
             Spacer()
 
-            Button("Cancel", action: onCancel)
+            Button( action: onCancel) { Text("Cancel", bundle: .module) }
                 .buttonStyle(WatcherSecondaryButtonStyle())
 
             Button(isEditing ? "Save Changes" : "Create Watcher") {

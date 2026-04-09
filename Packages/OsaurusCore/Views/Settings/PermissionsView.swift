@@ -35,13 +35,13 @@ struct PermissionsView: View {
                                 .font(.system(size: 14, weight: .medium))
                                 .foregroundColor(theme.accentColor)
 
-                            Text("About System Permissions")
+                            Text("About System Permissions", bundle: .module)
                                 .font(.system(size: 13, weight: .semibold))
                                 .foregroundColor(theme.primaryText)
                         }
 
                         Text(
-                            "Some plugins require additional system permissions to function. Grant permissions below to enable advanced features like automation, calendar access, and more."
+                            "Some plugins require additional system permissions to function. Grant permissions below to enable advanced features like automation, calendar access, and more.", bundle: .module
                         )
                         .font(.system(size: 12))
                         .foregroundColor(theme.secondaryText)
@@ -88,13 +88,13 @@ struct PermissionsView: View {
 
     private var headerView: some View {
         ManagerHeaderWithActions(
-            title: "Permissions",
-            subtitle: "Manage system permissions for plugins and features"
+            title: L("Permissions"),
+            subtitle: L("Manage system permissions for plugins and features")
         ) {
             HeaderSecondaryButton("Refresh", icon: "arrow.clockwise") {
                 permissionService.refreshAllPermissions()
             }
-            .help("Refresh permission status")
+            .help(Text("Refresh permission status", bundle: .module))
         }
     }
 }
@@ -197,7 +197,7 @@ private struct SystemPermissionRow: View {
                                     .scaleEffect(0.6)
                                     .frame(width: 12, height: 12)
                             } else {
-                                Text("Test")
+                                Text("Test", bundle: .module)
                                     .font(.system(size: 12, weight: .medium))
                             }
                         }
@@ -214,7 +214,7 @@ private struct SystemPermissionRow: View {
                         )
                         .buttonStyle(PlainButtonStyle())
                         .disabled(isTesting)
-                        .help("Run a diagnostic test to verify permission")
+                        .help(Text("Run a diagnostic test to verify permission", bundle: .module))
                     }
 
                     // Action button
@@ -225,7 +225,7 @@ private struct SystemPermissionRow: View {
                             HStack(spacing: 4) {
                                 Image(systemName: "gear")
                                     .font(.system(size: 11))
-                                Text("Settings")
+                                Text("Settings", bundle: .module)
                                     .font(.system(size: 12, weight: .medium))
                             }
                             .foregroundColor(themeManager.currentTheme.secondaryText)
@@ -248,7 +248,7 @@ private struct SystemPermissionRow: View {
                             HStack(spacing: 4) {
                                 Image(systemName: "hand.raised")
                                     .font(.system(size: 11))
-                                Text("Grant")
+                                Text("Grant", bundle: .module)
                                     .font(.system(size: 12, weight: .medium))
                             }
                             .foregroundColor(.white)
@@ -286,7 +286,7 @@ private struct SystemPermissionRow: View {
                             )
 
                         if !isSuccess {
-                            Text("Xcode builds need separate grants. Try 'tccutil reset AppleEvents' if stuck.")
+                            Text("Xcode builds need separate grants. Try 'tccutil reset AppleEvents' if stuck.", bundle: .module)
                                 .font(.system(size: 10))
                                 .foregroundColor(themeManager.currentTheme.tertiaryText)
                                 .padding(.top, 2)

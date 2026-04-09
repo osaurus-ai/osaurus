@@ -60,7 +60,7 @@ struct SectionHeader<Trailing: View>: View {
                 HStack(spacing: 6) {
                     Image(systemName: "arrow.clockwise")
                         .font(.system(size: 12, weight: .semibold))
-                    Text("Refresh")
+                    Text("Refresh", bundle: .module)
                         .font(.system(size: 13, weight: .semibold))
                 }
                 .foregroundColor(.white)

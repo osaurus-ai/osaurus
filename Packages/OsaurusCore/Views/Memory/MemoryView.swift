@@ -105,7 +105,7 @@ struct MemoryView: View {
                             ProgressView()
                                 .controlSize(.small)
                                 .padding(.bottom, 4)
-                            Text("Loading memory...")
+                            Text("Loading memory...", bundle: .module)
                                 .font(.system(size: 12))
                                 .foregroundColor(theme.tertiaryText)
                             Spacer()
@@ -188,8 +188,8 @@ struct MemoryView: View {
 
     private var headerView: some View {
         ManagerHeaderWithActions(
-            title: "Memory",
-            subtitle: "Manage your profile, overrides, and memory configuration"
+            title: L("Memory"),
+            subtitle: L("Manage your profile, overrides, and memory configuration")
         ) {
             HeaderIconButton("arrow.clockwise", isLoading: isRefreshing, help: "Refresh") {
                 refreshData()
@@ -206,7 +206,7 @@ struct MemoryView: View {
                 .font(.system(size: 16, weight: .medium))
                 .foregroundColor(theme.warningColor)
 
-            Text("Memory system is disabled. Enable it below to start building memory.")
+            Text("Memory system is disabled. Enable it below to start building memory.", bundle: .module)
                 .font(.system(size: 13))
                 .foregroundColor(theme.secondaryText)
 
@@ -218,7 +218,7 @@ struct MemoryView: View {
                 loadData()
                 showToast("Memory enabled")
             } label: {
-                Text("Enable")
+                Text("Enable", bundle: .module)
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(.white)
                     .padding(.horizontal, 14)
@@ -296,7 +296,7 @@ struct MemoryView: View {
                         .font(.system(size: 13))
                         .foregroundColor(theme.tertiaryText)
                     Text(
-                        "No profile generated yet. Chat with Osaurus and the memory system will build your profile automatically."
+                        "No profile generated yet. Chat with Osaurus and the memory system will build your profile automatically.", bundle: .module
                     )
                     .font(.system(size: 13))
                     .foregroundColor(theme.tertiaryText)
@@ -328,7 +328,7 @@ struct MemoryView: View {
                     Image(systemName: "info.circle")
                         .font(.system(size: 13))
                         .foregroundColor(theme.tertiaryText)
-                    Text("No overrides set. Add explicit facts that should always be in your profile.")
+                    Text("No overrides set. Add explicit facts that should always be in your profile.", bundle: .module)
                         .font(.system(size: 13))
                         .foregroundColor(theme.tertiaryText)
                 }
@@ -362,11 +362,11 @@ struct MemoryView: View {
                     .frame(width: 8, height: 8)
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Default Agent")
+                    Text("Default Agent", bundle: .module)
                         .font(.system(size: 13, weight: .medium))
                         .foregroundColor(theme.primaryText)
 
-                    Text("Uses your global chat settings")
+                    Text("Uses your global chat settings", bundle: .module)
                         .font(.system(size: 11))
                         .foregroundColor(theme.tertiaryText)
                         .lineLimit(1)
@@ -411,7 +411,7 @@ struct MemoryView: View {
                         )
                 }
                 .buttonStyle(PlainButtonStyle())
-                .help("Preview memory context")
+                .help(Text("Preview memory context", bundle: .module))
             }
             .padding(.vertical, 10)
             .padding(.horizontal, 4)
@@ -425,11 +425,11 @@ struct MemoryView: View {
                                 Image(systemName: "brain.head.profile")
                                     .font(.system(size: 10, weight: .medium))
                                     .foregroundColor(theme.tertiaryText)
-                                Text("WORKING MEMORY")
+                                Text("WORKING MEMORY", bundle: .module)
                                     .font(.system(size: 10, weight: .bold))
                                     .foregroundColor(theme.tertiaryText)
                                     .tracking(0.3)
-                                Text("\(defaultAgentEntries.count)")
+                                Text("\(defaultAgentEntries.count)", bundle: .module)
                                     .font(.system(size: 10, weight: .semibold))
                                     .foregroundColor(theme.tertiaryText)
                                     .padding(.horizontal, 5)
@@ -455,11 +455,11 @@ struct MemoryView: View {
                                 Image(systemName: "doc.text")
                                     .font(.system(size: 10, weight: .medium))
                                     .foregroundColor(theme.tertiaryText)
-                                Text("CONVERSATION HISTORY")
+                                Text("CONVERSATION HISTORY", bundle: .module)
                                     .font(.system(size: 10, weight: .bold))
                                     .foregroundColor(theme.tertiaryText)
                                     .tracking(0.3)
-                                Text("\(defaultAgentSummaries.count)")
+                                Text("\(defaultAgentSummaries.count)", bundle: .module)
                                     .font(.system(size: 10, weight: .semibold))
                                     .foregroundColor(theme.tertiaryText)
                                     .padding(.horizontal, 5)
@@ -569,7 +569,7 @@ struct MemoryView: View {
         MemorySection(title: "Configuration", icon: "gearshape") {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(spacing: 12) {
-                    Text("Core Model")
+                    Text("Core Model", bundle: .module)
                         .font(.system(size: 12, weight: .medium))
                         .foregroundColor(theme.secondaryText)
                         .frame(width: 100, alignment: .leading)
@@ -580,7 +580,7 @@ struct MemoryView: View {
 
                     Spacer()
 
-                    Text("Change in Settings → General")
+                    Text("Change in Settings → General", bundle: .module)
                         .font(.system(size: 11))
                         .foregroundColor(theme.tertiaryText)
                 }
@@ -589,7 +589,7 @@ struct MemoryView: View {
 
                 // Retention days
                 HStack(spacing: 12) {
-                    Text("Summary Retention")
+                    Text("Summary Retention", bundle: .module)
                         .font(.system(size: 12, weight: .medium))
                         .foregroundColor(theme.secondaryText)
                         .frame(width: 100, alignment: .leading)
@@ -610,7 +610,7 @@ struct MemoryView: View {
 
                 // Enable/Disable toggle
                 HStack(spacing: 12) {
-                    Text("Status")
+                    Text("Status", bundle: .module)
                         .font(.system(size: 12, weight: .medium))
                         .foregroundColor(theme.secondaryText)
                         .frame(width: 100, alignment: .leading)
@@ -647,7 +647,7 @@ struct MemoryView: View {
                     .foregroundColor(theme.errorColor)
                     .frame(width: 20)
 
-                Text("DANGER ZONE")
+                Text("DANGER ZONE", bundle: .module)
                     .font(.system(size: 11, weight: .bold))
                     .foregroundColor(theme.errorColor)
                     .tracking(0.5)
@@ -660,10 +660,10 @@ struct MemoryView: View {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Clear All Memory")
+                        Text("Clear All Memory", bundle: .module)
                             .font(.system(size: 13, weight: .medium))
                             .foregroundColor(theme.primaryText)
-                        Text("Permanently delete all memory data including profile, entries, and summaries.")
+                        Text("Permanently delete all memory data including profile, entries, and summaries.", bundle: .module)
                             .font(.system(size: 12))
                             .foregroundColor(theme.tertiaryText)
                     }
@@ -673,7 +673,7 @@ struct MemoryView: View {
                     Button {
                         showClearConfirmation = true
                     } label: {
-                        Text("Clear All")
+                        Text("Clear All", bundle: .module)
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundColor(theme.errorColor)
                             .padding(.horizontal, 14)
@@ -942,7 +942,7 @@ private struct MemorySection<Trailing: View, Content: View>: View {
                     .tracking(0.5)
 
                 if let count {
-                    Text("\(count)")
+                    Text("\(count)", bundle: .module)
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundColor(theme.secondaryText)
                         .padding(.horizontal, 7)
@@ -1139,7 +1139,7 @@ private struct AgentMemoryRow: View {
                     )
             }
             .buttonStyle(PlainButtonStyle())
-            .help("Preview context for this agent")
+            .help(Text("Preview context for this agent", bundle: .module))
 
             Button(action: onSelect) {
                 Image(systemName: "chevron.right")
@@ -1178,10 +1178,10 @@ private struct ProfileEditSheet: View {
         VStack(spacing: 0) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Edit User Profile")
+                    Text("Edit User Profile", bundle: .module)
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundColor(theme.primaryText)
-                    Text("Manually edit your profile content")
+                    Text("Manually edit your profile content", bundle: .module)
                         .font(.system(size: 12))
                         .foregroundColor(theme.tertiaryText)
                 }
@@ -1224,7 +1224,7 @@ private struct ProfileEditSheet: View {
                 Button {
                     dismiss()
                 } label: {
-                    Text("Cancel")
+                    Text("Cancel", bundle: .module)
                         .font(.system(size: 13, weight: .medium))
                         .foregroundColor(theme.primaryText)
                         .padding(.horizontal, 16)
@@ -1244,7 +1244,7 @@ private struct ProfileEditSheet: View {
                     onSave(editText)
                     dismiss()
                 } label: {
-                    Text("Save")
+                    Text("Save", bundle: .module)
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundColor(.white)
                         .padding(.horizontal, 20)
@@ -1288,10 +1288,10 @@ private struct AddOverrideSheet: View {
         VStack(spacing: 0) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Add Override")
+                    Text("Add Override", bundle: .module)
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundColor(theme.primaryText)
-                    Text("Enter an explicit fact that should always be in your profile")
+                    Text("Enter an explicit fact that should always be in your profile", bundle: .module)
                         .font(.system(size: 12))
                         .foregroundColor(theme.tertiaryText)
                 }
@@ -1314,7 +1314,7 @@ private struct AddOverrideSheet: View {
 
             Divider().opacity(0.5)
 
-            TextField("e.g., My name is Terence", text: $text)
+            TextField(text: $text, prompt: Text("e.g., My name is Terence", bundle: .module)) { Text("e.g., My name is Terence", bundle: .module) }
                 .textFieldStyle(.plain)
                 .font(.system(size: 13))
                 .focused($isFocused)
@@ -1341,7 +1341,7 @@ private struct AddOverrideSheet: View {
                 Button {
                     dismiss()
                 } label: {
-                    Text("Cancel")
+                    Text("Cancel", bundle: .module)
                         .font(.system(size: 13, weight: .medium))
                         .foregroundColor(theme.primaryText)
                         .padding(.horizontal, 16)
@@ -1362,7 +1362,7 @@ private struct AddOverrideSheet: View {
                     onAdd(trimmedText)
                     dismiss()
                 } label: {
-                    Text("Add")
+                    Text("Add", bundle: .module)
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundColor(.white)
                         .padding(.horizontal, 20)
@@ -1407,16 +1407,16 @@ private struct ContextPreviewSheet: View {
         VStack(spacing: 0) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Memory Context Preview")
+                    Text("Memory Context Preview", bundle: .module)
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundColor(theme.primaryText)
-                    Text("This is injected before the system prompt on each message")
+                    Text("This is injected before the system prompt on each message", bundle: .module)
                         .font(.system(size: 12))
                         .foregroundColor(theme.tertiaryText)
                 }
                 Spacer()
 
-                Text("~\(pluralized(max(1, context.count / MemoryConfiguration.charsPerToken), "token"))")
+                Text("~\(pluralized(max(1, context.count / MemoryConfiguration.charsPerToken), "token"))", bundle: .module)
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(theme.secondaryText)
                     .padding(.horizontal, 8)

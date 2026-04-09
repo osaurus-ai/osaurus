@@ -162,7 +162,7 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
                 port: nil,
                 basePath: "/v1",
                 authType: .apiKey,
-                providerType: .openai
+                providerType: .openResponses
             )
         case .google:
             return ProviderPresetConfiguration(
@@ -182,7 +182,7 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
                 port: nil,
                 basePath: "/v1",
                 authType: .apiKey,
-                providerType: .openai
+                providerType: .openaiLegacy
             )
         case .venice:
             return ProviderPresetConfiguration(
@@ -192,7 +192,7 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
                 port: nil,
                 basePath: "/api/v1",
                 authType: .apiKey,
-                providerType: .openai
+                providerType: .openaiLegacy
             )
         case .openrouter:
             return ProviderPresetConfiguration(
@@ -202,7 +202,7 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
                 port: nil,
                 basePath: "/api/v1",
                 authType: .apiKey,
-                providerType: .openai
+                providerType: .openaiLegacy
             )
         case .custom:
             return ProviderPresetConfiguration(
@@ -212,7 +212,7 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
                 port: nil,
                 basePath: "/v1",
                 authType: .apiKey,
-                providerType: .openai
+                providerType: .openaiLegacy
             )
         }
     }
@@ -313,7 +313,7 @@ struct ProviderHelpLinks: View {
                 }
             } label: {
                 HStack(spacing: 6) {
-                    Text("Open \(preset.name) Console")
+                    Text("Open \(preset.name) Console", bundle: .module)
                         .font(.system(size: 13, weight: .medium))
                     Image(systemName: "arrow.up.right")
                         .font(.system(size: 11, weight: .semibold))
@@ -329,7 +329,7 @@ struct ProviderHelpLinks: View {
                     }
                 } label: {
                     HStack(spacing: 6) {
-                        Text("View Docs")
+                        Text("View Docs", bundle: .module)
                             .font(.system(size: 13, weight: .medium))
                         Image(systemName: "book")
                             .font(.system(size: 11, weight: .semibold))

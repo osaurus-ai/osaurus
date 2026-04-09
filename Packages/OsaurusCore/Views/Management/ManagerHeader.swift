@@ -39,7 +39,7 @@ struct ManagerHeader: View {
                             .foregroundColor(theme.primaryText)
 
                         if let count = count {
-                            Text("\(count)")
+                            Text("\(count)", bundle: .module)
                                 .font(.system(size: 12, weight: .semibold))
                                 .foregroundColor(theme.secondaryText)
                                 .padding(.horizontal, 8)
@@ -101,7 +101,7 @@ struct ManagerHeaderWithActions<Actions: View>: View {
                             .foregroundColor(theme.primaryText)
 
                         if let count = count {
-                            Text("\(count)")
+                            Text("\(count)", bundle: .module)
                                 .font(.system(size: 12, weight: .semibold))
                                 .foregroundColor(theme.secondaryText)
                                 .padding(.horizontal, 8)
@@ -170,7 +170,7 @@ struct ManagerHeaderWithTabs<Actions: View, TabsRow: View>: View {
                             .foregroundColor(theme.primaryText)
 
                         if let count = count {
-                            Text("\(count)")
+                            Text("\(count)", bundle: .module)
                                 .font(.system(size: 12, weight: .semibold))
                                 .foregroundColor(theme.secondaryText)
                                 .padding(.horizontal, 8)

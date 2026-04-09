@@ -70,7 +70,7 @@ struct ProvidersView: View {
                 HStack(spacing: 6) {
                     Image(systemName: "plus")
                         .font(.system(size: 12, weight: .semibold))
-                    Text("Add Provider")
+                    Text("Add Provider", bundle: .module)
                         .font(.system(size: 13, weight: .semibold))
                 }
                 .foregroundColor(.white)
@@ -96,11 +96,11 @@ struct ProvidersView: View {
                     .foregroundColor(theme.accentColor)
             }
 
-            Text("No MCP Providers")
+            Text("No MCP Providers", bundle: .module)
                 .font(.system(size: 17, weight: .semibold))
                 .foregroundColor(theme.primaryText)
 
-            Text("Add a remote MCP server to discover and use its tools")
+            Text("Add a remote MCP server to discover and use its tools", bundle: .module)
                 .font(.system(size: 14))
                 .foregroundColor(theme.secondaryText)
                 .multilineTextAlignment(.center)
@@ -109,7 +109,7 @@ struct ProvidersView: View {
                 HStack(spacing: 6) {
                     Image(systemName: "plus.circle.fill")
                         .font(.system(size: 14))
-                    Text("Add Your First Provider")
+                    Text("Add Your First Provider", bundle: .module)
                         .font(.system(size: 14, weight: .medium))
                 }
                 .foregroundColor(theme.accentColor)
@@ -187,7 +187,7 @@ private struct ProviderCard: View {
                             HStack(spacing: 4) {
                                 Image(systemName: "wrench.and.screwdriver")
                                     .font(.system(size: 10))
-                                Text("\(toolCount) tools")
+                                Text("\(toolCount) tools", bundle: .module)
                                     .font(.system(size: 11, weight: .medium))
                             }
                             .foregroundColor(theme.secondaryText)
@@ -214,14 +214,14 @@ private struct ProviderCard: View {
                                 .scaleEffect(0.6)
                         } else if isConnected {
                             Button(action: onDisconnect) {
-                                Text("Disconnect")
+                                Text("Disconnect", bundle: .module)
                                     .font(.system(size: 12, weight: .medium))
                                     .foregroundColor(theme.errorColor)
                             }
                             .buttonStyle(PlainButtonStyle())
                         } else {
                             Button(action: onConnect) {
-                                Text("Connect")
+                                Text("Connect", bundle: .module)
                                     .font(.system(size: 12, weight: .semibold))
                                     .foregroundColor(.white)
                             }
@@ -241,11 +241,11 @@ private struct ProviderCard: View {
 
                     Menu {
                         Button(action: onEdit) {
-                            Label("Edit", systemImage: "pencil")
+                            Label { Text("Edit", bundle: .module) } icon: { Image(systemName: "pencil") }
                         }
                         Divider()
                         Button(role: .destructive, action: { showDeleteConfirm = true }) {
-                            Label("Delete", systemImage: "trash")
+                            Label { Text("Delete", bundle: .module) } icon: { Image(systemName: "trash") }
                         }
                     } label: {
                         Image(systemName: "ellipsis.circle")
@@ -334,7 +334,7 @@ private struct ProviderCard: View {
     @ViewBuilder
     private var statusBadge: some View {
         if !provider.enabled {
-            Text("Disabled")
+            Text("Disabled", bundle: .module)
                 .font(.system(size: 10, weight: .medium))
                 .foregroundColor(theme.tertiaryText)
                 .padding(.horizontal, 6)
@@ -343,7 +343,7 @@ private struct ProviderCard: View {
         } else if isConnected {
             HStack(spacing: 4) {
                 Circle().fill(theme.successColor).frame(width: 6, height: 6)
-                Text("Connected")
+                Text("Connected", bundle: .module)
                     .font(.system(size: 10, weight: .medium))
                     .foregroundColor(theme.successColor)
             }
@@ -355,7 +355,7 @@ private struct ProviderCard: View {
                 ProgressView()
                     .scaleEffect(0.4)
                     .frame(width: 6, height: 6)
-                Text("Connecting...")
+                Text("Connecting...", bundle: .module)
                     .font(.system(size: 10, weight: .medium))
                     .foregroundColor(theme.accentColor)
             }
@@ -366,7 +366,7 @@ private struct ProviderCard: View {
             HStack(spacing: 4) {
                 Image(systemName: "exclamationmark.circle.fill")
                     .font(.system(size: 8))
-                Text("Error")
+                Text("Error", bundle: .module)
                     .font(.system(size: 10, weight: .medium))
             }
             .foregroundColor(theme.errorColor)
@@ -396,7 +396,7 @@ private struct ProviderCard: View {
                         .font(.system(size: 11))
                         .foregroundColor(theme.tertiaryText)
                     Text(
-                        "\(provider.customHeaders.count + provider.secretHeaderKeys.count) custom header\(provider.customHeaders.count + provider.secretHeaderKeys.count == 1 ? "" : "s")"
+                        "\(provider.customHeaders.count + provider.secretHeaderKeys.count) custom header\(provider.customHeaders.count + provider.secretHeaderKeys.count == 1 ? "" : "s")", bundle: .module
                     )
                     .font(.system(size: 12))
                     .foregroundColor(theme.secondaryText)
@@ -406,7 +406,7 @@ private struct ProviderCard: View {
             // Discovered tools list
             if isConnected, let toolNames = state?.discoveredToolNames, !toolNames.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Provides:")
+                    Text("Provides:", bundle: .module)
                         .font(.system(size: 12, weight: .medium))
                         .foregroundColor(theme.secondaryText)
 
@@ -438,7 +438,7 @@ private struct ProviderCard: View {
             Image(systemName: icon)
                 .font(.system(size: 10))
                 .foregroundColor(theme.tertiaryText)
-            Text("\(label):")
+            Text("\(label):", bundle: .module)
                 .font(.system(size: 11))
                 .foregroundColor(theme.tertiaryText)
             Text(value)
@@ -536,7 +536,7 @@ private struct ProviderEditSheet: View {
                         VStack(alignment: .leading, spacing: 12) {
                             if customHeaders.isEmpty {
                                 HStack {
-                                    Text("No custom headers configured")
+                                    Text("No custom headers configured", bundle: .module)
                                         .font(.system(size: 13))
                                         .foregroundColor(themeManager.currentTheme.tertiaryText)
                                     Spacer()
@@ -604,11 +604,11 @@ private struct ProviderEditSheet: View {
                                     VStack(alignment: .leading, spacing: 16) {
                                         VStack(alignment: .leading, spacing: 6) {
                                             HStack {
-                                                Text("Discovery Timeout")
+                                                Text("Discovery Timeout", bundle: .module)
                                                     .font(.system(size: 12, weight: .medium))
                                                     .foregroundColor(themeManager.currentTheme.primaryText)
                                                 Spacer()
-                                                Text("\(Int(discoveryTimeout))s")
+                                                Text("\(Int(discoveryTimeout))s", bundle: .module)
                                                     .font(.system(size: 12, weight: .medium, design: .monospaced))
                                                     .foregroundColor(themeManager.currentTheme.accentColor)
                                             }
@@ -618,11 +618,11 @@ private struct ProviderEditSheet: View {
 
                                         VStack(alignment: .leading, spacing: 6) {
                                             HStack {
-                                                Text("Tool Call Timeout")
+                                                Text("Tool Call Timeout", bundle: .module)
                                                     .font(.system(size: 12, weight: .medium))
                                                     .foregroundColor(themeManager.currentTheme.primaryText)
                                                 Spacer()
-                                                Text("\(Int(toolCallTimeout))s")
+                                                Text("\(Int(toolCallTimeout))s", bundle: .module)
                                                     .font(.system(size: 12, weight: .medium, design: .monospaced))
                                                     .foregroundColor(themeManager.currentTheme.accentColor)
                                             }
@@ -761,14 +761,14 @@ private struct ProviderEditSheet: View {
                     if let result = testResult {
                         switch result {
                         case .success(let count):
-                            Text("Connected! (\(count) tools)")
+                            Text("Connected! (\(count) tools)", bundle: .module)
                                 .font(.system(size: 12, weight: .medium))
                         case .failure:
-                            Text("Failed - Tap to retry")
+                            Text("Failed - Tap to retry", bundle: .module)
                                 .font(.system(size: 12, weight: .medium))
                         }
                     } else {
-                        Text("Test")
+                        Text("Test", bundle: .module)
                             .font(.system(size: 12, weight: .medium))
                     }
                 }
@@ -790,7 +790,7 @@ private struct ProviderEditSheet: View {
                         RoundedRectangle(cornerRadius: 4)
                             .fill(themeManager.currentTheme.tertiaryBackground)
                     )
-                Text("+ Enter to save")
+                Text("+ Enter to save", bundle: .module)
                     .font(.system(size: 11))
             }
             .foregroundColor(themeManager.currentTheme.tertiaryText)
@@ -798,9 +798,9 @@ private struct ProviderEditSheet: View {
             Spacer()
 
             // Cancel
-            Button("Cancel") {
+            Button {
                 dismiss()
-            }
+            } label: { Text("Cancel", bundle: .module) }
             .buttonStyle(MCPSecondaryButtonStyle())
 
             // Save/Add
@@ -831,7 +831,7 @@ private struct ProviderEditSheet: View {
             HStack(spacing: 4) {
                 Image(systemName: "plus.circle.fill")
                     .font(.system(size: 11))
-                Text("Add Header")
+                Text("Add Header", bundle: .module)
                     .font(.system(size: 11, weight: .medium))
             }
             .foregroundColor(themeManager.currentTheme.accentColor)
@@ -985,7 +985,7 @@ private struct HeaderRow: View {
             // Key field
             ZStack(alignment: .leading) {
                 if header.key.isEmpty {
-                    Text("Key")
+                    Text("Key", bundle: .module)
                         .font(.system(size: 12, design: .monospaced))
                         .foregroundColor(themeManager.currentTheme.placeholderText)
                         .allowsHitTesting(false)

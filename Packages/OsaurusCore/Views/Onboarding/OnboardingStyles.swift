@@ -73,7 +73,7 @@ enum OnboardingStyle {
 
 /// Primary action button for onboarding with depth and polish
 struct OnboardingPrimaryButton: View {
-    let title: String
+    let title: LocalizedStringKey
     let action: () -> Void
     var isEnabled: Bool = true
 
@@ -187,17 +187,17 @@ enum OnboardingButtonState: Equatable {
 /// Stateful button that reflects connection test results with depth and polish
 struct OnboardingStatefulButton: View {
     let state: OnboardingButtonState
-    let idleTitle: String
-    let loadingTitle: String
-    let successTitle: String
-    let errorTitle: String
+    let idleTitle: LocalizedStringKey
+    let loadingTitle: LocalizedStringKey
+    let successTitle: LocalizedStringKey
+    let errorTitle: LocalizedStringKey
     let action: () -> Void
     var isEnabled: Bool = true
 
     @Environment(\.theme) private var theme
     @State private var isHovered = false
 
-    private var currentTitle: String {
+    private var currentTitle: LocalizedStringKey {
         switch state {
         case .idle: return idleTitle
         case .loading: return loadingTitle
@@ -396,7 +396,7 @@ struct OnboardingShimmerButton: View {
                     )
 
                 // Text
-                Text(title)
+                Text(LocalizedStringKey(title))
                     .font(theme.font(size: 15, weight: .semibold))
                     .foregroundColor(theme.isDark ? theme.primaryText : .white)
             }
@@ -501,7 +501,7 @@ struct OnboardingSecondaryButton: View {
                     )
 
                 // Text
-                Text(title)
+                Text(LocalizedStringKey(title))
                     .font(theme.font(size: 15, weight: .semibold))
                     .foregroundColor(theme.primaryText)
             }
@@ -530,7 +530,7 @@ struct OnboardingTextButton: View {
 
     var body: some View {
         Button(action: action) {
-            Text(title)
+            Text(LocalizedStringKey(title))
                 .font(theme.font(size: 13, weight: .medium))
                 .foregroundColor(isHovered ? theme.accentColor : theme.secondaryText)
                 .underline(isHovered)
@@ -559,7 +559,7 @@ struct OnboardingBackButton: View {
                 HStack(spacing: 6) {
                     Image(systemName: "chevron.left")
                         .font(.system(size: 12, weight: .semibold))
-                    Text("Back")
+                    Text("Back", bundle: .module)
                         .font(theme.font(size: 13, weight: .medium))
                 }
                 .foregroundColor(isHovered ? theme.accentColor : theme.secondaryText)

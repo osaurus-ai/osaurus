@@ -65,7 +65,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             } else {
                 button.title = "Osaurus"
             }
-            button.toolTip = "Osaurus Server"
+            button.toolTip = L("Osaurus Server")
             button.target = self
             button.action = #selector(togglePopover(_:))
 

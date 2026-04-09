@@ -119,7 +119,7 @@ struct ToolSecretsSheet: View {
             .frame(width: 40, height: 40)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("Configure Secrets")
+                Text("Configure Secrets", bundle: .module)
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundColor(theme.primaryText)
 
@@ -129,7 +129,7 @@ struct ToolSecretsSheet: View {
                         .foregroundColor(theme.secondaryText)
 
                     if let version = pluginVersion {
-                        Text("v\(version)")
+                        Text("v\(version)", bundle: .module)
                             .font(.system(size: 10, weight: .medium))
                             .foregroundColor(theme.tertiaryText)
                             .padding(.horizontal, 6)
@@ -183,7 +183,7 @@ struct ToolSecretsSheet: View {
                 .foregroundColor(theme.infoColor)
 
             Text(
-                "This plugin requires credentials to function. Your secrets are stored securely in the system Keychain."
+                "This plugin requires credentials to function. Your secrets are stored securely in the system Keychain.", bundle: .module
             )
             .font(.system(size: 12))
             .foregroundColor(theme.secondaryText)
@@ -248,7 +248,7 @@ struct ToolSecretsSheet: View {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .font(.system(size: 11))
                         .foregroundColor(theme.errorColor)
-                    Text("Please fill in all required fields")
+                    Text("Please fill in all required fields", bundle: .module)
                         .font(.system(size: 12))
                         .foregroundColor(theme.errorColor)
                 }
@@ -258,7 +258,7 @@ struct ToolSecretsSheet: View {
 
             // Cancel button
             Button(action: { dismiss() }) {
-                Text("Cancel")
+                Text("Cancel", bundle: .module)
             }
             .font(.system(size: 13, weight: .medium))
             .foregroundColor(theme.primaryText)
@@ -276,7 +276,7 @@ struct ToolSecretsSheet: View {
 
             // Save button
             Button(action: save) {
-                Text("Save")
+                Text("Save", bundle: .module)
                     .font(.system(size: 13, weight: .medium))
                     .foregroundColor(.white)
                     .padding(.horizontal, 18)
@@ -373,7 +373,7 @@ private struct SecretFieldRow: View {
                 if let urlString = spec.url, let url = URL(string: urlString) {
                     Button(action: { NSWorkspace.shared.open(url) }) {
                         HStack(spacing: 4) {
-                            Text("Get Key")
+                            Text("Get Key", bundle: .module)
                                 .font(.system(size: 11, weight: .medium))
                             Image(systemName: "arrow.up.right")
                                 .font(.system(size: 9, weight: .semibold))
@@ -399,7 +399,7 @@ private struct SecretFieldRow: View {
             HStack(spacing: 8) {
                 ZStack(alignment: .leading) {
                     if value.isEmpty {
-                        Text("Enter \(spec.label.lowercased())...")
+                        Text("Enter \(spec.label.lowercased())...", bundle: .module)
                             .font(.system(size: 13, design: .monospaced))
                             .foregroundColor(theme.placeholderText)
                             .allowsHitTesting(false)
@@ -455,7 +455,7 @@ private struct SecretFieldRow: View {
                 HStack(spacing: 4) {
                     Image(systemName: "exclamationmark.circle.fill")
                         .font(.system(size: 10))
-                    Text("This field is required")
+                    Text("This field is required", bundle: .module)
                         .font(.system(size: 11))
                 }
                 .foregroundColor(theme.errorColor)

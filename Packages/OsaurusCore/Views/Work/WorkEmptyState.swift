@@ -56,14 +56,14 @@ struct WorkEmptyState: View {
 
             VStack(spacing: 20) {
                 VStack(spacing: 8) {
-                    Text("Work")
+                    Text("Work", bundle: .module)
                         .font(theme.font(size: CGFloat(theme.titleSize) + 4, weight: .semibold))
                         .foregroundColor(theme.primaryText)
                         .opacity(hasAppeared ? 1 : 0)
                         .offset(y: hasAppeared ? 0 : 20)
                         .animation(theme.springAnimation().delay(0.1), value: hasAppeared)
 
-                    Text("Describe what you need.")
+                    Text("Describe what you need.", bundle: .module)
                         .font(theme.font(size: CGFloat(theme.bodySize) + 2))
                         .foregroundColor(theme.secondaryText)
                         .opacity(hasAppeared ? 1 : 0)
@@ -116,14 +116,14 @@ struct WorkEmptyState: View {
                 .animation(theme.springAnimation(), value: hasAppeared)
 
             VStack(spacing: 12) {
-                Text("Work")
+                Text("Work", bundle: .module)
                     .font(theme.font(size: CGFloat(theme.titleSize) + 2, weight: .semibold))
                     .foregroundColor(theme.primaryText)
                     .opacity(hasAppeared ? 1 : 0)
                     .offset(y: hasAppeared ? 0 : 20)
                     .animation(theme.springAnimation().delay(0.1), value: hasAppeared)
 
-                Text("Add a model to get started")
+                Text("Add a model to get started", bundle: .module)
                     .font(theme.font(size: CGFloat(theme.bodySize)))
                     .foregroundColor(theme.secondaryText)
                     .multilineTextAlignment(.center)
@@ -136,7 +136,7 @@ struct WorkEmptyState: View {
             Button(action: onOpenModelManager) {
                 HStack(spacing: 8) {
                     Image(systemName: "plus.circle.fill")
-                    Text("Add Model")
+                    Text("Add Model", bundle: .module)
                 }
                 .font(theme.font(size: CGFloat(theme.bodySize), weight: .medium))
                 .foregroundColor(.white)
@@ -158,7 +158,7 @@ struct WorkEmptyState: View {
 
             if let useFoundation = onUseFoundation {
                 Button(action: useFoundation) {
-                    Text("Use Apple Intelligence")
+                    Text("Use Apple Intelligence", bundle: .module)
                         .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
                         .foregroundColor(theme.accentColor)
                 }

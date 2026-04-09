@@ -1606,7 +1606,7 @@ public actor RemoteProviderService: ToolCapableService {
         case .anthropic:
             let anthropicRequest = request.toAnthropicRequest()
             bodyData = try encoder.encode(anthropicRequest)
-        case .openai:
+        case .openaiLegacy:
             bodyData = try encoder.encode(request)
         case .openResponses:
             let openResponsesRequest = request.toOpenResponsesRequest()
@@ -1649,7 +1649,7 @@ public actor RemoteProviderService: ToolCapableService {
 
             return (textContent.isEmpty ? nil : textContent, toolCalls.isEmpty ? nil : toolCalls)
 
-        case .openai:
+        case .openaiLegacy:
             let response = try JSONDecoder().decode(ChatCompletionResponse.self, from: data)
             let content = response.choices.first?.message.content
             let toolCalls = response.choices.first?.message.tool_calls

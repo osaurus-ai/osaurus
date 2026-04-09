@@ -25,11 +25,11 @@ struct DirectoryPickerView: View {
                         .truncationMode(.middle)
 
                     if directoryPicker.hasValidDirectory {
-                        Text("Custom directory selected")
+                        Text("Custom directory selected", bundle: .module)
                             .font(.system(size: 11))
                             .foregroundColor(theme.secondaryText)
                     } else {
-                        Text("Using default location")
+                        Text("Using default location", bundle: .module)
                             .font(.system(size: 11))
                             .foregroundColor(theme.tertiaryText)
                     }
@@ -56,7 +56,7 @@ struct DirectoryPickerView: View {
                             )
                     }
                     .buttonStyle(PlainButtonStyle())
-                    .help("Select custom directory")
+                    .help(Text("Select custom directory", bundle: .module))
 
                     if directoryPicker.hasValidDirectory {
                         Button(action: {
@@ -76,7 +76,7 @@ struct DirectoryPickerView: View {
                                 )
                         }
                         .buttonStyle(PlainButtonStyle())
-                        .help("Reset to default directory")
+                        .help(Text("Reset to default directory", bundle: .module))
                     }
                 }
             }
@@ -92,7 +92,7 @@ struct DirectoryPickerView: View {
             )
 
             // Help text
-            Text("Models will be organized in subfolders by repository name")
+            Text("Models will be organized in subfolders by repository name", bundle: .module)
                 .font(.system(size: 11))
                 .foregroundColor(theme.tertiaryText)
         }

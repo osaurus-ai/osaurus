@@ -40,7 +40,7 @@ struct AgentEntriesPanel: View {
                     Image(systemName: "magnifyingglass")
                         .font(.system(size: 10, weight: .medium))
                         .foregroundColor(theme.tertiaryText)
-                    TextField("Search entries...", text: $searchText)
+                    TextField(text: $searchText, prompt: Text("Search entries...", bundle: .module)) { Text("Search entries...", bundle: .module) }
                         .textFieldStyle(.plain)
                         .font(.system(size: 11))
                 }
@@ -70,7 +70,7 @@ struct AgentEntriesPanel: View {
             }
 
             HStack {
-                Text("\(filteredEntries.count) of \(entries.count) entries")
+                Text("\(filteredEntries.count) of \(entries.count) entries", bundle: .module)
                     .font(.system(size: 10))
                     .foregroundColor(theme.tertiaryText)
                 Spacer()
@@ -79,7 +79,7 @@ struct AgentEntriesPanel: View {
             if filteredEntries.isEmpty {
                 HStack {
                     Spacer()
-                    Text("No matching entries")
+                    Text("No matching entries", bundle: .module)
                         .font(.system(size: 12))
                         .foregroundColor(theme.tertiaryText)
                     Spacer()
@@ -254,7 +254,7 @@ struct MemorySummaryRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
-                Text("\(summary.tokenCount) tokens")
+                Text("\(summary.tokenCount) tokens", bundle: .module)
                     .font(.system(size: 10, weight: .medium))
                     .foregroundColor(theme.tertiaryText)
 

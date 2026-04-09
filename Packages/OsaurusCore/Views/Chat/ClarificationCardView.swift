@@ -57,7 +57,7 @@ struct ClarificationCardView: View {
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(theme.accentColor)
 
-                Text("Clarification Needed")
+                Text("Clarification Needed", bundle: .module)
                     .font(theme.font(size: CGFloat(theme.captionSize), weight: .semibold))
                     .foregroundColor(theme.accentColor)
             }
@@ -74,7 +74,7 @@ struct ClarificationCardView: View {
                 Circle()
                     .fill(theme.warningColor)
                     .frame(width: 6, height: 6)
-                Text("Waiting")
+                Text("Waiting", bundle: .module)
                     .font(theme.font(size: CGFloat(theme.captionSize) - 2, weight: .medium))
                     .foregroundColor(theme.tertiaryText)
             }

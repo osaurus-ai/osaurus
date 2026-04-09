@@ -80,7 +80,7 @@ struct AudioSettingsTab: View {
                 .font(.system(size: 12))
                 .foregroundColor(theme.accentColor)
 
-            Text("These settings apply to all voice modes: Voice Input, Transcription, and VAD Mode.")
+            Text("These settings apply to all voice modes: Voice Input, Transcription, and VAD Mode.", bundle: .module)
                 .font(.system(size: 12))
                 .foregroundColor(theme.secondaryText)
         }
@@ -107,11 +107,11 @@ struct AudioSettingsTab: View {
                 .frame(width: 48, height: 48)
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Voice Sensitivity")
+                    Text("Voice Sensitivity", bundle: .module)
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundColor(theme.primaryText)
 
-                    Text("Adjust how sensitive voice detection is")
+                    Text("Adjust how sensitive voice detection is", bundle: .module)
                         .font(.system(size: 12))
                         .foregroundColor(theme.secondaryText)
                 }
@@ -121,7 +121,7 @@ struct AudioSettingsTab: View {
 
             // Sensitivity Picker
             VStack(alignment: .leading, spacing: 8) {
-                Text("Sensitivity Level")
+                Text("Sensitivity Level", bundle: .module)
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(theme.secondaryText)
 
@@ -166,7 +166,7 @@ struct AudioSettingsTab: View {
                 Image(systemName: "info.circle")
                     .font(.system(size: 12))
                     .foregroundColor(theme.accentColor)
-                Text("Affects pause detection, wake word detection, and voice activity thresholds")
+                Text("Affects pause detection, wake word detection, and voice activity thresholds", bundle: .module)
                     .font(.system(size: 11))
                     .foregroundColor(theme.secondaryText)
             }
@@ -202,7 +202,7 @@ struct AudioSettingsTab: View {
                 .frame(width: 48, height: 48)
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Audio Input")
+                    Text("Audio Input", bundle: .module)
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundColor(theme.primaryText)
 
@@ -224,12 +224,12 @@ struct AudioSettingsTab: View {
                         )
                 }
                 .buttonStyle(PlainButtonStyle())
-                .help("Refresh available devices")
+                .help(Text("Refresh available devices", bundle: .module))
             }
 
             // Input Source Picker
             VStack(alignment: .leading, spacing: 8) {
-                Text("Input Source")
+                Text("Input Source", bundle: .module)
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(theme.secondaryText)
 
@@ -275,14 +275,14 @@ struct AudioSettingsTab: View {
             // Device picker (microphone mode only)
             if audioInputManager.selectedInputSource == .microphone {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Select Input Device")
+                    Text("Select Input Device", bundle: .module)
                         .font(.system(size: 11, weight: .medium))
                         .foregroundColor(theme.secondaryText)
 
                     Menu {
                         Button(action: { audioInputManager.selectDevice(nil) }) {
                             HStack {
-                                Text("System Default")
+                                Text("System Default", bundle: .module)
                                 if audioInputManager.selectedDeviceId == nil {
                                     Image(systemName: "checkmark")
                                 }
@@ -296,7 +296,7 @@ struct AudioSettingsTab: View {
                                 HStack {
                                     Text(device.name)
                                     if device.isDefault {
-                                        Text("(Default)")
+                                        Text("(Default)", bundle: .module)
                                             .foregroundColor(.secondary)
                                     }
                                     if audioInputManager.selectedDeviceId == device.id {
@@ -351,9 +351,11 @@ struct AudioSettingsTab: View {
     private var inputSourceDescription: String {
         switch audioInputManager.selectedInputSource {
         case .microphone:
-            return audioInputManager.selectedDevice?.name ?? "System Default"
+            return audioInputManager.selectedDevice?.name ?? L("System Default")
         case .systemAudio:
-            return systemAudioManager.hasPermission ? "Computer audio" : "Permission required"
+            return systemAudioManager.hasPermission
+                ? L("Computer audio")
+                : L("Permission required")
         }
     }
 
@@ -363,7 +365,7 @@ struct AudioSettingsTab: View {
         {
             return device.name
         }
-        return "System Default"
+        return L("System Default")
     }
 
     // MARK: - Live Test Card
@@ -371,7 +373,7 @@ struct AudioSettingsTab: View {
     private var liveTestCard: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
-                Text("Live Test")
+                Text("Live Test", bundle: .module)
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundColor(theme.primaryText)
 
@@ -383,7 +385,7 @@ struct AudioSettingsTab: View {
                             .fill(theme.errorColor)
                             .frame(width: 8, height: 8)
                             .modifier(AudioSettingsPulseModifier())
-                        Text("RECORDING")
+                        Text("RECORDING", bundle: .module)
                             .font(.system(size: 10, weight: .bold))
                             .foregroundColor(theme.errorColor)
                     }
@@ -396,7 +398,7 @@ struct AudioSettingsTab: View {
                 }
             }
 
-            Text("Test your audio settings with live voice transcription")
+            Text("Test your audio settings with live voice transcription", bundle: .module)
                 .font(.system(size: 12))
                 .foregroundColor(theme.secondaryText)
 
@@ -475,7 +477,7 @@ struct AudioSettingsTab: View {
                         HStack(spacing: 6) {
                             Image(systemName: "trash")
                                 .font(.system(size: 12))
-                            Text("Clear")
+                            Text("Clear", bundle: .module)
                                 .font(.system(size: 13, weight: .medium))
                         }
                         .foregroundColor(theme.secondaryText)

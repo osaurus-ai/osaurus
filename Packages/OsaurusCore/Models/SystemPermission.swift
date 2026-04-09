@@ -41,31 +41,31 @@ enum SystemPermission: String, CaseIterable, Codable, Sendable {
     var displayName: String {
         switch self {
         case .automation:
-            return "Automation"
+            return L("Automation")
         case .automationCalendar:
-            return "Automation (Calendar)"
+            return L("Automation (Calendar)")
         case .automationMail:
-            return "Automation (Mail)"
+            return L("Automation (Mail)")
         case .calendar:
-            return "Calendar"
+            return L("Calendar")
         case .reminders:
-            return "Reminders"
+            return L("Reminders")
         case .location:
-            return "Location"
+            return L("Location")
         case .notes:
-            return "Notes"
+            return L("Notes")
         case .maps:
-            return "Maps"
+            return L("Maps")
         case .accessibility:
-            return "Accessibility"
+            return L("Accessibility")
         case .contacts:
-            return "Contacts"
+            return L("Contacts")
         case .disk:
-            return "Full Disk Access"
+            return L("Full Disk Access")
         case .microphone:
-            return "Microphone"
+            return L("Microphone")
         case .screenRecording:
-            return "Screen Recording"
+            return L("Screen Recording")
         }
     }
 
@@ -73,31 +73,31 @@ enum SystemPermission: String, CaseIterable, Codable, Sendable {
     var description: String {
         switch self {
         case .automation:
-            return "Allows plugins to control other applications using AppleScript and Apple Events."
+            return L("Allows plugins to control other applications using AppleScript and Apple Events.")
         case .automationCalendar:
-            return "Allows plugins to read and create events in Calendar.app via AppleScript."
+            return L("Allows plugins to read and create events in Calendar.app via AppleScript.")
         case .automationMail:
-            return "Allows plugins to read and send emails in Mail.app via AppleScript."
+            return L("Allows plugins to read and send emails in Mail.app via AppleScript.")
         case .calendar:
-            return "Allows plugins to access your calendar to read and create events directly."
+            return L("Allows plugins to access your calendar to read and create events directly.")
         case .reminders:
-            return "Allows plugins to access your reminders to read and create tasks."
+            return L("Allows plugins to access your reminders to read and create tasks.")
         case .location:
-            return "Allows plugins to access your current location."
+            return L("Allows plugins to access your current location.")
         case .notes:
-            return "Allows plugins to read and create notes in the Notes app via AppleScript."
+            return L("Allows plugins to read and create notes in the Notes app via AppleScript.")
         case .maps:
-            return "Allows plugins to control Maps app via AppleScript."
+            return L("Allows plugins to control Maps app via AppleScript.")
         case .accessibility:
-            return "Allows plugins to interact with UI elements, simulate input, and control the computer."
+            return L("Allows plugins to interact with UI elements, simulate input, and control the computer.")
         case .contacts:
-            return "Allows plugins to access and search contacts."
+            return L("Allows plugins to access and search contacts.")
         case .disk:
-            return "Allows plugins to access protected files like the Messages database and other app data."
+            return L("Allows plugins to access protected files like the Messages database and other app data.")
         case .microphone:
-            return "Allows voice transcription using the microphone for speech-to-text."
+            return L("Allows voice transcription using the microphone for speech-to-text.")
         case .screenRecording:
-            return "Allows capturing system audio for transcription. Screen content is not recorded."
+            return L("Allows capturing system audio for transcription. Screen content is not recorded.")
         }
     }
 

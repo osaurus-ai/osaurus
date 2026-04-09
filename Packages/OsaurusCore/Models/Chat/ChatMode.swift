@@ -16,8 +16,8 @@ public enum ChatMode: String, Codable, Sendable {
 
     public var displayName: String {
         switch self {
-        case .chat: return "Chat"
-        case .work: return "Work"
+        case .chat: return L("Chat")
+        case .work: return L("Work")
         }
     }
 

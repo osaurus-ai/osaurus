@@ -98,11 +98,11 @@ struct AcknowledgementsView: View {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 10) {
-                        Text("Acknowledgements")
+                        Text("Acknowledgements", bundle: .module)
                             .font(.system(size: 28, weight: .bold, design: .rounded))
                             .foregroundColor(theme.primaryText)
 
-                        Text("\(acknowledgements.count)")
+                        Text("\(acknowledgements.count)", bundle: .module)
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundColor(theme.secondaryText)
                             .padding(.horizontal, 8)
@@ -113,7 +113,7 @@ struct AcknowledgementsView: View {
                             )
                     }
 
-                    Text("Open source libraries used by Osaurus")
+                    Text("Open source libraries used by Osaurus", bundle: .module)
                         .font(.system(size: 14))
                         .foregroundColor(theme.secondaryText)
                 }
@@ -135,7 +135,7 @@ struct AcknowledgementsView: View {
             ProgressView()
                 .progressViewStyle(.circular)
                 .scaleEffect(0.8)
-            Text("Loading acknowledgements...")
+            Text("Loading acknowledgements...", bundle: .module)
                 .font(.system(size: 13))
                 .foregroundColor(theme.secondaryText)
                 .padding(.top, 8)
@@ -150,7 +150,7 @@ struct AcknowledgementsView: View {
             Image(systemName: "exclamationmark.triangle")
                 .font(.system(size: 40))
                 .foregroundColor(theme.warningColor)
-            Text("Failed to load acknowledgements")
+            Text("Failed to load acknowledgements", bundle: .module)
                 .font(.system(size: 16, weight: .medium))
                 .foregroundColor(theme.primaryText)
                 .padding(.top, 8)
@@ -168,7 +168,7 @@ struct AcknowledgementsView: View {
     private var introSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(
-                "Osaurus is built with the help of many excellent open source projects. We are grateful to the developers and maintainers of these libraries."
+                "Osaurus is built with the help of many excellent open source projects. We are grateful to the developers and maintainers of these libraries.", bundle: .module
             )
             .font(.system(size: 14))
             .foregroundColor(theme.secondaryText)
@@ -189,7 +189,7 @@ struct AcknowledgementsView: View {
                     .font(.system(size: 18, weight: .semibold, design: .rounded))
                     .foregroundColor(theme.primaryText)
 
-                Text("\(packages.count)")
+                Text("\(packages.count)", bundle: .module)
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(theme.tertiaryText)
                     .padding(.horizontal, 6)
@@ -213,16 +213,16 @@ struct AcknowledgementsView: View {
             Divider()
                 .background(theme.secondaryBorder)
 
-            Text("Full license texts are available in the linked repositories.")
+            Text("Full license texts are available in the linked repositories.", bundle: .module)
                 .font(.system(size: 12))
                 .foregroundColor(theme.tertiaryText)
 
             HStack(spacing: 16) {
-                Button("View on GitHub") {
+                Button {
                     if let url = URL(string: "https://github.com/osaurus-ai/osaurus") {
                         NSWorkspace.shared.open(url)
                     }
-                }
+                } label: { Text("View on GitHub", bundle: .module) }
                 .buttonStyle(.link)
                 .font(.system(size: 12))
             }
@@ -340,7 +340,7 @@ private struct PackageRow: View {
                         .font(.system(size: 14, weight: .medium))
                         .foregroundColor(theme.primaryText)
 
-                    Text("v\(package.version)")
+                    Text("v\(package.version)", bundle: .module)
                         .font(.system(size: 11, weight: .regular, design: .monospaced))
                         .foregroundColor(theme.tertiaryText)
                 }
@@ -375,7 +375,7 @@ private struct PackageRow: View {
                     .foregroundColor(isHovering ? theme.accentColor : theme.tertiaryText)
             }
             .buttonStyle(.plain)
-            .help("Open repository")
+            .help(Text("Open repository", bundle: .module))
         }
         .padding(12)
         .background(

@@ -50,22 +50,22 @@ struct SkillsView: View {
                 if skillManager.skills.isEmpty && !skillManager.isRefreshing {
                     SettingsEmptyState(
                         icon: "sparkles",
-                        title: "Create Your First Skill",
-                        subtitle: "Skills provide specialized knowledge and guidance to the AI.",
+                        title: L("Create Your First Skill"),
+                        subtitle: L("Skills provide specialized knowledge and guidance to the AI."),
                         examples: [
                             .init(
                                 icon: "magnifyingglass",
-                                title: "Research Analyst",
+                                title: L("Research Analyst"),
                                 description: "Fact-checking and balanced analysis"
                             ),
                             .init(
                                 icon: "lightbulb.fill",
-                                title: "Creative Brainstormer",
+                                title: L("Creative Brainstormer"),
                                 description: "Generate ideas and explore possibilities"
                             ),
                             .init(
                                 icon: "checklist",
-                                title: "Productivity Coach",
+                                title: L("Productivity Coach"),
                                 description: "Task management and goal setting"
                             ),
                         ],
@@ -333,8 +333,8 @@ struct SkillsView: View {
 
     private var headerView: some View {
         ManagerHeaderWithActions(
-            title: "Skills",
-            subtitle: "Specialized knowledge and guidance for the AI",
+            title: L("Skills"),
+            subtitle: L("Specialized knowledge and guidance for the AI"),
             count: skillManager.skills.isEmpty ? nil : skillManager.enabledCount
         ) {
             HeaderIconButton("arrow.clockwise", isLoading: skillManager.isRefreshing, help: "Refresh skills") {
@@ -384,17 +384,17 @@ private struct ImportDropdownButton: View {
     var body: some View {
         Menu {
             Button(action: onGitHub) {
-                Label("From GitHub", systemImage: "link")
+                Label { Text("From GitHub", bundle: .module) } icon: { Image(systemName: "link") }
             }
             Divider()
             Button(action: onLocal) {
-                Label("From File", systemImage: "doc")
+                Label { Text("From File", bundle: .module) } icon: { Image(systemName: "doc") }
             }
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: "square.and.arrow.down")
                     .font(.system(size: 12, weight: .medium))
-                Text("Import")
+                Text("Import", bundle: .module)
                     .font(.system(size: 13, weight: .medium))
             }
             .foregroundColor(theme.primaryText)
@@ -439,11 +439,11 @@ private struct SkillRow: View {
 
     /// Display name of the source plugin, or "Plugin" as fallback
     private var pluginDisplayName: String {
-        guard let pluginId = skill.pluginId else { return "Plugin" }
+        guard let pluginId = skill.pluginId else { return L("Plugin") }
         if let plugin = PluginRepositoryService.shared.plugins.first(where: { $0.pluginId == pluginId }) {
-            return "From: \(plugin.displayName)"
+            return L("From: \(plugin.displayName)")
         }
-        return "Plugin"
+        return L("Plugin")
     }
 
     private var skillColor: Color {
@@ -479,7 +479,7 @@ private struct SkillRow: View {
                                     .foregroundColor(theme.primaryText)
 
                                 if skill.isBuiltIn {
-                                    Text("Built-in")
+                                    Text("Built-in", bundle: .module)
                                         .font(.system(size: 9, weight: .medium))
                                         .foregroundColor(theme.secondaryText)
                                         .padding(.horizontal, 6)
@@ -529,7 +529,7 @@ private struct SkillRow: View {
                         HStack(spacing: 4) {
                             Image(systemName: "doc.text")
                                 .font(.system(size: 10))
-                            Text("\(skill.instructions.count) chars")
+                            Text("\(skill.instructions.count) chars", bundle: .module)
                                 .font(.system(size: 11, weight: .medium))
                         }
                         .foregroundColor(theme.secondaryText)
@@ -568,7 +568,7 @@ private struct SkillRow: View {
                     // Instructions preview
                     VStack(alignment: .leading, spacing: 6) {
                         HStack {
-                            Text("Instructions")
+                            Text("Instructions", bundle: .module)
                                 .font(.system(size: 12, weight: .semibold))
                                 .foregroundColor(theme.primaryText)
 
@@ -580,12 +580,12 @@ private struct SkillRow: View {
                                     .foregroundColor(theme.tertiaryText)
                             }
 
-                            Label("v\(skill.version)", systemImage: "tag")
+                            Label { Text("v\(skill.version)", bundle: .module) } icon: { Image(systemName: "tag") }
                                 .font(.system(size: 10))
                                 .foregroundColor(theme.tertiaryText)
 
                             if skill.hasAssociatedFiles {
-                                Label("\(skill.totalFileCount) files", systemImage: "folder")
+                                Label { Text("\(skill.totalFileCount) files", bundle: .module) } icon: { Image(systemName: "folder") }
                                     .font(.system(size: 10))
                                     .foregroundColor(theme.tertiaryText)
                             }
@@ -636,7 +636,7 @@ private struct SkillRow: View {
                                 HStack(spacing: 4) {
                                     Image(systemName: "eye")
                                         .font(.system(size: 10))
-                                    Text("View")
+                                    Text("View", bundle: .module)
                                         .font(.system(size: 11, weight: .medium))
                                 }
                                 .foregroundColor(theme.accentColor)
@@ -655,7 +655,7 @@ private struct SkillRow: View {
                                 HStack(spacing: 4) {
                                     Image(systemName: "square.and.arrow.up")
                                         .font(.system(size: 10))
-                                    Text("Export")
+                                    Text("Export", bundle: .module)
                                         .font(.system(size: 11, weight: .medium))
                                 }
                                 .foregroundColor(theme.secondaryText)
@@ -676,7 +676,7 @@ private struct SkillRow: View {
                             HStack(spacing: 4) {
                                 Image(systemName: "info.circle")
                                     .font(.system(size: 10))
-                                Text("Managed by plugin")
+                                Text("Managed by plugin", bundle: .module)
                                     .font(.system(size: 10, weight: .medium))
                             }
                             .foregroundColor(theme.tertiaryText)
@@ -687,7 +687,7 @@ private struct SkillRow: View {
                                 HStack(spacing: 4) {
                                     Image(systemName: "trash")
                                         .font(.system(size: 10))
-                                    Text("Delete")
+                                    Text("Delete", bundle: .module)
                                         .font(.system(size: 11, weight: .medium))
                                 }
                                 .foregroundColor(theme.errorColor)
