@@ -112,6 +112,7 @@ struct MessageTableRepresentable: NSViewRepresentable {
         // sync session store into coordinator's expand cache for the initial load
         coordinator.expandedIds = expandedBlocksStore.expandedIds
         coordinator.sessionExpandedStore = expandedBlocksStore
+        coordinator.lastSwiftUIWidth = max(100, width)
 
         coordinator.applyBlocks(
             blocks,
@@ -141,10 +142,12 @@ struct MessageTableRepresentable: NSViewRepresentable {
             coordinator.expandedIds = expandedBlocksStore.expandedIds
         }
 
+        let rctx = renderingContext(for: coordinator)
+        coordinator.lastSwiftUIWidth = rctx.width
         coordinator.applyBlocks(
             blocks,
             groupHeaderMap: groupHeaderMap,
-            context: renderingContext(for: coordinator),
+            context: rctx,
             isStreaming: isStreaming,
             lastAssistantTurnId: lastAssistantTurnId,
             autoScrollEnabled: autoScrollEnabled
@@ -267,6 +270,10 @@ extension MessageTableRepresentable {
         private var frameObserver: NSObjectProtocol?
         private var frameDebounceWork: DispatchWorkItem?
 
+        /// Width last provided by SwiftUI (effectiveContentWidth, already clamped to maxContentWidth).
+        /// Used by the frame-change debounce to avoid reading the clip view before tile() has run.
+        var lastSwiftUIWidth: CGFloat = 100
+
         // MARK: Block State
 
         /// Ordered block IDs matching the current snapshot.
@@ -366,18 +373,32 @@ extension MessageTableRepresentable {
 
         private func handleScrollViewFrameChange() {
             guard let scrollView else { return }
-            let newWidth = scrollView.contentView.bounds.width
-            guard abs(newWidth - lastKnownFrameWidth) > 1.0 else { return }
-            lastKnownFrameWidth = newWidth
+            // NOTE: this notification fires before AppKit calls tile(), so the
+            // clip view width here is the pre-inset raw value — used only for
+            // change detection, not for ctx.width assignment.
+            let rawWidth = scrollView.contentView.bounds.width
+            guard abs(rawWidth - lastKnownFrameWidth) > 1.0 else {
+                return
+            }
+            lastKnownFrameWidth = rawWidth
 
             // only reconfigure after the frame stops changing
             // to avoid expensive per-frame work
             frameDebounceWork?.cancel()
             let work = DispatchWorkItem { [weak self] in
                 guard let self, let tableView else { return }
-                self.ctx.width = self.lastKnownFrameWidth
+                // use SwiftUI's pre-computed effectiveContentWidth (already clamped to
+                // maxContentWidth). Reading contentView.bounds.width here is unreliable
+                // because tile() may not have applied centering insets yet at this point.
+                let contentWidth = self.lastSwiftUIWidth
+                self.ctx.width = contentWidth
                 self.heightCache.removeAll()
-                tableView.sizeLastColumnToFit()
+                // set column width explicitly to match SwiftUI's effective content width
+                // (tile() may not have updated clip view insets yet, so sizeLastColumnToFit
+                // could give a stale value).
+                if let col = tableView.tableColumns.first {
+                    col.width = contentWidth
+                }
                 self.reconfigureAllCellsFromLookup(self.blockLookup)
             }
             frameDebounceWork = work
