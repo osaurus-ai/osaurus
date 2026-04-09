@@ -31,6 +31,10 @@ public final class TemporaryPairedKeyStore: @unchecked Sendable {
         }
     }
 
+    public func isTemporary(id: UUID) -> Bool {
+        queue.sync { keyIds.contains(id) }
+    }
+
     @objc private func applicationWillTerminate() {
         let ids = queue.sync { keyIds }
         for id in ids {

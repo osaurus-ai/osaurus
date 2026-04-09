@@ -1323,14 +1323,19 @@ struct ChatView: View {
     /// Convenience accessor for the window ID
     private var windowId: UUID { windowState.windowId }
 
-    /// Picker items filtered to the active Bonjour provider, or all items when no Bonjour agent is selected.
+    /// Picker items filtered to the active Bonjour provider's models when a remote agent is selected,
+    /// or local/foundation models only when no remote agent is active.
     private var filteredPickerItems: [ModelPickerItem] {
-        guard let providerId = windowState.selectedDiscoveredAgentProviderId else {
-            return session.pickerItems
+        if let providerId = windowState.selectedDiscoveredAgentProviderId {
+            return session.pickerItems.filter {
+                if case .remote(_, let id) = $0.source { return id == providerId }
+                return false
+            }
         }
+        // No remote agent selected: hide all remote models so the picker stays local.
         return session.pickerItems.filter {
-            if case .remote(_, let id) = $0.source { return id == providerId }
-            return false
+            if case .remote = $0.source { return false }
+            return true
         }
     }
 
@@ -1504,7 +1509,7 @@ struct ChatView: View {
                                     },
                                     onOpenOnboarding: nil,
                                     discoveredAgents: windowState.discoveredAgents,
-                                    onSelectDiscoveredAgent: { agent in pendingDiscoveredAgent = agent },
+                                    onSelectDiscoveredAgent: { agent in selectDiscoveredAgent(agent) },
                                     activeDiscoveredAgent: windowState.selectedDiscoveredAgent
                                 )
                                 .transition(.opacity.combined(with: .scale(scale: 0.98)))
@@ -1584,7 +1589,7 @@ struct ChatView: View {
                                     AppDelegate.shared?.showOnboardingWindow()
                                 },
                                 discoveredAgents: windowState.discoveredAgents,
-                                onSelectDiscoveredAgent: { agent in pendingDiscoveredAgent = agent }
+                                onSelectDiscoveredAgent: { agent in selectDiscoveredAgent(agent) }
                             )
                         }
                     }
@@ -1675,6 +1680,23 @@ struct ChatView: View {
                 }
                 .environment(\.theme, windowState.theme)
             }
+        }
+    }
+
+    /// Called when the user picks a discovered agent from the menu.
+    /// If a persistent (non-ephemeral) paired provider already exists for this agent,
+    /// connect directly without showing the pairing sheet.
+    private func selectDiscoveredAgent(_ agent: DiscoveredAgent) {
+        let manager = RemoteProviderManager.shared
+        let hasPersistentProvider = manager.configuration.providers.contains(where: {
+            $0.providerType == .osaurus
+                && $0.remoteAgentId == agent.id
+                && !manager.isEphemeral(id: $0.id)
+        })
+        if hasPersistentProvider {
+            connectToDiscoveredAgent(agent, token: "", isEphemeral: false)
+        } else {
+            pendingDiscoveredAgent = agent
         }
     }
 
