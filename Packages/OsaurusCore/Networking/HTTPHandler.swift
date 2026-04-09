@@ -1602,14 +1602,16 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 return
             }
 
-            // 4. Generate an osk-v1 API key scoped to the paired agent.
+            // 4. Generate a master-scoped osk-v1 API key (agentIndex: nil) so its
+            //    aud == masterAddress, which always passes the server validator's
+            //    audience check regardless of which agent the connector targets.
             //    This triggers biometric auth to access the Master Key.
             let shortAddr = String(req.connectorAddress.prefix(10))
             let label = "Paired – \(shortAddr)"
             guard let (fullKey, _) = try? APIKeyManager.shared.generate(
                 label: label,
                 expiration: .never,
-                agentIndex: agent.agentIndex
+                agentIndex: nil
             ) else {
                 hop {
                     var headers = [("Content-Type", "application/json; charset=utf-8")]
