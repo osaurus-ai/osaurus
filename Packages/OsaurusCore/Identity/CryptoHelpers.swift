@@ -164,6 +164,10 @@ func signAccessPayload(_ payload: Data, privateKey: Data) throws -> Data {
     try signWithPrefix(payload, privateKey: privateKey, prefix: "Osaurus Signed Access")
 }
 
+func signPairingPayload(_ payload: Data, privateKey: Data) throws -> Data {
+    try signWithPrefix(payload, privateKey: privateKey, prefix: "Osaurus Signed Pairing")
+}
+
 /// EIP-191 personal_sign compatible signing.
 /// Produces `\x19Ethereum Signed Message:\n<len><message>` hash + secp256k1 recoverable signature.
 func signEIP191Message(_ message: String, privateKey: Data) throws -> Data {

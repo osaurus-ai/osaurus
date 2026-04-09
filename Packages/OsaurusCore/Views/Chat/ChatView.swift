@@ -7,6 +7,7 @@
 
 import AppKit
 import Combine
+import LocalAuthentication
 import SwiftUI
 
 @MainActor
@@ -1657,13 +1658,23 @@ struct ChatView: View {
         .environment(\.theme, windowState.theme)
         .tint(theme.accentColor)
         .sheet(item: $pendingDiscoveredAgent) { agent in
-            BonjourTokenSheet(agentName: agent.name) { token in
-                connectToDiscoveredAgent(agent, token: token)
-                pendingDiscoveredAgent = nil
-            } onCancel: {
-                pendingDiscoveredAgent = nil
+            if agent.address != nil {
+                PairingSheet(agent: agent) { apiKey in
+                    connectToDiscoveredAgent(agent, token: apiKey)
+                    pendingDiscoveredAgent = nil
+                } onCancel: {
+                    pendingDiscoveredAgent = nil
+                }
+                .environment(\.theme, windowState.theme)
+            } else {
+                BonjourTokenSheet(agentName: agent.name) { token in
+                    connectToDiscoveredAgent(agent, token: token)
+                    pendingDiscoveredAgent = nil
+                } onCancel: {
+                    pendingDiscoveredAgent = nil
+                }
+                .environment(\.theme, windowState.theme)
             }
-            .environment(\.theme, windowState.theme)
         }
     }
 
@@ -1995,6 +2006,164 @@ private struct BonjourTokenSheet: View {
         }
         .padding(24)
         .frame(width: 380)
+    }
+}
+
+// MARK: - Pairing Sheet
+
+/// Sheet shown when the user selects a Bonjour-discovered agent that has a crypto address.
+/// Performs cryptographic pairing instead of prompting for a manual server token.
+private struct PairingSheet: View {
+    let agent: DiscoveredAgent
+    let onSuccess: (String) -> Void
+    let onCancel: () -> Void
+
+    @State private var isPairing = false
+    @State private var errorMessage: String? = nil
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Pair with \(agent.name)", bundle: .module)
+                    .font(theme.font(size: 16, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+
+                Text(
+                    "This will cryptographically verify both devices. The remote device will show an approval prompt.",
+                    bundle: .module
+                )
+                .font(theme.font(size: 13))
+                .foregroundColor(theme.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if let error = errorMessage {
+                Text(error)
+                    .font(theme.font(size: 12))
+                    .foregroundColor(theme.errorColor)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            HStack {
+                Button { onCancel() } label: { Text("Cancel", bundle: .module) }
+                    .keyboardShortcut(.cancelAction)
+                    .disabled(isPairing)
+                Spacer()
+                if isPairing {
+                    ProgressView()
+                        .controlSize(.small)
+                        .padding(.trailing, 4)
+                } else {
+                    Button {
+                        Task { await performPairing() }
+                    } label: {
+                        Text("Pair", bundle: .module)
+                    }
+                    .keyboardShortcut(.defaultAction)
+                    .buttonStyle(.borderedProminent)
+                }
+            }
+        }
+        .padding(24)
+        .frame(width: 380)
+    }
+
+    private func performPairing() async {
+        isPairing = true
+        errorMessage = nil
+        defer { isPairing = false }
+
+        do {
+            let apiKey = try await PairingClient.pair(with: agent)
+            onSuccess(apiKey)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+}
+
+// MARK: - Pairing Client
+
+private enum PairingClient {
+    struct PairRequestBody: Codable {
+        let connectorAddress: String
+        let agentId: String
+        let nonce: String
+        let signature: String
+    }
+
+    struct PairResponseBody: Codable {
+        let agentAddress: String
+        let apiKey: String
+    }
+
+    enum PairingError: LocalizedError {
+        case missingHost
+        case signFailed
+        case networkError(Int)
+        case decodingFailed
+        case denied
+
+        var errorDescription: String? {
+            switch self {
+            case .missingHost: return "Could not resolve the agent's network address."
+            case .signFailed: return "Failed to sign the pairing request."
+            case .networkError(let code): return "Pairing request failed (HTTP \(code))."
+            case .decodingFailed: return "Unexpected response from the remote device."
+            case .denied: return "Pairing was denied by the remote device."
+            }
+        }
+    }
+
+    static func pair(with agent: DiscoveredAgent) async throws -> String {
+        let context = LAContext()
+        context.touchIDAuthenticationAllowableReuseDuration = 300
+
+        var masterKey = try MasterKey.getPrivateKey(context: context)
+        defer {
+            masterKey.withUnsafeMutableBytes { ptr in
+                if let base = ptr.baseAddress { memset(base, 0, ptr.count) }
+            }
+        }
+
+        let connectorAddress = try PairingKey.deriveAddress(masterKey: masterKey)
+        let nonce = UUID().uuidString
+
+        let signature = try PairingKey.sign(payload: Data(nonce.utf8), masterKey: masterKey)
+        let hexSig = "0x" + signature.hexEncodedString
+
+        let rawHost = agent.host ?? ""
+        guard !rawHost.isEmpty else { throw PairingError.missingHost }
+        let host = rawHost.hasSuffix(".") ? String(rawHost.dropLast()) : rawHost
+
+        let urlString = "http://\(host):\(agent.port)/pair"
+        guard let url = URL(string: urlString) else { throw PairingError.missingHost }
+
+        let body = PairRequestBody(
+            connectorAddress: connectorAddress,
+            agentId: agent.id.uuidString,
+            nonce: nonce,
+            signature: hexSig
+        )
+        let bodyData = try JSONEncoder().encode(body)
+
+        var request = URLRequest(url: url, timeoutInterval: 120)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = bodyData
+
+        let (responseData, response) = try await URLSession.shared.data(for: request)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+
+        if statusCode == 403 { throw PairingError.denied }
+        guard statusCode == 200 else { throw PairingError.networkError(statusCode) }
+
+        guard let decoded = try? JSONDecoder().decode(PairResponseBody.self, from: responseData) else {
+            throw PairingError.decodingFailed
+        }
+
+        return decoded.apiKey
     }
 }
 

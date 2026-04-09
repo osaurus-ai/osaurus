@@ -138,7 +138,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             // Access key authentication gate (all data snapshotted at server start, zero locks)
             // Plugin routes handle their own auth per-route, so skip the global gate.
             // Loopback connections (CLI / local tools) are trusted without a token.
-            let publicPaths: Set<String> = ["/", "/health"]
+            let publicPaths: Set<String> = ["/", "/health", "/pair"]
             let isPluginRoute = path.hasPrefix("/plugins/")
             let isLoopback = trustLoopback && (context.channel.remoteAddress?.isLoopback ?? false)
             if !publicPaths.contains(path) && !isPluginRoute && !isLoopback {
@@ -297,6 +297,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 handleOpenResponses(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .POST, path == "/memory/ingest" {
                 handleMemoryIngest(head: head, context: context, startTime: startTime, userAgent: userAgent)
+            } else if head.method == .POST, path == "/pair" {
+                handlePairEndpoint(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .GET, path == "/agents" {
                 handleListAgents(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .GET, path.hasPrefix("/agents/") {
@@ -1493,6 +1495,143 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
     private struct AgentListResponse: Codable {
         let agents: [AgentListItem]
+    }
+
+    // MARK: - Pair Endpoint
+
+    private struct PairRequest: Codable {
+        let connectorAddress: String
+        let agentId: String
+        let nonce: String
+        let signature: String
+    }
+
+    private struct PairResponse: Codable {
+        let agentAddress: String
+        let apiKey: String
+    }
+
+    /// POST /pair — unauthenticated endpoint for cryptographic Bonjour pairing.
+    private func handlePairEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        let data: Data
+        let requestBodyString: String?
+        if let body = stateRef.value.requestBodyBuffer {
+            var bodyCopy = body
+            let bytes = bodyCopy.readBytes(length: bodyCopy.readableBytes) ?? []
+            data = Data(bytes)
+            requestBodyString = String(decoding: data, as: UTF8.self)
+        } else {
+            data = Data()
+            requestBodyString = nil
+        }
+
+        guard let req = try? JSONDecoder().decode(PairRequest.self, from: data) else {
+            var headers = [("Content-Type", "application/json; charset=utf-8")]
+            headers.append(contentsOf: stateRef.value.corsHeaders)
+            let body = #"{"error":"Invalid pairing request"}"#
+            sendResponse(context: context, version: head.version, status: .badRequest, headers: headers, body: body)
+            logRequest(method: "POST", path: "/pair", userAgent: userAgent, requestBody: requestBodyString, responseBody: body, responseStatus: 400, startTime: startTime)
+            return
+        }
+
+        let cors = stateRef.value.corsHeaders
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = makeHop(channel: context.channel, loop: loop)
+        let logSelf = self
+        let logStartTime = startTime
+        let logUserAgent = userAgent
+        let logRequestBody = requestBodyString
+
+        Task(priority: .userInitiated) {
+            // 1. Verify the connector's signature over the nonce.
+            let hexSig = req.signature.hasPrefix("0x") ? String(req.signature.dropFirst(2)) : req.signature
+            guard let sigBytes = Data(hexEncoded: hexSig),
+                let recovered = try? recoverAddress(
+                    payload: Data(req.nonce.utf8),
+                    signature: sigBytes,
+                    domainPrefix: "Osaurus Signed Pairing"
+                ),
+                recovered == req.connectorAddress
+            else {
+                hop {
+                    var headers = [("Content-Type", "application/json; charset=utf-8")]
+                    headers.append(contentsOf: cors)
+                    let body = #"{"error":"Signature verification failed"}"#
+                    self.sendResponse(context: ctx.value, version: head.version, status: .unauthorized, headers: headers, body: body)
+                    logSelf.logRequest(method: "POST", path: "/pair", userAgent: logUserAgent, requestBody: logRequestBody, responseBody: body, responseStatus: 401, startTime: logStartTime)
+                }
+                return
+            }
+
+            // 2. Resolve the target agent.
+            let agents = await MainActor.run { AgentManager.shared.agents }
+            guard let agentUUID = UUID(uuidString: req.agentId),
+                let agent = agents.first(where: { $0.id == agentUUID && $0.bonjourEnabled }),
+                let agentAddress = agent.agentAddress
+            else {
+                hop {
+                    var headers = [("Content-Type", "application/json; charset=utf-8")]
+                    headers.append(contentsOf: cors)
+                    let body = #"{"error":"Agent not found or not available for pairing"}"#
+                    self.sendResponse(context: ctx.value, version: head.version, status: .notFound, headers: headers, body: body)
+                    logSelf.logRequest(method: "POST", path: "/pair", userAgent: logUserAgent, requestBody: logRequestBody, responseBody: body, responseStatus: 404, startTime: logStartTime)
+                }
+                return
+            }
+
+            // 3. Show the approval popup on the advertiser's device.
+            let approved = await PairingPromptService.requestApproval(
+                connectorAddress: req.connectorAddress,
+                agentName: agent.name
+            )
+
+            guard approved else {
+                hop {
+                    var headers = [("Content-Type", "application/json; charset=utf-8")]
+                    headers.append(contentsOf: cors)
+                    let body = #"{"error":"Pairing denied"}"#
+                    self.sendResponse(context: ctx.value, version: head.version, status: .forbidden, headers: headers, body: body)
+                    logSelf.logRequest(method: "POST", path: "/pair", userAgent: logUserAgent, requestBody: logRequestBody, responseBody: body, responseStatus: 403, startTime: logStartTime)
+                }
+                return
+            }
+
+            // 4. Generate an osk-v1 API key scoped to the paired agent.
+            //    This triggers biometric auth to access the Master Key.
+            let shortAddr = String(req.connectorAddress.prefix(10))
+            let label = "Paired – \(shortAddr)"
+            guard let (fullKey, _) = try? APIKeyManager.shared.generate(
+                label: label,
+                expiration: .never,
+                agentIndex: agent.agentIndex
+            ) else {
+                hop {
+                    var headers = [("Content-Type", "application/json; charset=utf-8")]
+                    headers.append(contentsOf: cors)
+                    let body = #"{"error":"Failed to generate access key"}"#
+                    self.sendResponse(context: ctx.value, version: head.version, status: .internalServerError, headers: headers, body: body)
+                    logSelf.logRequest(method: "POST", path: "/pair", userAgent: logUserAgent, requestBody: logRequestBody, responseBody: body, responseStatus: 500, startTime: logStartTime)
+                }
+                return
+            }
+
+            // 5. Return the agent's address and the generated API key.
+            let response = PairResponse(agentAddress: agentAddress, apiKey: fullKey)
+            let json = (try? JSONEncoder().encode(response)).map { String(decoding: $0, as: UTF8.self) } ?? #"{"error":"Encoding failed"}"#
+
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(context: ctx.value, version: head.version, status: .ok, headers: headers, body: json)
+                logSelf.logRequest(method: "POST", path: "/pair", userAgent: logUserAgent, requestBody: logRequestBody, responseBody: json, responseStatus: 200, startTime: logStartTime)
+            }
+        }
     }
 
     private func handleListAgents(

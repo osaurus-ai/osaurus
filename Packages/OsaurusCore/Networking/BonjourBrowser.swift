@@ -11,7 +11,7 @@ import Foundation
 // MARK: - DiscoveredAgent
 
 /// A remote Osaurus agent discovered via Bonjour on the local network.
-public struct DiscoveredAgent: Identifiable, Equatable {
+public struct DiscoveredAgent: Identifiable, Equatable, Sendable {
     public let id: UUID
     public let name: String
     public let agentDescription: String
