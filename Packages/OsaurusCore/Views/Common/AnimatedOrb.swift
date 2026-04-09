@@ -83,9 +83,7 @@ struct AnimatedOrb: View {
             NotificationCenter.default.publisher(for: NSApplication.willResignActiveNotification)
         ) { _ in
             isAppActive = false
-            var t = Transaction()
-            t.animation = nil
-            withTransaction(t) {
+            withAnimation(.easeOut(duration: 0.4)) {
                 floatOffset = 0
                 glowPulse = 1.0
             }

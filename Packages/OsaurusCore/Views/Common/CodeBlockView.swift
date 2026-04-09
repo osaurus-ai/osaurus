@@ -10,7 +10,18 @@
 //
 
 import AppKit
+import Highlightr
 import SwiftUI
+
+// MARK: - Shared Highlightr Instance
+
+// Highlightr wraps highlight.js via JavaScriptCore — initialisation is expensive,
+// so we keep a single instance for the process lifetime.
+nonisolated(unsafe) private let sharedHighlightr: Highlightr? = {
+    guard let h = Highlightr() else { return nil }
+    h.setTheme(to: "pop")
+    return h
+}()
 
 // MARK: - CodeBlockView
 
@@ -204,20 +215,31 @@ struct CodeContentView: NSViewRepresentable {
     func buildAttributedString() -> NSMutableAttributedString {
         let fontSize = codeFontSize
         let font = monoFont(size: fontSize, weight: .regular)
-        let codeColor = NSColor(theme.primaryText.opacity(0.95))
         let lines = code.components(separatedBy: "\n")
 
         let gutterDigits = "\(lines.count)".count
         let gutterWidth = CGFloat(gutterDigits + 2) * fontSize * 0.62
         let indent: CGFloat = 12 + gutterWidth
 
-        let result = NSMutableAttributedString()
-        for (i, line) in lines.enumerated() {
-            let highlighted = highlightSyntax(line, language: language, font: font, defaultColor: codeColor)
-            result.append(highlighted)
-            if i < lines.count - 1 {
-                result.append(NSAttributedString(string: "\n"))
+        // use Highlightr for syntax highlighting; fall back to plain text if it returns nil.
+        let result: NSMutableAttributedString
+        let highlightedCode = sharedHighlightr?.highlight(code, as: language?.lowercased(), fastRender: true)
+        if let highlighted = highlightedCode {
+            result = NSMutableAttributedString(attributedString: highlighted)
+            let fullRange = NSRange(location: 0, length: result.length)
+            result.enumerateAttribute(.font, in: fullRange, options: []) { value, range, _ in
+                let isBold = (value as? NSFont)?.fontDescriptor.symbolicTraits.contains(.bold) ?? false
+                result.addAttribute(
+                    .font,
+                    value: monoFont(size: fontSize, weight: isBold ? .semibold : .regular),
+                    range: range
+                )
             }
+        } else {
+            result = NSMutableAttributedString(
+                string: code,
+                attributes: [.font: font, .foregroundColor: NSColor(theme.primaryText.opacity(0.95))]
+            )
         }
 
         let style = NSMutableParagraphStyle()
@@ -226,130 +248,7 @@ struct CodeContentView: NSViewRepresentable {
         style.headIndent = indent
         style.tailIndent = -12
 
-        let fullRange = NSRange(location: 0, length: result.length)
-        result.addAttribute(.paragraphStyle, value: style, range: fullRange)
-
-        return result
-    }
-
-    // MARK: - Syntax Highlighting (reuses SyntaxKeywords from SelectableTextView)
-
-    private static let regexCache = NSCache<NSString, NSRegularExpression>()
-
-    private static func cachedRegex(_ pattern: String) -> NSRegularExpression? {
-        let key = pattern as NSString
-        if let cached = regexCache.object(forKey: key) { return cached }
-        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
-        regexCache.setObject(regex, forKey: key)
-        return regex
-    }
-
-    private func highlightSyntax(
-        _ line: String,
-        language: String?,
-        font: NSFont,
-        defaultColor: NSColor
-    ) -> NSMutableAttributedString {
-        let result = NSMutableAttributedString(
-            string: line,
-            attributes: [.font: font, .foregroundColor: defaultColor]
-        )
-
-        guard let lang = language?.lowercased(), !line.isEmpty else { return result }
-
-        let commentColor = NSColor(theme.tertiaryText.opacity(0.6))
-        let stringColor = NSColor(theme.successColor.opacity(0.85))
-        let keywordColor = NSColor(theme.accentColor)
-        let numberColor = NSColor(theme.warningColor.opacity(0.85))
-        let typeColor = NSColor(theme.infoColor)
-
-        let fullRange = NSRange(location: 0, length: (line as NSString).length)
-
-        let commentPrefix: String? = {
-            switch lang {
-            case "python", "py", "ruby", "rb", "bash", "sh", "shell", "zsh", "yaml", "yml", "toml":
-                return "#"
-            case "swift", "javascript", "js", "typescript", "ts", "java", "kotlin", "c", "cpp", "c++",
-                "rust", "go", "json", "css", "scss", "sass", "php":
-                return "//"
-            case "sql":
-                return "--"
-            case "html", "xml":
-                return nil
-            default:
-                return "//"
-            }
-        }()
-
-        if let prefix = commentPrefix {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if trimmed.hasPrefix(prefix) {
-                result.addAttribute(.foregroundColor, value: commentColor, range: fullRange)
-                return result
-            }
-        }
-
-        if (lang == "html" || lang == "xml") && line.trimmingCharacters(in: .whitespaces).hasPrefix("<!--") {
-            result.addAttribute(.foregroundColor, value: commentColor, range: fullRange)
-            return result
-        }
-
-        if let regex = Self.cachedRegex(#"(\"[^\"\\]*(?:\\.[^\"\\]*)*\"|'[^'\\]*(?:\\.[^'\\]*)*')"#) {
-            for match in regex.matches(in: line, range: fullRange) {
-                result.addAttribute(.foregroundColor, value: stringColor, range: match.range)
-            }
-        }
-
-        if let regex = Self.cachedRegex(#"\b(\d+\.?\d*)\b"#) {
-            for match in regex.matches(in: line, range: fullRange) {
-                var existingColor: NSColor?
-                if match.range.location < result.length {
-                    existingColor =
-                        result.attribute(.foregroundColor, at: match.range.location, effectiveRange: nil) as? NSColor
-                }
-                if existingColor == defaultColor {
-                    result.addAttribute(.foregroundColor, value: numberColor, range: match.range)
-                }
-            }
-        }
-
-        let keywords = SyntaxKeywords.keywords(for: lang)
-        if !keywords.isEmpty {
-            for keyword in keywords {
-                let pattern = "\\b\(NSRegularExpression.escapedPattern(for: keyword))\\b"
-                if let regex = Self.cachedRegex(pattern) {
-                    for match in regex.matches(in: line, range: fullRange) {
-                        var existingColor: NSColor?
-                        if match.range.location < result.length {
-                            existingColor =
-                                result.attribute(.foregroundColor, at: match.range.location, effectiveRange: nil)
-                                as? NSColor
-                        }
-                        if existingColor == defaultColor {
-                            result.addAttribute(.foregroundColor, value: keywordColor, range: match.range)
-                            result.addAttribute(
-                                .font,
-                                value: monoFont(size: font.pointSize, weight: .medium),
-                                range: match.range
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
-        if let regex = Self.cachedRegex(#"\b([A-Z][a-zA-Z0-9_]*)\b"#) {
-            for match in regex.matches(in: line, range: fullRange) {
-                var existingColor: NSColor?
-                if match.range.location < result.length {
-                    existingColor =
-                        result.attribute(.foregroundColor, at: match.range.location, effectiveRange: nil) as? NSColor
-                }
-                if existingColor == defaultColor {
-                    result.addAttribute(.foregroundColor, value: typeColor, range: match.range)
-                }
-            }
-        }
+        result.addAttribute(.paragraphStyle, value: style, range: NSRange(location: 0, length: result.length))
 
         return result
     }

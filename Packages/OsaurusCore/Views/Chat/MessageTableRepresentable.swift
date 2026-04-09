@@ -27,6 +27,35 @@ enum MessageSection: Hashable {
     case main
 }
 
+// MARK: - CenteredMessageScrollView
+
+/// NSScrollView subclass that centers message content at up to `maxContentWidth`
+/// while keeping the scrollbar pinned to the view's right edge.
+final class CenteredMessageScrollView: NSScrollView {
+    var maxContentWidth: CGFloat = 1100
+
+    override func tile() {
+        let hInset = max(0, (bounds.width - maxContentWidth) / 2)
+        if contentInsets.left != hInset || contentInsets.right != hInset {
+            contentInsets = NSEdgeInsets(
+                top: contentInsets.top,
+                left: hInset,
+                bottom: contentInsets.bottom,
+                right: hInset
+            )
+        }
+        super.tile()
+        // overlay scrollers sit at the clip view's right edge (inside the inset).
+        // move them back to the scroll view's true right edge.
+        if hInset > 0, let vs = verticalScroller {
+            var f = vs.frame
+            f.origin.x = bounds.width - f.width
+            vs.frame = f
+        }
+        (documentView as? NSTableView)?.sizeLastColumnToFit()
+    }
+}
+
 // MARK: - MessageTableRepresentable
 
 struct MessageTableRepresentable: NSViewRepresentable {
@@ -83,6 +112,7 @@ struct MessageTableRepresentable: NSViewRepresentable {
         // sync session store into coordinator's expand cache for the initial load
         coordinator.expandedIds = expandedBlocksStore.expandedIds
         coordinator.sessionExpandedStore = expandedBlocksStore
+        coordinator.lastSwiftUIWidth = max(100, width)
 
         coordinator.applyBlocks(
             blocks,
@@ -112,14 +142,19 @@ struct MessageTableRepresentable: NSViewRepresentable {
             coordinator.expandedIds = expandedBlocksStore.expandedIds
         }
 
+        let rctx = renderingContext(for: coordinator)
+        coordinator.lastSwiftUIWidth = rctx.width
         coordinator.applyBlocks(
             blocks,
             groupHeaderMap: groupHeaderMap,
-            context: renderingContext(for: coordinator),
+            context: rctx,
             isStreaming: isStreaming,
             lastAssistantTurnId: lastAssistantTurnId,
             autoScrollEnabled: autoScrollEnabled
         )
+
+        // ensure the table column fills the (now-inset) clip view width
+        coordinator.tableView?.sizeLastColumnToFit()
     }
 
     // MARK: - View Factory Helpers
@@ -193,11 +228,13 @@ struct MessageTableRepresentable: NSViewRepresentable {
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("MessageColumn"))
         column.resizingMask = .autoresizingMask
         tv.addTableColumn(column)
+        tv.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
+        tv.sizeLastColumnToFit()
         return tv
     }
 
-    private static func makeScrollView(documentView: NSView) -> NSScrollView {
-        let sv = NSScrollView()
+    private static func makeScrollView(documentView: NSView) -> CenteredMessageScrollView {
+        let sv = CenteredMessageScrollView()
         sv.documentView = documentView
         sv.hasVerticalScroller = true
         sv.hasHorizontalScroller = false
@@ -227,6 +264,15 @@ extension MessageTableRepresentable {
         let scrollAnchor = ScrollAnchorManager()
         /// Tracks the last observed trigger value so we only scroll once per tap.
         var lastScrollToBottomTrigger: Int = 0
+
+        /// Last known scroll view width. Used to detect actual frame changes from AppKit layout
+        private var lastKnownFrameWidth: CGFloat = 0
+        private var frameObserver: NSObjectProtocol?
+        private var frameDebounceWork: DispatchWorkItem?
+
+        /// Width last provided by SwiftUI (effectiveContentWidth, already clamped to maxContentWidth).
+        /// Used by the frame-change debounce to avoid reading the clip view before tile() has run.
+        var lastSwiftUIWidth: CGFloat = 100
 
         // MARK: Block State
 
@@ -310,6 +356,53 @@ extension MessageTableRepresentable {
             scrollAnchor.onScrolledToBottom = onScrolledToBottom
             scrollAnchor.onScrolledAwayFromBottom = onScrolledAwayFromBottom
             scrollAnchor.attach(to: scrollView, tableView: tableView)
+
+            // observe actual frame changes from AppKit layout (fires after
+            // SwiftUI has resized the hosting scroll view like sidebar toggle)
+            scrollView.postsFrameChangedNotifications = true
+            frameObserver = NotificationCenter.default.addObserver(
+                forName: NSView.frameDidChangeNotification,
+                object: scrollView,
+                queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    self?.handleScrollViewFrameChange()
+                }
+            }
+        }
+
+        private func handleScrollViewFrameChange() {
+            guard let scrollView else { return }
+            // NOTE: this notification fires before AppKit calls tile(), so the
+            // clip view width here is the pre-inset raw value — used only for
+            // change detection, not for ctx.width assignment.
+            let rawWidth = scrollView.contentView.bounds.width
+            guard abs(rawWidth - lastKnownFrameWidth) > 1.0 else {
+                return
+            }
+            lastKnownFrameWidth = rawWidth
+
+            // only reconfigure after the frame stops changing
+            // to avoid expensive per-frame work
+            frameDebounceWork?.cancel()
+            let work = DispatchWorkItem { [weak self] in
+                guard let self, let tableView else { return }
+                // use SwiftUI's pre-computed effectiveContentWidth (already clamped to
+                // maxContentWidth). Reading contentView.bounds.width here is unreliable
+                // because tile() may not have applied centering insets yet at this point.
+                let contentWidth = self.lastSwiftUIWidth
+                self.ctx.width = contentWidth
+                self.heightCache.removeAll()
+                // set column width explicitly to match SwiftUI's effective content width
+                // (tile() may not have updated clip view insets yet, so sizeLastColumnToFit
+                // could give a stale value).
+                if let col = tableView.tableColumns.first {
+                    col.width = contentWidth
+                }
+                self.reconfigureAllCellsFromLookup(self.blockLookup)
+            }
+            frameDebounceWork = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
         }
 
         func setupHoverTracking(on tableView: HoverTrackingTableView) {

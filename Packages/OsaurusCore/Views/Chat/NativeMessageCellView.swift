@@ -13,7 +13,7 @@ import QuartzCore
 
 /// Passed to NativeMessageCellView.configure() — bundles all rendering inputs.
 struct CellRenderingContext {
-    let width: CGFloat
+    var width: CGFloat
     let agentName: String
     let isStreaming: Bool
     let lastAssistantTurnId: UUID?
@@ -45,7 +45,6 @@ struct CellRenderingContext {
 final class NativeHeaderView: NSView {
 
     private let nameLabel = NSTextField(labelWithString: "")
-    private let editingBadge = NSTextField(labelWithString: L("Editing"))
     private let actionStack = NSStackView()
     private var isEditing = false
 
@@ -74,11 +73,6 @@ final class NativeHeaderView: NSView {
         nameLabel.lineBreakMode = .byTruncatingTail
         addSubview(nameLabel)
 
-        editingBadge.translatesAutoresizingMaskIntoConstraints = false
-        editingBadge.isSelectable = true
-        editingBadge.isHidden = true
-        addSubview(editingBadge)
-
         actionStack.translatesAutoresizingMaskIntoConstraints = false
         actionStack.orientation = .horizontal
         actionStack.spacing = 4
@@ -91,8 +85,6 @@ final class NativeHeaderView: NSView {
         NSLayoutConstraint.activate([
             nameLabel.leadingAnchor.constraint(equalTo: leadingAnchor),
             nameLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
-            editingBadge.leadingAnchor.constraint(equalTo: nameLabel.trailingAnchor, constant: 6),
-            editingBadge.centerYAnchor.constraint(equalTo: centerYAnchor),
             actionStack.trailingAnchor.constraint(equalTo: trailingAnchor),
             actionStack.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
@@ -125,13 +117,18 @@ final class NativeHeaderView: NSView {
         nameLabel.font = NSFont.systemFont(ofSize: CGFloat(theme.captionSize) + 1, weight: .semibold)
         nameLabel.textColor = role == .user ? NSColor(theme.accentColor) : NSColor(theme.secondaryText)
 
-        editingBadge.stringValue = L("Editing")
-        editingBadge.font = NSFont.systemFont(ofSize: CGFloat(theme.captionSize) - 1, weight: .medium)
-        editingBadge.textColor = NSColor(theme.accentColor).withAlphaComponent(0.7)
-        editingBadge.isHidden = !isEditing
-
         rebuildActionButtons(role: role, theme: theme, onCancelEdit: onCancelEdit)
+        invalidateIntrinsicContentSize()
         setHovered(isHovered, animated: false)
+    }
+
+    override var intrinsicContentSize: NSSize {
+        let count = CGFloat(actionStack.arrangedSubviews.count)
+        guard count > 0 else { return NSSize(width: NSView.noIntrinsicMetric, height: 28) }
+        let stackW = count * Self.actionButtonSize + max(0, count - 1) * actionStack.spacing
+        let labelW = nameLabel.intrinsicContentSize.width
+        let total = stackW + (labelW > 0 ? labelW + 8 : 0)
+        return NSSize(width: total, height: 28)
     }
 
     func setHovered(_ hovered: Bool, animated: Bool = true) {
@@ -718,17 +715,17 @@ final class NativeMessageCellView: NSTableCellView {
     private var userTextView: NativeMarkdownView?
     private var userInlineEditView: UserMessageInlineEditView?
     private var userImageStack: NSStackView?
+    private var userDocumentStack: NSStackView?
     private var nativePendingView: NativePendingToolCallView?
     private var nativeTypingView: NativeTypingIndicatorView?
     private var nativeArtifactView: NativeArtifactCardView?
     private var nativePreflightView: NativePreflightCapabilitiesView?
     private var nativeStatsView: NativeStatsView?
 
-    /// inset stroke so rounded corners are not clipped by ancestor views
-    private var userBubbleBorderLayer: CAShapeLayer?
-    private var userBubbleBorderWidth: CGFloat = 0
-    private var userBubbleBorderColor: NSColor = .clear
     private var userBubbleCornerRadius: CGFloat = 0
+    private var userBubbleWidthConstraint: NSLayoutConstraint?
+    /// Height occupied by attachments above the bubble (docs + images + gaps), set during rebuild.
+    private var userAttachmentsHeight: CGFloat = 0
 
     // MARK: State
 
@@ -755,7 +752,6 @@ final class NativeMessageCellView: NSTableCellView {
 
     override func layout() {
         super.layout()
-        updateUserBubbleBorderStroke()
     }
 
     /// Row height from Auto Layout — avoids drift from hand-summed constants vs. actual constraints.
@@ -765,24 +761,33 @@ final class NativeMessageCellView: NSTableCellView {
         // never call layoutSubtreeIfNeeded() here — heightOfRow / onHeightMeasured can run during an active layout pass
         let targetWidth = max(bounds.width > 1 ? bounds.width : lastContextWidth, 100)
 
-        // user message: measure bubble subtree height (container bottom is tied to content, not the cell — see configureAsUserMessage)
-        if let container = userMessageContainer {
-            var widthPin: NSLayoutConstraint?
-            if bounds.width <= 1 {
-                let c = widthAnchor.constraint(equalToConstant: targetWidth)
-                c.priority = NSLayoutConstraint.Priority.required
-                c.isActive = true
-                widthPin = c
+        // user message: container is not pinned to cell bottom, so compute height manually.
+        if userDocumentStack != nil || userImageStack != nil || userMessageContainer != nil {
+            // Attachments above bubble (fixed heights)
+            let attachOffset: CGFloat =
+                userAttachmentsHeight > 0
+                ? 8 + userAttachmentsHeight + 6  // outerTopGap + attachments + gap to bubble
+                : 8  // outerTopGap only
+
+            if let container = userMessageContainer {
+                var widthPin: NSLayoutConstraint?
+                if bounds.width <= 1 {
+                    let c = widthAnchor.constraint(equalToConstant: targetWidth)
+                    c.priority = .required
+                    c.isActive = true
+                    widthPin = c
+                }
+                defer { widthPin?.isActive = false }
+                var containerH = container.fittingSize.height
+                if containerH < 2, let mv = userTextView {
+                    let bubbleW = userBubbleWidthConstraint?.constant ?? max(lastContextWidth - 32, 100)
+                    let textH = mv.measuredHeight(for: max(bubbleW - 24, 100))
+                    containerH = 10 + textH + 6
+                }
+                return ceil(max(attachOffset + containerH + 8, 56))
             }
-            defer { widthPin?.isActive = false }
-            var h = container.fittingSize.height
-            if h < 2, let mv = userTextView {
-                let inner = max(lastContextWidth - 32, 100)
-                let textW = max(inner - 24, 100)
-                let textH = mv.measuredHeight(for: textW)
-                h = 38 + textH + 16
-            }
-            return ceil(max(h, 1))
+            // Attachment-only (no text bubble)
+            return ceil(max(8 + userAttachmentsHeight + 8, 56))
         }
 
         var widthPin: NSLayoutConstraint?
@@ -1073,6 +1078,7 @@ final class NativeMessageCellView: NSTableCellView {
         sameKind: Bool
     ) {
         let images = attachments.filter(\.isImage)
+        let documents = attachments.filter(\.isDocument)
         let theme = context.theme
         let innerWidth = max(context.width - 32, 100)
 
@@ -1082,121 +1088,167 @@ final class NativeMessageCellView: NSTableCellView {
             && context.onConfirmEdit != nil
             && context.onCancelEdit != nil
 
+        // Bubble width: only text, measured to fit, capped at 65%.
+        // Attachments live outside the bubble so they don't affect its width.
+        let maxBubbleWidth = floor(innerWidth * 0.65)
+        let bubbleWidth: CGFloat = {
+            guard !text.isEmpty && !wantsInlineEdit else { return maxBubbleWidth }
+            let font =
+                NSFont(name: theme.primaryFontName, size: CGFloat(theme.bodySize))
+                ?? NSFont.systemFont(ofSize: CGFloat(theme.bodySize))
+            let measured = (text as NSString).boundingRect(
+                with: NSSize(width: maxBubbleWidth - 24, height: .greatestFiniteMagnitude),
+                options: [.usesLineFragmentOrigin, .usesFontLeading],
+                attributes: [.font: font]
+            )
+            let lineHeight = ceil(CGFloat(theme.bodySize) * 1.4)
+            let isMultiLine = measured.height > lineHeight * 1.5
+            return isMultiLine ? maxBubbleWidth : min(ceil(measured.width) + 24, maxBubbleWidth)
+        }()
+
         let needsUserMessageRebuild =
             !sameKind || userMessageContainer == nil || userMessageInlineEditActive != wantsInlineEdit
 
         if needsUserMessageRebuild {
             removeAllContentViews()
 
-            // bubble height comes from content (pins below). do not pin container.bottom to the cell — that stretches
-            // the bubble to whatever row height the table has (often an over-estimate), leaving empty space below text.
-            let container = NSView()
-            container.translatesAutoresizingMaskIntoConstraints = false
-            container.wantsLayer = true
-            container.layer?.masksToBounds = false  // prevent border clipping
-            addSubview(container)
-            NSLayoutConstraint.activate([
-                container.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
-                container.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
-                container.topAnchor.constraint(equalTo: topAnchor),
-            ])
-            userMessageContainer = container
+            // Compute attachment heights (needed for fittingSize measurement later).
+            let docGap: CGFloat = 6
+            let imgGap: CGFloat = 6
+            let outerTopGap: CGFloat = 8
+            var attachH: CGFloat = 0
+            if !documents.isEmpty { attachH += 26 }
+            if !images.isEmpty { attachH += (documents.isEmpty ? 0 : imgGap) + 96 }
+            userAttachmentsHeight = attachH
 
-            // "You" header inside the bubble (matches SwiftUI HeaderBlockContent behavior)
-            let hv = NativeHeaderView()
-            hv.translatesAutoresizingMaskIntoConstraints = false
-            container.addSubview(hv)
-            NSLayoutConstraint.activate([
-                hv.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12),
-                hv.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -12),
-                hv.topAnchor.constraint(equalTo: container.topAnchor, constant: 10),
-                hv.heightAnchor.constraint(equalToConstant: 24),
-            ])
-            nativeHeaderView = hv
+            // Attachments sit at cell level (right-aligned), above the bubble.
+            var cellTopAnchor = topAnchor
 
-            if wantsInlineEdit {
-                let ev = UserMessageInlineEditView()
-                ev.translatesAutoresizingMaskIntoConstraints = false
-                container.addSubview(ev)
+            if !documents.isEmpty {
+                let stack = NSStackView()
+                stack.orientation = .horizontal
+                stack.spacing = 6
+                stack.translatesAutoresizingMaskIntoConstraints = false
+                addSubview(stack)
                 NSLayoutConstraint.activate([
-                    ev.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12),
-                    ev.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -12),
-                    ev.topAnchor.constraint(equalTo: hv.bottomAnchor, constant: 4),
-                    ev.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -8),
+                    stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+                    stack.topAnchor.constraint(equalTo: cellTopAnchor, constant: outerTopGap),
+                    stack.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 16),
                 ])
-                userInlineEditView = ev
-                userMessageInlineEditActive = true
-                userImageStack = nil
-                userTextView = nil
+                stack.alignment = .centerY
+                userDocumentStack = stack
+                cellTopAnchor = stack.bottomAnchor
             } else {
-                userMessageInlineEditActive = false
-                userInlineEditView = nil
+                userDocumentStack = nil
+            }
 
-                var anchorBelowHeader = hv.bottomAnchor
-                let topGapAfterHeader: CGFloat = 6
+            if !images.isEmpty {
+                let stack = NSStackView()
+                stack.orientation = .horizontal
+                stack.spacing = 8
+                stack.translatesAutoresizingMaskIntoConstraints = false
+                addSubview(stack)
+                NSLayoutConstraint.activate([
+                    stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+                    stack.topAnchor.constraint(
+                        equalTo: cellTopAnchor,
+                        constant: documents.isEmpty ? outerTopGap : docGap
+                    ),
+                    stack.heightAnchor.constraint(equalToConstant: 96),
+                    stack.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 16),
+                ])
+                stack.alignment = .top
+                userImageStack = stack
+                cellTopAnchor = stack.bottomAnchor
+            } else {
+                userImageStack = nil
+            }
 
-                if !images.isEmpty {
-                    let stack = NSStackView()
-                    stack.orientation = .horizontal
-                    stack.spacing = 8
-                    stack.translatesAutoresizingMaskIntoConstraints = false
-                    container.addSubview(stack)
+            // Text bubble — only created when there is text or inline edit.
+            if !text.isEmpty || wantsInlineEdit {
+                let container = NSView()
+                container.translatesAutoresizingMaskIntoConstraints = false
+                container.wantsLayer = true
+                container.layer?.masksToBounds = false
+                addSubview(container)
+                let hasAbove = !documents.isEmpty || !images.isEmpty
+                let wc = container.widthAnchor.constraint(equalToConstant: bubbleWidth)
+                NSLayoutConstraint.activate([
+                    container.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+                    container.topAnchor.constraint(equalTo: cellTopAnchor, constant: hasAbove ? imgGap : outerTopGap),
+                    wc,
+                ])
+                userBubbleWidthConstraint = wc
+                userMessageContainer = container
+
+                if wantsInlineEdit {
+                    let ev = UserMessageInlineEditView()
+                    ev.translatesAutoresizingMaskIntoConstraints = false
+                    container.addSubview(ev)
                     NSLayoutConstraint.activate([
-                        stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12),
-                        stack.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -12),
-                        stack.topAnchor.constraint(equalTo: anchorBelowHeader, constant: topGapAfterHeader),
-                        stack.heightAnchor.constraint(equalToConstant: 96),
+                        ev.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12),
+                        ev.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -12),
+                        ev.topAnchor.constraint(equalTo: container.topAnchor, constant: 10),
+                        ev.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -10),
                     ])
-                    stack.alignment = .top
-                    userImageStack = stack
-                    anchorBelowHeader = stack.bottomAnchor
+                    userInlineEditView = ev
+                    userMessageInlineEditActive = true
+                    userTextView = nil
                 } else {
-                    userImageStack = nil
-                }
+                    userMessageInlineEditActive = false
+                    userInlineEditView = nil
 
-                if !text.isEmpty {
                     let mv = NativeMarkdownView()
                     mv.translatesAutoresizingMaskIntoConstraints = false
                     container.addSubview(mv)
-                    let gapBeforeText: CGFloat = images.isEmpty ? 4 : 8
+                    // Bottom padding is 6pt (10 - 4) to compensate for the 4pt paragraphSpacing
+                    // that NSParagraphStyle appends after the last line in NativeMarkdownView,
+                    // which would otherwise make the text appear above-center in the bubble.
                     NSLayoutConstraint.activate([
                         mv.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12),
                         mv.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -12),
-                        mv.topAnchor.constraint(equalTo: anchorBelowHeader, constant: gapBeforeText),
+                        mv.topAnchor.constraint(equalTo: container.topAnchor, constant: 10),
+                        container.bottomAnchor.constraint(equalTo: mv.bottomAnchor, constant: 6),
                     ])
                     userTextView = mv
-                } else {
-                    userTextView = nil
                 }
+            } else {
+                userMessageContainer = nil
+                userBubbleWidthConstraint = nil
+                userMessageInlineEditActive = false
+                userInlineEditView = nil
+                userTextView = nil
+            }
 
-                if let mv = userTextView {
-                    NSLayoutConstraint.activate([
-                        container.bottomAnchor.constraint(equalTo: mv.bottomAnchor, constant: 16)
-                    ])
-                } else if userImageStack != nil, let stack = userImageStack {
-                    NSLayoutConstraint.activate([
-                        container.bottomAnchor.constraint(equalTo: stack.bottomAnchor, constant: 16)
-                    ])
-                } else {
-                    NSLayoutConstraint.activate([
-                        hv.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -8)
-                    ])
-                }
+            // Hover action buttons — positioned to the left of the bubble (or attachments).
+            // Anchor vertically to the bubble if it exists, otherwise to the first attachment stack.
+            let anchorView = userMessageContainer ?? userImageStack ?? userDocumentStack
+            if let anchorView {
+                let hv = NativeHeaderView()
+                hv.translatesAutoresizingMaskIntoConstraints = false
+                addSubview(hv)
+                NSLayoutConstraint.activate([
+                    hv.trailingAnchor.constraint(equalTo: anchorView.leadingAnchor, constant: -8),
+                    hv.centerYAnchor.constraint(equalTo: anchorView.centerYAnchor),
+                    hv.heightAnchor.constraint(equalToConstant: 28),
+                    hv.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 8),
+                ])
+                nativeHeaderView = hv
+            } else {
+                nativeHeaderView = nil
             }
         }
 
-        // apply bubble background + inset stroke (layer border is centered on the edge and clips at corners)
+        // Update width constraint even when not rebuilding (e.g. sidebar toggle changes available width)
+        userBubbleWidthConstraint?.constant = bubbleWidth
+
+        // apply bubble background
         if let container = userMessageContainer {
-            let radius = CGFloat(theme.bubbleCornerRadius)
+            let radius = UserAttachmentThumbnailView.cornerRadius
             let bubbleColor: NSColor = {
                 if let c = theme.userBubbleColor { return NSColor(c).withAlphaComponent(theme.userBubbleOpacity) }
                 return NSColor(theme.accentColor).withAlphaComponent(theme.userBubbleOpacity)
             }()
-            let borderW = CGFloat(theme.messageBorderWidth)
-            let borderColor: NSColor =
-                theme.showEdgeLight
-                ? NSColor(theme.glassEdgeLight)
-                : NSColor(theme.primaryBorder).withAlphaComponent(theme.borderOpacity)
 
             container.layer?.cornerRadius = radius
             container.layer?.backgroundColor = bubbleColor.cgColor
@@ -1205,33 +1257,7 @@ final class NativeMessageCellView: NSTableCellView {
             container.layer?.borderColor = nil
 
             userBubbleCornerRadius = radius
-            userBubbleBorderWidth = borderW
-            userBubbleBorderColor = borderColor
-
-            if userBubbleBorderLayer == nil {
-                let stroke = CAShapeLayer()
-                stroke.fillColor = nil
-                stroke.zPosition = 10
-                container.layer?.addSublayer(stroke)
-                userBubbleBorderLayer = stroke
-            }
-            updateUserBubbleBorderStroke()
         }
-
-        // update "You" header
-        nativeHeaderView?.configure(
-            turnId: block.turnId,
-            role: .user,
-            name: "You",
-            isEditing: context.editingTurnId == block.turnId,
-            isHovered: context.isTurnHovered,
-            theme: theme,
-            onCopy: context.onCopy,
-            onRegenerate: nil,
-            onEdit: context.onEdit,
-            onDelete: context.onDelete,
-            onCancelEdit: context.onCancelEdit
-        )
 
         if wantsInlineEdit, let editPair = context.editText, let onConfirm = context.onConfirmEdit,
             let onCancel = context.onCancelEdit, let ev = userInlineEditView
@@ -1258,7 +1284,7 @@ final class NativeMessageCellView: NSTableCellView {
             }
             mv.configure(
                 text: text,
-                width: innerWidth - 24,
+                width: bubbleWidth - 24,
                 theme: theme,
                 cacheKey: block.id,
                 isStreaming: context.isStreaming
@@ -1296,6 +1322,39 @@ final class NativeMessageCellView: NSTableCellView {
                 }
             }
         }
+
+        if let stack = userDocumentStack {
+            while stack.arrangedSubviews.count < documents.count {
+                let chip = UserDocumentChipView()
+                chip.translatesAutoresizingMaskIntoConstraints = false
+                stack.addArrangedSubview(chip)
+            }
+            while stack.arrangedSubviews.count > documents.count {
+                let last = stack.arrangedSubviews.last!
+                stack.removeArrangedSubview(last)
+                last.removeFromSuperview()
+            }
+
+            for (index, attachment) in documents.enumerated() {
+                guard let chip = stack.arrangedSubviews[index] as? UserDocumentChipView else { continue }
+                chip.configure(attachment: attachment, theme: theme)
+            }
+        }
+
+        // Configure hover action buttons (no name label for user messages)
+        nativeHeaderView?.configure(
+            turnId: block.turnId,
+            role: .user,
+            name: "",
+            isEditing: context.editingTurnId == block.turnId,
+            isHovered: context.isTurnHovered,
+            theme: context.theme,
+            onCopy: context.onCopy,
+            onRegenerate: context.onRegenerate,
+            onEdit: context.onEdit,
+            onDelete: context.onDelete,
+            onCancelEdit: context.onCancelEdit
+        )
 
         // push fitted height even when NativeMarkdownView.configure returns early (no onHeightChanged),
         // and so row height updates when estimate vs fittingSize differ by only 1–2pt (see reportMeasuredHeight)
@@ -1470,26 +1529,6 @@ final class NativeMessageCellView: NSTableCellView {
 
     // MARK: - Helpers
 
-    private func updateUserBubbleBorderStroke() {
-        guard let container = userMessageContainer,
-            let stroke = userBubbleBorderLayer,
-            userBubbleBorderWidth > 0
-        else { return }
-        let bounds = container.bounds
-        guard bounds.width > 1, bounds.height > 1 else { return }
-        let w = userBubbleBorderWidth
-        let inset = w / 2
-        stroke.frame = bounds
-        let r = max(userBubbleCornerRadius - inset, 0)
-        let rect = bounds.insetBy(dx: inset, dy: inset)
-        let path = NSBezierPath(roundedRect: rect, xRadius: r, yRadius: r)
-        stroke.path = path.cgPath
-        stroke.lineWidth = w
-        stroke.strokeColor = userBubbleBorderColor.cgColor
-        stroke.fillColor = nil
-        stroke.lineJoin = .round
-    }
-
     private func removeAllContentViews() {
         spacerView?.removeFromSuperview(); spacerView = nil
         nativeHeaderView?.removeFromSuperview(); nativeHeaderView = nil
@@ -1505,16 +1544,16 @@ final class NativeMessageCellView: NSTableCellView {
         userTextView = nil
         userInlineEditView = nil
         userImageStack = nil
+        userBubbleWidthConstraint = nil
+        userAttachmentsHeight = 0
         userMessageInlineEditActive = false
-        userBubbleBorderLayer = nil
-        userBubbleBorderWidth = 0
     }
 }
 
 /// Thumbnail in user bubble — tap opens full-screen preview (wired via `CellRenderingContext.onUserImagePreview`).
 /// `CALayer` corner radius + `NSImageView` in `NSTableView` still drew a square trailing edge here; clipping in `draw(_:)` is the reliable fix.
 private final class UserAttachmentThumbnailView: NSView {
-    private static let cornerRadius: CGFloat = 8
+    static let cornerRadius: CGFloat = 10
 
     override var isFlipped: Bool { true }
 
@@ -1593,6 +1632,86 @@ private final class UserAttachmentThumbnailView: NSView {
     }
 }
 
+// MARK: - User Document Chip (native AppKit)
+
+private final class UserDocumentChipView: NSView {
+    override var isFlipped: Bool { true }
+
+    private let iconView = NSImageView()
+    private let nameField = NSTextField(labelWithString: "")
+    private let sizeField = NSTextField(labelWithString: "")
+
+    override var intrinsicContentSize: NSSize {
+        let nameW = min(nameField.intrinsicContentSize.width, 130)
+        let sizeW = sizeField.intrinsicContentSize.width
+        let w = 8 + 14 + 5 + nameW + 5 + sizeW + 8
+        return NSSize(width: min(w, 220), height: 26)
+    }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.cornerRadius = UserAttachmentThumbnailView.cornerRadius
+
+        iconView.translatesAutoresizingMaskIntoConstraints = false
+        iconView.imageScaling = .scaleProportionallyDown
+
+        for field in [nameField, sizeField] {
+            field.translatesAutoresizingMaskIntoConstraints = false
+            field.isEditable = false
+            field.isBordered = false
+            field.drawsBackground = false
+            field.lineBreakMode = .byTruncatingMiddle
+            field.maximumNumberOfLines = 1
+            addSubview(field)
+        }
+        addSubview(iconView)
+
+        nameField.font = NSFont.systemFont(ofSize: 11, weight: .medium)
+        sizeField.font = NSFont.systemFont(ofSize: 9, weight: .regular)
+
+        NSLayoutConstraint.activate([
+            heightAnchor.constraint(equalToConstant: 26),
+
+            iconView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            iconView.centerYAnchor.constraint(equalTo: centerYAnchor),
+            iconView.widthAnchor.constraint(equalToConstant: 14),
+            iconView.heightAnchor.constraint(equalToConstant: 14),
+
+            nameField.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 5),
+            nameField.centerYAnchor.constraint(equalTo: centerYAnchor),
+            nameField.widthAnchor.constraint(lessThanOrEqualToConstant: 130),
+
+            sizeField.leadingAnchor.constraint(equalTo: nameField.trailingAnchor, constant: 5),
+            sizeField.centerYAnchor.constraint(equalTo: centerYAnchor),
+            sizeField.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -8),
+        ])
+
+        nameField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
+    func configure(attachment: Attachment, theme: any ThemeProtocol) {
+        layer?.backgroundColor = NSColor(theme.secondaryBackground).withAlphaComponent(0.7).cgColor
+
+        let symbolName = attachment.fileIcon
+        let config = NSImage.SymbolConfiguration(pointSize: 11, weight: .medium)
+        iconView.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)?
+            .withSymbolConfiguration(config)
+        iconView.contentTintColor = NSColor(theme.accentColor)
+
+        nameField.stringValue = attachment.filename ?? "Document"
+        nameField.textColor = NSColor(theme.primaryText)
+
+        sizeField.stringValue = attachment.fileSizeFormatted ?? ""
+        sizeField.textColor = NSColor(theme.tertiaryText)
+
+        invalidateIntrinsicContentSize()
+    }
+}
+
 // MARK: - ContentBlockKindTag
 
 /// Lightweight discriminator used to detect kind changes without comparing full associated values.
@@ -1668,24 +1787,34 @@ enum NativeCellHeightEstimator {
             return CGFloat(lines) * 22 + 24
 
         case let .userMessage(text, attachments):
-            // header: 10 top + 24 label + 4 gap = 38pt; text below; 16pt bottom = 54pt base
-
-            // "You" header
-            var h: CGFloat = 38
+            var h: CGFloat = 8  // outerTopGap
             let innerW = max(width - 32, 100)
+
+            // Attachments above bubble (fixed heights)
+            let docCount = attachments.filter(\.isDocument).count
+            let imageCount = attachments.filter(\.isImage).count
+            if docCount > 0 { h += 26 }
+            if imageCount > 0 { h += (docCount > 0 ? 6 : 0) + 96 }
+            if (docCount > 0 || imageCount > 0) && !text.isEmpty { h += 6 }  // gap to bubble
+
+            // Text bubble (10pt top + text + 10pt bottom)
             if !text.isEmpty {
-                let textW = innerW - 24
+                let maxBubbleW = floor(innerW * 0.65)
+                let textW = maxBubbleW - 24
                 let cacheKey = "\(block.id)-w\(Int(textW))"
+                let textH: CGFloat
                 if let cached = ThreadCache.shared.height(for: cacheKey) {
-                    h += cached + 16
+                    textH = cached
                 } else {
                     let chars = max(Int(textW / 7), 20)
                     let lines = max(1, (text.count + chars - 1) / chars)
-                    h += CGFloat(lines) * 22 + 16
+                    textH = CGFloat(lines) * 22
                 }
+                h += 10 + textH + 6
             }
-            h += CGFloat(attachments.filter(\.isImage).count) * 120
-            return max(h, 64)
+
+            h += 8  // bottom margin
+            return max(h, 48)
 
         case let .toolCallGroup(calls):
             // each row self-sizes at ~41pt (40pt header + 1pt separator)

@@ -235,9 +235,6 @@ struct ThemeEditorView: View {
                     currentTheme.tertiaryText
                 ).textCase(.uppercase)
                 sliderRow("Corner Radius", value: $editingTheme.messages.bubbleCornerRadius, range: 0 ... 40)
-                sliderRow("Border Width", value: $editingTheme.messages.borderWidth, range: 0 ... 4)
-                Toggle(isOn: $editingTheme.messages.showEdgeLight) { Text("Edge Light", bundle: .module) }
-                    .font(.system(size: 13))
             }
         }
     }
@@ -906,48 +903,23 @@ struct ThemeChatPreview: View {
     }
 
     private func previewUserMessage(_ content: String) -> some View {
-        let radius = CGFloat(theme.messages.bubbleCornerRadius)
+        let radius: CGFloat = 10
         let opacity = theme.messages.userBubbleOpacity
-        let borderWidth = CGFloat(theme.messages.borderWidth)
 
-        return VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Text("You", bundle: .module)
-                    .font(primaryFont(size: captionSize + 1, weight: .semibold))
-                    .foregroundColor(c(theme.colors.accentColor))
-                Spacer()
-            }
-
-            Text(content)
-                .font(bodyFont)
-                .foregroundColor(c(theme.colors.primaryText))
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: radius, style: .continuous)
-                .fill(userBubbleColor.opacity(opacity))
-        )
-        .overlay(
-            Group {
-                if theme.messages.showEdgeLight {
-                    RoundedRectangle(cornerRadius: radius, style: .continuous)
-                        .strokeBorder(
-                            LinearGradient(
-                                colors: [
-                                    c(theme.colors.primaryBorder),
-                                    c(theme.colors.primaryBorder).opacity(0.4),
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            ),
-                            lineWidth: borderWidth
-                        )
-                }
-            }
-        )
-        .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+        return Text(content)
+            .font(bodyFont)
+            .foregroundColor(c(theme.colors.primaryText))
+            .padding(.horizontal, 12)
+            .padding(.top, 10)
+            .padding(.bottom, 10)
+            .background(
+                RoundedRectangle(cornerRadius: radius, style: .continuous)
+                    .fill(userBubbleColor.opacity(opacity))
+            )
+            .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .trailing)
     }
 
     private func previewAssistantMessage() -> some View {
