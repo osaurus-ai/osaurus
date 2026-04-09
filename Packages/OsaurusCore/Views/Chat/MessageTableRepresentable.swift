@@ -27,6 +27,35 @@ enum MessageSection: Hashable {
     case main
 }
 
+// MARK: - CenteredMessageScrollView
+
+/// NSScrollView subclass that centers message content at up to `maxContentWidth`
+/// while keeping the scrollbar pinned to the view's right edge.
+final class CenteredMessageScrollView: NSScrollView {
+    var maxContentWidth: CGFloat = 1100
+
+    override func tile() {
+        let hInset = max(0, (bounds.width - maxContentWidth) / 2)
+        if contentInsets.left != hInset || contentInsets.right != hInset {
+            contentInsets = NSEdgeInsets(
+                top: contentInsets.top,
+                left: hInset,
+                bottom: contentInsets.bottom,
+                right: hInset
+            )
+        }
+        super.tile()
+        // overlay scrollers sit at the clip view's right edge (inside the inset).
+        // move them back to the scroll view's true right edge.
+        if hInset > 0, let vs = verticalScroller {
+            var f = vs.frame
+            f.origin.x = bounds.width - f.width
+            vs.frame = f
+        }
+        (documentView as? NSTableView)?.sizeLastColumnToFit()
+    }
+}
+
 // MARK: - MessageTableRepresentable
 
 struct MessageTableRepresentable: NSViewRepresentable {
@@ -121,7 +150,7 @@ struct MessageTableRepresentable: NSViewRepresentable {
             autoScrollEnabled: autoScrollEnabled
         )
 
-        // ensure the table column fills the scroll view width after layout changes
+        // ensure the table column fills the (now-inset) clip view width
         coordinator.tableView?.sizeLastColumnToFit()
     }
 
@@ -201,8 +230,8 @@ struct MessageTableRepresentable: NSViewRepresentable {
         return tv
     }
 
-    private static func makeScrollView(documentView: NSView) -> NSScrollView {
-        let sv = NSScrollView()
+    private static func makeScrollView(documentView: NSView) -> CenteredMessageScrollView {
+        let sv = CenteredMessageScrollView()
         sv.documentView = documentView
         sv.hasVerticalScroller = true
         sv.hasHorizontalScroller = false

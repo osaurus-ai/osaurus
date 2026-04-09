@@ -1333,6 +1333,7 @@ struct ChatView: View {
         GeometryReader { proxy in
             let sidebarWidth: CGFloat = windowState.showSidebar ? 240 : 0
             let chatWidth = proxy.size.width - sidebarWidth
+            let effectiveContentWidth = min(chatWidth, 1100)
 
             HStack(alignment: .top, spacing: 0) {
                 // Sidebar
@@ -1380,7 +1381,7 @@ struct ChatView: View {
                     // Background
                     chatBackground
 
-                    // Main content
+                    // Main content — centered with a max readable width
                     VStack(spacing: 0) {
                         // Header
                         chatHeader
@@ -1417,7 +1418,7 @@ struct ChatView: View {
                                 .transition(.opacity.combined(with: .scale(scale: 0.98)))
                             } else {
                                 // Message thread
-                                messageThread(chatWidth)
+                                messageThread(effectiveContentWidth)
                                     .transition(.opacity.combined(with: .move(edge: .bottom)))
                             }
 
@@ -1447,6 +1448,8 @@ struct ChatView: View {
                                 windowId: windowState.windowId,
                                 isCompact: windowState.showSidebar
                             )
+                            .frame(maxWidth: 1100)
+                            .frame(maxWidth: .infinity)
                         } else {
                             // No models empty state
                             ChatEmptyState(
