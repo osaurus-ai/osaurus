@@ -136,6 +136,18 @@ public final class APIKeyManager: @unchecked Sendable {
         }
     }
 
+    /// Revoke an access key and remove it from the key list entirely.
+    /// Use this for temporary keys that should leave no trace after deletion.
+    public func delete(id: UUID) {
+        queue.sync(flags: .barrier) {
+            guard let index = keys.firstIndex(where: { $0.id == id }) else { return }
+            let key = keys[index]
+            RevocationStore.shared.revokeKey(address: key.iss, nonce: key.nonce)
+            keys.remove(at: index)
+            Self.saveToKeychain(keys)
+        }
+    }
+
     // MARK: - List
 
     public func listKeys() -> [AccessKeyInfo] {

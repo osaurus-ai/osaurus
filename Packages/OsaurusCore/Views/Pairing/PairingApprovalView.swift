@@ -11,13 +11,15 @@ import SwiftUI
 struct PairingApprovalView: View {
     let agentName: String
     let connectorAddress: OsaurusID
-    let onAllow: () -> Void
+    /// Called with `isPermanent` when the user approves.
+    let onAllow: (Bool) -> Void
     let onDeny: () -> Void
 
     @ObservedObject private var themeManager = ThemeManager.shared
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
     @State private var appeared = false
+    @State private var isPermanent = false
 
     private var cardGradient: LinearGradient {
         LinearGradient(
@@ -44,6 +46,16 @@ struct PairingApprovalView: View {
                     .padding(.horizontal, 24)
                     .opacity(appeared ? 1 : 0)
                     .offset(y: appeared ? 0 : 4)
+
+                Toggle(isOn: $isPermanent) {
+                    Text("Remember this device", bundle: .module)
+                        .font(.system(size: 13))
+                        .foregroundColor(theme.primaryText)
+                }
+                .toggleStyle(.checkbox)
+                .padding(.top, 12)
+                .padding(.horizontal, 24)
+                .opacity(appeared ? 1 : 0)
 
                 Rectangle()
                     .fill(theme.primaryBorder.opacity(0.3))
@@ -157,7 +169,7 @@ struct PairingApprovalView: View {
                 icon: "checkmark",
                 isPrimary: true,
                 color: theme.successColor,
-                action: onAllow
+                action: { onAllow(isPermanent) }
             )
         }
     }

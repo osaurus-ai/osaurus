@@ -16,22 +16,25 @@ enum PairingPromptService {
     private static var globalKeyMonitor: Any?
     private static var closeObserver: NSObjectProtocol?
 
-    static func requestApproval(connectorAddress: OsaurusID, agentName: String) async -> Bool {
+    static func requestApproval(
+        connectorAddress: OsaurusID,
+        agentName: String
+    ) async -> (approved: Bool, isPermanent: Bool) {
         return await withCheckedContinuation { continuation in
             var hasResumed = false
 
-            let onAllow = {
+            let onAllow = { (isPermanent: Bool) in
                 guard !hasResumed else { return }
                 hasResumed = true
                 dismissWindow()
-                continuation.resume(returning: true)
+                continuation.resume(returning: (approved: true, isPermanent: isPermanent))
             }
 
             let onDeny = {
                 guard !hasResumed else { return }
                 hasResumed = true
                 dismissWindow()
-                continuation.resume(returning: false)
+                continuation.resume(returning: (approved: false, isPermanent: false))
             }
 
             let themeManager = ThemeManager.shared
@@ -94,8 +97,8 @@ enum PairingPromptService {
             }
 
             let handleKeyEvent: (NSEvent) -> Bool = { event in
-                if event.keyCode == 36 {  // Enter
-                    onAllow()
+                if event.keyCode == 36 {  // Enter — approve as temporary (checkbox state drives permanent)
+                    onAllow(false)
                     return true
                 } else if event.keyCode == 53 {  // Escape
                     onDeny()

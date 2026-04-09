@@ -1509,6 +1509,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     private struct PairResponse: Codable {
         let agentAddress: String
         let apiKey: String
+        let isPermanent: Bool
     }
 
     /// POST /pair — unauthenticated endpoint for cryptographic Bonjour pairing.
@@ -1547,6 +1548,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logStartTime = startTime
         let logUserAgent = userAgent
         let logRequestBody = requestBodyString
+        // Strip port from Host header (e.g. "device.local:1337" → "device.local")
+        let pairingHost = (head.headers.first(name: "Host") ?? "unknown")
+            .components(separatedBy: ":").first ?? "unknown"
 
         Task(priority: .userInitiated) {
             // 1. Verify the connector's signature over the nonce.
@@ -1586,12 +1590,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             }
 
             // 3. Show the approval popup on the advertiser's device.
-            let approved = await PairingPromptService.requestApproval(
+            let approval = await PairingPromptService.requestApproval(
                 connectorAddress: req.connectorAddress,
                 agentName: agent.name
             )
 
-            guard approved else {
+            guard approval.approved else {
                 hop {
                     var headers = [("Content-Type", "application/json; charset=utf-8")]
                     headers.append(contentsOf: cors)
@@ -1602,13 +1606,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 return
             }
 
+            let isPermanent = approval.isPermanent
+
             // 4. Generate a master-scoped osk-v1 API key (agentIndex: nil) so its
             //    aud == masterAddress, which always passes the server validator's
             //    audience check regardless of which agent the connector targets.
             //    This triggers biometric auth to access the Master Key.
-            let shortAddr = String(req.connectorAddress.prefix(10))
-            let label = "Paired – \(shortAddr)"
-            guard let (fullKey, _) = try? APIKeyManager.shared.generate(
+            let label = "Paired – \(pairingHost)"
+            guard let (fullKey, keyInfo) = try? APIKeyManager.shared.generate(
                 label: label,
                 expiration: .never,
                 agentIndex: nil
@@ -1623,8 +1628,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 return
             }
 
-            // 5. Return the agent's address and the generated API key.
-            let response = PairResponse(agentAddress: agentAddress, apiKey: fullKey)
+            // Temporary keys are revoked and removed from the key list on app exit.
+            if !isPermanent {
+                TemporaryPairedKeyStore.shared.register(keyId: keyInfo.id)
+            }
+
+            // 5. Return the agent's address, the generated API key, and the permanence flag.
+            let response = PairResponse(agentAddress: agentAddress, apiKey: fullKey, isPermanent: isPermanent)
             let json = (try? JSONEncoder().encode(response)).map { String(decoding: $0, as: UTF8.self) } ?? #"{"error":"Encoding failed"}"#
 
             hop {
