@@ -38,6 +38,7 @@ enum ContentBlockKind: Equatable {
     case generationStats(ttft: TimeInterval?, tokensPerSecond: Double?, tokenCount: Int?)
     case typingIndicator
     case groupSpacer
+    case chart(spec: ChartSpec)
 
     /// Custom Equatable optimized for performance during streaming.
     /// Uses text length comparison as a cheap proxy for content change detection.
@@ -85,6 +86,9 @@ enum ContentBlockKind: Equatable {
         case (.groupSpacer, .groupSpacer):
             return true
 
+        case let (.chart(lSpec), .chart(rSpec)):
+            return lSpec == rSpec
+
         default:
             return false
         }
@@ -105,7 +109,7 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
         case let .header(role, _, _): return role
         case let .paragraph(_, _, _, role): return role
         case .toolCallGroup, .thinking, .sharedArtifact, .pendingToolCall, .preflightCapabilities,
-            .generationStats, .typingIndicator, .groupSpacer:
+            .generationStats, .typingIndicator, .groupSpacer, .chart:
             return .assistant
         case .userMessage: return .user
         }
@@ -248,6 +252,15 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
         let turnId = associatedWithTurnId ?? afterTurnId
         return ContentBlock(id: "spacer-\(afterTurnId.uuidString)", turnId: turnId, kind: .groupSpacer, position: .only)
     }
+
+    static func chart(turnId: UUID, spec: ChartSpec, position: BlockPosition) -> ContentBlock {
+        ContentBlock(
+            id: "chart-\(turnId.uuidString)",
+            turnId: turnId,
+            kind: .chart(spec: spec),
+            position: position
+        )
+    }
 }
 
 // MARK: - Block Generation
@@ -329,16 +342,13 @@ extension ContentBlock {
                 // during streaming, skip the regex-based metadata strip (O(n) on every sync).
                 // visibleContent is used for the final render once streaming ends.
                 let text = isStreaming ? turn.content : turn.visibleContent
-                turnBlocks.append(
-                    .paragraph(
-                        turnId: turn.id,
-                        index: 0,
-                        text: text,
-                        isStreaming: isStreaming && turn.pendingToolName == nil,
-                        role: turn.role,
-                        position: .middle
-                    )
+                let chartBlocks = Self.extractChartBlocks(
+                    from: text,
+                    turnId: turn.id,
+                    isStreaming: isStreaming && turn.pendingToolName == nil,
+                    role: turn.role
                 )
+                turnBlocks.append(contentsOf: chartBlocks)
             }
 
             if isStreaming && turn.contentIsEmpty && !turn.hasThinking
@@ -375,6 +385,15 @@ extension ContentBlock {
                             regularItems = []
                         }
                         turnBlocks.append(.sharedArtifact(turnId: turn.id, artifact: artifact, position: .middle))
+                    } else if call.function.name == "render_chart",
+                        let result,
+                        let spec = Self.parseChartSpecFromResult(result)
+                    {
+                        if !regularItems.isEmpty {
+                            turnBlocks.append(.toolCallGroup(turnId: turn.id, calls: regularItems, position: .middle))
+                            regularItems = []
+                        }
+                        turnBlocks.append(.chart(turnId: turn.id, spec: spec.normalized, position: .middle))
                     } else {
                         regularItems.append(ToolCallItem(call: call, result: result))
                     }
@@ -421,6 +440,88 @@ extension ContentBlock {
     /// Reconstructs a SharedArtifact from an enriched share_artifact tool result.
     private static func parseSharedArtifactFromResult(_ result: String) -> SharedArtifact? {
         SharedArtifact.fromEnrichedToolResult(result)
+    }
+
+    /// Parses a ChartSpec from a render_chart tool result marker.
+    private static func parseChartSpecFromResult(_ result: String) -> ChartSpec? {
+        guard let start = result.range(of: "---CHART_START---\n"),
+              let end   = result.range(of: "\n---CHART_END---")
+        else { return nil }
+        let json = String(result[start.upperBound..<end.lowerBound])
+        guard let data = json.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(ChartSpec.self, from: data)
+    }
+
+    /// Splits text into paragraph and chart blocks by detecting ```chart fenced blocks.
+    /// During streaming, incomplete fences (no closing ```) are left as plain paragraphs
+    /// and re-evaluated on the next sync once the closing fence arrives.
+    private static func extractChartBlocks(
+        from text: String,
+        turnId: UUID,
+        isStreaming: Bool,
+        role: MessageRole
+    ) -> [ContentBlock] {
+        let fence = "```chart"
+        guard text.contains(fence) else {
+            return [.paragraph(turnId: turnId, index: 0, text: text,
+                               isStreaming: isStreaming, role: role, position: .middle)]
+        }
+
+        var blocks: [ContentBlock] = []
+        var remaining = text
+        var paraIndex = 0
+
+        while let fenceStart = remaining.range(of: fence) {
+            let before = String(remaining[..<fenceStart.lowerBound])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !before.isEmpty {
+                blocks.append(.paragraph(turnId: turnId, index: paraIndex,
+                                         text: before, isStreaming: false,
+                                         role: role, position: .middle))
+                paraIndex += 1
+            }
+
+            let afterFence = remaining[fenceStart.upperBound...]
+            if let closeRange = afterFence.range(of: "```") {
+                let json = String(afterFence[..<closeRange.lowerBound])
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                remaining = String(afterFence[closeRange.upperBound...])
+
+                if let data = json.data(using: .utf8),
+                   let spec = try? JSONDecoder().decode(ChartSpec.self, from: data)
+                {
+                    blocks.append(.chart(turnId: turnId, spec: spec.normalized, position: .middle))
+                } else {
+                    // Malformed JSON — show as readable code block so user can see what was emitted
+                    let errText = "⚠️ Could not render chart — invalid spec:\n```\n\(json)\n```"
+                    blocks.append(.paragraph(turnId: turnId, index: paraIndex,
+                                             text: errText, isStreaming: false,
+                                             role: role, position: .middle))
+                    paraIndex += 1
+                }
+            } else {
+                // No closing fence yet — streaming in progress; leave as plain text for now
+                let partialText = fence + String(afterFence)
+                blocks.append(.paragraph(turnId: turnId, index: paraIndex,
+                                         text: partialText, isStreaming: isStreaming,
+                                         role: role, position: .middle))
+                paraIndex += 1
+                remaining = ""
+                break
+            }
+        }
+
+        let tail = remaining.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !tail.isEmpty {
+            blocks.append(.paragraph(turnId: turnId, index: paraIndex,
+                                     text: tail, isStreaming: isStreaming,
+                                     role: role, position: .middle))
+        }
+
+        return blocks.isEmpty
+            ? [.paragraph(turnId: turnId, index: 0, text: text,
+                           isStreaming: isStreaming, role: role, position: .middle)]
+            : blocks
     }
 
     private static func assignPositions(to blocks: [ContentBlock]) -> [ContentBlock] {

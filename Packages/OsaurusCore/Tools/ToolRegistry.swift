@@ -97,6 +97,7 @@ final class ToolRegistry: ObservableObject {
             SearchConversationsTool(),
             SearchSummariesTool(),
             SearchGraphTool(),
+            RenderChartTool(),
         ]
         var configChanged = false
         for tool in builtIns {

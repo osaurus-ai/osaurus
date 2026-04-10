@@ -22,6 +22,7 @@ let package = Package(
         .package(path: "../OsaurusRepository"),
         .package(url: "https://github.com/mgriebling/SwiftMath", from: "1.7.3"),
         .package(url: "https://github.com/raspu/Highlightr", from: "2.3.0"),
+        .package(url: "https://github.com/AAChartModel/AAChartKit-Swift.git", from: "9.5.0"),
     ],
     targets: [
         .target(
@@ -46,6 +47,7 @@ let package = Package(
                 .product(name: "Containerization", package: "containerization"),
                 .product(name: "ContainerizationExtras", package: "containerization"),
                 .product(name: "Highlightr", package: "Highlightr"),
+                .product(name: "AAInfographics", package: "AAChartKit-Swift"),
             ],
             path: ".",
             exclude: ["Tests"],
