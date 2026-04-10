@@ -1885,10 +1885,11 @@ enum NativeCellHeightEstimator {
             return h + 12 + 24
 
         case let .chart(spec):
-            // cardPadding(12) + title(20+8) + chart(260) + note(6+16) + cardPadding(12) + cell insets(12)
-            var h: CGFloat = 12 + 260 + 12 + 12   // paddings + chart + cell insets
-            if !(spec.title ?? "").isEmpty { h += 20 + 8 }
-            if !(spec.note  ?? "").isEmpty { h += 6 + 16 }
+            var h: CGFloat = NativeChartView.cardPadding + NativeChartView.chartHeight + 12 // top pad + chart + cell insets
+            h += (spec.title ?? "").isEmpty ? 0 : (20 + 4)   // title + gap
+            h += (spec.note  ?? "").isEmpty
+                ? NativeChartView.cardPadding                  // bottom padding only
+                : (6 + 16 + NativeChartView.cardPadding)      // note + bottom padding
             return h
         }
     }
