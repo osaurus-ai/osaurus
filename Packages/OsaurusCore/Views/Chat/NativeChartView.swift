@@ -11,21 +11,45 @@ import AAInfographics
 
 final class NativeChartView: NSView {
 
-    private let card       = NSView()
-    private let titleLabel = NSTextField(labelWithString: "")
-    private let noteLabel  = NSTextField(labelWithString: "")
-    private let chartView  = AAChartView()
+    private let card         = NSView()
+    private let titleLabel   = NSTextField(labelWithString: "")
+    private let typePicker   = NSPopUpButton()
+    private let noteLabel    = NSTextField(labelWithString: "")
+    private let chartView    = AAChartView()
 
     /// Animation runs only on first draw; subsequent spec changes skip animation.
     private var hasDrawn = false
     /// Skip redundant redraws (window focus, resize) when spec hasn't changed.
     private var lastSpec: ChartSpec?
-    /// Cached theme background hex — used to re-apply after WebView loads.
-    private var lastBgHex: String = "#000000"
+    /// Chart type chosen by the user via the picker; overrides spec.chartType until a new spec arrives.
+    private var chartTypeOverride: String?
+    /// Cached theme so the picker action can trigger a redraw with the same theme.
+    private var lastTheme: (any ThemeProtocol)?
 
     // Chart height gives Highcharts enough vertical room for the plot + legend.
     static let chartHeight: CGFloat = 320
     static let cardPadding: CGFloat = 12
+
+    private static let chartTypes: [String] = [
+        "line", "spline", "column", "bar", "area", "areaspline",
+        "pie", "scatter", "bubble", "waterfall",
+    ]
+
+    private static func symbol(for chartType: String) -> String {
+        switch chartType {
+        case "line":       return "chart.xyaxis.line"
+        case "spline":     return "chart.line.uptrend.xyaxis"
+        case "column":     return "chart.bar.fill"
+        case "bar":        return "chart.bar.xaxis.ascending"
+        case "area":       return "chart.line.flattrend.xyaxis.circle.fill"
+        case "areaspline": return "chart.line.uptrend.xyaxis.circle.fill"
+        case "pie":        return "chart.pie.fill"
+        case "scatter":    return "chart.dots.scatter"
+        case "bubble":     return "circle.grid.3x3.fill"
+        case "waterfall":  return "chart.bar.doc.horizontal.fill"
+default:           return "chart.bar.fill"
+        }
+    }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -41,7 +65,6 @@ final class NativeChartView: NSView {
 
         card.wantsLayer = true
         card.layer?.cornerRadius = 12
-        // Subtle border for elevation
         card.layer?.borderWidth  = 1
         card.translatesAutoresizingMaskIntoConstraints = false
         addSubview(card)
@@ -56,6 +79,22 @@ final class NativeChartView: NSView {
         titleLabel.lineBreakMode = .byTruncatingTail
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         card.addSubview(titleLabel)
+
+        // Chart type picker
+        typePicker.removeAllItems()
+        for type in Self.chartTypes {
+            let item = NSMenuItem()
+            item.title = type.capitalized
+            item.image = NSImage(systemSymbolName: Self.symbol(for: type), accessibilityDescription: nil)
+            typePicker.menu?.addItem(item)
+        }
+        typePicker.font = .systemFont(ofSize: 11)
+        typePicker.controlSize = .small
+        typePicker.bezelStyle = .roundRect
+        typePicker.translatesAutoresizingMaskIntoConstraints = false
+        typePicker.target = self
+        typePicker.action = #selector(chartTypeChanged)
+        card.addSubview(typePicker)
 
         // Suppress WKWebView's white background before JS renders
         chartView.setValue(false, forKey: "drawsBackground")
@@ -74,9 +113,13 @@ final class NativeChartView: NSView {
         NSLayoutConstraint.activate([
             titleLabel.topAnchor.constraint(equalTo: card.topAnchor, constant: p),
             titleLabel.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: p),
-            titleLabel.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -p),
+            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: typePicker.leadingAnchor, constant: -8),
+            titleLabel.centerYAnchor.constraint(equalTo: typePicker.centerYAnchor),
 
-            chartView.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 4),
+            typePicker.topAnchor.constraint(equalTo: card.topAnchor, constant: p - 2),
+            typePicker.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -p),
+
+            chartView.topAnchor.constraint(equalTo: typePicker.bottomAnchor, constant: 4),
             chartView.leadingAnchor.constraint(equalTo: card.leadingAnchor),
             chartView.trailingAnchor.constraint(equalTo: card.trailingAnchor),
             chartView.heightAnchor.constraint(equalToConstant: Self.chartHeight),
@@ -95,7 +138,6 @@ final class NativeChartView: NSView {
         let textColor = NSColor(theme.primaryText)
 
         card.layer?.backgroundColor = bgColor.cgColor
-        // Subtle gray border — slightly lighter than the card background
         card.layer?.borderColor = NSColor(theme.primaryBorder).withAlphaComponent(0.25).cgColor
         titleLabel.textColor    = textColor
         noteLabel.textColor     = NSColor(theme.secondaryText)
@@ -110,33 +152,59 @@ final class NativeChartView: NSView {
             noteLabel.isHidden = true
         }
 
-        lastBgHex = bgHex
+        lastTheme = theme
 
         // Skip chart redraw when spec hasn't changed (handles window focus / resize)
         guard spec != lastSpec else { return }
         lastSpec = spec
+        chartTypeOverride = nil   // new spec from model — reset any user override
 
-        let (options, seriesElements) = buildChartModel(from: spec, bgHex: bgHex, textHex: textColor.hexString, theme: theme)
+        // Sync picker to the spec's chart type
+        if let idx = Self.chartTypes.firstIndex(of: spec.chartType) {
+            typePicker.selectItem(at: idx)
+        }
 
-        if !hasDrawn {
+        redraw(spec: spec, bgHex: bgHex, textHex: textColor.hexString, theme: theme)
+    }
+
+    func measuredCardHeight() -> CGFloat {
+        let p = Self.cardPadding
+        let headerH: CGFloat = 24    // picker height + 4pt gap
+        var h = p + headerH
+        h += Self.chartHeight
+        if noteLabel.isHidden {
+            h += p
+        } else {
+            h += 6 + 16 + p
+        }
+        return h
+    }
+
+    // MARK: - Picker action
+
+    @objc private func chartTypeChanged() {
+        guard let spec = lastSpec, let theme = lastTheme else { return }
+        chartTypeOverride = Self.chartTypes[typePicker.indexOfSelectedItem]
+
+        var updated = spec
+        updated.chartType = chartTypeOverride!
+
+        let bgHex   = NSColor(theme.cardBackground).hexString
+        let textHex = NSColor(theme.primaryText).hexString
+        redraw(spec: updated, bgHex: bgHex, textHex: textHex, theme: theme, forceFullRedraw: true)
+    }
+
+    // MARK: - Draw / Refresh
+
+    private func redraw(spec: ChartSpec, bgHex: String, textHex: String, theme: any ThemeProtocol, forceFullRedraw: Bool = false) {
+        let (options, seriesElements) = buildChartModel(from: spec, bgHex: bgHex, textHex: textHex, theme: theme)
+
+        if !hasDrawn || forceFullRedraw {
             hasDrawn = true
             chartView.aa_drawChartWithChartOptions(options)
         } else {
             chartView.aa_onlyRefreshTheChartDataWithChartModelSeries(seriesElements, animation: false)
         }
-    }
-
-    func measuredCardHeight() -> CGFloat {
-        let p = Self.cardPadding
-        var h = p
-        h += titleLabel.isHidden ? 0 : (20 + 4)   // title + gap
-        h += Self.chartHeight
-        if noteLabel.isHidden {
-            h += p                      // chartView → card bottom
-        } else {
-            h += 6 + 16 + p            // gap + note + bottom padding
-        }
-        return h
     }
 
     // MARK: - AAChartModel Builder
@@ -178,7 +246,6 @@ final class NativeChartView: NSView {
             model.colorsTheme(colors)
         }
 
-        // Apply axis label and legend text colors via AAOptions (AAChartModel has no axesTextColor)
         let options = model.aa_toAAOptions()
         let labelStyle = AAStyle().color(textHex).fontSize(11)
         options.xAxis?.labels(AALabels().style(labelStyle))
