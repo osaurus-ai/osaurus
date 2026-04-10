@@ -24,7 +24,7 @@ final class NativeChartView: NSView {
     private var lastBgHex: String = "#000000"
 
     // Chart height gives Highcharts enough vertical room for the plot + legend.
-    static let chartHeight: CGFloat = 300
+    static let chartHeight: CGFloat = 320
     static let cardPadding: CGFloat = 12
 
     override init(frame: CGRect) {
@@ -57,7 +57,8 @@ final class NativeChartView: NSView {
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         card.addSubview(titleLabel)
 
-        // Transparent WKWebView so AAChartKit's chart.backgroundColor controls the background
+        // Suppress WKWebView's white background before JS renders
+        chartView.setValue(false, forKey: "drawsBackground")
         chartView.underPageBackgroundColor = .clear
         chartView.translatesAutoresizingMaskIntoConstraints = false
         card.addSubview(chartView)
@@ -80,11 +81,9 @@ final class NativeChartView: NSView {
             chartView.trailingAnchor.constraint(equalTo: card.trailingAnchor),
             chartView.heightAnchor.constraint(equalToConstant: Self.chartHeight),
 
-            // noteLabel anchors to chartView bottom and defines card bottom
             noteLabel.topAnchor.constraint(equalTo: chartView.bottomAnchor, constant: 6),
             noteLabel.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: p),
             noteLabel.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -p),
-            noteLabel.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -p),
         ])
     }
 
@@ -95,7 +94,6 @@ final class NativeChartView: NSView {
         let bgHex     = bgColor.hexString
         let textColor = NSColor(theme.primaryText)
 
-        // Card chrome
         card.layer?.backgroundColor = bgColor.cgColor
         // Subtle gray border — slightly lighter than the card background
         card.layer?.borderColor = NSColor(theme.primaryBorder).withAlphaComponent(0.25).cgColor
@@ -133,7 +131,11 @@ final class NativeChartView: NSView {
         var h = p
         h += titleLabel.isHidden ? 0 : (20 + 4)   // title + gap
         h += Self.chartHeight
-        h += noteLabel.isHidden ? p : (6 + 16 + p) // bottom padding or note + bottom padding
+        if noteLabel.isHidden {
+            h += p                      // chartView → card bottom
+        } else {
+            h += 6 + 16 + p            // gap + note + bottom padding
+        }
         return h
     }
 
