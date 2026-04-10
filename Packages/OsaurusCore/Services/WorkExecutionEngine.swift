@@ -35,16 +35,28 @@ public actor WorkExecutionEngine {
     /// so this only fires if something is genuinely stuck.
     private static let toolExecutionTimeout: UInt64 = 300
 
+    private func makeToolCall(from invocation: ServiceToolInvocation) -> ToolCall {
+        let callId =
+            invocation.toolCallId
+            ?? "call_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(24))"
+
+        return ToolCall(
+            id: callId,
+            type: "function",
+            function: ToolCallFunction(
+                name: invocation.toolName,
+                arguments: invocation.jsonArguments
+            ),
+            geminiThoughtSignature: invocation.geminiThoughtSignature
+        )
+    }
+
     /// Executes a tool call with a timeout to prevent indefinite hangs.
     private func executeToolCall(
         _ invocation: ServiceToolInvocation,
         issueId: String,
         agentId: UUID? = nil
     ) async throws -> ToolCallResult {
-        let callId =
-            invocation.toolCallId
-            ?? "call_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(24))"
-
         let timeout = Self.toolExecutionTimeout
         let toolName = invocation.toolName
 
@@ -75,15 +87,7 @@ public actor WorkExecutionEngine {
             return "[TIMEOUT] Tool '\(toolName)' did not complete within \(timeout) seconds."
         }
 
-        let toolCall = ToolCall(
-            id: callId,
-            type: "function",
-            function: ToolCallFunction(
-                name: invocation.toolName,
-                arguments: invocation.jsonArguments
-            ),
-            geminiThoughtSignature: invocation.geminiThoughtSignature
-        )
+        let toolCall = makeToolCall(from: invocation)
 
         return ToolCallResult(toolCall: toolCall, result: result)
     }
@@ -463,7 +467,7 @@ public actor WorkExecutionEngine {
                     ChatMessage(
                         role: "user",
                         content:
-                            "[System Notice] \(warningThreshold) iterations remaining. Finish current work and call `complete_task` with a summary. Create issues for anything unfinished."
+                            "[System Notice] \(warningThreshold) iterations remaining. Finish current work and call `complete_task` with status, verification, remaining risks, and remaining work. Create issues for anything unfinished."
                     )
                 )
             }
@@ -589,7 +593,7 @@ public actor WorkExecutionEngine {
                         summary.isEmpty
                         ? String(responseContent.prefix(500))
                         : summary
-                    return .completed(summary: fallback, artifact: nil)
+                    return .completed(summary: fallback, artifact: nil, status: .partial)
                 }
 
                 // Model is reasoning but hasn't called a tool yet - prompt to continue
@@ -617,9 +621,76 @@ public actor WorkExecutionEngine {
             // Check for meta-tool signals before execution
             switch invocation.toolName {
             case "complete_task":
-                // Parse the complete_task arguments to get summary and artifact
-                let (summary, artifact) = parseCompleteTaskArgs(invocation.jsonArguments, taskId: issue.taskId)
-                return .completed(summary: summary, artifact: artifact)
+                switch parseCompleteTaskArgs(invocation.jsonArguments, taskId: issue.taskId) {
+                case .success(let completion):
+                    return .completed(
+                        summary: completion.contract.formattedMessage,
+                        artifact: completion.artifact,
+                        status: completion.contract.status
+                    )
+
+                case .failure(let rejection):
+                    let toolCall = makeToolCall(from: invocation)
+                    let rejectionMessage = "[REJECTED] \(rejection.message)"
+                    let cleanedContent = StringCleaning.stripFunctionCallLeakage(
+                        responseContent,
+                        toolName: invocation.toolName
+                    )
+
+                    if cleanedContent.isEmpty {
+                        messages.append(
+                            ChatMessage(
+                                role: "assistant",
+                                content: nil,
+                                tool_calls: [toolCall],
+                                tool_call_id: nil
+                            )
+                        )
+                    } else {
+                        messages.append(
+                            ChatMessage(
+                                role: "assistant",
+                                content: cleanedContent,
+                                tool_calls: [toolCall],
+                                tool_call_id: nil
+                            )
+                        )
+                    }
+
+                    messages.append(
+                        ChatMessage(
+                            role: "tool",
+                            content: rejectionMessage,
+                            tool_calls: nil,
+                            tool_call_id: toolCall.id
+                        )
+                    )
+                    messages.append(
+                        ChatMessage(
+                            role: "user",
+                            content:
+                                "[System Notice] `complete_task` was rejected. Continue working, gather evidence, and try again with the required structured completion contract."
+                        )
+                    )
+
+                    await onToolCall(invocation.toolName, invocation.jsonArguments, rejectionMessage)
+                    await onStatusUpdate("Completion rejected")
+
+                    _ = try? IssueStore.createEvent(
+                        IssueEvent.withPayload(
+                            issueId: issue.id,
+                            eventType: .toolCallCompleted,
+                            payload: EventPayload.ToolCallCompleted(
+                                toolName: invocation.toolName,
+                                iteration: iteration,
+                                arguments: invocation.jsonArguments,
+                                result: rejectionMessage,
+                                success: false
+                            )
+                        )
+                    )
+                    continue
+                }
 
             case "request_clarification":
                 // Parse clarification request
@@ -785,23 +856,39 @@ public actor WorkExecutionEngine {
         return summaryLines.joined(separator: "\n")
     }
 
+    private struct ParsedCompleteTask {
+        let contract: WorkCompletionContract
+        let artifact: SharedArtifact?
+    }
+
+    private struct CompleteTaskRejection: Error {
+        let message: String
+    }
+
+    private static let completeTaskFormatHint =
+        """
+        `complete_task` requires JSON like {"status":"verified|partial|blocked","summary":"...","verification_performed":"...","remaining_risks":"...","remaining_work":"..."}. Use `none` when no risks or remaining work remain.
+        """
+
     /// Parses complete_task tool arguments
-    private func parseCompleteTaskArgs(_ jsonArgs: String, taskId: String) -> (String, SharedArtifact?) {
-        struct CompleteTaskArgs: Decodable {
-            let summary: String
-            let success: Bool?
-            let artifact: String?
-            let remaining_work: String?
+    private func parseCompleteTaskArgs(_ jsonArgs: String, taskId: String) -> Result<
+        ParsedCompleteTask,
+        CompleteTaskRejection
+    > {
+        guard let data = jsonArgs.data(using: .utf8),
+            let contract = try? JSONDecoder().decode(WorkCompletionContract.self, from: data)
+        else {
+            return .failure(CompleteTaskRejection(message: Self.completeTaskFormatHint))
         }
 
-        guard let data = jsonArgs.data(using: .utf8),
-            let args = try? JSONDecoder().decode(CompleteTaskArgs.self, from: data)
-        else {
-            return ("Task completed", nil)
+        if let validationError = contract.validationError {
+            return .failure(
+                CompleteTaskRejection(message: "\(validationError) \(Self.completeTaskFormatHint)")
+            )
         }
 
         var artifact: SharedArtifact? = nil
-        if let rawContent = args.artifact, !rawContent.isEmpty {
+        if let rawContent = contract.artifact, !rawContent.isEmpty {
             let content =
                 rawContent
                 .replacingOccurrences(of: "\\n", with: "\n")
@@ -825,12 +912,7 @@ public actor WorkExecutionEngine {
             if let artifact { _ = try? IssueStore.createSharedArtifact(artifact) }
         }
 
-        var summary = args.summary
-        if args.success == false, let remaining = args.remaining_work, !remaining.isEmpty {
-            summary += "\nRemaining work: \(remaining)"
-        }
-
-        return (summary, artifact)
+        return .success(ParsedCompleteTask(contract: contract, artifact: artifact))
     }
 
     /// Parses request_clarification tool arguments

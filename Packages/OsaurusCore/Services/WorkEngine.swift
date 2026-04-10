@@ -521,11 +521,12 @@ public actor WorkEngine {
 
         // Handle the loop result
         switch loopResult {
-        case .completed(let summary, let artifact):
+        case .completed(let summary, let artifact, let status):
             activeSession?.messages = messages
             activeSession?.lastExitReason = .completed
             // Close the issue with success
             _ = await IssueManager.shared.closeIssueSafe(issue.id, result: summary)
+            let isSuccessfulCompletion = status.isSuccessfulCompletion
 
             let finalArtifact = artifact
             if let artifact = artifact {
@@ -550,14 +551,14 @@ public actor WorkEngine {
                     issueId: issue.id,
                     eventType: .executionCompleted,
                     payload: EventPayload.ExecutionCompleted(
-                        success: true,
+                        success: isSuccessfulCompletion,
                         discoveries: 0,
                         summary: summary
                     )
                 )
             )
 
-            await delegate?.workEngine(self, didCompleteIssue: issue, success: true)
+            await delegate?.workEngine(self, didCompleteIssue: issue, success: isSuccessfulCompletion)
             clearPersistedExecutionState(issueId: issue.id)
 
             activeSession = nil
@@ -566,9 +567,10 @@ public actor WorkEngine {
 
             return ExecutionResult(
                 issue: issue,
-                success: true,
+                success: isSuccessfulCompletion,
                 message: summary,
-                artifact: finalArtifact
+                artifact: finalArtifact,
+                completionStatus: status
             )
 
         case .interrupted(let resumedMessages, let iteration, let totalToolCalls):

@@ -51,7 +51,8 @@ public enum SystemPromptTemplates {
         - Limit changes to what was requested. No speculative error handling, no premature abstractions, no narrating comments.
         - Start with the answer — no filler, no echoing the user. Be concise.
         - You MUST call `share_artifact` for every output file BEFORE calling `complete_task`. The user sees nothing unless you share it.
-        - Only after sharing all outputs, call `complete_task` with `{"summary": "...", "success": true}`.
+        - Only after sharing all outputs, call `complete_task` with `{"status":"verified","summary":"...","verification_performed":"...","remaining_risks":"none","remaining_work":"none"}`.
+        - If work is unfinished, call `complete_task` with `status: "partial"` or `status: "blocked"` and explain the verification performed, remaining risks, and remaining work.
         - NEVER call `complete_task` without first calling `share_artifact`.
 
         ## Notes
@@ -73,7 +74,7 @@ public enum SystemPromptTemplates {
         - Work step by step. After each tool call, assess what you learned and decide the next action.
         - You do not need to plan everything upfront. Explore, read, understand, then act.
         - If you discover additional work needed, use `create_issue` to track it.
-        - Use `complete_task` as the normal way to finish work once the task is actually verified.
+        - Use `complete_task` as the normal way to finish work once the task is actually verified. If work cannot be fully finished, use `status: "partial"` or `status: "blocked"` instead of pretending it is done.
         - If the task is ambiguous and you cannot make a reasonable assumption, use `request_clarification`.
 
         ## Task Execution
@@ -119,7 +120,8 @@ public enum SystemPromptTemplates {
 
         When the goal is fully achieved:
         1. You MUST call `share_artifact` BEFORE `complete_task`. The user cannot see any files you created unless you explicitly share them. Call `share_artifact` for every output file or directory (images, charts, code, websites, reports, HTML, videos, etc.).
-        2. Only AFTER sharing all outputs, call `complete_task` with `{"summary": "what was accomplished", "success": true}`.
+        2. Only AFTER sharing all outputs, call `complete_task` with `{"status":"verified","summary":"what was accomplished","verification_performed":"tests run / commands executed / manual validation","remaining_risks":"none","remaining_work":"none"}`.
+        3. If the task is incomplete, still use `complete_task`, but set `status` to `partial` or `blocked` and describe the actual verification performed, the remaining risks, and the remaining work.
 
         NEVER call `complete_task` without first calling `share_artifact` for every file the user should see. If you skip `share_artifact`, the user gets nothing.
 
