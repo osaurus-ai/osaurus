@@ -17,6 +17,7 @@ struct OsaurusCLI {
         case list
         case show(String)
         case run(String)
+        case pull(String)
         case mcp
         case ui
         case tools([String])
@@ -39,6 +40,9 @@ struct OsaurusCLI {
             return nil
         case "run":
             if let modelId = rest.first, !modelId.isEmpty { return .run(modelId) }
+            return nil
+        case "pull":
+            if let modelId = rest.first, !modelId.isEmpty { return .pull(modelId) }
             return nil
         case "mcp": return .mcp
         case "ui": return .ui
@@ -72,6 +76,8 @@ struct OsaurusCLI {
             await ShowCommand.execute(args: [modelId])
         case .run(let modelId):
             await RunCommand.execute(args: [modelId])
+        case .pull(let modelId):
+            await PullCommand.execute(args: [modelId])
         case .mcp:
             await MCPCommand.execute(args: [])
         case .ui:
@@ -104,6 +110,7 @@ struct OsaurusCLI {
               osaurus status          Check if the Osaurus server is running
               osaurus list            List available model IDs
               osaurus show <model_id> Show metadata for a model
+              osaurus pull <model_id> Download a model from Hugging Face
               osaurus run <model_id>  Chat with a downloaded model (interactive)
               osaurus ui              Show the Osaurus menu popover in the menu bar
               osaurus tools list      List installed tools
