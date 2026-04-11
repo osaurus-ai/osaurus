@@ -39,6 +39,10 @@ public enum RemoteProviderType: String, Codable, Sendable, CaseIterable {
     case openResponses = "openResponses"  // Open Responses API — used for official OpenAI and any compatible provider
     case gemini = "gemini"  // Google Gemini API
     case osaurus = "osaurus"  // Native Osaurus agent — full server-side execution via /agents/{id}/run
+    // Azure OpenAI uses OpenAI-compatible request/response format but requires:
+    //   - `api-key` header instead of `Authorization: Bearer`
+    //   - URL pattern: https://<resource>.openai.azure.com/openai/deployments/<deployment>/chat/completions?api-version=<version>
+    case azureOpenAI = "azureOpenAI"
 
     public var displayName: String {
         switch self {
@@ -47,6 +51,7 @@ public enum RemoteProviderType: String, Codable, Sendable, CaseIterable {
         case .openResponses: return "Open Responses"
         case .gemini: return "Google Gemini"
         case .osaurus: return "Osaurus Agent"
+        case .azureOpenAI: return "Azure OpenAI"
         }
     }
 
@@ -57,6 +62,7 @@ public enum RemoteProviderType: String, Codable, Sendable, CaseIterable {
         case .openResponses: return "/responses"
         case .gemini: return "/models"  // Actual URL is built dynamically: /models/{model}:generateContent
         case .osaurus: return "/run"  // Unused — full URL built by RemoteProviderService.buildURLRequest
+        case .azureOpenAI: return "/chat/completions"  // Unused — full URL built by RemoteProviderService.buildURLRequest
         }
     }
 
@@ -89,10 +95,28 @@ public struct RemoteProvider: Codable, Identifiable, Sendable, Equatable {
     /// The UUID of the agent on the remote Osaurus server. Only used when providerType == .osaurus.
     public var remoteAgentId: UUID?
 
+    // MARK: - Azure OpenAI specific fields
+
+    /// Azure OpenAI deployment name (replaces model in the URL path).
+    /// Only used when providerType == .azureOpenAI.
+    /// Example: "gpt-4o-deployment"
+    public var azureDeploymentName: String?
+
+    /// Azure OpenAI API version query parameter.
+    /// Only used when providerType == .azureOpenAI.
+    /// Defaults to "2024-02-01" if not set.
+    public var azureAPIVersion: String?
+
+    /// Resolved Azure API version, falling back to the stable default.
+    public var resolvedAzureAPIVersion: String {
+        azureAPIVersion ?? "2024-02-01"
+    }
+
     private enum CodingKeys: String, CodingKey {
         case id, name, host, providerProtocol, port, basePath
         case customHeaders, authType, providerType, enabled, autoConnect, timeout
         case secretHeaderKeys, remoteAgentId
+        case azureDeploymentName, azureAPIVersion
     }
 
     public init(
@@ -109,7 +133,9 @@ public struct RemoteProvider: Codable, Identifiable, Sendable, Equatable {
         autoConnect: Bool = true,
         timeout: TimeInterval = 60,
         secretHeaderKeys: [String] = [],
-        remoteAgentId: UUID? = nil
+        remoteAgentId: UUID? = nil,
+        azureDeploymentName: String? = nil,
+        azureAPIVersion: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -125,6 +151,8 @@ public struct RemoteProvider: Codable, Identifiable, Sendable, Equatable {
         self.timeout = timeout
         self.secretHeaderKeys = secretHeaderKeys
         self.remoteAgentId = remoteAgentId
+        self.azureDeploymentName = azureDeploymentName
+        self.azureAPIVersion = azureAPIVersion
     }
 
     /// Custom decoder – uses `decodeIfPresent` for backward compatibility with older config files.
@@ -146,6 +174,8 @@ public struct RemoteProvider: Codable, Identifiable, Sendable, Equatable {
         timeout = try container.decodeIfPresent(TimeInterval.self, forKey: .timeout) ?? 60
         secretHeaderKeys = try container.decodeIfPresent([String].self, forKey: .secretHeaderKeys) ?? []
         remoteAgentId = try container.decodeIfPresent(UUID.self, forKey: .remoteAgentId)
+        azureDeploymentName = try container.decodeIfPresent(String.self, forKey: .azureDeploymentName)
+        azureAPIVersion = try container.decodeIfPresent(String.self, forKey: .azureAPIVersion)
     }
 
     /// Get the effective port (uses protocol default if not specified)
@@ -210,6 +240,57 @@ public struct RemoteProvider: Codable, Identifiable, Sendable, Equatable {
         return URL(string: base.absoluteString + normalizedEndpoint)
     }
 
+    /// Build the full Azure OpenAI chat completions URL for the configured deployment.
+    ///
+    /// Format: `https://<resource>.openai.azure.com/openai/deployments/<deployment>/chat/completions?api-version=<version>`
+    ///
+    /// - Returns: The fully constructed URL, or `nil` when `azureDeploymentName` is not set
+    ///   or the host cannot be resolved.
+    public func azureChatCompletionsURL() -> URL? {
+        guard let deployment = azureDeploymentName, !deployment.isEmpty else { return nil }
+
+        // Build: scheme://host/openai/deployments/<deployment>/chat/completions?api-version=<version>
+        var components = URLComponents()
+        components.scheme = providerProtocol.rawValue
+
+        // Strip any path from host — Azure resource names never include a path component.
+        var actualHost = host.trimmingCharacters(in: .whitespaces)
+        if let slashIndex = actualHost.firstIndex(of: "/") {
+            actualHost = String(actualHost[..<slashIndex])
+        }
+        components.host = actualHost
+
+        if let port = port, port != providerProtocol.defaultPort {
+            components.port = port
+        }
+
+        components.path = "/openai/deployments/\(deployment)/chat/completions"
+        components.queryItems = [URLQueryItem(name: "api-version", value: resolvedAzureAPIVersion)]
+        return components.url
+    }
+
+    /// Build the Azure OpenAI models list URL.
+    ///
+    /// Format: `https://<resource>.openai.azure.com/openai/models?api-version=<version>`
+    public func azureModelsURL() -> URL? {
+        var components = URLComponents()
+        components.scheme = providerProtocol.rawValue
+
+        var actualHost = host.trimmingCharacters(in: .whitespaces)
+        if let slashIndex = actualHost.firstIndex(of: "/") {
+            actualHost = String(actualHost[..<slashIndex])
+        }
+        components.host = actualHost
+
+        if let port = port, port != providerProtocol.defaultPort {
+            components.port = port
+        }
+
+        components.path = "/openai/models"
+        components.queryItems = [URLQueryItem(name: "api-version", value: resolvedAzureAPIVersion)]
+        return components.url
+    }
+
     /// Display string for the endpoint
     public var displayEndpoint: String {
         // Use the baseURL to get the properly constructed endpoint
@@ -250,6 +331,11 @@ public struct RemoteProvider: Codable, Identifiable, Sendable, Equatable {
             case .gemini:
                 if headers["x-goog-api-key"] == nil {
                     headers["x-goog-api-key"] = apiKey
+                }
+            case .azureOpenAI:
+                // Azure uses `api-key` header instead of `Authorization: Bearer`
+                if headers["api-key"] == nil {
+                    headers["api-key"] = apiKey
                 }
             case .openaiLegacy, .openResponses, .osaurus:
                 if headers["Authorization"] == nil {
