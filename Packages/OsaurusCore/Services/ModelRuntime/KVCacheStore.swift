@@ -319,9 +319,9 @@ struct KVCacheStore {
     /// Returns a **fresh copy** of the prefix cache for this model + content hash.
     ///
     /// Hot-tier path: if the prefix cache is resident in RAM (entry.cache != nil), deep-copy
-    /// all KVCache objects in-memory and return immediately — no SSD I/O.  Each caller gets
-    /// independent objects whose MLXArrays are shared via copy-on-write until generation
-    /// mutates them, keeping the stored hot-tier copy pristine.
+    /// all KVCache objects in-memory and return immediately — no SSD I/O. Each caller gets
+    /// detached MLXArray storage so live generation cannot alias Metal-backed buffers owned by
+    /// the cached entry.
     ///
     /// Cold-tier fallback: if only an SSD path is recorded, load from disk as before.
     mutating func getPrefixCache(modelName: String, hash: String) -> ([any KVCache]?, [Int]?) {
@@ -367,7 +367,7 @@ struct KVCacheStore {
             let kb = bytes / 1024
             kvLog.info("[perf] ssdLoad kind=prefix durationMs=\(loadMs, privacy: .public) kb=\(kb, privacy: .public)")
             print("[KVCacheStore] Prefix cache SSD load (promoted to RAM) \(key.prefix(24)) (\(kb)KB, \(loadMs)ms)")
-            // Return a deep copy so the hot-tier entry stays pristine.
+            // Return a detached copy so the hot-tier entry stays pristine.
             return (Self.deepCopyCache(cache), entry.tokens)
         } catch {
             print("[KVCacheStore] Failed to load prefix cache from SSD: \(error)")
@@ -376,11 +376,73 @@ struct KVCacheStore {
         }
     }
 
-    /// Returns an independent copy of `source` where every KVCache layer is a new
-    /// object of the same concrete type.  The underlying MLXArrays are shared via
-    /// copy-on-write until generation mutates the new copy, so this is very cheap.
+    /// Returns an independent copy of `source`.
+    ///
+    /// Transformer-style KV caches are rebuilt with detached MLXArray storage to
+    /// avoid aliasing live Metal resources between cached snapshots and active
+    /// generation. Other cache families currently fall back to upstream `copy()`
+    /// because the generic MLX readback path is not stable across all cache types.
     static func deepCopyCache(_ source: [any KVCache]) -> [any KVCache] {
-        source.map { $0.copy() }
+        source.map { detachedCloneCache($0) }
+    }
+
+    private static func detachedCloneCache(_ source: any KVCache) -> any KVCache {
+        if let cacheList = source as? CacheList {
+            return detachedCloneCacheList(cacheList)
+        }
+
+        // The crash signature implicated transformer KV caches (`RotatingKVCache`)
+        // whose upstream `copy()` implementation aliases the underlying MLX
+        // storage. Scope the expensive detached clone to that family only.
+        guard var clone = instantiateCacheLike(source) else {
+            return source.copy()
+        }
+
+        let detachedState = source.state.map(detachedCloneArray)
+        if !detachedState.isEmpty {
+            clone.state = detachedState
+        }
+        clone.metaState = source.metaState
+        return clone
+    }
+
+    private static func detachedCloneCacheList(_ source: CacheList) -> any KVCache {
+        if let subcaches = Mirror(reflecting: source).descendant("caches") as? [any KVCache] {
+            return CacheList(subcaches.map { detachedCloneCache($0) })
+        }
+        return source.copy()
+    }
+
+    private static func instantiateCacheLike(_ source: any KVCache) -> (any KVCache)? {
+        switch source {
+        case let chunked as ChunkedKVCache:
+            let chunkSize = chunked.metaState.first.flatMap { $0 == "None" ? nil : Int($0) }
+            return ChunkedKVCache(chunkSize: chunkSize)
+        case is KVCacheSimple:
+            return KVCacheSimple()
+        case let rotating as RotatingKVCache:
+            let maxSize = Int(rotating.metaState.dropFirst().first ?? "") ?? rotating.maxSize
+            guard let maxSize else { return nil }
+            return RotatingKVCache(maxSize: maxSize)
+        case let quantized as any QuantizedKVCacheProtocol:
+            return QuantizedKVCache(
+                groupSize: quantized.groupSize,
+                bits: quantized.bits,
+                mode: quantized.mode
+            )
+        default:
+            return nil
+        }
+    }
+
+    private static func detachedCloneArray(_ source: MLXArray) -> MLXArray {
+        if source.nbytes == 0 || source.size == 0 {
+            // Zero-length cache slices can be represented by null-backed MLX views.
+            // Return a shape-preserving view without touching `asData()` so MLX
+            // never dereferences a missing Metal buffer during snapshot cloning.
+            return source[.ellipsis]
+        }
+        return MLXArray(data: source.asData(access: .copy))
     }
 
     private static let maxPrefixCachesPerModel = 2

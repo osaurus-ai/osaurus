@@ -76,4 +76,59 @@ struct MLXGenerationEngineTests {
         let layers: [any KVCache] = [mamba, kv]
         #expect(effectiveCacheOffset(layers) == 0)
     }
+
+    @Test func hasWrappedRotatingCache_returnsTrueWhenPromptExceedsWindow() {
+        let rotating = RotatingKVCache(maxSize: 1024, keep: 4)
+        let layers: [any KVCache] = [rotating]
+
+        #expect(hasWrappedRotatingCache(layers, cachedTokenCount: 2048))
+    }
+
+    @Test func hasWrappedRotatingCache_returnsFalseWhenPromptFitsWindow() {
+        let rotating = RotatingKVCache(maxSize: 1024, keep: 4)
+        let layers: [any KVCache] = [rotating]
+
+        #expect(!hasWrappedRotatingCache(layers, cachedTokenCount: 1024))
+    }
+
+    @Test func hasWrappedRotatingCache_ignoresNonRotatingLayers() {
+        let kv = KVCacheSimple()
+        let layers: [any KVCache] = [kv]
+
+        #expect(!hasWrappedRotatingCache(layers, cachedTokenCount: 4096))
+    }
+
+    @Test func snapshotCopyByteLimit_capsAtEightGiB() {
+        let limit = MLXGenerationEngine.snapshotCopyByteLimit(
+            physicalMemory: 128 * 1024 * 1024 * 1024
+        )
+
+        #expect(limit == 8 * 1024 * 1024 * 1024)
+    }
+
+    @Test func snapshotCopyByteLimit_reservesOneEighthOfSystemMemory() {
+        let limit = MLXGenerationEngine.snapshotCopyByteLimit(
+            physicalMemory: 32 * 1024 * 1024 * 1024
+        )
+
+        #expect(limit == 4 * 1024 * 1024 * 1024)
+    }
+
+    @Test func shouldSkipSnapshotCopy_trueWhenCacheExceedsLimit() {
+        let skip = MLXGenerationEngine.shouldSkipSnapshotCopy(
+            cacheBytes: 9 * 1024 * 1024 * 1024,
+            physicalMemory: 128 * 1024 * 1024 * 1024
+        )
+
+        #expect(skip)
+    }
+
+    @Test func shouldSkipSnapshotCopy_falseWhenCacheFitsLimit() {
+        let skip = MLXGenerationEngine.shouldSkipSnapshotCopy(
+            cacheBytes: 3 * 1024 * 1024 * 1024,
+            physicalMemory: 32 * 1024 * 1024 * 1024
+        )
+
+        #expect(!skip)
+    }
 }

@@ -46,6 +46,40 @@ struct RuntimeConfig: Sendable {
         )
     }
 
+    func capped(to maxKVCap: Int?) -> RuntimeConfig {
+        capped(maxKVCap: maxKVCap, prefillStepCap: nil)
+    }
+
+    func capped(maxKVCap: Int?, prefillStepCap: Int?) -> RuntimeConfig {
+        let resolvedMaxKV: Int?
+        if let maxKVCap {
+            if let maxKV {
+                resolvedMaxKV = min(maxKV, maxKVCap)
+            } else {
+                resolvedMaxKV = maxKVCap
+            }
+        } else {
+            resolvedMaxKV = maxKV
+        }
+
+        let resolvedPrefillStep: Int
+        if let prefillStepCap {
+            resolvedPrefillStep = min(prefillStep, prefillStepCap)
+        } else {
+            resolvedPrefillStep = prefillStep
+        }
+
+        return RuntimeConfig(
+            topP: topP,
+            kvBits: kvBits,
+            kvGroup: kvGroup,
+            quantStart: quantStart,
+            maxKV: resolvedMaxKV,
+            prefillStep: resolvedPrefillStep,
+            turboQuant: turboQuant
+        )
+    }
+
     /// Auto-enable 8-bit KV cache quantization when the headroom after model
     /// weights is less than 16 GB. Only kicks in when the user hasn't
     /// explicitly configured genKVBits.

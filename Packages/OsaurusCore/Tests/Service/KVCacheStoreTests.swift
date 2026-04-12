@@ -529,6 +529,31 @@ struct KVCacheStoreTests {
         #expect(copy !== src)
     }
 
+    /// RotatingKVCache with an explicit zero-length state should still deep copy
+    /// without touching MLX's raw-byte bridge.
+    @Test func deepCopyCache_rotatingKVCacheWithZeroLengthState() {
+        let src = RotatingKVCache(maxSize: 4)
+        let fullKeys = MLX.zeros([1, 1, 1, 1])
+        let fullValues = MLX.zeros([1, 1, 1, 1])
+        src.state = [
+            fullKeys[.ellipsis, ..<0, 0...],
+            fullValues[.ellipsis, ..<0, 0...],
+        ]
+
+        let copies = KVCacheStore.deepCopyCache([src])
+        #expect(copies.count == 1)
+        guard let copy = copies[0] as? RotatingKVCache else {
+            Issue.record("Expected RotatingKVCache copy")
+            return
+        }
+
+        #expect(copy !== src)
+        #expect(copy.offset == 0)
+        #expect(copy.state.count == 2)
+        #expect(copy.state[0].shape == [1, 1, 0, 1])
+        #expect(copy.state[1].shape == [1, 1, 0, 1])
+    }
+
     /// MambaCache (ArraysCache subtype): deep copy produces MambaCache (not KVCacheSimple).
     @Test func deepCopyCache_mambaCache() {
         let src = MambaCache()
@@ -553,6 +578,21 @@ struct KVCacheStoreTests {
         #expect(copies.count == 2)
         #expect(copies[0] is KVCacheSimple)
         #expect(copies[1] is MambaCache)
+    }
+
+    @Test func deepCopyCache_cacheListPreservesNestedTypes() {
+        let mamba = MambaCache()
+        let rotating = RotatingKVCache(maxSize: 8)
+        let composite = CacheList(mamba, rotating)
+        let copies = KVCacheStore.deepCopyCache([composite])
+
+        guard let copiedList = copies[0] as? CacheList else {
+            Issue.record("Expected CacheList copy")
+            return
+        }
+
+        #expect(copiedList[0] is MambaCache)
+        #expect(copiedList[1] is RotatingKVCache)
     }
 
     // MARK: - saveToDisk: no crash for missing session

@@ -57,6 +57,8 @@ actor ModelRuntime {
     private var currentModelName: String?
     private var kvCacheStore = KVCacheStore()
     private var cachedConfig: RuntimeConfig?
+    private var learnedMaxKVCaps: [String: Int] = [:]
+    private var learnedPrefillStepCaps: [String: Int] = [:]
     private var activeGenerationTask: Task<Void, Never>?
     // modelName:taskHash -> Task
     private var prefixCacheTasks: [String: Task<Void, Never>] = [:]
@@ -141,6 +143,16 @@ actor ModelRuntime {
     /// Invalidates the cached RuntimeConfig so the next request reads fresh values.
     func invalidateConfig() {
         cachedConfig = nil
+        learnedMaxKVCaps.removeAll()
+        learnedPrefillStepCaps.removeAll()
+    }
+
+    func effectiveRuntimeMaxKV(for modelName: String) async -> Int? {
+        let cfg = await getConfig()
+        return cfg.capped(
+            maxKVCap: learnedMaxKVCaps[modelName],
+            prefillStepCap: learnedPrefillStepCaps[modelName]
+        ).maxKV
     }
 
     /// Invalidates the KV cache for a specific session (e.g., on window close).
@@ -280,6 +292,22 @@ actor ModelRuntime {
         guard !modelCache.isEmpty else { return 0 }
         let modelBytes = modelCache.values.reduce(Int64(0)) { $0 + $1.weightsSizeBytes }
         return KVCacheStore.computeBudget(modelWeightsBytes: modelBytes)
+    }
+
+    private func rememberLearnedMaxKV(_ maxKV: Int, for modelName: String) {
+        if let existing = learnedMaxKVCaps[modelName] {
+            learnedMaxKVCaps[modelName] = min(existing, maxKV)
+        } else {
+            learnedMaxKVCaps[modelName] = maxKV
+        }
+    }
+
+    private func rememberLearnedPrefillStep(_ prefillStep: Int, for modelName: String) {
+        if let existing = learnedPrefillStepCaps[modelName] {
+            learnedPrefillStepCaps[modelName] = min(existing, prefillStep)
+        } else {
+            learnedPrefillStepCaps[modelName] = prefillStep
+        }
     }
 
     /// MLX freed-buffer cache limit sized for intermediate activation reuse.
@@ -471,7 +499,10 @@ actor ModelRuntime {
         genLog.info("generateEventStream: start model=\(modelName, privacy: .public)")
 
         let effectiveStopSequences = stopSequences
-        let cfg = await getConfig()
+        let cfg = (await getConfig()).capped(
+            maxKVCap: learnedMaxKVCaps[modelName],
+            prefillStepCap: learnedPrefillStepCaps[modelName]
+        )
         let holder = try await loadContainer(id: modelId, name: modelName)
 
         let wiredPolicy = MLXLMCommon.WiredSumPolicy()
@@ -512,15 +543,15 @@ actor ModelRuntime {
 
         var rawStream: AsyncStream<MLXLMCommon.TokenGeneration>
         var tokenizer: any Tokenizer
-        var cache: [any KVCache]
         var newTokens: [Int]
         var genTask: Task<Void, Never>
         var toolCallFormat: ToolCallFormat
-        // Two-phase prefill sets this to the stable-boundary snapshot instead of the full-prompt snapshot.
-        nonisolated(unsafe) var snapshotCacheOverride: ([any KVCache], [Int])? = nil
+        // `prepareAndGenerate` now always returns a pre-generation snapshot.
+        nonisolated(unsafe) var snapshotCacheToStore: [any KVCache] = []
+        var snapshotTokensToStore: [Int] = []
 
         genLog.info(
-            "generateEventStream: prepareAndGenerate existingCache=\(existingCache != nil, privacy: .public) cachedTokens=\(cachedTokens?.count ?? 0, privacy: .public)"
+            "generateEventStream: prepareAndGenerate existingCache=\(existingCache != nil, privacy: .public) cachedTokens=\(cachedTokens?.count ?? 0, privacy: .public) maxKV=\(cfg.maxKV ?? -1, privacy: .public) prefillStep=\(cfg.prefillStep, privacy: .public)"
         )
 
         // Acquire exclusive Metal access after all throwing setup is complete.
@@ -535,60 +566,99 @@ actor ModelRuntime {
         // The UI shows a spinner; once the first generated token arrives prefillDidFinish() clears it.
         InferenceProgressManager.shared.prefillWillStartAsync(tokenCount: 0)
 
-        do {
-            let genResult = try await MLXGenerationEngine.prepareAndGenerate(
-                container: holder.container,
-                buildChat: buildChat,
-                buildToolsSpec: buildTools,
-                generation: parameters,
-                runtime: cfg,
-                existingCache: existingCache,
-                cachedTokens: cachedTokens,
-                wiredMemoryTicket: wiredTicket
-            )
-            (rawStream, tokenizer, cache, newTokens, genTask, toolCallFormat) = (
-                genResult.stream, genResult.tokenizer, genResult.cache,
-                genResult.promptTokens, genResult.genTask, genResult.toolCallFormat
-            )
-            // For two-phase prefill, override snapshot with the stable-boundary snapshot.
-            if let snapCache = genResult.snapshotCache, let snapTokens = genResult.snapshotTokens {
-                snapshotCacheOverride = (snapCache, snapTokens)
-            }
-        } catch {
-            genLog.error(
-                "generateEventStream: prepareAndGenerate failed (cache retry): \(error.localizedDescription, privacy: .public)"
-            )
-            guard existingCache != nil else {
-                InferenceProgressManager.shared.prefillDidFinishAsync()
-                await MetalGate.shared.exitGeneration()
-                throw error
-            }
-            genLog.warning("Cache incompatible, retrying: \(error.localizedDescription, privacy: .public)")
-            invalidateCaches(sessionId: sessionId, modelName: modelName, prefixHash: prefixHash)
-            // Re-signal for the retry prefill (still unknown count).
-            InferenceProgressManager.shared.prefillWillStartAsync(tokenCount: 0)
+        var runtimeConfig = cfg
+        nonisolated(unsafe) var attemptCache = existingCache
+        let initialCachedTokens = cachedTokens
+        var attemptCachedTokens = initialCachedTokens
+        var retriedWithoutCache = false
+        var lastMetalAllocationRequestedBytes: Int64?
+
+        while true {
             do {
-                let retryResult = try await MLXGenerationEngine.prepareAndGenerate(
+                let genResult = try await MLXGenerationEngine.prepareAndGenerate(
                     container: holder.container,
                     buildChat: buildChat,
                     buildToolsSpec: buildTools,
                     generation: parameters,
-                    runtime: cfg,
-                    existingCache: nil,
-                    cachedTokens: nil,
+                    runtime: runtimeConfig,
+                    existingCache: attemptCache,
+                    cachedTokens: attemptCachedTokens,
                     wiredMemoryTicket: wiredTicket
                 )
-                (rawStream, tokenizer, cache, newTokens, genTask, toolCallFormat) = (
-                    retryResult.stream, retryResult.tokenizer, retryResult.cache,
-                    retryResult.promptTokens, retryResult.genTask, retryResult.toolCallFormat
-                )
-                if let snapCache = retryResult.snapshotCache, let snapTokens = retryResult.snapshotTokens {
-                    snapshotCacheOverride = (snapCache, snapTokens)
-                }
+                rawStream = genResult.stream
+                tokenizer = genResult.tokenizer
+                newTokens = genResult.promptTokens
+                genTask = genResult.genTask
+                toolCallFormat = genResult.toolCallFormat
+                snapshotCacheToStore = genResult.snapshotCache
+                snapshotTokensToStore = genResult.snapshotTokens
+                break
             } catch {
-                InferenceProgressManager.shared.prefillDidFinishAsync()
-                await MetalGate.shared.exitGeneration()
-                throw error
+                let description = error.localizedDescription
+                let requestedBytes = Self.metalAllocationFailureBytes(from: description)?.requestedBytes
+                let shouldPreferPrefillStep = Self.metalAllocationRetryShouldPreferPrefillStep(
+                    previousRequestedBytes: lastMetalAllocationRequestedBytes,
+                    currentRequestedBytes: requestedBytes
+                )
+                if let reducedMaxKV = Self.adaptiveMaxKVForMetalAllocationFailure(
+                    currentMaxKV: runtimeConfig.maxKV,
+                    errorDescription: description
+                ), !shouldPreferPrefillStep {
+                    let previousMaxKV = runtimeConfig.maxKV ?? -1
+                    runtimeConfig = runtimeConfig.capped(
+                        maxKVCap: reducedMaxKV,
+                        prefillStepCap: runtimeConfig.prefillStep
+                    )
+                    rememberLearnedMaxKV(reducedMaxKV, for: modelName)
+                    invalidateCaches(sessionId: sessionId, modelName: modelName, prefixHash: prefixHash)
+                    attemptCache = nil
+                    attemptCachedTokens = nil
+                    retriedWithoutCache = true
+                    lastMetalAllocationRequestedBytes = requestedBytes
+                    genLog.warning(
+                        "generateEventStream: metal allocation failed for maxKV=\(previousMaxKV, privacy: .public), retrying with maxKV=\(reducedMaxKV, privacy: .public): \(description, privacy: .public)"
+                    )
+                    InferenceProgressManager.shared.prefillWillStartAsync(tokenCount: 0)
+                    continue
+                }
+
+                if let reducedPrefillStep = Self.adaptivePrefillStepForMetalAllocationFailure(
+                    currentPrefillStep: runtimeConfig.prefillStep,
+                    errorDescription: description
+                ) {
+                    let previousPrefillStep = runtimeConfig.prefillStep
+                    runtimeConfig = runtimeConfig.capped(
+                        maxKVCap: runtimeConfig.maxKV,
+                        prefillStepCap: reducedPrefillStep
+                    )
+                    rememberLearnedPrefillStep(reducedPrefillStep, for: modelName)
+                    invalidateCaches(sessionId: sessionId, modelName: modelName, prefixHash: prefixHash)
+                    attemptCache = nil
+                    attemptCachedTokens = nil
+                    retriedWithoutCache = true
+                    lastMetalAllocationRequestedBytes = requestedBytes
+                    genLog.warning(
+                        "generateEventStream: metal allocation failed for prefillStep=\(previousPrefillStep, privacy: .public), retrying with prefillStep=\(reducedPrefillStep, privacy: .public): \(description, privacy: .public)"
+                    )
+                    InferenceProgressManager.shared.prefillWillStartAsync(tokenCount: 0)
+                    continue
+                }
+
+                lastMetalAllocationRequestedBytes = requestedBytes
+                genLog.error(
+                    "generateEventStream: prepareAndGenerate failed: \(description, privacy: .public)"
+                )
+                guard attemptCache != nil, !retriedWithoutCache else {
+                    InferenceProgressManager.shared.prefillDidFinishAsync()
+                    await MetalGate.shared.exitGeneration()
+                    throw error
+                }
+                genLog.warning("Cache incompatible, retrying: \(description, privacy: .public)")
+                invalidateCaches(sessionId: sessionId, modelName: modelName, prefixHash: prefixHash)
+                attemptCache = nil
+                attemptCachedTokens = nil
+                retriedWithoutCache = true
+                InferenceProgressManager.shared.prefillWillStartAsync(tokenCount: 0)
             }
         }
         genLog.info("generateEventStream: stream created tokenCount=\(newTokens.count, privacy: .public)")
@@ -610,38 +680,24 @@ actor ModelRuntime {
         }
         activeGenerationTask = gatedGenTask
 
-        // Store a pre-generation snapshot of the cache immediately after prefill.
-        //
-        // Standard (single-phase) path: snapshot the full-prompt cache keyed by `newTokens`.
-        // Two-phase path: use the stable-boundary snapshot from prepareAndGenerate (keyed by
-        // stableTokens, before gen-prefix). This ensures the next turn's common-prefix check
-        // hits exactly at cacheOffset, with toTrim == 0, even for MambaCache models.
-        if let sid = sessionId {
-            let (snapCacheToStore, snapTokensToStore): ([any KVCache], [Int])
-            if let override = snapshotCacheOverride {
-                // Two-phase: store the stable-boundary snapshot already deep-copied inside engine.
-                snapCacheToStore = override.0
-                snapTokensToStore = override.1
-                genLog.info("twoPhase snapshot override: stableTokens=\(snapTokensToStore.count, privacy: .public)")
-            } else {
-                // Single-phase: snapshot full-prompt cache now.
-                snapCacheToStore = KVCacheStore.deepCopyCache(cache)
-                snapTokensToStore = newTokens
-            }
-            let arraysToEval = snapCacheToStore.flatMap { $0.state }
-            if !arraysToEval.isEmpty { try? withError { eval(arraysToEval) } }
+        // Store the pre-generation snapshot returned by prepareAndGenerate.
+        // In the standard path this is keyed by `newTokens`; in the two-phase
+        // path it is keyed by the stable boundary before the generation prefix.
+        if let sid = sessionId, !snapshotCacheToStore.isEmpty, !snapshotTokensToStore.isEmpty {
             kvCacheStore.putCache(
                 sessionId: sid,
-                cache: snapCacheToStore,
-                tokens: snapTokensToStore,
+                cache: snapshotCacheToStore,
+                tokens: snapshotTokensToStore,
                 modelName: modelName
             )
             let budget = currentKVBudget()
             kvCacheStore.ensureBudget(budget)
-            let snapshotOffset = effectiveCacheOffset(snapCacheToStore)
+            let snapshotOffset = effectiveCacheOffset(snapshotCacheToStore)
             genLog.info(
-                "pre-gen snapshot stored session=\(sid.prefix(8), privacy: .public) tokens=\(snapTokensToStore.count, privacy: .public) offset=\(snapshotOffset, privacy: .public)"
+                "pre-gen snapshot stored session=\(sid.prefix(8), privacy: .public) tokens=\(snapshotTokensToStore.count, privacy: .public) offset=\(snapshotOffset, privacy: .public)"
             )
+        } else if let sid = sessionId {
+            genLog.warning("pre-gen snapshot skipped session=\(sid.prefix(8), privacy: .public)")
         }
 
         // Thread the tokenizer into StreamAccumulator so it can decode token IDs to text.
@@ -800,6 +856,81 @@ actor ModelRuntime {
         let combined = systemContent + "\0" + tools
         let digest = SHA256.hash(data: Data(combined.utf8))
         return digest.prefix(16).map { String(format: "%02x", $0) }.joined()
+    }
+
+    nonisolated static func adaptiveMaxKVForMetalAllocationFailure(
+        currentMaxKV: Int?,
+        errorDescription: String
+    ) -> Int? {
+        guard let currentMaxKV, currentMaxKV > 4096 else { return nil }
+
+        let normalized = errorDescription.lowercased()
+        guard
+            normalized.contains("metal::malloc"),
+            normalized.contains("maximum allowed buffer size")
+        else {
+            return nil
+        }
+
+        let targetMaxKV: Int
+        if let allocation = metalAllocationFailureBytes(from: errorDescription) {
+            let safetyFactor = Double(allocation.allowedBytes) / Double(allocation.requestedBytes) * 0.9
+            targetMaxKV = Int(Double(currentMaxKV) * safetyFactor)
+        } else {
+            targetMaxKV = currentMaxKV / 2
+        }
+
+        let rounded = max(4096, (targetMaxKV / 1024) * 1024)
+        guard rounded < currentMaxKV else {
+            let halved = max(4096, ((currentMaxKV / 2) / 1024) * 1024)
+            return halved < currentMaxKV ? halved : nil
+        }
+        return rounded
+    }
+
+    nonisolated static func adaptivePrefillStepForMetalAllocationFailure(
+        currentPrefillStep: Int,
+        errorDescription: String
+    ) -> Int? {
+        let minimumPrefillStep = 256
+        guard currentPrefillStep > minimumPrefillStep else { return nil }
+
+        let normalized = errorDescription.lowercased()
+        guard
+            normalized.contains("metal::malloc"),
+            normalized.contains("maximum allowed buffer size")
+        else {
+            return nil
+        }
+
+        let halved = max(minimumPrefillStep, ((currentPrefillStep / 2) / 256) * 256)
+        return halved < currentPrefillStep ? halved : nil
+    }
+
+    nonisolated static func metalAllocationRetryShouldPreferPrefillStep(
+        previousRequestedBytes: Int64?,
+        currentRequestedBytes: Int64?
+    ) -> Bool {
+        guard let previousRequestedBytes, let currentRequestedBytes else { return false }
+        return currentRequestedBytes >= Int64(Double(previousRequestedBytes) * 0.98)
+    }
+
+    nonisolated static func metalAllocationFailureBytes(
+        from errorDescription: String
+    ) -> (requestedBytes: Int64, allowedBytes: Int64)? {
+        let pattern =
+            #"Attempting to allocate ([0-9]+) bytes which is greater than the maximum allowed buffer size of ([0-9]+) bytes"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+        let range = NSRange(errorDescription.startIndex..., in: errorDescription)
+        guard let match = regex.firstMatch(in: errorDescription, range: range), match.numberOfRanges == 3,
+            let requestedRange = Range(match.range(at: 1), in: errorDescription),
+            let allowedRange = Range(match.range(at: 2), in: errorDescription),
+            let requestedBytes = Int64(errorDescription[requestedRange]),
+            let allowedBytes = Int64(errorDescription[allowedRange])
+        else {
+            return nil
+        }
+        return (requestedBytes, allowedBytes)
     }
 
     nonisolated static func makeGenerateParameters(

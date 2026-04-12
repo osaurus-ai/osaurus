@@ -36,9 +36,21 @@ func effectiveCacheOffset(_ cache: [any KVCache]) -> Int {
     return cache.first?.offset ?? 0
 }
 
+/// Prefix-based cache reuse is unsafe once a rotating cache has wrapped past its
+/// window because the retained state corresponds to a suffix of the prompt, not a
+/// true prefix. In that case callers must rebuild the cache from scratch.
+func hasWrappedRotatingCache(_ cache: [any KVCache], cachedTokenCount: Int) -> Bool {
+    cache.contains { layer in
+        guard layer is RotatingKVCache, let maxSize = layer.maxSize else { return false }
+        return cachedTokenCount > maxSize
+    }
+}
+
 struct MLXGenerationEngine {
 
     private static let maxImageSize = CGSize(width: 1024, height: 1024)
+    private static let minimumSnapshotCopyBytes = Int64(512 * 1024 * 1024)
+    private static let maximumSnapshotCopyBytes = Int64(8 * 1024 * 1024 * 1024)
 
     private static func downscaleIfNeeded(_ image: CIImage) -> CIImage {
         let scale = min(MediaProcessing.bestFitScale(image.extent.size, in: maxImageSize), 1.0)
@@ -63,6 +75,34 @@ struct MLXGenerationEngine {
                 videos: message.videos
             )
         }
+    }
+
+    static func snapshotCopyByteLimit(physicalMemory: UInt64 = ProcessInfo.processInfo.physicalMemory) -> Int64 {
+        let adaptiveLimit = Int64(physicalMemory / 8)
+        return max(minimumSnapshotCopyBytes, min(adaptiveLimit, maximumSnapshotCopyBytes))
+    }
+
+    static func shouldSkipSnapshotCopy(
+        cacheBytes: Int64,
+        physicalMemory: UInt64 = ProcessInfo.processInfo.physicalMemory
+    ) -> Bool {
+        cacheBytes > snapshotCopyByteLimit(physicalMemory: physicalMemory)
+    }
+
+    private static func snapshotCacheIfAffordable(
+        _ cache: [any KVCache],
+        tokens: [Int]
+    ) -> ([any KVCache], [Int]) {
+        let cacheBytes = Int64(KVCacheStore.cacheBytes(cache))
+        guard cacheBytes > 0 else { return ([], []) }
+        let byteLimit = snapshotCopyByteLimit()
+        guard !shouldSkipSnapshotCopy(cacheBytes: cacheBytes) else {
+            engineLog.warning(
+                "prepareAndGenerate: skipping snapshot copy cacheBytes=\(cacheBytes, privacy: .public) byteLimit=\(byteLimit, privacy: .public) tokens=\(tokens.count, privacy: .public)"
+            )
+            return ([], [])
+        }
+        return (KVCacheStore.deepCopyCache(cache), tokens)
     }
 
     /// Holds the generation stream plus the caller-owned KV cache that was
@@ -91,16 +131,12 @@ struct MLXGenerationEngine {
         promptTokens: [Int],
         genTask: Task<Void, Never>,
         toolCallFormat: ToolCallFormat,
-        /// Non-nil when a two-phase prefill was performed.  The snapshot cache
-        /// and its corresponding token array are at the *stable boundary* —
-        /// i.e. after all history tokens have been processed but BEFORE the
-        /// generation-prefix tokens (e.g. `<|im_start|>assistant\n<think>\n`).
-        /// Storing the session cache keyed by these tokens instead of
-        /// `promptTokens` means the next turn's common-prefix check will hit
-        /// exactly at `snapshotTokens.count` == `cacheOffset`, requiring zero
-        /// trim even on non-trimmable (MambaCache) models.
-        snapshotCache: [any KVCache]?,
-        snapshotTokens: [Int]?
+        /// Snapshot taken before the generation task starts mutating the live
+        /// cache. In the single-phase path this is keyed by `promptTokens`; in
+        /// the two-phase path it is keyed by the stable boundary (before any
+        /// generation-prefix tokens).
+        snapshotCache: [any KVCache],
+        snapshotTokens: [Int]
     ) {
         let spState = engineSignposter.beginInterval("prepareAndGenerate", id: engineSignposter.makeSignpostID())
         let t0 = CFAbsoluteTimeGetCurrent()
@@ -114,8 +150,8 @@ struct MLXGenerationEngine {
             let promptTokens: [Int]
             let genTask: Task<Void, Never>
             let toolCallFormat: ToolCallFormat
-            let snapshotCache: CacheBox?
-            let snapshotTokens: [Int]?
+            let snapshotCache: CacheBox
+            let snapshotTokens: [Int]
             init(
                 _ stream: AsyncStream<MLXLMCommon.TokenGeneration>,
                 _ tokenizer: any Tokenizer,
@@ -123,8 +159,8 @@ struct MLXGenerationEngine {
                 _ promptTokens: [Int],
                 _ genTask: Task<Void, Never>,
                 _ toolCallFormat: ToolCallFormat,
-                _ snapshotCache: CacheBox?,
-                _ snapshotTokens: [Int]?
+                _ snapshotCache: CacheBox,
+                _ snapshotTokens: [Int]
             ) {
                 self.stream = stream; self.tokenizer = tokenizer; self.cache = cache
                 self.promptTokens = promptTokens; self.genTask = genTask
@@ -147,6 +183,9 @@ struct MLXGenerationEngine {
                 maxKV: runtime.maxKV,
                 prefillStep: runtime.prefillStep,
                 turboQuant: runtime.turboQuant
+            )
+            engineLog.info(
+                "runtimeConfig: turboQuant=\(runtime.turboQuant, privacy: .public) kvBits=\(String(describing: runtime.kvBits), privacy: .public) kvGroup=\(runtime.kvGroup, privacy: .public) quantStart=\(runtime.quantStart, privacy: .public) maxKV=\(String(describing: runtime.maxKV), privacy: .public) prefillStep=\(runtime.prefillStep, privacy: .public)"
             )
             let additionalContext: [String: any Sendable]? =
                 generation.modelOptions["disableThinking"]?.boolValue == true
@@ -193,6 +232,12 @@ struct MLXGenerationEngine {
             if let existingCache = existingCache, let cachedTokens = cachedTokens, fullLMInput.image == nil,
                 fullLMInput.video == nil
             {
+                if hasWrappedRotatingCache(existingCache, cachedTokenCount: cachedTokens.count) {
+                    cache = makePromptCache(model: context.model, parameters: parameters)
+                    debugLog(
+                        "[MLXGenerationEngine] wrapped rotating cache detected (cachedTokens=\(cachedTokens.count)); skipping prefix reuse"
+                    )
+                } else {
                 // Find common prefix length
                 var commonPrefixLength = zip(newPromptTokens, cachedTokens).prefix(while: { $0 == $1 }).count
 
@@ -254,6 +299,7 @@ struct MLXGenerationEngine {
                         video: fullLMInput.video
                     )
                     debugLog("[MLXGenerationEngine] sliced input to \(newTokens.shape) new tokens")
+                }
                 }
             } else {
                 // Cannot reuse cache (e.g. VLM with images, or no cached tokens)
@@ -317,11 +363,9 @@ struct MLXGenerationEngine {
             }
 
             let genPrefixLen = newPromptTokens.count - stableTokenCount
-            // existingCache != nil guard: on turn 1 there is no prior cache to reuse,
-            // so deep-copying the full prefill cache would double peak RAM and OOM on large
-            // system prompts (~3700+ tokens with Qwen3.5-9B-4bit).  On turn 1 the single-phase
-            // path already stores a snapshot via snapshotCacheOverride after generation, so turn 2
-            // will find a cache hit and use two-phase correctly.
+            // Only switch to the more complex two-phase path once we have a
+            // prior session snapshot. Turn 1 still stores the standard prompt
+            // snapshot and gives turn 2 the signal needed to upgrade.
             let useTwoPhase =
                 canAttemptTwoPhase && genPrefixLen > 0 && modelCacheIsNonTrimmable
                 && existingCache != nil
@@ -361,9 +405,13 @@ struct MLXGenerationEngine {
                     try withError { eval(cache) }
                 }
 
-                // Deep-copy cache at stable boundary for snapshot storage.
-                let snapCache = KVCacheStore.deepCopyCache(cache)
-                let snapTokens = Array(newPromptTokens[0 ..< stableTokenCount])
+                // Snapshotting a very large Gemma/VLM cache can require tens of GB
+                // of extra Metal buffers. Skip persistence for oversized caches and
+                // fall back to a full prefill on the next turn instead of crashing.
+                let (snapCache, snapTokens) = snapshotCacheIfAffordable(
+                    cache,
+                    tokens: Array(newPromptTokens[0 ..< stableTokenCount])
+                )
                 debugLog(
                     "[MLXGenerationEngine] twoPhase phase1 done: stableOffset=\(effectiveCacheOffset(cache)) snapTokens=\(snapTokens.count)"
                 )
@@ -533,6 +581,10 @@ struct MLXGenerationEngine {
                 id: engineSignposter.makeSignpostID(),
                 "promptTokens: \(newPromptTokens.count, privacy: .public), effectiveTokens: \(effectiveInput.text.tokens.dim(0), privacy: .public), cacheOffset: \(postPrefillOffset, privacy: .public)"
             )
+            // Snapshot the prompt cache before generateTokenTask() launches its
+            // background Task. Calling deepCopyCache() after generateTokenTask()
+            // races TokenIterator.next() on the same MLX buffers.
+            let (snapCache, snapTokens) = snapshotCacheIfAffordable(cache, tokens: newPromptTokens)
             let (stream, genTask) = MLXLMCommon.generateTokenTask(
                 promptTokenCount: newPromptTokens.count,
                 modelConfiguration: contextWithEOS.configuration,
@@ -550,8 +602,8 @@ struct MLXGenerationEngine {
                 newPromptTokens,
                 genTask,
                 toolCallFormat,
-                nil,
-                nil
+                CacheBox(snapCache),
+                snapTokens
             )
         }
         let durationMs = (CFAbsoluteTimeGetCurrent() - t0) * 1000
@@ -560,7 +612,7 @@ struct MLXGenerationEngine {
         )
         return (
             result.stream, result.tokenizer, result.cache.cache, result.promptTokens, result.genTask,
-            result.toolCallFormat, result.snapshotCache?.cache, result.snapshotTokens
+            result.toolCallFormat, result.snapshotCache.cache, result.snapshotTokens
         )
     }
 }
