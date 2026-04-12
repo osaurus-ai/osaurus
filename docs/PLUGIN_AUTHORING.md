@@ -253,7 +253,7 @@ The manifest JSON returned by `get_manifest` describes the plugin's capabilities
 }
 ```
 
-All v2 capabilities (`routes`, `config`, `web`, `artifact_handler`, `docs`) are optional. A v2 plugin can declare any combination of them.
+All v2 capabilities (`routes`, `config`, `web`, `artifact_handler`, `file_importers`, `docs`) are optional. A v2 plugin can declare any combination of them.
 
 **Top-level fields:**
 
@@ -263,7 +263,7 @@ All v2 capabilities (`routes`, `config`, `web`, `artifact_handler`, `docs`) are 
 | `version`      | string | No       | Semver version string                          |
 | `description`  | string | No       | Short description of the plugin                |
 | `instructions` | string | No       | Default system prompt instructions appended during plugin-initiated inference; users can override per-agent in agent settings |
-| `capabilities` | object | Yes      | Tools, routes, config, web, artifact_handler   |
+| `capabilities` | object | Yes      | Tools, routes, config, web, artifact_handler, file_importers |
 | `secrets`      | array  | No       | API key / credential declarations              |
 | `docs`         | object | No       | README, changelog, external links              |
 
@@ -306,6 +306,7 @@ New in v2:
 - **`on_task_event`**: Set this on `osr_plugin_api` to receive lifecycle events for dispatched tasks. Set to `NULL` to opt out.
 - **Host API callbacks**: The `osr_host_api` now provides 20 callbacks across 9 capability groups — config, data store, logging, agent dispatch (core + extended), inference, models, HTTP client, and file I/O. All are available from the moment `osaurus_plugin_entry_v2` returns.
 - **Artifact handling**: Plugins can declare `"artifact_handler": true` in their manifest capabilities to intercept shared artifacts. See [Artifact Handling](#artifact-handling).
+- **File importers**: Plugins can declare `"file_importers"` in the manifest to normalize host-selected files into existing document attachments. See [File Import Plugin Contract](development/file-import-plugin-contract.md).
 
 ---
 
