@@ -41,6 +41,12 @@ This document describes how to build external plugins for Osaurus using the Gene
 - [ABI Reference](#abi-reference)
 - [Language-Specific Notes](#language-specific-notes)
 
+Related development docs:
+
+- [Development Docs Index](./development/README.md)
+- [Project State And Forward Plan](./development/PROJECT_STATE_AND_FORWARD_PLAN.md)
+- [File Import Plugin Contract](./development/file-import-plugin-contract.md)
+
 ```mermaid
 graph LR
     Plugin["Plugin (.dylib)"] -- "osaurus_plugin_entry_v2(host)" --> Osaurus
