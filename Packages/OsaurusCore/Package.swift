@@ -13,15 +13,20 @@ let package = Package(
         .package(url: "https://github.com/modelcontextprotocol/swift-sdk.git", from: "0.12.0"),
         .package(url: "https://github.com/orlandos-nl/IkigaJSON", from: "2.3.2"),
         .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.7.0"),
-        .package(url: "https://github.com/osaurus-ai/mlx-swift", branch: "osaurus-0.31.3"),
-        .package(url: "https://github.com/osaurus-ai/mlx-swift-lm", branch: "main"),
+        .package(
+            url: "https://github.com/osaurus-ai/mlx-swift",
+            revision: "02b01f07e8c5cae22cd7fd1187e673d8d5de0db6"),
+        .package(
+            url: "https://github.com/osaurus-ai/mlx-swift-lm",
+            revision: "10d547ee65e16e9e9c20197623b29ab7c4952100"),
         .package(url: "https://github.com/huggingface/swift-transformers", from: "1.1.6"),
         .package(url: "https://github.com/FluidInference/FluidAudio.git", from: "0.13.4"),
-        .package(url: "https://github.com/rryam/VecturaKit", branch: "main"),
+        .package(
+            url: "https://github.com/rryam/VecturaKit",
+            revision: "5fed66f3700bee561326e719250aa01c49fc53d5"),
         .package(url: "https://github.com/21-DOT-DEV/swift-secp256k1", exact: "0.21.1"),
         .package(path: "../OsaurusRepository"),
         .package(url: "https://github.com/mgriebling/SwiftMath", from: "1.7.3"),
-        .package(url: "https://github.com/raspu/Highlightr", from: "2.3.0"),
     ],
     targets: [
         .target(
@@ -45,11 +50,9 @@ let package = Package(
                 .product(name: "SwiftMath", package: "SwiftMath"),
                 .product(name: "Containerization", package: "containerization"),
                 .product(name: "ContainerizationExtras", package: "containerization"),
-                .product(name: "Highlightr", package: "Highlightr"),
             ],
             path: ".",
-            exclude: ["Tests"],
-            resources: [.process("Resources")]
+            exclude: ["Tests"]
         ),
         .testTarget(
             name: "OsaurusCoreTests",
