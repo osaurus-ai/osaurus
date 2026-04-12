@@ -661,7 +661,7 @@ public final class SpeechService: ObservableObject {
             }.value
 
             let manager = AsrManager(config: .default)
-            try await manager.initialize(models: models)
+            try await manager.loadModels(models)
             self.sendableAsrManager = SendableAsrManager(manager)
 
             let vad = try await VadManager(
