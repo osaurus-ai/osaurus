@@ -4176,6 +4176,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         switch item {
                         case .message(let msg):
                             return acc + max(1, msg.content.plainText.count / 4)
+                        case .functionCall(let call):
+                            return acc + max(1, call.arguments.count / 4)
                         case .functionCallOutput(let output):
                             return acc + max(1, output.output.count / 4)
                         }
