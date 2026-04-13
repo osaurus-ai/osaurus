@@ -85,6 +85,7 @@ public struct SystemPromptComposer: Sendable {
             executionMode: executionMode,
             query: query,
             toolsDisabled: toolsDisabled,
+            model: model,
             trace: trace
         )
         trace?.mark("compose_context_done")
@@ -99,6 +100,7 @@ public struct SystemPromptComposer: Sendable {
         executionMode: WorkExecutionMode,
         query: String,
         toolsDisabled: Bool,
+        model: String? = nil,
         trace: TTFTTrace? = nil
     ) async -> ComposedContext {
         var comp = composer
@@ -108,8 +110,9 @@ public struct SystemPromptComposer: Sendable {
         trace?.mark("memory_done")
 
         let toolMode = AgentManager.shared.effectiveToolSelectionMode(for: agentId)
+        let isLocalModel = MLXService.shared.handles(requestedModel: model)
         let preflight: PreflightResult
-        if !toolsDisabled && toolMode == .auto && !query.isEmpty {
+        if !toolsDisabled && toolMode == .auto && !query.isEmpty && !isLocalModel {
             let mode = ChatConfigurationStore.load().preflightSearchMode ?? .balanced
             trace?.mark("preflight_search_start")
             preflight = await PreflightCapabilitySearch.search(query: query, mode: mode)
