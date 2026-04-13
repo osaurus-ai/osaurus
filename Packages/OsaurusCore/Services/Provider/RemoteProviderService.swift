@@ -523,6 +523,25 @@ public actor RemoteProviderService: ToolCapableService {
                                                     current.args = doneEvent.arguments
                                                     accumulatedToolCalls[idx] = current
                                                 }
+                                            case "response.output_item.done":
+                                                // Final confirmed item — extract args from completed function_call
+                                                if let doneEvent = try? JSONDecoder().decode(
+                                                    OutputItemDoneEvent.self,
+                                                    from: jsonData
+                                                ) {
+                                                    if case .functionCall(let funcCall) = doneEvent.item {
+                                                        let idx = doneEvent.output_index
+                                                        var current =
+                                                            accumulatedToolCalls[idx] ?? (
+                                                                id: funcCall.call_id, name: funcCall.name, args: "",
+                                                                thoughtSignature: nil
+                                                            )
+                                                        if current.args.isEmpty {
+                                                            current.args = funcCall.arguments
+                                                        }
+                                                        accumulatedToolCalls[idx] = current
+                                                    }
+                                                }
                                             case "response.completed":
                                                 if let invocation = Self.makeToolInvocation(from: accumulatedToolCalls)
                                                 {
@@ -1096,6 +1115,25 @@ public actor RemoteProviderService: ToolCapableService {
                                                         )
                                                     current.args = doneEvent.arguments
                                                     accumulatedToolCalls[idx] = current
+                                                }
+                                            case "response.output_item.done":
+                                                // Final confirmed item — extract args from completed function_call
+                                                if let doneEvent = try? JSONDecoder().decode(
+                                                    OutputItemDoneEvent.self,
+                                                    from: jsonData
+                                                ) {
+                                                    if case .functionCall(let funcCall) = doneEvent.item {
+                                                        let idx = doneEvent.output_index
+                                                        var current =
+                                                            accumulatedToolCalls[idx] ?? (
+                                                                id: funcCall.call_id, name: funcCall.name, args: "",
+                                                                thoughtSignature: nil
+                                                            )
+                                                        if current.args.isEmpty {
+                                                            current.args = funcCall.arguments
+                                                        }
+                                                        accumulatedToolCalls[idx] = current
+                                                    }
                                                 }
                                             case "response.completed":
                                                 lastFinishReason = "completed"
