@@ -478,7 +478,15 @@ actor ModelRuntime {
         let effectiveStopSequences = stopSequences
         let cfg = await getConfig()
         trace?.mark("load_container_start")
-        let holder = try await loadContainer(id: modelId, name: modelName)
+        InferenceProgressManager.shared.modelLoadWillStartAsync()
+        let holder: SessionHolder
+        do {
+            holder = try await loadContainer(id: modelId, name: modelName)
+        } catch {
+            InferenceProgressManager.shared.modelLoadDidFinishAsync()
+            throw error
+        }
+        InferenceProgressManager.shared.modelLoadDidFinishAsync()
         trace?.mark("load_container_done")
 
         let wiredPolicy = MLXLMCommon.WiredSumPolicy()
