@@ -67,43 +67,34 @@ final class ModelDownloadService: ObservableObject {
     // MARK: - Properties
 
     static let downloadFilePatterns: [String] = [
-        "config.json",
-        "tokenizer.json",
-        "tokenizer_config.json",
-        "special_tokens_map.json",
-        "generation_config.json",
-        "chat_template.jinja",
-        "preprocessor_config.json",
-        "processor_config.json",
-        "jang_config.json",
-        "jjqf_config.json",
-        "jang_cfg.json",
-        "mxq_config.json",
+        "*.json",
+        "*.jinja",
+        "*.txt",
+        "*.model",
         "*.safetensors",
+    ]
+
+    /// Filenames excluded from download even when they match a glob pattern.
+    static let downloadExcludedFiles: Set<String> = [
+        "README.md",
+        ".gitattributes",
     ]
 
     private var activeDownloadTasks: [String: Task<Void, Never>] = [:]
     private var downloadTokens: [String: UUID] = [:]
     private var progressSamples: [String: [(timestamp: TimeInterval, completed: Int64)]] = [:]
     private var lastKnownSpeed: [String: Double] = [:]
+    private var hasRunTopUp = false
 
     // MARK: - Download Methods
 
     func download(_ model: MLXModel) {
-        let patterns = Self.downloadFilePatterns
-
-        let needsTopUp = Self.isMissingExactPatternFiles(at: model.localDirectory, patterns: patterns)
-        if model.isDownloaded && !needsTopUp {
+        if model.isDownloaded {
             downloadStates[model.id] = .completed
             return
         }
         let state = downloadStates[model.id] ?? .notStarted
-        switch state {
-        case .downloading, .completed:
-            return
-        default:
-            break
-        }
+        if case .downloading = state { return }
 
         activeDownloadTasks[model.id]?.cancel()
         let token = UUID()
@@ -144,7 +135,8 @@ final class ModelDownloadService: ObservableObject {
                 guard
                     let files = await HuggingFaceService.shared.fetchMatchingFiles(
                         repoId: model.id,
-                        patterns: patterns
+                        patterns: Self.downloadFilePatterns,
+                        excludedFiles: Self.downloadExcludedFiles
                     ), !files.isEmpty
                 else {
                     await MainActor.run {
@@ -191,13 +183,7 @@ final class ModelDownloadService: ObservableObject {
                 for file in filesToDownload {
                     try Task.checkCancellation()
 
-                    let encodedPath =
-                        file.path.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)
-                        ?? file.path
-                    guard
-                        let downloadURL = URL(
-                            string: "https://huggingface.co/\(model.id)/resolve/main/\(encodedPath)"
-                        )
+                    guard let downloadURL = Self.resolveURL(repoId: model.id, path: file.path)
                     else { continue }
                     let destination = model.localDirectory.appendingPathComponent(file.path)
 
@@ -301,7 +287,8 @@ final class ModelDownloadService: ObservableObject {
     func estimateSize(for model: MLXModel) async -> Int64? {
         await HuggingFaceService.shared.estimateTotalSize(
             repoId: model.id,
-            patterns: Self.downloadFilePatterns
+            patterns: Self.downloadFilePatterns,
+            excludedFiles: Self.downloadExcludedFiles
         )
     }
 
@@ -365,6 +352,11 @@ final class ModelDownloadService: ObservableObject {
         lastKnownSpeed[modelId] = nil
     }
 
+    private static func resolveURL(repoId: String, path: String) -> URL? {
+        let encoded = path.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? path
+        return URL(string: "https://huggingface.co/\(repoId)/resolve/main/\(encoded)")
+    }
+
     private func updateDownloadProgress(
         modelId: String,
         token: UUID,
@@ -413,14 +405,73 @@ final class ModelDownloadService: ObservableObject {
         )
     }
 
-    private static func isMissingExactPatternFiles(at directory: URL, patterns: [String]) -> Bool {
-        let fileManager = FileManager.default
-        let exactNames = patterns.filter { !$0.contains("*") && !$0.contains("?") }
-        for name in exactNames {
-            let path = directory.appendingPathComponent(name).path
-            if !fileManager.fileExists(atPath: path) { return true }
+    // MARK: - Background Top-Up
+
+    /// Returns the subset of remote pattern-matched files that are missing
+    /// locally or have a size mismatch. Returns an empty array on network
+    /// failure so callers can treat "no network" as "nothing to do".
+    static func findMissingFiles(
+        for model: MLXModel,
+        patterns: [String] = downloadFilePatterns,
+        excludedFiles: Set<String> = downloadExcludedFiles
+    ) async -> [HuggingFaceService.MatchedFile] {
+        guard
+            let remoteFiles = await HuggingFaceService.shared.fetchMatchingFiles(
+                repoId: model.id,
+                patterns: patterns,
+                excludedFiles: excludedFiles
+            )
+        else { return [] }
+
+        let fm = FileManager.default
+        return remoteFiles.filter { file in
+            let local = model.localDirectory.appendingPathComponent(file.path)
+            guard let attrs = try? fm.attributesOfItem(atPath: local.path),
+                let localSize = (attrs[.size] as? NSNumber)?.int64Value
+            else { return true }
+            return localSize != file.size
         }
-        return false
+    }
+
+    /// Silently downloads missing config/tokenizer files for models that are
+    /// already considered "downloaded". Runs sequentially to avoid hammering
+    /// the HF API. Does not mutate `downloadStates` so the UI stays stable.
+    /// Only runs once per app lifecycle.
+    func topUpCompletedModels(_ models: [MLXModel]) async {
+        guard !hasRunTopUp else { return }
+        hasRunTopUp = true
+        let candidates = models.filter { $0.isDownloaded && !isActiveDownload($0.id) }
+        guard !candidates.isEmpty else { return }
+
+        for model in candidates {
+            let missing = await Self.findMissingFiles(for: model)
+            guard !missing.isEmpty else { continue }
+
+            do {
+                try FileManager.default.createDirectory(
+                    at: model.localDirectory,
+                    withIntermediateDirectories: true
+                )
+
+                let downloader = DirectDownloader()
+                defer { downloader.invalidate() }
+
+                for file in missing {
+                    guard let url = Self.resolveURL(repoId: model.id, path: file.path)
+                    else { continue }
+                    let destination = model.localDirectory.appendingPathComponent(file.path)
+
+                    try await downloader.download(
+                        from: url,
+                        to: destination,
+                        expectedSize: file.size,
+                        onProgress: { _, _ in }
+                    )
+                }
+            } catch {
+                print("[ModelDownloadService] Top-up failed for \(model.id): \(error.localizedDescription)")
+            }
+        }
     }
 
     static func directoryAllocatedSize(at url: URL) -> Int64? {

@@ -186,6 +186,11 @@ final class ModelManager: NSObject, ObservableObject {
         isLoadingModels = false
 
         checkForDeprecatedModels()
+
+        let allModels = availableModels + suggestedModels
+        Task { [downloadService] in
+            await downloadService.topUpCompletedModels(allModels)
+        }
     }
 
     /// Scans locally installed models for deprecated entries and populates deprecation notices.
