@@ -99,7 +99,7 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         workMaxIterations: Int? = nil,
         defaultAutonomousExec: AutonomousExecConfig? = nil,
         preflightSearchMode: PreflightSearchMode? = nil,
-        disableTools: Bool = true,
+        disableTools: Bool = false,
         enableClipboardMonitoring: Bool = true
     ) {
         self.hotkey = hotkey
@@ -146,7 +146,7 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
             PreflightSearchMode.self,
             forKey: .preflightSearchMode
         )
-        disableTools = try container.decodeIfPresent(Bool.self, forKey: .disableTools) ?? true
+        disableTools = try container.decodeIfPresent(Bool.self, forKey: .disableTools) ?? false
         enableClipboardMonitoring = try container.decodeIfPresent(Bool.self, forKey: .enableClipboardMonitoring) ?? true
     }
 
