@@ -812,13 +812,20 @@ final class ChatSession: ObservableObject {
             // Must refresh block memoizer before first delta — otherwise visibleBlocks stays
             // user-only while isStreaming is true and the table early-returns without assistant rows.
             rebuildVisibleBlocks()
+            #if DEBUG
+                let ttftTrace: TTFTTrace? = TTFTTrace()
+            #else
+                let ttftTrace: TTFTTrace? = nil
+            #endif
             do {
                 let engine = chatEngineFactory()
                 let chatCfg = ChatConfigurationStore.load()
 
                 // MARK: - Capability Setup
                 let effectiveAgentId = agentId ?? Agent.defaultId
+                ttftTrace?.mark("prepare_exec_mode_start")
                 let executionMode = await prepareChatExecutionMode(agentId: effectiveAgentId)
+                ttftTrace?.mark("prepare_exec_mode_done")
                 guard isRunActive(runId) else { return }
 
                 // Per-conversation override from the chat-bar Tools chip wins
@@ -831,7 +838,8 @@ final class ChatSession: ObservableObject {
                     executionMode: executionMode,
                     model: selectedModel,
                     query: trimmed,
-                    toolsDisabled: effectiveToolsDisabled
+                    toolsDisabled: effectiveToolsDisabled,
+                    trace: ttftTrace
                 )
                 guard isRunActive(runId) else { return }
 
@@ -848,6 +856,16 @@ final class ChatSession: ObservableObject {
                 var toolSpecs = context.tools
                 let isManualTools = AgentManager.shared.effectiveToolSelectionMode(for: effectiveAgentId) == .manual
                 cachedContext = context
+
+                // Skip tool injection for local models when preflight found no relevant tools.
+                // Tool definitions are verbose in chat templates (~500 tokens each) and dominate
+                // the prompt token count, causing slow prefill on memory-constrained devices.
+                if context.preflightItems.isEmpty
+                    && !isManualTools
+                    && MLXService.shared.handles(requestedModel: selectedModel)
+                {
+                    toolSpecs = []
+                }
 
                 if !context.preflightItems.isEmpty {
                     assistantTurn.preflightCapabilities = context.preflightItems
@@ -921,9 +939,34 @@ final class ChatSession: ObservableObject {
                 var pendingBudgetNotice: String?
                 let effectiveTemp = AgentManager.shared.effectiveTemperature(for: effectiveAgentId)
 
+                ttftTrace?.mark("pre_ttft_done")
+
                 outer: while attempts < maxAttempts {
                     attempts += 1
+                    ttftTrace?.mark("build_messages_start")
                     var msgs = buildMessages()
+                    ttftTrace?.mark("build_messages_done")
+                    ttftTrace?.set("messageCount", msgs.count)
+                    ttftTrace?.set("conversationTurns", turns.count)
+
+                    #if DEBUG
+                        // Dump full prompt to debug log for TTFT analysis
+                        if attempts == 1 {
+                            var promptDump = "═══ FULL PROMPT DUMP ═══\n"
+                            for (i, m) in msgs.enumerated() {
+                                promptDump += "── [\(i)] role=\(m.role) chars=\(m.content?.count ?? 0) ──\n"
+                                promptDump += (m.content ?? "(nil)") + "\n"
+                            }
+                            if let tools = toolSpecs.isEmpty ? nil : toolSpecs {
+                                promptDump += "── TOOLS (\(tools.count)) ──\n"
+                                for t in tools {
+                                    promptDump += "  - \(t.function.name): \(t.function.description)\n"
+                                }
+                            }
+                            promptDump += "═══ END PROMPT DUMP ═══"
+                            debugLog(promptDump)
+                        }
+                    #endif
                     if let notice = pendingBudgetNotice {
                         msgs.append(ChatMessage(role: "user", content: notice))
                         pendingBudgetNotice = nil
@@ -951,11 +994,11 @@ final class ChatSession: ObservableObject {
                     req.cache_hint = context.cacheHint
                     req.staticPrefix = context.staticPrefix
                     req.modelOptions = activeModelOptions.isEmpty ? nil : activeModelOptions
+                    req.ttftTrace = ttftTrace
                     debugLog(
                         "send: attempt=\(attempts) model=\(req.model) tools=\(req.tools?.count ?? 0) sessionId=\(req.session_id ?? "nil")"
                     )
                     do {
-                        let streamStartTime = Date()
                         var uiDeltaCount = 0
                         var firstDeltaTime: Date?
 
@@ -969,7 +1012,12 @@ final class ChatSession: ObservableObject {
                             self?.rebuildVisibleBlocks()
                         }
 
+                        ttftTrace?.mark("engine_streamChat_start")
                         let stream = try await engine.streamChat(request: req)
+                        ttftTrace?.mark("engine_streamChat_returned")
+                        // Start TTFT timer after model is loaded and stream is ready.
+                        // This excludes model loading time from the displayed TTFT.
+                        let streamStartTime = Date()
                         debugLog("send: got stream, entering delta loop")
                         for try await delta in stream {
                             if !isRunActive(runId) {
@@ -1022,7 +1070,12 @@ final class ChatSession: ObservableObject {
                                 continue
                             }
                             if !delta.isEmpty {
-                                if firstDeltaTime == nil { firstDeltaTime = Date() }
+                                if firstDeltaTime == nil {
+                                    firstDeltaTime = Date()
+                                    ttftTrace?.mark("first_text_delta")
+                                    ttftTrace?.set("model", selectedModel ?? "unknown")
+                                    ttftTrace?.emit()
+                                }
                                 uiDeltaCount += 1
                                 processor.receiveDelta(delta)
                             }

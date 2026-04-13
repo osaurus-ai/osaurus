@@ -331,13 +331,27 @@ actor ModelRuntime {
         modelId: String,
         modelName: String
     ) async throws -> AsyncThrowingStream<ModelRuntimeEvent, Error> {
+        let trace = parameters.ttftTrace
+        trace?.mark("runtime_start")
+
+        trace?.mark("await_active_gen")
         _ = await activeGenerationTask?.value
         if Task.isCancelled { throw CancellationError() }
 
         genLog.info("generateEventStream: start model=\(modelName, privacy: .public)")
 
         let cfg = await getConfig()
-        let holder = try await loadContainer(id: modelId, name: modelName)
+        trace?.mark("load_container_start")
+        InferenceProgressManager.shared.modelLoadWillStartAsync()
+        let holder: SessionHolder
+        do {
+            holder = try await loadContainer(id: modelId, name: modelName)
+        } catch {
+            InferenceProgressManager.shared.modelLoadDidFinishAsync()
+            throw error
+        }
+        InferenceProgressManager.shared.modelLoadDidFinishAsync()
+        trace?.mark("load_container_done")
 
         let wiredPolicy = MLXLMCommon.WiredSumPolicy()
         let wiredTicket = wiredPolicy.ticket(
@@ -355,7 +369,10 @@ actor ModelRuntime {
         }
 
         // Acquire exclusive Metal access after all throwing setup is complete.
+        // This ensures the gate is never left locked by a loadContainer failure.
+        trace?.mark("metal_gate_enter")
         await MetalGate.shared.enterGeneration()
+        trace?.mark("metal_gate_acquired")
         if Task.isCancelled {
             await MetalGate.shared.exitGeneration()
             throw CancellationError()
@@ -364,6 +381,7 @@ actor ModelRuntime {
         // Signal prefill starting (count unknown until prepareAndGenerate returns).
         InferenceProgressManager.shared.prefillWillStartAsync(tokenCount: 0)
 
+        trace?.mark("prepare_and_generate_start")
         let genResult:
             (
                 stream: AsyncStream<MLXLMCommon.TokenGeneration>,
@@ -381,6 +399,8 @@ actor ModelRuntime {
                 runtime: cfg,
                 wiredMemoryTicket: wiredTicket
             )
+            trace?.mark("prepare_and_generate_done")
+            trace?.set("promptTokens", genResult.promptTokens.count)
         } catch {
             InferenceProgressManager.shared.prefillDidFinishAsync()
             await MetalGate.shared.exitGeneration()

@@ -26,6 +26,8 @@ struct GenerationParameters: Sendable {
     /// dynamic sections like memory), producing a KV cache that exactly matches
     /// the reusable portion across requests.
     let staticPrefix: String?
+    /// Optional TTFT trace for diagnostic timing instrumentation.
+    let ttftTrace: TTFTTrace?
 
     init(
         temperature: Float?,
@@ -35,7 +37,8 @@ struct GenerationParameters: Sendable {
         modelOptions: [String: ModelOptionValue] = [:],
         sessionId: String? = nil,
         cacheHint: String? = nil,
-        staticPrefix: String? = nil
+        staticPrefix: String? = nil,
+        ttftTrace: TTFTTrace? = nil
     ) {
         self.temperature = temperature
         self.maxTokens = maxTokens
@@ -45,6 +48,7 @@ struct GenerationParameters: Sendable {
         self.sessionId = sessionId
         self.cacheHint = cacheHint
         self.staticPrefix = staticPrefix
+        self.ttftTrace = ttftTrace
     }
 }
 

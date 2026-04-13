@@ -74,16 +74,22 @@ public struct SystemPromptComposer: Sendable {
         executionMode: WorkExecutionMode,
         model: String? = nil,
         query: String = "",
-        toolsDisabled: Bool = false
+        toolsDisabled: Bool = false,
+        trace: TTFTTrace? = nil
     ) async -> ComposedContext {
+        trace?.mark("compose_context_start")
         let composer = forChat(agentId: agentId, executionMode: executionMode, model: model)
-        return await finalizeContext(
+        let result = await finalizeContext(
             composer: composer,
             agentId: agentId,
             executionMode: executionMode,
             query: query,
-            toolsDisabled: toolsDisabled
+            toolsDisabled: toolsDisabled,
+            model: model,
+            trace: trace
         )
+        trace?.mark("compose_context_done")
+        return result
     }
 
     /// Shared pipeline: append memory + preflight + skills + resolve tools + build ComposedContext.
@@ -93,16 +99,24 @@ public struct SystemPromptComposer: Sendable {
         agentId: UUID,
         executionMode: WorkExecutionMode,
         query: String,
-        toolsDisabled: Bool
+        toolsDisabled: Bool,
+        model: String? = nil,
+        trace: TTFTTrace? = nil
     ) async -> ComposedContext {
         var comp = composer
+
+        trace?.mark("memory_start")
         await comp.appendMemory(agentId: agentId.uuidString)
+        trace?.mark("memory_done")
 
         let toolMode = AgentManager.shared.effectiveToolSelectionMode(for: agentId)
+        let isLocalModel = MLXService.shared.handles(requestedModel: model)
         let preflight: PreflightResult
-        if !toolsDisabled && toolMode == .auto && !query.isEmpty {
+        if !toolsDisabled && toolMode == .auto && !query.isEmpty && !isLocalModel {
             let mode = ChatConfigurationStore.load().preflightSearchMode ?? .balanced
+            trace?.mark("preflight_search_start")
             preflight = await PreflightCapabilitySearch.search(query: query, mode: mode)
+            trace?.mark("preflight_search_done")
         } else {
             preflight = .empty
         }
@@ -114,18 +128,26 @@ public struct SystemPromptComposer: Sendable {
             comp.append(.dynamic(id: "skills", label: "Skills", content: section))
         }
 
+        trace?.mark("resolve_tools_start")
         let tools = resolveTools(
             agentId: agentId,
             executionMode: executionMode,
             toolsDisabled: toolsDisabled,
             preflight: preflight
         )
+        trace?.mark("resolve_tools_done")
+
         let manifest = comp.manifest()
         let toolNames = tools.map { $0.function.name }
         debugLog("[Context] \(manifest.debugDescription)")
 
+        let rendered = comp.render()
+        trace?.set("systemPromptChars", rendered.count)
+        trace?.set("toolCount", tools.count)
+        trace?.set("preflightItems", preflight.items.count)
+
         return ComposedContext(
-            prompt: comp.render(),
+            prompt: rendered,
             manifest: manifest,
             tools: tools,
             toolTokens: ToolRegistry.shared.totalEstimatedTokens(for: tools),

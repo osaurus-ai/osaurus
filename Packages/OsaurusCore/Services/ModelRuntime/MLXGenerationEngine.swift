@@ -84,7 +84,9 @@ struct MLXGenerationEngine {
             }
         }
 
+        let trace = generation.ttftTrace
         let result: ResultBox = try await container.perform { (context: MLXLMCommon.ModelContext) in
+            trace?.mark("container_perform_entered")
             let chat = preprocessImages(in: buildChat())
             let toolsSpec = buildToolsSpec()
             let parameters = ModelRuntime.makeGenerateParameters(
@@ -109,6 +111,7 @@ struct MLXGenerationEngine {
                 additionalContext: additionalContext
             )
             let fullLMInput: LMInput
+            trace?.mark("tokenization_start")
             do {
                 fullLMInput = try await context.processor.prepare(input: fullInput)
             } catch {
@@ -121,6 +124,7 @@ struct MLXGenerationEngine {
                     userInfo: [NSLocalizedDescriptionKey: "Chat template error: \(detail)"]
                 )
             }
+            trace?.mark("tokenization_done")
 
             var contextWithEOS = context
             let existing = context.configuration.extraEOSTokens
