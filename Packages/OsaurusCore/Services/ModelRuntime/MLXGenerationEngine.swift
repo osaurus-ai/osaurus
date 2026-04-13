@@ -133,7 +133,9 @@ struct MLXGenerationEngine {
             }
         }
 
+        let trace = generation.ttftTrace
         let result: ResultBox = try await container.perform { (context: MLXLMCommon.ModelContext) in
+            trace?.mark("container_perform_entered")
             let chat = preprocessImages(in: buildChat())
             let toolsSpec = buildToolsSpec()
             let parameters = ModelRuntime.makeGenerateParameters(
@@ -158,6 +160,7 @@ struct MLXGenerationEngine {
                 additionalContext: additionalContext
             )
             let fullLMInput: LMInput
+            trace?.mark("tokenization_start")
             do {
                 fullLMInput = try await context.processor.prepare(input: fullInput)
             } catch {
@@ -170,6 +173,7 @@ struct MLXGenerationEngine {
                     userInfo: [NSLocalizedDescriptionKey: "Chat template error: \(detail)"]
                 )
             }
+            trace?.mark("tokenization_done")
 
             var contextWithEOS = context
             let existing = context.configuration.extraEOSTokens
@@ -189,6 +193,7 @@ struct MLXGenerationEngine {
             }
             var cache: [any KVCache]
             var effectiveInput = fullLMInput
+            trace?.mark("cache_reuse_start")
 
             if let existingCache = existingCache, let cachedTokens = cachedTokens, fullLMInput.image == nil,
                 fullLMInput.video == nil
@@ -330,7 +335,10 @@ struct MLXGenerationEngine {
                 "[MLXGenerationEngine] twoPhase=\(useTwoPhase) genPrefixLen=\(genPrefixLen) stableTokens=\(stableTokenCount) canTrim=\(canTrimPromptCache(cache)) hasExisting=\(existingCache != nil)"
             )
 
+            trace?.mark("cache_reuse_done")
+
             if useTwoPhase {
+                trace?.mark("twophase_prefill_start")
                 // ── Phase 1: prefill stableTokens ─────────────────────────────────────
                 // effectiveInput may already be sliced (cache reuse path); recompute against
                 // stableTokenCount to find what still needs processing.
@@ -498,6 +506,7 @@ struct MLXGenerationEngine {
                 genContinuation.onTermination = { @Sendable _ in genTask.cancel() }
 
                 engineLog.info("prepareAndGenerate: twoPhase stream created, returning")
+                trace?.mark("twophase_prefill_done")
 
                 let toolCallFormat = contextWithEOS.configuration.toolCallFormat ?? .json
                 return ResultBox(
@@ -513,6 +522,9 @@ struct MLXGenerationEngine {
             }
 
             // ── Single-phase (standard) path ──────────────────────────────────────────
+            trace?.mark("cache_reuse_done")
+            trace?.mark("singlephase_prefill_start")
+            trace?.set("effectiveTokens", effectiveInput.text.tokens.dim(0))
             engineLog.info(
                 "prepareAndGenerate: constructing TokenIterator effectiveTokens=\(effectiveInput.text.tokens.dim(0), privacy: .public)"
             )
@@ -524,6 +536,7 @@ struct MLXGenerationEngine {
                     parameters: parameters
                 )
             }
+            trace?.mark("singlephase_prefill_done")
             let postPrefillOffset = effectiveCacheOffset(cache)
             debugLog(
                 "[MLXGenerationEngine] post-prefill effectiveCacheOffset=\(postPrefillOffset) cacheCount=\(cache.count) cacheTypes=\(cache.prefix(4).map { type(of: $0) })"

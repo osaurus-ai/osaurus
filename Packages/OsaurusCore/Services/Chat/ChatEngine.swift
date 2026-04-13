@@ -37,6 +37,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
 
     func streamChat(request: ChatCompletionRequest) async throws -> AsyncThrowingStream<String, Error> {
         debugLog("[ChatEngine] streamChat: start model=\(request.model)")
+        let trace = request.ttftTrace
+        trace?.mark("chatengine_start")
         let messages = request.messages
         debugLog("[ChatEngine] streamChat: messages count=\(messages.count), fetching remote services")
         let temperature = request.temperature
@@ -55,7 +57,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             modelOptions: request.modelOptions ?? [:],
             sessionId: request.session_id,
             cacheHint: request.cache_hint,
-            staticPrefix: request.staticPrefix
+            staticPrefix: request.staticPrefix,
+            ttftTrace: trace
         )
 
         // Candidate services and installed models (injected for testability)
@@ -63,7 +66,9 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
 
         // Fetch current remote services from MainActor at request time so routing always
         // reflects the latest connected Bonjour/remote agents without requiring a new engine.
+        trace?.mark("fetch_remote_services")
         let remoteServices = await MainActor.run { RemoteProviderManager.shared.connectedServices() }
+        trace?.mark("route_resolve")
         debugLog("[ChatEngine] streamChat: remoteServices=\(remoteServices.count), routing model=\(request.model)")
 
         let route = ModelServiceRouter.resolve(
@@ -81,6 +86,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             if let tools = request.tools, !tools.isEmpty, let toolSvc = service as? ToolCapableService {
                 let stopSequences = request.stop ?? []
                 debugLog("[ChatEngine] streamChat: calling streamWithTools tools=\(tools.count)")
+                trace?.mark("chatengine_streamWithTools_start")
                 innerStream = try await toolSvc.streamWithTools(
                     messages: messages,
                     parameters: params,
@@ -89,15 +95,18 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                     toolChoice: request.tool_choice,
                     requestedModel: request.model
                 )
+                trace?.mark("chatengine_streamWithTools_done")
                 debugLog("[ChatEngine] streamChat: streamWithTools returned")
             } else {
                 debugLog("[ChatEngine] streamChat: calling streamDeltas")
+                trace?.mark("chatengine_streamDeltas_start")
                 innerStream = try await service.streamDeltas(
                     messages: messages,
                     parameters: params,
                     requestedModel: request.model,
                     stopSequences: request.stop ?? []
                 )
+                trace?.mark("chatengine_streamDeltas_done")
                 debugLog("[ChatEngine] streamChat: streamDeltas returned")
             }
 

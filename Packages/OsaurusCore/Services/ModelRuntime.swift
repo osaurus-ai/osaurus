@@ -454,11 +454,16 @@ actor ModelRuntime {
         modelId: String,
         modelName: String
     ) async throws -> AsyncThrowingStream<ModelRuntimeEvent, Error> {
+        let trace = parameters.ttftTrace
+        trace?.mark("runtime_start")
+
+        trace?.mark("await_active_gen")
         _ = await activeGenerationTask?.value
         if Task.isCancelled { throw CancellationError() }
 
         // Cancel and await any background prefix-cache tasks for this model so
         // we never have two concurrent Metal/MLX operations on the same container.
+        trace?.mark("await_prefix_tasks")
         let modelPrefix = "\(modelName):"
         let stalePrefixTasks = prefixCacheTasks.filter { $0.key.hasPrefix(modelPrefix) }
         for (key, task) in stalePrefixTasks {
@@ -472,7 +477,9 @@ actor ModelRuntime {
 
         let effectiveStopSequences = stopSequences
         let cfg = await getConfig()
+        trace?.mark("load_container_start")
         let holder = try await loadContainer(id: modelId, name: modelName)
+        trace?.mark("load_container_done")
 
         let wiredPolicy = MLXLMCommon.WiredSumPolicy()
         let wiredTicket = wiredPolicy.ticket(
@@ -493,6 +500,7 @@ actor ModelRuntime {
         // nonisolated(unsafe) suppresses the Sendable check for [any KVCache] which
         // doesn't conform to Sendable but is safe here because access is serialized
         // through the ModelRuntime actor and ModelContainer.perform.
+        trace?.mark("kv_cache_lookup")
         nonisolated(unsafe) let existingCacheInfo: ([any KVCache]?, [Int]?) = {
             if let sid = sessionId {
                 let (sessionCache, tokens) = kvCacheStore.getCache(sessionId: sid, modelName: modelName)
@@ -503,6 +511,8 @@ actor ModelRuntime {
 
         nonisolated(unsafe) let existingCache = existingCacheInfo.0
         let cachedTokens = existingCacheInfo.1
+        trace?.set("cacheHit", existingCache != nil ? (cachedTokens != nil ? "session(\(cachedTokens!.count) tokens)" : "prefix") : "miss")
+        trace?.set("isVLM", holder.isVLM)
 
         let capturedMessages = chatMessages
         let buildChat: @Sendable () -> [MLXLMCommon.Chat.Message] = { capturedMessages }
@@ -525,7 +535,9 @@ actor ModelRuntime {
 
         // Acquire exclusive Metal access after all throwing setup is complete.
         // This ensures the gate is never left locked by a loadContainer failure.
+        trace?.mark("metal_gate_enter")
         await MetalGate.shared.enterGeneration()
+        trace?.mark("metal_gate_acquired")
         if Task.isCancelled {
             await MetalGate.shared.exitGeneration()
             throw CancellationError()
@@ -535,6 +547,7 @@ actor ModelRuntime {
         // The UI shows a spinner; once the first generated token arrives prefillDidFinish() clears it.
         InferenceProgressManager.shared.prefillWillStartAsync(tokenCount: 0)
 
+        trace?.mark("prepare_and_generate_start")
         do {
             let genResult = try await MLXGenerationEngine.prepareAndGenerate(
                 container: holder.container,
@@ -550,6 +563,9 @@ actor ModelRuntime {
                 genResult.stream, genResult.tokenizer, genResult.cache,
                 genResult.promptTokens, genResult.genTask, genResult.toolCallFormat
             )
+            trace?.mark("prepare_and_generate_done")
+            trace?.set("promptTokens", newTokens.count)
+            trace?.set("twoPhase", genResult.snapshotCache != nil)
             // For two-phase prefill, override snapshot with the stable-boundary snapshot.
             if let snapCache = genResult.snapshotCache, let snapTokens = genResult.snapshotTokens {
                 snapshotCacheOverride = (snapCache, snapTokens)

@@ -359,6 +359,8 @@ struct ChatCompletionRequest: Codable, Sendable {
     var modelOptions: [String: ModelOptionValue]? = nil
     /// Static system prompt content for prefix cache building (not serialized to JSON).
     var staticPrefix: String? = nil
+    /// Optional TTFT trace for diagnostic timing (not serialized to JSON).
+    var ttftTrace: TTFTTrace? = nil
 
     /// Resolved max tokens, preferring max_tokens then max_completion_tokens.
     var resolvedMaxTokens: Int? { max_tokens ?? max_completion_tokens }

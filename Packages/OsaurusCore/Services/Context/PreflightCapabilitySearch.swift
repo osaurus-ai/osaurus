@@ -104,7 +104,8 @@ enum CapabilitySearch {
     static func canCreatePlugins() async -> Bool {
         await MainActor.run {
             let agentId = AgentManager.shared.activeAgent.id
-            return AgentManager.shared.effectiveAutonomousExec(for: agentId)?.pluginCreate == true
+            guard let config = AgentManager.shared.effectiveAutonomousExec(for: agentId) else { return false }
+            return config.enabled && config.pluginCreate
         }
     }
 }
@@ -140,7 +141,7 @@ enum PreflightCapabilitySearch {
         )
 
         if selectedNames.isEmpty {
-            return await sandboxPluginCreatorFallback()
+            return .empty
         }
 
         let (toolSpecs, items) = await MainActor.run {
