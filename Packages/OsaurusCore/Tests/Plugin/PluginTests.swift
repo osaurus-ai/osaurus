@@ -478,6 +478,7 @@ struct PluginManifestDecodingTests {
         #expect(manifest.capabilities.routes == nil)
         #expect(manifest.capabilities.config == nil)
         #expect(manifest.capabilities.web == nil)
+        #expect(manifest.capabilities.file_importers == nil)
     }
 
     @Test func manifestWithRoutes() throws {
@@ -618,6 +619,45 @@ struct PluginManifestDecodingTests {
     @Test func routeAuthDefaultsToOwner() throws {
         let route = PluginManifest.RouteSpec(id: "test", path: "/test", methods: ["GET"])
         #expect(route.auth == .owner)
+    }
+
+    @Test func manifestWithFileImporters() throws {
+        let json = """
+            {
+                "plugin_id": "com.test.importers",
+                "capabilities": {
+                    "tools": [
+                        {
+                            "id": "import_xlsx",
+                            "description": "Import spreadsheet",
+                            "parameters": {
+                                "type": "object"
+                            }
+                        }
+                    ],
+                    "file_importers": [
+                        {
+                            "id": "xlsx",
+                            "tool_id": "import_xlsx",
+                            "extensions": ["xlsx", "xls"],
+                            "ut_types": ["org.openxmlformats.spreadsheetml.sheet"],
+                            "mime_types": ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"],
+                            "max_bytes": 10485760,
+                            "output_mode": "normalized_text",
+                            "output_schema_version": 2
+                        }
+                    ]
+                }
+            }
+            """
+        let manifest = try JSONDecoder().decode(PluginManifest.self, from: Data(json.utf8))
+        let importer = try #require(manifest.capabilities.file_importers?.first)
+        #expect(importer.id == "xlsx")
+        #expect(importer.tool_id == "import_xlsx")
+        #expect(importer.extensions == ["xlsx", "xls"])
+        #expect(importer.max_bytes == 10_485_760)
+        #expect(importer.output_mode == .normalizedText)
+        #expect(importer.output_schema_version == 2)
     }
 }
 

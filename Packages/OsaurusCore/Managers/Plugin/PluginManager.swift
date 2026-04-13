@@ -110,6 +110,7 @@ final class PluginManager {
         if forceReload {
             for loaded in plugins {
                 ToolRegistry.shared.unregister(names: loaded.tools.map { $0.name })
+                FileImportService.unregisterPluginImporters(pluginId: loaded.plugin.id)
                 if !loaded.skills.isEmpty {
                     await SkillManager.shared.unregisterPluginSkills(pluginId: loaded.plugin.id)
                 }
@@ -148,6 +149,7 @@ final class PluginManager {
                 remaining.append(loaded)
             } else {
                 ToolRegistry.shared.unregister(names: loaded.tools.map { $0.name })
+                FileImportService.unregisterPluginImporters(pluginId: loaded.plugin.id)
                 if !loaded.skills.isEmpty {
                     await SkillManager.shared.unregisterPluginSkills(pluginId: loaded.plugin.id)
                 }
@@ -175,6 +177,8 @@ final class PluginManager {
                 for tool in loaded.tools {
                     ToolRegistry.shared.registerPluginTool(tool)
                 }
+
+                FileImportService.registerPluginImporters(from: loaded.plugin)
 
                 // Register plugin skills
                 for skill in loaded.skills {

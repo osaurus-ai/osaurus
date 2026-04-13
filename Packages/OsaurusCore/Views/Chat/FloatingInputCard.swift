@@ -1790,7 +1790,7 @@ extension FloatingInputCard {
                 let animation = theme.springAnimation()
                 Task.detached(priority: .userInitiated) {
                     do {
-                        let attachments = try DocumentParser.parseAll(url: url)
+                        let attachments = try await DocumentParser.parseAll(url: url)
                         await MainActor.run {
                             withAnimation(animation) {
                                 self.pendingAttachments.append(contentsOf: attachments)
@@ -2021,7 +2021,7 @@ extension FloatingInputCard {
         let animation = theme.springAnimation()
         Task.detached(priority: .userInitiated) {
             do {
-                let attachments = try DocumentParser.parseAll(url: url)
+                let attachments = try await DocumentParser.parseAll(url: url)
                 await MainActor.run {
                     withAnimation(animation) {
                         self.pendingAttachments.append(contentsOf: attachments)
