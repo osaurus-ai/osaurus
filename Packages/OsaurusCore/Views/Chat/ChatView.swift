@@ -810,7 +810,7 @@ final class ChatSession: ObservableObject {
             // user-only while isStreaming is true and the table early-returns without assistant rows.
             rebuildVisibleBlocks()
             #if DEBUG
-            let ttftTrace = TTFTTrace()
+            let ttftTrace: TTFTTrace? = TTFTTrace()
             #else
             let ttftTrace: TTFTTrace? = nil
             #endif
