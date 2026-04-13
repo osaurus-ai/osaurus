@@ -8,6 +8,54 @@
 > migration. Everything under `docs/internal/` is team-only — do not expose
 > to public contributors or include in release builds.
 
+## ⚠️ Round 3 scope change — read this first
+
+This branch went through three rounds of scope. The audit log (`04-CHANGE-AUDIT.md`)
+reflects all three. Don't skim — the early changes are partially superseded.
+
+**What the branch actually does now**:
+
+1. **Package-level migration** — replaces osaurus's custom `KVCacheStore` with
+   vmlx-swift-lm's `CacheCoordinator` (paged L1 + disk L2 + SSM companion +
+   TurboQuant). Covers the JIT crash fix (#814), Gemma 4 JANG shape fixes
+   (#808, #813), and unlocks the package's continuous batching engine for
+   future use. This is the bulk of the work in commits `9d66eb12` and
+   `db492f29`.
+
+2. **User-visible cache surface stripped** — osaurus doesn't expose any cache
+   knobs. No "Cache Storage" settings subsection, no Disk KV Cache row in the
+   model inspector, no `cacheEnabled`/`cacheDiskMaxGB`/`cacheMaxBlocks` fields
+   in `ServerConfiguration`. Caching is invisible infrastructure handled by
+   the package with hardcoded osaurus-internal defaults. This is the Round 3
+   revert, commits `51d055a3` and `0bb41b90`.
+
+3. **Memory default off + Settings toggle** — `MemoryConfiguration.enabled`
+   defaults to `false`. A new toggle in Settings → Chat → Memory lets users
+   opt in. Existing users with explicit `"enabled": true` in their JSON keep
+   memory on; everyone else starts with memory off on next launch.
+
+4. **Tools default off + chat-bar Tools chip** — `ChatConfiguration.disableTools`
+   defaults to `true`. Same opt-in story: a Settings toggle plus a new Tools
+   chip in `FloatingInputCard` that overrides the global for one conversation.
+
+**What the branch does NOT do** (explicitly deferred):
+
+- BatchEngine migration — the `TokenIterator` single-sequence path still runs.
+  Switching to `BatchEngine` for continuous batching is a separate, larger
+  architectural change.
+- Experience Mode presets (Simple / Balanced / Power / Developer) — deferred
+  to a future branch.
+- First-launch onboarding modal — deferred.
+- Per-tool checkboxes in a Tools popover — the chip is a simple on/off cycle
+  for now. Power users can still use `Agent.manualToolNames`.
+
+**Per-change audit**: every entry is in `04-CHANGE-AUDIT.md`. The Round 3
+entries are at the **bottom** of the file under the "Round 3 — cache-surface
+strip + memory/tools defaults" section heading. They supersede parts of
+C-001..C-013.
+
+---
+
 ## Important — package hosting note
 
 This migration currently points at the **private** `osaurus-ai/vmlx-swift-lm`
@@ -101,30 +149,63 @@ Numbered in reading order:
 
 ---
 
-## Change register (C-001 through C-013)
+## Change register (C-001 through C-018 + C-R01..C-R06)
 
 Every code change in this branch is numbered and documented in `04-CHANGE-AUDIT.md`.
-Quick reference:
+
+### Round 1 & 2 — initial cache migration + first-pass UX
+
+These entries built out a user-visible cache settings surface that
+was **later reverted** in Round 3. Listed here for history. Some
+changes (C-002, C-003, C-010, C-011 helpers, the core migration work)
+remain load-bearing; others (C-001, C-006, C-007, C-008, C-012, C-013)
+are superseded.
+
+| ID | File | What | Round 3 status |
+|----|------|------|----------------|
+| C-001 | `ServerConfiguration.swift` | Add `cacheEnabled` master toggle field | **Reverted by C-R01** |
+| C-002 | `RuntimeConfig.swift` | `autoTurboQuant()` → unconditional `true` | Kept |
+| C-003 | `ConfigurationView.swift` | UI badge/helper mirrors C-002 | Kept |
+| C-004 | `ModelRuntime.swift` | Factor `buildCacheCoordinatorConfig` + helpers | **Simplified by C-R06** |
+| C-005 | `ModelRuntime.swift` | Add `refreshCacheConfig()` hot-reload | **Removed by C-R06** |
+| C-006 | `ConfigurationView.swift` | Reset + load/save for cache fields | **Reverted by C-R02** |
+| C-007 | `ConfigurationView.swift` | Master "KV Caching" toggle UI | **Reverted by C-R02** |
+| C-008 | `ConfigurationView.swift` | Split `serverRestartNeeded` / `modelReloadNeeded` | **Simplified by C-R03** |
+| C-009 | `ModelRuntime.swift` | Fix dict-iteration race + nil-coordinator window | **Obsolete** (refreshCacheConfig gone) |
+| — | `MLXGenerationEngine.swift` | Remove unused `import MLXLLM` | Kept |
+| C-010 | `ChatWindowManager.swift` | Invalidate `MemoryContextAssembler` on window close | Kept |
+| C-011 | `OsaurusPaths.swift` | Add `diskKVCache()` / usage / clear helpers | Kept (used internally) |
+| C-012 | `ModelCacheInspectorView.swift` | Disk cache row + expanded Clear All | **Reverted by C-R04** |
+| C-013 | `ServerConfigurationStoreTests.swift` | 5 round-trip tests for cache fields | **Reverted by C-R05** |
+
+### Round 3 — cache surface strip + memory/tools defaults
+
+These are the current-state changes that define the branch's end state.
 
 | ID | File | What | Severity |
 |----|------|------|----------|
-| C-001 | `ServerConfiguration.swift` | Add `cacheEnabled` master toggle field | P1 |
-| C-002 | `RuntimeConfig.swift` | `autoTurboQuant()` → unconditional `true` (default-on) | P1 |
-| C-003 | `ConfigurationView.swift` | UI badge/helper mirrors C-002 | P1 |
-| C-004 | `ModelRuntime.swift` | Factor `buildCacheCoordinatorConfig` + `isDirectoryWritable` + `installCacheCoordinator` helpers; honor master toggle; add disk writability check | P1 |
-| C-005 | `ModelRuntime.swift` | Add `refreshCacheConfig()` hot-reload method | **P0** |
-| C-006 | `ConfigurationView.swift` | Fix `resetToDefaults()` + `tempCacheEnabled` state + load/save wiring | P1 |
-| C-007 | `ConfigurationView.swift` | Add master "KV Caching" toggle UI with disabled+dimmed sub-settings | P1 |
-| C-008 | `ConfigurationView.swift` | Split `serverRestartNeeded` / `modelReloadNeeded`; wire `refreshCacheConfig` | **P0** |
-| C-009 | `ModelRuntime.swift` | Fix dict-iteration race + nil-coordinator window in refresh | **P0** |
-| — | `MLXGenerationEngine.swift` | Remove unused `import MLXLLM` | P2 |
-| C-010 | `ChatWindowManager.swift` | Invalidate `MemoryContextAssembler` on window close | P2 |
-| C-011 | `OsaurusPaths.swift` | Add `diskKVCache()` / usage / clear helpers | P1 |
-| C-012 | `ModelCacheInspectorView.swift` | Disk cache row + expanded Clear All scope | P1 |
-| C-013 | `ServerConfigurationStoreTests.swift` | 5 round-trip tests for new cache fields | P1 |
+| C-R01 | `ServerConfiguration.swift` | Remove user-facing cache fields | P0 |
+| C-R02 | `ConfigurationView.swift` | Remove Cache Storage subsection | P1 |
+| C-R03 | `ConfigurationView.swift` | `modelReloadNeeded` → `runtimeConfigChanged` + use `invalidateConfig` | P1 |
+| C-R04 | `ModelCacheInspectorView.swift` | Remove Disk KV Cache row | P1 |
+| C-R05 | `ServerConfigurationStoreTests.swift` | Migration-compat test for removed fields | P1 |
+| C-R06 | `ModelRuntime.swift` | Simplify `buildCacheCoordinatorConfig` (no serverCfg); drop `refreshCacheConfig` | P1 |
+| **C-014** | `MemoryConfiguration.swift` | Flip `enabled` default to `false` | **P0** |
+| **C-015** | `ConfigurationView.swift` | Add Memory toggle to Settings → Chat | **P0** |
+| **C-016** | `ChatConfiguration.swift` | Flip `disableTools` default to `true` | **P0** |
+| **C-017** | `ChatWindowState.swift` | Add `toolsDisabledOverride: Bool?` | P1 |
+| **C-018** | `FloatingInputCard.swift` | Add Tools chip to chat bar selector row | P1 |
 
 Plus the original migration commit `9d66eb12` which did the bulk removal
 (KVCacheStore + custom cache logic — ~1,953 lines deleted).
+
+### Commits in chronological order
+
+1. `9d66eb12` — Initial vmlx migration (KVCacheStore deletion + CacheCoordinator)
+2. `db492f29` — Round 1/2 cache UI + refresh hot-reload
+3. `51d055a3` — Clean up misplaced design doc folder
+4. `0bb41b90` — **Round 3** cache strip + memory/tools defaults + Tools chip
+5. (Next) — Round 3 documentation updates + polish (this commit)
 
 ---
 

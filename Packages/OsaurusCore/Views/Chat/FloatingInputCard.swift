@@ -1523,11 +1523,26 @@ extension FloatingInputCard {
             )
         }
         .buttonStyle(.plain)
-        .help(
-            toolsChipActive
-                ? "Tools enabled for this conversation. Tap to use global default."
-                : "Tools disabled. Tap to enable for this conversation."
-        )
+        .help(toolsChipHelpText)
+    }
+
+    private var toolsChipHelpText: String {
+        let global = AppConfiguration.shared.chatConfig.disableTools
+        if toolsChipActive {
+            // Currently ON
+            if toolsDisabledOverride == nil {
+                return "Tools are enabled globally. Tap to disable for this conversation."
+            }
+            return "Tools enabled for this conversation. Tap to reset to global default (off)."
+        } else {
+            // Currently OFF
+            if toolsDisabledOverride == nil {
+                return global
+                    ? "Tools off by default. Tap to enable for this conversation — the agent can use built-in tools, plugin tools, and any manual tools configured on its agent profile."
+                    : "Tools are disabled globally. Tap to enable for this conversation."
+            }
+            return "Tools disabled for this conversation. Tap to reset to global default."
+        }
     }
 
     private var sandboxToggleChip: some View {

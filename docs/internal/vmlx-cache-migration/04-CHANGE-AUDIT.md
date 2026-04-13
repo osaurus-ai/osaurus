@@ -1650,6 +1650,97 @@ let effectiveToolsDisabled =
 
 ---
 
+## Semantic note — `disableTools` is a hard kill
+
+Flagged during post-commit verification of C-016. Not a new change, just
+documentation of an existing invariant that now matters more.
+
+### The invariant
+
+`SystemPromptComposer.resolveTools` line 146:
+```swift
+guard !toolsDisabled else { return [] }
+```
+
+When `toolsDisabled == true`, **every** path through `resolveTools` returns
+an empty tool list — including:
+- Always-loaded built-in tools (capability search etc.)
+- Agent-level manual tools (`Agent.manualToolNames`)
+- Preflight-selected tools
+
+### Why this matters after C-016
+
+Before C-016: default was `disableTools = false`. Agents with explicit
+`toolSelectionMode: .manual` + `manualToolNames: ["web_search"]` got their
+manual tools on every request without configuration.
+
+After C-016: default is `disableTools = true`. Those same agents get
+**no tools** unless the user explicitly flips either:
+- The Settings toggle in Chat > Tools (global), OR
+- The Tools chip in the chat bar (per-conversation via C-018)
+
+### Why this is the right semantics
+
+Matches the user's explicit direction: "no automatic memory feature,
+simply within the chat bar there should be a button to open tools and
+then that opens submenu to enable disable tools, and let this all act
+in this manner." The chip **is** the per-conversation opt-in. Agents
+don't get tools automatically.
+
+### What's NOT broken
+
+- The chat-bar Tools chip path works end-to-end: flipping it sets
+  `toolsDisabledOverride = false`, which flows through `ChatView.sendMessage`
+  and causes `resolveTools` to take the normal path, which reads the
+  agent's `toolSelectionMode` and loads manual tools correctly.
+- Users who preserved the old behavior by having `"disableTools": false`
+  explicitly in their `ChatConfiguration.json` are unaffected.
+- Remote providers (Claude via API, etc.) never went through this path,
+  so their tool handling is unchanged.
+
+### What reviewers should think about
+
+- **Is the UX clear?** When a user upgrades, their configured agents
+  suddenly have no tools. The first time they notice, they'll go looking
+  for the toggle. Finding it in Settings OR the chat bar should be
+  obvious — that's the audit focus for C-015 and C-018.
+- **Should agent-level manual tools always win over global disable?**
+  An alternative semantic: `disableTools` only kills auto-discovery /
+  preflight, and per-agent manual tools still load. This is a bigger
+  change and we're **not** implementing it here. Flagged for potential
+  follow-up if user testing shows confusion.
+- **Does the onboarding / first-run experience need to explain this?**
+  No onboarding exists today. If the team wants one, that's a separate
+  feature.
+
+### If we change our mind later
+
+The single load-bearing line is `SystemPromptComposer.swift:146`. Changing
+it to:
+```swift
+guard !toolsDisabled || toolMode == .manual else { return [] }
+```
+...would make agent-level manual tools survive a global disable. But it
+would also mean "disable tools" doesn't fully disable tools, which
+contradicts the existing docstring. Not a small change — would affect
+the "plain LLM backend" use case that the field was designed for.
+
+### Action items
+
+- [x] Document the semantic here (done — this block)
+- [x] Update the Tools chip help text in `FloatingInputCard` to be
+      honest about what "enabled" means (done in C-018)
+- [ ] Update the Memory/Tools subsection copy in `ConfigurationView`
+      to explicitly mention "even if an agent has manual tools configured,
+      they won't load unless this is enabled or the chat-bar Tools chip
+      is active for that conversation" — deferred to C-019 if we ship it
+- [ ] Consider a chat-bar tooltip: "Your agent has manual tools configured.
+      Tap to enable them for this conversation." Would require reading
+      `AgentManager.effectiveManualToolNames` from the chip — deferred
+
+---
+
+
 
 
 
