@@ -30,6 +30,9 @@ jobs:
       - name: Install Metal Toolchain
         run: xcodebuild -downloadComponent MetalToolchain
 
+      - name: Configure git for private SPM deps
+        run: git config --global url."https://x-access-token:${{ secrets.SPM_PAT }}@github.com/".insteadOf "https://github.com/"
+
       - name: Cache SPM packages
         uses: actions/cache@v4
         with:
@@ -67,6 +70,9 @@ jobs:
         uses: maxim-lobanov/setup-xcode@v1
         with:
           xcode-version: latest-stable
+
+      - name: Configure git for private SPM deps
+        run: git config --global url."https://x-access-token:${{ secrets.SPM_PAT }}@github.com/".insteadOf "https://github.com/"
 
       - name: Cache SPM packages
         uses: actions/cache@v4
