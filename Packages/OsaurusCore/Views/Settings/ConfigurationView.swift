@@ -50,6 +50,9 @@ struct ConfigurationView: View {
     @State private var tempMaxKV: String = ""
     @State private var tempPrefillStep: String = ""
     @State private var tempTurboQuant: Bool? = nil
+    @State private var tempDiskCacheEnabled: Bool = true
+    @State private var tempDiskCacheMaxGB: String = ""
+    @State private var tempCacheMaxBlocks: String = ""
     @State private var tempEvictionPolicy: ModelEvictionPolicy = .strictSingleModel
 
     // Toast settings state
@@ -425,6 +428,8 @@ struct ConfigurationView: View {
                             "Quantization",
                             "Prefill",
                             "Max KV",
+                            "Cache Storage",
+                            "Disk Cache",
                             "CPU",
                             "Memory"
                         ) {
@@ -504,6 +509,41 @@ struct ConfigurationView: View {
                                                         range: 64 ... 2048,
                                                         step: 64,
                                                         defaultValue: 512
+                                                    )
+                                                }
+                                                .padding(.top, 8)
+                                            }
+                                        }
+                                    }
+
+                                    SettingsDivider()
+
+                                    // Cache Storage
+                                    SettingsSubsection(label: "Cache Storage") {
+                                        VStack(alignment: .leading, spacing: 12) {
+                                            SettingsToggle(
+                                                title: "Disk Cache",
+                                                description:
+                                                    "Persist KV cache to disk so prefill is skipped across app restarts.",
+                                                isOn: $tempDiskCacheEnabled
+                                            )
+                                            DisclosureGroup("Advanced") {
+                                                VStack(alignment: .leading, spacing: 12) {
+                                                    SettingsStepperField(
+                                                        label: "Disk Cache Limit (GB)",
+                                                        help: "Maximum disk space for cached KV state",
+                                                        text: $tempDiskCacheMaxGB,
+                                                        range: 1 ... 32,
+                                                        step: 1,
+                                                        defaultValue: 4
+                                                    )
+                                                    SettingsStepperField(
+                                                        label: "Memory Cache Blocks",
+                                                        help: "Max L1 paged cache blocks (64 tokens each)",
+                                                        text: $tempCacheMaxBlocks,
+                                                        range: 100 ... 8000,
+                                                        step: 100,
+                                                        defaultValue: 1000
                                                     )
                                                 }
                                                 .padding(.top, 8)
@@ -780,6 +820,9 @@ struct ConfigurationView: View {
         tempMaxKV = configuration.genMaxKVSize.map(String.init) ?? ""
         tempPrefillStep = configuration.genPrefillStepSize.map(String.init) ?? ""
         tempTurboQuant = configuration.genTurboQuant
+        tempDiskCacheEnabled = configuration.cacheDiskEnabled ?? true
+        tempDiskCacheMaxGB = configuration.cacheDiskMaxGB.map { String(Int($0)) } ?? ""
+        tempCacheMaxBlocks = configuration.cacheMaxBlocks.map(String.init) ?? ""
         tempAllowedOrigins = configuration.allowedOrigins.joined(separator: ", ")
         tempEvictionPolicy = configuration.modelEvictionPolicy
 
@@ -909,6 +952,12 @@ struct ConfigurationView: View {
         let trimmedPrefillStep = tempPrefillStep.trimmingCharacters(in: .whitespacesAndNewlines)
         configuration.genPrefillStepSize = trimmedPrefillStep.isEmpty ? nil : Int(trimmedPrefillStep)
         configuration.genTurboQuant = tempTurboQuant
+
+        configuration.cacheDiskEnabled = tempDiskCacheEnabled ? nil : false
+        let trimmedDiskGB = tempDiskCacheMaxGB.trimmingCharacters(in: .whitespacesAndNewlines)
+        configuration.cacheDiskMaxGB = trimmedDiskGB.isEmpty ? nil : Float(trimmedDiskGB)
+        let trimmedMaxBlocks = tempCacheMaxBlocks.trimmingCharacters(in: .whitespacesAndNewlines)
+        configuration.cacheMaxBlocks = trimmedMaxBlocks.isEmpty ? nil : Int(trimmedMaxBlocks)
 
         configuration.modelEvictionPolicy = tempEvictionPolicy
 
