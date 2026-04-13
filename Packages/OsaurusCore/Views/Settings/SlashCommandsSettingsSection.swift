@@ -244,9 +244,11 @@ struct SlashCommandEditorSheet: View {
                                 } label: {
                                     ZStack {
                                         RoundedRectangle(cornerRadius: 6)
-                                            .fill(icon == sym
-                                                  ? theme.accentColor.opacity(0.15)
-                                                  : theme.tertiaryBackground)
+                                            .fill(
+                                                icon == sym
+                                                    ? theme.accentColor.opacity(0.15)
+                                                    : theme.tertiaryBackground
+                                            )
                                             .overlay(
                                                 RoundedRectangle(cornerRadius: 6)
                                                     .strokeBorder(
@@ -287,13 +289,16 @@ struct SlashCommandEditorSheet: View {
                                     .fill(theme.inputBackground)
                                     .overlay(
                                         RoundedRectangle(cornerRadius: 8)
-                                            .stroke(nameError != nil ? Color.red.opacity(0.6) : theme.inputBorder,
-                                                    lineWidth: 1)
+                                            .stroke(
+                                                nameError != nil ? Color.red.opacity(0.6) : theme.inputBorder,
+                                                lineWidth: 1
+                                            )
                                     )
                             )
                             .onChange(of: name) { _, newValue in
                                 // Strip spaces and leading slash
-                                let cleaned = newValue
+                                let cleaned =
+                                    newValue
                                     .replacingOccurrences(of: " ", with: "-")
                                     .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
                                 if cleaned != newValue { name = cleaned }

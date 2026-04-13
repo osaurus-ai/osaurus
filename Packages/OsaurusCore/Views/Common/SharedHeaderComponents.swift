@@ -229,7 +229,9 @@ struct AgentPill: View {
                             )
                         }
                     }
-                } header: { Text("On This Network", bundle: .module) }
+                } header: {
+                    Text("On This Network", bundle: .module)
+                }
             }
 
             Divider()
@@ -237,7 +239,11 @@ struct AgentPill: View {
             Button(action: {
                 AppDelegate.shared?.showManagementWindow(initialTab: .agents)
             }) {
-                Label { Text("Manage Agents...", bundle: .module) } icon: { Image(systemName: "person.2.badge.gearshape") }
+                Label {
+                    Text("Manage Agents...", bundle: .module)
+                } icon: {
+                    Image(systemName: "person.2.badge.gearshape")
+                }
             }
         } label: {
             HStack(spacing: 6) {

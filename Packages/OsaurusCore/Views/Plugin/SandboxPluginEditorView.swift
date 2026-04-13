@@ -104,15 +104,21 @@ private extension SandboxPluginEditorView {
     var editorFooter: some View {
         HStack {
             if !isNew {
-                Label { Text("Editing \"\(originalId)\"", bundle: .module) } icon: { Image(systemName: "pencil") }
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
+                Label {
+                    Text("Editing \"\(originalId)\"", bundle: .module)
+                } icon: {
+                    Image(systemName: "pencil")
+                }
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
             }
             Spacer()
             HStack(spacing: 12) {
                 Button {
                     dismiss(); onDismiss()
-                } label: { Text("Cancel", bundle: .module) }
+                } label: {
+                    Text("Cancel", bundle: .module)
+                }
                 .buttonStyle(.bordered)
                 Button(action: savePlugin) {
                     HStack(spacing: 4) {
@@ -181,8 +187,14 @@ private extension SandboxPluginEditorView {
                     toolCard(index: index, tool: tool)
                 }
             }
-            Button(action: addTool) { Label { Text("Add Tool", bundle: .module) } icon: { Image(systemName: "plus") } }
-                .buttonStyle(.bordered)
+            Button(action: addTool) {
+                Label {
+                    Text("Add Tool", bundle: .module)
+                } icon: {
+                    Image(systemName: "plus")
+                }
+            }
+            .buttonStyle(.bordered)
         }
     }
 
@@ -197,8 +209,14 @@ private extension SandboxPluginEditorView {
                 fileCard(path: path)
             }
 
-            Button(action: addFile) { Label { Text("Add File", bundle: .module) } icon: { Image(systemName: "plus") } }
-                .buttonStyle(.bordered)
+            Button(action: addFile) {
+                Label {
+                    Text("Add File", bundle: .module)
+                } icon: {
+                    Image(systemName: "plus")
+                }
+            }
+            .buttonStyle(.bordered)
         }
     }
 
@@ -278,9 +296,15 @@ private extension SandboxPluginEditorView {
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(theme.secondaryText)
                 Spacer()
-                Button(action: { addParameter(to: toolIndex) }) { Label { Text("Add", bundle: .module) } icon: { Image(systemName: "plus") } }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
+                Button(action: { addParameter(to: toolIndex) }) {
+                    Label {
+                        Text("Add", bundle: .module)
+                    } icon: {
+                        Image(systemName: "plus")
+                    }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
             }
 
             let params = plugin.tools?[toolIndex].parameters ?? [:]
@@ -706,8 +730,14 @@ private extension SandboxPluginEditorView {
                     .buttonStyle(PlainButtonStyle())
                 }
             }
-            Button(action: { binding.wrappedValue.append("") }) { Label { Text("Add", bundle: .module) } icon: { Image(systemName: "plus") } }
-                .buttonStyle(.bordered)
+            Button(action: { binding.wrappedValue.append("") }) {
+                Label {
+                    Text("Add", bundle: .module)
+                } icon: {
+                    Image(systemName: "plus")
+                }
+            }
+            .buttonStyle(.bordered)
         }
     }
 }

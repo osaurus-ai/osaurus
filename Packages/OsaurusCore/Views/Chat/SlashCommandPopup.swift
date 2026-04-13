@@ -118,9 +118,11 @@ struct SlashCommandPopup: View {
                 // Icon
                 ZStack {
                     RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(isSelected
-                              ? theme.accentColor.opacity(0.15)
-                              : theme.tertiaryBackground.opacity(0.5))
+                        .fill(
+                            isSelected
+                                ? theme.accentColor.opacity(0.15)
+                                : theme.tertiaryBackground.opacity(0.5)
+                        )
                         .frame(width: 26, height: 26)
                     Image(systemName: command.icon)
                         .font(.system(size: 12, weight: .medium))

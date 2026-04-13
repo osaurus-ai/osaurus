@@ -445,9 +445,9 @@ extension ContentBlock {
     /// Parses a ChartSpec from a render_chart tool result marker.
     private static func parseChartSpecFromResult(_ result: String) -> ChartSpec? {
         guard let start = result.range(of: "---CHART_START---\n"),
-              let end   = result.range(of: "\n---CHART_END---")
+            let end = result.range(of: "\n---CHART_END---")
         else { return nil }
-        let json = String(result[start.upperBound..<end.lowerBound])
+        let json = String(result[start.upperBound ..< end.lowerBound])
         guard let data = json.data(using: .utf8) else { return nil }
         return try? JSONDecoder().decode(ChartSpec.self, from: data)
     }
@@ -463,8 +463,16 @@ extension ContentBlock {
     ) -> [ContentBlock] {
         let fence = "```chart"
         guard text.contains(fence) else {
-            return [.paragraph(turnId: turnId, index: 0, text: text,
-                               isStreaming: isStreaming, role: role, position: .middle)]
+            return [
+                .paragraph(
+                    turnId: turnId,
+                    index: 0,
+                    text: text,
+                    isStreaming: isStreaming,
+                    role: role,
+                    position: .middle
+                )
+            ]
         }
 
         var blocks: [ContentBlock] = []
@@ -475,9 +483,16 @@ extension ContentBlock {
             let before = String(remaining[..<fenceStart.lowerBound])
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             if !before.isEmpty {
-                blocks.append(.paragraph(turnId: turnId, index: paraIndex,
-                                         text: before, isStreaming: false,
-                                         role: role, position: .middle))
+                blocks.append(
+                    .paragraph(
+                        turnId: turnId,
+                        index: paraIndex,
+                        text: before,
+                        isStreaming: false,
+                        role: role,
+                        position: .middle
+                    )
+                )
                 paraIndex += 1
             }
 
@@ -488,23 +503,37 @@ extension ContentBlock {
                 remaining = String(afterFence[closeRange.upperBound...])
 
                 if let data = json.data(using: .utf8),
-                   let spec = try? JSONDecoder().decode(ChartSpec.self, from: data)
+                    let spec = try? JSONDecoder().decode(ChartSpec.self, from: data)
                 {
                     blocks.append(.chart(turnId: turnId, spec: spec.normalized, position: .middle))
                 } else {
                     // Malformed JSON — show as readable code block so user can see what was emitted
                     let errText = "⚠️ Could not render chart — invalid spec:\n```\n\(json)\n```"
-                    blocks.append(.paragraph(turnId: turnId, index: paraIndex,
-                                             text: errText, isStreaming: false,
-                                             role: role, position: .middle))
+                    blocks.append(
+                        .paragraph(
+                            turnId: turnId,
+                            index: paraIndex,
+                            text: errText,
+                            isStreaming: false,
+                            role: role,
+                            position: .middle
+                        )
+                    )
                     paraIndex += 1
                 }
             } else {
                 // No closing fence yet — streaming in progress; leave as plain text for now
                 let partialText = fence + String(afterFence)
-                blocks.append(.paragraph(turnId: turnId, index: paraIndex,
-                                         text: partialText, isStreaming: isStreaming,
-                                         role: role, position: .middle))
+                blocks.append(
+                    .paragraph(
+                        turnId: turnId,
+                        index: paraIndex,
+                        text: partialText,
+                        isStreaming: isStreaming,
+                        role: role,
+                        position: .middle
+                    )
+                )
                 paraIndex += 1
                 remaining = ""
                 break
@@ -513,14 +542,29 @@ extension ContentBlock {
 
         let tail = remaining.trimmingCharacters(in: .whitespacesAndNewlines)
         if !tail.isEmpty {
-            blocks.append(.paragraph(turnId: turnId, index: paraIndex,
-                                     text: tail, isStreaming: isStreaming,
-                                     role: role, position: .middle))
+            blocks.append(
+                .paragraph(
+                    turnId: turnId,
+                    index: paraIndex,
+                    text: tail,
+                    isStreaming: isStreaming,
+                    role: role,
+                    position: .middle
+                )
+            )
         }
 
         return blocks.isEmpty
-            ? [.paragraph(turnId: turnId, index: 0, text: text,
-                           isStreaming: isStreaming, role: role, position: .middle)]
+            ? [
+                .paragraph(
+                    turnId: turnId,
+                    index: 0,
+                    text: text,
+                    isStreaming: isStreaming,
+                    role: role,
+                    position: .middle
+                )
+            ]
             : blocks
     }
 

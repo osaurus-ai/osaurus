@@ -261,7 +261,8 @@ private struct LegacyWhisperBanner: View {
                     .foregroundColor(theme.primaryText)
 
                 Text(
-                    "These models are no longer used. Delete to free up \(modelManager.legacyWhisperModelsSizeString ?? "disk space").", bundle: .module
+                    "These models are no longer used. Delete to free up \(modelManager.legacyWhisperModelsSizeString ?? "disk space").",
+                    bundle: .module
                 )
                 .font(.system(size: 12))
                 .foregroundColor(theme.secondaryText)

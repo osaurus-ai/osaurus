@@ -473,22 +473,31 @@ struct GitHubImportSheet: View {
         HStack(spacing: 10) {
             Spacer()
 
-            Button( action: cancel) { Text("Cancel", bundle: .module) }
+            Button(action: cancel) { Text("Cancel", bundle: .module) }
                 .buttonStyle(GitHubSecondaryButtonStyle())
 
             switch importState {
             case .urlInput:
-                Button { fetchSkills() } label: { Text("Continue", bundle: .module) }
-                    .buttonStyle(GitHubPrimaryButtonStyle())
-                    .disabled(urlInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    .keyboardShortcut(.return, modifiers: .command)
+                Button {
+                    fetchSkills()
+                } label: {
+                    Text("Continue", bundle: .module)
+                }
+                .buttonStyle(GitHubPrimaryButtonStyle())
+                .disabled(urlInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .keyboardShortcut(.return, modifiers: .command)
 
             case .skillSelection:
                 Button {
                     if case .skillSelection(let result) = importState {
                         importSelectedSkills(from: result)
                     }
-                } label: { Text("Import \(selectedSkillPaths.count) Skill\(selectedSkillPaths.count == 1 ? "" : "s")", bundle: .module) }
+                } label: {
+                    Text(
+                        "Import \(selectedSkillPaths.count) Skill\(selectedSkillPaths.count == 1 ? "" : "s")",
+                        bundle: .module
+                    )
+                }
                 .buttonStyle(GitHubPrimaryButtonStyle())
                 .disabled(selectedSkillPaths.isEmpty)
                 .keyboardShortcut(.return, modifiers: .command)

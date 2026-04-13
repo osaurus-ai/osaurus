@@ -340,7 +340,8 @@ struct SkillEditorSheet: View {
             ZStack(alignment: .topLeading) {
                 if instructions.isEmpty && !isBuiltIn {
                     Text(
-                        "Write guidance for the AI...\n\nExample:\n## When to use this skill\n- Describe scenarios\n\n## Guidelines\n- Add specific guidance", bundle: .module
+                        "Write guidance for the AI...\n\nExample:\n## When to use this skill\n- Describe scenarios\n\n## Guidelines\n- Add specific guidance",
+                        bundle: .module
                     )
                     .font(.system(size: 13, design: .monospaced))
                     .foregroundColor(themeManager.currentTheme.placeholderText)

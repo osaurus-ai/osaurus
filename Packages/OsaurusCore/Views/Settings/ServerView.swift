@@ -117,9 +117,13 @@ private struct ServerStatusCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Label { Text("Status", bundle: .module) } icon: { Image(systemName: "antenna.radiowaves.left.and.right") }
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(theme.primaryText)
+            Label {
+                Text("Status", bundle: .module)
+            } icon: {
+                Image(systemName: "antenna.radiowaves.left.and.right")
+            }
+            .font(.system(size: 14, weight: .semibold))
+            .foregroundColor(theme.primaryText)
 
             HStack(spacing: 16) {
                 VStack(alignment: .leading, spacing: 8) {
@@ -216,9 +220,13 @@ private struct AccessKeysSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
-                Label { Text("Access Keys", bundle: .module) } icon: { Image(systemName: "key.horizontal") }
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
+                Label {
+                    Text("Access Keys", bundle: .module)
+                } icon: {
+                    Image(systemName: "key.horizontal")
+                }
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(theme.primaryText)
 
                 Spacer()
 
@@ -257,7 +265,8 @@ private struct AccessKeysSection: View {
                             .foregroundColor(theme.warningColor)
                     }
                     Text(
-                        "All API endpoints are restricted until you create an access key. Click \"Generate Key\" above to get started.", bundle: .module
+                        "All API endpoints are restricted until you create an access key. Click \"Generate Key\" above to get started.",
+                        bundle: .module
                     )
                     .font(.system(size: 12))
                     .foregroundColor(theme.secondaryText)
@@ -511,9 +520,13 @@ private struct RelaysSectionView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Label { Text("Relays", bundle: .module) } icon: { Image(systemName: "globe") }
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(theme.primaryText)
+            Label {
+                Text("Relays", bundle: .module)
+            } icon: {
+                Image(systemName: "globe")
+            }
+            .font(.system(size: 14, weight: .semibold))
+            .foregroundColor(theme.primaryText)
 
             Text("Expose agents to the public internet via relay tunnels.", bundle: .module)
                 .font(.system(size: 12))
@@ -555,13 +568,18 @@ private struct RelaysSectionView: View {
                     relayManager.setTunnelEnabled(true, for: id)
                 }
                 pendingRelayAgentId = nil
-            } label: { Text("Enable Tunnel", bundle: .module) }
+            } label: {
+                Text("Enable Tunnel", bundle: .module)
+            }
             Button(role: .cancel) {
                 pendingRelayAgentId = nil
-            } label: { Text("Cancel", bundle: .module) }
+            } label: {
+                Text("Cancel", bundle: .module)
+            }
         } message: {
             Text(
-                "This will create a public URL for this agent via agent.osaurus.ai. Anyone with the URL can send requests to your local server. Your access keys still protect the API endpoints.", bundle: .module
+                "This will create a public URL for this agent via agent.osaurus.ai. Anyone with the URL can send requests to your local server. Your access keys still protect the API endpoints.",
+                bundle: .module
             )
         }
         .task {
@@ -782,9 +800,13 @@ private struct APIReferenceTabContent: View {
 
     private var endpointsCard: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Label { Text("API Endpoints", bundle: .module) } icon: { Image(systemName: "arrow.left.arrow.right") }
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(theme.primaryText)
+            Label {
+                Text("API Endpoints", bundle: .module)
+            } icon: {
+                Image(systemName: "arrow.left.arrow.right")
+            }
+            .font(.system(size: 14, weight: .semibold))
+            .foregroundColor(theme.primaryText)
 
             Text("Available endpoints on your Osaurus server. Expand to test directly.", bundle: .module)
                 .font(.system(size: 12))
@@ -876,9 +898,13 @@ private struct APIReferenceTabContent: View {
 
     private var documentationSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Label { Text("Documentation", bundle: .module) } icon: { Image(systemName: "book") }
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(theme.primaryText)
+            Label {
+                Text("Documentation", bundle: .module)
+            } icon: {
+                Image(systemName: "book")
+            }
+            .font(.system(size: 14, weight: .semibold))
+            .foregroundColor(theme.primaryText)
 
             Text("Learn how to integrate Osaurus into your applications.", bundle: .module)
                 .font(.system(size: 12))
@@ -1066,18 +1092,20 @@ private struct AccessKeyGeneratorSheet: View {
                 Text("Label", bundle: .module)
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(theme.secondaryText)
-                TextField(text: $label, prompt: Text("e.g. Cursor, CLI, my-app", bundle: .module)) { Text("e.g. Cursor, CLI, my-app", bundle: .module) }
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 13))
-                    .padding(10)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(theme.inputBackground)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .stroke(theme.inputBorder, lineWidth: 1)
-                            )
-                    )
+                TextField(text: $label, prompt: Text("e.g. Cursor, CLI, my-app", bundle: .module)) {
+                    Text("e.g. Cursor, CLI, my-app", bundle: .module)
+                }
+                .textFieldStyle(.plain)
+                .font(.system(size: 13))
+                .padding(10)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(theme.inputBackground)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(theme.inputBorder, lineWidth: 1)
+                        )
+                )
             }
 
             VStack(alignment: .leading, spacing: 6) {
@@ -1705,9 +1733,13 @@ private struct ResponsePanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Label { Text("Response", bundle: .module) } icon: { Image(systemName: "arrow.down.circle.fill") }
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(theme.secondaryText)
+                Label {
+                    Text("Response", bundle: .module)
+                } icon: {
+                    Image(systemName: "arrow.down.circle.fill")
+                }
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(theme.secondaryText)
 
                 Spacer()
 
@@ -1852,9 +1884,13 @@ private struct EndpointRow: View {
     private var requestPanel: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Label { Text("Request", bundle: .module) } icon: { Image(systemName: "arrow.up.circle.fill") }
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(theme.secondaryText)
+                Label {
+                    Text("Request", bundle: .module)
+                } icon: {
+                    Image(systemName: "arrow.up.circle.fill")
+                }
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(theme.secondaryText)
                 Spacer()
                 if endpoint.examplePayload != nil, !endpoint.hasPathParameters {
                     Button(action: { editablePayload = endpoint.examplePayload ?? "{}" }) {
@@ -1889,8 +1925,11 @@ private struct EndpointRow: View {
                 HStack(spacing: 6) {
                     Image(systemName: "info.circle")
                         .font(.system(size: 10))
-                    Text("Replace path parameters with real values. Test via curl or your HTTP client.", bundle: .module)
-                        .font(.system(size: 10))
+                    Text(
+                        "Replace path parameters with real values. Test via curl or your HTTP client.",
+                        bundle: .module
+                    )
+                    .font(.system(size: 10))
                 }
                 .foregroundColor(theme.tertiaryText)
             } else if endpoint.examplePayload != nil {
@@ -2013,9 +2052,13 @@ private struct TranscriptionTestRow: View {
 
     private var requestPanel: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Label { Text("Request", bundle: .module) } icon: { Image(systemName: "arrow.up.circle.fill") }
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(theme.secondaryText)
+            Label {
+                Text("Request", bundle: .module)
+            } icon: {
+                Image(systemName: "arrow.up.circle.fill")
+            }
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundColor(theme.secondaryText)
 
             VStack(alignment: .leading, spacing: 6) {
                 Text("Model", bundle: .module)

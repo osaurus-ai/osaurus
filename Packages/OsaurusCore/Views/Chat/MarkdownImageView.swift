@@ -302,18 +302,30 @@ struct ImageContextMenuItems: View {
         Button {
             ImageActions.saveImageToFile(image)
         } label: {
-            Label { Text("Save Image\u{2026}", bundle: .module) } icon: { Image(systemName: "arrow.down.to.line") }
+            Label {
+                Text("Save Image\u{2026}", bundle: .module)
+            } icon: {
+                Image(systemName: "arrow.down.to.line")
+            }
         }
         Button {
             ImageActions.copyImageToClipboard(image)
         } label: {
-            Label { Text("Copy Image", bundle: .module) } icon: { Image(systemName: "doc.on.doc") }
+            Label {
+                Text("Copy Image", bundle: .module)
+            } icon: {
+                Image(systemName: "doc.on.doc")
+            }
         }
         Divider()
         Button {
             onFullScreen()
         } label: {
-            Label { Text("Open Full Screen", bundle: .module) } icon: { Image(systemName: "arrow.up.left.and.arrow.down.right") }
+            Label {
+                Text("Open Full Screen", bundle: .module)
+            } icon: {
+                Image(systemName: "arrow.up.left.and.arrow.down.right")
+            }
         }
     }
 }

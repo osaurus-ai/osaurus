@@ -266,9 +266,9 @@ actor ModelRuntime {
         let ramGB = ProcessInfo.processInfo.physicalMemory / (1024 * 1024 * 1024)
         let maxBlocks: Int
         switch ramGB {
-        case 0 ..< 16: maxBlocks = 500     // 32k tokens at 64 per block
-        case 16 ..< 48: maxBlocks = 1000   // 64k tokens
-        default: maxBlocks = 2000          // 128k tokens
+        case 0 ..< 16: maxBlocks = 500  // 32k tokens at 64 per block
+        case 16 ..< 48: maxBlocks = 1000  // 64k tokens
+        default: maxBlocks = 2000  // 128k tokens
         }
 
         var cacheConfig = CacheCoordinatorConfig()
@@ -364,13 +364,14 @@ actor ModelRuntime {
         // Signal prefill starting (count unknown until prepareAndGenerate returns).
         InferenceProgressManager.shared.prefillWillStartAsync(tokenCount: 0)
 
-        let genResult: (
-            stream: AsyncStream<MLXLMCommon.TokenGeneration>,
-            tokenizer: any Tokenizer,
-            promptTokens: [Int],
-            genTask: Task<Void, Never>,
-            toolCallFormat: ToolCallFormat
-        )
+        let genResult:
+            (
+                stream: AsyncStream<MLXLMCommon.TokenGeneration>,
+                tokenizer: any Tokenizer,
+                promptTokens: [Int],
+                genTask: Task<Void, Never>,
+                toolCallFormat: ToolCallFormat
+            )
         do {
             genResult = try await MLXGenerationEngine.prepareAndGenerate(
                 container: holder.container,

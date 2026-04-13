@@ -725,19 +725,31 @@ private struct FileOperationRow: View {
                 Button {
                     openFile()
                 } label: {
-                    Label { Text("Open File", bundle: .module) } icon: { Image(systemName: "arrow.up.forward.square") }
+                    Label {
+                        Text("Open File", bundle: .module)
+                    } icon: {
+                        Image(systemName: "arrow.up.forward.square")
+                    }
                 }
                 Button {
                     revealInFinder()
                 } label: {
-                    Label { Text("Reveal in Finder", bundle: .module) } icon: { Image(systemName: "folder") }
+                    Label {
+                        Text("Reveal in Finder", bundle: .module)
+                    } icon: {
+                        Image(systemName: "folder")
+                    }
                 }
                 Divider()
             }
             Button {
                 onUndo()
             } label: {
-                Label { Text("Undo Change", bundle: .module) } icon: { Image(systemName: "arrow.uturn.backward") }
+                Label {
+                    Text("Undo Change", bundle: .module)
+                } icon: {
+                    Image(systemName: "arrow.uturn.backward")
+                }
             }
         }
     }

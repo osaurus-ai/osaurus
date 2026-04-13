@@ -69,12 +69,14 @@ struct RenderChartTool: OsaurusTool {
         if let ct = args["chartType"] as? String {
             chartType = ct
         } else if let props = args["properties"] as? [String: Any],
-                  let ct = props["chartType"] as? String {
+            let ct = props["chartType"] as? String
+        {
             chartType = ct
         } else if let propsStr = args["properties"] as? String,
-                  let data = propsStr.data(using: .utf8),
-                  let props = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let ct = props["chartType"] as? String {
+            let data = propsStr.data(using: .utf8),
+            let props = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let ct = props["chartType"] as? String
+        {
             chartType = ct
         } else {
             return errorResult("chartType is required (e.g. \"line\", \"column\", \"pie\")")
@@ -85,9 +87,9 @@ struct RenderChartTool: OsaurusTool {
             return errorResult("series is required — pass an array of column names to plot")
         }
 
-        let format    = (args["format"] as? String)?.lowercased() ?? "csv"
-        let xColumn   = args["xColumn"]       as? String
-        let title     = args["title"]         as? String
+        let format = (args["format"] as? String)?.lowercased() ?? "csv"
+        let xColumn = args["xColumn"] as? String
+        let title = args["title"] as? String
         let tipSuffix = args["tooltipSuffix"] as? String
 
         let headers: [String]
@@ -188,18 +190,19 @@ struct RenderChartTool: OsaurusTool {
             .map { $0.trimmingCharacters(in: .whitespaces) }
         let rows = lines.map {
             $0.components(separatedBy: String(separator))
-              .map { $0.trimmingCharacters(in: .whitespaces) }
+                .map { $0.trimmingCharacters(in: .whitespaces) }
         }
         return (headers, rows)
     }
 
     private func parseJSON(_ raw: String) throws -> ([String], [[String]]) {
         guard let data = raw.data(using: .utf8),
-              let array = try JSONSerialization.jsonObject(with: data) as? [[String: Any]],
-              let first = array.first
+            let array = try JSONSerialization.jsonObject(with: data) as? [[String: Any]],
+            let first = array.first
         else {
             throw NSError(
-                domain: "RenderChartTool", code: 1,
+                domain: "RenderChartTool",
+                code: 1,
                 userInfo: [NSLocalizedDescriptionKey: "JSON must be an array of objects"]
             )
         }
@@ -211,14 +214,14 @@ struct RenderChartTool: OsaurusTool {
     private func downsample(_ rows: [[String]], to maxCount: Int) -> [[String]] {
         guard rows.count > maxCount else { return rows }
         let step = Double(rows.count) / Double(maxCount)
-        return (0..<maxCount).map { i in rows[Int(Double(i) * step)] }
+        return (0 ..< maxCount).map { i in rows[Int(Double(i) * step)] }
     }
 
     /// Fallback for when the model serializes an array as a JSON string e.g. "[\"Apple\",\"Google\"]"
     private func parseStringArrayFromJSON(_ value: Any?) -> [String]? {
         guard let str = value as? String,
-              let data = str.data(using: .utf8),
-              let arr = try? JSONSerialization.jsonObject(with: data) as? [String]
+            let data = str.data(using: .utf8),
+            let arr = try? JSONSerialization.jsonObject(with: data) as? [String]
         else { return nil }
         return arr.isEmpty ? nil : arr
     }

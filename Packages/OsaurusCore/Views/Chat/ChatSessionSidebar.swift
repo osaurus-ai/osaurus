@@ -272,11 +272,15 @@ private struct SessionRow: View {
                     Button {
                         openInNewWindow()
                     } label: {
-                        Label { Text("Open in New Window", bundle: .module) } icon: { Image(systemName: "macwindow.badge.plus") }
+                        Label {
+                            Text("Open in New Window", bundle: .module)
+                        } icon: {
+                            Image(systemName: "macwindow.badge.plus")
+                        }
                     }
                     Divider()
                 }
-                Button( action: onStartRename) { Text("Rename", bundle: .module) }
+                Button(action: onStartRename) { Text("Rename", bundle: .module) }
                 Button(role: .destructive, action: onDelete) { Text("Delete", bundle: .module) }
             }
         }
@@ -315,24 +319,24 @@ private struct SessionRow: View {
             Text("Title", bundle: .module)
         }
         .onSubmit(onConfirmRename)
-            .textFieldStyle(.plain)
-            .font(.system(size: 12, weight: .medium))
-            .foregroundColor(theme.primaryText)
-            .padding(.horizontal, 4)
-            .padding(.vertical, 2)
-            .background(theme.primaryBackground.opacity(0.5))
-            .clipShape(RoundedRectangle(cornerRadius: 4))
-            .focused($isTextFieldFocused)
-            .onExitCommand(perform: onCancelRename)
-            .onAppear {
-                isTextFieldFocused = true
+        .textFieldStyle(.plain)
+        .font(.system(size: 12, weight: .medium))
+        .foregroundColor(theme.primaryText)
+        .padding(.horizontal, 4)
+        .padding(.vertical, 2)
+        .background(theme.primaryBackground.opacity(0.5))
+        .clipShape(RoundedRectangle(cornerRadius: 4))
+        .focused($isTextFieldFocused)
+        .onExitCommand(perform: onCancelRename)
+        .onAppear {
+            isTextFieldFocused = true
+        }
+        .onChange(of: isTextFieldFocused) { _, focused in
+            if !focused {
+                // Clicked outside - confirm the rename
+                onConfirmRename()
             }
-            .onChange(of: isTextFieldFocused) { _, focused in
-                if !focused {
-                    // Clicked outside - confirm the rename
-                    onConfirmRename()
-                }
-            }
+        }
     }
 
 }

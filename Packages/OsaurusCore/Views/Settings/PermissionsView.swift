@@ -41,7 +41,8 @@ struct PermissionsView: View {
                         }
 
                         Text(
-                            "Some plugins require additional system permissions to function. Grant permissions below to enable advanced features like automation, calendar access, and more.", bundle: .module
+                            "Some plugins require additional system permissions to function. Grant permissions below to enable advanced features like automation, calendar access, and more.",
+                            bundle: .module
                         )
                         .font(.system(size: 12))
                         .foregroundColor(theme.secondaryText)
@@ -286,10 +287,13 @@ private struct SystemPermissionRow: View {
                             )
 
                         if !isSuccess {
-                            Text("Xcode builds need separate grants. Try 'tccutil reset AppleEvents' if stuck.", bundle: .module)
-                                .font(.system(size: 10))
-                                .foregroundColor(themeManager.currentTheme.tertiaryText)
-                                .padding(.top, 2)
+                            Text(
+                                "Xcode builds need separate grants. Try 'tccutil reset AppleEvents' if stuck.",
+                                bundle: .module
+                            )
+                            .font(.system(size: 10))
+                            .foregroundColor(themeManager.currentTheme.tertiaryText)
+                            .padding(.top, 2)
                         }
                     }
                 }

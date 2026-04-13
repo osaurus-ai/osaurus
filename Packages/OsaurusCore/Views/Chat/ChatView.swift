@@ -1906,12 +1906,20 @@ private struct BonjourTokenSheet: View {
                 .font(theme.font(size: 13))
 
             HStack {
-                Button { onCancel() } label: { Text("Cancel", bundle: .module) }
-                    .keyboardShortcut(.cancelAction)
+                Button {
+                    onCancel()
+                } label: {
+                    Text("Cancel", bundle: .module)
+                }
+                .keyboardShortcut(.cancelAction)
                 Spacer()
-                Button { onConnect(token) } label: { Text("Connect", bundle: .module) }
-                    .keyboardShortcut(.defaultAction)
-                    .buttonStyle(.borderedProminent)
+                Button {
+                    onConnect(token)
+                } label: {
+                    Text("Connect", bundle: .module)
+                }
+                .keyboardShortcut(.defaultAction)
+                .buttonStyle(.borderedProminent)
             }
         }
         .padding(24)

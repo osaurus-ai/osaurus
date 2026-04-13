@@ -296,7 +296,8 @@ struct MemoryView: View {
                         .font(.system(size: 13))
                         .foregroundColor(theme.tertiaryText)
                     Text(
-                        "No profile generated yet. Chat with Osaurus and the memory system will build your profile automatically.", bundle: .module
+                        "No profile generated yet. Chat with Osaurus and the memory system will build your profile automatically.",
+                        bundle: .module
                     )
                     .font(.system(size: 13))
                     .foregroundColor(theme.tertiaryText)
@@ -663,9 +664,12 @@ struct MemoryView: View {
                         Text("Clear All Memory", bundle: .module)
                             .font(.system(size: 13, weight: .medium))
                             .foregroundColor(theme.primaryText)
-                        Text("Permanently delete all memory data including profile, entries, and summaries.", bundle: .module)
-                            .font(.system(size: 12))
-                            .foregroundColor(theme.tertiaryText)
+                        Text(
+                            "Permanently delete all memory data including profile, entries, and summaries.",
+                            bundle: .module
+                        )
+                        .font(.system(size: 12))
+                        .foregroundColor(theme.tertiaryText)
                     }
 
                     Spacer()
@@ -1314,24 +1318,26 @@ private struct AddOverrideSheet: View {
 
             Divider().opacity(0.5)
 
-            TextField(text: $text, prompt: Text("e.g., My name is Terence", bundle: .module)) { Text("e.g., My name is Terence", bundle: .module) }
-                .textFieldStyle(.plain)
-                .font(.system(size: 13))
-                .focused($isFocused)
-                .padding(12)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(theme.inputBackground)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8)
-                                .stroke(
-                                    isFocused ? theme.accentColor.opacity(0.5) : theme.inputBorder,
-                                    lineWidth: isFocused ? 1.5 : 1
-                                )
-                        )
-                )
-                .padding(.horizontal, 20)
-                .padding(.vertical, 16)
+            TextField(text: $text, prompt: Text("e.g., My name is Terence", bundle: .module)) {
+                Text("e.g., My name is Terence", bundle: .module)
+            }
+            .textFieldStyle(.plain)
+            .font(.system(size: 13))
+            .focused($isFocused)
+            .padding(12)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(theme.inputBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(
+                                isFocused ? theme.accentColor.opacity(0.5) : theme.inputBorder,
+                                lineWidth: isFocused ? 1.5 : 1
+                            )
+                    )
+            )
+            .padding(.horizontal, 20)
+            .padding(.vertical, 16)
 
             Divider().opacity(0.5)
 
@@ -1416,12 +1422,15 @@ private struct ContextPreviewSheet: View {
                 }
                 Spacer()
 
-                Text("~\(pluralized(max(1, context.count / MemoryConfiguration.charsPerToken), "token"))", bundle: .module)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .background(Capsule().fill(theme.tertiaryBackground))
+                Text(
+                    "~\(pluralized(max(1, context.count / MemoryConfiguration.charsPerToken), "token"))",
+                    bundle: .module
+                )
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(theme.secondaryText)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(Capsule().fill(theme.tertiaryBackground))
 
                 Button {
                     dismiss()

@@ -85,13 +85,19 @@ enum CapabilitySearch {
     ) async -> CapabilitySearchResults {
         let threshold = minimumRelevanceScore
         async let methodHits = MethodSearchService.shared.search(
-            query: query, topK: topK.methods, threshold: threshold
+            query: query,
+            topK: topK.methods,
+            threshold: threshold
         )
         async let toolHits = ToolSearchService.shared.search(
-            query: query, topK: topK.tools, threshold: threshold
+            query: query,
+            topK: topK.tools,
+            threshold: threshold
         )
         async let skillHits = SkillSearchService.shared.search(
-            query: query, topK: topK.skills, threshold: threshold
+            query: query,
+            topK: topK.skills,
+            threshold: threshold
         )
 
         return CapabilitySearchResults(
@@ -119,7 +125,7 @@ enum PreflightCapabilitySearch {
 
     static func search(query: String, mode: PreflightSearchMode = .balanced) async -> PreflightResult {
         guard mode != .off,
-              !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         else { return .empty }
 
         let (catalog, groups) = await MainActor.run {
@@ -136,7 +142,10 @@ enum PreflightCapabilitySearch {
         guard !catalog.isEmpty else { return .empty }
 
         let selectedNames = await selectTools(
-            query: query, catalog: catalog, groups: groups, cap: mode.toolCap
+            query: query,
+            catalog: catalog,
+            groups: groups,
+            cap: mode.toolCap
         )
 
         if selectedNames.isEmpty {
@@ -238,18 +247,21 @@ enum PreflightCapabilitySearch {
         var selected: [String] = []
         var seen: Set<String> = []
 
-        let tokens = trimmed
+        let tokens =
+            trimmed
             .components(separatedBy: CharacterSet(charactersIn: ",\n"))
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
 
         for token in tokens {
-            let cleaned = token
+            let cleaned =
+                token
                 .replacingOccurrences(of: "^[-•*]\\s*", with: "", options: .regularExpression)
                 .trimmingCharacters(in: .whitespaces)
 
             if let canonical = validNames[cleaned.lowercased()],
-               seen.insert(canonical).inserted {
+                seen.insert(canonical).inserted
+            {
                 selected.append(canonical)
             }
         }

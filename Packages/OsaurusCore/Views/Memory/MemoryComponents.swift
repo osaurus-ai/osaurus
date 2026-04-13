@@ -40,9 +40,11 @@ struct AgentEntriesPanel: View {
                     Image(systemName: "magnifyingglass")
                         .font(.system(size: 10, weight: .medium))
                         .foregroundColor(theme.tertiaryText)
-                    TextField(text: $searchText, prompt: Text("Search entries...", bundle: .module)) { Text("Search entries...", bundle: .module) }
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 11))
+                    TextField(text: $searchText, prompt: Text("Search entries...", bundle: .module)) {
+                        Text("Search entries...", bundle: .module)
+                    }
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 11))
                 }
                 .padding(.horizontal, 8)
                 .padding(.vertical, 5)

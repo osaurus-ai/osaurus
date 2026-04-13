@@ -39,19 +39,24 @@ private enum WalkthroughStepType: Int, CaseIterable {
         switch self {
         case .modes:
             return L(
-"Chat Mode — Talk back and forth, like a conversation.\nWork Mode — Give it a task and let it work in the background.")
+                "Chat Mode — Talk back and forth, like a conversation.\nWork Mode — Give it a task and let it work in the background."
+            )
         case .tools:
             return L(
-"20+ built-in plugins for Mail, Calendar, Browser, Files, and more. Import skills from GitHub. Connect MCP servers. All with your permission.")
+                "20+ built-in plugins for Mail, Calendar, Browser, Files, and more. Import skills from GitHub. Connect MCP servers. All with your permission."
+            )
         case .sandbox:
             return L(
-"The Sandbox runs code in a Linux container on your Mac. Agents can execute commands, install packages, and work with files — fully isolated from your system.")
+                "The Sandbox runs code in a Linux container on your Mac. Agents can execute commands, install packages, and work with files — fully isolated from your system."
+            )
         case .personalization:
             return L(
-"Create different agents for different tasks. Talk hands-free with voice. Customize how everything looks.")
+                "Create different agents for different tasks. Talk hands-free with voice. Customize how everything looks."
+            )
         case .memory:
             return L(
-"Osaurus builds a layered memory from your conversations — profile, working context, summaries, and a knowledge graph. Agents recall relevant facts automatically. Your memory stays with you, not a provider.")
+                "Osaurus builds a layered memory from your conversations — profile, working context, summaries, and a knowledge graph. Agents recall relevant facts automatically. Your memory stays with you, not a provider."
+            )
         case .privacy:
             return L("Conversations stay on your Mac. Switch providers anytime — your history comes with you.")
         }

@@ -20,10 +20,14 @@ struct HotkeyRecorder: View {
                 Text("Recording… Press new shortcut", bundle: .module)
                     .font(.system(size: 11))
                     .foregroundColor(theme.secondaryText)
-                Button { isRecording = false } label: { Text("Cancel", bundle: .module) }
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.accentColor)
-                    .buttonStyle(.plain)
+                Button {
+                    isRecording = false
+                } label: {
+                    Text("Cancel", bundle: .module)
+                }
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(theme.accentColor)
+                .buttonStyle(.plain)
             } else {
                 Text(display(for: value))
                     .font(.system(size: 12, weight: .medium))
@@ -38,15 +42,23 @@ struct HotkeyRecorder: View {
                                     .stroke(theme.inputBorder, lineWidth: 1)
                             )
                     )
-                Button { isRecording = true } label: { Text("Change…", bundle: .module) }
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.accentColor)
-                    .buttonStyle(.plain)
+                Button {
+                    isRecording = true
+                } label: {
+                    Text("Change…", bundle: .module)
+                }
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(theme.accentColor)
+                .buttonStyle(.plain)
                 if value != nil {
-                    Button { value = nil } label: { Text("Clear", bundle: .module) }
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
-                        .buttonStyle(.plain)
+                    Button {
+                        value = nil
+                    } label: {
+                        Text("Clear", bundle: .module)
+                    }
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+                    .buttonStyle(.plain)
                 }
             }
         }

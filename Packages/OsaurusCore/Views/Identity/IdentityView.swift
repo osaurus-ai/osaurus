@@ -154,11 +154,14 @@ private struct IdentitySetupCard: View {
                     .font(.system(size: 22, weight: .bold, design: .rounded))
                     .foregroundColor(theme.primaryText)
 
-                Text("Generate a cryptographic identity stored securely\nin your iCloud Keychain and Secure Enclave.", bundle: .module)
-                    .font(.system(size: 14))
-                    .foregroundColor(theme.secondaryText)
-                    .multilineTextAlignment(.center)
-                    .lineSpacing(2)
+                Text(
+                    "Generate a cryptographic identity stored securely\nin your iCloud Keychain and Secure Enclave.",
+                    bundle: .module
+                )
+                .font(.system(size: 14))
+                .foregroundColor(theme.secondaryText)
+                .multilineTextAlignment(.center)
+                .lineSpacing(2)
             }
 
             if let errorMessage {

@@ -241,11 +241,19 @@ private struct ProviderCard: View {
 
                     Menu {
                         Button(action: onEdit) {
-                            Label { Text("Edit", bundle: .module) } icon: { Image(systemName: "pencil") }
+                            Label {
+                                Text("Edit", bundle: .module)
+                            } icon: {
+                                Image(systemName: "pencil")
+                            }
                         }
                         Divider()
                         Button(role: .destructive, action: { showDeleteConfirm = true }) {
-                            Label { Text("Delete", bundle: .module) } icon: { Image(systemName: "trash") }
+                            Label {
+                                Text("Delete", bundle: .module)
+                            } icon: {
+                                Image(systemName: "trash")
+                            }
                         }
                     } label: {
                         Image(systemName: "ellipsis.circle")
@@ -396,7 +404,8 @@ private struct ProviderCard: View {
                         .font(.system(size: 11))
                         .foregroundColor(theme.tertiaryText)
                     Text(
-                        "\(provider.customHeaders.count + provider.secretHeaderKeys.count) custom header\(provider.customHeaders.count + provider.secretHeaderKeys.count == 1 ? "" : "s")", bundle: .module
+                        "\(provider.customHeaders.count + provider.secretHeaderKeys.count) custom header\(provider.customHeaders.count + provider.secretHeaderKeys.count == 1 ? "" : "s")",
+                        bundle: .module
                     )
                     .font(.system(size: 12))
                     .foregroundColor(theme.secondaryText)
@@ -800,7 +809,9 @@ private struct ProviderEditSheet: View {
             // Cancel
             Button {
                 dismiss()
-            } label: { Text("Cancel", bundle: .module) }
+            } label: {
+                Text("Cancel", bundle: .module)
+            }
             .buttonStyle(MCPSecondaryButtonStyle())
 
             // Save/Add

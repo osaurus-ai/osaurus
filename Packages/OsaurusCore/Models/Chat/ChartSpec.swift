@@ -21,9 +21,9 @@ public struct ChartSpec: Codable, Equatable, Sendable {
     public var series: [ChartSeries]
     public var colorsTheme: [String]?
     public var tooltipSuffix: String?
-    public var stacking: String?        // "normal", "percent", or nil
+    public var stacking: String?  // "normal", "percent", or nil
     public var dataLabelsEnabled: Bool?
-    public var note: String?            // set by RenderChartTool when downsampling occurs
+    public var note: String?  // set by RenderChartTool when downsampling occurs
 
     public static let validChartTypes: Set<String> = [
         "column", "bar", "line", "spline", "area", "areaspline",
@@ -47,15 +47,15 @@ public struct ChartSpec: Codable, Equatable, Sendable {
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        chartType         = (try? c.decode(String.self, forKey: .chartType)) ?? "column"
-        title             = try? c.decode(String.self, forKey: .title)
-        subtitle          = try? c.decode(String.self, forKey: .subtitle)
-        categories        = try? c.decode([String].self, forKey: .categories)
-        tooltipSuffix     = try? c.decode(String.self, forKey: .tooltipSuffix)
-        stacking          = try? c.decode(String.self, forKey: .stacking)
+        chartType = (try? c.decode(String.self, forKey: .chartType)) ?? "column"
+        title = try? c.decode(String.self, forKey: .title)
+        subtitle = try? c.decode(String.self, forKey: .subtitle)
+        categories = try? c.decode([String].self, forKey: .categories)
+        tooltipSuffix = try? c.decode(String.self, forKey: .tooltipSuffix)
+        stacking = try? c.decode(String.self, forKey: .stacking)
         dataLabelsEnabled = try? c.decode(Bool.self, forKey: .dataLabelsEnabled)
-        note              = try? c.decode(String.self, forKey: .note)
-        colorsTheme       = try? c.decode([String].self, forKey: .colorsTheme)
+        note = try? c.decode(String.self, forKey: .note)
+        colorsTheme = try? c.decode([String].self, forKey: .colorsTheme)
 
         // Coerce series data: some quantized models emit numbers as strings or omit nulls
         if let rawSeries = try? c.decode([RawSeries].self, forKey: .series) {
@@ -66,7 +66,7 @@ public struct ChartSpec: Codable, Equatable, Sendable {
                         switch v {
                         case .double(let d): return d
                         case .string(let s): return Double(s)
-                        case .null:          return nil
+                        case .null: return nil
                         }
                     }
                 )
@@ -102,16 +102,16 @@ public struct ChartSpec: Codable, Equatable, Sendable {
         dataLabelsEnabled: Bool? = nil,
         note: String? = nil
     ) {
-        self.chartType         = chartType
-        self.title             = title
-        self.subtitle          = subtitle
-        self.categories        = categories
-        self.series            = series
-        self.colorsTheme       = colorsTheme
-        self.tooltipSuffix     = tooltipSuffix
-        self.stacking          = stacking
+        self.chartType = chartType
+        self.title = title
+        self.subtitle = subtitle
+        self.categories = categories
+        self.series = series
+        self.colorsTheme = colorsTheme
+        self.tooltipSuffix = tooltipSuffix
+        self.stacking = stacking
         self.dataLabelsEnabled = dataLabelsEnabled
-        self.note              = note
+        self.note = note
     }
 
     // MARK: - Internal lenient series parser
@@ -126,10 +126,15 @@ public struct ChartSpec: Codable, Equatable, Sendable {
 
         init(from decoder: Decoder) throws {
             let s = try decoder.singleValueContainer()
-            if s.decodeNil()                             { self = .null }
-            else if let d = try? s.decode(Double.self)  { self = .double(d) }
-            else if let str = try? s.decode(String.self) { self = .string(str) }
-            else                                         { self = .null }
+            if s.decodeNil() {
+                self = .null
+            } else if let d = try? s.decode(Double.self) {
+                self = .double(d)
+            } else if let str = try? s.decode(String.self) {
+                self = .string(str)
+            } else {
+                self = .null
+            }
         }
     }
 }

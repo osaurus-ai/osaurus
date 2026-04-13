@@ -259,15 +259,19 @@ private extension SandboxView {
                     .foregroundColor(theme.warningColor)
 
                     Button(action: performProvision) {
-                        Label { Text("Retry", bundle: .module) } icon: { Image(systemName: "arrow.clockwise") }
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 18)
-                            .padding(.vertical, 10)
-                            .background(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .fill(theme.accentColor)
-                            )
+                        Label {
+                            Text("Retry", bundle: .module)
+                        } icon: {
+                            Image(systemName: "arrow.clockwise")
+                        }
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 18)
+                        .padding(.vertical, 10)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(theme.accentColor)
+                        )
                     }
                     .buttonStyle(.plain)
                 }
@@ -475,7 +479,8 @@ private struct SandboxLogConsoleCard: View {
                             let filtered = filteredLogEntries
                             if filtered.isEmpty {
                                 Text(
-                                    "No log entries yet. Command output and container activity will stream here in real time.", bundle: .module
+                                    "No log entries yet. Command output and container activity will stream here in real time.",
+                                    bundle: .module
                                 )
                                 .font(.system(size: 11))
                                 .foregroundColor(theme.tertiaryText)
@@ -690,20 +695,31 @@ private extension SandboxView {
     var dangerZoneCard: some View {
         sectionCard(title: "Danger Zone", icon: "exclamationmark.triangle") {
             VStack(alignment: .leading, spacing: 12) {
-                Text("Resetting destroys all installed sandbox packages. Agent workspace files on the host persist.", bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
+                Text(
+                    "Resetting destroys all installed sandbox packages. Agent workspace files on the host persist.",
+                    bundle: .module
+                )
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
 
                 HStack(spacing: 12) {
                     destructiveButton("Reset Container", icon: "arrow.counterclockwise") {
                         showResetConfirm = true
                     }
                     .alert(Text("Reset Container?", bundle: .module), isPresented: $showResetConfirm) {
-                        Button(role: .cancel) {} label: { Text("Cancel", bundle: .module) }
-                        Button(role: .destructive) { performReset() } label: { Text("Reset", bundle: .module) }
+                        Button(role: .cancel) {
+                        } label: {
+                            Text("Cancel", bundle: .module)
+                        }
+                        Button(role: .destructive) {
+                            performReset()
+                        } label: {
+                            Text("Reset", bundle: .module)
+                        }
                     } message: {
                         Text(
-                            "This will destroy the container and re-provision from scratch. Installed packages and sandbox plugin state will be lost.", bundle: .module
+                            "This will destroy the container and re-provision from scratch. Installed packages and sandbox plugin state will be lost.",
+                            bundle: .module
                         )
                     }
 
@@ -711,10 +727,20 @@ private extension SandboxView {
                         showRemoveConfirm = true
                     }
                     .alert(Text("Remove Container?", bundle: .module), isPresented: $showRemoveConfirm) {
-                        Button(role: .cancel) {} label: { Text("Cancel", bundle: .module) }
-                        Button(role: .destructive) { performRemove() } label: { Text("Remove", bundle: .module) }
+                        Button(role: .cancel) {
+                        } label: {
+                            Text("Cancel", bundle: .module)
+                        }
+                        Button(role: .destructive) {
+                            performRemove()
+                        } label: {
+                            Text("Remove", bundle: .module)
+                        }
                     } message: {
-                        Text("This will stop and remove the container entirely. You can set it up again later.", bundle: .module)
+                        Text(
+                            "This will stop and remove the container entirely. You can set it up again later.",
+                            bundle: .module
+                        )
                     }
                 }
             }
@@ -1039,11 +1065,15 @@ private struct SandboxProvisionSheet: View {
             Divider().foregroundColor(theme.cardBorder)
 
             HStack {
-                Button { dismiss() } label: { Text("Cancel", bundle: .module) }
-                    .buttonStyle(.plain)
-                    .foregroundColor(theme.secondaryText)
-                    .font(.system(size: 13, weight: .medium))
-                    .keyboardShortcut(.escape, modifiers: [])
+                Button {
+                    dismiss()
+                } label: {
+                    Text("Cancel", bundle: .module)
+                }
+                .buttonStyle(.plain)
+                .foregroundColor(theme.secondaryText)
+                .font(.system(size: 13, weight: .medium))
+                .keyboardShortcut(.escape, modifiers: [])
 
                 Spacer()
 
@@ -1051,15 +1081,19 @@ private struct SandboxProvisionSheet: View {
                     dismiss()
                     onConfirm()
                 }) {
-                    Label { Text("Set Up Sandbox", bundle: .module) } icon: { Image(systemName: "shippingbox") }
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 18)
-                        .padding(.vertical, 10)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(theme.accentColor)
-                        )
+                    Label {
+                        Text("Set Up Sandbox", bundle: .module)
+                    } icon: {
+                        Image(systemName: "shippingbox")
+                    }
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 10)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(theme.accentColor)
+                    )
                 }
                 .buttonStyle(.plain)
                 .keyboardShortcut(.return, modifiers: .command)

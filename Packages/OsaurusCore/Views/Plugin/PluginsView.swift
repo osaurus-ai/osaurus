@@ -696,7 +696,11 @@ private struct PluginCard: View {
         } else {
             Menu {
                 Button(action: onSelect) {
-                    Label { Text("View Details", bundle: .module) } icon: { Image(systemName: "info.circle") }
+                    Label {
+                        Text("View Details", bundle: .module)
+                    } icon: {
+                        Image(systemName: "info.circle")
+                    }
                 }
                 if plugin.hasUpdate, let onUpgrade {
                     Button {
@@ -704,7 +708,11 @@ private struct PluginCard: View {
                             do { try await onUpgrade() } catch { handleInstallError(error) }
                         }
                     } label: {
-                        Label { Text("Update", bundle: .module) } icon: { Image(systemName: "arrow.up.circle.fill") }
+                        Label {
+                            Text("Update", bundle: .module)
+                        } icon: {
+                            Image(systemName: "arrow.up.circle.fill")
+                        }
                     }
                 }
                 if !cachedSecrets.isEmpty {
@@ -723,7 +731,11 @@ private struct PluginCard: View {
                             do { try await onInstall() } catch { handleInstallError(error) }
                         }
                     } label: {
-                        Label { Text("Install", bundle: .module) } icon: { Image(systemName: "arrow.down.circle.fill") }
+                        Label {
+                            Text("Install", bundle: .module)
+                        } icon: {
+                            Image(systemName: "arrow.down.circle.fill")
+                        }
                     }
                 }
                 if plugin.isInstalled, let onUninstall {
@@ -736,7 +748,11 @@ private struct PluginCard: View {
                             }
                         }
                     } label: {
-                        Label { Text("Uninstall", bundle: .module) } icon: { Image(systemName: "trash") }
+                        Label {
+                            Text("Uninstall", bundle: .module)
+                        } icon: {
+                            Image(systemName: "trash")
+                        }
                     }
                 }
             } label: {
@@ -1325,7 +1341,9 @@ private struct PluginDetailView: View {
                         } label: {
                             HStack(spacing: 6) {
                                 Image(systemName: perm.systemIconName).font(.system(size: 11))
-                                Text("Grant \(perm.displayName)", bundle: .module).font(.system(size: 11, weight: .medium))
+                                Text("Grant \(perm.displayName)", bundle: .module).font(
+                                    .system(size: 11, weight: .medium)
+                                )
                             }
                             .foregroundColor(.white)
                             .padding(.horizontal, 12)

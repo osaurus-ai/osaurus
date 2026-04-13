@@ -168,7 +168,8 @@ struct AcknowledgementsView: View {
     private var introSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(
-                "Osaurus is built with the help of many excellent open source projects. We are grateful to the developers and maintainers of these libraries.", bundle: .module
+                "Osaurus is built with the help of many excellent open source projects. We are grateful to the developers and maintainers of these libraries.",
+                bundle: .module
             )
             .font(.system(size: 14))
             .foregroundColor(theme.secondaryText)
@@ -222,7 +223,9 @@ struct AcknowledgementsView: View {
                     if let url = URL(string: "https://github.com/osaurus-ai/osaurus") {
                         NSWorkspace.shared.open(url)
                     }
-                } label: { Text("View on GitHub", bundle: .module) }
+                } label: {
+                    Text("View on GitHub", bundle: .module)
+                }
                 .buttonStyle(.link)
                 .font(.system(size: 12))
             }

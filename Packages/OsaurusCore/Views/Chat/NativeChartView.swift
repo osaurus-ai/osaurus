@@ -11,11 +11,11 @@ import AAInfographics
 
 final class NativeChartView: NSView {
 
-    private let card         = NSView()
-    private let titleLabel   = NSTextField(labelWithString: "")
-    private let typePicker   = NSPopUpButton()
-    private let noteLabel    = NSTextField(labelWithString: "")
-    private let chartView    = AAChartView()
+    private let card = NSView()
+    private let titleLabel = NSTextField(labelWithString: "")
+    private let typePicker = NSPopUpButton()
+    private let noteLabel = NSTextField(labelWithString: "")
+    private let chartView = AAChartView()
 
     /// Animation runs only on first draw; subsequent spec changes skip animation.
     private var hasDrawn = false
@@ -37,17 +37,17 @@ final class NativeChartView: NSView {
 
     private static func symbol(for chartType: String) -> String {
         switch chartType {
-        case "line":       return "chart.xyaxis.line"
-        case "spline":     return "chart.line.uptrend.xyaxis"
-        case "column":     return "chart.bar.fill"
-        case "bar":        return "chart.bar.xaxis.ascending"
-        case "area":       return "chart.line.flattrend.xyaxis.circle.fill"
+        case "line": return "chart.xyaxis.line"
+        case "spline": return "chart.line.uptrend.xyaxis"
+        case "column": return "chart.bar.fill"
+        case "bar": return "chart.bar.xaxis.ascending"
+        case "area": return "chart.line.flattrend.xyaxis.circle.fill"
         case "areaspline": return "chart.line.uptrend.xyaxis.circle.fill"
-        case "pie":        return "chart.pie.fill"
-        case "scatter":    return "chart.dots.scatter"
-        case "bubble":     return "circle.grid.3x3.fill"
-        case "waterfall":  return "chart.bar.doc.horizontal.fill"
-default:           return "chart.bar.fill"
+        case "pie": return "chart.pie.fill"
+        case "scatter": return "chart.dots.scatter"
+        case "bubble": return "circle.grid.3x3.fill"
+        case "waterfall": return "chart.bar.doc.horizontal.fill"
+        default: return "chart.bar.fill"
         }
     }
 
@@ -65,7 +65,7 @@ default:           return "chart.bar.fill"
 
         card.wantsLayer = true
         card.layer?.cornerRadius = 12
-        card.layer?.borderWidth  = 1
+        card.layer?.borderWidth = 1
         card.translatesAutoresizingMaskIntoConstraints = false
         addSubview(card)
         NSLayoutConstraint.activate([
@@ -75,7 +75,7 @@ default:           return "chart.bar.fill"
             card.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
 
-        titleLabel.font          = .systemFont(ofSize: 13, weight: .semibold)
+        titleLabel.font = .systemFont(ofSize: 13, weight: .semibold)
         titleLabel.lineBreakMode = .byTruncatingTail
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         card.addSubview(titleLabel)
@@ -102,9 +102,9 @@ default:           return "chart.bar.fill"
         chartView.translatesAutoresizingMaskIntoConstraints = false
         card.addSubview(chartView)
 
-        noteLabel.font                 = .systemFont(ofSize: 11)
-        noteLabel.isHidden             = true
-        noteLabel.lineBreakMode        = .byWordWrapping
+        noteLabel.font = .systemFont(ofSize: 11)
+        noteLabel.isHidden = true
+        noteLabel.lineBreakMode = .byWordWrapping
         noteLabel.maximumNumberOfLines = 2
         noteLabel.translatesAutoresizingMaskIntoConstraints = false
         card.addSubview(noteLabel)
@@ -133,21 +133,21 @@ default:           return "chart.bar.fill"
     // MARK: - Configure
 
     func configure(spec: ChartSpec, theme: any ThemeProtocol) {
-        let bgColor   = NSColor(theme.cardBackground)
-        let bgHex     = bgColor.hexString
+        let bgColor = NSColor(theme.cardBackground)
+        let bgHex = bgColor.hexString
         let textColor = NSColor(theme.primaryText)
 
         card.layer?.backgroundColor = bgColor.cgColor
         card.layer?.borderColor = NSColor(theme.primaryBorder).withAlphaComponent(0.25).cgColor
-        titleLabel.textColor    = textColor
-        noteLabel.textColor     = NSColor(theme.secondaryText)
+        titleLabel.textColor = textColor
+        noteLabel.textColor = NSColor(theme.secondaryText)
 
         titleLabel.stringValue = spec.title ?? ""
-        titleLabel.isHidden    = (spec.title ?? "").isEmpty
+        titleLabel.isHidden = (spec.title ?? "").isEmpty
 
         if let note = spec.note, !note.isEmpty {
             noteLabel.stringValue = "ⓘ \(note)"
-            noteLabel.isHidden    = false
+            noteLabel.isHidden = false
         } else {
             noteLabel.isHidden = true
         }
@@ -157,7 +157,7 @@ default:           return "chart.bar.fill"
         // Skip chart redraw when spec hasn't changed (handles window focus / resize)
         guard spec != lastSpec else { return }
         lastSpec = spec
-        chartTypeOverride = nil   // new spec from model — reset any user override
+        chartTypeOverride = nil  // new spec from model — reset any user override
 
         // Sync picker to the spec's chart type
         if let idx = Self.chartTypes.firstIndex(of: spec.chartType) {
@@ -169,7 +169,7 @@ default:           return "chart.bar.fill"
 
     func measuredCardHeight() -> CGFloat {
         let p = Self.cardPadding
-        let headerH: CGFloat = 24    // picker height + 4pt gap
+        let headerH: CGFloat = 24  // picker height + 4pt gap
         var h = p + headerH
         h += Self.chartHeight
         if noteLabel.isHidden {
@@ -189,14 +189,20 @@ default:           return "chart.bar.fill"
         var updated = spec
         updated.chartType = chartTypeOverride!
 
-        let bgHex   = NSColor(theme.cardBackground).hexString
+        let bgHex = NSColor(theme.cardBackground).hexString
         let textHex = NSColor(theme.primaryText).hexString
         redraw(spec: updated, bgHex: bgHex, textHex: textHex, theme: theme, forceFullRedraw: true)
     }
 
     // MARK: - Draw / Refresh
 
-    private func redraw(spec: ChartSpec, bgHex: String, textHex: String, theme: any ThemeProtocol, forceFullRedraw: Bool = false) {
+    private func redraw(
+        spec: ChartSpec,
+        bgHex: String,
+        textHex: String,
+        theme: any ThemeProtocol,
+        forceFullRedraw: Bool = false
+    ) {
         let (options, seriesElements) = buildChartModel(from: spec, bgHex: bgHex, textHex: textHex, theme: theme)
 
         if !hasDrawn || forceFullRedraw {
@@ -238,7 +244,7 @@ default:           return "chart.bar.fill"
             model.categories(categories)
         }
         if let stacking = spec.stacking,
-           let stackingType = AAChartStackingType(rawValue: stacking)
+            let stackingType = AAChartStackingType(rawValue: stacking)
         {
             model.stacking(stackingType)
         }
@@ -266,9 +272,9 @@ private extension NSColor {
     /// Returns a CSS hex string (#rrggbb) suitable for passing to AAChartKit
     var hexString: String {
         guard let color = usingColorSpace(.sRGB) else { return "#000000" }
-        let r = Int((color.redComponent   * 255).rounded())
+        let r = Int((color.redComponent * 255).rounded())
         let g = Int((color.greenComponent * 255).rounded())
-        let b = Int((color.blueComponent  * 255).rounded())
+        let b = Int((color.blueComponent * 255).rounded())
         return String(format: "#%02x%02x%02x", r, g, b)
     }
 }

@@ -63,16 +63,18 @@ struct ServerConfigurationStoreTests {
     /// cache fields the schema no longer knows about.
     @Test func decode_ignoresRemovedCacheFields() async throws {
         let json = """
-        {
-            "port": 1234,
-            "cacheEnabled": false,
-            "cacheDiskEnabled": false,
-            "cacheDiskMaxGB": 8.0,
-            "cacheMaxBlocks": 500
-        }
-        """
+            {
+                "port": 1234,
+                "cacheEnabled": false,
+                "cacheDiskEnabled": false,
+                "cacheDiskMaxGB": 8.0,
+                "cacheMaxBlocks": 500
+            }
+            """
         let decoded = try JSONDecoder().decode(
-            ServerConfiguration.self, from: Data(json.utf8))
+            ServerConfiguration.self,
+            from: Data(json.utf8)
+        )
         #expect(decoded.port == 1234)
     }
 }

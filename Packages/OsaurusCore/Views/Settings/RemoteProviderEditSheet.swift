@@ -628,20 +628,24 @@ private struct AddProviderFlow: View {
 
             Spacer()
 
-            Button { dismiss() } label: { Text("Cancel", bundle: .module) }
-                .font(.system(size: 13, weight: .medium))
-                .foregroundColor(theme.primaryText)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(theme.tertiaryBackground)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8)
-                                .stroke(theme.inputBorder, lineWidth: 1)
-                        )
-                )
-                .buttonStyle(PlainButtonStyle())
+            Button {
+                dismiss()
+            } label: {
+                Text("Cancel", bundle: .module)
+            }
+            .font(.system(size: 13, weight: .medium))
+            .foregroundColor(theme.primaryText)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(theme.tertiaryBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(theme.inputBorder, lineWidth: 1)
+                    )
+            )
+            .buttonStyle(PlainButtonStyle())
 
             Button(action: onAction) {
                 HStack(spacing: 6) {
@@ -1316,20 +1320,24 @@ private struct EditProviderFlow: View {
 
             Spacer()
 
-            Button { dismiss() } label: { Text("Cancel", bundle: .module) }
-                .font(.system(size: 13, weight: .medium))
-                .foregroundColor(theme.primaryText)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(theme.tertiaryBackground)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8)
-                                .stroke(theme.inputBorder, lineWidth: 1)
-                        )
-                )
-                .buttonStyle(PlainButtonStyle())
+            Button {
+                dismiss()
+            } label: {
+                Text("Cancel", bundle: .module)
+            }
+            .font(.system(size: 13, weight: .medium))
+            .foregroundColor(theme.primaryText)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(theme.tertiaryBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(theme.inputBorder, lineWidth: 1)
+                    )
+            )
+            .buttonStyle(PlainButtonStyle())
 
             Button(action: save) {
                 Text("Save Changes", bundle: .module)
@@ -1689,20 +1697,20 @@ private struct CompactHeaderRow: View {
             TextField(text: $header.key, prompt: Text("Key", bundle: .module)) {
                 Text("Key", bundle: .module)
             }
-                .textFieldStyle(.plain)
-                .font(.system(size: 12, design: .monospaced))
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
-                .frame(width: 120)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(themeManager.currentTheme.inputBackground)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8)
-                                .stroke(themeManager.currentTheme.inputBorder, lineWidth: 1)
-                        )
-                )
-                .foregroundColor(themeManager.currentTheme.primaryText)
+            .textFieldStyle(.plain)
+            .font(.system(size: 12, design: .monospaced))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .frame(width: 120)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(themeManager.currentTheme.inputBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(themeManager.currentTheme.inputBorder, lineWidth: 1)
+                    )
+            )
+            .foregroundColor(themeManager.currentTheme.primaryText)
 
             Group {
                 if header.isSecret {

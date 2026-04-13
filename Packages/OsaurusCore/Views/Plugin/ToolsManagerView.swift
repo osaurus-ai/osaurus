@@ -433,14 +433,20 @@ private struct SandboxPluginsTabContent: View {
             )
         }
         .alert(Text("Remove Plugin?", bundle: .module), isPresented: $showDeleteConfirm) {
-            Button(role: .cancel) { pluginToDelete = nil } label: { Text("Cancel", bundle: .module) }
+            Button(role: .cancel) {
+                pluginToDelete = nil
+            } label: {
+                Text("Cancel", bundle: .module)
+            }
             Button(role: .destructive) {
                 if let p = pluginToDelete {
                     pluginLibrary.delete(id: p.id)
                     ToolRegistry.shared.unregisterSandboxPluginTools(pluginId: p.id)
                     pluginToDelete = nil
                 }
-            } label: { Text("Remove", bundle: .module) }
+            } label: {
+                Text("Remove", bundle: .module)
+            }
         } message: {
             if let p = pluginToDelete {
                 Text("Remove \"\(p.name)\" from the library? This will also unregister its tools.", bundle: .module)
@@ -453,7 +459,11 @@ private struct SandboxPluginsTabContent: View {
                 set: { if !$0 { actionError = nil } }
             )
         ) {
-            Button(role: .cancel) { actionError = nil } label: { Text("OK", bundle: .module) }
+            Button(role: .cancel) {
+                actionError = nil
+            } label: {
+                Text("OK", bundle: .module)
+            }
         } message: {
             if let error = actionError {
                 Text(error)
@@ -472,7 +482,8 @@ private struct SandboxPluginsTabContent: View {
                 .foregroundColor(theme.secondaryText)
 
             Text(
-                "Create a plugin or import a JSON recipe. Plugins are automatically provisioned when any agent uses them.", bundle: .module
+                "Create a plugin or import a JSON recipe. Plugins are automatically provisioned when any agent uses them.",
+                bundle: .module
             )
             .font(.system(size: 13))
             .foregroundColor(theme.tertiaryText)
@@ -592,17 +603,33 @@ private struct SandboxPluginToolCard: View {
 
                 Menu {
                     Button(action: onEdit) {
-                        Label { Text("Edit", bundle: .module) } icon: { Image(systemName: "pencil") }
+                        Label {
+                            Text("Edit", bundle: .module)
+                        } icon: {
+                            Image(systemName: "pencil")
+                        }
                     }
                     Button(action: onDuplicate) {
-                        Label { Text("Duplicate", bundle: .module) } icon: { Image(systemName: "plus.square.on.square") }
+                        Label {
+                            Text("Duplicate", bundle: .module)
+                        } icon: {
+                            Image(systemName: "plus.square.on.square")
+                        }
                     }
                     Button(action: onExport) {
-                        Label { Text("Export", bundle: .module) } icon: { Image(systemName: "square.and.arrow.up") }
+                        Label {
+                            Text("Export", bundle: .module)
+                        } icon: {
+                            Image(systemName: "square.and.arrow.up")
+                        }
                     }
                     Divider()
                     Button(role: .destructive, action: onDelete) {
-                        Label { Text("Remove", bundle: .module) } icon: { Image(systemName: "trash") }
+                        Label {
+                            Text("Remove", bundle: .module)
+                        } icon: {
+                            Image(systemName: "trash")
+                        }
                     }
                 } label: {
                     Image(systemName: "ellipsis.circle")
@@ -737,9 +764,12 @@ struct ToolPermissionBanner: View {
             }
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("\(count) plugin\(count == 1 ? "" : "s") need\(count == 1 ? "s" : "") system permissions", bundle: .module)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
+                Text(
+                    "\(count) plugin\(count == 1 ? "" : "s") need\(count == 1 ? "s" : "") system permissions",
+                    bundle: .module
+                )
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(theme.primaryText)
                 Text("Expand each plugin to grant the required permissions", bundle: .module)
                     .font(.system(size: 11))
                     .foregroundColor(theme.secondaryText)
@@ -1045,7 +1075,11 @@ private struct RemoteProviderToolsCard: View {
 
                 Menu {
                     Button(action: onDisconnect) {
-                        Label { Text("Disconnect", bundle: .module) } icon: { Image(systemName: "bolt.slash") }
+                        Label {
+                            Text("Disconnect", bundle: .module)
+                        } icon: {
+                            Image(systemName: "bolt.slash")
+                        }
                     }
                 } label: {
                     Image(systemName: "ellipsis.circle")

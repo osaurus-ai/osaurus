@@ -137,10 +137,14 @@ struct OnboardingLocalDownloadView: View {
         .alert(Text("Download Failed", bundle: .module), isPresented: $showError) {
             Button {
                 startDownload()
-            } label: { Text("Try Again", bundle: .module) }
+            } label: {
+                Text("Try Again", bundle: .module)
+            }
             Button {
                 onSkip()
-            } label: { Text("Skip", bundle: .module) }
+            } label: {
+                Text("Skip", bundle: .module)
+            }
         } message: {
             Text(errorMessage)
         }
@@ -286,7 +290,8 @@ struct OnboardingLocalDownloadView: View {
 
             // Info text
             Text(
-                "Once this finishes, you'll have an AI running entirely on your Mac — no account, no cloud, no data leaving your machine.", bundle: .module
+                "Once this finishes, you'll have an AI running entirely on your Mac — no account, no cloud, no data leaving your machine.",
+                bundle: .module
             )
             .font(theme.font(size: 13))
             .foregroundColor(theme.secondaryText)

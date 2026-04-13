@@ -53,7 +53,8 @@ struct OnboardingChoosePathView: View {
 
     private var helpContent: String {
         if foundationAvailable {
-            return L("""
+            return L(
+                """
                 Apple Intelligence is built into macOS and runs privately on your device. It's ready to use immediately.
 
                 Local models run on your Mac using your hardware. They're private and free to use, but require a download.
@@ -61,15 +62,18 @@ struct OnboardingChoosePathView: View {
                 Cloud providers like Claude and ChatGPT are more powerful but require an account and charge per use.
 
                 Not sure? Apple Intelligence is recommended for most users.
-                """)
+                """
+            )
         } else {
-            return L("""
+            return L(
+                """
                 Local models run on your Mac using your hardware. They're private and free to use, but less capable than cloud models for complex tasks.
 
                 Cloud providers like Claude and ChatGPT are more powerful but require an account and charge per use.
 
                 Not sure? Start local. You can add providers later.
-                """)
+                """
+            )
         }
     }
 
