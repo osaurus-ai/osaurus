@@ -60,17 +60,6 @@ final class ChatWindowState: ObservableObject {
     @Published private(set) var cachedActiveAgent: Agent = .default
     @Published private(set) var cachedAgentDisplayName: String = "Assistant"
 
-    /// Per-conversation override for the global `ChatConfiguration.disableTools`
-    /// setting. When nil, the global setting is used (usually `true` — tools
-    /// off by default). When non-nil, it overrides the global for this window
-    /// only. Set via the Tools chip in the chat input bar.
-    ///
-    /// Semantics:
-    /// - `nil` → follow `ChatConfiguration.disableTools`
-    /// - `false` → tools **enabled** for this conversation
-    /// - `true`  → tools **disabled** for this conversation
-    @Published var toolsDisabledOverride: Bool?
-
     // MARK: - Private
 
     private nonisolated(unsafe) var notificationObservers: [NSObjectProtocol] = []

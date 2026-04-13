@@ -97,8 +97,7 @@ struct WorkView: View {
                             onSkillSelected: { skillId in
                                 session.pendingOneOffSkillId = skillId
                             },
-                            pendingSkillId: $session.pendingOneOffSkillId,
-                            toolsDisabledOverride: $windowState.toolsDisabledOverride
+                            pendingSkillId: $session.pendingOneOffSkillId
                         )
                     }
                 }
