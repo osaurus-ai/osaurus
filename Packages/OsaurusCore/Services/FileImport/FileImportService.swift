@@ -152,15 +152,20 @@ enum FileImportService {
                         UTType("public.swift-source")?.identifier ?? "public.swift-source",
                         UTType("com.netscape.javascript-source")?.identifier ?? "com.netscape.javascript-source",
                         UTType("public.shell-script")?.identifier ?? "public.shell-script",
+                        UTType("public.svg-image")?.identifier ?? "public.svg-image",
+                        UTType("com.apple.property-list")?.identifier ?? "com.apple.property-list",
                     ],
                     mimeTypes: [
                         "text/plain",
                         "text/csv",
                         "text/tab-separated-values",
                         "application/json",
+                        "application/x-ndjson",
                         "application/xml",
                         "application/x-yaml",
                         "application/toml",
+                        "application/x-plist",
+                        "image/svg+xml",
                     ],
                     maxBytes: defaultMaxInputBytes,
                     source: .core,
@@ -209,7 +214,9 @@ enum FileImportService {
 
     private static let plainTextExtensions: Set<String> = [
         "txt", "md", "markdown", "csv", "tsv",
-        "json", "xml", "yaml", "yml", "toml",
+        "json", "jsonl", "ndjson",
+        "xml", "svg",
+        "yaml", "yml", "toml", "plist",
         "log", "ini", "cfg", "conf", "env",
         "swift", "py", "js", "ts", "tsx", "jsx",
         "rs", "go", "java", "kt", "c", "cpp", "h", "hpp",
@@ -267,7 +274,13 @@ enum FileImportService {
     private static func parsePlainTextFamily(url: URL) throws -> [Attachment] {
         let filename = url.lastPathComponent
         let fileSize = try fileSize(for: url)
-        let content = try parsePlainText(url: url)
+        let ext = url.pathExtension.lowercased()
+        let content: String
+        if ext == "plist" {
+            content = try parsePropertyList(url: url)
+        } else {
+            content = try parsePlainText(url: url)
+        }
         return [.document(filename: filename, content: content, fileSize: fileSize)]
     }
 
@@ -280,6 +293,28 @@ enum FileImportService {
             {
                 return str
             }
+            throw FileImportError.readFailed(error.localizedDescription)
+        }
+    }
+
+    private static func parsePropertyList(url: URL) throws -> String {
+        do {
+            let data = try Data(contentsOf: url)
+            var format = PropertyListSerialization.PropertyListFormat.binary
+            let plist = try PropertyListSerialization.propertyList(from: data, options: [], format: &format)
+
+            if JSONSerialization.isValidJSONObject(plist),
+                let jsonData = try? JSONSerialization.data(
+                    withJSONObject: plist,
+                    options: [.prettyPrinted, .sortedKeys]
+                ),
+                let jsonString = String(data: jsonData, encoding: .utf8)
+            {
+                return jsonString
+            }
+
+            return String(describing: plist)
+        } catch {
             throw FileImportError.readFailed(error.localizedDescription)
         }
     }
