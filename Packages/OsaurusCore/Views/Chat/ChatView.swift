@@ -852,16 +852,6 @@ final class ChatSession: ObservableObject {
                 let isManualTools = AgentManager.shared.effectiveToolSelectionMode(for: effectiveAgentId) == .manual
                 cachedContext = context
 
-                // Skip tool injection for local models when preflight found no relevant tools.
-                // Tool definitions are verbose in chat templates (~500 tokens each) and dominate
-                // the prompt token count, causing slow prefill on memory-constrained devices.
-                if context.preflightItems.isEmpty
-                    && !isManualTools
-                    && MLXService.shared.handles(requestedModel: selectedModel)
-                {
-                    toolSpecs = []
-                }
-
                 if !context.preflightItems.isEmpty {
                     assistantTurn.preflightCapabilities = context.preflightItems
                 }

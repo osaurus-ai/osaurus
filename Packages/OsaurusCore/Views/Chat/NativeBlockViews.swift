@@ -125,18 +125,27 @@ final class NativeTypingIndicatorView: NSView {
 
     private func observeModelLoading() {
         let manager = InferenceProgressManager.shared
-        let sink = manager.$isLoadingModel.receive(on: DispatchQueue.main).sink { [weak self] loading in
-            self?.setLoadingModelState(loading)
-        }
+        let sink = manager.$isLoadingModel.combineLatest(manager.$isPreflighting)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] (loadingModel, preflighting) in
+                self?.setLoadingModelState(loadingModel: loadingModel, preflighting: preflighting)
+            }
         cancellables.append(sink)
     }
 
-    private func setLoadingModelState(_ loading: Bool) {
-        guard loading != isShowingLoadingLabel else { return }
-        isShowingLoadingLabel = loading
-        loadingLabel.isHidden = !loading
-        dotStack.isHidden = loading
-        memoryStack?.isHidden = loading
+    private func setLoadingModelState(loadingModel: Bool, preflighting: Bool) {
+        let showingLabel = loadingModel || preflighting
+        let expectedText = preflighting ? "Searching capabilities..." : "Loading Model..."
+
+        guard showingLabel != isShowingLoadingLabel || (showingLabel && loadingLabel.stringValue != expectedText) else {
+            return
+        }
+
+        isShowingLoadingLabel = showingLabel
+        loadingLabel.stringValue = expectedText
+        loadingLabel.isHidden = !showingLabel
+        dotStack.isHidden = showingLabel
+        memoryStack?.isHidden = showingLabel
     }
 
     private func updateMemoryLabel(monitor: SystemMonitorService) {

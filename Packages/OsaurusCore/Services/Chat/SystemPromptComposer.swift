@@ -110,9 +110,8 @@ public struct SystemPromptComposer: Sendable {
         trace?.mark("memory_done")
 
         let toolMode = AgentManager.shared.effectiveToolSelectionMode(for: agentId)
-        let isLocalModel = MLXService.shared.handles(requestedModel: model)
         let preflight: PreflightResult
-        if !toolsDisabled && toolMode == .auto && !query.isEmpty && !isLocalModel {
+        if !toolsDisabled && toolMode == .auto && !query.isEmpty {
             let mode = ChatConfigurationStore.load().preflightSearchMode ?? .balanced
             trace?.mark("preflight_search_start")
             preflight = await PreflightCapabilitySearch.search(query: query, mode: mode)

@@ -142,6 +142,9 @@ enum PreflightCapabilitySearch {
 
         guard !catalog.isEmpty else { return .empty }
 
+        InferenceProgressManager.shared.preflightWillStartAsync()
+        defer { InferenceProgressManager.shared.preflightDidFinishAsync() }
+
         let selectedNames = await selectTools(
             query: query,
             catalog: catalog,
