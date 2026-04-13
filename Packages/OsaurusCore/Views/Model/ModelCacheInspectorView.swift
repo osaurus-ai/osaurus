@@ -13,6 +13,8 @@ struct ModelCacheInspectorView: View {
     @State private var isClearingAll = false
     @State private var isRefreshing = false
     @State private var isHoveringRefresh = false
+    @State private var diskKVCacheBytes: Int = 0
+    @State private var isClearingDiskKV = false
 
     var onRefresh: (() -> Void)?
 
@@ -83,6 +85,50 @@ struct ModelCacheInspectorView: View {
                 }
             }
 
+            // Disk KV Cache row — shows current L2 disk cache usage and lets
+            // the user clear it independently of loaded models. Clearing the
+            // disk cache is non-destructive: the directory is re-created on
+            // next model load.
+            HStack(spacing: 8) {
+                Image(systemName: "externaldrive.fill")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Disk KV Cache", bundle: .module)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(theme.primaryText)
+                    Text(formatBytes(diskKVCacheBytes))
+                        .font(.system(size: 10))
+                        .foregroundColor(theme.secondaryText)
+                }
+                Spacer()
+                Button {
+                    Task {
+                        isClearingDiskKV = true
+                        _ = OsaurusPaths.clearDiskKVCache()
+                        diskKVCacheBytes = OsaurusPaths.diskKVCacheUsageBytes()
+                        isClearingDiskKV = false
+                    }
+                } label: {
+                    Text(isClearingDiskKV ? "Clearing…" : "Clear", bundle: .module)
+                        .font(.system(size: 11, weight: .medium))
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(diskKVCacheBytes == 0 || isClearingDiskKV)
+                .opacity(diskKVCacheBytes == 0 ? 0.5 : 1.0)
+            }
+            .padding(.vertical, 8)
+            .padding(.horizontal, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(theme.cardBackground.opacity(0.5))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(theme.cardBorder.opacity(0.3), lineWidth: 1)
+            )
+
             // Divider
             Rectangle()
                 .fill(
@@ -99,13 +145,18 @@ struct ModelCacheInspectorView: View {
                 ClearAllButton(isClearing: isClearingAll) {
                     Task {
                         isClearingAll = true
+                        // Clear All scope: unloads models + releases cache
+                        // coordinators + wipes the L2 disk cache. UI caches
+                        // (ThreadCache, BlockMemoizer) are content-keyed and
+                        // auto-evicted by NSCache — not cleared here.
                         await MLXService.shared.clearRuntimeCache()
+                        _ = OsaurusPaths.clearDiskKVCache()
                         await refresh()
                         isClearingAll = false
                     }
                 }
-                .disabled(items.isEmpty)
-                .opacity(items.isEmpty ? 0.5 : 1.0)
+                .disabled(items.isEmpty && diskKVCacheBytes == 0)
+                .opacity((items.isEmpty && diskKVCacheBytes == 0) ? 0.5 : 1.0)
 
                 Spacer()
 
@@ -125,8 +176,17 @@ struct ModelCacheInspectorView: View {
     private func refresh() async {
         isRefreshing = true
         items = await MLXService.shared.cachedRuntimeSummaries()
+        diskKVCacheBytes = OsaurusPaths.diskKVCacheUsageBytes()
         isRefreshing = false
         onRefresh?()
+    }
+
+    private func formatBytes(_ bytes: Int) -> String {
+        if bytes <= 0 { return "Empty" }
+        let formatter = ByteCountFormatter()
+        formatter.allowedUnits = [.useMB, .useGB]
+        formatter.countStyle = .file
+        return formatter.string(fromByteCount: Int64(bytes))
     }
 }
 

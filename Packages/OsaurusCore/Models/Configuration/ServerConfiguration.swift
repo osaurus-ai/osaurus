@@ -62,6 +62,10 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
     public var genTurboQuant: Bool?
 
     // MARK: - Cache Tier Settings
+    /// Master toggle for KV caching (paged L1 + disk L2 + SSM companion + TurboQuant).
+    /// nil = true (default on). When false, models load without any cache coordinator
+    /// and every request runs a full prefill.
+    public var cacheEnabled: Bool?
     /// Enable L2 disk cache for KV state persistence across app restarts; nil = true (default on)
     public var cacheDiskEnabled: Bool?
     /// Maximum disk cache size in GB; nil = 4.0
@@ -90,6 +94,7 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
         case genMaxKVSize
         case genPrefillStepSize
         case genTurboQuant
+        case cacheEnabled
         case cacheDiskEnabled
         case cacheDiskMaxGB
         case cacheMaxBlocks
@@ -122,6 +127,7 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
         self.genMaxKVSize = try container.decodeIfPresent(Int.self, forKey: .genMaxKVSize)
         self.genPrefillStepSize = try container.decodeIfPresent(Int.self, forKey: .genPrefillStepSize)
         self.genTurboQuant = try container.decodeIfPresent(Bool.self, forKey: .genTurboQuant)
+        self.cacheEnabled = try container.decodeIfPresent(Bool.self, forKey: .cacheEnabled)
         self.cacheDiskEnabled = try container.decodeIfPresent(Bool.self, forKey: .cacheDiskEnabled)
         self.cacheDiskMaxGB = try container.decodeIfPresent(Float.self, forKey: .cacheDiskMaxGB)
         self.cacheMaxBlocks = try container.decodeIfPresent(Int.self, forKey: .cacheMaxBlocks)
@@ -148,6 +154,7 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
         genMaxKVSize: Int?,
         genPrefillStepSize: Int?,
         genTurboQuant: Bool? = nil,
+        cacheEnabled: Bool? = nil,
         cacheDiskEnabled: Bool? = nil,
         cacheDiskMaxGB: Float? = nil,
         cacheMaxBlocks: Int? = nil,
@@ -168,6 +175,7 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
         self.genMaxKVSize = genMaxKVSize
         self.genPrefillStepSize = genPrefillStepSize
         self.genTurboQuant = genTurboQuant
+        self.cacheEnabled = cacheEnabled
         self.cacheDiskEnabled = cacheDiskEnabled
         self.cacheDiskMaxGB = cacheDiskMaxGB
         self.cacheMaxBlocks = cacheMaxBlocks

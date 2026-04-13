@@ -50,6 +50,7 @@ struct ConfigurationView: View {
     @State private var tempMaxKV: String = ""
     @State private var tempPrefillStep: String = ""
     @State private var tempTurboQuant: Bool? = nil
+    @State private var tempCacheEnabled: Bool = true
     @State private var tempDiskCacheEnabled: Bool = true
     @State private var tempDiskCacheMaxGB: String = ""
     @State private var tempCacheMaxBlocks: String = ""
@@ -470,10 +471,8 @@ struct ConfigurationView: View {
                                             SettingsToggle(
                                                 title: "TurboQuant",
                                                 description:
-                                                    "KV cache compression for ~5x memory savings. Auto-detected based on available RAM.",
-                                                badge: tempTurboQuant == nil
-                                                    ? (turboQuantAutoEnabled ? "(Auto-Enabled)" : "(Auto-Disabled)")
-                                                    : nil,
+                                                    "KV cache compression for ~5x memory savings. Enabled by default on all hardware.",
+                                                badge: tempTurboQuant == nil ? "(Default)" : nil,
                                                 isOn: turboQuantBinding
                                             )
                                             DisclosureGroup("Advanced") {
@@ -522,11 +521,19 @@ struct ConfigurationView: View {
                                     SettingsSubsection(label: "Cache Storage") {
                                         VStack(alignment: .leading, spacing: 12) {
                                             SettingsToggle(
+                                                title: "KV Caching",
+                                                description:
+                                                    "Master switch for all KV cache tiers (memory, disk, hybrid SSM). Enabled by default. Turn off for debugging or to force full prefill on every request.",
+                                                isOn: $tempCacheEnabled
+                                            )
+                                            SettingsToggle(
                                                 title: "Disk Cache",
                                                 description:
                                                     "Persist KV cache to disk so prefill is skipped across app restarts.",
                                                 isOn: $tempDiskCacheEnabled
                                             )
+                                            .disabled(!tempCacheEnabled)
+                                            .opacity(tempCacheEnabled ? 1.0 : 0.5)
                                             DisclosureGroup("Advanced") {
                                                 VStack(alignment: .leading, spacing: 12) {
                                                     SettingsStepperField(
@@ -548,6 +555,8 @@ struct ConfigurationView: View {
                                                 }
                                                 .padding(.top, 8)
                                             }
+                                            .disabled(!tempCacheEnabled)
+                                            .opacity(tempCacheEnabled ? 1.0 : 0.5)
                                         }
                                     }
 
@@ -763,14 +772,10 @@ struct ConfigurationView: View {
 
     // MARK: - TurboQuant Helpers
 
-    /// Rough estimate of whether auto-detection would enable TurboQuant.
-    /// Uses the same headroom < 16 GB heuristic as RuntimeConfig but without
-    /// model weights (assumes ~8 GB model as a conservative estimate).
-    private var turboQuantAutoEnabled: Bool {
-        let systemRAM = Int64(ProcessInfo.processInfo.physicalMemory)
-        let estimatedHeadroom = systemRAM - 8 * 1024 * 1024 * 1024
-        return estimatedHeadroom < 16 * 1024 * 1024 * 1024
-    }
+    /// TurboQuant is enabled by default for all users (mirrors
+    /// `RuntimeConfig.autoTurboQuant()`). The UI binding reflects this so an
+    /// unset user preference shows the toggle as on.
+    private var turboQuantAutoEnabled: Bool { true }
 
     private var turboQuantBinding: Binding<Bool> {
         Binding(
@@ -820,6 +825,7 @@ struct ConfigurationView: View {
         tempMaxKV = configuration.genMaxKVSize.map(String.init) ?? ""
         tempPrefillStep = configuration.genPrefillStepSize.map(String.init) ?? ""
         tempTurboQuant = configuration.genTurboQuant
+        tempCacheEnabled = configuration.cacheEnabled ?? true
         tempDiskCacheEnabled = configuration.cacheDiskEnabled ?? true
         tempDiskCacheMaxGB = configuration.cacheDiskMaxGB.map { String(Int($0)) } ?? ""
         tempCacheMaxBlocks = configuration.cacheMaxBlocks.map(String.init) ?? ""
@@ -878,6 +884,10 @@ struct ConfigurationView: View {
         tempMaxKV = ""
         tempPrefillStep = ""
         tempTurboQuant = nil
+        tempCacheEnabled = true
+        tempDiskCacheEnabled = true
+        tempDiskCacheMaxGB = ""
+        tempCacheMaxBlocks = ""
         tempEvictionPolicy = serverDefaults.modelEvictionPolicy
 
         showSuccess("Settings restored to defaults")
@@ -953,6 +963,7 @@ struct ConfigurationView: View {
         configuration.genPrefillStepSize = trimmedPrefillStep.isEmpty ? nil : Int(trimmedPrefillStep)
         configuration.genTurboQuant = tempTurboQuant
 
+        configuration.cacheEnabled = tempCacheEnabled ? nil : false
         configuration.cacheDiskEnabled = tempDiskCacheEnabled ? nil : false
         let trimmedDiskGB = tempDiskCacheMaxGB.trimmingCharacters(in: .whitespacesAndNewlines)
         configuration.cacheDiskMaxGB = trimmedDiskGB.isEmpty ? nil : Float(trimmedDiskGB)
@@ -970,17 +981,34 @@ struct ConfigurationView: View {
 
         let serverConfigChanged = previousServerCfg != configuration
         let startAtLoginChanged = previousServerCfg.startAtLogin != configuration.startAtLogin
+
+        // `serverRestartNeeded` gates restarting the NIO HTTP server. Only the
+        // fields that affect how the socket is opened / CORS / eviction belong
+        // here. Generation-time settings (kv*, turbo, top-p, prefill, cache*)
+        // do NOT require a NIO restart — they are reloaded on the MLX runtime
+        // via `modelReloadNeeded` below.
         let serverRestartNeeded =
             previousServerCfg.port != configuration.port
             || previousServerCfg.exposeToNetwork != configuration.exposeToNetwork
             || previousServerCfg.allowedOrigins != configuration.allowedOrigins
-            || previousServerCfg.genTopP != configuration.genTopP
+            || previousServerCfg.modelEvictionPolicy != configuration.modelEvictionPolicy
+
+        // `modelReloadNeeded` gates calling `ModelRuntime.refreshCacheConfig()`.
+        // These fields flow into `RuntimeConfig.snapshot()` or
+        // `CacheCoordinatorConfig`, so changing them requires rebuilding the
+        // coordinator on every loaded model.
+        let modelReloadNeeded =
+            previousServerCfg.genTopP != configuration.genTopP
             || previousServerCfg.genKVBits != configuration.genKVBits
             || previousServerCfg.genKVGroupSize != configuration.genKVGroupSize
             || previousServerCfg.genQuantizedKVStart != configuration.genQuantizedKVStart
             || previousServerCfg.genMaxKVSize != configuration.genMaxKVSize
             || previousServerCfg.genPrefillStepSize != configuration.genPrefillStepSize
-            || previousServerCfg.modelEvictionPolicy != configuration.modelEvictionPolicy
+            || previousServerCfg.genTurboQuant != configuration.genTurboQuant
+            || previousServerCfg.cacheEnabled != configuration.cacheEnabled
+            || previousServerCfg.cacheDiskEnabled != configuration.cacheDiskEnabled
+            || previousServerCfg.cacheDiskMaxGB != configuration.cacheDiskMaxGB
+            || previousServerCfg.cacheMaxBlocks != configuration.cacheMaxBlocks
 
         ServerConfigurationStore.save(configuration)
 
@@ -1075,6 +1103,13 @@ struct ConfigurationView: View {
             }
             if serverRestartNeeded {
                 await AppDelegate.shared?.serverController.restartServer()
+            }
+            if modelReloadNeeded {
+                // Apply generation / cache settings to all loaded models
+                // without requiring a manual unload + reload. Awaits active
+                // generation before rebuilding coordinators (see
+                // ModelRuntime.refreshCacheConfig).
+                await ModelRuntime.shared.refreshCacheConfig()
             }
         }
 

@@ -573,10 +573,19 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         windowStates.removeValue(forKey: id)
 
         let closedSessionId = windows[id]?.sessionId
+        let closedAgentId = windows[id]?.agentId
         Task {
             if let sid = closedSessionId {
                 await ModelRuntime.shared.invalidateSession(sid.uuidString)
                 PluginHostContext.invalidatePreflightCache(sessionId: sid.uuidString)
+            }
+            if let aid = closedAgentId {
+                // Drop any 10-second-TTL memory context snapshot so a freshly
+                // opened window for the same agent rebuilds from current state.
+                // Without this, a user who edits memory in window B and closes
+                // window A could briefly see the stale A-era assembly on the
+                // next compose pass.
+                await MemoryContextAssembler.shared.invalidateCache(agentId: aid.uuidString)
             }
             let active = self.activeLocalModelNames()
             await ModelRuntime.shared.unloadModelsNotIn(active)

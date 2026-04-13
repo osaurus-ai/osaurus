@@ -9,9 +9,8 @@
 
 import CoreImage
 import Foundation
-import MLXLLM
 @preconcurrency import MLXLMCommon
-import MLXVLM
+import MLXVLM  // MediaProcessing for image downscaling
 import os.log
 
 private let engineLog = Logger(subsystem: "ai.osaurus", category: "Generation")

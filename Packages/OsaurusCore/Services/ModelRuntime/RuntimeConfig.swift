@@ -56,13 +56,16 @@ struct RuntimeConfig: Sendable {
         return headroom < 16 * 1024 * 1024 * 1024 ? 8 : nil
     }
 
-    /// Auto-enable TurboQuant when the headroom after model weights is less
-    /// than 16 GB. Uses the same threshold as autoKVBits.
+    /// TurboQuant is enabled by default for all users as of the vmlx-swift-lm
+    /// migration. Compression is essentially free (no meaningful quality regression
+    /// on standard benchmarks) and enables longer context windows on all hardware.
+    /// Users can disable it explicitly via `genTurboQuant = false` in
+    /// ServerConfiguration / Settings → Local Inference → TurboQuant.
+    ///
+    /// `modelWeightsBytes` is accepted for signature compatibility with
+    /// `autoKVBits` and for future heuristics (e.g., blocklist per model size).
     private static func autoTurboQuant(modelWeightsBytes: Int64) -> Bool {
-        guard modelWeightsBytes > 0 else { return false }
-        let systemRAM = Int64(ProcessInfo.processInfo.physicalMemory)
-        let headroom = systemRAM - modelWeightsBytes
-        return headroom < 16 * 1024 * 1024 * 1024
+        return true
     }
 
     /// Auto-detect a reasonable maxKV default based on available system RAM.
