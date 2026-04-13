@@ -129,6 +129,14 @@
         "repository": "https://github.com/raspu/Highlightr",
         "license": "MIT",
         "licenseUrl": "https://github.com/raspu/Highlightr/blob/master/LICENSE"
+    },
+    {
+        "name": "AAChartKit",
+        "identity": "AAChartKit-Swift",
+        "version": "9.5.0",
+        "repository": "https://github.com/AAChartModel/AAChartKit-Swift",
+        "license": "MIT",
+        "licenseUrl": "https://github.com/AAChartModel/AAChartKit-Swift/blob/master/LICENSE"
     }
   ]
 }

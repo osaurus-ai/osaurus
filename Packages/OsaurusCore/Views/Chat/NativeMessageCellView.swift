@@ -719,6 +719,7 @@ final class NativeMessageCellView: NSTableCellView {
     private var nativePendingView: NativePendingToolCallView?
     private var nativeTypingView: NativeTypingIndicatorView?
     private var nativeArtifactView: NativeArtifactCardView?
+    private var nativeChartView: NativeChartView?
     private var nativePreflightView: NativePreflightCapabilitiesView?
     private var nativeStatsView: NativeStatsView?
 
@@ -863,6 +864,9 @@ final class NativeMessageCellView: NSTableCellView {
 
         case let .sharedArtifact(artifact):
             configureAsArtifact(block: block, artifact: artifact, context: context, sameKind: sameKind)
+
+        case let .chart(spec):
+            configureAsChart(block: block, spec: spec, context: context, sameKind: sameKind)
 
         case let .preflightCapabilities(items):
             configureAsPreflight(block: block, items: items, context: context, sameKind: sameKind)
@@ -1479,6 +1483,38 @@ final class NativeMessageCellView: NSTableCellView {
         }
     }
 
+    // MARK: - Chart
+
+    private func configureAsChart(
+        block: ContentBlock,
+        spec: ChartSpec,
+        context: CellRenderingContext,
+        sameKind: Bool
+    ) {
+        if !sameKind || nativeChartView == nil {
+            removeAllContentViews()
+            let cv = NativeChartView()
+            cv.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(cv)
+            let bottomToCell = cv.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6)
+            bottomToCell.priority = NSLayoutConstraint.Priority(250)
+            NSLayoutConstraint.activate([
+                cv.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+                cv.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+                cv.topAnchor.constraint(equalTo: topAnchor, constant: 6),
+                bottomToCell,
+            ])
+            nativeChartView = cv
+        }
+        let blockId = block.id
+        nativeChartView?.configure(spec: spec, theme: context.theme)
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let cv = self.nativeChartView else { return }
+            guard self.currentBlockId == blockId else { return }
+            context.onHeightMeasured?(cv.measuredCardHeight() + 12, blockId)
+        }
+    }
+
     // MARK: - PreflightCapabilities
 
     private func configureAsPreflight(
@@ -1717,7 +1753,7 @@ private final class UserDocumentChipView: NSView {
 /// Lightweight discriminator used to detect kind changes without comparing full associated values.
 enum ContentBlockKindTag: Equatable {
     case header, paragraph, toolCallGroup, thinking, userMessage, pendingToolCall
-    case generationStats, typingIndicator, groupSpacer, sharedArtifact, preflightCapabilities, other
+    case generationStats, typingIndicator, groupSpacer, sharedArtifact, preflightCapabilities, chart, other
 }
 
 extension ContentBlockKind {
@@ -1734,6 +1770,7 @@ extension ContentBlockKind {
         case .groupSpacer: return .groupSpacer
         case .sharedArtifact: return .sharedArtifact
         case .preflightCapabilities: return .preflightCapabilities
+        case .chart: return .chart
         }
     }
 }
@@ -1846,6 +1883,14 @@ enum NativeCellHeightEstimator {
             // configureAsArtifact reports measuredCardHeight() + 12 for cell top/bottom inset — match that here
             // extra slack: intrinsic footer + deferred layout can exceed this; too-small row clips Open in Finder
             return h + 12 + 24
+
+        case let .chart(spec):
+            var h: CGFloat = NativeChartView.cardPadding + NativeChartView.chartHeight + 12 // top pad + chart + cell insets
+            h += (spec.title ?? "").isEmpty ? 0 : (20 + 4)   // title + gap
+            h += (spec.note  ?? "").isEmpty
+                ? NativeChartView.cardPadding                  // bottom padding only
+                : (6 + 16 + NativeChartView.cardPadding)      // note + bottom padding
+            return h
         }
     }
 }
