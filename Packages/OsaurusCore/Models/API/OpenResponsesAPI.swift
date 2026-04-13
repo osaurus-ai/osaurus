@@ -79,6 +79,10 @@ public enum OpenResponsesInput: Codable, Sendable {
 /// Input item types
 public enum OpenResponsesInputItem: Codable, Sendable {
     case message(OpenResponsesMessageItem)
+    /// A prior model-issued function call included in input for multi-turn history.
+    /// The Responses API requires clients to echo previous `function_call` output items
+    /// back as input items alongside the matching `function_call_output` result.
+    case functionCall(OpenResponsesFunctionCall)
     case functionCallOutput(OpenResponsesFunctionCallOutputItem)
 
     private enum CodingKeys: String, CodingKey {
@@ -92,6 +96,8 @@ public enum OpenResponsesInputItem: Codable, Sendable {
         switch type {
         case "message":
             self = .message(try OpenResponsesMessageItem(from: decoder))
+        case "function_call":
+            self = .functionCall(try OpenResponsesFunctionCall(from: decoder))
         case "function_call_output":
             self = .functionCallOutput(try OpenResponsesFunctionCallOutputItem(from: decoder))
         default:
@@ -106,6 +112,8 @@ public enum OpenResponsesInputItem: Codable, Sendable {
     public func encode(to encoder: Encoder) throws {
         switch self {
         case .message(let item):
+            try item.encode(to: encoder)
+        case .functionCall(let item):
             try item.encode(to: encoder)
         case .functionCallOutput(let item):
             try item.encode(to: encoder)
@@ -732,6 +740,23 @@ extension OpenResponsesRequest {
                 switch item {
                 case .message(let messageItem):
                     messages.append(ChatMessage(role: messageItem.role, content: messageItem.content.plainText))
+                case .functionCall(let callItem):
+                    // A prior model-issued function call echoed back as input for multi-turn history.
+                    // Convert to an assistant message with tool_calls so the downstream Chat
+                    // Completions API can match it to the following function_call_output item.
+                    let toolCall = ToolCall(
+                        id: callItem.call_id,
+                        type: "function",
+                        function: ToolCallFunction(name: callItem.name, arguments: callItem.arguments)
+                    )
+                    messages.append(
+                        ChatMessage(
+                            role: "assistant",
+                            content: nil,
+                            tool_calls: [toolCall],
+                            tool_call_id: nil
+                        )
+                    )
                 case .functionCallOutput(let outputItem):
                     messages.append(
                         ChatMessage(
