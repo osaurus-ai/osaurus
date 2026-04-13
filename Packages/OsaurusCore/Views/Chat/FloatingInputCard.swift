@@ -93,7 +93,8 @@ struct FloatingInputCard: View {
         isCompact: Bool = false,
         onClearChat: (() -> Void)? = nil,
         onSkillSelected: ((UUID) -> Void)? = nil,
-        pendingSkillId: Binding<UUID?> = .constant(nil)
+        pendingSkillId: Binding<UUID?> = .constant(nil),
+        toolsDisabledOverride: Binding<Bool?> = .constant(nil)
     ) {
         self._text = text
         self._selectedModel = selectedModel
@@ -124,6 +125,7 @@ struct FloatingInputCard: View {
         self.onClearChat = onClearChat
         self.onSkillSelected = onSkillSelected
         self._pendingSkillId = pendingSkillId
+        self._toolsDisabledOverride = toolsDisabledOverride
     }
 
     // Observe managers for reactive updates

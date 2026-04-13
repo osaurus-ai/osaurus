@@ -9,6 +9,7 @@
 
 import CoreImage
 import Foundation
+import MLX
 @preconcurrency import MLXLMCommon
 import MLXVLM  // MediaProcessing for image downscaling
 import os.log

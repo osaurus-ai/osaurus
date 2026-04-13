@@ -97,6 +97,7 @@ final class ChatWindowState: ObservableObject {
         decodeBackgroundImageAsync(themeConfig: theme.customThemeConfig)
 
         // Configure session
+        self.session.windowState = self
         self.session.agentId = agentId
         self.session.applyInitialModelSelection()
         if let data = sessionData {

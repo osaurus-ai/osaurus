@@ -55,6 +55,9 @@ final class ChatSession: ObservableObject {
     /// Callback when session needs to be saved (called after streaming completes)
     var onSessionChanged: (() -> Void)?
 
+    /// Weak back-reference to the owning window state (set by ChatWindowState).
+    weak var windowState: ChatWindowState?
+
     private var currentTask: Task<Void, Never>?
     private var activeRunId: UUID?
     private var activeRunContext: RunContext?
@@ -822,7 +825,7 @@ final class ChatSession: ObservableObject {
                 // over the global disableTools setting. When the override is
                 // nil, fall back to the global.
                 let effectiveToolsDisabled =
-                    windowState.toolsDisabledOverride ?? chatCfg.disableTools
+                    windowState?.toolsDisabledOverride ?? chatCfg.disableTools
                 let context = await SystemPromptComposer.composeChatContext(
                     agentId: effectiveAgentId,
                     executionMode: executionMode,

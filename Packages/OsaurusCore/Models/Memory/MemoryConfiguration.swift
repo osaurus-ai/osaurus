@@ -91,7 +91,7 @@ public struct MemoryConfiguration: Codable, Equatable, Sendable {
         mmrLambda: Double = 0.7,
         mmrFetchMultiplier: Double = 2.0,
         maxEntriesPerAgent: Int = 500,
-        enabled: Bool = false,
+        enabled: Bool = true,
         verificationEnabled: Bool = true,
         verificationSemanticDedupThreshold: Double = 0.85,
         verificationJaccardDedupThreshold: Double = 0.6
