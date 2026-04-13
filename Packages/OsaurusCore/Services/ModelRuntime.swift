@@ -152,8 +152,7 @@ actor ModelRuntime {
 
     private func getConfig() async -> RuntimeConfig {
         if let cached = cachedConfig { return cached }
-        let totalWeights = modelCache.values.reduce(Int64(0)) { $0 + $1.weightsSizeBytes }
-        let cfg = await RuntimeConfig.snapshot(modelWeightsBytes: totalWeights)
+        let cfg = await RuntimeConfig.snapshot()
         cachedConfig = cfg
         return cfg
     }
@@ -555,27 +554,16 @@ actor ModelRuntime {
         maxTokens: Int,
         topP: Float,
         repetitionPenalty: Float?,
-        kvBits: Int?,
-        kvGroup: Int,
-        quantStart: Int,
-        maxKV: Int?,
-        prefillStep: Int,
-        turboQuant: Bool
+        maxKV: Int?
     ) -> MLXLMCommon.GenerateParameters {
-        var p = MLXLMCommon.GenerateParameters(
+        MLXLMCommon.GenerateParameters(
             maxTokens: maxTokens,
             maxKVSize: maxKV,
-            kvBits: kvBits,
-            kvGroupSize: kvGroup,
-            quantizedKVStart: quantStart,
-            kvMode: turboQuant ? .turboQuant(keyBits: 3, valueBits: 3) : .none,
             temperature: temperature,
             topP: topP,
             repetitionPenalty: repetitionPenalty,
             repetitionContextSize: 20
         )
-        p.prefillStepSize = prefillStep
-        return p
     }
 
     nonisolated static func makeTokenizerTools(

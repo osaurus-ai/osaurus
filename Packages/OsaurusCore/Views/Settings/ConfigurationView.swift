@@ -45,12 +45,7 @@ struct ConfigurationView: View {
 
     // Local Inference settings state
     @State private var tempTopP: String = ""
-    @State private var tempKVBits: String = ""
-    @State private var tempKVGroup: String = ""
-    @State private var tempQuantStart: String = ""
     @State private var tempMaxKV: String = ""
-    @State private var tempPrefillStep: String = ""
-    @State private var tempTurboQuant: Bool? = nil
     @State private var tempEvictionPolicy: ModelEvictionPolicy = .strictSingleModel
 
     // Toast settings state
@@ -451,9 +446,6 @@ struct ConfigurationView: View {
                             "Sampling",
                             "Top P",
                             "KV Cache",
-                            "TurboQuant",
-                            "Quantization",
-                            "Prefill",
                             "Max KV",
                             "CPU",
                             "Memory"
@@ -493,54 +485,8 @@ struct ConfigurationView: View {
                                                 step: 1024,
                                                 defaultValue: 8192
                                             )
-                                            SettingsToggle(
-                                                title: "TurboQuant",
-                                                description:
-                                                    "KV cache compression for ~5x memory savings. Enabled by default on all hardware.",
-                                                badge: tempTurboQuant == nil ? "(Default)" : nil,
-                                                isOn: turboQuantBinding
-                                            )
-                                            DisclosureGroup("Advanced") {
-                                                VStack(alignment: .leading, spacing: 12) {
-                                                    SettingsStepperField(
-                                                        label: "Cache Bits",
-                                                        help: "Quantization bits. Empty disables",
-                                                        text: $tempKVBits,
-                                                        range: 2 ... 8,
-                                                        step: 1,
-                                                        defaultValue: 8
-                                                    )
-                                                    SettingsStepperField(
-                                                        label: "Group Size",
-                                                        help: "KV quantization group size",
-                                                        text: $tempKVGroup,
-                                                        range: 1 ... 256,
-                                                        step: 16,
-                                                        defaultValue: 64
-                                                    )
-                                                    SettingsStepperField(
-                                                        label: "Quantized Start",
-                                                        help: "Token offset to begin quantization",
-                                                        text: $tempQuantStart,
-                                                        range: 0 ... 1024,
-                                                        step: 64,
-                                                        defaultValue: 0
-                                                    )
-                                                    SettingsStepperField(
-                                                        label: "Prefill Step",
-                                                        help: "Tokens per prefill chunk",
-                                                        text: $tempPrefillStep,
-                                                        range: 64 ... 2048,
-                                                        step: 64,
-                                                        defaultValue: 512
-                                                    )
-                                                }
-                                                .padding(.top, 8)
-                                            }
                                         }
                                     }
-
-                                    SettingsDivider()
 
                                     SettingsDivider()
 
@@ -757,20 +703,6 @@ struct ConfigurationView: View {
         }
     }
 
-    // MARK: - TurboQuant Helpers
-
-    /// TurboQuant is enabled by default for all users (mirrors
-    /// `RuntimeConfig.autoTurboQuant()`). The UI binding reflects this so an
-    /// unset user preference shows the toggle as on.
-    private var turboQuantAutoEnabled: Bool { true }
-
-    private var turboQuantBinding: Binding<Bool> {
-        Binding(
-            get: { tempTurboQuant ?? turboQuantAutoEnabled },
-            set: { tempTurboQuant = $0 }
-        )
-    }
-
     // MARK: - Configuration Loading
 
     private func loadConfiguration() {
@@ -803,16 +735,7 @@ struct ConfigurationView: View {
 
         let defaults = ServerConfiguration.default
         tempTopP = configuration.genTopP == defaults.genTopP ? "" : String(configuration.genTopP)
-        tempKVBits = configuration.genKVBits.map(String.init) ?? ""
-        tempKVGroup =
-            configuration.genKVGroupSize == defaults.genKVGroupSize
-            ? "" : String(configuration.genKVGroupSize)
-        tempQuantStart =
-            configuration.genQuantizedKVStart == defaults.genQuantizedKVStart
-            ? "" : String(configuration.genQuantizedKVStart)
         tempMaxKV = configuration.genMaxKVSize.map(String.init) ?? ""
-        tempPrefillStep = configuration.genPrefillStepSize.map(String.init) ?? ""
-        tempTurboQuant = configuration.genTurboQuant
         tempAllowedOrigins = configuration.allowedOrigins.joined(separator: ", ")
         tempEvictionPolicy = configuration.modelEvictionPolicy
 
@@ -863,12 +786,7 @@ struct ConfigurationView: View {
         tempAgentMaxIterations = ""
 
         tempTopP = ""
-        tempKVBits = ""
-        tempKVGroup = ""
-        tempQuantStart = ""
         tempMaxKV = ""
-        tempPrefillStep = ""
-        tempTurboQuant = nil
         tempEvictionPolicy = serverDefaults.modelEvictionPolicy
 
         showSuccess("Settings restored to defaults")
@@ -920,29 +838,8 @@ struct ConfigurationView: View {
             configuration.genTopP = Float(trimmedTopP) ?? defaults.genTopP
         }
 
-        configuration.genKVBits = Int(tempKVBits)
-
-        let trimmedKVGroup = tempKVGroup.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmedKVGroup.isEmpty {
-            configuration.genKVGroupSize = defaults.genKVGroupSize
-        } else {
-            configuration.genKVGroupSize = Int(trimmedKVGroup) ?? defaults.genKVGroupSize
-        }
-
-        let trimmedQuantStart = tempQuantStart.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmedQuantStart.isEmpty {
-            configuration.genQuantizedKVStart = defaults.genQuantizedKVStart
-        } else {
-            configuration.genQuantizedKVStart =
-                Int(trimmedQuantStart) ?? defaults.genQuantizedKVStart
-        }
-
         let trimmedMaxKV = tempMaxKV.trimmingCharacters(in: .whitespacesAndNewlines)
         configuration.genMaxKVSize = trimmedMaxKV.isEmpty ? nil : Int(trimmedMaxKV)
-
-        let trimmedPrefillStep = tempPrefillStep.trimmingCharacters(in: .whitespacesAndNewlines)
-        configuration.genPrefillStepSize = trimmedPrefillStep.isEmpty ? nil : Int(trimmedPrefillStep)
-        configuration.genTurboQuant = tempTurboQuant
 
         configuration.modelEvictionPolicy = tempEvictionPolicy
 
@@ -958,7 +855,7 @@ struct ConfigurationView: View {
 
         // `serverRestartNeeded` gates restarting the NIO HTTP server. Only the
         // fields that affect how the socket is opened / CORS / eviction belong
-        // here. Generation-time settings (kv*, turbo, top-p, prefill) flow into
+        // here. Generation-time settings (top-p, maxKV) flow into
         // `RuntimeConfig.snapshot()` and are re-read on the next request via
         // `ModelRuntime.invalidateConfig()` below — they do NOT require a NIO
         // restart nor a model reload.
@@ -970,12 +867,7 @@ struct ConfigurationView: View {
 
         let runtimeConfigChanged =
             previousServerCfg.genTopP != configuration.genTopP
-            || previousServerCfg.genKVBits != configuration.genKVBits
-            || previousServerCfg.genKVGroupSize != configuration.genKVGroupSize
-            || previousServerCfg.genQuantizedKVStart != configuration.genQuantizedKVStart
             || previousServerCfg.genMaxKVSize != configuration.genMaxKVSize
-            || previousServerCfg.genPrefillStepSize != configuration.genPrefillStepSize
-            || previousServerCfg.genTurboQuant != configuration.genTurboQuant
 
         ServerConfigurationStore.save(configuration)
 
