@@ -32,6 +32,10 @@ struct FloatingInputCard: View {
     var focusTrigger: Int = 0
     /// Current agent ID (used for agent-specific settings)
     var agentId: UUID? = nil
+    /// Per-conversation override for tools enable/disable. Binds to
+    /// `ChatWindowState.toolsDisabledOverride`. When nil, falls back to the
+    /// global `ChatConfiguration.disableTools` setting.
+    @Binding var toolsDisabledOverride: Bool?
     /// Window ID for targeted VAD notifications
     var windowId: UUID? = nil
     /// Work input state (nil = chat mode, non-nil = work mode)
@@ -1133,6 +1137,13 @@ extension FloatingInputCard {
                 sandboxToggleChip
             }
 
+            // Tools chip — lets the user toggle tools on/off for this
+            // conversation, overriding the global ChatConfiguration.disableTools
+            // setting. Always visible in chat mode so users can opt-in.
+            if workInputState == nil {
+                toolsToggleChip
+            }
+
             // Clipboard chip (visible when there's something new on the clipboard and monitoring is enabled)
             if AppConfiguration.shared.chatConfig.enableClipboardMonitoring && clipboardService.hasNewContent {
                 clipboardToggleChip
@@ -1439,6 +1450,84 @@ extension FloatingInputCard {
         } else {
             return "Enable Sandbox for autonomous code execution"
         }
+    }
+
+    // MARK: - Tools toggle chip
+    //
+    // Simple on/off chip for per-conversation tool enable/disable. Reads from
+    // `toolsDisabledOverride` (binding to ChatWindowState); when nil, falls
+    // back to global ChatConfiguration.disableTools. Tapping cycles through:
+    //   nil (follow global) → false (explicitly enabled)
+    //                      → true (explicitly disabled)
+    //                      → nil (back to follow global)
+    //
+    // Visually, "enabled" is the active state — matches the color convention
+    // used by other chips (thinking, sandbox).
+
+    private var effectiveToolsDisabled: Bool {
+        toolsDisabledOverride ?? AppConfiguration.shared.chatConfig.disableTools
+    }
+
+    private var toolsChipActive: Bool {
+        !effectiveToolsDisabled
+    }
+
+    private var toolsChipBadge: String? {
+        // Show "(Override)" when the user has explicitly set an override that
+        // differs from the global default.
+        guard let override = toolsDisabledOverride else { return nil }
+        let global = AppConfiguration.shared.chatConfig.disableTools
+        return override != global ? "•" : nil
+    }
+
+    private func cycleToolsOverride() {
+        let global = AppConfiguration.shared.chatConfig.disableTools
+        // Cycle: nil → opposite of global → same as global (nil again)
+        if toolsDisabledOverride == nil {
+            toolsDisabledOverride = !global
+        } else {
+            toolsDisabledOverride = nil
+        }
+    }
+
+    private var toolsToggleChip: some View {
+        Button(action: cycleToolsOverride) {
+            HStack(spacing: 5) {
+                Image(systemName: toolsChipActive ? "wrench.and.screwdriver.fill" : "wrench.and.screwdriver")
+                    .font(.system(size: CGFloat(theme.captionSize) - 2, weight: .medium))
+                    .foregroundColor(toolsChipActive ? theme.accentColor : theme.tertiaryText)
+
+                Text("Tools", bundle: .module)
+                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                    .foregroundColor(toolsChipActive ? theme.primaryText : theme.tertiaryText)
+                    .lineLimit(1)
+
+                if let badge = toolsChipBadge {
+                    Text(badge)
+                        .font(.system(size: CGFloat(theme.captionSize) - 2, weight: .bold))
+                        .foregroundColor(theme.accentColor)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(
+                Capsule()
+                    .fill(toolsChipActive ? theme.accentColor.opacity(0.12) : theme.buttonBackground.opacity(0.5))
+            )
+            .overlay(
+                Capsule()
+                    .strokeBorder(
+                        toolsChipActive ? theme.accentColor.opacity(0.3) : theme.buttonBorder.opacity(0.3),
+                        lineWidth: 1
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+        .help(
+            toolsChipActive
+                ? "Tools enabled for this conversation. Tap to use global default."
+                : "Tools disabled. Tap to enable for this conversation."
+        )
     }
 
     private var sandboxToggleChip: some View {
@@ -3446,7 +3535,8 @@ private struct EndTaskButton: View {
                         supportsImages: true,
                         estimatedContextTokens: 2450,
                         onSend: { _ in },
-                        onStop: {}
+                        onStop: {},
+                        toolsDisabledOverride: .constant(nil)
                     )
                 }
                 .frame(width: 700, height: 400)

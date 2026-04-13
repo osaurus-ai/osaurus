@@ -141,53 +141,8 @@ actor ModelRuntime {
         cachedConfig = nil
     }
 
-    /// Refreshes generation-time and cache-tier settings on all loaded models.
-    ///
-    /// Called from `ConfigurationView.saveConfiguration()` whenever a gen* or
-    /// cache* field changes so the user sees the new settings take effect
-    /// without manually unloading and reloading every model.
-    ///
-    /// Flow:
-    /// 1. Cancel any active generation — the in-flight TokenIterator holds a
-    ///    strong reference to the *old* coordinator, so we wait for it to
-    ///    finish before swapping coordinators (prevents orphaned cache writes,
-    ///    see CONSIDERATIONS §C.3).
-    /// 2. Invalidate the cached `RuntimeConfig` snapshot.
-    /// 3. Re-read `ServerConfiguration`.
-    /// 4. Snapshot the current `modelCache` values — iterating the live
-    ///    dictionary while `installCacheCoordinator` suspends would be unsafe
-    ///    if a concurrent actor call mutated the dict.
-    /// 5. For each snapshotted holder, let `installCacheCoordinator` do the
-    ///    right thing: when the master toggle is on, `enableCaching(config:)`
-    ///    atomically replaces the coordinator under an unfair lock — no window
-    ///    where the coordinator is nil. When the master toggle is off, it
-    ///    calls `disableCaching()` to release the existing coordinator.
-    ///
-    /// Actor isolation ensures no new `generateEventStream` can interleave
-    /// between step 1 and the start of step 5. Inside step 5, the actor
-    /// suspends on `container.perform`, allowing queued generations to run —
-    /// but they see whichever coordinator is currently installed via
-    /// `container.cacheCoordinator` (the package guarantees atomic swap).
-    func refreshCacheConfig() async {
-        await cancelActiveGeneration()
-        cachedConfig = nil
-
-        let serverCfg = await ServerConfigurationStore.load()
-        // Snapshot before iterating: if another actor call (e.g.
-        // `unload(name:)`) mutates `modelCache` while we await inside the
-        // loop, the live iteration would be undefined. Dictionaries are
-        // value types so this is a cheap copy of the holder references.
-        let holders = Array(modelCache.values)
-        for holder in holders {
-            await installCacheCoordinator(on: holder, serverCfg: serverCfg)
-        }
-        genLog.info(
-            "refreshCacheConfig: applied to \(holders.count, privacy: .public) loaded model(s)"
-        )
-    }
-
     /// Called when a chat window closes. With the package-level CacheCoordinator
-    /// the paged cache is content-addressed and bounded by maxCacheBlocks, so
+    /// the paged cache is content-addressed and bounded internally, so
     /// per-session invalidation is not needed — stale blocks are LRU-evicted.
     func invalidateSession(_ sessionId: String) {
         // No-op: CacheCoordinator handles eviction via LRU on PagedCacheManager.
@@ -269,9 +224,8 @@ actor ModelRuntime {
             Memory.cacheLimit = mlxCacheLimit()
 
             // Enable multi-tier KV caching via vmlx-swift-lm's CacheCoordinator.
-            // Settings are read from ServerConfiguration with sensible defaults.
-            let serverCfg = await ServerConfigurationStore.load()
-            await installCacheCoordinator(on: holder, serverCfg: serverCfg)
+            // Cache tier config is entirely osaurus-internal — not user-visible.
+            await installCacheCoordinator(on: holder)
 
             genLog.info(
                 "loadContainer: loaded \(name, privacy: .public) isVLM=\(holder.isVLM, privacy: .public)"
@@ -285,30 +239,21 @@ actor ModelRuntime {
 
     // MARK: - Cache coordinator plumbing
 
-    /// Builds a `CacheCoordinatorConfig` from the current `ServerConfiguration`.
+    /// Builds a `CacheCoordinatorConfig` with osaurus-internal defaults.
     ///
-    /// Returns `nil` when the user has disabled caching entirely via the
-    /// `cacheEnabled` master toggle. In that case callers should skip
-    /// `enableCaching()` entirely — the model runs with full prefill on every
-    /// request and no cache is consulted.
+    /// **KV caching is package-owned** — osaurus does not expose any cache
+    /// knobs to users. This helper exists only to:
+    /// - Point the disk cache at osaurus's paths (`OsaurusPaths.diskKVCache()`)
+    /// - Provide a sensible `modelKey` for per-model isolation
+    /// - Pick a max-blocks default based on RAM
+    /// - Fall back to memory-only when the disk cache dir is not writable
     ///
-    /// When returned, the config carries:
-    /// - L1 paged cache enabled (`usePagedCache = true` from package default)
-    /// - L2 disk cache per user setting (default on)
-    /// - `modelKey` scoped to the loaded model name so different models don't
-    ///   poison each other's cached token blocks
-    /// - `maxCacheBlocks` auto-scaled by RAM when not user-overridden
+    /// Defaults chosen to be invisible and sensible. If the package's defaults
+    /// ever drift in a way that matters to osaurus, this is the single place
+    /// to override.
     private nonisolated static func buildCacheCoordinatorConfig(
-        modelName: String,
-        serverCfg: ServerConfiguration?
-    ) -> CacheCoordinatorConfig? {
-        // Master toggle. nil treated as true (default on).
-        let masterEnabled = serverCfg?.cacheEnabled ?? true
-        guard masterEnabled else { return nil }
-
-        // Resolve the disk cache directory. If the parent (cache root) can't
-        // be created / written, fall back to memory-only so we don't hand the
-        // coordinator a bad path.
+        modelName: String
+    ) -> CacheCoordinatorConfig {
         let diskCacheDir = OsaurusPaths.diskKVCache()
         OsaurusPaths.ensureExistsSilent(diskCacheDir)
         let diskDirUsable = isDirectoryWritable(diskCacheDir)
@@ -318,17 +263,18 @@ actor ModelRuntime {
             )
         }
 
-        let userDiskEnabled = serverCfg?.cacheDiskEnabled ?? true
-        let diskEnabled = userDiskEnabled && diskDirUsable
-        let diskMaxGB = serverCfg?.cacheDiskMaxGB ?? 4.0
         let ramGB = ProcessInfo.processInfo.physicalMemory / (1024 * 1024 * 1024)
-        let defaultMaxBlocks = ramGB >= 48 ? 2000 : 1000
-        let maxBlocks = serverCfg?.cacheMaxBlocks ?? defaultMaxBlocks
+        let maxBlocks: Int
+        switch ramGB {
+        case 0 ..< 16: maxBlocks = 500     // 32k tokens at 64 per block
+        case 16 ..< 48: maxBlocks = 1000   // 64k tokens
+        default: maxBlocks = 2000          // 128k tokens
+        }
 
         var cacheConfig = CacheCoordinatorConfig()
-        cacheConfig.enableDiskCache = diskEnabled
+        cacheConfig.enableDiskCache = diskDirUsable
         cacheConfig.diskCacheDir = diskCacheDir
-        cacheConfig.diskCacheMaxGB = diskMaxGB
+        cacheConfig.diskCacheMaxGB = 4.0
         cacheConfig.modelKey = modelName
         cacheConfig.maxCacheBlocks = maxBlocks
         return cacheConfig
@@ -348,30 +294,13 @@ actor ModelRuntime {
         }
     }
 
-    /// Installs the cache coordinator on a freshly-loaded holder OR refreshes
-    /// it after settings change. Calls `enableCaching` (or `disableCaching`
-    /// when the master toggle is off) and runs hybrid detection.
+    /// Installs the cache coordinator on a freshly-loaded holder.
     ///
     /// Ordering: `enableCaching` → `setHybrid`. Safe because this method is
     /// actor-isolated — no other `generateEventStream` call can run until we
-    /// return. See VMLX-CACHE-INTEGRATION-CONSIDERATIONS §C.5.
-    private func installCacheCoordinator(
-        on holder: SessionHolder,
-        serverCfg: ServerConfiguration?
-    ) async {
-        guard
-            let cacheConfig = Self.buildCacheCoordinatorConfig(
-                modelName: holder.name, serverCfg: serverCfg
-            )
-        else {
-            // Master toggle is off. Make sure any previous coordinator is gone.
-            holder.container.disableCaching()
-            genLog.info(
-                "installCacheCoordinator: cache disabled for \(holder.name, privacy: .public)"
-            )
-            return
-        }
-
+    /// return.
+    private func installCacheCoordinator(on holder: SessionHolder) async {
+        let cacheConfig = Self.buildCacheCoordinatorConfig(modelName: holder.name)
         holder.container.enableCaching(config: cacheConfig)
 
         // Auto-detect hybrid models (SSM layers) and set the flag on the

@@ -25,6 +25,22 @@
 
 <!-- Changes will be appended below this line -->
 
+> ## ⚠️ Scope change — round 3 (2026-04-13)
+>
+> After C-001…C-013 landed, the direction shifted: osaurus should have
+> **zero** user-visible cache configuration. Caching is the
+> vmlx-swift-lm package's concern. osaurus uses hardcoded internal
+> defaults and doesn't expose cache knobs in Settings or the model
+> inspector.
+>
+> The user also asked for memory and tools to be **off by default**,
+> with in-chat and in-Settings toggles to enable them.
+>
+> Read the C-R## revert entries and C-014..C-018 net-new entries
+> **below** the C-013 entry in this file (they were appended last).
+> The C-001..C-013 entries are kept unchanged for history but most
+> of their user-facing surface is reverted by C-R01..C-R06.
+
 ---
 
 ### C-001 — Add `cacheEnabled` master toggle to `ServerConfiguration`
@@ -1047,6 +1063,593 @@ journal files may be recreated after our delete.
   `Data()` which is empty and would throw).
 
 ---
+
+## Round 3 — cache-surface strip + memory/tools defaults
+
+The following entries supersede the user-facing portions of C-001..C-013.
+Direction: osaurus should have **zero** cache knobs. Caching is the
+package's concern. Memory and tools default **off**, with minimal toggles
+for users to turn them on.
+
+---
+
+### C-R01 — Remove user-facing cache fields from `ServerConfiguration`
+
+- **File**: `Packages/OsaurusCore/Models/Configuration/ServerConfiguration.swift`
+- **Kind**: `remove` (fields, CodingKeys, decoder lines, init parameters, init body)
+- **Supersedes**: C-001
+- **Why**: These fields were exposed for user configuration, but we've
+  decided caching should be entirely package-owned. Users don't see cache
+  knobs — the package picks sensible defaults, and osaurus tweaks a few
+  internal values in `ModelRuntime.buildCacheCoordinatorConfig`
+  (`modelKey`, disk cache dir, max blocks by RAM).
+
+**Removed**:
+- `public var cacheEnabled: Bool?`
+- `public var cacheDiskEnabled: Bool?`
+- `public var cacheDiskMaxGB: Float?`
+- `public var cacheMaxBlocks: Int?`
+- Corresponding `CodingKeys` cases
+- Decoder `decodeIfPresent` calls
+- Memberwise init parameters + assignments
+
+**Added**: A comment block explaining that cache config is package-owned
+and pointing readers to `ModelRuntime.installCacheCoordinator` for the
+internal-only config construction.
+
+**Migration**: Existing `ServerConfiguration.json` files with these fields
+decode without error — the decoder ignores unknown keys. A test in
+`ServerConfigurationStoreTests` (C-R05) covers this path explicitly.
+
+**Blast radius**:
+- Every callsite that read these fields is removed by C-R02..C-R04.
+- No network / API exposure of these fields existed, so no HTTP schema
+  change.
+- `ConfigurationView` state vars + UI elements removed in C-R02.
+
+**Audit focus**:
+- Verify no grep for `cacheEnabled`, `cacheDiskEnabled`, `cacheDiskMaxGB`,
+  `cacheMaxBlocks` returns results in osaurus code after this change.
+- Verify the comment explaining the new ownership is present.
+- Verify existing user JSON files still deserialize (covered by C-R05 test).
+
+---
+
+### C-R02 — Remove Cache Storage Settings subsection
+
+- **File**: `Packages/OsaurusCore/Views/Settings/ConfigurationView.swift`
+- **Kind**: `remove` (state vars, UI block, load/save/reset wiring)
+- **Supersedes**: C-006, C-007
+- **Why**: Follows from C-R01 — the fields no longer exist, so the UI for
+  them goes too. Settings is leaner.
+
+**Removed**:
+- `@State private var tempCacheEnabled: Bool = true`
+- `@State private var tempDiskCacheEnabled: Bool = true`
+- `@State private var tempDiskCacheMaxGB: String = ""`
+- `@State private var tempCacheMaxBlocks: String = ""`
+- Entire `SettingsSubsection(label: "Cache Storage") { ... }` block
+  including master toggle, disk toggle, advanced stepper fields
+- Search keyword entries for "Cache Storage" and "Disk Cache"
+- Load wiring: `tempCacheEnabled = configuration.cacheEnabled ?? true` etc.
+- Save wiring: `configuration.cacheEnabled = tempCacheEnabled ? nil : false` etc.
+- Reset wiring: `tempCacheEnabled = true` etc.
+
+**Preserved**:
+- All other Local Inference section content (Sampling, KV Cache,
+  Model Management) stays unchanged.
+
+**Blast radius**:
+- UI only. Backend changes already made by C-R01.
+
+**Audit focus**:
+- Open Settings → Local Inference: verify the Cache Storage subsection
+  is gone but everything else renders.
+- Verify Reset to Defaults doesn't crash (no stale references).
+- Verify search for "cache" in Settings no longer matches a Cache Storage
+  section.
+
+---
+
+### C-R03 — Split `serverRestartNeeded` / replace `modelReloadNeeded` with `runtimeConfigChanged`
+
+- **File**: `Packages/OsaurusCore/Views/Settings/ConfigurationView.swift`
+- **Kind**: `edit` (rewrite change-detection block)
+- **Supersedes**: C-008
+- **Why**: C-008 introduced `modelReloadNeeded` to gate calls to
+  `ModelRuntime.refreshCacheConfig()`. With cache settings stripped
+  (C-R01) and `refreshCacheConfig` removed (C-R06), there's no reason
+  to rebuild coordinators on settings save. The gen* fields (top-p,
+  kvBits, kvGroup, quantStart, maxKVSize, prefillStepSize, turboQuant)
+  still flow into `RuntimeConfig.snapshot()` at request time — we just
+  need to invalidate the cached snapshot so next request reads fresh
+  values.
+
+**Before** (C-008 state):
+```swift
+let modelReloadNeeded = ...  // tracked gen* + cache* fields
+// ...
+if modelReloadNeeded {
+    await ModelRuntime.shared.refreshCacheConfig()
+}
+```
+
+**After** (C-R03):
+```swift
+let runtimeConfigChanged = ...  // tracks only gen* fields; no cache* fields
+// ...
+if runtimeConfigChanged {
+    await ModelRuntime.shared.invalidateConfig()
+}
+```
+
+**Preserved**:
+- `serverRestartNeeded` continues to gate NIO restart on port/CORS/eviction
+  policy changes.
+- `ModelRuntime.invalidateConfig()` is still a valid, callable method that
+  was pre-existing in the actor.
+
+**Blast radius**:
+- Settings save path only. No model reload happens on settings change —
+  just a cheap in-memory config snapshot drop.
+- Users who change kvBits etc. see it take effect on the NEXT request,
+  with no model reload.
+
+**Audit focus**:
+- Verify `modelReloadNeeded` name is gone from the file.
+- Verify `refreshCacheConfig()` is not called from anywhere in osaurus
+  (grep for it).
+- Verify changing a gen* field in Settings causes
+  `ModelRuntime.invalidateConfig()` to fire.
+
+---
+
+### C-R04 — Remove Disk KV Cache row from `ModelCacheInspectorView`
+
+- **File**: `Packages/OsaurusCore/Views/Model/ModelCacheInspectorView.swift`
+- **Kind**: `remove` (state vars, UI row, formatBytes helper)
+- **Supersedes**: C-012
+- **Why**: Same reasoning as C-R01/C-R02 — caching is invisible. Users
+  don't see disk cache usage in the inspector. The "Clear All" button is
+  restored to its original narrow scope (unload models only).
+
+**Removed**:
+- `@State private var diskKVCacheBytes: Int = 0`
+- `@State private var isClearingDiskKV = false`
+- The HStack rendering the Disk KV Cache row with icon, label, size,
+  Clear button
+- `private func formatBytes(_ bytes: Int) -> String` — the `Int`
+  overload added for the row. (Pre-existing `formatBytes(_ bytes: Int64)`
+  on `ModelCacheRow` is untouched — separate function.)
+- `diskKVCacheBytes = OsaurusPaths.diskKVCacheUsageBytes()` call in
+  `refresh()`
+- `_ = OsaurusPaths.clearDiskKVCache()` call in the Clear All button
+- `diskKVCacheBytes` check in the Clear All button's disabled condition
+
+**Preserved**:
+- `OsaurusPaths.diskKVCache()` / `diskKVCacheUsageBytes()` /
+  `clearDiskKVCache()` helpers from C-011. Still used internally by
+  `ModelRuntime.buildCacheCoordinatorConfig` and available for debug /
+  future features.
+
+**Blast radius**:
+- UI only. Cache still works and persists to disk as before — users just
+  don't see the usage row.
+
+**Audit focus**:
+- Open Model Cache Inspector: verify only the model list + Clear All
+  button are visible, no disk cache row.
+- Verify Clear All button still unloads models.
+
+---
+
+### C-R05 — Replace cache round-trip tests with migration-compat test
+
+- **File**: `Packages/OsaurusCore/Tests/Networking/ServerConfigurationStoreTests.swift`
+- **Kind**: `remove` (5 tests) + `add` (1 test)
+- **Supersedes**: C-013
+- **Why**: The 5 `cacheFields_*` tests from C-013 exercised fields that no
+  longer exist. Replaced with one test that validates pre-migration JSON
+  files (containing now-removed `cache*` keys) still decode successfully.
+
+**Removed**:
+- `cacheFields_missingInJSON_decodeAsNil`
+- `cacheFields_fullRoundTrip_preservesExplicitValues`
+- `cacheFields_explicitTrueRoundTrip`
+- `cacheFields_mixedNilAndExplicit`
+- `cacheFields_partialJSON_onlyDecodedFields`
+
+**Added**:
+- `decode_ignoresRemovedCacheFields` — feeds JSON with `cacheEnabled`,
+  `cacheDiskEnabled`, `cacheDiskMaxGB`, `cacheMaxBlocks` keys and asserts
+  the decoder ignores them without throwing. Verifies existing users'
+  `ServerConfiguration.json` files migrate cleanly.
+
+**Blast radius**:
+- Tests only. No production code change.
+
+**Audit focus**:
+- Verify the new test actually compiles (uses the same Swift Testing
+  `@Test` macro as the rest of the file).
+- Verify the JSON blob is syntactically valid.
+
+---
+
+### C-R06 — Simplify `ModelRuntime` cache config + remove `refreshCacheConfig`
+
+- **File**: `Packages/OsaurusCore/Services/ModelRuntime.swift`
+- **Kind**: `edit` (simplify) + `remove` (two methods)
+- **Supersedes**: C-004 partial, C-005, C-009
+- **Why**: C-004 built a `CacheCoordinatorConfig` from `ServerConfiguration`
+  user fields. Now those fields don't exist. The builder should use
+  hardcoded osaurus-internal defaults only. `refreshCacheConfig` was there
+  to propagate settings changes to loaded coordinators — with no settings
+  to propagate, it's dead code.
+
+**Changes to `buildCacheCoordinatorConfig`**:
+- **Before**: `private nonisolated static func buildCacheCoordinatorConfig(modelName:, serverCfg:) -> CacheCoordinatorConfig?`
+  — returned nil when `serverCfg.cacheEnabled == false`
+- **After**: `private nonisolated static func buildCacheCoordinatorConfig(modelName:) -> CacheCoordinatorConfig`
+  — non-optional return, no serverCfg param. Hardcoded defaults only:
+  - `enableDiskCache = isDirectoryWritable(diskCacheDir)`
+  - `diskCacheMaxGB = 4.0` (hardcoded)
+  - `modelKey = modelName`
+  - `maxCacheBlocks` tiered by RAM:
+    - `< 16 GB` → 500 blocks (~32k tokens)
+    - `16-48 GB` → 1000 blocks (~64k tokens)
+    - `≥ 48 GB` → 2000 blocks (~128k tokens)
+
+**Changes to `installCacheCoordinator`**:
+- **Before**: `private func installCacheCoordinator(on holder:, serverCfg:) async`
+  — master-off branch called `disableCaching()`
+- **After**: `private func installCacheCoordinator(on holder:) async`
+  — always enables caching. The guard-let against the master toggle is gone.
+
+**Removed**:
+- `func refreshCacheConfig() async` — unreachable after C-R03.
+
+**Preserved**:
+- `isDirectoryWritable(_:)` — still used by `buildCacheCoordinatorConfig`
+- `invalidateSession(_:)` — still a documented no-op for API compat
+
+**Blast radius**:
+- `loadContainer` simplified: no longer awaits `ServerConfigurationStore.load()`
+  before installing the coordinator.
+- Users cannot disable caching. For debug purposes, developers can edit
+  this file directly.
+
+**Audit focus**:
+- Verify `refreshCacheConfig` is completely gone.
+- Verify `buildCacheCoordinatorConfig` takes only `modelName: String`.
+- Verify the RAM tier logic picks sane defaults for 16/32/64 GB Macs.
+- Verify no dangling references to `serverCfg` in the cache config path.
+
+---
+
+### C-014 — Flip `MemoryConfiguration.enabled` default to `false`
+
+- **File**: `Packages/OsaurusCore/Models/Memory/MemoryConfiguration.swift`
+- **Kind**: `edit` (change default parameter value)
+- **Severity**: P0 (behavior change for existing users)
+- **Doc ref**: CONSIDERATIONS §A.1
+- **Why**: Memory was silently enabled by default, injecting up to ~9,300
+  tokens per request (working memory 3000 + summaries 3000 + chunks 3000
+  + graph 300). Most users never opened the memory UI and didn't know
+  about the bloat. Flipping to opt-in aligns with the "simple by default"
+  direction and matches peer apps (Claude Projects, Cursor Memory).
+
+**Before** (line 94):
+```swift
+enabled: Bool = true,
+```
+
+**After**:
+```swift
+enabled: Bool = false,
+```
+
+**Decoder** (line 170) is unchanged:
+```swift
+enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? defaults.enabled
+```
+
+Because `defaults.enabled` now reads `false`, existing JSON files without
+the field decode as `false`. Users who explicitly set `"enabled": true` in
+their `MemoryConfiguration.json` keep memory on — the decoder only
+defaults when the field is absent.
+
+**Migration**:
+- **New installs**: memory off by default.
+- **Existing users without an explicit override**: memory off on next launch.
+  They lose the feature until they re-enable in Settings (C-015).
+- **Existing users with explicit `enabled: true`**: no change, memory stays on.
+
+**Blast radius**:
+- All memory assembly calls skip via
+  `MemoryContextAssembler.buildContext` line 46's `guard config.enabled`
+  short-circuit. Zero tokens injected.
+- `SystemPromptComposer.appendMemory` becomes a no-op for users who don't
+  opt in. Large token savings per request.
+
+**Audit focus**:
+- Delete the osaurus config dir on a test machine, launch, check
+  memory is off.
+- With an existing config with `"enabled": true`, launch, check
+  memory stays on.
+- With a config with no enabled field, launch, check memory is off.
+
+---
+
+### C-015 — Add Memory toggle to Settings → Chat
+
+- **File**: `Packages/OsaurusCore/Views/Settings/ConfigurationView.swift`
+- **Kind**: `add` (state var, UI subsection, load, save, reset, search keyword)
+- **Severity**: P0 (required companion to C-014 — otherwise users have no
+  way to re-enable memory)
+- **Depends on**: C-014
+- **Why**: After flipping the default, users need an in-UI path to turn
+  memory back on. Prior to this change there was NO Memory toggle in the
+  Settings view at all — users had to edit
+  `~/.osaurus/config/MemoryConfiguration.json` manually. That's
+  unacceptable for a feature users might want to opt into.
+
+**Added**:
+- `@State private var tempMemoryEnabled: Bool = false`
+- New `SettingsSubsection(label: "Memory")` inside the Chat section,
+  between Tools and Clipboard subsections
+- Load in `loadConfiguration()`:
+  ```swift
+  tempMemoryEnabled = MemoryConfigurationStore.load().enabled
+  ```
+- Save in `saveConfiguration()`:
+  ```swift
+  var memoryCfg = MemoryConfigurationStore.load()
+  if memoryCfg.enabled != tempMemoryEnabled {
+      memoryCfg.enabled = tempMemoryEnabled
+      MemoryConfigurationStore.save(memoryCfg)
+  }
+  ```
+- Reset in `resetToDefaults()`:
+  ```swift
+  tempMemoryEnabled = false
+  ```
+- Search keyword "Memory" added to the Chat section's `matchesSearch()` args.
+
+**UI copy**:
+- Toggle label: "Enable memory"
+- Description: "Inject persistent memory (profile, working memory,
+  summaries, relationships) into the system prompt. Off by default —
+  memory can add thousands of tokens per request. Enable for agents that
+  need long-term context across conversations."
+
+**Scope explicitly NOT in this change**:
+- No per-agent override
+- No budget editing UI (workingMemoryBudgetTokens etc.)
+- No tri-state (user sets global, not per-agent)
+
+Power users who need per-agent or budget control can still edit the JSON.
+
+**Blast radius**:
+- Settings UI only. Respects the same
+  `MemoryConfigurationStore.save(_:)` code path used by
+  `MemoryConfiguration.json` — nothing custom.
+
+**Audit focus**:
+- Toggle on → save → close settings → reopen → verify toggle is on
+- Toggle on → save → close settings → relaunch app → verify toggle is on
+- Toggle on → run a chat → verify memory section appears in debug logs
+  (need to look at the prompt token count)
+- Toggle off → same cycle, verify memory is absent
+
+---
+
+### C-016 — Flip `ChatConfiguration.disableTools` default to `true`
+
+- **File**: `Packages/OsaurusCore/Models/Chat/ChatConfiguration.swift`
+- **Kind**: `edit` (change default in two places: memberwise init + decoder)
+- **Severity**: P0 (behavior change for existing users)
+- **Depends on**: None
+- **Why**: Tools were on by default, and preflight capability search
+  loaded up to 8 tool specs into the system prompt per request
+  (~320–640 tokens). For a user just chatting with a model, that's
+  cognitive + token overhead they didn't ask for. Flipping to opt-in
+  matches the memory default flip in C-014.
+
+**Two changes in the same file**:
+
+1. **Memberwise init default** (line 102):
+```swift
+// Before:
+disableTools: Bool = false,
+// After:
+disableTools: Bool = true,
+```
+
+2. **Decoder default** (line 149):
+```swift
+// Before:
+disableTools = try container.decodeIfPresent(Bool.self, forKey: .disableTools) ?? false
+// After:
+disableTools = try container.decodeIfPresent(Bool.self, forKey: .disableTools) ?? true
+```
+
+Both are needed because the decoder fallback and the init default are
+independent in Swift — the decoder doesn't invoke the init when decoding.
+
+**Companion change in `ConfigurationView.swift`**:
+- `tempDisableTools` initial state flipped to `true`
+- `resetToDefaults` sets `tempDisableTools = true`
+- Description text updated to reflect the new default
+
+**Migration**:
+- **New installs**: tools disabled by default. Agents are plain chat.
+- **Existing users without explicit override**: tools disabled on upgrade.
+  They lose tool access until they re-enable in Settings OR flip the
+  per-conversation Tools chip in the chat bar (C-018).
+- **Existing users with `"disableTools": false`**: explicit override
+  honored, tools stay on.
+- **Existing users with `"disableTools": true`**: no change.
+
+**Blast radius**:
+- All tool-enabled flows: `SystemPromptComposer.finalizeContext` receives
+  `toolsDisabled: true` from `ChatView.sendMessage` unless there's an
+  override (C-017).
+- `ToolRegistry.alwaysLoadedSpecs()` skipped.
+- Preflight search skipped.
+- Raw prompt shipped to model with ~320-640 token savings.
+- Existing agents with explicit tool configs (Agent.manualToolNames)
+  still flow through `Agent.toolSelectionMode`, but only when
+  `toolsDisabled == false`. Need to verify this doesn't silently strip
+  agent-level tool configs.
+
+**Audit focus**:
+- Flip the global, make a plain chat request, verify no tools in the
+  final request payload (grep request logs for `tools:` key).
+- Flip the global on, make a chat request, verify the preflight-selected
+  tools are in the payload.
+- Check an agent with explicit `manualToolNames: ["web_search"]` — when
+  global is off, does the agent still get its tools? **Need to verify:**
+  the code reads `toolsDisabled` before checking agent overrides, so
+  agent-level tools may be stripped too. If that's wrong, we'll need a
+  follow-up fix.
+
+---
+
+### C-017 — Add per-conversation tools override on `ChatWindowState`
+
+- **File**: `Packages/OsaurusCore/Managers/Chat/ChatWindowState.swift`
+- **Kind**: `add` (new `@Published` property)
+- **Severity**: P1
+- **Depends on**: C-016
+- **Why**: With the global default off (C-016), users need a way to
+  enable tools for a specific conversation without flipping Settings.
+  Adding per-window state keeps the override local and ephemeral —
+  resets when the window closes.
+
+**Added**:
+```swift
+/// Per-conversation override for the global `ChatConfiguration.disableTools`
+/// setting. When nil, the global setting is used. When non-nil, it
+/// overrides the global for this window only.
+///
+/// - `nil` → follow `ChatConfiguration.disableTools`
+/// - `false` → tools enabled for this conversation
+/// - `true`  → tools disabled for this conversation
+@Published var toolsDisabledOverride: Bool?
+```
+
+**Consumed by C-018** (the chip) and `ChatView.sendMessage` where:
+```swift
+let effectiveToolsDisabled =
+    windowState.toolsDisabledOverride ?? chatCfg.disableTools
+```
+
+**Scope**:
+- Lives on `ChatWindowState` (ephemeral per-window). NOT persisted.
+  Close the window, override is gone — matches the "simple on/off
+  affordance" the user asked for.
+- NOT a tool-by-tool list. The chip only flips the master on/off. If
+  users need per-tool control, there's still the agent editor.
+- NOT per-session in the sense of "saved to chat history". A user
+  reopening a conversation starts fresh at `nil`.
+
+**Blast radius**:
+- `ChatView.sendMessage` reads it (wired in C-017 continuation)
+- `FloatingInputCard` binds to it (C-018)
+- Zero runtime cost when unset (nil coalesce).
+
+**Audit focus**:
+- Verify it's `@Published` so SwiftUI bindings work
+- Verify it's declared `var` (not `let`) so the chip can mutate it
+
+---
+
+### C-018 — Add Tools chip to chat input bar
+
+- **File**: `Packages/OsaurusCore/Views/Chat/FloatingInputCard.swift`
+  (+ small wiring in `ChatView.swift` and `WorkView.swift`)
+- **Kind**: `add` (new chip view + helper methods + selector row integration)
+- **Severity**: P1
+- **Depends on**: C-016, C-017
+- **Why**: Give users an in-chat toggle for tools so they don't have to
+  dive into Settings. Matches the user's explicit request: "simply within
+  the chat bar there should be a button to open tools and then that opens
+  submenu to enable disable tools".
+
+**Design choice: simple on/off, no popover (for now)**:
+
+The user asked for a "submenu to enable disable tools". We're shipping
+V1 as a simple one-tap toggle (chip flips between enabled / disabled /
+follow-global) rather than a full popover with per-tool checkboxes.
+Rationale:
+- 90% of users just want "tools on or off" — the chip handles this.
+- Per-tool granularity already exists at the agent level
+  (`Agent.manualToolNames`) — users who need it use the agent editor.
+- A popover adds ~300 LoC and 4 extra reviewer checkpoints. Defer to a
+  follow-up if users ask.
+
+**Added in `FloatingInputCard.swift`**:
+- `@Binding var toolsDisabledOverride: Bool?` — new required binding
+- `private var effectiveToolsDisabled: Bool` — resolver helper
+- `private var toolsChipActive: Bool` — style helper (inverse of disabled)
+- `private var toolsChipBadge: String?` — shows "•" when override differs
+  from the global default
+- `private func cycleToolsOverride()` — tap handler: cycles
+  nil → opposite-of-global → nil
+- `private var toolsToggleChip: some View` — the chip view itself
+- Selector row integration: chip shown in chat mode only
+  (`workInputState == nil`), between Sandbox and Clipboard chips
+
+**Cycle semantics**:
+- Starting state: `nil` (follow global). Global default is now true
+  (disabled), so tools chip appears off.
+- First tap: `nil` → `false` (explicitly enabled). Chip lights up with
+  `•` badge.
+- Second tap: `false` → `nil` (back to global default). Chip dims, no badge.
+- Visual states:
+  - `toolsChipActive == true` → accent color, filled icon, "Tools" label
+    bright
+  - `toolsChipActive == false` → tertiary text color, outlined icon, dim label
+- Help text reflects current state
+
+**Wiring in `ChatView.swift`** (C-018 call site):
+```swift
+// In FloatingInputCard(...) call:
+toolsDisabledOverride: $windowState.toolsDisabledOverride
+
+// In sendMessage:
+let effectiveToolsDisabled =
+    windowState.toolsDisabledOverride ?? chatCfg.disableTools
+```
+
+**Wiring in `WorkView.swift`**:
+- Same binding pass-through: `toolsDisabledOverride: $windowState.toolsDisabledOverride`
+- Chip is hidden in work mode (`workInputState == nil` check in selector row)
+
+**Wiring in preview (`FloatingInputCard.swift` PreviewWrapper)**:
+- `toolsDisabledOverride: .constant(nil)` — preview doesn't have a real
+  window state, uses a constant binding
+
+**Blast radius**:
+- Selector row gains one more chip in chat mode. No layout changes to
+  existing chips (thinking / sandbox / clipboard stay in their spots).
+- No persistence: override lives only in ChatWindowState and resets on
+  window close.
+- No HTTP API changes.
+
+**Audit focus**:
+- Open a chat, verify the Tools chip appears in the selector row
+  (between Sandbox and Clipboard).
+- Verify the chip defaults to "off" visual when global `disableTools`
+  is `true` (new default).
+- Tap the chip, verify it lights up and a "•" badge appears.
+- Send a message, verify tools are in the request (via debug log).
+- Tap the chip again, verify it returns to default state.
+- Close the window, reopen, verify the override is gone (nil).
+- Switch to work mode (WorkView), verify the chip is NOT visible.
+
+---
+
 
 
 

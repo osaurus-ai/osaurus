@@ -61,17 +61,10 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
     /// TurboQuant KV cache compression; nil = auto-detect based on RAM, true = on, false = off
     public var genTurboQuant: Bool?
 
-    // MARK: - Cache Tier Settings
-    /// Master toggle for KV caching (paged L1 + disk L2 + SSM companion + TurboQuant).
-    /// nil = true (default on). When false, models load without any cache coordinator
-    /// and every request runs a full prefill.
-    public var cacheEnabled: Bool?
-    /// Enable L2 disk cache for KV state persistence across app restarts; nil = true (default on)
-    public var cacheDiskEnabled: Bool?
-    /// Maximum disk cache size in GB; nil = 4.0
-    public var cacheDiskMaxGB: Float?
-    /// Maximum number of paged cache blocks in L1 memory; nil = auto-detect based on RAM
-    public var cacheMaxBlocks: Int?
+    // Note: KV cache tier configuration (paged L1, disk L2, SSM companion, TurboQuant)
+    // is owned by the vmlx-swift-lm package. osaurus no longer exposes cache knobs to
+    // users — the package picks sensible defaults based on RAM and model characteristics,
+    // and ModelRuntime.installCacheCoordinator passes a minimal hardcoded config.
 
     /// List of allowed origins for CORS. Empty disables CORS. Use "*" to allow any origin.
     public var allowedOrigins: [String]
@@ -94,10 +87,6 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
         case genMaxKVSize
         case genPrefillStepSize
         case genTurboQuant
-        case cacheEnabled
-        case cacheDiskEnabled
-        case cacheDiskMaxGB
-        case cacheMaxBlocks
         case allowedOrigins
         case modelEvictionPolicy
     }
@@ -127,10 +116,6 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
         self.genMaxKVSize = try container.decodeIfPresent(Int.self, forKey: .genMaxKVSize)
         self.genPrefillStepSize = try container.decodeIfPresent(Int.self, forKey: .genPrefillStepSize)
         self.genTurboQuant = try container.decodeIfPresent(Bool.self, forKey: .genTurboQuant)
-        self.cacheEnabled = try container.decodeIfPresent(Bool.self, forKey: .cacheEnabled)
-        self.cacheDiskEnabled = try container.decodeIfPresent(Bool.self, forKey: .cacheDiskEnabled)
-        self.cacheDiskMaxGB = try container.decodeIfPresent(Float.self, forKey: .cacheDiskMaxGB)
-        self.cacheMaxBlocks = try container.decodeIfPresent(Int.self, forKey: .cacheMaxBlocks)
         self.allowedOrigins =
             try container.decodeIfPresent([String].self, forKey: .allowedOrigins)
             ?? defaults.allowedOrigins
@@ -154,10 +139,6 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
         genMaxKVSize: Int?,
         genPrefillStepSize: Int?,
         genTurboQuant: Bool? = nil,
-        cacheEnabled: Bool? = nil,
-        cacheDiskEnabled: Bool? = nil,
-        cacheDiskMaxGB: Float? = nil,
-        cacheMaxBlocks: Int? = nil,
         allowedOrigins: [String] = [],
         modelEvictionPolicy: ModelEvictionPolicy = .strictSingleModel
     ) {
@@ -175,10 +156,6 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
         self.genMaxKVSize = genMaxKVSize
         self.genPrefillStepSize = genPrefillStepSize
         self.genTurboQuant = genTurboQuant
-        self.cacheEnabled = cacheEnabled
-        self.cacheDiskEnabled = cacheDiskEnabled
-        self.cacheDiskMaxGB = cacheDiskMaxGB
-        self.cacheMaxBlocks = cacheMaxBlocks
         self.allowedOrigins = allowedOrigins
         self.modelEvictionPolicy = modelEvictionPolicy
     }

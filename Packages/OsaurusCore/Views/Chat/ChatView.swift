@@ -818,12 +818,17 @@ final class ChatSession: ObservableObject {
                 let executionMode = await prepareChatExecutionMode(agentId: effectiveAgentId)
                 guard isRunActive(runId) else { return }
 
+                // Per-conversation override from the chat-bar Tools chip wins
+                // over the global disableTools setting. When the override is
+                // nil, fall back to the global.
+                let effectiveToolsDisabled =
+                    windowState.toolsDisabledOverride ?? chatCfg.disableTools
                 let context = await SystemPromptComposer.composeChatContext(
                     agentId: effectiveAgentId,
                     executionMode: executionMode,
                     model: selectedModel,
                     query: trimmed,
-                    toolsDisabled: chatCfg.disableTools
+                    toolsDisabled: effectiveToolsDisabled
                 )
                 guard isRunActive(runId) else { return }
 
@@ -1465,7 +1470,8 @@ struct ChatView: View {
                                 onSkillSelected: { skillId in
                                     observedSession.pendingOneOffSkillId = skillId
                                 },
-                                pendingSkillId: $observedSession.pendingOneOffSkillId
+                                pendingSkillId: $observedSession.pendingOneOffSkillId,
+                                toolsDisabledOverride: $windowState.toolsDisabledOverride
                             )
                             .frame(maxWidth: 1100)
                             .frame(maxWidth: .infinity)

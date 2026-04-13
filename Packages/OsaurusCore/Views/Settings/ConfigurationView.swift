@@ -27,7 +27,8 @@ struct ConfigurationView: View {
     @State private var tempChatTopP: String = ""
     @State private var tempChatMaxToolAttempts: String = ""
     @State private var tempPreflightSearchMode: PreflightSearchMode = .balanced
-    @State private var tempDisableTools: Bool = false
+    @State private var tempDisableTools: Bool = true
+    @State private var tempMemoryEnabled: Bool = false
     @State private var tempCoreModelProvider: String = ""
     @State private var tempCoreModelName: String = ""
     @State private var coreModelPickerItems: [ModelPickerItem] = []
@@ -50,10 +51,6 @@ struct ConfigurationView: View {
     @State private var tempMaxKV: String = ""
     @State private var tempPrefillStep: String = ""
     @State private var tempTurboQuant: Bool? = nil
-    @State private var tempCacheEnabled: Bool = true
-    @State private var tempDiskCacheEnabled: Bool = true
-    @State private var tempDiskCacheMaxGB: String = ""
-    @State private var tempCacheMaxBlocks: String = ""
     @State private var tempEvictionPolicy: ModelEvictionPolicy = .strictSingleModel
 
     // Toast settings state
@@ -237,7 +234,9 @@ struct ConfigurationView: View {
                             "Max Tool Attempts",
                             "Generation",
                             "Preflight",
-                            "Capability Search"
+                            "Capability Search",
+                            "Memory",
+                            "Tools"
                         ) {
                             SettingsSection(title: "Chat", icon: "message") {
                                 VStack(alignment: .leading, spacing: 20) {
@@ -329,7 +328,23 @@ struct ConfigurationView: View {
                                                     .font(.system(size: 12))
                                             }
                                             Text(
-                                                "Send messages directly to the model with no tool specs or capability injection. Keeps the prompt stable across turns for maximum KV-cache reuse. Recommended when osaurus is acting as a backend for an external agent.", bundle: .module
+                                                "Send messages directly to the model with no tool specs or capability injection. Tools are off by default — enable them here or via the chat bar to let agents use built-in and plugin tools.", bundle: .module
+                                            )
+                                            .font(.system(size: 11))
+                                            .foregroundColor(theme.tertiaryText)
+                                        }
+                                    }
+
+                                    SettingsDivider()
+
+                                    SettingsSubsection(label: "Memory") {
+                                        VStack(alignment: .leading, spacing: 8) {
+                                            Toggle(isOn: $tempMemoryEnabled) {
+                                                Text("Enable memory", bundle: .module)
+                                                    .font(.system(size: 12))
+                                            }
+                                            Text(
+                                                "Inject persistent memory (profile, working memory, summaries, relationships) into the system prompt. Off by default — memory can add thousands of tokens per request. Enable for agents that need long-term context across conversations.", bundle: .module
                                             )
                                             .font(.system(size: 11))
                                             .foregroundColor(theme.tertiaryText)
@@ -429,8 +444,6 @@ struct ConfigurationView: View {
                             "Quantization",
                             "Prefill",
                             "Max KV",
-                            "Cache Storage",
-                            "Disk Cache",
                             "CPU",
                             "Memory"
                         ) {
@@ -516,49 +529,6 @@ struct ConfigurationView: View {
                                     }
 
                                     SettingsDivider()
-
-                                    // Cache Storage
-                                    SettingsSubsection(label: "Cache Storage") {
-                                        VStack(alignment: .leading, spacing: 12) {
-                                            SettingsToggle(
-                                                title: "KV Caching",
-                                                description:
-                                                    "Master switch for all KV cache tiers (memory, disk, hybrid SSM). Enabled by default. Turn off for debugging or to force full prefill on every request.",
-                                                isOn: $tempCacheEnabled
-                                            )
-                                            SettingsToggle(
-                                                title: "Disk Cache",
-                                                description:
-                                                    "Persist KV cache to disk so prefill is skipped across app restarts.",
-                                                isOn: $tempDiskCacheEnabled
-                                            )
-                                            .disabled(!tempCacheEnabled)
-                                            .opacity(tempCacheEnabled ? 1.0 : 0.5)
-                                            DisclosureGroup("Advanced") {
-                                                VStack(alignment: .leading, spacing: 12) {
-                                                    SettingsStepperField(
-                                                        label: "Disk Cache Limit (GB)",
-                                                        help: "Maximum disk space for cached KV state",
-                                                        text: $tempDiskCacheMaxGB,
-                                                        range: 1 ... 32,
-                                                        step: 1,
-                                                        defaultValue: 4
-                                                    )
-                                                    SettingsStepperField(
-                                                        label: "Memory Cache Blocks",
-                                                        help: "Max L1 paged cache blocks (64 tokens each)",
-                                                        text: $tempCacheMaxBlocks,
-                                                        range: 100 ... 8000,
-                                                        step: 100,
-                                                        defaultValue: 1000
-                                                    )
-                                                }
-                                                .padding(.top, 8)
-                                            }
-                                            .disabled(!tempCacheEnabled)
-                                            .opacity(tempCacheEnabled ? 1.0 : 0.5)
-                                        }
-                                    }
 
                                     SettingsDivider()
 
@@ -803,6 +773,7 @@ struct ConfigurationView: View {
         tempChatMaxToolAttempts = chat.maxToolAttempts.map(String.init) ?? ""
         tempPreflightSearchMode = chat.preflightSearchMode ?? .balanced
         tempDisableTools = chat.disableTools
+        tempMemoryEnabled = MemoryConfigurationStore.load().enabled
         tempCoreModelProvider = chat.coreModelProvider ?? ""
         tempCoreModelName = chat.coreModelName ?? ""
         tempEnableClipboardMonitoring = chat.enableClipboardMonitoring
@@ -825,10 +796,6 @@ struct ConfigurationView: View {
         tempMaxKV = configuration.genMaxKVSize.map(String.init) ?? ""
         tempPrefillStep = configuration.genPrefillStepSize.map(String.init) ?? ""
         tempTurboQuant = configuration.genTurboQuant
-        tempCacheEnabled = configuration.cacheEnabled ?? true
-        tempDiskCacheEnabled = configuration.cacheDiskEnabled ?? true
-        tempDiskCacheMaxGB = configuration.cacheDiskMaxGB.map { String(Int($0)) } ?? ""
-        tempCacheMaxBlocks = configuration.cacheMaxBlocks.map(String.init) ?? ""
         tempAllowedOrigins = configuration.allowedOrigins.joined(separator: ", ")
         tempEvictionPolicy = configuration.modelEvictionPolicy
 
@@ -868,7 +835,8 @@ struct ConfigurationView: View {
         tempChatTopP = ""
         tempChatMaxToolAttempts = ""
         tempPreflightSearchMode = .balanced
-        tempDisableTools = false
+        tempDisableTools = true
+        tempMemoryEnabled = false
         tempCoreModelProvider = ""
         tempCoreModelName = ""
         tempEnableClipboardMonitoring = chatDefaults.enableClipboardMonitoring
@@ -884,10 +852,6 @@ struct ConfigurationView: View {
         tempMaxKV = ""
         tempPrefillStep = ""
         tempTurboQuant = nil
-        tempCacheEnabled = true
-        tempDiskCacheEnabled = true
-        tempDiskCacheMaxGB = ""
-        tempCacheMaxBlocks = ""
         tempEvictionPolicy = serverDefaults.modelEvictionPolicy
 
         showSuccess("Settings restored to defaults")
@@ -963,13 +927,6 @@ struct ConfigurationView: View {
         configuration.genPrefillStepSize = trimmedPrefillStep.isEmpty ? nil : Int(trimmedPrefillStep)
         configuration.genTurboQuant = tempTurboQuant
 
-        configuration.cacheEnabled = tempCacheEnabled ? nil : false
-        configuration.cacheDiskEnabled = tempDiskCacheEnabled ? nil : false
-        let trimmedDiskGB = tempDiskCacheMaxGB.trimmingCharacters(in: .whitespacesAndNewlines)
-        configuration.cacheDiskMaxGB = trimmedDiskGB.isEmpty ? nil : Float(trimmedDiskGB)
-        let trimmedMaxBlocks = tempCacheMaxBlocks.trimmingCharacters(in: .whitespacesAndNewlines)
-        configuration.cacheMaxBlocks = trimmedMaxBlocks.isEmpty ? nil : Int(trimmedMaxBlocks)
-
         configuration.modelEvictionPolicy = tempEvictionPolicy
 
         let parsedOrigins: [String] =
@@ -984,20 +941,17 @@ struct ConfigurationView: View {
 
         // `serverRestartNeeded` gates restarting the NIO HTTP server. Only the
         // fields that affect how the socket is opened / CORS / eviction belong
-        // here. Generation-time settings (kv*, turbo, top-p, prefill, cache*)
-        // do NOT require a NIO restart — they are reloaded on the MLX runtime
-        // via `modelReloadNeeded` below.
+        // here. Generation-time settings (kv*, turbo, top-p, prefill) flow into
+        // `RuntimeConfig.snapshot()` and are re-read on the next request via
+        // `ModelRuntime.invalidateConfig()` below — they do NOT require a NIO
+        // restart nor a model reload.
         let serverRestartNeeded =
             previousServerCfg.port != configuration.port
             || previousServerCfg.exposeToNetwork != configuration.exposeToNetwork
             || previousServerCfg.allowedOrigins != configuration.allowedOrigins
             || previousServerCfg.modelEvictionPolicy != configuration.modelEvictionPolicy
 
-        // `modelReloadNeeded` gates calling `ModelRuntime.refreshCacheConfig()`.
-        // These fields flow into `RuntimeConfig.snapshot()` or
-        // `CacheCoordinatorConfig`, so changing them requires rebuilding the
-        // coordinator on every loaded model.
-        let modelReloadNeeded =
+        let runtimeConfigChanged =
             previousServerCfg.genTopP != configuration.genTopP
             || previousServerCfg.genKVBits != configuration.genKVBits
             || previousServerCfg.genKVGroupSize != configuration.genKVGroupSize
@@ -1005,10 +959,6 @@ struct ConfigurationView: View {
             || previousServerCfg.genMaxKVSize != configuration.genMaxKVSize
             || previousServerCfg.genPrefillStepSize != configuration.genPrefillStepSize
             || previousServerCfg.genTurboQuant != configuration.genTurboQuant
-            || previousServerCfg.cacheEnabled != configuration.cacheEnabled
-            || previousServerCfg.cacheDiskEnabled != configuration.cacheDiskEnabled
-            || previousServerCfg.cacheDiskMaxGB != configuration.cacheDiskMaxGB
-            || previousServerCfg.cacheMaxBlocks != configuration.cacheMaxBlocks
 
         ServerConfigurationStore.save(configuration)
 
@@ -1088,6 +1038,15 @@ struct ConfigurationView: View {
         )
         ChatConfigurationStore.save(chatCfg)
 
+        // Persist memory enable toggle. Budgets are not user-adjustable in
+        // this UI — users can edit MemoryConfiguration.json directly for
+        // advanced tuning.
+        var memoryCfg = MemoryConfigurationStore.load()
+        if memoryCfg.enabled != tempMemoryEnabled {
+            memoryCfg.enabled = tempMemoryEnabled
+            MemoryConfigurationStore.save(memoryCfg)
+        }
+
         let hotkeyChanged = previousChatCfg.hotkey != chatCfg.hotkey
 
         if hotkeyChanged {
@@ -1104,12 +1063,10 @@ struct ConfigurationView: View {
             if serverRestartNeeded {
                 await AppDelegate.shared?.serverController.restartServer()
             }
-            if modelReloadNeeded {
-                // Apply generation / cache settings to all loaded models
-                // without requiring a manual unload + reload. Awaits active
-                // generation before rebuilding coordinators (see
-                // ModelRuntime.refreshCacheConfig).
-                await ModelRuntime.shared.refreshCacheConfig()
+            if runtimeConfigChanged {
+                // Drop the cached RuntimeConfig snapshot so the next
+                // generation re-reads fresh values from ServerConfiguration.
+                await ModelRuntime.shared.invalidateConfig()
             }
         }
 
