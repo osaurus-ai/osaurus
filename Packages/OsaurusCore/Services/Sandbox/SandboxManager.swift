@@ -139,11 +139,13 @@
                     await setProvisioningPhase(isRestart ? "Starting sandbox..." : "Starting host API bridge...")
                     try await HostAPIBridgeServer.shared.start(socketPath: Self.bridgeSocketPath)
 
-                    // NAT networking -- no vmnet entitlement required
+                    NSLog("[SandboxManager] Creating VmnetNetwork and ContainerManager...")
+                    let network = try VmnetNetwork()
                     var manager = try ContainerManager(
                         kernel: kernel,
                         initfs: initfs,
-                        root: OsaurusPaths.container()
+                        root: OsaurusPaths.container(),
+                        network: network
                     )
 
                     await setProvisioningPhase(isRestart ? "Booting container..." : "Creating container...")
@@ -152,23 +154,17 @@
                     let bridgeSocketPath = Self.bridgeSocketPath
                     let guestBridgeSocketPath = Self.guestBridgeSocketPath
 
+                    NSLog("[SandboxManager] Creating container...")
                     let container = try await manager.create(
                         Self.containerID,
                         reference: Self.containerImage,
                         rootfsSizeInBytes: 8.gib(),
-                        networking: false
+                        networking: true
                     ) { cfg in
                         cfg.cpus = config.cpus
                         cfg.memoryInBytes = UInt64(config.memoryGB).gib()
                         cfg.process.arguments = ["sleep", "infinity"]
                         cfg.process.workingDirectory = "/"
-
-                        // NAT interface for outbound internet (apk, pip, npm, etc.)
-                        let natInterface = NATInterface(
-                            ipv4Address: try! CIDRv4("10.0.2.15/24"),  // swiftlint:disable:this force_try
-                            ipv4Gateway: nil
-                        )
-                        cfg.interfaces = [natInterface]
 
                         // Relay the host bridge socket into the guest via vsock
                         let bridgeRelay = UnixSocketConfiguration(
@@ -183,8 +179,10 @@
                     }
 
                     await setProvisioningPhase("Starting container...")
+                    NSLog("[SandboxManager] Starting container...")
                     try await container.create()
                     try await container.start()
+                    NSLog("[SandboxManager] Container started successfully")
 
                     self.containerManager = manager
                     self.linuxContainer = container
@@ -203,7 +201,24 @@
                     SandboxConfigurationStore.save(savedConfig)
                 }
             } catch {
+                NSLog("[SandboxManager] Provision failed: \(error)")
                 await setProvisioningPhase(nil)
+
+                if let container = linuxContainer {
+                    try? await container.stop()
+                }
+                if var mgr = containerManager {
+                    try? mgr.delete(Self.containerID)
+                }
+                linuxContainer = nil
+                containerManager = nil
+
+                if FileManager.default.fileExists(atPath: staleContainerDir.path) {
+                    try? FileManager.default.removeItem(at: staleContainerDir)
+                }
+
+                await HostAPIBridgeServer.shared.stop()
+
                 throw error
             }
         }
@@ -233,7 +248,7 @@
                 } catch {
                     _status = .stopped
                     syncStatus()
-                    throw error
+                    throw Self.friendlyError(from: error)
                 }
             }
         }
@@ -877,6 +892,23 @@
                 State.shared.status = status
                 NotificationCenter.default.post(name: .toolsListChanged, object: nil)
             }
+        }
+
+        private static func friendlyError(from error: Error) -> Error {
+            let desc = String(describing: error)
+            if desc.contains("GRPCStatus") || desc.contains("GRPC") {
+                NSLog("[SandboxManager] gRPC error from Containerization framework: \(desc)")
+                return SandboxError.startFailed(
+                    "Container failed to start (VM networking error). Try resetting the container."
+                )
+            }
+            if desc.contains("vmnet") {
+                NSLog("[SandboxManager] vmnet error: \(desc)")
+                return SandboxError.startFailed(
+                    "Container networking failed. Ensure no other VMs are using conflicting network resources."
+                )
+            }
+            return error
         }
 
         private func setProvisioningPhase(_ phase: String?) async {

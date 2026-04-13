@@ -633,7 +633,7 @@ public struct OutputItemDoneEvent: Codable, Sendable {
 public struct FunctionCallArgumentsDeltaEvent: Codable, Sendable {
     public let type: String
     public let sequence_number: Int?  // Osaurus-specific; not sent by all providers (e.g. OpenAI)
-    public let item_id: String?       // Not present in all provider implementations
+    public let item_id: String?  // Not present in all provider implementations
     public let output_index: Int
     public let call_id: String
     public let delta: String
@@ -652,7 +652,7 @@ public struct FunctionCallArgumentsDeltaEvent: Codable, Sendable {
 public struct FunctionCallArgumentsDoneEvent: Codable, Sendable {
     public let type: String
     public let sequence_number: Int?  // Osaurus-specific; not sent by all providers (e.g. OpenAI)
-    public let item_id: String?       // Not present in all provider implementations
+    public let item_id: String?  // Not present in all provider implementations
     public let output_index: Int
     public let call_id: String
     public let arguments: String
