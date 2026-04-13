@@ -75,6 +75,10 @@ final class ModelDownloadService: ObservableObject {
         "chat_template.jinja",
         "preprocessor_config.json",
         "processor_config.json",
+        "jang_config.json",
+        "jjqf_config.json",
+        "jang_cfg.json",
+        "mxq_config.json",
         "*.safetensors",
     ]
 
