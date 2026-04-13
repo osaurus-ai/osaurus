@@ -51,7 +51,10 @@ struct FileImportRegistryTests {
     }
 
     @Test func documentParserParsesTextAttachment() async throws {
-        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(
+            UUID().uuidString,
+            isDirectory: true
+        )
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: tempDir) }
 
@@ -68,7 +71,7 @@ struct FileImportRegistryTests {
 private struct TestImporter: FileImporter {
     let descriptor: FileImportDescriptor
 
-    func importFile(at url: URL) async throws -> [Attachment] {
-        [.document(filename: url.lastPathComponent, content: "ok", fileSize: 2)]
+    func importFile(at url: URL) async throws -> [OsaurusCore.Attachment] {
+        [OsaurusCore.Attachment.document(filename: url.lastPathComponent, content: "ok", fileSize: 2)]
     }
 }

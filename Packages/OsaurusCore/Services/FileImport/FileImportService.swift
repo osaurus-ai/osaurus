@@ -26,7 +26,8 @@ public enum FileImportError: LocalizedError, Equatable {
         case .readFailed(let reason):
             return "Failed to read file: \(reason)"
         case .fileTooLarge(let maxBytes):
-            return "Document exceeds the \(ByteCountFormatter.string(fromByteCount: Int64(maxBytes), countStyle: .file)) attachment limit"
+            return
+                "Document exceeds the \(ByteCountFormatter.string(fromByteCount: Int64(maxBytes), countStyle: .file)) attachment limit"
         case .emptyContent:
             return "Document appears to be empty"
         case .invalidFilePath:
