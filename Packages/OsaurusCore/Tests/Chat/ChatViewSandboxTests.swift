@@ -169,6 +169,189 @@ struct ChatViewSandboxTests {
             #expect(sandboxToolTokens == ToolRegistry.shared.totalEstimatedTokens(for: sandboxTools))
         }
     }
+
+    @Test
+    func selectedModelIsLocal_treatsSlashStyleLocalPickerIdsAsLocal() {
+        let session = ChatSession()
+        let modelId = "TheCluster/Gemma-4-31B-Heretic-MLX-mxfp4"
+        session.pickerItems = [
+            ModelPickerItem(
+                id: modelId,
+                displayName: "Gemma 4 31B",
+                source: .local
+            )
+        ]
+        session.selectedModel = modelId
+
+        #expect(session.selectedModelIsLocal)
+    }
+
+    @Test
+    func buildUserMessageText_truncatesOversizedDocumentsWhenBudgetProvided() {
+        let repeated = String(repeating: "line 1234567890\n", count: 300)
+        let attachment = Attachment.document(
+            filename: "_chat.txt",
+            content: repeated,
+            fileSize: repeated.utf8.count
+        )
+
+        let built = ChatSession.buildUserMessageText(
+            content: "Analyze this closely.",
+            attachments: [attachment],
+            maxInputTokens: 200
+        )
+
+        #expect(built.contains("<attached_document name=\"_chat.txt\">"))
+        #expect(built.contains("Document truncated to fit local model context"))
+        #expect(built.contains("Analyze this closely."))
+        #expect(built.count < repeated.count)
+    }
+
+    @Test
+    func buildUserMessageText_truncatesOversizedDocumentsWhenOnlyCapProvided() {
+        let repeated = String(repeating: "transcript line 1234567890\n", count: 600)
+        let attachment = Attachment.document(
+            filename: "_chat.txt",
+            content: repeated,
+            fileSize: repeated.utf8.count
+        )
+
+        let built = ChatSession.buildUserMessageText(
+            content: "What matters here?",
+            attachments: [attachment],
+            documentTokenCap: 256
+        )
+
+        #expect(built.contains("<attached_document name=\"_chat.txt\">"))
+        #expect(built.contains("Document truncated to fit local model context"))
+        #expect(built.contains("What matters here?"))
+        #expect(built.count < repeated.count)
+    }
+
+    @Test
+    func buildUserMessageText_rendersDocumentManifestWhenReferencesProvided() {
+        let attachment = Attachment.document(
+            filename: "_chat.txt",
+            content: "alpha beta gamma",
+            fileSize: 16
+        )
+
+        let built = ChatSession.buildUserMessageText(
+            content: "Analyze the transcript.",
+            attachments: [attachment],
+            documentReferences: [
+                AttachedDocumentReference(
+                    attachmentId: attachment.id.uuidString,
+                    filename: "_chat.txt",
+                    characterCount: 16,
+                    chunkCount: 1,
+                    preview: "alpha beta gamma"
+                )
+            ]
+        )
+
+        #expect(built.contains("<attached_documents>"))
+        #expect(built.contains("search_attached_documents"))
+        #expect(built.contains("read_attached_document"))
+        #expect(built.contains(attachment.id.uuidString))
+        #expect(built.contains("Analyze the transcript."))
+        #expect(!built.contains("<attached_document name=\"_chat.txt\">\nalpha beta gamma"))
+    }
+
+    @Test
+    func buildUserMessageText_prefersPromptContextBlockOverRawDocumentInlining() {
+        let attachment = Attachment.document(
+            filename: "_chat.txt",
+            content: "alpha beta gamma delta epsilon",
+            fileSize: 32
+        )
+
+        let built = ChatSession.buildUserMessageText(
+            content: "Summarize the transcript.",
+            attachments: [attachment],
+            documentPromptBlock:
+                "<attached_document_context>\n<attached_document_excerpt id=\"1\" name=\"_chat.txt\" chunk=\"1/1\" score=\"42\">gamma delta</attached_document_excerpt>\n</attached_document_context>"
+        )
+
+        #expect(built.contains("<attached_document_context>"))
+        #expect(built.contains("gamma delta"))
+        #expect(built.contains("Summarize the transcript."))
+        #expect(!built.contains("<attached_document name=\"_chat.txt\">"))
+    }
+
+    @Test
+    func buildUserMessageText_combinesManifestAndPromptContextForLocalDocuments() {
+        let attachment = Attachment.document(
+            filename: "_chat.txt",
+            content: "alpha beta gamma delta epsilon",
+            fileSize: 32
+        )
+
+        let built = ChatSession.buildUserMessageText(
+            content: "Please analyze the full file, not just one excerpt.",
+            attachments: [attachment],
+            documentPromptBlock:
+                "<attached_document_context>\n<attached_document_excerpt id=\"doc-1\" name=\"_chat.txt\" chunk=\"2/4\" score=\"42\">gamma delta</attached_document_excerpt>\n</attached_document_context>",
+            documentReferences: [
+                AttachedDocumentReference(
+                    attachmentId: attachment.id.uuidString,
+                    filename: "_chat.txt",
+                    characterCount: 32,
+                    chunkCount: 4,
+                    preview: "alpha beta gamma"
+                )
+            ]
+        )
+
+        #expect(built.contains("<attached_documents>"))
+        #expect(built.contains("<attached_document_context>"))
+        #expect(built.contains("search_attached_documents"))
+        #expect(built.contains("read_attached_document"))
+        #expect(built.contains(attachment.id.uuidString))
+        #expect(built.contains("Please analyze the full file"))
+    }
+
+    @Test
+    func isFailedAttachedDocumentProbe_detectsStaleNoMatchToolLoops() {
+        let turn = ChatTurn(role: .assistant, content: "")
+        turn.toolCalls = [
+            ToolCall(
+                id: "call_123",
+                type: "function",
+                function: ToolCallFunction(
+                    name: "search_attached_documents",
+                    arguments: "{}"
+                )
+            )
+        ]
+        turn.toolResults = [
+            "call_123": "No matching excerpts found in the requested attached documents."
+        ]
+
+        #expect(ChatSession.isFailedAttachedDocumentProbe(turn))
+    }
+
+    @Test
+    func isStaleExcerptOnlyAttachedDocumentAnswer_detectsOldExcerptBoundResponses() {
+        let turn = ChatTurn(
+            role: .assistant,
+            content:
+                "Since I only have access to the specific excerpts provided in the prompt, my previous analysis was limited to those snippets. Based on the provided excerpts, here is a focused summary."
+        )
+
+        #expect(ChatSession.isStaleExcerptOnlyAttachedDocumentAnswer(turn))
+    }
+
+    @Test
+    func shouldInjectHistoricalDocumentContext_disablesForImageOnlyTurns() {
+        let turn = ChatTurn(
+            role: .user,
+            content: "What do you see in this photo?",
+            attachments: [.image(Data([0x89, 0x50, 0x4E, 0x47]))]
+        )
+
+        #expect(!ChatSession.shouldInjectHistoricalDocumentContext(for: turn))
+    }
 }
 
 @MainActor
