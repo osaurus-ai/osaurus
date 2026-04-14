@@ -141,7 +141,8 @@ struct TranscriptionModeSettingsTab: View {
                     .foregroundColor(theme.accentColor)
 
                 Text(
-                    "When enabled, press the hotkey to start transcribing. Your voice will be typed directly into the focused text field in any application.", bundle: .module
+                    "When enabled, press the hotkey to start transcribing. Your voice will be typed directly into the focused text field in any application.",
+                    bundle: .module
                 )
                 .font(.system(size: 12))
                 .foregroundColor(theme.secondaryText)
@@ -371,18 +372,18 @@ struct TranscriptionModeSettingsTab: View {
             TextField(text: .constant(""), prompt: Text("Transcribed text will appear here...", bundle: .module)) {
                 Text("Transcribed text will appear here...", bundle: .module)
             }
-                .textFieldStyle(.plain)
-                .font(.system(size: 14))
-                .foregroundColor(theme.primaryText)
-                .padding(12)
-                .background(
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(theme.inputBackground)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10)
-                                .stroke(theme.inputBorder, lineWidth: 1)
-                        )
-                )
+            .textFieldStyle(.plain)
+            .font(.system(size: 14))
+            .foregroundColor(theme.primaryText)
+            .padding(12)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(theme.inputBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(theme.inputBorder, lineWidth: 1)
+                    )
+            )
 
             // Error display
             if case .error(let message) = transcriptionService.state {

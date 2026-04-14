@@ -101,6 +101,43 @@ public enum OsaurusPaths {
         root().appendingPathComponent("cache", isDirectory: true)
     }
 
+    /// Disk KV cache directory used by vmlx-swift-lm's `DiskCache` (L2 tier).
+    /// Stores SQLite index + safetensors blocks keyed by model + token hash.
+    public static func diskKVCache() -> URL {
+        cache().appendingPathComponent("kv_v2", isDirectory: true)
+    }
+
+    /// Current size of the disk KV cache in bytes. Returns 0 when the
+    /// directory doesn't exist yet.
+    public static func diskKVCacheUsageBytes() -> Int {
+        let url = diskKVCache()
+        guard FileManager.default.fileExists(atPath: url.path) else { return 0 }
+        return directorySize(at: url)
+    }
+
+    /// Deletes every file under the disk KV cache directory. The directory
+    /// itself is left in place (re-created on next model load via
+    /// `ensureExistsSilent`). Safe to call while models are loaded — the
+    /// package's `DiskCache` will reopen its SQLite handle on the next
+    /// `storeAfterGeneration` call, but may log errors for writes that race
+    /// the deletion. For a clean clear, call `ModelRuntime.shared.clearAll()`
+    /// first to release the coordinators.
+    ///
+    /// Returns the number of bytes freed.
+    @discardableResult
+    public static func clearDiskKVCache() -> Int {
+        let url = diskKVCache()
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: url.path) else { return 0 }
+        let before = directorySize(at: url)
+        if let contents = try? fm.contentsOfDirectory(at: url, includingPropertiesForKeys: nil) {
+            for entry in contents {
+                try? fm.removeItem(at: entry)
+            }
+        }
+        return before
+    }
+
     /// Skills directory
     public static func skills() -> URL {
         root().appendingPathComponent("skills", isDirectory: true)

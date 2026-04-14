@@ -1465,7 +1465,9 @@ extension WorkSession: WorkEngineDelegate {
             liveExecutionTurns
             .last(where: { $0.role == .assistant })?.content
 
-        if !userMessage.isEmpty {
+        if !userMessage.isEmpty,
+            !AgentManager.shared.effectiveMemoryDisabled(for: agentId)
+        {
             let convId = issue.id
             Task.detached {
                 await MemoryService.shared.recordConversationTurn(

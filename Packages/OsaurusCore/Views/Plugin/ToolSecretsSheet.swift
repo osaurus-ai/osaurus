@@ -183,7 +183,8 @@ struct ToolSecretsSheet: View {
                 .foregroundColor(theme.infoColor)
 
             Text(
-                "This plugin requires credentials to function. Your secrets are stored securely in the system Keychain.", bundle: .module
+                "This plugin requires credentials to function. Your secrets are stored securely in the system Keychain.",
+                bundle: .module
             )
             .font(.system(size: 12))
             .foregroundColor(theme.secondaryText)

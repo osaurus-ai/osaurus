@@ -428,19 +428,35 @@ private struct AgentCard: View {
 
                     Menu {
                         Button(action: onSelect) {
-                            Label { Text("Open", bundle: .module) } icon: { Image(systemName: "arrow.right.circle") }
+                            Label {
+                                Text("Open", bundle: .module)
+                            } icon: {
+                                Image(systemName: "arrow.right.circle")
+                            }
                         }
                         Button(action: onDuplicate) {
-                            Label { Text("Duplicate", bundle: .module) } icon: { Image(systemName: "doc.on.doc") }
+                            Label {
+                                Text("Duplicate", bundle: .module)
+                            } icon: {
+                                Image(systemName: "doc.on.doc")
+                            }
                         }
                         Button(action: onExport) {
-                            Label { Text("Export", bundle: .module) } icon: { Image(systemName: "square.and.arrow.up") }
+                            Label {
+                                Text("Export", bundle: .module)
+                            } icon: {
+                                Image(systemName: "square.and.arrow.up")
+                            }
                         }
                         Divider()
                         Button(role: .destructive) {
                             showDeleteConfirm = true
                         } label: {
-                            Label { Text("Delete", bundle: .module) } icon: { Image(systemName: "trash") }
+                            Label {
+                                Text("Delete", bundle: .module)
+                            } icon: {
+                                Image(systemName: "trash")
+                            }
                         }
                     } label: {
                         Image(systemName: "ellipsis")
@@ -656,6 +672,8 @@ struct AgentDetailView: View {
     @State private var workQuickActions: [AgentQuickAction]?
     @State private var editingQuickActionId: UUID?
     @State private var pluginInstructionsMap: [String: String] = [:]
+    @State private var disableTools: Bool = false
+    @State private var disableMemory: Bool = false
     @State private var toolSelectionMode: ToolSelectionMode = .auto
     @State private var manualToolNames: Set<String> = []
     @State private var manualSkillNames: Set<String> = []
@@ -1045,7 +1063,10 @@ struct AgentDetailView: View {
         tabHelperText(DetailTab.configure.helperText)
         systemPromptSection
         generationSection
-        toolSelectionSection
+        disableTogglesSection
+        if !disableTools {
+            toolSelectionSection
+        }
         quickActionsSection
         themeSection
     }
@@ -1104,9 +1125,12 @@ struct AgentDetailView: View {
                         )
                 )
 
-                Text("Instructions that define this agent's behavior. Leave empty to use global settings.", bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
+                Text(
+                    "Instructions that define this agent's behavior. Leave empty to use global settings.",
+                    bundle: .module
+                )
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
             }
             .onChange(of: systemPrompt) { debouncedSave() }
         }
@@ -1116,9 +1140,13 @@ struct AgentDetailView: View {
         AgentDetailSection(title: "Generation", icon: "cpu") {
             VStack(spacing: 16) {
                 VStack(alignment: .leading, spacing: 6) {
-                    Label { Text("Default Model", bundle: .module) } icon: { Image(systemName: "cube.fill") }
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
+                    Label {
+                        Text("Default Model", bundle: .module)
+                    } icon: {
+                        Image(systemName: "cube.fill")
+                    }
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(theme.secondaryText)
 
                     Button {
                         showModelPicker.toggle()
@@ -1187,17 +1215,25 @@ struct AgentDetailView: View {
 
                 HStack(spacing: 16) {
                     VStack(alignment: .leading, spacing: 6) {
-                        Label { Text("Temperature", bundle: .module) } icon: { Image(systemName: "thermometer.medium") }
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(theme.secondaryText)
+                        Label {
+                            Text("Temperature", bundle: .module)
+                        } icon: {
+                            Image(systemName: "thermometer.medium")
+                        }
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(theme.secondaryText)
 
                         StyledTextField(placeholder: "0.7", text: $temperature, icon: nil)
                     }
 
                     VStack(alignment: .leading, spacing: 6) {
-                        Label { Text("Max Tokens", bundle: .module) } icon: { Image(systemName: "number") }
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(theme.secondaryText)
+                        Label {
+                            Text("Max Tokens", bundle: .module)
+                        } icon: {
+                            Image(systemName: "number")
+                        }
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(theme.secondaryText)
 
                         StyledTextField(placeholder: "4096", text: $maxTokens, icon: nil)
                     }
@@ -1253,6 +1289,52 @@ struct AgentDetailView: View {
         return 0
     }
 
+    private var disableTogglesSection: some View {
+        AgentDetailSection(title: "Features", icon: "switch.2") {
+            VStack(alignment: .leading, spacing: 10) {
+                featureToggleRow(
+                    title: "Disable Tools",
+                    subtitle: "No tools or pre-flight context will be sent to the model.",
+                    isOn: $disableTools
+                )
+                featureToggleRow(
+                    title: "Disable Memory",
+                    subtitle: "Memory will not be injected into prompts or recorded.",
+                    isOn: $disableMemory
+                )
+            }
+        }
+    }
+
+    private func featureToggleRow(title: LocalizedStringKey, subtitle: LocalizedStringKey, isOn: Binding<Bool>)
+        -> some View
+    {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title, bundle: .module)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(theme.primaryText)
+                Text(subtitle, bundle: .module)
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.tertiaryText)
+            }
+            Spacer()
+            Toggle("", isOn: isOn)
+                .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
+                .labelsHidden()
+                .onChange(of: isOn.wrappedValue) { debouncedSave() }
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(theme.inputBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(theme.inputBorder, lineWidth: 1)
+                )
+        )
+    }
+
     private var toolSelectionSection: some View {
         AgentDetailSection(title: "Tools", icon: "wrench.and.screwdriver") {
             VStack(alignment: .leading, spacing: 12) {
@@ -1304,9 +1386,9 @@ struct AgentDetailView: View {
             TextField(text: $toolSearchText, prompt: Text("Search tools and skills...", bundle: .module)) {
                 Text("Search tools and skills...", bundle: .module)
             }
-                .font(.system(size: 12))
-                .textFieldStyle(.plain)
-                .foregroundColor(theme.primaryText)
+            .font(.system(size: 12))
+            .textFieldStyle(.plain)
+            .foregroundColor(theme.primaryText)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
@@ -1825,7 +1907,8 @@ struct AgentDetailView: View {
         AgentDetailSection(title: "Bonjour", icon: "antenna.radiowaves.left.and.right") {
             VStack(alignment: .leading, spacing: 12) {
                 Text(
-                    "Advertise this agent on your local network via Bonjour so nearby devices can discover it automatically.", bundle: .module
+                    "Advertise this agent on your local network via Bonjour so nearby devices can discover it automatically.",
+                    bundle: .module
                 )
                 .font(.system(size: 12))
                 .foregroundColor(theme.secondaryText)
@@ -1891,7 +1974,8 @@ struct AgentDetailView: View {
             AgentDetailSection(title: "Relay", icon: "globe") {
                 VStack(alignment: .leading, spacing: 12) {
                     Text(
-                        "Expose this agent to the public internet via a relay tunnel so external services can reach it.", bundle: .module
+                        "Expose this agent to the public internet via a relay tunnel so external services can reach it.",
+                        bundle: .module
                     )
                     .font(.system(size: 12))
                     .foregroundColor(theme.secondaryText)
@@ -2679,10 +2763,13 @@ struct AgentDetailView: View {
             subtitle: memoryEntries.isEmpty ? "None" : "\(memoryEntries.count)"
         ) {
             if memoryEntries.isEmpty {
-                Text("No working memory entries yet. Memories are automatically extracted from conversations.", bundle: .module)
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.tertiaryText)
-                    .padding(.vertical, 8)
+                Text(
+                    "No working memory entries yet. Memories are automatically extracted from conversations.",
+                    bundle: .module
+                )
+                .font(.system(size: 12))
+                .foregroundColor(theme.tertiaryText)
+                .padding(.vertical, 8)
             } else {
                 AgentEntriesPanel(
                     entries: memoryEntries,
@@ -2759,6 +2846,8 @@ struct AgentDetailView: View {
         selectedThemeId = agent.themeId
         chatQuickActions = agent.chatQuickActions
         workQuickActions = agent.workQuickActions
+        disableTools = agent.disableTools ?? false
+        disableMemory = agent.disableMemory ?? false
         toolSelectionMode = agent.toolSelectionMode ?? .auto
         manualToolNames = Set(agent.manualToolNames ?? [])
         manualSkillNames = Set(agent.manualSkillNames ?? [])
@@ -2830,7 +2919,9 @@ struct AgentDetailView: View {
             pluginInstructions: effectivePluginInstructions,
             toolSelectionMode: toolSelectionMode,
             manualToolNames: toolSelectionMode == .manual ? Array(manualToolNames) : nil,
-            manualSkillNames: toolSelectionMode == .manual ? Array(manualSkillNames) : nil
+            manualSkillNames: toolSelectionMode == .manual ? Array(manualSkillNames) : nil,
+            disableTools: disableTools ? true : nil,
+            disableMemory: disableMemory ? true : nil
         )
 
         agentManager.update(updated)
@@ -3028,7 +3119,8 @@ private struct AgentEditorSheet: View {
                             )
 
                             Text(
-                                "Instructions that define this agent's behavior. Leave empty to use global settings.", bundle: .module
+                                "Instructions that define this agent's behavior. Leave empty to use global settings.",
+                                bundle: .module
                             )
                             .font(.system(size: 11))
                             .foregroundColor(theme.tertiaryText)
@@ -3039,9 +3131,13 @@ private struct AgentEditorSheet: View {
                         VStack(spacing: 16) {
                             HStack(spacing: 16) {
                                 VStack(alignment: .leading, spacing: 6) {
-                                    Label { Text("Temperature", bundle: .module) } icon: { Image(systemName: "thermometer.medium") }
-                                        .font(.system(size: 11, weight: .medium))
-                                        .foregroundColor(theme.secondaryText)
+                                    Label {
+                                        Text("Temperature", bundle: .module)
+                                    } icon: {
+                                        Image(systemName: "thermometer.medium")
+                                    }
+                                    .font(.system(size: 11, weight: .medium))
+                                    .foregroundColor(theme.secondaryText)
 
                                     StyledTextField(
                                         placeholder: "0.7",
@@ -3051,9 +3147,13 @@ private struct AgentEditorSheet: View {
                                 }
 
                                 VStack(alignment: .leading, spacing: 6) {
-                                    Label { Text("Max Tokens", bundle: .module) } icon: { Image(systemName: "number") }
-                                        .font(.system(size: 11, weight: .medium))
-                                        .foregroundColor(theme.secondaryText)
+                                    Label {
+                                        Text("Max Tokens", bundle: .module)
+                                    } icon: {
+                                        Image(systemName: "number")
+                                    }
+                                    .font(.system(size: 11, weight: .medium))
+                                    .foregroundColor(theme.secondaryText)
 
                                     StyledTextField(
                                         placeholder: "4096",
@@ -3200,12 +3300,14 @@ private struct AgentEditorSheet: View {
 
             Spacer()
 
-            Button( action: onCancel) { Text("Cancel", bundle: .module) }
+            Button(action: onCancel) { Text("Cancel", bundle: .module) }
                 .buttonStyle(SecondaryButtonStyle())
 
             Button {
                 saveAgent()
-            } label: { Text("Create Agent", bundle: .module) }
+            } label: {
+                Text("Create Agent", bundle: .module)
+            }
             .buttonStyle(PrimaryButtonStyle())
             .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             .keyboardShortcut(.return, modifiers: .command)

@@ -101,9 +101,13 @@ struct ThemeEditorView: View {
     private var editorFooter: some View {
         HStack {
             if editingTheme.isBuiltIn {
-                Label { Text("Built-in themes cannot be modified directly", bundle: .module) } icon: { Image(systemName: "info.circle") }
-                    .font(.system(size: 11))
-                    .foregroundColor(currentTheme.warningColor)
+                Label {
+                    Text("Built-in themes cannot be modified directly", bundle: .module)
+                } icon: {
+                    Image(systemName: "info.circle")
+                }
+                .font(.system(size: 11))
+                .foregroundColor(currentTheme.warningColor)
             }
 
             Spacer()
@@ -111,7 +115,9 @@ struct ThemeEditorView: View {
             HStack(spacing: 12) {
                 Button {
                     dismiss(); onDismiss()
-                } label: { Text("Cancel", bundle: .module) }
+                } label: {
+                    Text("Cancel", bundle: .module)
+                }
                 .buttonStyle(.bordered)
 
                 Button(action: saveTheme) {
@@ -152,7 +158,9 @@ struct ThemeEditorView: View {
                     Text("Solid", bundle: .module).tag(ThemeBackground.BackgroundType.solid)
                     Text("Gradient", bundle: .module).tag(ThemeBackground.BackgroundType.gradient)
                     Text("Image", bundle: .module).tag(ThemeBackground.BackgroundType.image)
-                } label: { Text("Background", bundle: .module) }
+                } label: {
+                    Text("Background", bundle: .module)
+                }
                 .pickerStyle(.segmented)
             }
         }
@@ -177,20 +185,26 @@ struct ThemeEditorView: View {
             editorSection("Advanced Colors", itemCount: 18) {
                 colorRowOptional("Placeholder", hex: $editingTheme.colors.placeholderText)
 
-                Text("Sidebar", bundle: .module).font(.system(size: 11, weight: .semibold)).foregroundColor(currentTheme.tertiaryText)
-                    .textCase(.uppercase)
+                Text("Sidebar", bundle: .module).font(.system(size: 11, weight: .semibold)).foregroundColor(
+                    currentTheme.tertiaryText
+                )
+                .textCase(.uppercase)
                 colorRow("Sidebar BG", hex: $editingTheme.colors.sidebarBackground)
                 colorRow("Sidebar Selected", hex: $editingTheme.colors.sidebarSelectedBackground)
 
-                Text("Status", bundle: .module).font(.system(size: 11, weight: .semibold)).foregroundColor(currentTheme.tertiaryText)
-                    .textCase(.uppercase)
+                Text("Status", bundle: .module).font(.system(size: 11, weight: .semibold)).foregroundColor(
+                    currentTheme.tertiaryText
+                )
+                .textCase(.uppercase)
                 colorRow("Success", hex: $editingTheme.colors.successColor)
                 colorRow("Warning", hex: $editingTheme.colors.warningColor)
                 colorRow("Error", hex: $editingTheme.colors.errorColor)
                 colorRow("Info", hex: $editingTheme.colors.infoColor)
 
-                Text("Components", bundle: .module).font(.system(size: 11, weight: .semibold)).foregroundColor(currentTheme.tertiaryText)
-                    .textCase(.uppercase)
+                Text("Components", bundle: .module).font(.system(size: 11, weight: .semibold)).foregroundColor(
+                    currentTheme.tertiaryText
+                )
+                .textCase(.uppercase)
                 colorRow("Card BG", hex: $editingTheme.colors.cardBackground)
                 colorRow("Card Border", hex: $editingTheme.colors.cardBorder)
                 colorRow("Button BG", hex: $editingTheme.colors.buttonBackground)
@@ -263,8 +277,10 @@ struct ThemeEditorView: View {
     private var bordersAndEffectsSection: some View {
         VStack(alignment: .leading, spacing: 16) {
             editorSection("Borders & Effects") {
-                Text("Borders", bundle: .module).font(.system(size: 11, weight: .semibold)).foregroundColor(currentTheme.tertiaryText)
-                    .textCase(.uppercase)
+                Text("Borders", bundle: .module).font(.system(size: 11, weight: .semibold)).foregroundColor(
+                    currentTheme.tertiaryText
+                )
+                .textCase(.uppercase)
                 colorRow("Border Color", hex: $editingTheme.colors.primaryBorder)
                 colorRow("Secondary Border", hex: $editingTheme.colors.secondaryBorder)
                 colorRow("Focus Border", hex: $editingTheme.colors.focusBorder)
@@ -281,8 +297,10 @@ struct ThemeEditorView: View {
 
                 Divider().opacity(0.3)
 
-                Text("Shadows", bundle: .module).font(.system(size: 11, weight: .semibold)).foregroundColor(currentTheme.tertiaryText)
-                    .textCase(.uppercase)
+                Text("Shadows", bundle: .module).font(.system(size: 11, weight: .semibold)).foregroundColor(
+                    currentTheme.tertiaryText
+                )
+                .textCase(.uppercase)
                 sliderRow("Shadow Opacity", value: $editingTheme.shadows.shadowOpacity, range: 0 ... 1)
                 sliderRow("Card Shadow", value: $editingTheme.shadows.cardShadowRadius, range: 0 ... 30)
                 sliderRow("Hover Shadow", value: $editingTheme.shadows.cardShadowRadiusHover, range: 0 ... 40)
@@ -295,8 +313,10 @@ struct ThemeEditorView: View {
     private var advancedSection: some View {
         VStack(alignment: .leading, spacing: 16) {
             editorSection("Advanced") {
-                Text("Animation", bundle: .module).font(.system(size: 11, weight: .semibold)).foregroundColor(currentTheme.tertiaryText)
-                    .textCase(.uppercase)
+                Text("Animation", bundle: .module).font(.system(size: 11, weight: .semibold)).foregroundColor(
+                    currentTheme.tertiaryText
+                )
+                .textCase(.uppercase)
 
                 VStack(spacing: 12) {
                     HStack {
@@ -317,8 +337,12 @@ struct ThemeEditorView: View {
                     .padding(.horizontal, 8)
                     .background(RoundedRectangle(cornerRadius: 8).fill(currentTheme.tertiaryBackground.opacity(0.5)))
 
-                    Button { animationPreviewTrigger.toggle() } label: { Text("Test Animation", bundle: .module) }
-                        .buttonStyle(.bordered)
+                    Button {
+                        animationPreviewTrigger.toggle()
+                    } label: {
+                        Text("Test Animation", bundle: .module)
+                    }
+                    .buttonStyle(.bordered)
                 }
 
                 sliderRow("Quick", value: $editingTheme.animationConfig.durationQuick, range: 0.05 ... 0.5)
@@ -330,9 +354,10 @@ struct ThemeEditorView: View {
                 if editingTheme.background.type == .solid {
                     Divider().opacity(0.3)
 
-                    Text("Solid Background", bundle: .module).font(.system(size: 11, weight: .semibold)).foregroundColor(
-                        currentTheme.tertiaryText
-                    ).textCase(.uppercase)
+                    Text("Solid Background", bundle: .module).font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(
+                            currentTheme.tertiaryText
+                        ).textCase(.uppercase)
                     colorRow(
                         "Color",
                         hex: Binding(
@@ -376,12 +401,22 @@ struct ThemeEditorView: View {
                                 var colors = editingTheme.background.gradientColors ?? ["#000000", "#333333"]
                                 colors.append("#000000")
                                 editingTheme.background.gradientColors = colors
-                            }) { Label { Text("Add Color", bundle: .module) } icon: { Image(systemName: "plus") } }
+                            }) {
+                                Label {
+                                    Text("Add Color", bundle: .module)
+                                } icon: {
+                                    Image(systemName: "plus")
+                                }
+                            }
                             .buttonStyle(.bordered)
 
                             if (editingTheme.background.gradientColors?.count ?? 0) > 2 {
                                 Button(action: { editingTheme.background.gradientColors?.removeLast() }) {
-                                    Label { Text("Remove", bundle: .module) } icon: { Image(systemName: "minus") }
+                                    Label {
+                                        Text("Remove", bundle: .module)
+                                    } icon: {
+                                        Image(systemName: "minus")
+                                    }
                                 }
                                 .buttonStyle(.bordered)
                             }
@@ -401,9 +436,10 @@ struct ThemeEditorView: View {
                 if editingTheme.background.type == .image {
                     Divider().opacity(0.3)
 
-                    Text("Background Image", bundle: .module).font(.system(size: 11, weight: .semibold)).foregroundColor(
-                        currentTheme.tertiaryText
-                    ).textCase(.uppercase)
+                    Text("Background Image", bundle: .module).font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(
+                            currentTheme.tertiaryText
+                        ).textCase(.uppercase)
                     VStack(spacing: 12) {
                         if let imageData = editingTheme.background.imageData,
                             let data = Data(base64Encoded: imageData),
@@ -419,8 +455,12 @@ struct ThemeEditorView: View {
                                         .stroke(currentTheme.primaryBorder, lineWidth: 1)
                                 )
 
-                            Button { editingTheme.background.imageData = nil } label: { Text("Remove Image", bundle: .module) }
-                                .buttonStyle(.bordered)
+                            Button {
+                                editingTheme.background.imageData = nil
+                            } label: {
+                                Text("Remove Image", bundle: .module)
+                            }
+                            .buttonStyle(.bordered)
                         } else {
                             Button(action: { showImagePicker = true }) {
                                 VStack(spacing: 8) {
@@ -447,23 +487,29 @@ struct ThemeEditorView: View {
                             range: 0 ... 1
                         )
 
-                        Picker(selection: Binding(
+                        Picker(
+                            selection: Binding(
                                 get: { editingTheme.background.imageFit ?? .fill },
                                 set: { editingTheme.background.imageFit = $0 }
-                            )) {
+                            )
+                        ) {
                             Text("Fill", bundle: .module).tag(ThemeBackground.ImageFit.fill)
                             Text("Fit", bundle: .module).tag(ThemeBackground.ImageFit.fit)
                             Text("Stretch", bundle: .module).tag(ThemeBackground.ImageFit.stretch)
                             Text("Tile", bundle: .module).tag(ThemeBackground.ImageFit.tile)
-                        } label: { Text("Fit", bundle: .module) }
+                        } label: {
+                            Text("Fit", bundle: .module)
+                        }
                         .pickerStyle(.segmented)
                     }
                 }
 
                 Divider().opacity(0.3)
 
-                Text("Overlay", bundle: .module).font(.system(size: 11, weight: .semibold)).foregroundColor(currentTheme.tertiaryText)
-                    .textCase(.uppercase)
+                Text("Overlay", bundle: .module).font(.system(size: 11, weight: .semibold)).foregroundColor(
+                    currentTheme.tertiaryText
+                )
+                .textCase(.uppercase)
                 colorRowOptional("Color", hex: $editingTheme.background.overlayColor)
                 sliderRow(
                     "Opacity",

@@ -264,10 +264,18 @@ private struct ScheduleCard: View {
 
                     Menu {
                         Button(action: onEdit) {
-                            Label { Text("Edit", bundle: .module) } icon: { Image(systemName: "pencil") }
+                            Label {
+                                Text("Edit", bundle: .module)
+                            } icon: {
+                                Image(systemName: "pencil")
+                            }
                         }
                         Button(action: onRunNow) {
-                            Label { Text("Run Now", bundle: .module) } icon: { Image(systemName: "play.fill") }
+                            Label {
+                                Text("Run Now", bundle: .module)
+                            } icon: {
+                                Image(systemName: "play.fill")
+                            }
                         }
                         .disabled(isRunning)
                         Divider()
@@ -283,7 +291,11 @@ private struct ScheduleCard: View {
                         Button(role: .destructive) {
                             showDeleteConfirm = true
                         } label: {
-                            Label { Text("Delete", bundle: .module) } icon: { Image(systemName: "trash") }
+                            Label {
+                                Text("Delete", bundle: .module)
+                            } icon: {
+                                Image(systemName: "trash")
+                            }
                         }
                     } label: {
                         Image(systemName: "ellipsis")
@@ -2392,7 +2404,7 @@ struct ScheduleEditorSheet: View {
         HStack(spacing: 12) {
             Spacer()
 
-            Button( action: onCancel) { Text("Cancel", bundle: .module) }
+            Button(action: onCancel) { Text("Cancel", bundle: .module) }
                 .buttonStyle(ScheduleSecondaryButtonStyle())
 
             Button(isEditing ? "Save Changes" : "Create Schedule") {

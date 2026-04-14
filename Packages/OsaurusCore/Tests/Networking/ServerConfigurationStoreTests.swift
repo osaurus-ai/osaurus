@@ -24,9 +24,7 @@ struct ServerConfigurationStoreTests {
         #expect(decoded.numberOfThreads == defaults.numberOfThreads)
         #expect(decoded.backlog == defaults.backlog)
         #expect(decoded.genTopP == defaults.genTopP)
-        #expect(decoded.genKVGroupSize == defaults.genKVGroupSize)
-        #expect(decoded.genQuantizedKVStart == defaults.genQuantizedKVStart)
-        #expect(decoded.genPrefillStepSize == nil)
+        #expect(decoded.genMaxKVSize == nil)
     }
 
     @Test @MainActor func storeRoundTrip_readsWhatWasWritten() async throws {
@@ -47,7 +45,6 @@ struct ServerConfigurationStoreTests {
         config.port = 5555
         config.exposeToNetwork = true
         config.genTopP = 0.7
-        config.genKVBits = 8
         config.genMaxKVSize = 16384
 
         ServerConfigurationStore.save(config)
@@ -55,5 +52,31 @@ struct ServerConfigurationStoreTests {
 
         #expect(loaded != nil)
         #expect(loaded == config)
+    }
+
+    /// Decoding pre-migration JSON files that contained now-removed cache*
+    /// and gen* fields should succeed silently — unknown keys are ignored
+    /// by the decoder. This test simulates that migration by feeding JSON
+    /// with fields the schema no longer knows about.
+    @Test func decode_ignoresRemovedCacheFields() async throws {
+        let json = """
+            {
+                "port": 1234,
+                "cacheEnabled": false,
+                "cacheDiskEnabled": false,
+                "cacheDiskMaxGB": 8.0,
+                "cacheMaxBlocks": 500,
+                "genKVBits": 8,
+                "genKVGroupSize": 64,
+                "genQuantizedKVStart": 512,
+                "genPrefillStepSize": 1024,
+                "genTurboQuant": true
+            }
+            """
+        let decoded = try JSONDecoder().decode(
+            ServerConfiguration.self,
+            from: Data(json.utf8)
+        )
+        #expect(decoded.port == 1234)
     }
 }

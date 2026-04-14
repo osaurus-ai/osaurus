@@ -20,12 +20,16 @@ public actor HostAPIBridgeServer {
     private var channel: Channel?
     private var boundSocketPath: String?
 
+    public var isRunning: Bool { group != nil }
+
     /// Start the bridge server on a Unix domain socket.
     /// The socket is relayed into the container via vsock by the Containerization framework.
+    /// If already running, stops the existing server first to ensure a clean socket.
     public func start(socketPath: String) async throws {
-        guard group == nil else { return }
+        if group != nil {
+            await stop()
+        }
 
-        // Clean up stale socket from a previous crash
         try? FileManager.default.removeItem(atPath: socketPath)
 
         let group = MultiThreadedEventLoopGroup(numberOfThreads: 2)

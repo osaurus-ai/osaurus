@@ -6,8 +6,8 @@
 //  Uses Virtualization.framework directly -- no CLI, no XPC daemon.
 //  All container operations are serialized through this actor.
 //
-//  Networking: NAT (VZNATNetworkDeviceAttachment) for outbound internet,
-//  vsock Unix socket relay for the host API bridge. No vmnet entitlement needed.
+//  Networking: VmnetNetwork (vmnet-backed NAT) for outbound internet,
+//  vsock Unix socket relay for the host API bridge.
 //
 
 #if os(macOS)
@@ -84,7 +84,7 @@
             return _status
         }
 
-        private var staleContainerDir: URL {
+        var staleContainerDir: URL {
             OsaurusPaths.container().appendingPathComponent("containers/\(Self.containerID)")
         }
 
@@ -139,15 +139,15 @@
                     await setProvisioningPhase(isRestart ? "Starting sandbox..." : "Starting host API bridge...")
                     try await HostAPIBridgeServer.shared.start(socketPath: Self.bridgeSocketPath)
 
-                    // NAT networking -- no vmnet entitlement required
+                    let network = try VmnetNetwork()
                     var manager = try ContainerManager(
                         kernel: kernel,
                         initfs: initfs,
-                        root: OsaurusPaths.container()
+                        root: OsaurusPaths.container(),
+                        network: network
                     )
 
                     await setProvisioningPhase(isRestart ? "Booting container..." : "Creating container...")
-
                     let workspace = OsaurusPaths.containerWorkspace().path
                     let bridgeSocketPath = Self.bridgeSocketPath
                     let guestBridgeSocketPath = Self.guestBridgeSocketPath
@@ -156,30 +156,20 @@
                         Self.containerID,
                         reference: Self.containerImage,
                         rootfsSizeInBytes: 8.gib(),
-                        networking: false
+                        networking: true
                     ) { cfg in
                         cfg.cpus = config.cpus
                         cfg.memoryInBytes = UInt64(config.memoryGB).gib()
                         cfg.process.arguments = ["sleep", "infinity"]
                         cfg.process.workingDirectory = "/"
 
-                        // NAT interface for outbound internet (apk, pip, npm, etc.)
-                        let natInterface = NATInterface(
-                            ipv4Address: try! CIDRv4("10.0.2.15/24"),  // swiftlint:disable:this force_try
-                            ipv4Gateway: nil
-                        )
-                        cfg.interfaces = [natInterface]
-
-                        // Relay the host bridge socket into the guest via vsock
                         let bridgeRelay = UnixSocketConfiguration(
                             source: URL(fileURLWithPath: bridgeSocketPath),
                             destination: URL(fileURLWithPath: guestBridgeSocketPath),
                             direction: .into
                         )
                         cfg.sockets = [bridgeRelay]
-
-                        let workspaceMount = Containerization.Mount.share(source: workspace, destination: "/workspace")
-                        cfg.mounts.append(workspaceMount)
+                        cfg.mounts.append(.share(source: workspace, destination: "/workspace"))
                     }
 
                     await setProvisioningPhase("Starting container...")
@@ -203,7 +193,9 @@
                     SandboxConfigurationStore.save(savedConfig)
                 }
             } catch {
+                NSLog("[SandboxManager] Provision failed: \(error)")
                 await setProvisioningPhase(nil)
+                await cleanupAfterFailure()
                 throw error
             }
         }
@@ -233,7 +225,7 @@
                 } catch {
                     _status = .stopped
                     syncStatus()
-                    throw error
+                    throw Self.friendlyError(from: error)
                 }
             }
         }
@@ -774,7 +766,16 @@
             }
         }
 
-        // MARK: - Private Helpers
+        // MARK: - Helpers
+
+        func cleanupAfterFailure() async {
+            if let container = linuxContainer { try? await container.stop() }
+            if var mgr = containerManager { try? mgr.delete(Self.containerID) }
+            linuxContainer = nil
+            containerManager = nil
+            try? FileManager.default.removeItem(at: staleContainerDir)
+            await HostAPIBridgeServer.shared.stop()
+        }
 
         private func ensureHostDirectories() throws {
             try OsaurusPaths.ensureExists(OsaurusPaths.container())
@@ -785,9 +786,8 @@
 
         private func configureSandbox() async throws {
             _ = try? await exec(command: "mount -o remount,hidepid=2 /proc 2>/dev/null || true")
-            _ = try? await execAsRoot(command: "udhcpc -i eth0 -f -q -n 2>/dev/null || true")
+            await waitForNetwork()
 
-            // Install osaurus-host shell shim via host mount
             let shimScript = Self.osaurusHostShimScript
             let shimStagingPath = OsaurusPaths.containerWorkspace().appendingPathComponent(".osaurus-host-shim")
             try shimScript.write(to: shimStagingPath, atomically: true, encoding: .utf8)
@@ -795,6 +795,20 @@
                 command:
                     "cp /workspace/.osaurus-host-shim /usr/local/bin/osaurus-host && chmod 555 /usr/local/bin/osaurus-host && rm /workspace/.osaurus-host-shim"
             )
+        }
+
+        /// Polls until the guest can reach the Alpine CDN, so plugins that
+        /// run `apk add` right after provisioning don't hit DNS failures.
+        private func waitForNetwork() async {
+            for attempt in 1 ... 5 {
+                let result = try? await exec(
+                    command: "wget -q --spider http://dl-cdn.alpinelinux.org 2>/dev/null && echo ok",
+                    timeout: 5
+                )
+                if result?.stdout.contains("ok") == true { return }
+                NSLog("[SandboxManager] Network not ready yet (attempt \(attempt)/5)")
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+            }
         }
 
         // MARK: - osaurus-host Shell Shim
@@ -877,6 +891,21 @@
                 State.shared.status = status
                 NotificationCenter.default.post(name: .toolsListChanged, object: nil)
             }
+        }
+
+        private static func friendlyError(from error: Error) -> Error {
+            let desc = String(describing: error)
+            if desc.contains("GRPC") {
+                return SandboxError.startFailed(
+                    "Container failed to start (VM error). Try resetting the container."
+                )
+            }
+            if desc.contains("vmnet") {
+                return SandboxError.startFailed(
+                    "Container networking failed. Ensure no other VMs are using conflicting network resources."
+                )
+            }
+            return error
         }
 
         private func setProvisioningPhase(_ phase: String?) async {

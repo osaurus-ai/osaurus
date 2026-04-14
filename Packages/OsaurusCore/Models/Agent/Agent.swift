@@ -93,6 +93,10 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
     public var manualToolNames: [String]?
     /// Skill names explicitly selected by the user when toolSelectionMode is .manual
     public var manualSkillNames: [String]?
+    /// When true, no tools or preflight context are sent for this agent
+    public var disableTools: Bool?
+    /// When true, memory is neither injected into prompts nor recorded for this agent
+    public var disableMemory: Bool?
 
     public init(
         id: UUID = UUID(),
@@ -116,7 +120,9 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         bonjourEnabled: Bool = false,
         toolSelectionMode: ToolSelectionMode? = nil,
         manualToolNames: [String]? = nil,
-        manualSkillNames: [String]? = nil
+        manualSkillNames: [String]? = nil,
+        disableTools: Bool? = nil,
+        disableMemory: Bool? = nil
     ) {
         self.id = id
         self.name = name
@@ -140,6 +146,8 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         self.toolSelectionMode = toolSelectionMode
         self.manualToolNames = manualToolNames
         self.manualSkillNames = manualSkillNames
+        self.disableTools = disableTools
+        self.disableMemory = disableMemory
     }
 
     // MARK: - Built-in Agents
@@ -205,6 +213,8 @@ extension Agent {
         toolSelectionMode = try c.decodeIfPresent(ToolSelectionMode.self, forKey: .toolSelectionMode)
         manualToolNames = try c.decodeIfPresent([String].self, forKey: .manualToolNames)
         manualSkillNames = try c.decodeIfPresent([String].self, forKey: .manualSkillNames)
+        disableTools = try c.decodeIfPresent(Bool.self, forKey: .disableTools)
+        disableMemory = try c.decodeIfPresent(Bool.self, forKey: .disableMemory)
     }
 }
 
@@ -272,7 +282,9 @@ extension Agent {
                 autonomousExec: exportedAgent.autonomousExec,
                 toolSelectionMode: exportedAgent.toolSelectionMode,
                 manualToolNames: exportedAgent.manualToolNames,
-                manualSkillNames: exportedAgent.manualSkillNames
+                manualSkillNames: exportedAgent.manualSkillNames,
+                disableTools: exportedAgent.disableTools,
+                disableMemory: exportedAgent.disableMemory
             )
         }
     }

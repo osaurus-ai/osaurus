@@ -69,6 +69,9 @@ struct EditableTextView: NSViewRepresentable {
         textView.onMarkedTextChanged = { [weak coordinator] composing in
             coordinator?.parent.isComposing = composing
         }
+        textView.onFocusChanged = { [weak coordinator] focused in
+            coordinator?.parent.isFocused = focused
+        }
 
         scrollView.documentView = textView
 
@@ -162,12 +165,7 @@ struct EditableTextView: NSViewRepresentable {
             // no-op here; text sync and size invalidation are both handled in textDidChange.
         }
 
-        func textDidBeginEditing(_ notification: Notification) {
-            parent.isFocused = true
-        }
-
         func textDidEndEditing(_ notification: Notification) {
-            parent.isFocused = false
             parent.isComposing = false
         }
 
@@ -214,6 +212,23 @@ final class CustomNSTextView: NSTextView {
     var maxHeight: CGFloat = .infinity
     /// Called when IME marked-text state changes (composing / not composing)
     var onMarkedTextChanged: ((Bool) -> Void)?
+    var onFocusChanged: ((Bool) -> Void)?
+
+    override func becomeFirstResponder() -> Bool {
+        let result = super.becomeFirstResponder()
+        if result {
+            onFocusChanged?(true)
+        }
+        return result
+    }
+
+    override func resignFirstResponder() -> Bool {
+        let result = super.resignFirstResponder()
+        if result {
+            onFocusChanged?(false)
+        }
+        return result
+    }
 
     override func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
         super.setMarkedText(string, selectedRange: selectedRange, replacementRange: replacementRange)

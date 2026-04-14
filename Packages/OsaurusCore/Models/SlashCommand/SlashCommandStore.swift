@@ -16,19 +16,22 @@ public enum SlashCommandStore {
         let directory = commandsDirectory()
         OsaurusPaths.ensureExistsSilent(directory)
 
-        guard let files = try? FileManager.default.contentsOfDirectory(
-            at: directory,
-            includingPropertiesForKeys: nil
-        ) else { return [] }
+        guard
+            let files = try? FileManager.default.contentsOfDirectory(
+                at: directory,
+                includingPropertiesForKeys: nil
+            )
+        else { return [] }
 
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
 
-        return files
+        return
+            files
             .filter { $0.pathExtension == "json" }
             .compactMap { file -> SlashCommand? in
                 guard let data = try? Data(contentsOf: file),
-                      let cmd = try? decoder.decode(SlashCommand.self, from: data)
+                    let cmd = try? decoder.decode(SlashCommand.self, from: data)
                 else { return nil }
                 return cmd
             }

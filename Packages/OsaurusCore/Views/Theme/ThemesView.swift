@@ -236,16 +236,24 @@ struct ThemesView: View {
 
             HStack(spacing: 12) {
                 Button(action: { loadThemes() }) {
-                    Label { Text("Retry", bundle: .module) } icon: { Image(systemName: "arrow.clockwise") }
-                        .font(.system(size: 13, weight: .medium))
+                    Label {
+                        Text("Retry", bundle: .module)
+                    } icon: {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                    .font(.system(size: 13, weight: .medium))
                 }
                 .buttonStyle(.borderedProminent)
 
                 Button(action: {
                     themeManager.forceReinstallBuiltInThemes(); loadThemes()
                 }) {
-                    Label { Text("Reinstall Built-ins", bundle: .module) } icon: { Image(systemName: "arrow.triangle.2.circlepath") }
-                        .font(.system(size: 13, weight: .medium))
+                    Label {
+                        Text("Reinstall Built-ins", bundle: .module)
+                    } icon: {
+                        Image(systemName: "arrow.triangle.2.circlepath")
+                    }
+                    .font(.system(size: 13, weight: .medium))
                 }
                 .buttonStyle(.bordered)
             }
@@ -274,8 +282,12 @@ struct ThemesView: View {
             Button(action: {
                 themeManager.forceReinstallBuiltInThemes(); loadThemes()
             }) {
-                Label { Text("Install Built-in Themes", bundle: .module) } icon: { Image(systemName: "arrow.down.circle") }
-                    .font(.system(size: 13, weight: .medium))
+                Label {
+                    Text("Install Built-in Themes", bundle: .module)
+                } icon: {
+                    Image(systemName: "arrow.down.circle")
+                }
+                .font(.system(size: 13, weight: .medium))
             }
             .buttonStyle(.borderedProminent)
         }
@@ -446,11 +458,14 @@ struct ThemesView: View {
                     .font(.system(size: 17, weight: .semibold))
                     .foregroundColor(theme.primaryText)
 
-                Text("Design a unique look for your chat interface with custom colors, fonts, and effects", bundle: .module)
-                    .font(.system(size: 13))
-                    .foregroundColor(theme.secondaryText)
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: 400)
+                Text(
+                    "Design a unique look for your chat interface with custom colors, fonts, and effects",
+                    bundle: .module
+                )
+                .font(.system(size: 13))
+                .foregroundColor(theme.secondaryText)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 400)
             }
 
             HStack(spacing: 14) {
@@ -675,22 +690,42 @@ struct ThemePreviewCard: View {
                     Menu {
                         if !isActive {
                             Button(action: onApply) {
-                                Label { Text("Apply Theme", bundle: .module) } icon: { Image(systemName: "checkmark") }
+                                Label {
+                                    Text("Apply Theme", bundle: .module)
+                                } icon: {
+                                    Image(systemName: "checkmark")
+                                }
                             }
                         }
                         Button(action: onEdit) {
-                            Label { Text("Edit", bundle: .module) } icon: { Image(systemName: "pencil") }
+                            Label {
+                                Text("Edit", bundle: .module)
+                            } icon: {
+                                Image(systemName: "pencil")
+                            }
                         }
                         Button(action: onDuplicate) {
-                            Label { Text("Duplicate", bundle: .module) } icon: { Image(systemName: "doc.on.doc") }
+                            Label {
+                                Text("Duplicate", bundle: .module)
+                            } icon: {
+                                Image(systemName: "doc.on.doc")
+                            }
                         }
                         Button(action: onExport) {
-                            Label { Text("Export", bundle: .module) } icon: { Image(systemName: "square.and.arrow.up") }
+                            Label {
+                                Text("Export", bundle: .module)
+                            } icon: {
+                                Image(systemName: "square.and.arrow.up")
+                            }
                         }
                         if let onDelete = onDelete {
                             Divider()
                             Button(role: .destructive, action: onDelete) {
-                                Label { Text("Delete", bundle: .module) } icon: { Image(systemName: "trash") }
+                                Label {
+                                    Text("Delete", bundle: .module)
+                                } icon: {
+                                    Image(systemName: "trash")
+                                }
                             }
                         }
                     } label: {

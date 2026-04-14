@@ -384,11 +384,19 @@ private struct ImportDropdownButton: View {
     var body: some View {
         Menu {
             Button(action: onGitHub) {
-                Label { Text("From GitHub", bundle: .module) } icon: { Image(systemName: "link") }
+                Label {
+                    Text("From GitHub", bundle: .module)
+                } icon: {
+                    Image(systemName: "link")
+                }
             }
             Divider()
             Button(action: onLocal) {
-                Label { Text("From File", bundle: .module) } icon: { Image(systemName: "doc") }
+                Label {
+                    Text("From File", bundle: .module)
+                } icon: {
+                    Image(systemName: "doc")
+                }
             }
         } label: {
             HStack(spacing: 6) {
@@ -580,14 +588,22 @@ private struct SkillRow: View {
                                     .foregroundColor(theme.tertiaryText)
                             }
 
-                            Label { Text("v\(skill.version)", bundle: .module) } icon: { Image(systemName: "tag") }
-                                .font(.system(size: 10))
-                                .foregroundColor(theme.tertiaryText)
+                            Label {
+                                Text("v\(skill.version)", bundle: .module)
+                            } icon: {
+                                Image(systemName: "tag")
+                            }
+                            .font(.system(size: 10))
+                            .foregroundColor(theme.tertiaryText)
 
                             if skill.hasAssociatedFiles {
-                                Label { Text("\(skill.totalFileCount) files", bundle: .module) } icon: { Image(systemName: "folder") }
-                                    .font(.system(size: 10))
-                                    .foregroundColor(theme.tertiaryText)
+                                Label {
+                                    Text("\(skill.totalFileCount) files", bundle: .module)
+                                } icon: {
+                                    Image(systemName: "folder")
+                                }
+                                .font(.system(size: 10))
+                                .foregroundColor(theme.tertiaryText)
                             }
                         }
 

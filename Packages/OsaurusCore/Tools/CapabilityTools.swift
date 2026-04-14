@@ -39,6 +39,12 @@ final class CapabilitiesSearchTool: OsaurusTool, @unchecked Sendable {
         + "Relevant capabilities are already loaded based on your task — use this only when you "
         + "need something not already available. Returns ranked results tagged by type."
 
+    let agentId: UUID?
+
+    init(agentId: UUID? = nil) {
+        self.agentId = agentId
+    }
+
     let parameters: JSONValue? = .object([
         "type": .string("object"),
         "properties": .object([
@@ -66,7 +72,14 @@ final class CapabilitiesSearchTool: OsaurusTool, @unchecked Sendable {
         )
 
         if hits.isEmpty {
-            if await CapabilitySearch.canCreatePlugins() {
+            let id: UUID
+            if let existingId = agentId ?? WorkExecutionContext.currentAgentId {
+                id = existingId
+            } else {
+                id = await MainActor.run { AgentManager.shared.activeAgent.id }
+            }
+
+            if await CapabilitySearch.canCreatePlugins(agentId: id) {
                 return """
                     No capabilities found matching '\(query)'.
 

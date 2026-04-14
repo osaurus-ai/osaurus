@@ -366,10 +366,13 @@ struct ModelDownloadView: View {
                     .foregroundColor(theme.primaryText)
             }
 
-            Text("Some downloaded models have been replaced with improved OsaurusAI versions that fix known bugs.", bundle: .module)
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
-                .fixedSize(horizontal: false, vertical: true)
+            Text(
+                "Some downloaded models have been replaced with improved OsaurusAI versions that fix known bugs.",
+                bundle: .module
+            )
+            .font(.system(size: 12))
+            .foregroundColor(theme.secondaryText)
+            .fixedSize(horizontal: false, vertical: true)
 
             ForEach(modelManager.deprecationNotices) { notice in
                 deprecationRow(for: notice)

@@ -16,6 +16,14 @@ import Foundation
 final class InferenceProgressManager: ObservableObject, @unchecked Sendable {
     static let shared = InferenceProgressManager()
 
+    /// True while the model container is being loaded (weights paging into GPU).
+    /// The UI shows "Loading Model..." during this phase.
+    @MainActor @Published var isLoadingModel: Bool = false
+
+    /// True while preflight capability search is running.
+    /// The UI shows "Searching capabilities..." during this phase.
+    @MainActor @Published var isPreflighting: Bool = false
+
     /// Non-nil while a prefill is in progress.  Set to the prompt token count
     /// just before `prepareAndGenerate` is called; cleared as soon as the first
     /// generated token arrives (or on error / cancellation).
@@ -53,5 +61,25 @@ final class InferenceProgressManager: ObservableObject, @unchecked Sendable {
     /// Fire-and-forget variant for call sites that are not on MainActor.
     func prefillDidFinishAsync() {
         Task { @MainActor in self.prefillDidFinish() }
+    }
+
+    /// Signal that model container loading has started.
+    func modelLoadWillStartAsync() {
+        Task { @MainActor in self.isLoadingModel = true }
+    }
+
+    /// Signal that model container loading has finished.
+    func modelLoadDidFinishAsync() {
+        Task { @MainActor in self.isLoadingModel = false }
+    }
+
+    /// Signal that preflight search has started.
+    func preflightWillStartAsync() {
+        Task { @MainActor in self.isPreflighting = true }
+    }
+
+    /// Signal that preflight search has finished.
+    func preflightDidFinishAsync() {
+        Task { @MainActor in self.isPreflighting = false }
     }
 }

@@ -48,18 +48,13 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
     // MARK: - Generation Settings (UI adjustable)
     /// Default top-p sampling for generation (can be overridden per request)
     public var genTopP: Float
-    /// KV cache quantization bits (nil to disable)
-    public var genKVBits: Int?
-    /// KV cache quantization group size
-    public var genKVGroupSize: Int
-    /// Token offset to begin quantizing KV cache
-    public var genQuantizedKVStart: Int
     /// Maximum KV cache size (tokens); nil for unlimited
     public var genMaxKVSize: Int?
-    /// Prefill step size (tokens per prefill chunk); nil for auto-detect based on RAM
-    public var genPrefillStepSize: Int?
-    /// TurboQuant KV cache compression; nil = auto-detect based on RAM, true = on, false = off
-    public var genTurboQuant: Bool?
+
+    // KV cache quantization (kvBits, kvGroupSize, quantizedKVStart, turboQuant)
+    // and prefill step sizing are owned by the vmlx-swift-lm package.
+    // CacheCoordinator picks sensible defaults based on RAM and model
+    // characteristics; osaurus no longer exposes these knobs to users.
 
     /// List of allowed origins for CORS. Empty disables CORS. Use "*" to allow any origin.
     public var allowedOrigins: [String]
@@ -76,12 +71,7 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
         case numberOfThreads
         case backlog
         case genTopP
-        case genKVBits
-        case genKVGroupSize
-        case genQuantizedKVStart
         case genMaxKVSize
-        case genPrefillStepSize
-        case genTurboQuant
         case allowedOrigins
         case modelEvictionPolicy
     }
@@ -102,15 +92,7 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
             try container.decodeIfPresent(Int.self, forKey: .numberOfThreads) ?? defaults.numberOfThreads
         self.backlog = try container.decodeIfPresent(Int32.self, forKey: .backlog) ?? defaults.backlog
         self.genTopP = try container.decodeIfPresent(Float.self, forKey: .genTopP) ?? defaults.genTopP
-        self.genKVBits = try container.decodeIfPresent(Int.self, forKey: .genKVBits) ?? defaults.genKVBits
-        self.genKVGroupSize =
-            try container.decodeIfPresent(Int.self, forKey: .genKVGroupSize) ?? defaults.genKVGroupSize
-        self.genQuantizedKVStart =
-            try container.decodeIfPresent(Int.self, forKey: .genQuantizedKVStart)
-            ?? defaults.genQuantizedKVStart
         self.genMaxKVSize = try container.decodeIfPresent(Int.self, forKey: .genMaxKVSize)
-        self.genPrefillStepSize = try container.decodeIfPresent(Int.self, forKey: .genPrefillStepSize)
-        self.genTurboQuant = try container.decodeIfPresent(Bool.self, forKey: .genTurboQuant)
         self.allowedOrigins =
             try container.decodeIfPresent([String].self, forKey: .allowedOrigins)
             ?? defaults.allowedOrigins
@@ -128,12 +110,7 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
         numberOfThreads: Int,
         backlog: Int32,
         genTopP: Float,
-        genKVBits: Int?,
-        genKVGroupSize: Int,
-        genQuantizedKVStart: Int,
         genMaxKVSize: Int?,
-        genPrefillStepSize: Int?,
-        genTurboQuant: Bool? = nil,
         allowedOrigins: [String] = [],
         modelEvictionPolicy: ModelEvictionPolicy = .strictSingleModel
     ) {
@@ -145,12 +122,7 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
         self.numberOfThreads = numberOfThreads
         self.backlog = backlog
         self.genTopP = genTopP
-        self.genKVBits = genKVBits
-        self.genKVGroupSize = genKVGroupSize
-        self.genQuantizedKVStart = genQuantizedKVStart
         self.genMaxKVSize = genMaxKVSize
-        self.genPrefillStepSize = genPrefillStepSize
-        self.genTurboQuant = genTurboQuant
         self.allowedOrigins = allowedOrigins
         self.modelEvictionPolicy = modelEvictionPolicy
     }
@@ -159,18 +131,14 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
     public static var `default`: ServerConfiguration {
         ServerConfiguration(
             port: 1337,
-            exposeToNetwork: false,  // Default to false (localhost)
+            exposeToNetwork: false,
             startAtLogin: false,
-            hideDockIcon: false,  // Default to showing dock icon
-            appearanceMode: .system,  // Default to system appearance
+            hideDockIcon: false,
+            appearanceMode: .system,
             numberOfThreads: ProcessInfo.processInfo.activeProcessorCount,
             backlog: 256,
             genTopP: 1.0,
-            genKVBits: nil,
-            genKVGroupSize: 64,
-            genQuantizedKVStart: 0,
             genMaxKVSize: nil,
-            genPrefillStepSize: nil,
             allowedOrigins: [],
             modelEvictionPolicy: .strictSingleModel
         )

@@ -90,10 +90,11 @@ struct InsightsView: View {
                     .font(.system(size: 12))
                     .foregroundColor(theme.tertiaryText)
 
-                TextField(text: $insightsService.searchFilter, prompt: Text("Search path or model...", bundle: .module)) { Text("Search path or model...", bundle: .module) }
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 13))
-                    .foregroundColor(theme.primaryText)
+                TextField(text: $insightsService.searchFilter, prompt: Text("Search path or model...", bundle: .module))
+                { Text("Search path or model...", bundle: .module) }
+                .textFieldStyle(.plain)
+                .font(.system(size: 13))
+                .foregroundColor(theme.primaryText)
 
                 if !insightsService.searchFilter.isEmpty {
                     Button(action: { insightsService.searchFilter = "" }) {
@@ -289,7 +290,8 @@ struct InsightsView: View {
                 .foregroundColor(theme.secondaryText)
 
             Text(
-                "API request activity will appear here.\nTest endpoints from Server tab or connect an app via the API.", bundle: .module
+                "API request activity will appear here.\nTest endpoints from Server tab or connect an app via the API.",
+                bundle: .module
             )
             .font(.system(size: 13))
             .foregroundColor(theme.tertiaryText)
@@ -520,9 +522,13 @@ private struct RequestLogRow: View {
                     // Request panel
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
-                            Label { Text("Request", bundle: .module) } icon: { Image(systemName: "arrow.up.circle.fill") }
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundColor(theme.secondaryText)
+                            Label {
+                                Text("Request", bundle: .module)
+                            } icon: {
+                                Image(systemName: "arrow.up.circle.fill")
+                            }
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(theme.secondaryText)
                             Spacer()
                         }
 
@@ -557,9 +563,13 @@ private struct RequestLogRow: View {
                     // Response panel
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
-                            Label { Text("Response", bundle: .module) } icon: { Image(systemName: "arrow.down.circle.fill") }
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundColor(theme.secondaryText)
+                            Label {
+                                Text("Response", bundle: .module)
+                            } icon: {
+                                Image(systemName: "arrow.down.circle.fill")
+                            }
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(theme.secondaryText)
                             Spacer()
 
                             if let body = log.responseBody {
@@ -660,9 +670,13 @@ private struct RequestLogRow: View {
     @ViewBuilder
     private var inferenceDetails: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Label { Text("Inference Details", bundle: .module) } icon: { Image(systemName: "bolt.fill") }
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(.purple.opacity(0.8))
+            Label {
+                Text("Inference Details", bundle: .module)
+            } icon: {
+                Image(systemName: "bolt.fill")
+            }
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundColor(.purple.opacity(0.8))
 
             HStack(spacing: 24) {
                 if log.model != nil {

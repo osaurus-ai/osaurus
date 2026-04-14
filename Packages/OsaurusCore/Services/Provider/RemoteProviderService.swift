@@ -508,6 +508,40 @@ public actor RemoteProviderService: ToolCapableService {
                                                     accumulatedToolCalls[idx] = current
                                                     continuation.yield(StreamingToolHint.encodeArgs(deltaEvent.delta))
                                                 }
+                                            case "response.function_call_arguments.done":
+                                                // Authoritative complete arguments — overwrite any accumulated deltas
+                                                if let doneEvent = try? JSONDecoder().decode(
+                                                    FunctionCallArgumentsDoneEvent.self,
+                                                    from: jsonData
+                                                ) {
+                                                    let idx = doneEvent.output_index
+                                                    var current =
+                                                        accumulatedToolCalls[idx] ?? (
+                                                            id: doneEvent.call_id, name: nil, args: "",
+                                                            thoughtSignature: nil
+                                                        )
+                                                    current.args = doneEvent.arguments
+                                                    accumulatedToolCalls[idx] = current
+                                                }
+                                            case "response.output_item.done":
+                                                // Final confirmed item — extract args from completed function_call
+                                                if let doneEvent = try? JSONDecoder().decode(
+                                                    OutputItemDoneEvent.self,
+                                                    from: jsonData
+                                                ) {
+                                                    if case .functionCall(let funcCall) = doneEvent.item {
+                                                        let idx = doneEvent.output_index
+                                                        var current =
+                                                            accumulatedToolCalls[idx] ?? (
+                                                                id: funcCall.call_id, name: funcCall.name, args: "",
+                                                                thoughtSignature: nil
+                                                            )
+                                                        if current.args.isEmpty {
+                                                            current.args = funcCall.arguments
+                                                        }
+                                                        accumulatedToolCalls[idx] = current
+                                                    }
+                                                }
                                             case "response.completed":
                                                 if let invocation = Self.makeToolInvocation(from: accumulatedToolCalls)
                                                 {
@@ -1066,6 +1100,40 @@ public actor RemoteProviderService: ToolCapableService {
                                                     current.args += deltaEvent.delta
                                                     accumulatedToolCalls[idx] = current
                                                     continuation.yield(StreamingToolHint.encodeArgs(deltaEvent.delta))
+                                                }
+                                            case "response.function_call_arguments.done":
+                                                // Authoritative complete arguments — overwrite any accumulated deltas
+                                                if let doneEvent = try? JSONDecoder().decode(
+                                                    FunctionCallArgumentsDoneEvent.self,
+                                                    from: jsonData
+                                                ) {
+                                                    let idx = doneEvent.output_index
+                                                    var current =
+                                                        accumulatedToolCalls[idx] ?? (
+                                                            id: doneEvent.call_id, name: nil, args: "",
+                                                            thoughtSignature: nil
+                                                        )
+                                                    current.args = doneEvent.arguments
+                                                    accumulatedToolCalls[idx] = current
+                                                }
+                                            case "response.output_item.done":
+                                                // Final confirmed item — extract args from completed function_call
+                                                if let doneEvent = try? JSONDecoder().decode(
+                                                    OutputItemDoneEvent.self,
+                                                    from: jsonData
+                                                ) {
+                                                    if case .functionCall(let funcCall) = doneEvent.item {
+                                                        let idx = doneEvent.output_index
+                                                        var current =
+                                                            accumulatedToolCalls[idx] ?? (
+                                                                id: funcCall.call_id, name: funcCall.name, args: "",
+                                                                thoughtSignature: nil
+                                                            )
+                                                        if current.args.isEmpty {
+                                                            current.args = funcCall.arguments
+                                                        }
+                                                        accumulatedToolCalls[idx] = current
+                                                    }
                                                 }
                                             case "response.completed":
                                                 lastFinishReason = "completed"
@@ -2242,15 +2310,29 @@ private struct RemoteChatRequest: Encodable {
                 }
 
             case "assistant":
-                // Assistant messages with tool calls need special handling
                 if let toolCalls = msg.tool_calls, !toolCalls.isEmpty {
-                    // First add any text content
+                    // Emit any text content first
                     if let content = msg.content, !content.isEmpty {
                         let msgContent = OpenResponsesMessageContent.text(content)
                         inputItems.append(.message(OpenResponsesMessageItem(role: "assistant", content: msgContent)))
                     }
-                    // Note: function_call items from assistant are not input items in Open Responses
-                    // They would be represented as prior output from the assistant
+                    // Each tool call becomes a function_call input item so the following
+                    // function_call_output items have a matching call_id to reference.
+                    for tc in toolCalls {
+                        let raw = UUID().uuidString.replacingOccurrences(of: "-", with: "")
+                        let itemId = "fc_" + String(raw.prefix(24))
+                        inputItems.append(
+                            .functionCall(
+                                OpenResponsesFunctionCall(
+                                    id: itemId,
+                                    status: .completed,
+                                    callId: tc.id,
+                                    name: tc.function.name,
+                                    arguments: tc.function.arguments
+                                )
+                            )
+                        )
+                    }
                 } else if let content = msg.content {
                     let msgContent = OpenResponsesMessageContent.text(content)
                     inputItems.append(.message(OpenResponsesMessageItem(role: "assistant", content: msgContent)))

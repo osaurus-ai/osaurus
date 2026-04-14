@@ -91,14 +91,17 @@ struct OnboardingIdentitySetupView: View {
 
             Spacer().frame(height: 14)
 
-            Text("Generate a cryptographic identity for you and your\nagents. Stored securely in iCloud Keychain.", bundle: .module)
-                .font(theme.font(size: 13))
-                .foregroundColor(theme.secondaryText)
-                .multilineTextAlignment(.center)
-                .lineSpacing(4)
-                .opacity(hasAppeared ? 1 : 0)
-                .offset(y: hasAppeared ? 0 : 10)
-                .animation(.easeOut(duration: 0.5).delay(0.25), value: hasAppeared)
+            Text(
+                "Generate a cryptographic identity for you and your\nagents. Stored securely in iCloud Keychain.",
+                bundle: .module
+            )
+            .font(theme.font(size: 13))
+            .foregroundColor(theme.secondaryText)
+            .multilineTextAlignment(.center)
+            .lineSpacing(4)
+            .opacity(hasAppeared ? 1 : 0)
+            .offset(y: hasAppeared ? 0 : 10)
+            .animation(.easeOut(duration: 0.5).delay(0.25), value: hasAppeared)
 
             if case .error(let message) = phase {
                 Text(message)

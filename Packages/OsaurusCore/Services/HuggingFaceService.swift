@@ -69,7 +69,12 @@ actor HuggingFaceService {
     private init() {}
 
     /// Fetch files from a Hugging Face repo that match the given glob patterns.
-    func fetchMatchingFiles(repoId: String, patterns: [String]) async -> [MatchedFile]? {
+    /// Files whose last path component appears in `excludedFiles` are skipped.
+    func fetchMatchingFiles(
+        repoId: String,
+        patterns: [String],
+        excludedFiles: Set<String> = []
+    ) async -> [MatchedFile]? {
         var comps = URLComponents()
         comps.scheme = "https"
         comps.host = "huggingface.co"
@@ -98,6 +103,7 @@ actor HuggingFaceService {
             let files = nodes.compactMap { node -> MatchedFile? in
                 if node.type == "directory" { return nil }
                 let filename = (node.path as NSString).lastPathComponent
+                if excludedFiles.contains(filename) { return nil }
                 let matched = matchers.contains { $0.matches(filename) }
                 guard matched else { return nil }
                 let sz = node.size ?? node.lfs?.size ?? 0
@@ -111,8 +117,18 @@ actor HuggingFaceService {
     }
 
     /// Estimate the total size for files matching provided patterns.
-    func estimateTotalSize(repoId: String, patterns: [String]) async -> Int64? {
-        guard let files = await fetchMatchingFiles(repoId: repoId, patterns: patterns) else { return nil }
+    func estimateTotalSize(
+        repoId: String,
+        patterns: [String],
+        excludedFiles: Set<String> = []
+    ) async -> Int64? {
+        guard
+            let files = await fetchMatchingFiles(
+                repoId: repoId,
+                patterns: patterns,
+                excludedFiles: excludedFiles
+            )
+        else { return nil }
         let total = files.reduce(Int64(0)) { $0 + $1.size }
         return total > 0 ? total : nil
     }

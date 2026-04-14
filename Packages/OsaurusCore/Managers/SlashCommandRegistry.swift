@@ -75,7 +75,8 @@ public final class SlashCommandRegistry {
         let all = allCommands
         guard !query.isEmpty else { return all }
         let q = query.lowercased()
-        return all
+        return
+            all
             .compactMap { cmd -> (SlashCommand, Int)? in
                 let score = matchScore(query: q, name: cmd.name.lowercased())
                 return score > 0 ? (cmd, score) : nil
@@ -112,18 +113,21 @@ public final class SlashCommandRegistry {
                 .filter { $0.isLetter || $0.isNumber || $0 == "-" }
             guard !slug.isEmpty else { continue }
 
-            let desc = skill.description.isEmpty
+            let desc =
+                skill.description.isEmpty
                 ? "Apply \(skill.name) skill"
                 : skill.description
 
-            append(SlashCommand(
-                id: skill.id,
-                name: slug,
-                description: desc,
-                icon: "wand.and.stars",
-                kind: .skill,
-                isBuiltIn: false
-            ))
+            append(
+                SlashCommand(
+                    id: skill.id,
+                    name: slug,
+                    description: desc,
+                    icon: "wand.and.stars",
+                    kind: .skill,
+                    isBuiltIn: false
+                )
+            )
         }
 
         return result

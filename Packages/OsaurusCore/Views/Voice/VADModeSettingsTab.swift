@@ -222,7 +222,8 @@ struct VADModeSettingsTab: View {
                     .foregroundColor(theme.accentColor)
 
                 Text(
-                    "When enabled, Osaurus will continuously listen for agent names. Say a agent's name to automatically open a chat with that agent.", bundle: .module
+                    "When enabled, Osaurus will continuously listen for agent names. Say a agent's name to automatically open a chat with that agent.",
+                    bundle: .module
                 )
                 .font(.system(size: 12))
                 .foregroundColor(theme.secondaryText)
@@ -388,22 +389,24 @@ struct VADModeSettingsTab: View {
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(theme.secondaryText)
 
-                TextField(text: $customWakePhrase, prompt: Text("e.g., Hey Osaurus", bundle: .module)) { Text("e.g., Hey Osaurus", bundle: .module) }
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 14))
-                    .foregroundColor(theme.primaryText)
-                    .padding(12)
-                    .background(
-                        RoundedRectangle(cornerRadius: 10)
-                            .fill(theme.inputBackground)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 10)
-                                    .stroke(theme.inputBorder, lineWidth: 1)
-                            )
-                    )
-                    .onChange(of: customWakePhrase) { _, _ in
-                        saveSettings()
-                    }
+                TextField(text: $customWakePhrase, prompt: Text("e.g., Hey Osaurus", bundle: .module)) {
+                    Text("e.g., Hey Osaurus", bundle: .module)
+                }
+                .textFieldStyle(.plain)
+                .font(.system(size: 14))
+                .foregroundColor(theme.primaryText)
+                .padding(12)
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(theme.inputBackground)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(theme.inputBorder, lineWidth: 1)
+                        )
+                )
+                .onChange(of: customWakePhrase) { _, _ in
+                    saveSettings()
+                }
 
                 Text("Leave empty to only use agent names as wake words", bundle: .module)
                     .font(.system(size: 11))

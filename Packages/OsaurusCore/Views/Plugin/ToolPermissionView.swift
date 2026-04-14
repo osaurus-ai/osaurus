@@ -168,9 +168,13 @@ struct ToolPermissionView: View {
     private var argumentsBlock: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Label { Text("Arguments", bundle: .module) } icon: { Image(systemName: "curlybraces") }
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
+                Label {
+                    Text("Arguments", bundle: .module)
+                } icon: {
+                    Image(systemName: "curlybraces")
+                }
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(theme.secondaryText)
 
                 Spacer()
 
@@ -315,12 +319,16 @@ private struct AlwaysAllowButton: View {
 
     var body: some View {
         Button(action: action) {
-            Label { Text("Always Allow", bundle: .module) } icon: { Image(systemName: "checkmark.circle") }
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(isHovered ? theme.primaryText : theme.secondaryText)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(Capsule().fill(theme.tertiaryBackground.opacity(isHovered ? 0.8 : 0.5)))
+            Label {
+                Text("Always Allow", bundle: .module)
+            } icon: {
+                Image(systemName: "checkmark.circle")
+            }
+            .font(.system(size: 12, weight: .medium))
+            .foregroundColor(isHovered ? theme.primaryText : theme.secondaryText)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(Capsule().fill(theme.tertiaryBackground.opacity(isHovered ? 0.8 : 0.5)))
         }
         .buttonStyle(.plain)
         .scaleEffect(isHovered ? 1.02 : 1.0)

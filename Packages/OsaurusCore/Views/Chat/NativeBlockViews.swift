@@ -10,6 +10,7 @@
 //
 
 import AppKit
+import Combine
 import QuartzCore
 
 // MARK: - NativeTypingIndicatorView
@@ -23,6 +24,7 @@ final class NativeTypingIndicatorView: NSView {
     private let memoryIcon = NSImageView()
     private let memoryLabel = NSTextField(labelWithString: "")
     private var memoryStack: NSStackView?
+    private let loadingLabel = NSTextField(labelWithString: "")
 
     // MARK: Animation
 
@@ -34,6 +36,7 @@ final class NativeTypingIndicatorView: NSView {
     // MARK: State
 
     private var theme: (any ThemeProtocol)?
+    private var isShowingLoadingLabel = false
 
     // MARK: Init
 
@@ -42,6 +45,7 @@ final class NativeTypingIndicatorView: NSView {
         buildViews()
         startAnimation()
         observeMemory()
+        observeModelLoading()
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -90,6 +94,18 @@ final class NativeTypingIndicatorView: NSView {
             dotStack.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
 
+        // "Loading Model..." label (hidden by default, shown during model load)
+        loadingLabel.stringValue = "Loading Model..."
+        loadingLabel.font = .systemFont(ofSize: 12, weight: .medium)
+        loadingLabel.textColor = .secondaryLabelColor
+        loadingLabel.translatesAutoresizingMaskIntoConstraints = false
+        loadingLabel.isHidden = true
+        addSubview(loadingLabel)
+        NSLayoutConstraint.activate([
+            loadingLabel.leadingAnchor.constraint(equalTo: leadingAnchor),
+            loadingLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+
         // height is controlled by the parent cell — no fixed height constraint here
     }
 
@@ -107,8 +123,33 @@ final class NativeTypingIndicatorView: NSView {
         updateMemoryLabel(monitor: monitor)
     }
 
+    private func observeModelLoading() {
+        let manager = InferenceProgressManager.shared
+        let sink = manager.$isLoadingModel.combineLatest(manager.$isPreflighting)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] (loadingModel, preflighting) in
+                self?.setLoadingModelState(loadingModel: loadingModel, preflighting: preflighting)
+            }
+        cancellables.append(sink)
+    }
+
+    private func setLoadingModelState(loadingModel: Bool, preflighting: Bool) {
+        let showingLabel = loadingModel || preflighting
+        let expectedText = preflighting ? "Searching capabilities..." : "Loading Model..."
+
+        guard showingLabel != isShowingLoadingLabel || (showingLabel && loadingLabel.stringValue != expectedText) else {
+            return
+        }
+
+        isShowingLoadingLabel = showingLabel
+        loadingLabel.stringValue = expectedText
+        loadingLabel.isHidden = !showingLabel
+        dotStack.isHidden = showingLabel
+        memoryStack?.isHidden = showingLabel
+    }
+
     private func updateMemoryLabel(monitor: SystemMonitorService) {
-        guard monitor.totalMemoryGB > 0 else {
+        guard monitor.totalMemoryGB > 0, !isShowingLoadingLabel else {
             memoryStack?.isHidden = true
             return
         }

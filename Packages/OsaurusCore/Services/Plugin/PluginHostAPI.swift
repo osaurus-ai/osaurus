@@ -436,16 +436,19 @@ final class PluginHostContext: @unchecked Sendable {
             }
         }
         let resolvedAgentId = agentCtx?.agentId ?? Agent.defaultId
-        if options.wantsPreflight {
+        let (agentToolsOff, isManual) = await MainActor.run {
+            let mgr = AgentManager.shared
+            return (
+                mgr.effectiveToolsDisabled(for: resolvedAgentId),
+                mgr.effectiveToolSelectionMode(for: resolvedAgentId) == .manual
+            )
+        }
+        if options.wantsPreflight && !agentToolsOff {
             enriched = await applyPreflightSearch(
                 to: enriched,
                 executionMode: execMode,
                 agentId: resolvedAgentId
             )
-        }
-
-        let isManual = await MainActor.run {
-            AgentManager.shared.effectiveToolSelectionMode(for: resolvedAgentId) == .manual
         }
         if isManual,
             let section = await SkillManager.shared.manualSkillPromptSection(for: resolvedAgentId)
@@ -643,7 +646,7 @@ final class PluginHostContext: @unchecked Sendable {
             return (mode, tools)
         }
 
-        let preflight = await PreflightCapabilitySearch.search(query: query, mode: preflightMode)
+        let preflight = await PreflightCapabilitySearch.search(query: query, mode: preflightMode, agentId: agentId)
 
         if let sid = inference.request.session_id {
             preflightCacheLock.withLock { preflightCache[sid] = preflight }

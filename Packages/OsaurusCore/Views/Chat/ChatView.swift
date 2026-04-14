@@ -55,6 +55,9 @@ final class ChatSession: ObservableObject {
     /// Callback when session needs to be saved (called after streaming completes)
     var onSessionChanged: (() -> Void)?
 
+    /// Weak back-reference to the owning window state (set by ChatWindowState).
+    weak var windowState: ChatWindowState?
+
     private var currentTask: Task<Void, Never>?
     private var activeRunId: UUID?
     private var activeRunContext: RunContext?
@@ -310,9 +313,12 @@ final class ChatSession: ObservableObject {
         }
 
         let manifest = buildPreviewManifest(agentId: effectiveId, executionMode: executionMode)
-        let toolTokens = ToolRegistry.shared.totalEstimatedTokens(
-            for: ToolRegistry.shared.alwaysLoadedSpecs(mode: executionMode)
-        )
+        let toolTokens =
+            AgentManager.shared.effectiveToolsDisabled(for: effectiveId)
+            ? 0
+            : ToolRegistry.shared.totalEstimatedTokens(
+                for: ToolRegistry.shared.alwaysLoadedSpecs(mode: executionMode)
+            )
         return .from(
             manifest: manifest,
             toolTokens: toolTokens,
@@ -514,13 +520,19 @@ final class ChatSession: ObservableObject {
 
     private func refreshMemoryTokens() async {
         let effectiveAgentId = agentId ?? Agent.defaultId
+        guard !AgentManager.shared.effectiveMemoryDisabled(for: effectiveAgentId) else {
+            if cachedContext?.manifest.memoryTokens ?? 0 > 0 {
+                cachedContext = nil
+                objectWillChange.send()
+            }
+            return
+        }
         let context = await MemoryContextAssembler.assembleContext(
             agentId: effectiveAgentId.uuidString,
             config: MemoryConfigurationStore.load()
         )
         let newTokens = ContextBudgetManager.estimateTokens(for: context)
-        let oldTokens = cachedContext?.manifest.memoryTokens ?? 0
-        guard newTokens != oldTokens else { return }
+        guard newTokens != cachedContext?.manifest.memoryTokens ?? 0 else { return }
         cachedContext = nil
         objectWillChange.send()
     }
@@ -651,7 +663,10 @@ final class ChatSession: ObservableObject {
 
         let assistantContent = turns.last(where: { $0.role == .assistant })?.content
 
-        if context.hasContent, let sid = sessionId {
+        let agentUUID = UUID(uuidString: context.memoryAgentId) ?? Agent.defaultId
+        let memoryOff = AgentManager.shared.effectiveMemoryDisabled(for: agentUUID)
+
+        if !memoryOff, context.hasContent, let sid = sessionId {
             let convId = sid.uuidString
             let aid = context.memoryAgentId
             let chunkIdx = turns.count
@@ -706,7 +721,7 @@ final class ChatSession: ObservableObject {
             }
         }
 
-        if context.hasContent {
+        if !memoryOff, context.hasContent {
             let today = ISO8601DateFormatter.string(
                 from: Date(),
                 timeZone: .current,
@@ -809,13 +824,20 @@ final class ChatSession: ObservableObject {
             // Must refresh block memoizer before first delta — otherwise visibleBlocks stays
             // user-only while isStreaming is true and the table early-returns without assistant rows.
             rebuildVisibleBlocks()
+            #if DEBUG
+                let ttftTrace: TTFTTrace? = TTFTTrace()
+            #else
+                let ttftTrace: TTFTTrace? = nil
+            #endif
             do {
                 let engine = chatEngineFactory()
                 let chatCfg = ChatConfigurationStore.load()
 
                 // MARK: - Capability Setup
                 let effectiveAgentId = agentId ?? Agent.defaultId
+                ttftTrace?.mark("prepare_exec_mode_start")
                 let executionMode = await prepareChatExecutionMode(agentId: effectiveAgentId)
+                ttftTrace?.mark("prepare_exec_mode_done")
                 guard isRunActive(runId) else { return }
 
                 let context = await SystemPromptComposer.composeChatContext(
@@ -823,7 +845,8 @@ final class ChatSession: ObservableObject {
                     executionMode: executionMode,
                     model: selectedModel,
                     query: trimmed,
-                    toolsDisabled: chatCfg.disableTools
+                    toolsDisabled: chatCfg.disableTools,
+                    trace: ttftTrace
                 )
                 guard isRunActive(runId) else { return }
 
@@ -913,9 +936,34 @@ final class ChatSession: ObservableObject {
                 var pendingBudgetNotice: String?
                 let effectiveTemp = AgentManager.shared.effectiveTemperature(for: effectiveAgentId)
 
+                ttftTrace?.mark("pre_ttft_done")
+
                 outer: while attempts < maxAttempts {
                     attempts += 1
+                    ttftTrace?.mark("build_messages_start")
                     var msgs = buildMessages()
+                    ttftTrace?.mark("build_messages_done")
+                    ttftTrace?.set("messageCount", msgs.count)
+                    ttftTrace?.set("conversationTurns", turns.count)
+
+                    #if DEBUG
+                        // Dump full prompt to debug log for TTFT analysis
+                        if attempts == 1 {
+                            var promptDump = "═══ FULL PROMPT DUMP ═══\n"
+                            for (i, m) in msgs.enumerated() {
+                                promptDump += "── [\(i)] role=\(m.role) chars=\(m.content?.count ?? 0) ──\n"
+                                promptDump += (m.content ?? "(nil)") + "\n"
+                            }
+                            if let tools = toolSpecs.isEmpty ? nil : toolSpecs {
+                                promptDump += "── TOOLS (\(tools.count)) ──\n"
+                                for t in tools {
+                                    promptDump += "  - \(t.function.name): \(t.function.description)\n"
+                                }
+                            }
+                            promptDump += "═══ END PROMPT DUMP ═══"
+                            debugLog(promptDump)
+                        }
+                    #endif
                     if let notice = pendingBudgetNotice {
                         msgs.append(ChatMessage(role: "user", content: notice))
                         pendingBudgetNotice = nil
@@ -943,11 +991,11 @@ final class ChatSession: ObservableObject {
                     req.cache_hint = context.cacheHint
                     req.staticPrefix = context.staticPrefix
                     req.modelOptions = activeModelOptions.isEmpty ? nil : activeModelOptions
+                    req.ttftTrace = ttftTrace
                     debugLog(
                         "send: attempt=\(attempts) model=\(req.model) tools=\(req.tools?.count ?? 0) sessionId=\(req.session_id ?? "nil")"
                     )
                     do {
-                        let streamStartTime = Date()
                         var uiDeltaCount = 0
                         var firstDeltaTime: Date?
 
@@ -961,7 +1009,12 @@ final class ChatSession: ObservableObject {
                             self?.rebuildVisibleBlocks()
                         }
 
+                        ttftTrace?.mark("engine_streamChat_start")
                         let stream = try await engine.streamChat(request: req)
+                        ttftTrace?.mark("engine_streamChat_returned")
+                        // Start TTFT timer after model is loaded and stream is ready.
+                        // This excludes model loading time from the displayed TTFT.
+                        let streamStartTime = Date()
                         debugLog("send: got stream, entering delta loop")
                         for try await delta in stream {
                             if !isRunActive(runId) {
@@ -1014,7 +1067,12 @@ final class ChatSession: ObservableObject {
                                 continue
                             }
                             if !delta.isEmpty {
-                                if firstDeltaTime == nil { firstDeltaTime = Date() }
+                                if firstDeltaTime == nil {
+                                    firstDeltaTime = Date()
+                                    ttftTrace?.mark("first_text_delta")
+                                    ttftTrace?.set("model", selectedModel ?? "unknown")
+                                    ttftTrace?.emit()
+                                }
                                 uiDeltaCount += 1
                                 processor.receiveDelta(delta)
                             }
@@ -1900,12 +1958,20 @@ private struct BonjourTokenSheet: View {
                 .font(theme.font(size: 13))
 
             HStack {
-                Button { onCancel() } label: { Text("Cancel", bundle: .module) }
-                    .keyboardShortcut(.cancelAction)
+                Button {
+                    onCancel()
+                } label: {
+                    Text("Cancel", bundle: .module)
+                }
+                .keyboardShortcut(.cancelAction)
                 Spacer()
-                Button { onConnect(token) } label: { Text("Connect", bundle: .module) }
-                    .keyboardShortcut(.defaultAction)
-                    .buttonStyle(.borderedProminent)
+                Button {
+                    onConnect(token)
+                } label: {
+                    Text("Connect", bundle: .module)
+                }
+                .keyboardShortcut(.defaultAction)
+                .buttonStyle(.borderedProminent)
             }
         }
         .padding(24)

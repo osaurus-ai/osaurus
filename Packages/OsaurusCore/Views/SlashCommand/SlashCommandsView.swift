@@ -32,7 +32,9 @@ struct SlashCommandsView: View {
                     SettingsEmptyState(
                         icon: "command",
                         title: L("Create Your First Command"),
-                        subtitle: L("Slash commands let you insert reusable prompts from the chat input by typing /name."),
+                        subtitle: L(
+                            "Slash commands let you insert reusable prompts from the chat input by typing /name."
+                        ),
                         examples: [
                             .init(
                                 icon: "globe",

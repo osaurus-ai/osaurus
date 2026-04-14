@@ -1037,7 +1037,7 @@ extension FloatingInputCard {
     @ViewBuilder
     private var pendingSkillChipView: some View {
         if let skillId = pendingSkillId,
-           let skill = SkillManager.shared.skill(for: skillId)
+            let skill = SkillManager.shared.skill(for: skillId)
         {
             HStack(spacing: 5) {
                 Image(systemName: "wand.and.stars")
@@ -1499,7 +1499,9 @@ extension FloatingInputCard {
         .contextMenu {
             Button {
                 AppDelegate.shared?.showManagementWindow(initialTab: .sandbox)
-            } label: { Text("Open Sandbox Settings", bundle: .module) }
+            } label: {
+                Text("Open Sandbox Settings", bundle: .module)
+            }
         }
         .task(id: isSandboxLoading) {
             sandboxPulseTask?.cancel()
@@ -1682,7 +1684,9 @@ extension FloatingInputCard {
         .contextMenu {
             Button {
                 clipboardService.markAsRead()
-            } label: { Text("Dismiss", bundle: .module) }
+            } label: {
+                Text("Dismiss", bundle: .module)
+            }
             Divider()
             if let content = clipboardService.currentContent {
                 switch content {
@@ -1690,15 +1694,21 @@ extension FloatingInputCard {
                     Button {
                         localText += text
                         clipboardService.markAsRead()
-                    } label: { Text("Paste to Input", bundle: .module) }
+                    } label: {
+                        Text("Paste to Input", bundle: .module)
+                    }
                 case .file:
                     Button {
                         attachClipboardSnippet()
-                    } label: { Text("Attach File", bundle: .module) }
+                    } label: {
+                        Text("Attach File", bundle: .module)
+                    }
                 case .image:
                     Button {
                         attachClipboardSnippet()
-                    } label: { Text("Attach Image", bundle: .module) }
+                    } label: {
+                        Text("Attach Image", bundle: .module)
+                    }
                 }
             }
         }
@@ -1818,18 +1828,30 @@ extension FloatingInputCard {
                         Button {
                             Task { await folderContextService.selectFolder() }
                         } label: {
-                            Label { Text("Change Folder", bundle: .module) } icon: { Image(systemName: "folder.badge.gear") }
+                            Label {
+                                Text("Change Folder", bundle: .module)
+                            } icon: {
+                                Image(systemName: "folder.badge.gear")
+                            }
                         }
                         Button {
                             Task { await folderContextService.refreshContext() }
                         } label: {
-                            Label { Text("Refresh Context", bundle: .module) } icon: { Image(systemName: "arrow.clockwise") }
+                            Label {
+                                Text("Refresh Context", bundle: .module)
+                            } icon: {
+                                Image(systemName: "arrow.clockwise")
+                            }
                         }
                         Divider()
                         Button(role: .destructive) {
                             folderContextService.clearFolder()
                         } label: {
-                            Label { Text("Clear Folder", bundle: .module) } icon: { Image(systemName: "folder.badge.minus") }
+                            Label {
+                                Text("Clear Folder", bundle: .module)
+                            } icon: {
+                                Image(systemName: "folder.badge.minus")
+                            }
                         }
                     }
                 }
@@ -2116,21 +2138,24 @@ extension FloatingInputCard {
                 ? {
                     syncAndSendNow()
                 } : nil,
-            onArrowUp: showSlashPopup ? {
-                slashSelectedIndex = max(0, slashSelectedIndex - 1)
-                return true
-            } : nil,
-            onArrowDown: showSlashPopup ? {
-                let maxIndex = slashFilteredCommands.count - 1
-                slashSelectedIndex = min(maxIndex, slashSelectedIndex + 1)
-                return true
-            } : nil,
-            onEscape: showSlashPopup ? {
-                // Dismiss popup by clearing the slash prefix
-                localText = ""
-                text = ""
-                return true
-            } : nil
+            onArrowUp: showSlashPopup
+                ? {
+                    slashSelectedIndex = max(0, slashSelectedIndex - 1)
+                    return true
+                } : nil,
+            onArrowDown: showSlashPopup
+                ? {
+                    let maxIndex = slashFilteredCommands.count - 1
+                    slashSelectedIndex = min(maxIndex, slashSelectedIndex + 1)
+                    return true
+                } : nil,
+            onEscape: showSlashPopup
+                ? {
+                    // Dismiss popup by clearing the slash prefix
+                    localText = ""
+                    text = ""
+                    return true
+                } : nil
         )
         .frame(maxHeight: maxHeight)
         .overlay(alignment: .topLeading) {
@@ -3067,7 +3092,9 @@ private struct SlashCommandTriggerButton: View {
 
                 Text("/")
                     .font(.system(size: 16, weight: .medium, design: .monospaced))
-                    .foregroundColor(isActive ? theme.accentColor : (isHovered ? theme.accentColor : theme.secondaryText))
+                    .foregroundColor(
+                        isActive ? theme.accentColor : (isHovered ? theme.accentColor : theme.secondaryText)
+                    )
             }
             .frame(width: 32, height: 32)
             .overlay(

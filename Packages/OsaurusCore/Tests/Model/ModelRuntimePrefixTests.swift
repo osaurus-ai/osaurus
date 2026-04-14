@@ -2,16 +2,10 @@
 //  ModelRuntimePrefixTests.swift
 //  osaurusTests
 //
-//  Tests for the background prefix-cache build path in ModelRuntime.
-//
-//  The key invariant: buildPrefixCache (always called from a background
-//  prefix-cache task) awaits activeGenerationTask before touching the GPU,
-//  and never overwrites it.  This prevents concurrent Metal command buffer
-//  submissions that cause EXC_BAD_ACCESS / SIGSEGV on Apple Silicon.
-//
+//  Tests for ModelRuntime actor isolation guarantees.
 //  The actor isolation on ModelRuntime ensures all state mutations are
-//  serialised, so generateEventStream and buildPrefixCache never interleave
-//  within a single suspension point.
+//  serialised, so generateEventStream never interleaves with other
+//  actor-isolated work within a single suspension point.
 //
 
 import Foundation
@@ -20,11 +14,11 @@ import Testing
 @testable import OsaurusCore
 
 /// Verifies that ModelRuntime exposes the API surface expected by the
-/// prefix-cache GPU serialisation fix.
+/// GPU serialisation guarantees.
 struct ModelRuntimePrefixTests {
 
-    /// ModelRuntime must be an actor so that generateEventStream,
-    /// buildPrefixCache, and the stale-task cleanup are serialised.
+    /// ModelRuntime must be an actor so that generateEventStream
+    /// and the stale-task cleanup are serialised.
     @Test func modelRuntimeIsAnActor() {
         #expect(ModelRuntime.self is any Actor.Type)
     }

@@ -20,14 +20,16 @@ fi
 
 # Ensure a clean build environment before archiving
 rm -rf build/DerivedData build/SourcePackages
-xcodebuild -resolvePackageDependencies -project App/osaurus.xcodeproj -scheme osaurus
+xcodebuild -resolvePackageDependencies -workspace osaurus.xcworkspace -scheme osaurus -clonedSourcePackagesDirPath build/SourcePackages -disableAutomaticPackageResolution
 
 # 1. Build the CLI first (as a separate scheme)
 echo "Building CLI (OsaurusCLI)..."
-xcodebuild -project App/osaurus.xcodeproj \
+xcodebuild -workspace osaurus.xcworkspace \
   -scheme osaurus-cli \
   -configuration Release \
   -derivedDataPath build \
+  -clonedSourcePackagesDirPath build/SourcePackages \
+  -disableAutomaticPackageResolution \
   ARCHS=arm64 \
   VALID_ARCHS=arm64 \
   ONLY_ACTIVE_ARCH=NO \
@@ -38,10 +40,12 @@ xcodebuild -project App/osaurus.xcodeproj \
 
 # 2. Archive the App (which doesn't have the CLI embedded yet via Xcode)
 echo "Archiving App (osaurus)..."
-xcodebuild -project App/osaurus.xcodeproj \
+xcodebuild -workspace osaurus.xcworkspace \
   -scheme osaurus \
   -configuration Release \
   -derivedDataPath build \
+  -clonedSourcePackagesDirPath build/SourcePackages \
+  -disableAutomaticPackageResolution \
   ARCHS=arm64 \
   VALID_ARCHS=arm64 \
   ONLY_ACTIVE_ARCH=NO \

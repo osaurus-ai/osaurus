@@ -342,6 +342,26 @@ extension AgentManager {
         return agent.maxTokens
     }
 
+    /// Whether tools are disabled for an agent.
+    /// Default agent defers to global `ChatConfiguration.disableTools`.
+    /// Custom agents use their own flag (defaulting to false), OR-ed with the global flag.
+    public func effectiveToolsDisabled(for agentId: UUID) -> Bool {
+        let globalDisabled = ChatConfigurationStore.load().disableTools
+        guard let agent = agent(for: agentId) else { return globalDisabled }
+        if agent.id == Agent.defaultId { return globalDisabled }
+        return (agent.disableTools ?? false) || globalDisabled
+    }
+
+    /// Whether memory is disabled for an agent.
+    /// Default agent defers to global `MemoryConfiguration.enabled` (inverted).
+    /// Custom agents use their own flag (defaulting to false), OR-ed with global disabled.
+    public func effectiveMemoryDisabled(for agentId: UUID) -> Bool {
+        let globalDisabled = !MemoryConfigurationStore.load().enabled
+        guard let agent = agent(for: agentId) else { return globalDisabled }
+        if agent.id == Agent.defaultId { return globalDisabled }
+        return (agent.disableMemory ?? false) || globalDisabled
+    }
+
     /// Get the effective tool selection mode for an agent.
     /// Default agent always uses .auto (controlled by global preflightSearchMode).
     public func effectiveToolSelectionMode(for agentId: UUID) -> ToolSelectionMode {

@@ -85,13 +85,19 @@ enum CapabilitySearch {
     ) async -> CapabilitySearchResults {
         let threshold = minimumRelevanceScore
         async let methodHits = MethodSearchService.shared.search(
-            query: query, topK: topK.methods, threshold: threshold
+            query: query,
+            topK: topK.methods,
+            threshold: threshold
         )
         async let toolHits = ToolSearchService.shared.search(
-            query: query, topK: topK.tools, threshold: threshold
+            query: query,
+            topK: topK.tools,
+            threshold: threshold
         )
         async let skillHits = SkillSearchService.shared.search(
-            query: query, topK: topK.skills, threshold: threshold
+            query: query,
+            topK: topK.skills,
+            threshold: threshold
         )
 
         return CapabilitySearchResults(
@@ -101,10 +107,10 @@ enum CapabilitySearch {
         )
     }
 
-    static func canCreatePlugins() async -> Bool {
+    static func canCreatePlugins(agentId: UUID) async -> Bool {
         await MainActor.run {
-            let agentId = AgentManager.shared.activeAgent.id
-            return AgentManager.shared.effectiveAutonomousExec(for: agentId)?.pluginCreate == true
+            guard let config = AgentManager.shared.effectiveAutonomousExec(for: agentId) else { return false }
+            return config.enabled && config.pluginCreate
         }
     }
 }
@@ -117,9 +123,9 @@ enum PreflightCapabilitySearch {
 
     // MARK: Search
 
-    static func search(query: String, mode: PreflightSearchMode = .balanced) async -> PreflightResult {
+    static func search(query: String, mode: PreflightSearchMode = .balanced, agentId: UUID) async -> PreflightResult {
         guard mode != .off,
-              !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         else { return .empty }
 
         let (catalog, groups) = await MainActor.run {
@@ -133,14 +139,20 @@ enum PreflightCapabilitySearch {
             return (sorted, groupMap)
         }
 
-        guard !catalog.isEmpty else { return .empty }
+        guard !catalog.isEmpty else { return await sandboxPluginCreatorFallback(agentId: agentId) }
+
+        InferenceProgressManager.shared.preflightWillStartAsync()
+        defer { InferenceProgressManager.shared.preflightDidFinishAsync() }
 
         let selectedNames = await selectTools(
-            query: query, catalog: catalog, groups: groups, cap: mode.toolCap
+            query: query,
+            catalog: catalog,
+            groups: groups,
+            cap: mode.toolCap
         )
 
         if selectedNames.isEmpty {
-            return await sandboxPluginCreatorFallback()
+            return await sandboxPluginCreatorFallback(agentId: agentId)
         }
 
         let (toolSpecs, items) = await MainActor.run {
@@ -238,18 +250,21 @@ enum PreflightCapabilitySearch {
         var selected: [String] = []
         var seen: Set<String> = []
 
-        let tokens = trimmed
+        let tokens =
+            trimmed
             .components(separatedBy: CharacterSet(charactersIn: ",\n"))
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
 
         for token in tokens {
-            let cleaned = token
+            let cleaned =
+                token
                 .replacingOccurrences(of: "^[-•*]\\s*", with: "", options: .regularExpression)
                 .trimmingCharacters(in: .whitespaces)
 
             if let canonical = validNames[cleaned.lowercased()],
-               seen.insert(canonical).inserted {
+                seen.insert(canonical).inserted
+            {
                 selected.append(canonical)
             }
         }
@@ -261,8 +276,8 @@ enum PreflightCapabilitySearch {
 
     // MARK: Fallback
 
-    private static func sandboxPluginCreatorFallback() async -> PreflightResult {
-        guard await CapabilitySearch.canCreatePlugins() else { return .empty }
+    private static func sandboxPluginCreatorFallback(agentId: UUID) async -> PreflightResult {
+        guard await CapabilitySearch.canCreatePlugins(agentId: agentId) else { return .empty }
         let skill = await MainActor.run {
             SkillManager.shared.skill(named: "Sandbox Plugin Creator")
         }

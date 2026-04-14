@@ -263,10 +263,18 @@ private struct WatcherCard: View {
 
                     Menu {
                         Button(action: onEdit) {
-                            Label { Text("Edit", bundle: .module) } icon: { Image(systemName: "pencil") }
+                            Label {
+                                Text("Edit", bundle: .module)
+                            } icon: {
+                                Image(systemName: "pencil")
+                            }
                         }
                         Button(action: onRunNow) {
-                            Label { Text("Trigger Now", bundle: .module) } icon: { Image(systemName: "play.fill") }
+                            Label {
+                                Text("Trigger Now", bundle: .module)
+                            } icon: {
+                                Image(systemName: "play.fill")
+                            }
                         }
                         .disabled(isRunning)
                         Divider()
@@ -282,7 +290,11 @@ private struct WatcherCard: View {
                         Button(role: .destructive) {
                             showDeleteConfirm = true
                         } label: {
-                            Label { Text("Delete", bundle: .module) } icon: { Image(systemName: "trash") }
+                            Label {
+                                Text("Delete", bundle: .module)
+                            } icon: {
+                                Image(systemName: "trash")
+                            }
                         }
                     } label: {
                         Image(systemName: "ellipsis")
@@ -763,7 +775,8 @@ struct WatcherEditorSheet: View {
                 ZStack(alignment: .topLeading) {
                     if instructions.isEmpty {
                         Text(
-                            "What should the AI do when changes are detected?", bundle: .module
+                            "What should the AI do when changes are detected?",
+                            bundle: .module
                         )
                         .font(.system(size: 13))
                         .foregroundColor(theme.placeholderText)
@@ -789,7 +802,8 @@ struct WatcherEditorSheet: View {
                 )
 
                 Text(
-                    "The AI will receive these instructions along with a list of changed files.", bundle: .module
+                    "The AI will receive these instructions along with a list of changed files.",
+                    bundle: .module
                 )
                 .font(.system(size: 11))
                 .foregroundColor(theme.tertiaryText)
@@ -836,7 +850,9 @@ struct WatcherEditorSheet: View {
                         ForEach(Responsiveness.allCases, id: \.self) { level in
                             Text(level.displayName).tag(level)
                         }
-                    } label: { Text("Responsiveness", bundle: .module) }
+                    } label: {
+                        Text("Responsiveness", bundle: .module)
+                    }
                     .pickerStyle(.segmented)
                     .labelsHidden()
 
@@ -874,7 +890,7 @@ struct WatcherEditorSheet: View {
         HStack(spacing: 12) {
             Spacer()
 
-            Button( action: onCancel) { Text("Cancel", bundle: .module) }
+            Button(action: onCancel) { Text("Cancel", bundle: .module) }
                 .buttonStyle(WatcherSecondaryButtonStyle())
 
             Button(isEditing ? "Save Changes" : "Create Watcher") {

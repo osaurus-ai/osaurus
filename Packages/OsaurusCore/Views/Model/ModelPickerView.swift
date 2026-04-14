@@ -254,10 +254,12 @@ struct ModelPickerView: View {
                 .font(.system(size: 13))
                 .foregroundColor(theme.tertiaryText)
 
-            TextField(text: $searchText, prompt: Text("Search models...", bundle: .module)) { Text("Search models...", bundle: .module) }
-                .textFieldStyle(.plain)
-                .font(.system(size: 13))
-                .foregroundColor(theme.primaryText)
+            TextField(text: $searchText, prompt: Text("Search models...", bundle: .module)) {
+                Text("Search models...", bundle: .module)
+            }
+            .textFieldStyle(.plain)
+            .font(.system(size: 13))
+            .foregroundColor(theme.primaryText)
 
             if !searchText.isEmpty {
                 Button(action: { searchText = "" }) {
@@ -359,8 +361,10 @@ struct ModelPickerView: View {
                 VStack(spacing: 0) {
                     // toggle for mock data
                     HStack {
-                        Toggle(isOn: $useMockData) { Text("Use Mock Data (\(mockModels.count) models)", bundle: .module) }
-                            .padding()
+                        Toggle(isOn: $useMockData) {
+                            Text("Use Mock Data (\(mockModels.count) models)", bundle: .module)
+                        }
+                        .padding()
                         Spacer()
                     }
                     .background(Color.gray.opacity(0.1))

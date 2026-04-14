@@ -720,6 +720,7 @@ final class OpenResponsesSSEWriter {
         context: ChannelHandlerContext
     ) {
         self.currentItemId = itemId
+        self.accumulatedText = ""  // Reset so function call args don't include prior text content
 
         let functionCall = OpenResponsesFunctionCall(
             id: itemId,

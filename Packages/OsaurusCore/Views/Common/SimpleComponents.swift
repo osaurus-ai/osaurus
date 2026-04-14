@@ -608,7 +608,10 @@ struct SystemResourceMonitor: View {
                     .progressViewStyle(MinimalProgressViewStyle(color: colorForUsage(monitor.memoryUsage)))
                     .frame(height: 4)
                     .help(
-                        Text("Memory: \(String(format: "%.1f", monitor.usedMemoryGB)) GB / \(String(format: "%.1f", monitor.totalMemoryGB)) GB", bundle: .module)
+                        Text(
+                            "Memory: \(String(format: "%.1f", monitor.usedMemoryGB)) GB / \(String(format: "%.1f", monitor.totalMemoryGB)) GB",
+                            bundle: .module
+                        )
                     )
                     .onHover { hovering in
                         isHoveringRAM = hovering
@@ -617,7 +620,8 @@ struct SystemResourceMonitor: View {
                         Group {
                             if isHoveringRAM {
                                 Text(
-                                    "\(String(format: "%.1f", monitor.usedMemoryGB)) / \(String(format: "%.1f", monitor.totalMemoryGB)) GB", bundle: .module
+                                    "\(String(format: "%.1f", monitor.usedMemoryGB)) / \(String(format: "%.1f", monitor.totalMemoryGB)) GB",
+                                    bundle: .module
                                 )
                                 .font(.system(size: 10, weight: .medium, design: .monospaced))
                                 .foregroundColor(theme.primaryText)

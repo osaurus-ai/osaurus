@@ -2,7 +2,9 @@
 //  ModelRuntime.swift
 //  osaurus
 //
-//  Holds MLX runtime state (containers, gates, caches) behind an actor.
+//  Holds MLX runtime state (containers, gates) behind an actor.
+//  Cache management is delegated to vmlx-swift-lm's CacheCoordinator
+//  (enabled per-container at load time).
 //
 
 import CoreImage
@@ -55,11 +57,8 @@ actor ModelRuntime {
     private var modelCache: [String: SessionHolder] = [:]
     private var loadingTasks: [String: Task<SessionHolder, Error>] = [:]
     private var currentModelName: String?
-    private var kvCacheStore = KVCacheStore()
     private var cachedConfig: RuntimeConfig?
     private var activeGenerationTask: Task<Void, Never>?
-    // modelName:taskHash -> Task
-    private var prefixCacheTasks: [String: Task<Void, Never>] = [:]
 
     private init() {}
 
@@ -87,18 +86,14 @@ actor ModelRuntime {
         activeGenerationTask?.cancel()
         _ = await activeGenerationTask?.value
         activeGenerationTask = nil
-
-        // also cancel and await all background prefix cache tasks
-        for task in prefixCacheTasks.values {
-            task.cancel()
-            _ = await task.value
-        }
-        prefixCacheTasks.removeAll()
     }
 
     func unload(name: String) async {
         await cancelActiveGeneration()
-        kvCacheStore.invalidateModel(name)
+
+        if let holder = modelCache[name] {
+            holder.container.disableCaching()
+        }
 
         autoreleasepool {
             _ = modelCache.removeValue(forKey: name)
@@ -123,7 +118,10 @@ actor ModelRuntime {
 
     func clearAll() async {
         await cancelActiveGeneration()
-        kvCacheStore.clearAll()
+
+        for holder in modelCache.values {
+            holder.container.disableCaching()
+        }
 
         autoreleasepool {
             modelCache.removeAll()
@@ -143,143 +141,20 @@ actor ModelRuntime {
         cachedConfig = nil
     }
 
-    /// Invalidates the KV cache for a specific session (e.g., on window close).
-    /// Does NOT call Memory.clearCache() -- the freed arrays will be reclaimed
-    /// naturally once they exceed mlxCacheLimit. Flushing here would penalize
-    /// any generation still running on other windows.
+    /// Called when a chat window closes. With the package-level CacheCoordinator
+    /// the paged cache is content-addressed and bounded internally, so
+    /// per-session invalidation is not needed — stale blocks are LRU-evicted.
     func invalidateSession(_ sessionId: String) {
-        kvCacheStore.invalidate(sessionId: sessionId)
-    }
-
-    // MARK: - Cache invalidation helpers
-
-    private func invalidateCaches(sessionId: String?, modelName: String, prefixHash: String) {
-        if let sid = sessionId {
-            kvCacheStore.invalidate(sessionId: sid)
-        }
-        kvCacheStore.invalidatePrefixCache(modelName: modelName, hash: prefixHash)
-    }
-
-    /// Wraps a stream so that after it finishes successfully, a prefix KV cache
-    /// is built for the given model+hash.  The build runs sequentially — never
-    /// concurrently with the generation that produced this stream — because it
-    /// only starts after the stream is fully consumed (i.e. the generation's
-    /// `genTask` has completed and no Metal work is in flight).
-    private func wrapWithPrefixCacheBuild(
-        _ stream: AsyncThrowingStream<ModelRuntimeEvent, Error>,
-        holder: SessionHolder,
-        systemContent: String,
-        tools: [Tool]?,
-        toolChoice: ToolChoiceOption?,
-        modelName: String,
-        prefixHash: String,
-        runtimeConfig: RuntimeConfig
-    ) -> AsyncThrowingStream<ModelRuntimeEvent, Error> {
-        let (wrapped, continuation) = AsyncThrowingStream<ModelRuntimeEvent, Error>.makeStream()
-        let forwardTask = Task {
-            do {
-                for try await event in stream {
-                    if Task.isCancelled { break }
-                    continuation.yield(event)
-                }
-                continuation.finish()
-
-                guard !Task.isCancelled else { return }
-                guard !kvCacheStore.hasPrefixCache(modelName: modelName, hash: prefixHash) else { return }
-
-                let taskKey = "\(modelName):\(prefixHash)"
-                guard prefixCacheTasks[taskKey] == nil else { return }
-
-                let prefixTask = Task {
-                    await buildPrefixCache(
-                        holder: holder,
-                        systemContent: systemContent,
-                        tools: tools,
-                        toolChoice: toolChoice,
-                        modelName: modelName,
-                        hash: prefixHash,
-                        runtimeConfig: runtimeConfig
-                    )
-                    await removePrefixTask(key: taskKey)
-                }
-                prefixCacheTasks[taskKey] = prefixTask
-            } catch {
-                continuation.finish(throwing: error)
-            }
-        }
-        continuation.onTermination = { @Sendable _ in forwardTask.cancel() }
-        return wrapped
-    }
-
-    /// Forwards events from `stream` and invalidates the relevant caches when
-    /// iteration throws, so subsequent requests don't hit the same stale data.
-    private func wrapWithCacheInvalidation(
-        _ stream: AsyncThrowingStream<ModelRuntimeEvent, Error>,
-        sessionId: String?,
-        modelName: String,
-        prefixHash: String
-    ) -> AsyncThrowingStream<ModelRuntimeEvent, Error> {
-        let (wrapped, continuation) = AsyncThrowingStream<ModelRuntimeEvent, Error>.makeStream()
-        let forwardTask = Task {
-            do {
-                for try await event in stream {
-                    if Task.isCancelled { break }
-                    continuation.yield(event)
-                }
-                continuation.finish()
-            } catch {
-                invalidateCaches(sessionId: sessionId, modelName: modelName, prefixHash: prefixHash)
-                print(
-                    "[ModelRuntime] Stream failed with cache, invalidated for next attempt: \(error.localizedDescription)"
-                )
-                continuation.finish(throwing: error)
-            }
-        }
-        continuation.onTermination = { @Sendable _ in forwardTask.cancel() }
-        return wrapped
-    }
-
-    private func storeSessionCache(sessionId: String, cache: [any KVCache], promptTokens: [Int], modelName: String) {
-        // Materialize all lazy MLXArrays before storing.
-        //
-        // During generation, TokenIterator uses asyncEval() to keep the GPU pipeline full.
-        // Each in-place key/value write (`keys[..., prev..<offset, ...] = newKeys`) adds a
-        // graph node.  After generateLoopTask completes and Stream().synchronize() returns,
-        // the GPU is finished — but the MLXArray objects in the cache may still hold
-        // unevaluated computation-graph references rather than concrete GPU buffers.  On the
-        // next turn, MLX walks those graphs from scratch, triggering a full re-prefill even
-        // though offset and token counts are correct.
-        //
-        // eval() forces the arrays to concrete buffers right now, so subsequent reads are
-        // O(1) buffer accesses instead of O(n) graph replays.
-        let arraysToEval = cache.flatMap { $0.state }
-        if !arraysToEval.isEmpty {
-            try? withError { eval(arraysToEval) }
-        }
-
-        kvCacheStore.putCache(sessionId: sessionId, cache: cache, tokens: promptTokens, modelName: modelName)
-        let budget = currentKVBudget()
-        kvCacheStore.ensureBudget(budget)
-        let offset = effectiveCacheOffset(cache)
-        genLog.info(
-            "storeSessionCache: session=\(sessionId.prefix(8), privacy: .public) tokens=\(promptTokens.count, privacy: .public) offset=\(offset, privacy: .public)"
-        )
+        // No-op: CacheCoordinator handles eviction via LRU on PagedCacheManager.
     }
 
     // MARK: - Internals
 
     private func getConfig() async -> RuntimeConfig {
         if let cached = cachedConfig { return cached }
-        let totalWeights = modelCache.values.reduce(Int64(0)) { $0 + $1.weightsSizeBytes }
-        let cfg = await RuntimeConfig.snapshot(modelWeightsBytes: totalWeights)
+        let cfg = await RuntimeConfig.snapshot()
         cachedConfig = cfg
         return cfg
-    }
-
-    private func currentKVBudget() -> Int {
-        guard !modelCache.isEmpty else { return 0 }
-        let modelBytes = modelCache.values.reduce(Int64(0)) { $0 + $1.weightsSizeBytes }
-        return KVCacheStore.computeBudget(modelWeightsBytes: modelBytes)
     }
 
     /// MLX freed-buffer cache limit sized for intermediate activation reuse.
@@ -346,7 +221,14 @@ actor ModelRuntime {
             loadingTasks[name] = nil
             currentModelName = name
             Memory.cacheLimit = mlxCacheLimit()
-            genLog.info("loadContainer: loaded \(name, privacy: .public) isVLM=\(holder.isVLM, privacy: .public)")
+
+            // Enable multi-tier KV caching via vmlx-swift-lm's CacheCoordinator.
+            // Cache tier config is entirely osaurus-internal — not user-visible.
+            await installCacheCoordinator(on: holder)
+
+            genLog.info(
+                "loadContainer: loaded \(name, privacy: .public) isVLM=\(holder.isVLM, privacy: .public)"
+            )
             return holder
         } catch {
             loadingTasks[name] = nil
@@ -354,97 +236,91 @@ actor ModelRuntime {
         }
     }
 
-    private func removePrefixTask(key: String) async {
-        prefixCacheTasks.removeValue(forKey: key)
-    }
+    // MARK: - Cache coordinator plumbing
 
-    /// Builds and persists a prefix KV cache for the given system content and
-    /// tools via a minimal 1-token generation.  Called lazily on the first real
-    /// query when no persisted prefix cache is found on disk.
+    /// Builds a `CacheCoordinatorConfig` with osaurus-internal defaults.
     ///
-    /// Always called from a background prefix-cache task (never inline in the
-    /// generation path).  Awaits any active generation before starting its own
-    /// GPU work so Metal command buffers never overlap.
-    private func buildPrefixCache(
-        holder: SessionHolder,
-        systemContent: String,
-        tools: [Tool]?,
-        toolChoice: ToolChoiceOption?,
-        modelName: String,
-        hash: String,
-        runtimeConfig: RuntimeConfig
-    ) async {
-        // Wait for any in-flight generation to finish before touching the GPU.
-        // Closes the window where wrapWithPrefixCacheBuild's forwardTask creates
-        // this task *after* the next generateEventStream's stale-task cleanup ran.
-        _ = await activeGenerationTask?.value
-        guard !Task.isCancelled else { return }
-
-        // Acquire exclusive Metal access for the prefix cache build.
-        await MetalGate.shared.enterGeneration()
-        guard !Task.isCancelled else {
-            await MetalGate.shared.exitGeneration()
-            return
+    /// **KV caching is package-owned** — osaurus does not expose any cache
+    /// knobs to users. This helper exists only to:
+    /// - Point the disk cache at osaurus's paths (`OsaurusPaths.diskKVCache()`)
+    /// - Provide a sensible `modelKey` for per-model isolation
+    /// - Pick a max-blocks default based on RAM
+    /// - Fall back to memory-only when the disk cache dir is not writable
+    ///
+    /// Defaults chosen to be invisible and sensible. If the package's defaults
+    /// ever drift in a way that matters to osaurus, this is the single place
+    /// to override.
+    private nonisolated static func buildCacheCoordinatorConfig(
+        modelName: String
+    ) -> CacheCoordinatorConfig {
+        let diskCacheDir = OsaurusPaths.diskKVCache()
+        OsaurusPaths.ensureExistsSilent(diskCacheDir)
+        let diskDirUsable = isDirectoryWritable(diskCacheDir)
+        if !diskDirUsable {
+            genLog.warning(
+                "buildCacheCoordinatorConfig: disk cache dir not writable, forcing memory-only: \(diskCacheDir.path, privacy: .public)"
+            )
         }
 
-        let tokenizerTools = Self.makeTokenizerTools(tools: tools, toolChoice: toolChoice)
-        let messages: [MLXLMCommon.Chat.Message] = [
-            .init(role: .system, content: systemContent, images: [], videos: []),
-            .init(role: .user, content: "Hi", images: [], videos: []),
-        ]
-        let params = GenerationParameters(temperature: 0.0, maxTokens: 1)
-
-        do {
-            let prefixResult = try await MLXGenerationEngine.prepareAndGenerate(
-                container: holder.container,
-                buildChat: { messages },
-                buildToolsSpec: { tokenizerTools },
-                generation: params,
-                runtime: runtimeConfig,
-                existingCache: nil,
-                cachedTokens: nil,
-                wiredMemoryTicket: nil
-            )
-            let (stream, cache, newTokens, genTask) = (
-                prefixResult.stream, prefixResult.cache, prefixResult.promptTokens, prefixResult.genTask
-            )
-
-            for await _ in stream {
-                if Task.isCancelled { break }
-            }
-            if !Task.isCancelled {
-                await genTask.value
-            } else {
-                genTask.cancel()
-            }
-
-            guard !Task.isCancelled else {
-                await MetalGate.shared.exitGeneration()
-                return
-            }
-            guard cache.contains(where: { $0.offset > 0 }) else {
-                print("[ModelRuntime] Prefix cache incomplete, skipping persistence")
-                await MetalGate.shared.exitGeneration()
-                return
-            }
-
-            let prefixArrays = cache.flatMap { $0.state }
-            if !prefixArrays.isEmpty { try? withError { eval(prefixArrays) } }
-
-            kvCacheStore.putPrefixCache(cache, tokens: newTokens, modelName: modelName, hash: hash)
-            print("[ModelRuntime] Prefix cached for \(modelName) (hash: \(hash.prefix(8)))")
-        } catch {
-            print("[ModelRuntime] Failed to build prefix cache: \(error)")
+        let ramGB = ProcessInfo.processInfo.physicalMemory / (1024 * 1024 * 1024)
+        let maxBlocks: Int
+        switch ramGB {
+        case 0 ..< 16: maxBlocks = 500  // 32k tokens at 64 per block
+        case 16 ..< 48: maxBlocks = 1000  // 64k tokens
+        default: maxBlocks = 2000  // 128k tokens
         }
-        await MetalGate.shared.exitGeneration()
+
+        var cacheConfig = CacheCoordinatorConfig()
+        cacheConfig.enableDiskCache = diskDirUsable
+        cacheConfig.diskCacheDir = diskCacheDir
+        cacheConfig.diskCacheMaxGB = 4.0
+        cacheConfig.modelKey = modelName
+        cacheConfig.maxCacheBlocks = maxBlocks
+        return cacheConfig
     }
 
-    // MARK: - Driver helpers (actor-isolated)
+    /// Best-effort writability probe for the disk cache directory. Uses a
+    /// tempfile round-trip rather than `FileManager.isWritableFile(atPath:)`
+    /// so symlinks / ACLs / out-of-disk conditions are caught.
+    private nonisolated static func isDirectoryWritable(_ url: URL) -> Bool {
+        let probe = url.appendingPathComponent(".osaurus_write_probe_\(UUID().uuidString)")
+        do {
+            try Data().write(to: probe)
+            try? FileManager.default.removeItem(at: probe)
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    /// Installs the cache coordinator on a freshly-loaded holder.
+    ///
+    /// Ordering: `enableCaching` → `setHybrid`. Safe because this method is
+    /// actor-isolated — no other `generateEventStream` call can run until we
+    /// return.
+    private func installCacheCoordinator(on holder: SessionHolder) async {
+        let cacheConfig = Self.buildCacheCoordinatorConfig(modelName: holder.name)
+        holder.container.enableCaching(config: cacheConfig)
+
+        // Auto-detect hybrid models (SSM layers) and set the flag on the
+        // freshly-created coordinator.
+        let isHybrid = await holder.container.perform { ctx -> Bool in
+            let testCache = ctx.model.newCache(parameters: nil)
+            return testCache.contains { $0 is MambaCache || $0 is ArraysCache }
+        }
+        holder.container.cacheCoordinator?.setHybrid(isHybrid)
+
+        genLog.info(
+            "installCacheCoordinator: enabled for \(holder.name, privacy: .public) isHybrid=\(isHybrid, privacy: .public) disk=\(cacheConfig.enableDiskCache, privacy: .public) maxBlocks=\(cacheConfig.maxCacheBlocks, privacy: .public)"
+        )
+    }
+
+    // MARK: - Generation driver
 
     /// Builds and returns an event stream for a single generation request.
-    /// If an existing session or prefix KV cache is available it is reused;
-    /// when a stale cache causes a shape mismatch the cache is invalidated
-    /// and the request is transparently retried with a fresh prefill.
+    /// Cache management is handled by the package's CacheCoordinator — the
+    /// TokenIterator performs prefix fetch, KV restore, partial prefill,
+    /// and post-generation cache store automatically.
     private func generateEventStream(
         chatBuilder: @Sendable () -> [MLXLMCommon.Chat.Message],
         parameters: GenerationParameters,
@@ -454,25 +330,27 @@ actor ModelRuntime {
         modelId: String,
         modelName: String
     ) async throws -> AsyncThrowingStream<ModelRuntimeEvent, Error> {
-        _ = await activeGenerationTask?.value
-        if Task.isCancelled { throw CancellationError() }
+        let trace = parameters.ttftTrace
+        trace?.mark("runtime_start")
 
-        // Cancel and await any background prefix-cache tasks for this model so
-        // we never have two concurrent Metal/MLX operations on the same container.
-        let modelPrefix = "\(modelName):"
-        let stalePrefixTasks = prefixCacheTasks.filter { $0.key.hasPrefix(modelPrefix) }
-        for (key, task) in stalePrefixTasks {
-            task.cancel()
-            _ = await task.value
-            prefixCacheTasks.removeValue(forKey: key)
-        }
+        trace?.mark("await_active_gen")
+        _ = await activeGenerationTask?.value
         if Task.isCancelled { throw CancellationError() }
 
         genLog.info("generateEventStream: start model=\(modelName, privacy: .public)")
 
-        let effectiveStopSequences = stopSequences
         let cfg = await getConfig()
-        let holder = try await loadContainer(id: modelId, name: modelName)
+        trace?.mark("load_container_start")
+        InferenceProgressManager.shared.modelLoadWillStartAsync()
+        let holder: SessionHolder
+        do {
+            holder = try await loadContainer(id: modelId, name: modelName)
+        } catch {
+            InferenceProgressManager.shared.modelLoadDidFinishAsync()
+            throw error
+        }
+        InferenceProgressManager.shared.modelLoadDidFinishAsync()
+        trace?.mark("load_container_done")
 
         let wiredPolicy = MLXLMCommon.WiredSumPolicy()
         let wiredTicket = wiredPolicy.ticket(
@@ -480,29 +358,8 @@ actor ModelRuntime {
             kind: .active
         )
 
-        let sessionId = parameters.sessionId
+        let effectiveStopSequences = stopSequences
         let chatMessages = chatBuilder()
-        let systemContent = chatMessages.first(where: { $0.role == .system })?.content ?? ""
-        let toolNames = (tools ?? []).map { $0.function.name }
-        let prefixHash =
-            parameters.cacheHint
-            ?? Self.computePrefixHash(systemContent: systemContent, toolNames: toolNames)
-
-        // Look up existing KV cache for this session, or fall back to a
-        // hash-keyed prefix cache for a warm start on new conversations.
-        // nonisolated(unsafe) suppresses the Sendable check for [any KVCache] which
-        // doesn't conform to Sendable but is safe here because access is serialized
-        // through the ModelRuntime actor and ModelContainer.perform.
-        nonisolated(unsafe) let existingCacheInfo: ([any KVCache]?, [Int]?) = {
-            if let sid = sessionId {
-                let (sessionCache, tokens) = kvCacheStore.getCache(sessionId: sid, modelName: modelName)
-                if sessionCache != nil { return (sessionCache, tokens) }
-            }
-            return kvCacheStore.getPrefixCache(modelName: modelName, hash: prefixHash)
-        }()
-
-        nonisolated(unsafe) let existingCache = existingCacheInfo.0
-        let cachedTokens = existingCacheInfo.1
 
         let capturedMessages = chatMessages
         let buildChat: @Sendable () -> [MLXLMCommon.Chat.Message] = { capturedMessages }
@@ -510,95 +367,51 @@ actor ModelRuntime {
             ModelRuntime.makeTokenizerTools(tools: tools, toolChoice: toolChoice)
         }
 
-        var rawStream: AsyncStream<MLXLMCommon.TokenGeneration>
-        var tokenizer: any Tokenizer
-        var cache: [any KVCache]
-        var newTokens: [Int]
-        var genTask: Task<Void, Never>
-        var toolCallFormat: ToolCallFormat
-        // Two-phase prefill sets this to the stable-boundary snapshot instead of the full-prompt snapshot.
-        nonisolated(unsafe) var snapshotCacheOverride: ([any KVCache], [Int])? = nil
-
-        genLog.info(
-            "generateEventStream: prepareAndGenerate existingCache=\(existingCache != nil, privacy: .public) cachedTokens=\(cachedTokens?.count ?? 0, privacy: .public)"
-        )
-
         // Acquire exclusive Metal access after all throwing setup is complete.
         // This ensures the gate is never left locked by a loadContainer failure.
+        trace?.mark("metal_gate_enter")
         await MetalGate.shared.enterGeneration()
+        trace?.mark("metal_gate_acquired")
         if Task.isCancelled {
             await MetalGate.shared.exitGeneration()
             throw CancellationError()
         }
 
-        // Signal that a prefill is starting (count unknown until prepareAndGenerate returns).
-        // The UI shows a spinner; once the first generated token arrives prefillDidFinish() clears it.
+        // Signal prefill starting (count unknown until prepareAndGenerate returns).
         InferenceProgressManager.shared.prefillWillStartAsync(tokenCount: 0)
 
+        trace?.mark("prepare_and_generate_start")
+        let genResult:
+            (
+                stream: AsyncStream<MLXLMCommon.TokenGeneration>,
+                tokenizer: any Tokenizer,
+                promptTokens: [Int],
+                genTask: Task<Void, Never>,
+                toolCallFormat: ToolCallFormat
+            )
         do {
-            let genResult = try await MLXGenerationEngine.prepareAndGenerate(
+            genResult = try await MLXGenerationEngine.prepareAndGenerate(
                 container: holder.container,
                 buildChat: buildChat,
                 buildToolsSpec: buildTools,
                 generation: parameters,
                 runtime: cfg,
-                existingCache: existingCache,
-                cachedTokens: cachedTokens,
                 wiredMemoryTicket: wiredTicket
             )
-            (rawStream, tokenizer, cache, newTokens, genTask, toolCallFormat) = (
-                genResult.stream, genResult.tokenizer, genResult.cache,
-                genResult.promptTokens, genResult.genTask, genResult.toolCallFormat
-            )
-            // For two-phase prefill, override snapshot with the stable-boundary snapshot.
-            if let snapCache = genResult.snapshotCache, let snapTokens = genResult.snapshotTokens {
-                snapshotCacheOverride = (snapCache, snapTokens)
-            }
+            trace?.mark("prepare_and_generate_done")
+            trace?.set("promptTokens", genResult.promptTokens.count)
         } catch {
-            genLog.error(
-                "generateEventStream: prepareAndGenerate failed (cache retry): \(error.localizedDescription, privacy: .public)"
-            )
-            guard existingCache != nil else {
-                InferenceProgressManager.shared.prefillDidFinishAsync()
-                await MetalGate.shared.exitGeneration()
-                throw error
-            }
-            genLog.warning("Cache incompatible, retrying: \(error.localizedDescription, privacy: .public)")
-            invalidateCaches(sessionId: sessionId, modelName: modelName, prefixHash: prefixHash)
-            // Re-signal for the retry prefill (still unknown count).
-            InferenceProgressManager.shared.prefillWillStartAsync(tokenCount: 0)
-            do {
-                let retryResult = try await MLXGenerationEngine.prepareAndGenerate(
-                    container: holder.container,
-                    buildChat: buildChat,
-                    buildToolsSpec: buildTools,
-                    generation: parameters,
-                    runtime: cfg,
-                    existingCache: nil,
-                    cachedTokens: nil,
-                    wiredMemoryTicket: wiredTicket
-                )
-                (rawStream, tokenizer, cache, newTokens, genTask, toolCallFormat) = (
-                    retryResult.stream, retryResult.tokenizer, retryResult.cache,
-                    retryResult.promptTokens, retryResult.genTask, retryResult.toolCallFormat
-                )
-                if let snapCache = retryResult.snapshotCache, let snapTokens = retryResult.snapshotTokens {
-                    snapshotCacheOverride = (snapCache, snapTokens)
-                }
-            } catch {
-                InferenceProgressManager.shared.prefillDidFinishAsync()
-                await MetalGate.shared.exitGeneration()
-                throw error
-            }
+            InferenceProgressManager.shared.prefillDidFinishAsync()
+            await MetalGate.shared.exitGeneration()
+            throw error
         }
+
+        let (rawStream, tokenizer, newTokens, genTask, toolCallFormat) = genResult
+
         genLog.info("generateEventStream: stream created tokenCount=\(newTokens.count, privacy: .public)")
-        // Prefill is now complete; update the display with the actual token count while
-        // generation is warming up (the first token clears the indicator).
         InferenceProgressManager.shared.prefillWillStartAsync(tokenCount: newTokens.count)
 
-        // Wrap genTask so the MetalGate is released when generation finishes
-        // (whether by completion or cancellation).  Propagate cancellation to the
-        // inner genTask so cancelActiveGeneration() stops Metal work promptly.
+        // Wrap genTask so the MetalGate is released when generation finishes.
         let innerGenTask = genTask
         let gatedGenTask = Task<Void, Never> {
             await withTaskCancellationHandler {
@@ -609,40 +422,6 @@ actor ModelRuntime {
             await MetalGate.shared.exitGeneration()
         }
         activeGenerationTask = gatedGenTask
-
-        // Store a pre-generation snapshot of the cache immediately after prefill.
-        //
-        // Standard (single-phase) path: snapshot the full-prompt cache keyed by `newTokens`.
-        // Two-phase path: use the stable-boundary snapshot from prepareAndGenerate (keyed by
-        // stableTokens, before gen-prefix). This ensures the next turn's common-prefix check
-        // hits exactly at cacheOffset, with toTrim == 0, even for MambaCache models.
-        if let sid = sessionId {
-            let (snapCacheToStore, snapTokensToStore): ([any KVCache], [Int])
-            if let override = snapshotCacheOverride {
-                // Two-phase: store the stable-boundary snapshot already deep-copied inside engine.
-                snapCacheToStore = override.0
-                snapTokensToStore = override.1
-                genLog.info("twoPhase snapshot override: stableTokens=\(snapTokensToStore.count, privacy: .public)")
-            } else {
-                // Single-phase: snapshot full-prompt cache now.
-                snapCacheToStore = KVCacheStore.deepCopyCache(cache)
-                snapTokensToStore = newTokens
-            }
-            let arraysToEval = snapCacheToStore.flatMap { $0.state }
-            if !arraysToEval.isEmpty { try? withError { eval(arraysToEval) } }
-            kvCacheStore.putCache(
-                sessionId: sid,
-                cache: snapCacheToStore,
-                tokens: snapTokensToStore,
-                modelName: modelName
-            )
-            let budget = currentKVBudget()
-            kvCacheStore.ensureBudget(budget)
-            let snapshotOffset = effectiveCacheOffset(snapCacheToStore)
-            genLog.info(
-                "pre-gen snapshot stored session=\(sid.prefix(8), privacy: .public) tokens=\(snapTokensToStore.count, privacy: .public) offset=\(snapshotOffset, privacy: .public)"
-            )
-        }
 
         // Thread the tokenizer into StreamAccumulator so it can decode token IDs to text.
         let capturedToolsSpec = buildTools()
@@ -657,41 +436,7 @@ actor ModelRuntime {
             onGeneratedTokenIds: { _ in }
         ).asAsyncThrowingStream()
 
-        // Compose wrappers: cache-invalidation on error.
-        // The pre-generation snapshot is already stored above; no post-generation re-store
-        // is needed (and would be harmful: it would overwrite the snapshot with a cache at
-        // offset = promptTokens + generatedIds, which diverges from the next-turn prompt by
-        // exactly the number of generated tokens, requiring trim that MambaCache cannot do).
-
-        // For new conversations without a prefix cache, schedule building after
-        // generation completes.  This runs sequentially (never concurrently with
-        // the generation genTask) so Metal commands don't overlap.
-        let needsPrefixCache =
-            sessionId == nil
-            && !holder.isVLM
-            && !kvCacheStore.hasPrefixCache(modelName: modelName, hash: prefixHash)
-
-        var composedStream = eventStream
-        if needsPrefixCache {
-            composedStream = wrapWithPrefixCacheBuild(
-                composedStream,
-                holder: holder,
-                systemContent: parameters.staticPrefix ?? systemContent,
-                tools: tools,
-                toolChoice: toolChoice,
-                modelName: modelName,
-                prefixHash: prefixHash,
-                runtimeConfig: cfg
-            )
-        }
-
-        guard existingCache != nil else { return composedStream }
-        return wrapWithCacheInvalidation(
-            composedStream,
-            sessionId: sessionId,
-            modelName: modelName,
-            prefixHash: prefixHash
-        )
+        return eventStream
     }
 
     // MARK: - New message-based (OpenAI ChatMessage) APIs
@@ -792,6 +537,8 @@ actor ModelRuntime {
 
     // MARK: - Static helpers (nonisolated)
 
+    /// Computes a deterministic hash from system content and tool names.
+    /// Used by the HTTP API to expose a prefix_hash field in responses.
     nonisolated static func computePrefixHash(
         systemContent: String,
         toolNames: [String]
@@ -807,27 +554,16 @@ actor ModelRuntime {
         maxTokens: Int,
         topP: Float,
         repetitionPenalty: Float?,
-        kvBits: Int?,
-        kvGroup: Int,
-        quantStart: Int,
-        maxKV: Int?,
-        prefillStep: Int,
-        turboQuant: Bool
+        maxKV: Int?
     ) -> MLXLMCommon.GenerateParameters {
-        var p = MLXLMCommon.GenerateParameters(
+        MLXLMCommon.GenerateParameters(
             maxTokens: maxTokens,
             maxKVSize: maxKV,
-            kvBits: kvBits,
-            kvGroupSize: kvGroup,
-            quantizedKVStart: quantStart,
-            kvMode: turboQuant ? .turboQuant(keyBits: 3, valueBits: 3) : .none,
             temperature: temperature,
             topP: topP,
             repetitionPenalty: repetitionPenalty,
             repetitionContextSize: 20
         )
-        p.prefillStepSize = prefillStep
-        return p
     }
 
     nonisolated static func makeTokenizerTools(

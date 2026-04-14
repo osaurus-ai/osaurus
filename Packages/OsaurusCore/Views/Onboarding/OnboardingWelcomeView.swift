@@ -63,7 +63,8 @@ struct OnboardingWelcomeView: View {
 
                     // Body
                     Text(
-                        "Agents, memory, tools, and identity that live on your Mac.\nModels are interchangeable — everything else compounds, stays with you.", bundle: .module
+                        "Agents, memory, tools, and identity that live on your Mac.\nModels are interchangeable — everything else compounds, stays with you.",
+                        bundle: .module
                     )
                     .font(theme.font(size: 13))
                     .foregroundColor(theme.secondaryText)

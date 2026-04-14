@@ -6,26 +6,27 @@ import Testing
 struct PreflightCapabilitySearchTests {
 
     @Test func emptyQueryReturnsEmptyResult() async {
-        let result = await PreflightCapabilitySearch.search(query: "")
+        let result = await PreflightCapabilitySearch.search(query: "", agentId: UUID())
         #expect(result.toolSpecs.isEmpty)
         #expect(result.contextSnippet.isEmpty)
     }
 
     @Test func whitespaceOnlyQueryReturnsEmptyResult() async {
-        let result = await PreflightCapabilitySearch.search(query: "   \n  ")
+        let result = await PreflightCapabilitySearch.search(query: "   \n  ", agentId: UUID())
         #expect(result.toolSpecs.isEmpty)
         #expect(result.contextSnippet.isEmpty)
     }
 
     @Test func nonsenseQueryReturnsGracefully() async {
         let result = await PreflightCapabilitySearch.search(
-            query: "zzz_completely_nonexistent_capability_xyz_12345"
+            query: "zzz_completely_nonexistent_capability_xyz_12345",
+            agentId: UUID()
         )
         #expect(result.toolSpecs.isEmpty)
     }
 
     @Test func resultContainsNoDuplicateToolSpecs() async {
-        let result = await PreflightCapabilitySearch.search(query: "deploy build test")
+        let result = await PreflightCapabilitySearch.search(query: "deploy build test", agentId: UUID())
         let names = result.toolSpecs.map { $0.function.name }
         #expect(Set(names).count == names.count)
     }
@@ -36,7 +37,7 @@ struct PreflightCapabilitySearchTests {
         }
         let alwaysNames = Set(alwaysLoaded.map { $0.function.name })
 
-        let result = await PreflightCapabilitySearch.search(query: "search memory save method")
+        let result = await PreflightCapabilitySearch.search(query: "search memory save method", agentId: UUID())
         let preflightNames = result.toolSpecs.map { $0.function.name }
 
         #expect(
@@ -48,19 +49,19 @@ struct PreflightCapabilitySearchTests {
     // MARK: - PreflightSearchMode Tests
 
     @Test func offModeReturnsEmptyResult() async {
-        let result = await PreflightCapabilitySearch.search(query: "deploy build test", mode: .off)
+        let result = await PreflightCapabilitySearch.search(query: "deploy build test", mode: .off, agentId: UUID())
         #expect(result.toolSpecs.isEmpty)
         #expect(result.contextSnippet.isEmpty)
     }
 
     @Test func narrowModeReturnsNoDuplicates() async {
-        let result = await PreflightCapabilitySearch.search(query: "deploy build test", mode: .narrow)
+        let result = await PreflightCapabilitySearch.search(query: "deploy build test", mode: .narrow, agentId: UUID())
         let names = result.toolSpecs.map { $0.function.name }
         #expect(Set(names).count == names.count)
     }
 
     @Test func wideModeReturnsNoDuplicates() async {
-        let result = await PreflightCapabilitySearch.search(query: "deploy build test", mode: .wide)
+        let result = await PreflightCapabilitySearch.search(query: "deploy build test", mode: .wide, agentId: UUID())
         let names = result.toolSpecs.map { $0.function.name }
         #expect(Set(names).count == names.count)
     }
