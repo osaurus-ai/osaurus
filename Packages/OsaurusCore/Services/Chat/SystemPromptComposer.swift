@@ -105,13 +105,18 @@ public struct SystemPromptComposer: Sendable {
     ) async -> ComposedContext {
         var comp = composer
 
+        let effectiveToolsOff = toolsDisabled || AgentManager.shared.effectiveToolsDisabled(for: agentId)
+        let memoryOff = AgentManager.shared.effectiveMemoryDisabled(for: agentId)
+
         trace?.mark("memory_start")
-        await comp.appendMemory(agentId: agentId.uuidString)
+        if !memoryOff {
+            await comp.appendMemory(agentId: agentId.uuidString)
+        }
         trace?.mark("memory_done")
 
         let toolMode = AgentManager.shared.effectiveToolSelectionMode(for: agentId)
         let preflight: PreflightResult
-        if !toolsDisabled && toolMode == .auto && !query.isEmpty {
+        if !effectiveToolsOff && toolMode == .auto && !query.isEmpty {
             let mode = ChatConfigurationStore.load().preflightSearchMode ?? .balanced
             trace?.mark("preflight_search_start")
             preflight = await PreflightCapabilitySearch.search(query: query, mode: mode, agentId: agentId)
@@ -131,7 +136,7 @@ public struct SystemPromptComposer: Sendable {
         let tools = resolveTools(
             agentId: agentId,
             executionMode: executionMode,
-            toolsDisabled: toolsDisabled,
+            toolsDisabled: effectiveToolsOff,
             preflight: preflight
         )
         trace?.mark("resolve_tools_done")

@@ -313,9 +313,12 @@ final class ChatSession: ObservableObject {
         }
 
         let manifest = buildPreviewManifest(agentId: effectiveId, executionMode: executionMode)
-        let toolTokens = ToolRegistry.shared.totalEstimatedTokens(
-            for: ToolRegistry.shared.alwaysLoadedSpecs(mode: executionMode)
-        )
+        let toolTokens =
+            AgentManager.shared.effectiveToolsDisabled(for: effectiveId)
+            ? 0
+            : ToolRegistry.shared.totalEstimatedTokens(
+                for: ToolRegistry.shared.alwaysLoadedSpecs(mode: executionMode)
+            )
         return .from(
             manifest: manifest,
             toolTokens: toolTokens,
@@ -517,13 +520,19 @@ final class ChatSession: ObservableObject {
 
     private func refreshMemoryTokens() async {
         let effectiveAgentId = agentId ?? Agent.defaultId
+        guard !AgentManager.shared.effectiveMemoryDisabled(for: effectiveAgentId) else {
+            if cachedContext?.manifest.memoryTokens ?? 0 > 0 {
+                cachedContext = nil
+                objectWillChange.send()
+            }
+            return
+        }
         let context = await MemoryContextAssembler.assembleContext(
             agentId: effectiveAgentId.uuidString,
             config: MemoryConfigurationStore.load()
         )
         let newTokens = ContextBudgetManager.estimateTokens(for: context)
-        let oldTokens = cachedContext?.manifest.memoryTokens ?? 0
-        guard newTokens != oldTokens else { return }
+        guard newTokens != cachedContext?.manifest.memoryTokens ?? 0 else { return }
         cachedContext = nil
         objectWillChange.send()
     }
@@ -654,7 +663,10 @@ final class ChatSession: ObservableObject {
 
         let assistantContent = turns.last(where: { $0.role == .assistant })?.content
 
-        if context.hasContent, let sid = sessionId {
+        let agentUUID = UUID(uuidString: context.memoryAgentId) ?? Agent.defaultId
+        let memoryOff = AgentManager.shared.effectiveMemoryDisabled(for: agentUUID)
+
+        if !memoryOff, context.hasContent, let sid = sessionId {
             let convId = sid.uuidString
             let aid = context.memoryAgentId
             let chunkIdx = turns.count
@@ -709,7 +721,7 @@ final class ChatSession: ObservableObject {
             }
         }
 
-        if context.hasContent {
+        if !memoryOff, context.hasContent {
             let today = ISO8601DateFormatter.string(
                 from: Date(),
                 timeZone: .current,

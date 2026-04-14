@@ -672,6 +672,8 @@ struct AgentDetailView: View {
     @State private var workQuickActions: [AgentQuickAction]?
     @State private var editingQuickActionId: UUID?
     @State private var pluginInstructionsMap: [String: String] = [:]
+    @State private var disableTools: Bool = false
+    @State private var disableMemory: Bool = false
     @State private var toolSelectionMode: ToolSelectionMode = .auto
     @State private var manualToolNames: Set<String> = []
     @State private var manualSkillNames: Set<String> = []
@@ -1061,7 +1063,10 @@ struct AgentDetailView: View {
         tabHelperText(DetailTab.configure.helperText)
         systemPromptSection
         generationSection
-        toolSelectionSection
+        disableTogglesSection
+        if !disableTools {
+            toolSelectionSection
+        }
         quickActionsSection
         themeSection
     }
@@ -1282,6 +1287,52 @@ struct AgentDetailView: View {
         if d.contains(query) { return 40 }
         if SearchService.fuzzyMatch(query: query, in: n) { return 20 }
         return 0
+    }
+
+    private var disableTogglesSection: some View {
+        AgentDetailSection(title: "Features", icon: "switch.2") {
+            VStack(alignment: .leading, spacing: 10) {
+                featureToggleRow(
+                    title: "Disable Tools",
+                    subtitle: "No tools or pre-flight context will be sent to the model.",
+                    isOn: $disableTools
+                )
+                featureToggleRow(
+                    title: "Disable Memory",
+                    subtitle: "Memory will not be injected into prompts or recorded.",
+                    isOn: $disableMemory
+                )
+            }
+        }
+    }
+
+    private func featureToggleRow(title: LocalizedStringKey, subtitle: LocalizedStringKey, isOn: Binding<Bool>)
+        -> some View
+    {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title, bundle: .module)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(theme.primaryText)
+                Text(subtitle, bundle: .module)
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.tertiaryText)
+            }
+            Spacer()
+            Toggle("", isOn: isOn)
+                .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
+                .labelsHidden()
+                .onChange(of: isOn.wrappedValue) { debouncedSave() }
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(theme.inputBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(theme.inputBorder, lineWidth: 1)
+                )
+        )
     }
 
     private var toolSelectionSection: some View {
@@ -2795,6 +2846,8 @@ struct AgentDetailView: View {
         selectedThemeId = agent.themeId
         chatQuickActions = agent.chatQuickActions
         workQuickActions = agent.workQuickActions
+        disableTools = agent.disableTools ?? false
+        disableMemory = agent.disableMemory ?? false
         toolSelectionMode = agent.toolSelectionMode ?? .auto
         manualToolNames = Set(agent.manualToolNames ?? [])
         manualSkillNames = Set(agent.manualSkillNames ?? [])
@@ -2866,7 +2919,9 @@ struct AgentDetailView: View {
             pluginInstructions: effectivePluginInstructions,
             toolSelectionMode: toolSelectionMode,
             manualToolNames: toolSelectionMode == .manual ? Array(manualToolNames) : nil,
-            manualSkillNames: toolSelectionMode == .manual ? Array(manualSkillNames) : nil
+            manualSkillNames: toolSelectionMode == .manual ? Array(manualSkillNames) : nil,
+            disableTools: disableTools ? true : nil,
+            disableMemory: disableMemory ? true : nil
         )
 
         agentManager.update(updated)
