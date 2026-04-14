@@ -1560,7 +1560,7 @@ const char* response = host->complete(request);
 | `"foundation"`| Apple Foundation Model                   |
 | specific name | Exact model by ID (e.g., `"gpt-4o"`, `"mlx-community/Llama-3.2-3B-Instruct"`) |
 
-**Response:** Standard OpenAI-compatible chat completion JSON with `choices`, `usage`, etc. When tools were executed during the agentic loop, the response includes a `tool_calls_executed` array listing each tool call that was made.
+**Response:** Standard OpenAI-compatible chat completion JSON with `choices`, `usage`, etc. When tools were executed during the agentic loop, the response includes a `tool_calls_executed` array listing each tool call that was made. If `share_artifact` was called, the response also includes a `shared_artifacts` array with artifact metadata (`filename`, `mime_type`, `size`, `host_path`, `is_directory`, and optional `description`). Plugins should prefer reading artifacts from this field rather than relying solely on the `invoke(type: "artifact")` callback, since the response is available while the originating request context (e.g., active chat) is still valid.
 
 #### Streaming Completion
 
