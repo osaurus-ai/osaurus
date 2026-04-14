@@ -524,9 +524,18 @@ public actor WorkEngine {
         case .completed(let summary, let artifact, let status):
             activeSession?.messages = messages
             activeSession?.lastExitReason = .completed
-            // Close the issue with success
-            _ = await IssueManager.shared.closeIssueSafe(issue.id, result: summary)
             let isSuccessfulCompletion = status.isSuccessfulCompletion
+
+            switch status {
+            case .verified:
+                _ = await IssueManager.shared.closeIssueSafe(issue.id, result: summary)
+            case .partial:
+                _ = await IssueManager.shared.updateIssueStatusSafe(issue.id, to: .open)
+            case .blocked:
+                _ = await IssueManager.shared.updateIssueStatusSafe(issue.id, to: .blocked)
+            }
+
+            let finalIssue = (try? IssueStore.getIssue(id: issue.id)) ?? issue
 
             let finalArtifact = artifact
             if let artifact = artifact {
@@ -558,7 +567,11 @@ public actor WorkEngine {
                 )
             )
 
-            await delegate?.workEngine(self, didCompleteIssue: issue, success: isSuccessfulCompletion)
+            await delegate?.workEngine(
+                self,
+                didCompleteIssue: finalIssue,
+                success: isSuccessfulCompletion
+            )
             clearPersistedExecutionState(issueId: issue.id)
 
             activeSession = nil
@@ -566,7 +579,7 @@ public actor WorkEngine {
             pendingExecutionContext = nil
 
             return ExecutionResult(
-                issue: issue,
+                issue: finalIssue,
                 success: isSuccessfulCompletion,
                 message: summary,
                 artifact: finalArtifact,

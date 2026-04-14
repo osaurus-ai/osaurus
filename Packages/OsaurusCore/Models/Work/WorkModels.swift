@@ -546,6 +546,11 @@ struct WorkCompletionContract: Codable, Sendable, Equatable {
         case artifact
     }
 
+    static let formatHint =
+        """
+        Required JSON: {"status":"verified|partial|blocked","summary":"...","verification_performed":"...","remaining_risks":"...","remaining_work":"..."}. Use `none` when no risks or remaining work remain.
+        """
+
     var trimmedSummary: String {
         summary.trimmingCharacters(in: .whitespacesAndNewlines)
     }
@@ -594,17 +599,36 @@ struct WorkCompletionContract: Codable, Sendable, Equatable {
         ].joined(separator: "\n")
     }
 
+    private var normalizedVerificationEvidence: String {
+        let punctuationAndSymbols = CharacterSet.punctuationCharacters.union(.symbols)
+        return
+            trimmedVerificationPerformed
+            .lowercased()
+            .unicodeScalars
+            .map { scalar in
+                punctuationAndSymbols.contains(scalar) ? " " : String(scalar)
+            }
+            .joined()
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+    }
+
     private var hasMeaningfulVerificationEvidence: Bool {
-        let normalized = trimmedVerificationPerformed.lowercased()
+        let normalized = normalizedVerificationEvidence
         if normalized.count < 12 {
             return false
         }
 
         let placeholders: Set<String> = [
-            "n/a",
             "na",
+            "n a",
             "none",
+            "none provided",
             "no verification",
+            "no verification performed",
+            "no checks run",
+            "no tests run",
             "not verified",
             "not applicable",
             "unknown",

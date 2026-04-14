@@ -865,11 +865,6 @@ public actor WorkExecutionEngine {
         let message: String
     }
 
-    private static let completeTaskFormatHint =
-        """
-        `complete_task` requires JSON like {"status":"verified|partial|blocked","summary":"...","verification_performed":"...","remaining_risks":"...","remaining_work":"..."}. Use `none` when no risks or remaining work remain.
-        """
-
     /// Parses complete_task tool arguments
     private func parseCompleteTaskArgs(_ jsonArgs: String, taskId: String) -> Result<
         ParsedCompleteTask,
@@ -878,12 +873,19 @@ public actor WorkExecutionEngine {
         guard let data = jsonArgs.data(using: .utf8),
             let contract = try? JSONDecoder().decode(WorkCompletionContract.self, from: data)
         else {
-            return .failure(CompleteTaskRejection(message: Self.completeTaskFormatHint))
+            return .failure(
+                CompleteTaskRejection(
+                    message: "`complete_task` requires \(WorkCompletionContract.formatHint)"
+                )
+            )
         }
 
         if let validationError = contract.validationError {
             return .failure(
-                CompleteTaskRejection(message: "\(validationError) \(Self.completeTaskFormatHint)")
+                CompleteTaskRejection(
+                    message:
+                        "\(validationError) `complete_task` requires \(WorkCompletionContract.formatHint)"
+                )
             )
         }
 

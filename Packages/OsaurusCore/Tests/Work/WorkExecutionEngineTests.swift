@@ -240,6 +240,58 @@ struct WorkExecutionEngineTests {
     }
 
     @Test @MainActor
+    func executeLoop_rejectsVerifiedCompletionWithPunctuatedPlaceholderEvidence() async throws {
+        let engine = WorkExecutionEngine(
+            chatEngine: SequencedWorkChatEngine(
+                steps: [
+                    .tool(
+                        "complete_task",
+                        #"{"status":"verified","summary":"done","verification_performed":"No verification performed.","remaining_risks":"none","remaining_work":"none"}"#
+                    ),
+                    .tool(
+                        "complete_task",
+                        #"{"status":"verified","summary":"done","verification_performed":"Ran regression tests and manually validated the final result.","remaining_risks":"none","remaining_work":"none"}"#
+                    ),
+                ]
+            )
+        )
+        let issue = Issue(taskId: "task-punctuated-evidence", title: "Reject punctuated weak evidence")
+        var messages = [ChatMessage(role: "user", content: "Finish the task")]
+
+        let result = try await engine.executeLoop(
+            issue: issue,
+            messages: &messages,
+            systemPrompt: "Base",
+            model: "mock",
+            tools: [completeTaskToolSpec()],
+            maxIterations: 4,
+            onIterationStart: { _ in },
+            onDelta: { _, _ in },
+            onToolHint: { _ in },
+            onToolArgHint: { _ in },
+            onToolCall: { _, _, _ in },
+            onStatusUpdate: { _ in },
+            onArtifact: { _ in },
+            onTokensConsumed: { _, _ in }
+        )
+
+        guard case .completed(let summary, _, let status) = result else {
+            Issue.record("Expected loop completion after punctuated evidence rejection")
+            return
+        }
+
+        #expect(status == .verified)
+        #expect(summary.contains("Completion status: VERIFIED"))
+        #expect(messages.contains(where: { $0.role == "tool" && ($0.content?.contains("[REJECTED]") == true) }))
+        #expect(
+            messages.contains(where: {
+                $0.role == "tool"
+                    && ($0.content?.contains("requires concrete verification evidence") == true)
+            })
+        )
+    }
+
+    @Test @MainActor
     func executeLoop_returnsInterruptedWithAccumulatedMessages() async throws {
         let registry = ToolRegistry.shared
         registry.register(NoopTestTool())

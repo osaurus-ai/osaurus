@@ -186,6 +186,9 @@ struct WorkEngineResumeTests {
                 "Remaining work: Wire the parser into the execution path and add integration coverage."
             )
         )
+        let persistedIssueValue = try IssueStore.getIssue(id: result.issue.id)
+        let persistedIssue = try #require(persistedIssueValue)
+        #expect(persistedIssue.status == IssueStatus.open)
     }
 
     @Test
@@ -218,6 +221,9 @@ struct WorkEngineResumeTests {
                 "Remaining risks: Deployment remains unverified until credentials are provided."
             )
         )
+        let persistedIssueValue = try IssueStore.getIssue(id: result.issue.id)
+        let persistedIssue = try #require(persistedIssueValue)
+        #expect(persistedIssue.status == IssueStatus.blocked)
     }
 }
 

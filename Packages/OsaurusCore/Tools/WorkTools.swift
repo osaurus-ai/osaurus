@@ -74,7 +74,7 @@ public struct CompleteTaskTool: OsaurusTool {
                 code: 3,
                 userInfo: [
                     NSLocalizedDescriptionKey:
-                        Self.contractFormatHint
+                        "Invalid completion format. \(WorkCompletionContract.formatHint)"
                 ]
             )
         }
@@ -85,7 +85,7 @@ public struct CompleteTaskTool: OsaurusTool {
                 code: 3,
                 userInfo: [
                     NSLocalizedDescriptionKey:
-                        "\(validationError) \(Self.contractFormatHint)"
+                        "\(validationError) \(WorkCompletionContract.formatHint)"
                 ]
             )
         }
@@ -110,11 +110,6 @@ public struct CompleteTaskTool: OsaurusTool {
 
         return result
     }
-
-    private static let contractFormatHint =
-        """
-        Invalid completion format. Required JSON: {"status":"verified|partial|blocked","summary":"...","verification_performed":"...","remaining_risks":"...","remaining_work":"..."}. Use `none` when no risks or remaining work exist.
-        """
 }
 
 // MARK: - Share Artifact Tool
