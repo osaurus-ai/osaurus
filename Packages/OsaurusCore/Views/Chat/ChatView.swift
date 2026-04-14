@@ -14,7 +14,6 @@ final class ChatSession: ObservableObject {
     @Published var turns: [ChatTurn] = []
     @Published var isStreaming: Bool = false
     @Published var lastStreamError: String?
-    @Published var repairFailed: Bool = false
     @Published var pendingSecretPrompt: SecretPromptState?
     /// Tracks expand/collapse state for tool calls, thinking blocks, etc.
     /// Lives on the session so state survives NSTableView cell reuse.
@@ -1268,15 +1267,8 @@ final class ChatSession: ObservableObject {
                     }
                 }
             } catch {
-                let message = error.localizedDescription
-                assistantTurn.content = "Error: \(message)"
-                lastStreamError = message
-                if let nsError = error as NSError?,
-                   nsError.domain == "ModelRuntime",
-                   nsError.code == 2
-                {
-                    repairFailed = true
-                }
+                assistantTurn.content = "Error: \(error.localizedDescription)"
+                lastStreamError = error.localizedDescription
             }
         }
     }
@@ -1304,13 +1296,6 @@ struct ChatView: View {
     @State private var userImagePreview: NSImage?
     // Bonjour agent connection
     @State private var pendingDiscoveredAgent: DiscoveredAgent? = nil
-    // Model repair alert
-    private var repairFailedBinding: Binding<Bool> {
-        Binding(
-            get: { session.repairFailed },
-            set: { session.repairFailed = $0 }
-        )
-    }
 
     /// Convenience accessor for the window's theme
     private var theme: ThemeProtocol { windowState.theme }
@@ -1390,19 +1375,6 @@ struct ChatView: View {
                 },
                 .cancel("Cancel"),
             ]
-        )
-        .themedAlert(
-            "Model Repair Required",
-            isPresented: repairFailedBinding,
-            message:
-                "Failed to download required model files. Please check your internet connection and try again.",
-            primaryButton: .primary("Retry") {
-                // Remove the failed assistant turn and regenerate
-                if let lastTurn = session.turns.last, lastTurn.role == .assistant {
-                    session.regenerate(turnId: lastTurn.id)
-                }
-            },
-            secondaryButton: .cancel("Dismiss")
         )
         .themedAlertScope(.chat(windowState.windowId))
         .overlay(ThemedAlertHost(scope: .chat(windowState.windowId)))

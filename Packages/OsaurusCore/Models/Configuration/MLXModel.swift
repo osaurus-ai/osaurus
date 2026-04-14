@@ -49,11 +49,6 @@ struct MLXModel: Identifiable, Codable {
         self.rootDirectory = rootDirectory
     }
 
-    /// Whether this is a JANG-quantized model (identified by "JANG" in the repo ID).
-    var isJANG: Bool {
-        id.localizedCaseInsensitiveContains("jang")
-    }
-
     /// Formatted download size string (e.g., "3.9 GB")
     var formattedDownloadSize: String? {
         guard let bytes = totalSizeEstimateBytes else { return nil }

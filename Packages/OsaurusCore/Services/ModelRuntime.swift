@@ -198,22 +198,7 @@ actor ModelRuntime {
         }
 
         let probe = MLXModel(id: id, name: name, description: "", downloadURL: "")
-        if probe.isJANG {
-            InferenceProgressManager.shared.missingFilesDownloadWillStartAsync(modelName: name)
-            let repairSuccess = await ModelDownloadService.ensureComplete(for: probe, directory: localURL)
-            InferenceProgressManager.shared.missingFilesDownloadDidFinishAsync()
-
-            guard repairSuccess else {
-                throw NSError(
-                    domain: "ModelRuntime",
-                    code: 2,
-                    userInfo: [
-                        NSLocalizedDescriptionKey:
-                            "Failed to download required files for \(name). Please check your internet connection and try again, or use the Repair button in model details."
-                    ]
-                )
-            }
-        }
+        await ModelDownloadService.ensureComplete(for: probe, directory: localURL)
 
         let task = Task<SessionHolder, Error> {
             let tokenizerLoader = SwiftTransformersTokenizerLoader()

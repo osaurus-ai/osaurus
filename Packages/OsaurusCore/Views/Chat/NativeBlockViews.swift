@@ -125,29 +125,17 @@ final class NativeTypingIndicatorView: NSView {
 
     private func observeModelLoading() {
         let manager = InferenceProgressManager.shared
-        let sink = manager.$isLoadingModel
-            .combineLatest(manager.$isPreflighting, manager.$isDownloadingMissingFiles)
+        let sink = manager.$isLoadingModel.combineLatest(manager.$isPreflighting)
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] (loadingModel, preflighting, downloadingMissing) in
-                self?.setLoadingModelState(
-                    loadingModel: loadingModel,
-                    preflighting: preflighting,
-                    downloadingMissingFiles: downloadingMissing
-                )
+            .sink { [weak self] (loadingModel, preflighting) in
+                self?.setLoadingModelState(loadingModel: loadingModel, preflighting: preflighting)
             }
         cancellables.append(sink)
     }
 
-    private func setLoadingModelState(loadingModel: Bool, preflighting: Bool, downloadingMissingFiles: Bool = false) {
-        let showingLabel = loadingModel || preflighting || downloadingMissingFiles
-        let expectedText: String
-        if downloadingMissingFiles {
-            expectedText = "Downloading required files..."
-        } else if preflighting {
-            expectedText = "Searching capabilities..."
-        } else {
-            expectedText = "Loading Model..."
-        }
+    private func setLoadingModelState(loadingModel: Bool, preflighting: Bool) {
+        let showingLabel = loadingModel || preflighting
+        let expectedText = preflighting ? "Searching capabilities..." : "Loading Model..."
 
         guard showingLabel != isShowingLoadingLabel || (showingLabel && loadingLabel.stringValue != expectedText) else {
             return

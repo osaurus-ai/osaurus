@@ -32,13 +32,6 @@ final class InferenceProgressManager: ObservableObject, @unchecked Sendable {
     /// Wall-clock time when the current prefill started.
     @MainActor @Published var prefillStartedAt: Date? = nil
 
-    /// True while missing model files are being downloaded before model load.
-    /// The UI shows "Downloading required files..." during this phase.
-    @MainActor @Published var isDownloadingMissingFiles: Bool = false
-
-    /// The name of the model whose missing files are being downloaded.
-    @MainActor @Published var missingFilesModelName: String? = nil
-
     init() {}
 
     #if DEBUG
@@ -78,22 +71,6 @@ final class InferenceProgressManager: ObservableObject, @unchecked Sendable {
     /// Signal that model container loading has finished.
     func modelLoadDidFinishAsync() {
         Task { @MainActor in self.isLoadingModel = false }
-    }
-
-    /// Signal that missing files download has started for a model.
-    func missingFilesDownloadWillStartAsync(modelName: String) {
-        Task { @MainActor in
-            self.isDownloadingMissingFiles = true
-            self.missingFilesModelName = modelName
-        }
-    }
-
-    /// Signal that missing files download has finished.
-    func missingFilesDownloadDidFinishAsync() {
-        Task { @MainActor in
-            self.isDownloadingMissingFiles = false
-            self.missingFilesModelName = nil
-        }
     }
 
     /// Signal that preflight search has started.
