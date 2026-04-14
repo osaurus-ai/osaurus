@@ -966,7 +966,10 @@ extension SharedArtifact {
         executionMode: WorkExecutionMode,
         sandboxAgentName: String? = nil
     ) -> ProcessingResult? {
-        guard var parsed = parseMarkers(from: toolResult) else { return nil }
+        guard var parsed = parseMarkers(from: toolResult) else {
+            NSLog("[SharedArtifact] parseMarkers failed – markers not found in tool result")
+            return nil
+        }
 
         let mimeType = parsed.metadata["mime_type"] as? String ?? "application/octet-stream"
         let description = parsed.metadata["description"] as? String
@@ -1006,8 +1009,11 @@ extension SharedArtifact {
                     sandboxAgentName: sandboxAgentName
                 )
             else {
-                print(
-                    "[SharedArtifact] Could not resolve '\(path)' (mode=\(executionMode), agent=\(sandboxAgentName ?? "nil"))"
+                NSLog(
+                    "[SharedArtifact] Could not resolve '%@' (mode=%@, agent=%@)",
+                    path,
+                    String(describing: executionMode),
+                    sandboxAgentName ?? "nil"
                 )
                 return nil
             }
@@ -1015,14 +1021,19 @@ extension SharedArtifact {
             let fm = FileManager.default
             var isDir: ObjCBool = false
             guard fm.fileExists(atPath: source.path, isDirectory: &isDir) else {
-                print("[SharedArtifact] File not found: \(source.path)")
+                NSLog("[SharedArtifact] File not found: %@", source.path)
                 return nil
             }
             let isDirectory = isDir.boolValue
 
             if fm.fileExists(atPath: destPath.path) { try? fm.removeItem(at: destPath) }
             do { try fm.copyItem(at: source, to: destPath) } catch {
-                print("[SharedArtifact] Copy failed \(source.path) → \(destPath.path): \(error)")
+                NSLog(
+                    "[SharedArtifact] Copy failed %@ → %@: %@",
+                    source.path,
+                    destPath.path,
+                    error.localizedDescription
+                )
                 return nil
             }
 
@@ -1047,6 +1058,7 @@ extension SharedArtifact {
             contentLines = []
 
         } else {
+            NSLog("[SharedArtifact] No content and no path in metadata for '\(parsed.filename)'")
             return nil
         }
 
@@ -1085,6 +1097,33 @@ extension SharedArtifact {
             fileSize: fileSize > 0 ? fileSize : (textContent?.utf8.count ?? 0),
             hostPath: hostPath,
             isDirectory: isDirectory,
+            content: textContent,
+            description: description
+        )
+    }
+
+    /// Best-effort artifact construction from a raw (non-enriched) tool result.
+    /// Used as a fallback when `processToolResult` fails (e.g. file can't be copied
+    /// from sandbox), so artifact handler plugins still receive metadata.
+    static func fromToolResultFallback(
+        _ toolResult: String,
+        contextId: String,
+        contextType: ArtifactContextType
+    ) -> SharedArtifact? {
+        guard let parsed = parseMarkers(from: toolResult) else { return nil }
+
+        let mimeType = parsed.metadata["mime_type"] as? String ?? "application/octet-stream"
+        let description = parsed.metadata["description"] as? String
+        let hasContent = parsed.metadata["has_content"] as? Bool ?? false
+        let textContent = hasContent ? parsed.contentLines.joined(separator: "\n") : nil
+
+        return SharedArtifact(
+            contextId: contextId,
+            contextType: contextType,
+            filename: parsed.filename,
+            mimeType: mimeType,
+            fileSize: textContent?.utf8.count ?? 0,
+            hostPath: "",
             content: textContent,
             description: description
         )
