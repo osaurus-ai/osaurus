@@ -221,11 +221,14 @@ final class SSEResponseWriter: ResponseWriter {
 
     @inline(__always)
     private func writeSSEChunk(_ chunk: ChatCompletionChunk, context: ChannelHandlerContext) {
-        let encoder = IkigaJSONEncoder()  // Create encoder per write for thread safety
         var buffer = context.channel.allocator.buffer(capacity: 256)
         buffer.writeString("data: ")
         do {
-            try encoder.encodeAndWrite(chunk, into: &buffer)
+            // Use standard JSONEncoder for cross-machine compatibility — IkigaJSON is optimized
+            // for intra-process NIO usage but its nil-value strategy can produce output that
+            // Apple's JSONDecoder rejects when consuming the SSE stream on a remote client.
+            let jsonData = try JSONEncoder().encode(chunk)
+            buffer.writeBytes(jsonData)
             buffer.writeString("\n\n")
             context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
             context.flush()

@@ -637,7 +637,17 @@ public actor RemoteProviderService: ToolCapableService {
                                         }
                                     }
                                 } catch {
-                                    // Log parsing errors for debugging
+                                    // Check if this is a server-side error payload before discarding
+                                    if let errorResponse = try? JSONDecoder().decode(
+                                        OpenAIError.self, from: jsonData
+                                    ) {
+                                        continuation.finish(
+                                            throwing: RemoteProviderServiceError.streamingError(
+                                                errorResponse.error.message
+                                            )
+                                        )
+                                        return
+                                    }
                                     print(
                                         "[Osaurus] Warning: Failed to parse SSE chunk in streamDeltas: \(error.localizedDescription)"
                                     )
@@ -1275,7 +1285,17 @@ public actor RemoteProviderService: ToolCapableService {
                                         }
                                     }
                                 } catch {
-                                    // Log parsing errors for debugging instead of silently ignoring
+                                    // Check if this is a server-side error payload before discarding
+                                    if let errorResponse = try? JSONDecoder().decode(
+                                        OpenAIError.self, from: jsonData
+                                    ) {
+                                        continuation.finish(
+                                            throwing: RemoteProviderServiceError.streamingError(
+                                                errorResponse.error.message
+                                            )
+                                        )
+                                        return
+                                    }
                                     print(
                                         "[Osaurus] Warning: Failed to parse SSE chunk: \(error.localizedDescription)"
                                     )
