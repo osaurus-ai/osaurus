@@ -142,7 +142,9 @@ struct MemoryFilterChip: View {
                 )
         }
         .buttonStyle(PlainButtonStyle())
-        .accessibilityLabel("Filter: \(label)")
+        .accessibilityLabel(
+            Text("Filter", bundle: .module) + Text(": ") + Text(LocalizedStringKey(label), bundle: .module)
+        )
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }

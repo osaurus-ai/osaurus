@@ -1953,7 +1953,7 @@ private struct BonjourTokenSheet: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            SecureField("Server token (optional)", text: $token)
+            SecureField(L("Server token (optional)"), text: $token)
                 .textFieldStyle(.roundedBorder)
                 .font(theme.font(size: 13))
 

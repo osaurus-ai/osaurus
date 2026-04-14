@@ -73,7 +73,7 @@ enum OnboardingStyle {
 
 /// Primary action button for onboarding with depth and polish
 struct OnboardingPrimaryButton: View {
-    let title: LocalizedStringKey
+    let title: String
     let action: () -> Void
     var isEnabled: Bool = true
 
@@ -145,7 +145,7 @@ struct OnboardingPrimaryButton: View {
                     )
 
                 // Text
-                Text(title)
+                Text(LocalizedStringKey(title), bundle: .module)
                     .font(theme.font(size: 15, weight: .semibold))
                     .foregroundColor(theme.isDark ? theme.primaryText : .white)
             }
@@ -396,7 +396,7 @@ struct OnboardingShimmerButton: View {
                     )
 
                 // Text
-                Text(LocalizedStringKey(title))
+                Text(LocalizedStringKey(title), bundle: .module)
                     .font(theme.font(size: 15, weight: .semibold))
                     .foregroundColor(theme.isDark ? theme.primaryText : .white)
             }
@@ -501,7 +501,7 @@ struct OnboardingSecondaryButton: View {
                     )
 
                 // Text
-                Text(LocalizedStringKey(title))
+                Text(LocalizedStringKey(title), bundle: .module)
                     .font(theme.font(size: 15, weight: .semibold))
                     .foregroundColor(theme.primaryText)
             }
@@ -530,7 +530,7 @@ struct OnboardingTextButton: View {
 
     var body: some View {
         Button(action: action) {
-            Text(LocalizedStringKey(title))
+            Text(LocalizedStringKey(title), bundle: .module)
                 .font(theme.font(size: 13, weight: .medium))
                 .foregroundColor(isHovered ? theme.accentColor : theme.secondaryText)
                 .underline(isHovered)
@@ -598,7 +598,8 @@ struct OnboardingSecureField: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             if let label = label {
-                Text(label.uppercased())
+                Text(LocalizedStringKey(label), bundle: .module)
+                    .textCase(.uppercase)
                     .font(theme.font(size: 10, weight: .bold))
                     .foregroundColor(theme.tertiaryText)
                     .tracking(0.5)
@@ -639,12 +640,15 @@ struct OnboardingTextField: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(label.uppercased())
+            Text(LocalizedStringKey(label), bundle: .module)
+                .textCase(.uppercase)
                 .font(theme.font(size: 10, weight: .bold))
                 .foregroundColor(theme.tertiaryText)
                 .tracking(0.5)
 
-            TextField(placeholder, text: $text)
+            TextField(text: $text, prompt: Text(LocalizedStringKey(placeholder), bundle: .module)) {
+                Text(LocalizedStringKey(placeholder), bundle: .module)
+            }
                 .textFieldStyle(.plain)
                 .font(isMonospaced ? .system(size: 14, design: .monospaced) : theme.font(size: 14))
                 .foregroundColor(theme.primaryText)
@@ -687,7 +691,7 @@ struct OnboardingExpandableSection: View {
                         .font(.system(size: 13))
                         .foregroundColor(theme.secondaryText)
 
-                    Text(title)
+                    Text(LocalizedStringKey(title), bundle: .module)
                         .font(theme.font(size: 13, weight: .medium))
                         .foregroundColor(theme.secondaryText)
 
@@ -970,12 +974,12 @@ struct OnboardingOptionCard: View {
 
                     // Text content
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(title)
+                        Text(LocalizedStringKey(title), bundle: .module)
                             .font(theme.font(size: 15, weight: .semibold))
                             .foregroundColor(theme.primaryText)
                             .fixedSize(horizontal: false, vertical: true)
 
-                        Text(description)
+                        Text(LocalizedStringKey(description), bundle: .module)
                             .font(theme.font(size: 13))
                             .foregroundColor(theme.secondaryText)
                             .fixedSize(horizontal: false, vertical: true)

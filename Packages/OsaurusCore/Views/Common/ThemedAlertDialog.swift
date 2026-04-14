@@ -245,7 +245,7 @@ private struct ThemedAlertDialogContent: View {
             }
 
             // Title
-            Text(title)
+            Text(LocalizedStringKey(title), bundle: .module)
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundColor(theme.primaryText)
                 .multilineTextAlignment(.center)

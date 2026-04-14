@@ -94,7 +94,7 @@ struct GradientButton: View {
                     Image(systemName: icon)
                         .font(.system(size: 14, weight: .medium))
                 }
-                Text(title)
+                Text(LocalizedStringKey(title), bundle: .module)
                     .font(.system(size: 14, weight: .semibold))
             }
             .foregroundColor(isPrimary ? .white : buttonColor)
@@ -173,7 +173,7 @@ struct SimpleToggleButton: View {
                     .rotationEffect(.degrees(isHovering ? 8 : 0))
                     .scaleEffect(isHovering ? 1.06 : 1.0)
                     .animation(.easeInOut(duration: 0.2), value: isHovering)
-                Text(title)
+                Text(LocalizedStringKey(title), bundle: .module)
                     .font(.system(size: 14, weight: .semibold))
             }
             .foregroundColor(buttonColor)
@@ -229,7 +229,7 @@ struct CopyableURLField: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(label)
+            Text(LocalizedStringKey(label), bundle: .module)
                 .font(.system(size: 12, weight: .medium))
                 .foregroundColor(theme.secondaryText)
 
@@ -467,7 +467,7 @@ private struct TabButton: View {
 
     var body: some View {
         Button(action: action) {
-            Text(title)
+            Text(LocalizedStringKey(title), bundle: .module)
                 .font(.system(size: 14, weight: isSelected ? .semibold : .medium))
                 .foregroundColor(isSelected ? theme.primaryText : theme.secondaryText)
                 .frame(maxWidth: .infinity)

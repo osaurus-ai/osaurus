@@ -405,7 +405,7 @@ private struct ScheduleCard: View {
     }
 
     private func badgeLabel(_ text: String, color: Color) -> some View {
-        Text(text)
+        Text(LocalizedStringKey(text), bundle: .module)
             .font(.system(size: 9, weight: .bold))
             .foregroundColor(color)
             .padding(.horizontal, 6)

@@ -879,7 +879,7 @@ private extension SandboxView {
                 Image(systemName: icon)
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundColor(theme.accentColor)
-                Text(title)
+                Text(LocalizedStringKey(title), bundle: .module)
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(theme.primaryText)
             }
@@ -900,10 +900,10 @@ private extension SandboxView {
     func toggleRow(title: String, description: String, isOn: Binding<Bool>) -> some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
-                Text(title)
+                Text(LocalizedStringKey(title), bundle: .module)
                     .font(.system(size: 13, weight: .medium))
                     .foregroundColor(theme.primaryText)
-                Text(description)
+                Text(LocalizedStringKey(description), bundle: .module)
                     .font(.system(size: 11))
                     .foregroundColor(theme.tertiaryText)
             }
@@ -951,7 +951,7 @@ private extension SandboxView {
                     Image(systemName: icon)
                         .font(.system(size: 11))
                 }
-                Text(title)
+                Text(LocalizedStringKey(title), bundle: .module)
                     .font(.system(size: 12, weight: .medium))
             }
             .foregroundColor(.white)
@@ -969,7 +969,7 @@ private extension SandboxView {
                     Image(systemName: icon)
                         .font(.system(size: 11))
                 }
-                Text(title)
+                Text(LocalizedStringKey(title), bundle: .module)
                     .font(.system(size: 12, weight: .medium))
             }
             .foregroundColor(theme.errorColor)
@@ -1253,7 +1253,7 @@ private struct SandboxAgentsView: View {
 
                     HStack(spacing: 8) {
                         pill(execEnabled ? "Autonomous" : "Manual", color: execEnabled ? .green : theme.tertiaryText)
-                        if secretCount > 0 { pill("\(secretCount) secret\(secretCount == 1 ? "" : "s")") }
+                        if secretCount > 0 { pill(String(format: L("%lld secrets"), Int64(secretCount))) }
                     }
                 }
 
@@ -1398,7 +1398,7 @@ private struct SandboxAgentsView: View {
     // MARK: - Shared Components
 
     private func pill(_ text: String, color: Color = .secondary) -> some View {
-        Text(text)
+        Text(LocalizedStringKey(text), bundle: .module)
             .font(.system(size: 10, weight: .medium))
             .foregroundColor(color)
             .padding(.horizontal, 7)
@@ -1411,9 +1411,10 @@ private struct SandboxAgentsView: View {
             Image(systemName: icon)
                 .font(.system(size: 11, weight: .medium))
                 .foregroundColor(theme.accentColor)
-            Text(title.uppercased())
+            Text(LocalizedStringKey(title), bundle: .module)
                 .font(.system(size: 11, weight: .bold))
                 .foregroundColor(theme.secondaryText)
+                .textCase(.uppercase)
                 .tracking(0.5)
             if count > 0 {
                 Text("\(count)", bundle: .module)
@@ -1445,7 +1446,7 @@ private struct SandboxAgentsView: View {
     }
 
     private func inlineHint(_ text: String) -> some View {
-        Text(text)
+        Text(LocalizedStringKey(text), bundle: .module)
             .font(.system(size: 12))
             .foregroundColor(theme.tertiaryText)
             .padding(.vertical, 4)
@@ -1456,7 +1457,7 @@ private struct SandboxAgentsView: View {
             Image(systemName: icon)
                 .font(.system(size: 12, weight: .medium))
                 .foregroundColor(color.opacity(0.8))
-            Text(text)
+            Text(LocalizedStringKey(text), bundle: .module)
                 .font(.system(size: 12))
                 .foregroundColor(theme.secondaryText)
         }
@@ -1664,7 +1665,7 @@ private struct SecretEntryRow: View {
     @ViewBuilder
     private func secretValueField(text: Binding<String>, secure: Bool) -> some View {
         if secure {
-            SecureField("value", text: text)
+            SecureField(L("value"), text: text)
                 .textFieldStyle(.plain)
                 .font(.system(size: 12, design: .monospaced))
                 .foregroundColor(theme.primaryText)
@@ -1676,7 +1677,7 @@ private struct SecretEntryRow: View {
                         .overlay(RoundedRectangle(cornerRadius: 6).stroke(theme.accentColor.opacity(0.4), lineWidth: 1))
                 )
         } else {
-            monoField("value", text: text)
+            monoField(L("value"), text: text)
         }
     }
 

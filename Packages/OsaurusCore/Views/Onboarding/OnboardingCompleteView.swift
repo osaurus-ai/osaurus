@@ -133,12 +133,12 @@ private struct CompleteOptionCard: View {
 
                     // Text
                     VStack(alignment: .leading, spacing: 3) {
-                        Text(LocalizedStringKey(title))
+                        Text(LocalizedStringKey(title), bundle: .module)
                             .font(theme.font(size: 14, weight: .semibold))
                             .foregroundColor(theme.primaryText)
 
                         if !description.isEmpty {
-                            Text(LocalizedStringKey(description))
+                            Text(LocalizedStringKey(description), bundle: .module)
                                 .font(theme.font(size: 12))
                                 .foregroundColor(theme.secondaryText)
                         }

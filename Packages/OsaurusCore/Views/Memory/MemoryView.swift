@@ -194,7 +194,7 @@ struct MemoryView: View {
             HeaderIconButton("arrow.clockwise", isLoading: isRefreshing, help: "Refresh") {
                 refreshData()
             }
-            .accessibilityLabel("Refresh memory data")
+            .accessibilityLabel(Text("Refresh memory data", bundle: .module))
         }
     }
 
@@ -726,13 +726,13 @@ struct MemoryView: View {
             Text(value)
                 .font(.system(size: 15, weight: .semibold, design: .rounded))
                 .foregroundColor(theme.primaryText)
-            Text(label)
+            Text(LocalizedStringKey(label), bundle: .module)
                 .font(.system(size: 11))
                 .foregroundColor(theme.tertiaryText)
         }
         .frame(maxWidth: .infinity)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(label): \(value)")
+        .accessibilityLabel(Text(LocalizedStringKey(label), bundle: .module) + Text(": \(value)"))
     }
 
     // MARK: - Data Loading
@@ -1019,7 +1019,7 @@ private struct SectionActionButton: View {
                     Image(systemName: icon)
                         .font(.system(size: 10, weight: .semibold))
                 }
-                Text(title)
+                Text(LocalizedStringKey(title), bundle: .module)
                     .font(.system(size: 11, weight: .semibold))
             }
             .foregroundColor(isHovering ? theme.accentColor : theme.secondaryText)

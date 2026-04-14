@@ -17,10 +17,10 @@ struct ToggleRow: View {
         GlassListRow {
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(title)
+                    Text(LocalizedStringKey(title), bundle: .module)
                         .font(.system(size: 14, weight: .medium))
                         .foregroundColor(theme.primaryText)
-                    Text(subtitle)
+                    Text(LocalizedStringKey(subtitle), bundle: .module)
                         .font(.system(size: 12))
                         .foregroundColor(theme.secondaryText)
                 }

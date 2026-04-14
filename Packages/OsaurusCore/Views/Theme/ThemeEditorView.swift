@@ -639,7 +639,7 @@ struct ThemeEditorView: View {
 
     private func colorRow(_ label: String, hex: Binding<String>) -> some View {
         HStack(spacing: 8) {
-            Text(label)
+            Text(LocalizedStringKey(label), bundle: .module)
                 .font(.system(size: 13))
                 .foregroundColor(currentTheme.primaryText)
 
@@ -660,7 +660,7 @@ struct ThemeEditorView: View {
 
     private func colorRowOptional(_ label: String, hex: Binding<String?>) -> some View {
         HStack(spacing: 8) {
-            Text(label)
+            Text(LocalizedStringKey(label), bundle: .module)
                 .font(.system(size: 13))
                 .foregroundColor(currentTheme.primaryText)
 
@@ -756,7 +756,7 @@ struct ThemeEditorView: View {
     private func sliderRow(_ label: String, value: Binding<Double>, range: ClosedRange<Double>) -> some View {
         VStack(spacing: 4) {
             HStack {
-                Text(label)
+                Text(LocalizedStringKey(label), bundle: .module)
                     .font(.system(size: 13))
                     .foregroundColor(currentTheme.primaryText)
 
@@ -774,7 +774,9 @@ struct ThemeEditorView: View {
 
     private func fontPicker(_ label: String, fontName: Binding<String>, isMono: Bool) -> some View {
         HStack {
-            Text(label).font(.system(size: 13)).foregroundColor(currentTheme.primaryText)
+            Text(LocalizedStringKey(label), bundle: .module)
+                .font(.system(size: 13))
+                .foregroundColor(currentTheme.primaryText)
             Spacer()
             Picker("", selection: fontName) {
                 ForEach(isMono ? availableMonoFonts : availablePrimaryFonts, id: \.self) { font in

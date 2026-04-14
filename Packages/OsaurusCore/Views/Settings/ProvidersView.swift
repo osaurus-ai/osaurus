@@ -1034,7 +1034,7 @@ private struct HeaderRow: View {
             // Value field
             ZStack(alignment: .leading) {
                 if header.value.isEmpty {
-                    Text(header.isSecret ? "Secret value" : "Value")
+                    Text(LocalizedStringKey(header.isSecret ? "Secret value" : "Value"), bundle: .module)
                         .font(.system(size: 12, design: .monospaced))
                         .foregroundColor(themeManager.currentTheme.placeholderText)
                         .allowsHitTesting(false)
@@ -1080,7 +1080,7 @@ private struct HeaderRow: View {
                 HStack(spacing: 4) {
                     Image(systemName: header.isSecret ? "lock.fill" : "lock.open")
                         .font(.system(size: 10))
-                    Text(header.isSecret ? "Secret" : "Plain")
+                    Text(LocalizedStringKey(header.isSecret ? "Secret" : "Plain"), bundle: .module)
                         .font(.system(size: 10, weight: .medium))
                 }
                 .foregroundColor(
@@ -1132,7 +1132,8 @@ private struct EditorCard<Content: View>: View {
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundColor(themeManager.currentTheme.accentColor)
 
-                Text(title.uppercased())
+                Text(LocalizedStringKey(title), bundle: .module)
+                    .textCase(.uppercase)
                     .font(.system(size: 11, weight: .bold))
                     .foregroundColor(themeManager.currentTheme.secondaryText)
                     .tracking(0.5)
@@ -1164,13 +1165,13 @@ private struct MCPStyledTextField: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(label)
+            Text(LocalizedStringKey(label), bundle: .module)
                 .font(.system(size: 12, weight: .medium))
                 .foregroundColor(themeManager.currentTheme.primaryText)
 
             ZStack(alignment: .leading) {
                 if text.isEmpty {
-                    Text(placeholder)
+                    Text(LocalizedStringKey(placeholder), bundle: .module)
                         .font(.system(size: 13, design: isMonospaced ? .monospaced : .default))
                         .foregroundColor(themeManager.currentTheme.placeholderText)
                         .allowsHitTesting(false)
@@ -1220,7 +1221,7 @@ private struct MCPStyledSecureField: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text(label)
+                Text(LocalizedStringKey(label), bundle: .module)
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(themeManager.currentTheme.primaryText)
 
@@ -1231,7 +1232,7 @@ private struct MCPStyledSecureField: View {
 
             ZStack(alignment: .leading) {
                 if text.isEmpty {
-                    Text(placeholder)
+                    Text(LocalizedStringKey(placeholder), bundle: .module)
                         .font(.system(size: 13, design: .monospaced))
                         .foregroundColor(themeManager.currentTheme.placeholderText)
                         .allowsHitTesting(false)
@@ -1271,10 +1272,10 @@ private struct MCPToggleRow: View {
     var body: some View {
         HStack {
             VStack(alignment: .leading, spacing: 3) {
-                Text(title)
+                Text(LocalizedStringKey(title), bundle: .module)
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(themeManager.currentTheme.primaryText)
-                Text(description)
+                Text(LocalizedStringKey(description), bundle: .module)
                     .font(.system(size: 11))
                     .foregroundStyle(themeManager.currentTheme.tertiaryText)
             }

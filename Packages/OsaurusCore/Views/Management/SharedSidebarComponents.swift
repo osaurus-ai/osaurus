@@ -365,7 +365,7 @@ struct SidebarRowActionButton: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help(help)
+        .help(Text(LocalizedStringKey(help), bundle: .module))
         .onHover { isHovered = $0 }
         .animation(.easeOut(duration: 0.15), value: isHovered)
     }

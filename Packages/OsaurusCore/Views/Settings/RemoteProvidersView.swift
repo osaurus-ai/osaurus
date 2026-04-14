@@ -445,7 +445,7 @@ private struct ProviderCardView: View {
     }
 
     private func badge(text: String, color: Color) -> some View {
-        Text(text)
+        Text(LocalizedStringKey(text), bundle: .module)
             .font(.system(size: 11, weight: .medium))
             .foregroundColor(color)
             .padding(.horizontal, 8)

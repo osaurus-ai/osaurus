@@ -24,7 +24,7 @@ struct InfoRow: View {
 
     var body: some View {
         HStack {
-            Text(label)
+            Text(LocalizedStringKey(label), bundle: .module)
                 .font(.system(size: 13, weight: .medium))
                 .foregroundColor(theme.secondaryText)
 

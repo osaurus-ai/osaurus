@@ -29,11 +29,11 @@ struct SectionHeader<Trailing: View>: View {
     var body: some View {
         HStack {
             VStack(alignment: .leading, spacing: 4) {
-                Text(title)
+                Text(LocalizedStringKey(title), bundle: .module)
                     .font(.system(size: 20, weight: .semibold, design: .rounded))
                     .foregroundColor(theme.primaryText)
 
-                Text(description)
+                Text(LocalizedStringKey(description), bundle: .module)
                     .font(.system(size: 13))
                     .foregroundColor(theme.secondaryText)
             }

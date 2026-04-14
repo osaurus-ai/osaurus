@@ -35,7 +35,7 @@ struct HeaderActionButton: View {
                 isHovered = hovering
             }
         }
-        .help(help)
+        .help(Text(LocalizedStringKey(help), bundle: .module))
     }
 }
 
@@ -63,9 +63,14 @@ struct ModeToggleButton: View {
         .opacity(isDisabled ? 0.4 : 1.0)
         .disabled(isDisabled)
         .help(
-            isDisabled
-                ? "Set up a model to use Work mode"
-                : (currentMode == .chat ? "Switch to Work mode" : "Switch to Chat mode")
+            Text(
+                LocalizedStringKey(
+                    isDisabled
+                        ? "Set up a model to use Work mode"
+                        : (currentMode == .chat ? "Switch to Work mode" : "Switch to Chat mode")
+                ),
+                bundle: .module
+            )
         )
     }
 
@@ -73,7 +78,8 @@ struct ModeToggleButton: View {
     private func segment(icon: String, label: String, mode: Mode, isSelected: Bool) -> some View {
         HStack(spacing: 5) {
             Image(systemName: icon).font(.system(size: 10, weight: .semibold))
-            Text(label).font(.system(size: 11, weight: .semibold))
+            Text(LocalizedStringKey(label), bundle: .module)
+                .font(.system(size: 11, weight: .semibold))
         }
         .fixedSize()
         .foregroundColor(isSelected ? theme.primaryText : theme.tertiaryText)

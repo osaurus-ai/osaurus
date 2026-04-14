@@ -1714,7 +1714,7 @@ private struct CompactHeaderRow: View {
 
             Group {
                 if header.isSecret {
-                    SecureField("Value", text: $header.value)
+                    SecureField(L("Value"), text: $header.value)
                 } else {
                     TextField(text: $header.value, prompt: Text("Value", bundle: .module)) {
                         Text("Value", bundle: .module)
@@ -1745,7 +1745,7 @@ private struct CompactHeaderRow: View {
                     .background(Circle().fill(themeManager.currentTheme.tertiaryBackground))
             }
             .buttonStyle(PlainButtonStyle())
-            .help(header.isSecret ? "This value is stored securely" : "Click to make this a secret value")
+            .help(Text(header.isSecret ? L("This value is stored securely") : L("Click to make this a secret value")))
 
             Button(action: onDelete) {
                 Image(systemName: "xmark")
@@ -1773,7 +1773,8 @@ private struct ProviderTextField: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(label.uppercased())
+            Text(LocalizedStringKey(label), bundle: .module)
+                .textCase(.uppercase)
                 .font(.system(size: 10, weight: .bold))
                 .foregroundColor(themeManager.currentTheme.tertiaryText)
                 .tracking(0.5)
@@ -1781,7 +1782,7 @@ private struct ProviderTextField: View {
             HStack(spacing: 10) {
                 ZStack(alignment: .leading) {
                     if text.isEmpty {
-                        Text(placeholder)
+                        Text(LocalizedStringKey(placeholder), bundle: .module)
                             .font(.system(size: 13, design: isMonospaced ? .monospaced : .default))
                             .foregroundColor(themeManager.currentTheme.placeholderText)
                             .allowsHitTesting(false)
@@ -1832,7 +1833,7 @@ private struct ProviderSecureField: View {
         HStack(spacing: 10) {
             ZStack(alignment: .leading) {
                 if text.isEmpty {
-                    Text(placeholder)
+                    Text(LocalizedStringKey(placeholder), bundle: .module)
                         .font(.system(size: 13, design: .monospaced))
                         .foregroundColor(themeManager.currentTheme.placeholderText)
                         .allowsHitTesting(false)

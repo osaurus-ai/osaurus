@@ -31,11 +31,11 @@ struct EmptyStateView: View {
                 .foregroundColor(theme.tertiaryText)
 
             VStack(spacing: 8) {
-                Text(title)
+                Text(LocalizedStringKey(title), bundle: .module)
                     .font(.system(size: 16, weight: .medium))
                     .foregroundColor(theme.primaryText)
 
-                Text(description)
+                Text(LocalizedStringKey(description), bundle: .module)
                     .font(.system(size: 14))
                     .foregroundColor(theme.secondaryText)
                     .multilineTextAlignment(.center)

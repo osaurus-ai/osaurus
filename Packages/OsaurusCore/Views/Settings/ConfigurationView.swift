@@ -1316,7 +1316,8 @@ private struct SettingsSection<Content: View>: View {
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundColor(themeManager.currentTheme.accentColor)
 
-                Text(title.uppercased())
+                Text(LocalizedStringKey(title), bundle: .module)
+                    .textCase(.uppercase)
                     .font(.system(size: 11, weight: .bold))
                     .foregroundColor(themeManager.currentTheme.secondaryText)
                     .tracking(0.5)
@@ -1345,14 +1346,14 @@ private struct SettingsField<Content: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(label)
+            Text(LocalizedStringKey(label), bundle: .module)
                 .font(.system(size: 11, weight: .medium))
                 .foregroundColor(themeManager.currentTheme.secondaryText)
 
             content()
 
             if let hint = hint {
-                Text(hint)
+                Text(LocalizedStringKey(hint), bundle: .module)
                     .font(.system(size: 11))
                     .foregroundColor(themeManager.currentTheme.tertiaryText)
             }
@@ -1375,7 +1376,8 @@ private struct SettingsSubsection<Content: View>: View {
                     .frame(width: 3, height: 14)
                     .clipShape(RoundedRectangle(cornerRadius: 1.5))
 
-                Text(label.uppercased())
+                Text(LocalizedStringKey(label), bundle: .module)
+                    .textCase(.uppercase)
                     .font(.system(size: 10, weight: .bold))
                     .foregroundColor(themeManager.currentTheme.tertiaryText)
                     .tracking(0.5)
@@ -1399,14 +1401,14 @@ private struct StyledSettingsTextArea: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(label)
+            Text(LocalizedStringKey(label), bundle: .module)
                 .font(.system(size: 11, weight: .medium))
                 .foregroundColor(themeManager.currentTheme.secondaryText)
 
             ZStack(alignment: .topLeading) {
                 // Themed placeholder overlay
                 if text.isEmpty {
-                    Text(placeholder)
+                    Text(LocalizedStringKey(placeholder), bundle: .module)
                         .font(.system(size: 13, design: .monospaced))
                         .foregroundColor(themeManager.currentTheme.placeholderText)
                         .padding(.top, 12)
@@ -1430,7 +1432,7 @@ private struct StyledSettingsTextArea: View {
                     )
             )
 
-            Text(hint)
+            Text(LocalizedStringKey(hint), bundle: .module)
                 .font(.system(size: 11))
                 .foregroundColor(themeManager.currentTheme.tertiaryText)
         }
@@ -1452,13 +1454,13 @@ private struct StyledSettingsTextField: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text(label)
+                Text(LocalizedStringKey(label), bundle: .module)
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(themeManager.currentTheme.secondaryText)
 
                 Spacer()
 
-                Text(help)
+                Text(LocalizedStringKey(help), bundle: .module)
                     .font(.system(size: 10))
                     .foregroundColor(themeManager.currentTheme.tertiaryText)
                     .lineLimit(1)
@@ -1468,7 +1470,7 @@ private struct StyledSettingsTextField: View {
                 ZStack(alignment: .leading) {
                     // Themed placeholder overlay
                     if text.isEmpty && !placeholder.isEmpty {
-                        Text(placeholder)
+                        Text(LocalizedStringKey(placeholder), bundle: .module)
                             .font(.system(size: 13, design: .monospaced))
                             .foregroundColor(themeManager.currentTheme.placeholderText)
                             .allowsHitTesting(false)
@@ -1537,13 +1539,13 @@ private struct SettingsSliderField: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text(label)
+                Text(LocalizedStringKey(label), bundle: .module)
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(themeManager.currentTheme.secondaryText)
 
                 Spacer()
 
-                Text(help)
+                Text(LocalizedStringKey(help), bundle: .module)
                     .font(.system(size: 10))
                     .foregroundColor(themeManager.currentTheme.tertiaryText)
                     .lineLimit(1)
@@ -1638,13 +1640,13 @@ private struct SettingsStepperField: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text(label)
+                Text(LocalizedStringKey(label), bundle: .module)
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(themeManager.currentTheme.secondaryText)
 
                 Spacer()
 
-                Text(help)
+                Text(LocalizedStringKey(help), bundle: .module)
                     .font(.system(size: 10))
                     .foregroundColor(themeManager.currentTheme.tertiaryText)
                     .lineLimit(1)
@@ -1751,16 +1753,16 @@ private struct SettingsToggle: View {
         HStack {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
-                    Text(title)
+                    Text(LocalizedStringKey(title), bundle: .module)
                         .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(themeManager.currentTheme.primaryText)
                     if let badge {
-                        Text(badge)
+                        Text(LocalizedStringKey(badge), bundle: .module)
                             .font(.system(size: 11, weight: .medium))
                             .foregroundStyle(themeManager.currentTheme.accentColor)
                     }
                 }
-                Text(description)
+                Text(LocalizedStringKey(description), bundle: .module)
                     .font(.system(size: 11))
                     .foregroundStyle(themeManager.currentTheme.tertiaryText)
             }
@@ -2081,7 +2083,7 @@ private struct AgentToolPermissionRow: View {
                 Text(displayName)
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(themeManager.currentTheme.primaryText)
-                Text(description)
+                Text(LocalizedStringKey(description), bundle: .module)
                     .font(.system(size: 10))
                     .foregroundColor(themeManager.currentTheme.tertiaryText)
             }

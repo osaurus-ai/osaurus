@@ -185,7 +185,7 @@ struct ToolsManagerView: View {
                 .font(.system(size: 40, weight: .light))
                 .foregroundColor(theme.tertiaryText)
 
-            Text(title)
+            Text(LocalizedStringKey(title), bundle: .module)
                 .font(.system(size: 15, weight: .medium))
                 .foregroundColor(theme.secondaryText)
 

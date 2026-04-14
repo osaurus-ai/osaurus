@@ -316,7 +316,7 @@ struct SlashCommandEditorSheet: View {
                         Text("Description", bundle: .module)
                             .font(.system(size: 11, weight: .medium))
                             .foregroundColor(theme.secondaryText)
-                        TextField("Short description shown in the popup", text: $description)
+                        TextField(L("Short description shown in the popup"), text: $description)
                             .textFieldStyle(.plain)
                             .font(.system(size: 13))
                             .foregroundColor(theme.primaryText)

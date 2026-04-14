@@ -49,11 +49,11 @@ struct SettingsEmptyState: View {
                 .animation(.spring(response: 0.5, dampingFraction: 0.7).delay(0.1), value: hasAppeared)
 
             VStack(spacing: 8) {
-                Text(title)
+                Text(LocalizedStringKey(title), bundle: .module)
                     .font(.system(size: 22, weight: .bold, design: .rounded))
                     .foregroundColor(theme.primaryText)
 
-                Text(subtitle)
+                Text(LocalizedStringKey(subtitle), bundle: .module)
                     .font(.system(size: 14))
                     .foregroundColor(theme.secondaryText)
                     .multilineTextAlignment(.center)

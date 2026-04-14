@@ -34,7 +34,7 @@ struct ManagerHeader: View {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 10) {
-                        Text(title)
+                        Text(LocalizedStringKey(title), bundle: .module)
                             .font(.system(size: 28, weight: .bold, design: .rounded))
                             .foregroundColor(theme.primaryText)
 
@@ -52,7 +52,7 @@ struct ManagerHeader: View {
                     }
 
                     if let subtitle = subtitle, !subtitle.isEmpty {
-                        Text(subtitle)
+                        Text(LocalizedStringKey(subtitle), bundle: .module)
                             .font(.system(size: 14))
                             .foregroundColor(theme.secondaryText)
                     }
@@ -96,7 +96,7 @@ struct ManagerHeaderWithActions<Actions: View>: View {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 10) {
-                        Text(title)
+                        Text(LocalizedStringKey(title), bundle: .module)
                             .font(.system(size: 28, weight: .bold, design: .rounded))
                             .foregroundColor(theme.primaryText)
 
@@ -114,7 +114,7 @@ struct ManagerHeaderWithActions<Actions: View>: View {
                     }
 
                     if let subtitle = subtitle, !subtitle.isEmpty {
-                        Text(subtitle)
+                        Text(LocalizedStringKey(subtitle), bundle: .module)
                             .font(.system(size: 14))
                             .foregroundColor(theme.secondaryText)
                     }
@@ -165,7 +165,7 @@ struct ManagerHeaderWithTabs<Actions: View, TabsRow: View>: View {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 10) {
-                        Text(title)
+                        Text(LocalizedStringKey(title), bundle: .module)
                             .font(.system(size: 28, weight: .bold, design: .rounded))
                             .foregroundColor(theme.primaryText)
 
@@ -183,7 +183,7 @@ struct ManagerHeaderWithTabs<Actions: View, TabsRow: View>: View {
                     }
 
                     if let subtitle = subtitle, !subtitle.isEmpty {
-                        Text(subtitle)
+                        Text(LocalizedStringKey(subtitle), bundle: .module)
                             .font(.system(size: 14))
                             .foregroundColor(theme.secondaryText)
                     }
@@ -230,7 +230,7 @@ struct HeaderPrimaryButton: View {
                     Image(systemName: icon)
                         .font(.system(size: 12, weight: .semibold))
                 }
-                Text(title)
+                Text(LocalizedStringKey(title), bundle: .module)
                     .font(.system(size: 13, weight: .semibold))
             }
             .foregroundColor(.white)
@@ -276,7 +276,7 @@ struct HeaderSecondaryButton: View {
                     Image(systemName: icon)
                         .font(.system(size: 12, weight: .medium))
                 }
-                Text(title)
+                Text(LocalizedStringKey(title), bundle: .module)
                     .font(.system(size: 13, weight: .medium))
             }
             .foregroundColor(theme.primaryText)
@@ -343,7 +343,7 @@ struct HeaderIconButton: View {
         }
         .buttonStyle(PlainButtonStyle())
         .disabled(isLoading)
-        .help(help ?? "")
+        .help(help.map { Text(LocalizedStringKey($0), bundle: .module) } ?? Text(""))
         .onHover { hovering in
             withAnimation(.easeOut(duration: 0.15)) {
                 isHovering = hovering

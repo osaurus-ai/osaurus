@@ -694,7 +694,7 @@ struct NotchView: View {
 
     private func notchActionButton(_ title: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Text(title)
+            Text(LocalizedStringKey(title), bundle: .module)
                 .font(.system(size: 11, weight: .medium))
                 .foregroundColor(accentColor)
                 .padding(.horizontal, 10)

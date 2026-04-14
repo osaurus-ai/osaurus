@@ -1538,7 +1538,7 @@ struct AgentDetailView: View {
     private func pluginTabContent(for pid: String) -> some View {
         if let loaded = PluginManager.shared.loadedPlugin(for: pid) {
             let pluginName = loaded.plugin.manifest.name ?? pid
-            tabHelperText("Configure \(pluginName) settings for this agent.")
+            tabHelperText(String(format: L("Configure %@ settings for this agent."), pluginName))
 
             if loaded.plugin.manifest.instructions != nil || pluginInstructionsMap[pid] != nil {
                 pluginInstructionsCard(for: loaded)
