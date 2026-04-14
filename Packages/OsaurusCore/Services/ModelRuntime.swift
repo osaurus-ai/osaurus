@@ -197,6 +197,9 @@ actor ModelRuntime {
             )
         }
 
+        let probe = MLXModel(id: id, name: name, description: "", downloadURL: "")
+        await ModelDownloadService.ensureComplete(for: probe, directory: localURL)
+
         let task = Task<SessionHolder, Error> {
             let tokenizerLoader = SwiftTransformersTokenizerLoader()
             let container = try await loadModelContainer(
