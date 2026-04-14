@@ -235,6 +235,19 @@ lefthook install
 
 This installs a `pre-push` hook that runs `swift-format` over the `Packages/` directory before each push.
 
+For PR-ready branches, run the practical validation lane before pushing updates:
+
+```bash
+scripts/validate_pr_branch.sh \
+  --test-filter 'AttachedDocumentToolsTests|ChatViewSandboxTests' \
+  --launch-check
+```
+
+The helper expects a clean working tree and will fail if the branch already has
+uncommitted changes or if the build/test steps leave tracked drift behind.
+
+Use the workspace build path, not `xcodebuild -project`, so package resolution stays aligned with `osaurus.xcworkspace/xcshareddata/swiftpm/Package.resolved`.
+
 ## Project Structure
 
 ```
