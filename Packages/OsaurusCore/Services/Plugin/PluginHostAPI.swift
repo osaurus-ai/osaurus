@@ -643,7 +643,7 @@ final class PluginHostContext: @unchecked Sendable {
             return (mode, tools)
         }
 
-        let preflight = await PreflightCapabilitySearch.search(query: query, mode: preflightMode)
+        let preflight = await PreflightCapabilitySearch.search(query: query, mode: preflightMode, agentId: agentId)
 
         if let sid = inference.request.session_id {
             preflightCacheLock.withLock { preflightCache[sid] = preflight }

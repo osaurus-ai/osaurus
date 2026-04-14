@@ -114,7 +114,7 @@ public struct SystemPromptComposer: Sendable {
         if !toolsDisabled && toolMode == .auto && !query.isEmpty {
             let mode = ChatConfigurationStore.load().preflightSearchMode ?? .balanced
             trace?.mark("preflight_search_start")
-            preflight = await PreflightCapabilitySearch.search(query: query, mode: mode)
+            preflight = await PreflightCapabilitySearch.search(query: query, mode: mode, agentId: agentId)
             trace?.mark("preflight_search_done")
         } else {
             preflight = .empty
