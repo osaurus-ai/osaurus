@@ -84,7 +84,7 @@
             return _status
         }
 
-        private var staleContainerDir: URL {
+        var staleContainerDir: URL {
             OsaurusPaths.container().appendingPathComponent("containers/\(Self.containerID)")
         }
 
@@ -766,9 +766,9 @@
             }
         }
 
-        // MARK: - Private Helpers
+        // MARK: - Helpers
 
-        private func cleanupAfterFailure() async {
+        func cleanupAfterFailure() async {
             if let container = linuxContainer { try? await container.stop() }
             if var mgr = containerManager { try? mgr.delete(Self.containerID) }
             linuxContainer = nil

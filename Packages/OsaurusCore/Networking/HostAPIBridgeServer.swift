@@ -20,6 +20,8 @@ public actor HostAPIBridgeServer {
     private var channel: Channel?
     private var boundSocketPath: String?
 
+    public var isRunning: Bool { group != nil }
+
     /// Start the bridge server on a Unix domain socket.
     /// The socket is relayed into the container via vsock by the Containerization framework.
     /// If already running, stops the existing server first to ensure a clean socket.
