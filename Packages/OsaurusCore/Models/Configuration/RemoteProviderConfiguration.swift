@@ -89,10 +89,14 @@ public struct RemoteProvider: Codable, Identifiable, Sendable, Equatable {
     /// The UUID of the agent on the remote Osaurus server. Only used when providerType == .osaurus.
     public var remoteAgentId: UUID?
 
+    /// The crypto address (e.g. "0x...") of the remote agent, used to build relay tunnel URLs.
+    /// Only used when providerType == .osaurus.
+    public var remoteAgentAddress: String?
+
     private enum CodingKeys: String, CodingKey {
         case id, name, host, providerProtocol, port, basePath
         case customHeaders, authType, providerType, enabled, autoConnect, timeout
-        case secretHeaderKeys, remoteAgentId
+        case secretHeaderKeys, remoteAgentId, remoteAgentAddress
     }
 
     public init(
@@ -109,7 +113,8 @@ public struct RemoteProvider: Codable, Identifiable, Sendable, Equatable {
         autoConnect: Bool = true,
         timeout: TimeInterval = 60,
         secretHeaderKeys: [String] = [],
-        remoteAgentId: UUID? = nil
+        remoteAgentId: UUID? = nil,
+        remoteAgentAddress: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -125,6 +130,7 @@ public struct RemoteProvider: Codable, Identifiable, Sendable, Equatable {
         self.timeout = timeout
         self.secretHeaderKeys = secretHeaderKeys
         self.remoteAgentId = remoteAgentId
+        self.remoteAgentAddress = remoteAgentAddress
     }
 
     /// Custom decoder – uses `decodeIfPresent` for backward compatibility with older config files.
@@ -146,6 +152,7 @@ public struct RemoteProvider: Codable, Identifiable, Sendable, Equatable {
         timeout = try container.decodeIfPresent(TimeInterval.self, forKey: .timeout) ?? 60
         secretHeaderKeys = try container.decodeIfPresent([String].self, forKey: .secretHeaderKeys) ?? []
         remoteAgentId = try container.decodeIfPresent(UUID.self, forKey: .remoteAgentId)
+        remoteAgentAddress = try container.decodeIfPresent(String.self, forKey: .remoteAgentAddress)
     }
 
     /// Get the effective port (uses protocol default if not specified)

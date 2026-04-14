@@ -1510,7 +1510,10 @@ struct ChatView: View {
                                     onOpenOnboarding: nil,
                                     discoveredAgents: windowState.discoveredAgents,
                                     onSelectDiscoveredAgent: { agent in selectDiscoveredAgent(agent) },
-                                    activeDiscoveredAgent: windowState.selectedDiscoveredAgent
+                                    activeDiscoveredAgent: windowState.selectedDiscoveredAgent,
+                                    pairedRelayAgents: windowState.pairedRelayAgents,
+                                    onSelectRelayAgent: { relay in connectToRelayAgent(relay) },
+                                    activeRelayAgent: windowState.selectedRelayAgent
                                 )
                                 .transition(.opacity.combined(with: .scale(scale: 0.98)))
                             } else {
@@ -1589,7 +1592,9 @@ struct ChatView: View {
                                     AppDelegate.shared?.showOnboardingWindow()
                                 },
                                 discoveredAgents: windowState.discoveredAgents,
-                                onSelectDiscoveredAgent: { agent in selectDiscoveredAgent(agent) }
+                                onSelectDiscoveredAgent: { agent in selectDiscoveredAgent(agent) },
+                                pairedRelayAgents: windowState.pairedRelayAgents,
+                                onSelectRelayAgent: { relay in connectToRelayAgent(relay) }
                             )
                         }
                     }
@@ -1714,8 +1719,10 @@ struct ChatView: View {
             providerId = existing.id
             var updated = existing
             updated.host = host
+            updated.providerProtocol = .http
             updated.port = agent.port
             updated.enabled = true
+            if let address = agent.address { updated.remoteAgentAddress = address }
             if !token.isEmpty {
                 updated.authType = .apiKey
                 manager.updateProvider(updated, apiKey: token)
@@ -1735,14 +1742,40 @@ struct ChatView: View {
                 providerType: .osaurus,
                 enabled: true,
                 autoConnect: true,
-                remoteAgentId: agent.id
+                remoteAgentId: agent.id,
+                remoteAgentAddress: agent.address
             )
             providerId = provider.id
             manager.addProvider(provider, apiKey: token.isEmpty ? nil : token, isEphemeral: isEphemeral)
         }
 
+        windowState.selectedRelayAgent = nil
         windowState.selectedDiscoveredAgent = agent
         windowState.selectedDiscoveredAgentProviderId = providerId
+        windowState.refreshPairedRelayAgents()
+        session.reset()
+        Task { await session.refreshPickerItems() }
+    }
+
+    private func connectToRelayAgent(_ relay: PairedRelayAgent) {
+        let relayHost = "\(relay.remoteAgentAddress).agent.osaurus.ai"
+        let manager = RemoteProviderManager.shared
+
+        guard let existing = manager.configuration.providers.first(where: { $0.id == relay.providerId }) else {
+            return
+        }
+
+        var updated = existing
+        updated.host = relayHost
+        updated.providerProtocol = .https
+        updated.port = nil
+        updated.enabled = true
+        manager.updateProvider(updated, apiKey: nil)
+        Task { try? await manager.connect(providerId: relay.providerId) }
+
+        windowState.selectedDiscoveredAgent = nil
+        windowState.selectedRelayAgent = relay
+        windowState.selectedDiscoveredAgentProviderId = relay.providerId
         session.reset()
         Task { await session.refreshPickerItems() }
     }

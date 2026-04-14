@@ -174,6 +174,9 @@ struct AgentPill: View {
     var discoveredAgents: [DiscoveredAgent] = []
     var onSelectDiscoveredAgent: ((DiscoveredAgent) -> Void)? = nil
     var activeDiscoveredAgent: DiscoveredAgent? = nil
+    var pairedRelayAgents: [PairedRelayAgent] = []
+    var onSelectRelayAgent: ((PairedRelayAgent) -> Void)? = nil
+    var activeRelayAgent: PairedRelayAgent? = nil
 
     @State private var isHovered = false
     @Environment(\.theme) private var theme
@@ -196,11 +199,16 @@ struct AgentPill: View {
     }
 
     private var displayName: String {
+        if let relay = activeRelayAgent { return relay.name }
         guard let discovered = activeDiscoveredAgent else { return activeAgent.name }
         if let host = discovered.host {
             return "\(discovered.name) (\(shortHost(host)))"
         }
         return discovered.name
+    }
+
+    private var isRemoteActive: Bool {
+        activeDiscoveredAgent != nil || activeRelayAgent != nil
     }
 
     var body: some View {
@@ -209,7 +217,7 @@ struct AgentPill: View {
                 Button(action: { onSelectAgent(agent.id) }) {
                     HStack {
                         Text(agent.name)
-                        if agent.id == activeAgentId && activeDiscoveredAgent == nil {
+                        if agent.id == activeAgentId && !isRemoteActive {
                             Spacer()
                             Image(systemName: "checkmark")
                                 .font(.system(size: 12, weight: .medium))
@@ -234,6 +242,22 @@ struct AgentPill: View {
                 }
             }
 
+            if !pairedRelayAgents.isEmpty && onSelectRelayAgent != nil {
+                Divider()
+                Section {
+                    ForEach(pairedRelayAgents) { relay in
+                        Button(action: { onSelectRelayAgent?(relay) }) {
+                            Label(
+                                relay.name,
+                                systemImage: activeRelayAgent?.id == relay.id ? "checkmark" : "antenna.radiowaves.left.and.right"
+                            )
+                        }
+                    }
+                } header: {
+                    Text("Paired", bundle: .module)
+                }
+            }
+
             Divider()
 
             Button(action: {
@@ -247,7 +271,7 @@ struct AgentPill: View {
             }
         } label: {
             HStack(spacing: 6) {
-                Image(systemName: activeDiscoveredAgent != nil ? "network" : "person.fill")
+                Image(systemName: isRemoteActive ? "network" : "person.fill")
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(isHovered ? theme.accentColor : theme.secondaryText)
 

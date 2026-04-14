@@ -17,6 +17,8 @@ struct WorkEmptyState: View {
     let onSelectAgent: (UUID) -> Void
     var discoveredAgents: [DiscoveredAgent] = []
     var onSelectDiscoveredAgent: ((DiscoveredAgent) -> Void)? = nil
+    var pairedRelayAgents: [PairedRelayAgent] = []
+    var onSelectRelayAgent: ((PairedRelayAgent) -> Void)? = nil
 
     @State private var hasAppeared = false
     @Environment(\.theme) private var theme
@@ -76,7 +78,9 @@ struct WorkEmptyState: View {
                     activeAgentId: activeAgentId,
                     onSelectAgent: onSelectAgent,
                     discoveredAgents: discoveredAgents,
-                    onSelectDiscoveredAgent: onSelectDiscoveredAgent
+                    onSelectDiscoveredAgent: onSelectDiscoveredAgent,
+                    pairedRelayAgents: pairedRelayAgents,
+                    onSelectRelayAgent: onSelectRelayAgent
                 )
                 .opacity(hasAppeared ? 1 : 0)
                 .offset(y: hasAppeared ? 0 : 12)

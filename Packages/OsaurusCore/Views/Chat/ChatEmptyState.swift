@@ -23,6 +23,9 @@ struct ChatEmptyState: View {
     var discoveredAgents: [DiscoveredAgent] = []
     var onSelectDiscoveredAgent: ((DiscoveredAgent) -> Void)? = nil
     var activeDiscoveredAgent: DiscoveredAgent? = nil
+    var pairedRelayAgents: [PairedRelayAgent] = []
+    var onSelectRelayAgent: ((PairedRelayAgent) -> Void)? = nil
+    var activeRelayAgent: PairedRelayAgent? = nil
 
     @State private var hasAppeared = false
     @Environment(\.theme) private var theme
@@ -138,7 +141,10 @@ struct ChatEmptyState: View {
             onSelectAgent: onSelectAgent,
             discoveredAgents: discoveredAgents,
             onSelectDiscoveredAgent: onSelectDiscoveredAgent,
-            activeDiscoveredAgent: activeDiscoveredAgent
+            activeDiscoveredAgent: activeDiscoveredAgent,
+            pairedRelayAgents: pairedRelayAgents,
+            onSelectRelayAgent: onSelectRelayAgent,
+            activeRelayAgent: activeRelayAgent
         )
     }
 
