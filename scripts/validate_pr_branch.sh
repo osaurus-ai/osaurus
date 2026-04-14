@@ -40,6 +40,35 @@ log_step() {
   printf '\n[%s] %s\n' "$(date '+%H:%M:%S')" "$*"
 }
 
+resolve_base_ref() {
+  local candidate
+  for candidate in upstream/main origin/main upstream/master origin/master; do
+    if git rev-parse --verify "$candidate" >/dev/null 2>&1; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+collect_swift_lint_targets() {
+  local base_ref merge_base path
+
+  if ! base_ref="$(resolve_base_ref)"; then
+    return 1
+  fi
+
+  merge_base="$(git merge-base HEAD "$base_ref")"
+  git diff --name-only --diff-filter=ACMR "$merge_base"...HEAD -- . \
+    | while IFS= read -r path; do
+      case "$path" in
+        *.swift|Package.swift)
+          printf '%s\n' "$path"
+          ;;
+      esac
+    done
+}
+
 require_clean_worktree() {
   local status
   status="$(git status --short --untracked-files=all)"
@@ -170,7 +199,22 @@ git diff --check
 
 if (( skip_lint == 0 )); then
   log_step "Running swift-format lint"
-  swift-format lint --strict --recursive Packages App
+  lint_targets=()
+  while IFS= read -r lint_target; do
+    [[ -n "$lint_target" ]] || continue
+    lint_targets+=("$lint_target")
+  done < <(collect_swift_lint_targets || true)
+
+  if ((${#lint_targets[@]} > 0)); then
+    swift-format lint --strict "${lint_targets[@]}"
+  else
+    if resolve_base_ref >/dev/null 2>&1; then
+      echo "No PR-local Swift files changed; skipping swift-format lint."
+    else
+      echo "Could not resolve a base ref for diff-aware linting; falling back to full tree."
+      swift-format lint --strict --recursive Packages App
+    fi
+  fi
 fi
 
 if (( skip_tests == 0 )); then

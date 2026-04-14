@@ -245,6 +245,9 @@ scripts/validate_pr_branch.sh \
 
 The helper expects a clean working tree and will fail if the branch already has
 uncommitted changes or if the build/test steps leave tracked drift behind.
+It lints only the Swift files touched by the PR branch relative to the default
+base branch, so unrelated formatting debt already present on `main` does not
+block a clean feature branch.
 
 Use the workspace build path, not `xcodebuild -project`, so package resolution stays aligned with `osaurus.xcworkspace/xcshareddata/swiftpm/Package.resolved`.
 
