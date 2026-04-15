@@ -139,7 +139,6 @@ struct ThemeEditorView: View {
         VStack(alignment: .leading, spacing: 16) {
             editorSection("Appearance") {
                 colorRow("Accent Color", hex: $editingTheme.colors.accentColor)
-                colorRow("Accent Light", hex: $editingTheme.colors.accentColorLight)
 
                 HStack {
                     Text("Mode", bundle: .module)
@@ -182,15 +181,8 @@ struct ThemeEditorView: View {
                 colorRow("Tertiary BG", hex: $editingTheme.colors.tertiaryBackground)
             }
 
-            editorSection("Advanced Colors", itemCount: 18) {
+            editorSection("Advanced Colors", itemCount: 11) {
                 colorRowOptional("Placeholder", hex: $editingTheme.colors.placeholderText)
-
-                Text("Sidebar", bundle: .module).font(.system(size: 11, weight: .semibold)).foregroundColor(
-                    currentTheme.tertiaryText
-                )
-                .textCase(.uppercase)
-                colorRow("Sidebar BG", hex: $editingTheme.colors.sidebarBackground)
-                colorRow("Sidebar Selected", hex: $editingTheme.colors.sidebarSelectedBackground)
 
                 Text("Status", bundle: .module).font(.system(size: 11, weight: .semibold)).foregroundColor(
                     currentTheme.tertiaryText
@@ -199,7 +191,6 @@ struct ThemeEditorView: View {
                 colorRow("Success", hex: $editingTheme.colors.successColor)
                 colorRow("Warning", hex: $editingTheme.colors.warningColor)
                 colorRow("Error", hex: $editingTheme.colors.errorColor)
-                colorRow("Info", hex: $editingTheme.colors.infoColor)
 
                 Text("Components", bundle: .module).font(.system(size: 11, weight: .semibold)).foregroundColor(
                     currentTheme.tertiaryText
@@ -207,15 +198,12 @@ struct ThemeEditorView: View {
                 .textCase(.uppercase)
                 colorRow("Card BG", hex: $editingTheme.colors.cardBackground)
                 colorRow("Card Border", hex: $editingTheme.colors.cardBorder)
-                colorRow("Button BG", hex: $editingTheme.colors.buttonBackground)
-                colorRow("Button Border", hex: $editingTheme.colors.buttonBorder)
                 colorRow("Input BG", hex: $editingTheme.colors.inputBackground)
                 colorRow("Input Border", hex: $editingTheme.colors.inputBorder)
 
                 Text("Code & Selection", bundle: .module).font(.system(size: 11, weight: .semibold)).foregroundColor(
                     currentTheme.tertiaryText
                 ).textCase(.uppercase)
-                colorRow("Glass Tint", hex: $editingTheme.colors.glassTintOverlay)
                 colorRow("Code Block BG", hex: $editingTheme.colors.codeBlockBackground)
                 colorRow("Text Selection", hex: $editingTheme.colors.selectionColor)
                 colorRow("Cursor", hex: $editingTheme.colors.cursorColor)
@@ -242,13 +230,6 @@ struct ThemeEditorView: View {
                 ).textCase(.uppercase)
                 colorRowOptional("Bubble Color", hex: $editingTheme.messages.assistantBubbleColor)
                 sliderRow("Opacity", value: $editingTheme.messages.assistantBubbleOpacity, range: 0 ... 1)
-
-                Divider().opacity(0.3)
-
-                Text("Bubble Style", bundle: .module).font(.system(size: 11, weight: .semibold)).foregroundColor(
-                    currentTheme.tertiaryText
-                ).textCase(.uppercase)
-                sliderRow("Corner Radius", value: $editingTheme.messages.bubbleCornerRadius, range: 0 ... 40)
             }
         }
     }
@@ -282,8 +263,6 @@ struct ThemeEditorView: View {
                 )
                 .textCase(.uppercase)
                 colorRow("Border Color", hex: $editingTheme.colors.primaryBorder)
-                colorRow("Secondary Border", hex: $editingTheme.colors.secondaryBorder)
-                colorRow("Focus Border", hex: $editingTheme.colors.focusBorder)
                 sliderRow("Border Width", value: $editingTheme.borders.defaultWidth, range: 0 ... 4)
                 sliderRow("Border Opacity", value: $editingTheme.borders.borderOpacity, range: 0 ... 1)
 
@@ -292,18 +271,7 @@ struct ThemeEditorView: View {
                 Text("Corner Radius", bundle: .module).font(.system(size: 11, weight: .semibold)).foregroundColor(
                     currentTheme.tertiaryText
                 ).textCase(.uppercase)
-                sliderRow("Card Radius", value: $editingTheme.borders.cardCornerRadius, range: 0 ... 30)
                 sliderRow("Input Radius", value: $editingTheme.borders.inputCornerRadius, range: 0 ... 20)
-
-                Divider().opacity(0.3)
-
-                Text("Shadows", bundle: .module).font(.system(size: 11, weight: .semibold)).foregroundColor(
-                    currentTheme.tertiaryText
-                )
-                .textCase(.uppercase)
-                sliderRow("Shadow Opacity", value: $editingTheme.shadows.shadowOpacity, range: 0 ... 1)
-                sliderRow("Card Shadow", value: $editingTheme.shadows.cardShadowRadius, range: 0 ... 30)
-                sliderRow("Hover Shadow", value: $editingTheme.shadows.cardShadowRadiusHover, range: 0 ... 40)
             }
         }
     }
@@ -346,7 +314,6 @@ struct ThemeEditorView: View {
                 }
 
                 sliderRow("Quick", value: $editingTheme.animationConfig.durationQuick, range: 0.05 ... 0.5)
-                sliderRow("Medium", value: $editingTheme.animationConfig.durationMedium, range: 0.1 ... 0.8)
                 sliderRow("Slow", value: $editingTheme.animationConfig.durationSlow, range: 0.2 ... 1.0)
                 sliderRow("Response", value: $editingTheme.animationConfig.springResponse, range: 0.1 ... 1.0)
                 sliderRow("Damping", value: $editingTheme.animationConfig.springDamping, range: 0.3 ... 1.0)
@@ -504,29 +471,6 @@ struct ThemeEditorView: View {
                     }
                 }
 
-                Divider().opacity(0.3)
-
-                Text("Overlay", bundle: .module).font(.system(size: 11, weight: .semibold)).foregroundColor(
-                    currentTheme.tertiaryText
-                )
-                .textCase(.uppercase)
-                colorRowOptional("Color", hex: $editingTheme.background.overlayColor)
-                sliderRow(
-                    "Opacity",
-                    value: Binding(
-                        get: { editingTheme.background.overlayOpacity ?? 0 },
-                        set: { editingTheme.background.overlayOpacity = $0 }
-                    ),
-                    range: 0 ... 1
-                )
-
-                Divider().opacity(0.3)
-
-                Text("Shadow Position", bundle: .module).font(.system(size: 11, weight: .semibold)).foregroundColor(
-                    currentTheme.tertiaryText
-                ).textCase(.uppercase)
-                sliderRow("Card Y Offset", value: $editingTheme.shadows.cardShadowY, range: 0 ... 20)
-                sliderRow("Hover Y Offset", value: $editingTheme.shadows.cardShadowYHover, range: 0 ... 20)
             }
         }
     }

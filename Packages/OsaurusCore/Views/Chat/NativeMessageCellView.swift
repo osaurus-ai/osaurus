@@ -819,11 +819,12 @@ final class NativeMessageCellView: NSTableCellView {
         case let .header(role, name, _):
             configureAsHeader(block: block, role: role, name: name, context: context, sameKind: sameKind)
 
-        case let .paragraph(_, text, isStreaming, _):
+        case let .paragraph(_, text, isStreaming, role):
             configureAsParagraph(
                 block: block,
                 text: text,
                 isStreaming: isStreaming,
+                role: role,
                 context: context,
                 sameKind: sameKind
             )
@@ -958,6 +959,7 @@ final class NativeMessageCellView: NSTableCellView {
         block: ContentBlock,
         text: String,
         isStreaming: Bool,
+        role: MessageRole,
         context: CellRenderingContext,
         sameKind: Bool
     ) {
@@ -986,6 +988,18 @@ final class NativeMessageCellView: NSTableCellView {
             cacheKey: block.id,
             isStreaming: isStreaming
         )
+
+        // Apply assistant bubble background when a custom color is set
+        if role == .assistant, let bubbleColor = context.theme.assistantBubbleColor {
+            self.wantsLayer = true
+            self.layer?.backgroundColor = NSColor(bubbleColor)
+                .withAlphaComponent(context.theme.assistantBubbleOpacity).cgColor
+            self.layer?.cornerRadius = 12
+        } else {
+            self.layer?.backgroundColor = nil
+            self.layer?.cornerRadius = 0
+        }
+
         // always report height: configure() can return early when text is unchanged (e.g. tool row
         // expand/collapse) and otherwise the table keeps a stale row height → clipped / squeezed text.
         let h = mv.measuredHeight(for: context.width - 32) + 8
@@ -1566,6 +1580,8 @@ final class NativeMessageCellView: NSTableCellView {
     // MARK: - Helpers
 
     private func removeAllContentViews() {
+        self.layer?.backgroundColor = nil
+        self.layer?.cornerRadius = 0
         spacerView?.removeFromSuperview(); spacerView = nil
         nativeHeaderView?.removeFromSuperview(); nativeHeaderView = nil
         nativeMarkdownView?.removeFromSuperview(); nativeMarkdownView = nil
