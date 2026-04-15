@@ -1058,8 +1058,8 @@ struct ThemeChatPreview: View {
     // MARK: - Input
 
     private var previewInput: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            // Model selector row inside card
+        VStack(spacing: 8) {
+            // Selector row — outside the card
             HStack(spacing: 8) {
                 selectorChip {
                     Circle().fill(c(theme.colors.successColor)).frame(width: 5, height: 5)
@@ -1073,60 +1073,109 @@ struct ThemeChatPreview: View {
                     .font(primaryFont(size: captionSize - 1, weight: .medium))
                     .foregroundColor(c(theme.colors.tertiaryText).opacity(0.6))
             }
-            .padding(.horizontal, 12)
-            .padding(.top, 10)
-            .padding(.bottom, 6)
 
-            // Text input placeholder
-            Text("Message or attach files...", bundle: .module)
-                .font(bodyFont)
-                .foregroundColor(c(theme.colors.placeholderText ?? theme.colors.tertiaryText))
-                .padding(.horizontal, 14)
-                .padding(.bottom, 8)
+            // Input card
+            VStack(alignment: .leading, spacing: 0) {
+                // Text input placeholder
+                Text("Message or attach files...", bundle: .module)
+                    .font(bodyFont)
+                    .foregroundColor(c(theme.colors.placeholderText ?? theme.colors.tertiaryText))
+                    .padding(.horizontal, 14)
+                    .padding(.top, 12)
+                    .padding(.bottom, 8)
 
-            // Button bar
-            HStack(spacing: 8) {
-                Image(systemName: "paperclip").font(.system(size: 12, weight: .medium))
-                    .foregroundColor(c(theme.colors.tertiaryText))
-                Text("/", bundle: .module).font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(c(theme.colors.tertiaryText))
+                // Button bar
+                HStack(spacing: 6) {
+                    previewActionButton(icon: "paperclip")
+                    previewSlashButton
 
-                Spacer()
+                    Spacer()
 
-                HStack(spacing: 3) {
-                    Text("⏎", bundle: .module).font(primaryFont(size: captionSize - 2, weight: .medium))
-                    Text("to send", bundle: .module).font(primaryFont(size: captionSize - 1))
-                }
-                .foregroundColor(c(theme.colors.tertiaryText).opacity(0.5))
+                    HStack(spacing: 3) {
+                        Text("⏎", bundle: .module).font(primaryFont(size: captionSize - 2, weight: .medium))
+                        Text("to send", bundle: .module).font(primaryFont(size: captionSize - 1))
+                    }
+                    .foregroundColor(c(theme.colors.tertiaryText).opacity(0.5))
 
-                Circle()
-                    .fill(
-                        LinearGradient(
-                            colors: [c(theme.colors.accentColor), c(theme.colors.accentColor).opacity(0.85)],
-                            startPoint: .top,
-                            endPoint: .bottom
+                    Circle()
+                        .fill(
+                            LinearGradient(
+                                colors: [c(theme.colors.accentColor), c(theme.colors.accentColor).opacity(0.85)],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
                         )
-                    )
-                    .frame(width: 26, height: 26)
-                    .overlay(
-                        Image(systemName: "arrow.up").font(.system(size: 11, weight: .bold)).foregroundColor(.white)
-                    )
+                        .frame(width: 26, height: 26)
+                        .overlay(
+                            Image(systemName: "arrow.up").font(.system(size: 11, weight: .bold)).foregroundColor(.white)
+                        )
+                }
+                .padding(.horizontal, 12)
+                .padding(.bottom, 10)
             }
-            .padding(.horizontal, 12)
-            .padding(.bottom, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .fill(c(theme.colors.primaryBackground).opacity(0.9))
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .strokeBorder(
+                        LinearGradient(
+                            colors: [
+                                .white.opacity(theme.isDark ? 0.2 : 0.3),
+                                c(theme.colors.primaryBorder).opacity(0.12),
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 0.5
+                    )
+            )
         }
-        .background(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(c(theme.colors.primaryBackground).opacity(0.9))
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+    }
+
+    private func previewActionButton(icon: String) -> some View {
+        ZStack {
+            Circle()
+                .fill(c(theme.colors.tertiaryBackground).opacity(0.8))
+            Image(systemName: icon)
+                .font(.system(size: CGFloat(theme.typography.bodySize), weight: .medium))
+                .foregroundColor(c(theme.colors.secondaryText))
+        }
+        .frame(width: 32, height: 32)
         .overlay(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
+            Circle()
                 .strokeBorder(
                     LinearGradient(
                         colors: [
-                            .white.opacity(theme.isDark ? 0.2 : 0.3),
-                            c(theme.colors.primaryBorder).opacity(0.12),
+                            .white.opacity(0.15),
+                            c(theme.colors.primaryBorder).opacity(0.1),
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    lineWidth: 0.5
+                )
+        )
+    }
+
+    private var previewSlashButton: some View {
+        ZStack {
+            Circle()
+                .fill(c(theme.colors.tertiaryBackground).opacity(0.8))
+            Text("/")
+                .font(.system(size: 16, weight: .medium, design: .monospaced))
+                .foregroundColor(c(theme.colors.secondaryText))
+        }
+        .frame(width: 32, height: 32)
+        .overlay(
+            Circle()
+                .strokeBorder(
+                    LinearGradient(
+                        colors: [
+                            .white.opacity(0.15),
+                            c(theme.colors.primaryBorder).opacity(0.1),
                         ],
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
