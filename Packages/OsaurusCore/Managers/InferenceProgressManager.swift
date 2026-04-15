@@ -86,10 +86,15 @@ final class InferenceProgressManager: ObservableObject, @unchecked Sendable {
     }
 
     /// Signal that model container loading has finished. Decrements the
-    /// refcount with a floor at 0 so double-fires (e.g. a cleanup block
-    /// that fires both in a `catch` and a later `defer`) never drive it
-    /// negative. See `ModelRuntime.generateEventStream` which now uses a
-    /// `defer` to guarantee symmetric start/finish even on cancellation.
+    /// refcount with a floor at 0 so double-fires (e.g. a buggy caller
+    /// firing in both a `catch` and a success path) can never drive it
+    /// negative and poison subsequent loads.
+    ///
+    /// Callers must guarantee that every `modelLoadWillStartAsync` is
+    /// paired with exactly one `modelLoadDidFinishAsync` on every exit
+    /// path (success, throw, cancel). See
+    /// `ModelRuntime.generateEventStream` for the canonical pattern —
+    /// a narrow do/catch scoped to just the container load.
     func modelLoadDidFinishAsync() {
         Task { @MainActor in
             self.loadInFlightCount = max(0, self.loadInFlightCount - 1)

@@ -359,17 +359,28 @@ actor ModelRuntime {
 
         let cfg = await getConfig()
         trace?.mark("load_container_start")
-        // Symmetric bookkeeping via `defer` — guarantees the "finish"
-        // decrement fires on every exit path (success, throw, cancel,
-        // early return). Previous code duplicated the decrement in a
-        // `catch` and then again after the `do`, which — combined with
-        // the now-refcounted `loadInFlightCount` in
-        // `InferenceProgressManager` — could double-decrement on races
-        // between two chat windows loading different models, leaving
-        // `isLoadingModel` wedged.
+        // Scoped start/finish around ONLY the container load. Symmetric
+        // bookkeeping via a do/catch pair — we can't use `defer` at
+        // function scope here because the function returns early (before
+        // generation runs, which happens inside `gatedGenTask`), and a
+        // function-scoped defer would keep `isLoadingModel` true through
+        // the MetalGate wait and the rest of setup. We want the flag to
+        // flip off as soon as the container is actually loaded, matching
+        // the pre-fix timing.
+        //
+        // The refcount in `InferenceProgressManager` guarantees that
+        // concurrent loads (two chat windows) don't corrupt each other,
+        // and `max(0, _ - 1)` on decrement floors the count so a
+        // double-fire from a future refactor can't drive it negative.
         InferenceProgressManager.shared.modelLoadWillStartAsync()
-        defer { InferenceProgressManager.shared.modelLoadDidFinishAsync() }
-        let holder: SessionHolder = try await loadContainer(id: modelId, name: modelName)
+        let holder: SessionHolder
+        do {
+            holder = try await loadContainer(id: modelId, name: modelName)
+        } catch {
+            InferenceProgressManager.shared.modelLoadDidFinishAsync()
+            throw error
+        }
+        InferenceProgressManager.shared.modelLoadDidFinishAsync()
         trace?.mark("load_container_done")
 
         let wiredPolicy = MLXLMCommon.WiredSumPolicy()
