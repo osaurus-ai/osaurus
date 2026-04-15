@@ -185,8 +185,23 @@ actor ModelRuntime {
             }
         }
 
+        // Re-entry fast path: another caller is already loading this model.
+        // If their task was cancelled by an evictor between our enqueue and
+        // our await (a real race when two chat windows trigger concurrent
+        // loads under `strictSingleModel`), fall through and create a new
+        // task instead of propagating the stale CancellationError to our
+        // caller — which would leave the UI stuck at "loading" with no
+        // recovery path short of quitting the app.
         if let existingTask = loadingTasks[name] {
-            return try await existingTask.value
+            do {
+                return try await existingTask.value
+            } catch is CancellationError {
+                genLog.info(
+                    "loadContainer: existing load for \(name, privacy: .public) was cancelled mid-flight; retrying with fresh task"
+                )
+                loadingTasks[name] = nil
+                // fall through to create a new task below
+            }
         }
 
         guard let localURL = Self.findLocalDirectory(forModelId: id) else {
@@ -344,15 +359,17 @@ actor ModelRuntime {
 
         let cfg = await getConfig()
         trace?.mark("load_container_start")
+        // Symmetric bookkeeping via `defer` — guarantees the "finish"
+        // decrement fires on every exit path (success, throw, cancel,
+        // early return). Previous code duplicated the decrement in a
+        // `catch` and then again after the `do`, which — combined with
+        // the now-refcounted `loadInFlightCount` in
+        // `InferenceProgressManager` — could double-decrement on races
+        // between two chat windows loading different models, leaving
+        // `isLoadingModel` wedged.
         InferenceProgressManager.shared.modelLoadWillStartAsync()
-        let holder: SessionHolder
-        do {
-            holder = try await loadContainer(id: modelId, name: modelName)
-        } catch {
-            InferenceProgressManager.shared.modelLoadDidFinishAsync()
-            throw error
-        }
-        InferenceProgressManager.shared.modelLoadDidFinishAsync()
+        defer { InferenceProgressManager.shared.modelLoadDidFinishAsync() }
+        let holder: SessionHolder = try await loadContainer(id: modelId, name: modelName)
         trace?.mark("load_container_done")
 
         let wiredPolicy = MLXLMCommon.WiredSumPolicy()

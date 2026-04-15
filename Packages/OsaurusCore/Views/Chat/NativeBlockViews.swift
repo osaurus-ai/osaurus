@@ -125,7 +125,14 @@ final class NativeTypingIndicatorView: NSView {
 
     private func observeModelLoading() {
         let manager = InferenceProgressManager.shared
-        let sink = manager.$isLoadingModel.combineLatest(manager.$isPreflighting)
+        // `isLoadingModel` is now a computed view over the `@Published`
+        // `loadInFlightCount` refcount (see InferenceProgressManager). We
+        // observe the underlying counter and derive the boolean in the
+        // sink, rather than using `$isLoadingModel` which no longer
+        // exists as a projected publisher.
+        let sink = manager.$loadInFlightCount
+            .map { $0 > 0 }
+            .combineLatest(manager.$isPreflighting)
             .receive(on: DispatchQueue.main)
             .sink { [weak self] (loadingModel, preflighting) in
                 self?.setLoadingModelState(loadingModel: loadingModel, preflighting: preflighting)
