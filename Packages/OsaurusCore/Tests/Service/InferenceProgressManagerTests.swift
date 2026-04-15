@@ -102,4 +102,71 @@ struct InferenceProgressManagerTests {
         #expect(state.prefillTokenCount == 200)
         #expect(state.prefillStartedAt != nil)
     }
+
+    // MARK: modelLoad refcount (regression — stuck-loading-forever bug)
+    //
+    // Prior to the refcount fix, `isLoadingModel` was a bare `Bool`.
+    // Two concurrent loads racing their start/finish sequences could
+    // leave the flag stuck — either stuck `true` (UI stuck at "loading")
+    // or stuck `false` while a load was still in flight. These tests
+    // lock in the refcount semantics.
+
+    @Test func modelLoad_singleCycle_incrementsThenDecrements() async {
+        let state = InferenceProgressManager._testMake()
+        #expect(state.loadInFlightCount == 0)
+        #expect(state.isLoadingModel == false)
+
+        state.modelLoadWillStartAsync()
+        try? await Task.sleep(nanoseconds: 10_000_000)
+        #expect(state.loadInFlightCount == 1)
+        #expect(state.isLoadingModel == true)
+
+        state.modelLoadDidFinishAsync()
+        try? await Task.sleep(nanoseconds: 10_000_000)
+        #expect(state.loadInFlightCount == 0)
+        #expect(state.isLoadingModel == false)
+    }
+
+    @Test func modelLoad_concurrentLoads_requireMatchingFinishes() async {
+        let state = InferenceProgressManager._testMake()
+
+        // Window A and Window B both start loads.
+        state.modelLoadWillStartAsync()
+        state.modelLoadWillStartAsync()
+        try? await Task.sleep(nanoseconds: 10_000_000)
+        #expect(state.loadInFlightCount == 2)
+        #expect(state.isLoadingModel == true)
+
+        // Window A finishes — UI should still show loading because B is mid-load.
+        state.modelLoadDidFinishAsync()
+        try? await Task.sleep(nanoseconds: 10_000_000)
+        #expect(state.loadInFlightCount == 1)
+        #expect(state.isLoadingModel == true)
+
+        // Window B finishes — now the UI can clear.
+        state.modelLoadDidFinishAsync()
+        try? await Task.sleep(nanoseconds: 10_000_000)
+        #expect(state.loadInFlightCount == 0)
+        #expect(state.isLoadingModel == false)
+    }
+
+    @Test func modelLoad_doubleFinishIsFloored_atZero() async {
+        let state = InferenceProgressManager._testMake()
+        state.modelLoadWillStartAsync()
+        try? await Task.sleep(nanoseconds: 10_000_000)
+
+        // Simulate a buggy caller that fires didFinish twice.
+        state.modelLoadDidFinishAsync()
+        state.modelLoadDidFinishAsync()
+        try? await Task.sleep(nanoseconds: 10_000_000)
+        #expect(state.loadInFlightCount == 0)
+        #expect(state.isLoadingModel == false)
+
+        // A subsequent new load must not be poisoned by the earlier
+        // double-finish — the flag must still flip back to true.
+        state.modelLoadWillStartAsync()
+        try? await Task.sleep(nanoseconds: 10_000_000)
+        #expect(state.loadInFlightCount == 1)
+        #expect(state.isLoadingModel == true)
+    }
 }

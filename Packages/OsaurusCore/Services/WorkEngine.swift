@@ -521,11 +521,21 @@ public actor WorkEngine {
 
         // Handle the loop result
         switch loopResult {
-        case .completed(let summary, let artifact):
+        case .completed(let summary, let artifact, let status):
             activeSession?.messages = messages
             activeSession?.lastExitReason = .completed
-            // Close the issue with success
-            _ = await IssueManager.shared.closeIssueSafe(issue.id, result: summary)
+            let isSuccessfulCompletion = status.isSuccessfulCompletion
+
+            switch status {
+            case .verified:
+                _ = await IssueManager.shared.closeIssueSafe(issue.id, result: summary)
+            case .partial:
+                _ = await IssueManager.shared.updateIssueStatusSafe(issue.id, to: .open)
+            case .blocked:
+                _ = await IssueManager.shared.updateIssueStatusSafe(issue.id, to: .blocked)
+            }
+
+            let finalIssue = (try? IssueStore.getIssue(id: issue.id)) ?? issue
 
             let finalArtifact = artifact
             if let artifact = artifact {
@@ -550,14 +560,18 @@ public actor WorkEngine {
                     issueId: issue.id,
                     eventType: .executionCompleted,
                     payload: EventPayload.ExecutionCompleted(
-                        success: true,
+                        success: isSuccessfulCompletion,
                         discoveries: 0,
                         summary: summary
                     )
                 )
             )
 
-            await delegate?.workEngine(self, didCompleteIssue: issue, success: true)
+            await delegate?.workEngine(
+                self,
+                didCompleteIssue: finalIssue,
+                success: isSuccessfulCompletion
+            )
             clearPersistedExecutionState(issueId: issue.id)
 
             activeSession = nil
@@ -565,10 +579,11 @@ public actor WorkEngine {
             pendingExecutionContext = nil
 
             return ExecutionResult(
-                issue: issue,
-                success: true,
+                issue: finalIssue,
+                success: isSuccessfulCompletion,
                 message: summary,
-                artifact: finalArtifact
+                artifact: finalArtifact,
+                completionStatus: status
             )
 
         case .interrupted(let resumedMessages, let iteration, let totalToolCalls):

@@ -352,7 +352,7 @@ final class ModelDownloadService: ObservableObject {
         lastKnownSpeed[modelId] = nil
     }
 
-    private static func resolveURL(repoId: String, path: String) -> URL? {
+    static func resolveURL(repoId: String, path: String) -> URL? {
         let encoded = path.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? path
         return URL(string: "https://huggingface.co/\(repoId)/resolve/main/\(encoded)")
     }
@@ -407,30 +407,69 @@ final class ModelDownloadService: ObservableObject {
 
     // MARK: - Background Top-Up
 
-    /// Returns the subset of remote pattern-matched files that are missing
-    /// locally or have a size mismatch. Returns an empty array on network
-    /// failure so callers can treat "no network" as "nothing to do".
-    static func findMissingFiles(
+    private static let sentinelFilename = ".topup_done"
+
+    /// Checks for missing files and downloads them if the sentinel is absent.
+    /// Writes the sentinel only when the remote check succeeds. Passing
+    /// `clearSentinel: true` forces a fresh remote check (used by Repair).
+    @discardableResult
+    static func ensureComplete(
         for model: MLXModel,
-        patterns: [String] = downloadFilePatterns,
-        excludedFiles: Set<String> = downloadExcludedFiles
-    ) async -> [HuggingFaceService.MatchedFile] {
-        guard
-            let remoteFiles = await HuggingFaceService.shared.fetchMatchingFiles(
-                repoId: model.id,
-                patterns: patterns,
-                excludedFiles: excludedFiles
-            )
-        else { return [] }
+        directory: URL,
+        clearSentinel: Bool = false
+    ) async -> Bool {
+        let sentinel = directory.appendingPathComponent(sentinelFilename)
+        if clearSentinel {
+            try? FileManager.default.removeItem(at: sentinel)
+        }
+        guard !FileManager.default.fileExists(atPath: sentinel.path) else { return true }
+        let success = await downloadMissingFiles(for: model, to: directory)
+        if success {
+            FileManager.default.createFile(atPath: sentinel.path, contents: nil)
+        }
+        return success
+    }
+
+    /// Downloads any missing config/tokenizer files for a model into `directory`.
+    /// Returns `true` if the remote file list was successfully fetched
+    /// (regardless of whether anything was missing), `false` on network failure.
+    @discardableResult
+    static func downloadMissingFiles(for model: MLXModel, to directory: URL) async -> Bool {
+        let remoteFiles = await HuggingFaceService.shared.fetchMatchingFiles(
+            repoId: model.id,
+            patterns: downloadFilePatterns,
+            excludedFiles: downloadExcludedFiles
+        )
+        guard let remoteFiles else { return false }
 
         let fm = FileManager.default
-        return remoteFiles.filter { file in
-            let local = model.localDirectory.appendingPathComponent(file.path)
+        let missing = remoteFiles.filter { file in
+            let local = directory.appendingPathComponent(file.path)
             guard let attrs = try? fm.attributesOfItem(atPath: local.path),
                 let localSize = (attrs[.size] as? NSNumber)?.int64Value
             else { return true }
             return localSize != file.size
         }
+        guard !missing.isEmpty else { return true }
+
+        let downloader = DirectDownloader()
+        defer { downloader.invalidate() }
+        var allSucceeded = true
+        for file in missing {
+            guard let url = resolveURL(repoId: model.id, path: file.path) else { continue }
+            let dest = directory.appendingPathComponent(file.path)
+            do {
+                try await downloader.download(
+                    from: url,
+                    to: dest,
+                    expectedSize: file.size,
+                    onProgress: { _, _ in }
+                )
+            } catch {
+                allSucceeded = false
+            }
+        }
+        return allSucceeded
     }
 
     /// Silently downloads missing config/tokenizer files for models that are
@@ -444,33 +483,7 @@ final class ModelDownloadService: ObservableObject {
         guard !candidates.isEmpty else { return }
 
         for model in candidates {
-            let missing = await Self.findMissingFiles(for: model)
-            guard !missing.isEmpty else { continue }
-
-            do {
-                try FileManager.default.createDirectory(
-                    at: model.localDirectory,
-                    withIntermediateDirectories: true
-                )
-
-                let downloader = DirectDownloader()
-                defer { downloader.invalidate() }
-
-                for file in missing {
-                    guard let url = Self.resolveURL(repoId: model.id, path: file.path)
-                    else { continue }
-                    let destination = model.localDirectory.appendingPathComponent(file.path)
-
-                    try await downloader.download(
-                        from: url,
-                        to: destination,
-                        expectedSize: file.size,
-                        onProgress: { _, _ in }
-                    )
-                }
-            } catch {
-                print("[ModelDownloadService] Top-up failed for \(model.id): \(error.localizedDescription)")
-            }
+            await Self.downloadMissingFiles(for: model, to: model.localDirectory)
         }
     }
 

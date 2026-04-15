@@ -565,6 +565,9 @@ public struct CustomTheme: Codable, Equatable, Sendable {
     public var messages: ThemeMessages
     public var borders: ThemeBorders
 
+    /// Syntax highlighting theme name (Highlightr). nil = auto (dark/light).
+    public var codeHighlightTheme: String?
+
     /// Whether this is a built-in theme (cannot be deleted)
     public var isBuiltIn: Bool
     public var isDark: Bool
@@ -579,6 +582,7 @@ public struct CustomTheme: Codable, Equatable, Sendable {
         shadows: ThemeShadows = ThemeShadows(),
         messages: ThemeMessages = ThemeMessages(),
         borders: ThemeBorders = ThemeBorders(),
+        codeHighlightTheme: String? = nil,
         isBuiltIn: Bool = false,
         isDark: Bool = true
     ) {
@@ -591,6 +595,7 @@ public struct CustomTheme: Codable, Equatable, Sendable {
         self.shadows = shadows
         self.messages = messages
         self.borders = borders
+        self.codeHighlightTheme = codeHighlightTheme
         self.isBuiltIn = isBuiltIn
         self.isDark = isDark
     }
@@ -607,6 +612,7 @@ public struct CustomTheme: Codable, Equatable, Sendable {
         shadows = try container.decode(ThemeShadows.self, forKey: .shadows)
         messages = try container.decodeIfPresent(ThemeMessages.self, forKey: .messages) ?? ThemeMessages()
         borders = try container.decodeIfPresent(ThemeBorders.self, forKey: .borders) ?? ThemeBorders()
+        codeHighlightTheme = try container.decodeIfPresent(String.self, forKey: .codeHighlightTheme)
         isBuiltIn = try container.decode(Bool.self, forKey: .isBuiltIn)
         isDark = try container.decode(Bool.self, forKey: .isDark)
     }

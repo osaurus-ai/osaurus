@@ -18,7 +18,10 @@ struct WorkEngineResumeTests {
             steps: [
                 .tool("noop_resume_test", "{}"),
                 .tool("request_clarification", #"{"question":"SQLite or PostgreSQL?"}"#),
-                .tool("complete_task", #"{"summary":"done","success":true}"#),
+                .tool(
+                    "complete_task",
+                    #"{"status":"verified","summary":"done","verification_performed":"Validated the final database path after clarification.","remaining_risks":"none","remaining_work":"none"}"#
+                ),
             ]
         )
         let engine = WorkEngine(executionEngine: WorkExecutionEngine(chatEngine: chatEngine))
@@ -67,7 +70,10 @@ struct WorkEngineResumeTests {
         let chatEngine = RecordingWorkChatEngine(
             steps: [
                 .tool("noop_resume_test", "{}"),
-                .tool("complete_task", #"{"summary":"wrapped up","success":true}"#),
+                .tool(
+                    "complete_task",
+                    #"{"status":"verified","summary":"wrapped up","verification_performed":"Ran the final task checks after resuming.","remaining_risks":"none","remaining_work":"none"}"#
+                ),
             ]
         )
         let engine = WorkEngine(executionEngine: WorkExecutionEngine(chatEngine: chatEngine))
@@ -125,7 +131,12 @@ struct WorkEngineResumeTests {
         #expect(paused.pauseReason == .budgetExhausted)
 
         let secondChatEngine = RecordingWorkChatEngine(
-            steps: [.tool("complete_task", #"{"summary":"recovered","success":true}"#)]
+            steps: [
+                .tool(
+                    "complete_task",
+                    #"{"status":"verified","summary":"recovered","verification_performed":"Confirmed the recovered execution path completed successfully.","remaining_risks":"none","remaining_work":"none"}"#
+                )
+            ]
         )
         let recoveredEngine = WorkEngine(executionEngine: WorkExecutionEngine(chatEngine: secondChatEngine))
 
@@ -143,6 +154,76 @@ struct WorkEngineResumeTests {
                     && ($0.content?.contains(WorkEngine.freshBudgetContinuation) == true)
             })
         )
+    }
+
+    @Test
+    func partialCompletion_returnsTypedNonSuccessfulResult() async throws {
+        try await IssueManager.shared.initialize()
+
+        let chatEngine = RecordingWorkChatEngine(
+            steps: [
+                .tool(
+                    "complete_task",
+                    #"{"status":"partial","summary":"Implemented the parser but left integration pending.","verification_performed":"Ran parser unit tests successfully; integration tests are still pending.","remaining_risks":"Integration path is not exercised yet.","remaining_work":"Wire the parser into the execution path and add integration coverage."}"#
+                )
+            ]
+        )
+        let engine = WorkEngine(executionEngine: WorkExecutionEngine(chatEngine: chatEngine))
+
+        let result = try await engine.run(
+            query: "Improve the parser",
+            model: "mock",
+            systemPrompt: "Base",
+            tools: [completeTaskToolSpec()],
+            executionMode: .none
+        )
+
+        #expect(!result.success)
+        #expect(result.completionStatus == .partial)
+        #expect(result.message.contains("Completion status: PARTIAL"))
+        #expect(
+            result.message.contains(
+                "Remaining work: Wire the parser into the execution path and add integration coverage."
+            )
+        )
+        let persistedIssueValue = try IssueStore.getIssue(id: result.issue.id)
+        let persistedIssue = try #require(persistedIssueValue)
+        #expect(persistedIssue.status == IssueStatus.open)
+    }
+
+    @Test
+    func blockedCompletion_returnsTypedNonSuccessfulResult() async throws {
+        try await IssueManager.shared.initialize()
+
+        let chatEngine = RecordingWorkChatEngine(
+            steps: [
+                .tool(
+                    "complete_task",
+                    #"{"status":"blocked","summary":"Stopped at the deployment step.","verification_performed":"Validated the local build and confirmed the remote API token is missing.","remaining_risks":"Deployment remains unverified until credentials are provided.","remaining_work":"Provide the missing credential and rerun deployment validation."}"#
+                )
+            ]
+        )
+        let engine = WorkEngine(executionEngine: WorkExecutionEngine(chatEngine: chatEngine))
+
+        let result = try await engine.run(
+            query: "Deploy the service",
+            model: "mock",
+            systemPrompt: "Base",
+            tools: [completeTaskToolSpec()],
+            executionMode: .none
+        )
+
+        #expect(!result.success)
+        #expect(result.completionStatus == .blocked)
+        #expect(result.message.contains("Completion status: BLOCKED"))
+        #expect(
+            result.message.contains(
+                "Remaining risks: Deployment remains unverified until credentials are provided."
+            )
+        )
+        let persistedIssueValue = try IssueStore.getIssue(id: result.issue.id)
+        let persistedIssue = try #require(persistedIssueValue)
+        #expect(persistedIssue.status == IssueStatus.blocked)
     }
 }
 

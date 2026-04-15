@@ -65,6 +65,8 @@ struct WorkExecutionEngineTests {
         #expect(prompt.contains(SystemPromptTemplates.sandboxScaffoldGuidance))
         #expect(prompt.contains(SystemPromptTemplates.sandboxVerifyGuidance))
         #expect(prompt.contains("call `complete_task`"))
+        #expect(prompt.contains(#""status":"verified""#))
+        #expect(!prompt.contains(#""success": true"#))
         #expect(prompt.contains(SystemPromptTemplates.sandboxReadFileHint))
     }
 
@@ -96,7 +98,12 @@ struct WorkExecutionEngineTests {
         let engine = WorkExecutionEngine(
             chatEngine: SequencedWorkChatEngine(
                 steps: (Array(repeating: .tool("noop_test", "{}"), count: 10)
-                    + [.tool("complete_task", #"{"summary":"done","success":true}"#)])
+                    + [
+                        .tool(
+                            "complete_task",
+                            #"{"status":"verified","summary":"done","verification_performed":"Ran the final smoke test and verified the output.","remaining_risks":"none","remaining_work":"none"}"#
+                        )
+                    ])
             )
         )
         let issue = Issue(taskId: "task-2", title: "Long task")
@@ -120,13 +127,168 @@ struct WorkExecutionEngineTests {
             onTokensConsumed: { _, _ in }
         )
 
-        guard case .completed(let summary, _) = result else {
+        guard case .completed(let summary, _, let status) = result else {
             Issue.record("Expected loop completion")
             return
         }
-        #expect(summary == "done")
+        #expect(status == .verified)
+        #expect(summary.contains("Completion status: VERIFIED"))
+        #expect(summary.contains("Summary: done"))
         #expect(statuses.contains(SystemPromptTemplates.budgetRemainingStatus(remaining: 5, total: 15)))
         #expect(statuses.contains(SystemPromptTemplates.budgetWarningStatus(remaining: 5)))
+    }
+
+    @Test @MainActor
+    func executeLoop_rejectsLegacyCompletionPayloadAndContinues() async throws {
+        let engine = WorkExecutionEngine(
+            chatEngine: SequencedWorkChatEngine(
+                steps: [
+                    .tool("complete_task", #"{"summary":"done","success":true}"#),
+                    .tool(
+                        "complete_task",
+                        #"{"status":"verified","summary":"done","verification_performed":"Ran regression tests and manually validated the final result.","remaining_risks":"none","remaining_work":"none"}"#
+                    ),
+                ]
+            )
+        )
+        let issue = Issue(taskId: "task-legacy", title: "Reject legacy payload")
+        var messages = [ChatMessage(role: "user", content: "Finish the task")]
+
+        let result = try await engine.executeLoop(
+            issue: issue,
+            messages: &messages,
+            systemPrompt: "Base",
+            model: "mock",
+            tools: [completeTaskToolSpec()],
+            maxIterations: 4,
+            onIterationStart: { _ in },
+            onDelta: { _, _ in },
+            onToolHint: { _ in },
+            onToolArgHint: { _ in },
+            onToolCall: { _, _, _ in },
+            onStatusUpdate: { _ in },
+            onArtifact: { _ in },
+            onTokensConsumed: { _, _ in }
+        )
+
+        guard case .completed(let summary, _, let status) = result else {
+            Issue.record("Expected loop completion after rejection")
+            return
+        }
+
+        #expect(status == .verified)
+        #expect(summary.contains("Completion status: VERIFIED"))
+        #expect(messages.contains(where: { $0.role == "tool" && ($0.content?.contains("[REJECTED]") == true) }))
+        #expect(
+            messages.contains(where: {
+                $0.role == "user"
+                    && ($0.content?.contains("`complete_task` was rejected") == true)
+            })
+        )
+    }
+
+    @Test @MainActor
+    func executeLoop_rejectsVerifiedCompletionWithoutMeaningfulEvidence() async throws {
+        let engine = WorkExecutionEngine(
+            chatEngine: SequencedWorkChatEngine(
+                steps: [
+                    .tool(
+                        "complete_task",
+                        #"{"status":"verified","summary":"done","verification_performed":"none","remaining_risks":"none","remaining_work":"none"}"#
+                    ),
+                    .tool(
+                        "complete_task",
+                        #"{"status":"verified","summary":"done","verification_performed":"Ran regression tests and manually validated the final result.","remaining_risks":"none","remaining_work":"none"}"#
+                    ),
+                ]
+            )
+        )
+        let issue = Issue(taskId: "task-evidence", title: "Reject weak evidence")
+        var messages = [ChatMessage(role: "user", content: "Finish the task")]
+
+        let result = try await engine.executeLoop(
+            issue: issue,
+            messages: &messages,
+            systemPrompt: "Base",
+            model: "mock",
+            tools: [completeTaskToolSpec()],
+            maxIterations: 4,
+            onIterationStart: { _ in },
+            onDelta: { _, _ in },
+            onToolHint: { _ in },
+            onToolArgHint: { _ in },
+            onToolCall: { _, _, _ in },
+            onStatusUpdate: { _ in },
+            onArtifact: { _ in },
+            onTokensConsumed: { _, _ in }
+        )
+
+        guard case .completed(let summary, _, let status) = result else {
+            Issue.record("Expected loop completion after evidence rejection")
+            return
+        }
+
+        #expect(status == .verified)
+        #expect(summary.contains("Completion status: VERIFIED"))
+        #expect(messages.contains(where: { $0.role == "tool" && ($0.content?.contains("[REJECTED]") == true) }))
+        #expect(
+            messages.contains(where: {
+                $0.role == "tool"
+                    && ($0.content?.contains("requires concrete verification evidence") == true)
+            })
+        )
+    }
+
+    @Test @MainActor
+    func executeLoop_rejectsVerifiedCompletionWithPunctuatedPlaceholderEvidence() async throws {
+        let engine = WorkExecutionEngine(
+            chatEngine: SequencedWorkChatEngine(
+                steps: [
+                    .tool(
+                        "complete_task",
+                        #"{"status":"verified","summary":"done","verification_performed":"No verification performed.","remaining_risks":"none","remaining_work":"none"}"#
+                    ),
+                    .tool(
+                        "complete_task",
+                        #"{"status":"verified","summary":"done","verification_performed":"Ran regression tests and manually validated the final result.","remaining_risks":"none","remaining_work":"none"}"#
+                    ),
+                ]
+            )
+        )
+        let issue = Issue(taskId: "task-punctuated-evidence", title: "Reject punctuated weak evidence")
+        var messages = [ChatMessage(role: "user", content: "Finish the task")]
+
+        let result = try await engine.executeLoop(
+            issue: issue,
+            messages: &messages,
+            systemPrompt: "Base",
+            model: "mock",
+            tools: [completeTaskToolSpec()],
+            maxIterations: 4,
+            onIterationStart: { _ in },
+            onDelta: { _, _ in },
+            onToolHint: { _ in },
+            onToolArgHint: { _ in },
+            onToolCall: { _, _, _ in },
+            onStatusUpdate: { _ in },
+            onArtifact: { _ in },
+            onTokensConsumed: { _, _ in }
+        )
+
+        guard case .completed(let summary, _, let status) = result else {
+            Issue.record("Expected loop completion after punctuated evidence rejection")
+            return
+        }
+
+        #expect(status == .verified)
+        #expect(summary.contains("Completion status: VERIFIED"))
+        #expect(messages.contains(where: { $0.role == "tool" && ($0.content?.contains("[REJECTED]") == true) }))
+        #expect(
+            messages.contains(where: {
+                $0.role == "tool"
+                    && ($0.content?.contains("requires concrete verification evidence") == true)
+            })
+        )
     }
 
     @Test @MainActor
@@ -246,6 +408,17 @@ private func clarificationToolSpec() -> Tool {
         function: ToolFunction(
             name: "request_clarification",
             description: "Clarify the task",
+            parameters: .object(["type": .string("object")])
+        )
+    )
+}
+
+private func completeTaskToolSpec() -> Tool {
+    Tool(
+        type: "function",
+        function: ToolFunction(
+            name: "complete_task",
+            description: "Complete the task",
             parameters: .object(["type": .string("object")])
         )
     )

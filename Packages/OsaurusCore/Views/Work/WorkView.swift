@@ -637,34 +637,117 @@ extension WorkView {
     }
 
     private func humanFriendlyError(_ error: String) -> (title: String, message: String) {
+        return WorkViewErrorClassifier.classify(error)
+    }
+}
+
+/// Error classifier for the WorkView error banner. Extracted from
+/// `WorkView.humanFriendlyError` so we can unit-test the classification
+/// logic directly (issue #858 regression).
+///
+/// Pure function: input is the raw error string from the inference
+/// pipeline, output is a (title, message) pair for display. No SwiftUI
+/// types here so the tests don't need to build the view hierarchy.
+enum WorkViewErrorClassifier {
+    static func classify(_ error: String) -> (title: String, message: String) {
         let lowercased = error.lowercased()
 
+        // Match HTTP status codes on word boundaries first — this is the
+        // most specific signal. We cap the truncated fallback at 200 chars
+        // (up from 80) so users can actually see the underlying API error
+        // message (e.g. Gemini's "Invalid model 'foo'. See https://...")
+        // instead of a generic "Something went wrong" that hides the cause.
+        //
+        // Previous logic had two latent bugs (issue #858):
+        //   1. The `"api"` check matched error bodies from google.dev/api,
+        //      or anything mentioning "API", classifying model-not-found
+        //      errors as "Authentication Error".
+        //   2. The `"server"` check matched any body containing the word
+        //      "server" (e.g. Google's own error strings), causing HTTP 400
+        //      responses to surface as "The service is temporarily
+        //      unavailable" with no hint to the user that the real cause
+        //      is an invalid model ID they typed.
+        //
+        // We now key on specific status codes first, then distinct
+        // terms, in most-to-least-specific order. "api" alone is too
+        // weak a signal to classify as auth error — we require the
+        // narrower "401"/"unauthorized"/"api key" phrases.
+
+        // HTTP status code matching — anchored on digits
+        if lowercased.contains(" 401") || lowercased.contains("401:") || lowercased.contains("unauthorized")
+            || lowercased.contains("api key") || lowercased.contains("invalid key")
+        {
+            return ("Authentication Error", "There was an issue with the API credentials. Please check your settings.")
+        }
+        if lowercased.contains(" 403") || lowercased.contains("403:") || lowercased.contains("forbidden") {
+            return ("Permission Denied", "The account or API key does not have permission for this request.")
+        }
+        if lowercased.contains(" 404") || lowercased.contains("404:") || lowercased.contains("not found")
+            || lowercased.contains("model not found") || lowercased.contains("does not exist")
+        {
+            let detail: String
+            if lowercased.contains("model") {
+                detail = "The requested model was not found. Check the model name in provider settings."
+            } else {
+                detail = "The requested resource could not be found."
+            }
+            return ("Not Found", detail)
+        }
+        let isInvalidModelClientError =
+            lowercased.contains("invalid ")
+            && (lowercased.contains(" model") || lowercased.contains("gemini"))
+        if lowercased.contains(" 400") || lowercased.contains("400:") || lowercased.contains("bad request")
+            || lowercased.contains("invalid argument") || lowercased.contains("invalid model")
+            || isInvalidModelClientError
+        {
+            // HTTP 400 from provider — usually a malformed request or an
+            // unrecognized model name. Also catches osaurus's own
+            // client-side validation errors (e.g. "Invalid Gemini model
+            // name 'foo': only ..." — see `RemoteProviderService`). We
+            // surface the underlying message so the user can see what's
+            // actually wrong.
+            let truncated = error.count > 200 ? String(error.prefix(200)) + "..." : error
+            return ("Request Rejected", truncated)
+        }
+        if lowercased.contains(" 429") || lowercased.contains("429:") || lowercased.contains("rate limit")
+            || lowercased.contains("too many")
+        {
+            return ("Rate Limited", "Too many requests. Please wait a moment before trying again.")
+        }
+        if lowercased.contains(" 500") || lowercased.contains("500:") || lowercased.contains(" 502")
+            || lowercased.contains("502:") || lowercased.contains(" 503") || lowercased.contains("503:")
+            || lowercased.contains(" 504") || lowercased.contains("504:") || lowercased.contains("internal server error")
+            || lowercased.contains("service unavailable") || lowercased.contains("bad gateway")
+            || lowercased.contains("gateway timeout") || lowercased.contains("overloaded")
+        {
+            return ("Server Error", "The provider is temporarily unavailable. Please try again later.")
+        }
+
+        // Non-status specific classifications
         if lowercased.contains("javascript") || lowercased.contains("browser") {
             return (
                 "Browser Error",
                 "Something went wrong while interacting with the browser. This might be a temporary issue."
             )
-        } else if lowercased.contains("timeout") {
-            return ("Request Timed Out", "The operation took too long to complete. Please try again.")
-        } else if lowercased.contains("network") || lowercased.contains("connection") {
-            return ("Connection Issue", "Unable to connect to the service. Please check your internet connection.")
-        } else if lowercased.contains("rate limit") || lowercased.contains("too many") {
-            return ("Rate Limited", "Too many requests. Please wait a moment before trying again.")
-        } else if lowercased.contains("api") || lowercased.contains("unauthorized") || lowercased.contains("401") {
-            return ("Authentication Error", "There was an issue with the API credentials. Please check your settings.")
-        } else if lowercased.contains("cancelled") || lowercased.contains("canceled") {
-            return ("Task Cancelled", "The operation was stopped before it could complete.")
-        } else if lowercased.contains("not found") || lowercased.contains("404") {
-            return ("Not Found", "The requested resource could not be found.")
-        } else if lowercased.contains("server") || lowercased.contains("500") || lowercased.contains("502")
-            || lowercased.contains("503")
-        {
-            return ("Server Error", "The service is temporarily unavailable. Please try again later.")
-        } else {
-            // Generic fallback - show truncated original error
-            let truncated = error.count > 80 ? String(error.prefix(80)) + "..." : error
-            return ("Something Went Wrong", truncated)
         }
+        if lowercased.contains("timeout") || lowercased.contains("timed out") {
+            return ("Request Timed Out", "The operation took too long to complete. Please try again.")
+        }
+        if lowercased.contains("cannot connect to host") || lowercased.contains("no internet")
+            || lowercased.contains("network connection was lost") || lowercased.contains("nsurlerror")
+            || lowercased.contains("dns")
+        {
+            return ("Connection Issue", "Unable to reach the provider. Check your network and the provider URL.")
+        }
+        if lowercased.contains("cancelled") || lowercased.contains("canceled") {
+            return ("Task Cancelled", "The operation was stopped before it could complete.")
+        }
+
+        // Generic fallback: show the underlying message truncated to 200
+        // chars (up from 80). Users reporting issues need enough text to
+        // diagnose; 80 chars was hiding most provider error bodies.
+        let truncated = error.count > 200 ? String(error.prefix(200)) + "..." : error
+        return ("Something Went Wrong", truncated)
     }
 
 }

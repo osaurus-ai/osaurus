@@ -1610,7 +1610,33 @@ public actor RemoteProviderService: ToolCapableService {
         if provider.providerType == .gemini {
             // Gemini uses model-in-URL pattern: /models/{model}:generateContent or :streamGenerateContent
             let action = request.stream ? "streamGenerateContent" : "generateContent"
-            let endpoint = "/models/\(request.model):\(action)"
+            // Validate the model segment before interpolating into the
+            // URL path. Previously a model name with spaces (e.g. the user
+            // typing "gemini 3.1 flash lite preview" as the model ID) flowed
+            // unsanitized into URL construction, and `URL(string:)` on
+            // the final string would return nil → the caller saw an
+            // opaque "invalidURL" throw. We explicitly surface the
+            // validation error so the user sees *which* character is
+            // rejected. See issue #858.
+            //
+            // Allowed chars cover:
+            // - standard model IDs: `gemini-2.0-flash-exp`, `gemini-1.5-pro-latest`
+            // - tuned models: `tunedModels/my-tuned-model`
+            // - Google's path-parent syntax: `models/foo/bar` (rare)
+            // Disallowed: whitespace, colons (reserved for the action
+            // suffix we append), `?` / `&` (query markers), other
+            // URL-unsafe chars that would silently corrupt the path.
+            let trimmedModel = request.model.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmedModel.isEmpty {
+                throw RemoteProviderServiceError.requestFailed(
+                    "Gemini model name is empty. Set a model ID like 'gemini-2.0-flash-exp' in provider settings.")
+            }
+            let allowed = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._/")
+            if trimmedModel.unicodeScalars.contains(where: { !allowed.contains($0) }) {
+                throw RemoteProviderServiceError.requestFailed(
+                    "Invalid Gemini model name '\(trimmedModel)': only letters, digits, '-', '_', '.', and '/' are allowed. Check provider settings.")
+            }
+            let endpoint = "/models/\(trimmedModel):\(action)"
             guard let geminiURL = provider.url(for: endpoint) else {
                 throw RemoteProviderServiceError.invalidURL
             }

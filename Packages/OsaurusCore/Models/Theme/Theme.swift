@@ -107,6 +107,9 @@ protocol ThemeProtocol {
     var captionSize: Double { get }
     var codeSize: Double { get }
 
+    // Code syntax highlighting theme (Highlightr name). nil = auto.
+    var codeHighlightTheme: String? { get }
+
     // Custom theme reference (for editing)
     var customThemeConfig: CustomTheme? { get }
 
@@ -149,6 +152,7 @@ extension ThemeProtocol {
     var captionSize: Double { 12 }
     var codeSize: Double { 13 }
 
+    var codeHighlightTheme: String? { nil }
     var customThemeConfig: CustomTheme? { nil }
 
     // Message bubble defaults
@@ -489,6 +493,9 @@ struct CustomizableTheme: ThemeProtocol {
     var bodySize: Double { config.typography.bodySize }
     var captionSize: Double { config.typography.captionSize }
     var codeSize: Double { config.typography.codeSize }
+
+    // Code syntax highlighting
+    var codeHighlightTheme: String? { config.codeHighlightTheme }
 
     // Custom theme reference
     var customThemeConfig: CustomTheme? { config }

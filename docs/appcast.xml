@@ -3,6 +3,67 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.16.14</title>
+            <pubDate>Wed, 15 Apr 2026 21:39:20 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.16.14</sparkle:version>
+            <sparkle:shortVersionString>0.16.14</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.16.14/Osaurus-0.16.14.dmg" length="34946888" type="application/octet-stream" sparkle:edSignature="MqsVn9ZSFMeJZ6ZUP3xeP+4QoVpI4Uh32g8RCOPJGYKdEdb3Ai+KpgtjBN2OhtQLilSoV5ECLvsMP1jTtRrAAw=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- removed unused theme properties \& improved code block customization/readability (#864) by @RaajeevChandran
+
+## 🐛 Bug Fixes
+
+- Fix stuck loading, #856 stats leak, #858 error classifier, #860 NIO crash + bump vmlx-swift-lm (#863) by @jjang-ai
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.16.13...0.16.14
+]]></description>
+        </item>
+        <item>
+            <title>0.16.13</title>
+            <pubDate>Wed, 15 Apr 2026 09:37:09 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.16.13</sparkle:version>
+            <sparkle:shortVersionString>0.16.13</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.16.13/Osaurus-0.16.13.dmg" length="34926846" type="application/octet-stream" sparkle:edSignature="MuZR1rkIy4tA8LH5EaPDXbqGM4UAjHumQfbe5OB2tf1gLvBaZarmCeOqWe6eYRlttFEpuOfyfC99o5i9h91CCQ=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- feature: strengthen Work Mode completion contract (#832) by @mimeding
+
+## 🧰 Maintenance
+
+- fixed artifact sharing on plugin (#859) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.16.12...0.16.13
+]]></description>
+        </item>
+        <item>
+            <title>0.16.12</title>
+            <pubDate>Tue, 14 Apr 2026 17:30:44 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.16.12</sparkle:version>
+            <sparkle:shortVersionString>0.16.12</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.16.12/Osaurus-0.16.12.dmg" length="34908474" type="application/octet-stream" sparkle:edSignature="qvg0hORnHyJ3FaKXcoCAAgcmgfeItJwbCRZutejb2cQBE4P4omw6dFxiwYHDJqmyzO2iOftWeoYQEtXX0On1Cw=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+## 🧰 Maintenance
+
+- bump vmlx version and added repair models function (#855) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.16.11...0.16.12
+]]></description>
+        </item>
+        <item>
             <title>0.16.11</title>
             <pubDate>Tue, 14 Apr 2026 02:59:47 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>

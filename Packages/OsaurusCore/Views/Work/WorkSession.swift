@@ -898,8 +898,10 @@ public final class WorkSession: ObservableObject {
 
         finishExecution()
 
-        if result.success {
+        if result.completionStatus != nil || result.success {
             streamingContent = result.message
+            errorMessage = nil
+            failedIssue = nil
         } else {
             errorMessage = result.message
             failedIssue = result.issue

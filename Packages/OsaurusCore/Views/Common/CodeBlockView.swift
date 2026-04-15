@@ -16,12 +16,52 @@ import SwiftUI
 // MARK: - Shared Highlightr Instance
 
 // Highlightr wraps highlight.js via JavaScriptCore — initialisation is expensive,
-// so we keep a single instance for the process lifetime.
+// so we keep a single instance for the process lifetime. The theme is switched
+// lazily when the resolved highlight theme name changes.
 nonisolated(unsafe) private let sharedHighlightr: Highlightr? = {
     guard let h = Highlightr() else { return nil }
-    h.setTheme(to: "pop")
+    h.setTheme(to: "atom-one-dark")
     return h
 }()
+
+/// Track which Highlightr theme is currently loaded so we only call setTheme when it changes.
+nonisolated(unsafe) private var currentHighlightrTheme: String = "atom-one-dark"
+
+private let defaultDarkHighlightTheme = "atom-one-dark"
+private let defaultLightHighlightTheme = "atom-one-light"
+
+/// Returns the available Highlightr theme names (cached after first call).
+nonisolated(unsafe) private var cachedAvailableThemes: [String]?
+func availableHighlightrThemes() -> [String] {
+    if let cached = cachedAvailableThemes { return cached }
+    let themes = (sharedHighlightr?.availableThemes() ?? []).sorted()
+    cachedAvailableThemes = themes
+    return themes
+}
+
+/// Resolves which Highlightr theme to use and switches if needed.
+/// Call this before highlighting — it's a no-op when the theme hasn't changed.
+func ensureHighlightrTheme(for theme: any ThemeProtocol) {
+    let resolved = theme.codeHighlightTheme
+        ?? (theme.isDark ? defaultDarkHighlightTheme : defaultLightHighlightTheme)
+    guard resolved != currentHighlightrTheme else { return }
+    sharedHighlightr?.setTheme(to: resolved)
+    currentHighlightrTheme = resolved
+}
+
+/// Returns the background color from the current Highlightr theme as a SwiftUI Color.
+/// Falls back to a sensible default if unavailable.
+func highlightrThemeBackgroundColor() -> Color {
+    if let bg = sharedHighlightr?.theme.themeBackgroundColor {
+        return Color(bg)
+    }
+    return Color(white: 0.1)
+}
+
+/// Returns the background color from the current Highlightr theme as an NSColor.
+func highlightrThemeBackgroundNSColor() -> NSColor {
+    sharedHighlightr?.theme.themeBackgroundColor ?? NSColor(white: 0.1, alpha: 1)
+}
 
 // MARK: - CodeBlockView
 
@@ -35,8 +75,11 @@ struct CodeBlockView: View {
     @State private var isHovered = false
 
     var body: some View {
+        let _ = ensureHighlightrTheme(for: theme)
+        let bgColor = highlightrThemeBackgroundColor()
+
         VStack(alignment: .leading, spacing: 0) {
-            headerBar
+            headerBar(bgColor: bgColor)
             CodeContentView(
                 code: code,
                 language: language,
@@ -48,14 +91,14 @@ struct CodeBlockView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(theme.codeBlockBackground)
+                .fill(bgColor)
         )
         .onHover { isHovered = $0 }
     }
 
     // MARK: - Header Bar
 
-    private var headerBar: some View {
+    private func headerBar(bgColor: Color) -> some View {
         HStack {
             Text(language?.lowercased() ?? "code")
                 .font(theme.monoFont(size: CGFloat(theme.captionSize) - 1, weight: .medium))
@@ -132,7 +175,8 @@ struct CodeContentView: NSViewRepresentable {
 
     func updateNSView(_ textView: CodeNSTextView, context: Context) {
         let coord = context.coordinator
-        let themeId = "\(theme.monoFontName)|\(theme.bodySize)"
+        let resolvedHL = theme.codeHighlightTheme ?? (theme.isDark ? "auto-dark" : "auto-light")
+        let themeId = "\(theme.monoFontName)|\(theme.bodySize)|\(resolvedHL)"
 
         let codeChanged = coord.lastCode != code
         let langChanged = coord.lastLanguage != language
@@ -221,12 +265,18 @@ struct CodeContentView: NSViewRepresentable {
         let gutterWidth = CGFloat(gutterDigits + 2) * fontSize * 0.62
         let indent: CGFloat = 12 + gutterWidth
 
+        // Ensure the Highlightr theme matches the current app theme before highlighting.
+        ensureHighlightrTheme(for: theme)
+
         // use Highlightr for syntax highlighting; fall back to plain text if it returns nil.
         let result: NSMutableAttributedString
         let highlightedCode = sharedHighlightr?.highlight(code, as: language?.lowercased(), fastRender: true)
         if let highlighted = highlightedCode {
             result = NSMutableAttributedString(attributedString: highlighted)
             let fullRange = NSRange(location: 0, length: result.length)
+            // Strip background colors injected by the Highlightr CSS theme —
+            // the app's own codeBlockBackground is used instead.
+            result.removeAttribute(.backgroundColor, range: fullRange)
             result.enumerateAttribute(.font, in: fullRange, options: []) { value, range, _ in
                 let isBold = (value as? NSFont)?.fontDescriptor.symbolicTraits.contains(.bold) ?? false
                 result.addAttribute(

@@ -16,9 +16,24 @@ import Foundation
 final class InferenceProgressManager: ObservableObject, @unchecked Sendable {
     static let shared = InferenceProgressManager()
 
-    /// True while the model container is being loaded (weights paging into GPU).
-    /// The UI shows "Loading Model..." during this phase.
-    @MainActor @Published var isLoadingModel: Bool = false
+    /// Refcount of in-flight model loads. Incremented by
+    /// `modelLoadWillStartAsync`, decremented by `modelLoadDidFinishAsync`.
+    /// The UI observes `isLoadingModel` which is a computed `count > 0`
+    /// view. The refcount — rather than a bare Bool — guarantees the
+    /// flag doesn't get stuck `false` when two concurrent loads race
+    /// (e.g. a second chat window starting a different model while the
+    /// first is mid-load) and doesn't get stuck `true` when a load is
+    /// cancelled mid-flight and its cleanup fires out of order with a
+    /// newer load's start.
+    ///
+    /// `private(set)` so only this class can mutate it. `@Published`
+    /// so SwiftUI redraws when the derived `isLoadingModel` flips.
+    @MainActor @Published private(set) var loadInFlightCount: Int = 0
+
+    /// True while at least one model container is being loaded.
+    /// Computed view over `loadInFlightCount`. SwiftUI picks up changes
+    /// because the underlying `@Published` storage is annotated.
+    @MainActor var isLoadingModel: Bool { loadInFlightCount > 0 }
 
     /// True while preflight capability search is running.
     /// The UI shows "Searching capabilities..." during this phase.
@@ -63,14 +78,27 @@ final class InferenceProgressManager: ObservableObject, @unchecked Sendable {
         Task { @MainActor in self.prefillDidFinish() }
     }
 
-    /// Signal that model container loading has started.
+    /// Signal that model container loading has started. Increments the
+    /// in-flight refcount; the matching `modelLoadDidFinishAsync` must
+    /// fire for every call, regardless of success / failure / cancel.
     func modelLoadWillStartAsync() {
-        Task { @MainActor in self.isLoadingModel = true }
+        Task { @MainActor in self.loadInFlightCount += 1 }
     }
 
-    /// Signal that model container loading has finished.
+    /// Signal that model container loading has finished. Decrements the
+    /// refcount with a floor at 0 so double-fires (e.g. a buggy caller
+    /// firing in both a `catch` and a success path) can never drive it
+    /// negative and poison subsequent loads.
+    ///
+    /// Callers must guarantee that every `modelLoadWillStartAsync` is
+    /// paired with exactly one `modelLoadDidFinishAsync` on every exit
+    /// path (success, throw, cancel). See
+    /// `ModelRuntime.generateEventStream` for the canonical pattern —
+    /// a narrow do/catch scoped to just the container load.
     func modelLoadDidFinishAsync() {
-        Task { @MainActor in self.isLoadingModel = false }
+        Task { @MainActor in
+            self.loadInFlightCount = max(0, self.loadInFlightCount - 1)
+        }
     }
 
     /// Signal that preflight search has started.

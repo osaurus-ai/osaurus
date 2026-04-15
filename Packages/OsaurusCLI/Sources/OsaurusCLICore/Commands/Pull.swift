@@ -98,7 +98,7 @@ public struct PullCommand: Command {
 
         print(
             "Downloading \(filesToDownload.count) file(s) "
-            + "(\(ByteCountFormatter.string(fromByteCount: totalBytes, countStyle: .file)) total) ..."
+                + "(\(ByteCountFormatter.string(fromByteCount: totalBytes, countStyle: .file)) total) ..."
         )
 
         // Download each file sequentially with progress
@@ -106,9 +106,11 @@ public struct PullCommand: Command {
         for file in filesToDownload {
             let encodedPath =
                 file.path.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? file.path
-            guard let downloadURL = URL(
-                string: "https://huggingface.co/\(modelId)/resolve/main/\(encodedPath)"
-            ) else {
+            guard
+                let downloadURL = URL(
+                    string: "https://huggingface.co/\(modelId)/resolve/main/\(encodedPath)"
+                )
+            else {
                 fputs("Invalid URL for file: \(file.path)\n", stderr)
                 continue
             }
@@ -232,7 +234,8 @@ public struct PullCommand: Command {
             onProgress: { bytesWritten, _ in
                 // Compute overall progress across all files
                 let overallCompleted = completedSoFar + bytesWritten
-                let fraction = totalBytes > 0
+                let fraction =
+                    totalBytes > 0
                     ? Double(overallCompleted) / Double(totalBytes)
                     : 0.0
                 printProgress(
@@ -403,7 +406,7 @@ private final class CLIFileDownloader: NSObject, URLSessionDownloadDelegate, @un
                             .cannotDecodeContentData,
                             userInfo: [
                                 NSLocalizedDescriptionKey:
-                                    "Size mismatch: expected \(expected), got \(actual)",
+                                    "Size mismatch: expected \(expected), got \(actual)"
                             ]
                         )
                     )

@@ -13,18 +13,39 @@ import Foundation
 public struct CompleteTaskTool: OsaurusTool {
     public let name = "complete_task"
     public let description =
-        "Mark the current task as complete with a summary of the verified result. IMPORTANT: Call share_artifact for any generated files BEFORE calling this tool."
+        "Finish the current task with a structured completion report. IMPORTANT: Call share_artifact for any generated files BEFORE calling this tool."
 
     public let parameters: JSONValue? = .object([
         "type": .string("object"),
         "properties": .object([
+            "status": .object([
+                "type": .string("string"),
+                "enum": .array([
+                    .string("verified"),
+                    .string("partial"),
+                    .string("blocked"),
+                ]),
+                "description": .string(
+                    "Final completion status. Use verified only when you have concrete evidence. Use partial when work remains. Use blocked when progress depends on an external change."
+                ),
+            ]),
             "summary": .object([
                 "type": .string("string"),
                 "description": .string("Brief one-line summary of what was accomplished"),
             ]),
-            "success": .object([
-                "type": .string("boolean"),
-                "description": .string("Whether the task was fully successful"),
+            "verification_performed": .object([
+                "type": .string("string"),
+                "description": .string(
+                    "Concrete evidence gathered before completion, such as tests run, commands executed, or manual validation performed."
+                ),
+            ]),
+            "remaining_risks": .object([
+                "type": .string("string"),
+                "description": .string("Known risks that still remain. Use `none` when nothing important remains."),
+            ]),
+            "remaining_work": .object([
+                "type": .string("string"),
+                "description": .string("Any remaining work. Use `none` when the task is fully complete."),
             ]),
             "artifact": .object([
                 "type": .string("string"),
@@ -32,51 +53,59 @@ public struct CompleteTaskTool: OsaurusTool {
                     "Optional final artifact in markdown format. Include this when a richer report or formatted result would help the user."
                 ),
             ]),
-            "remaining_work": .object([
-                "type": .string("string"),
-                "description": .string("Any remaining work that wasn't completed (optional)"),
-            ]),
         ]),
-        "required": .array([.string("summary"), .string("success")]),
+        "required": .array([
+            .string("status"),
+            .string("summary"),
+            .string("verification_performed"),
+            .string("remaining_risks"),
+            .string("remaining_work"),
+        ]),
     ])
 
     public init() {}
 
     public func execute(argumentsJSON: String) async throws -> String {
         guard let data = argumentsJSON.data(using: .utf8),
-            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let summary = json["summary"] as? String,
-            let success = coerceBool(json["success"])
+            let contract = try? JSONDecoder().decode(WorkCompletionContract.self, from: data)
         else {
             throw NSError(
                 domain: "WorkTools",
                 code: 3,
                 userInfo: [
                     NSLocalizedDescriptionKey:
-                        "Invalid completion format. Required: summary (string), success (true/false). Example: {\"summary\": \"Done\", \"success\": true}"
+                        "Invalid completion format. \(WorkCompletionContract.formatHint)"
+                ]
+            )
+        }
+
+        if let validationError = contract.validationError {
+            throw NSError(
+                domain: "WorkTools",
+                code: 3,
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "\(validationError) \(WorkCompletionContract.formatHint)"
                 ]
             )
         }
 
         let artifact =
-            (json["artifact"] as? String)?
+            contract.artifact?
             .replacingOccurrences(of: "\\n", with: "\n")
             .replacingOccurrences(of: "\\t", with: "\t")
 
-        let remainingWork = json["remaining_work"] as? String
-
         var result = """
             Task completion reported:
-            - Status: \(success ? "SUCCESS" : "PARTIAL")
-            - Summary: \(summary)
+            - Status: \(contract.status.rawValue.uppercased())
+            - Summary: \(contract.trimmedSummary)
+            - Verification: \(contract.trimmedVerificationPerformed)
+            - Remaining risks: \(contract.trimmedRemainingRisks)
+            - Remaining work: \(contract.trimmedRemainingWork)
             """
 
         if let artifact, !artifact.isEmpty {
             result += "\n- Artifact Length: \(artifact.count) characters"
-        }
-
-        if let remaining = remainingWork, !remaining.isEmpty {
-            result += "\n- Remaining work: \(remaining)"
         }
 
         return result

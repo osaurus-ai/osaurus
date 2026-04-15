@@ -352,18 +352,46 @@ final class PluginManager {
     // MARK: - Artifact Handler Notifications
 
     /// Notifies all plugins that declared `artifact_handler: true` about a shared artifact.
-    /// Each plugin is invoked asynchronously so no single handler blocks the caller or others.
-    func notifyArtifactHandlers(artifact: SharedArtifact) {
+    /// Invocations run concurrently but are awaited so they complete before the caller
+    /// returns -- this keeps the originating request context (e.g. active chat) alive.
+    func notifyArtifactHandlers(artifact: SharedArtifact) async {
         let payload = PluginHostContext.serializeArtifactEvent(artifact: artifact)
-        for loaded in plugins {
-            guard loaded.plugin.manifest.capabilities.artifact_handler == true else { continue }
-            guard loaded.plugin.abiVersion >= 2 else { continue }
-            Task {
-                _ = try? await loaded.plugin.invoke(
-                    type: "artifact",
-                    id: "share",
-                    payload: payload
-                )
+        let handlers = plugins.filter {
+            $0.plugin.manifest.capabilities.artifact_handler == true && $0.plugin.abiVersion >= 2
+        }
+        guard !handlers.isEmpty else {
+            NSLog(
+                "[PluginManager] No artifact handler plugins for '%@' (%d loaded)",
+                artifact.filename,
+                plugins.count
+            )
+            return
+        }
+
+        await withTaskGroup(of: Void.self) { group in
+            for loaded in handlers {
+                let pluginId = loaded.plugin.id
+                group.addTask {
+                    do {
+                        _ = try await loaded.plugin.invoke(
+                            type: "artifact",
+                            id: "share",
+                            payload: payload
+                        )
+                        NSLog(
+                            "[PluginManager] Artifact '%@' delivered to '%@'",
+                            artifact.filename,
+                            pluginId
+                        )
+                    } catch {
+                        NSLog(
+                            "[PluginManager] Artifact '%@' delivery to '%@' failed: %@",
+                            artifact.filename,
+                            pluginId,
+                            error.localizedDescription
+                        )
+                    }
+                }
             }
         }
     }

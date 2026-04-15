@@ -51,6 +51,10 @@ struct ModelDetailView: View, Identifiable {
     /// Whether the required files section is expanded
     @State private var isFilesExpanded = false
 
+    /// Repair status: nil = idle, true = succeeded, false = failed
+    @State private var isRepairing = false
+    @State private var repairResult: Bool?
+
     /// Normalized model ID for API usage
     private var apiModelId: String {
         let last = model.id.split(separator: "/").last.map(String.init) ?? model.name
@@ -501,6 +505,33 @@ struct ModelDetailView: View, Identifiable {
             }
             .buttonStyle(PlainButtonStyle())
 
+            Button(action: {
+                repairResult = nil
+                isRepairing = true
+                Task {
+                    await repairModel()
+                    isRepairing = false
+                }
+            }) {
+                HStack(spacing: 4) {
+                    if isRepairing {
+                        ProgressView()
+                            .progressViewStyle(CircularProgressViewStyle())
+                            .scaleEffect(0.5)
+                            .frame(width: 12, height: 12)
+                    } else if let result = repairResult {
+                        Image(systemName: result ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                            .font(.system(size: 11))
+                            .foregroundColor(result ? theme.successColor : theme.errorColor)
+                    }
+                    Text("Repair", bundle: .module)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(theme.accentColor)
+                }
+            }
+            .buttonStyle(PlainButtonStyle())
+            .disabled(isRepairing)
+
             Spacer()
 
             Button(action: { dismiss() }) {
@@ -516,6 +547,17 @@ struct ModelDetailView: View, Identifiable {
             }
             .buttonStyle(PlainButtonStyle())
         }
+    }
+
+    // MARK: - Repair
+
+    private func repairModel() async {
+        let success = await ModelDownloadService.ensureComplete(
+            for: model,
+            directory: model.localDirectory,
+            clearSentinel: true
+        )
+        await MainActor.run { repairResult = success }
     }
 
     // MARK: - Helper Functions

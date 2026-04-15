@@ -720,31 +720,20 @@ final class PluginHostContext: @unchecked Sendable {
 
     // MARK: Tool Execution
 
+    private typealias PostProcessResult = (result: String, artifactDict: [String: Any]?)
+
     /// Post-processes a tool result after execution, handling special tools
-    /// like `share_artifact` (copy files, notify handlers) and `capabilities_load`
-    /// (hot-load newly discovered tools into the active set).
+    /// like `share_artifact` (copy files, notify handlers, collect artifact metadata)
+    /// and `capabilities_load` (hot-load newly discovered tools into the active set).
     private static func postProcessToolResult(
         toolName: String,
         result: String,
         prep: PreparedInference,
         toolSpecs: inout [Tool]?
-    ) async -> String {
+    ) async -> PostProcessResult {
         switch toolName {
         case "share_artifact":
-            let agentName: String? = await MainActor.run {
-                prep.agentId.map { SandboxAgentProvisioner.linuxName(for: $0.uuidString) }
-            }
-            guard
-                let processed = SharedArtifact.processToolResult(
-                    result,
-                    contextId: prep.contextId,
-                    contextType: .chat,
-                    executionMode: prep.executionMode,
-                    sandboxAgentName: agentName
-                )
-            else { return result }
-            await PluginManager.shared.notifyArtifactHandlers(artifact: processed.artifact)
-            return processed.enrichedToolResult
+            return await processShareArtifact(result: result, prep: prep)
 
         case "capabilities_load":
             let newTools = await CapabilityLoadBuffer.shared.drain()
@@ -753,11 +742,56 @@ final class PluginHostContext: @unchecked Sendable {
             if !additions.isEmpty {
                 toolSpecs = (toolSpecs ?? []) + additions
             }
-            return result
+            return (result, nil)
 
         default:
-            return result
+            return (result, nil)
         }
+    }
+
+    /// Processes a `share_artifact` tool result: copies the file to the artifacts
+    /// directory, notifies artifact handler plugins, and returns metadata for the
+    /// inference response so the calling plugin can act on it immediately.
+    private static func processShareArtifact(
+        result: String,
+        prep: PreparedInference
+    ) async -> PostProcessResult {
+        let agentName: String? = await MainActor.run {
+            prep.agentId.map { SandboxAgentProvisioner.linuxName(for: $0.uuidString) }
+        }
+
+        if let processed = SharedArtifact.processToolResult(
+            result,
+            contextId: prep.contextId,
+            contextType: .chat,
+            executionMode: prep.executionMode,
+            sandboxAgentName: agentName
+        ) {
+            NSLog("[PluginHostAPI] share_artifact processed: %@", processed.artifact.filename)
+            await PluginManager.shared.notifyArtifactHandlers(artifact: processed.artifact)
+            return (processed.enrichedToolResult, serializeArtifactDict(processed.artifact))
+        }
+
+        NSLog(
+            "[PluginHostAPI] share_artifact processToolResult returned nil (mode=%@, agent=%@, ctx=%@)",
+            String(describing: prep.executionMode),
+            agentName ?? "nil",
+            prep.contextId
+        )
+
+        // Fallback: notify handlers with metadata only so plugins that don't need
+        // the host file (e.g. Telegram just needs the filename) can still act.
+        if let fallback = SharedArtifact.fromToolResultFallback(
+            result,
+            contextId: prep.contextId,
+            contextType: .chat
+        ) {
+            NSLog("[PluginHostAPI] share_artifact fallback artifact: %@", fallback.filename)
+            await PluginManager.shared.notifyArtifactHandlers(artifact: fallback)
+            return (result, serializeArtifactDict(fallback))
+        }
+
+        return (result, nil)
     }
 
     private static func executeToolCall(
@@ -815,6 +849,7 @@ final class PluginHostContext: @unchecked Sendable {
             )
             var messages = prep.enriched.request.messages
             var toolCallsExecuted: [[String: String]] = []
+            var sharedArtifacts: [[String: Any]] = []
             var toolSpecs = prep.enriched.tools
 
             for iteration in 1 ... prep.options.maxIterations {
@@ -843,12 +878,14 @@ final class PluginHostContext: @unchecked Sendable {
                                 agentId: prep.agentId,
                                 executionMode: prep.executionMode
                             )
-                            result = await Self.postProcessToolResult(
+                            let postProcessed = await Self.postProcessToolResult(
                                 toolName: tc.function.name,
                                 result: result,
                                 prep: prep,
                                 toolSpecs: &toolSpecs
                             )
+                            result = postProcessed.result
+                            if let dict = postProcessed.artifactDict { sharedArtifacts.append(dict) }
                             messages.append(
                                 ChatMessage(
                                     role: "tool",
@@ -870,6 +907,7 @@ final class PluginHostContext: @unchecked Sendable {
                         ])
                     }
                     if !toolCallsExecuted.isEmpty { json["tool_calls_executed"] = toolCallsExecuted }
+                    if !sharedArtifacts.isEmpty { json["shared_artifacts"] = sharedArtifacts }
                     return Self.jsonString(json)
 
                 } catch {
@@ -911,6 +949,7 @@ final class PluginHostContext: @unchecked Sendable {
             var messages = prep.enriched.request.messages
             var lastContent = ""
             var toolCallsExecuted: [[String: String]] = []
+            var sharedArtifacts: [[String: Any]] = []
             var toolSpecs = prep.enriched.tools
 
             let emit: ([String: Any]) -> Void = { payload in
@@ -944,7 +983,8 @@ final class PluginHostContext: @unchecked Sendable {
                         id: cid,
                         model: prep.enriched.request.model,
                         content: lastContent,
-                        toolCallsExecuted: toolCallsExecuted
+                        toolCallsExecuted: toolCallsExecuted,
+                        sharedArtifacts: sharedArtifacts
                     )
 
                 } catch let inv as ServiceToolInvocation {
@@ -970,12 +1010,14 @@ final class PluginHostContext: @unchecked Sendable {
                         agentId: prep.agentId,
                         executionMode: prep.executionMode
                     )
-                    result = await Self.postProcessToolResult(
+                    let postProcessed = await Self.postProcessToolResult(
                         toolName: inv.toolName,
                         result: result,
                         prep: prep,
                         toolSpecs: &toolSpecs
                     )
+                    result = postProcessed.result
+                    if let dict = postProcessed.artifactDict { sharedArtifacts.append(dict) }
 
                     emit(
                         Self.chunkPayload(
@@ -1022,7 +1064,8 @@ final class PluginHostContext: @unchecked Sendable {
                 id: cid,
                 model: prep.enriched.request.model,
                 content: lastContent,
-                toolCallsExecuted: toolCallsExecuted
+                toolCallsExecuted: toolCallsExecuted,
+                sharedArtifacts: sharedArtifacts
             )
         }
     }
@@ -1033,13 +1076,15 @@ final class PluginHostContext: @unchecked Sendable {
         id: String,
         model: String,
         content: String,
-        toolCallsExecuted: [[String: String]]
+        toolCallsExecuted: [[String: String]],
+        sharedArtifacts: [[String: Any]] = []
     ) -> String {
         var result: [String: Any] = [
             "id": id, "model": model,
             "choices": [["index": 0, "message": ["role": "assistant", "content": content], "finish_reason": "stop"]],
         ]
         if !toolCallsExecuted.isEmpty { result["tool_calls_executed"] = toolCallsExecuted }
+        if !sharedArtifacts.isEmpty { result["shared_artifacts"] = sharedArtifacts }
         return jsonString(result)
     }
 

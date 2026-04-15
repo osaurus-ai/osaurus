@@ -185,8 +185,23 @@ actor ModelRuntime {
             }
         }
 
+        // Re-entry fast path: another caller is already loading this model.
+        // If their task was cancelled by an evictor between our enqueue and
+        // our await (a real race when two chat windows trigger concurrent
+        // loads under `strictSingleModel`), fall through and create a new
+        // task instead of propagating the stale CancellationError to our
+        // caller — which would leave the UI stuck at "loading" with no
+        // recovery path short of quitting the app.
         if let existingTask = loadingTasks[name] {
-            return try await existingTask.value
+            do {
+                return try await existingTask.value
+            } catch is CancellationError {
+                genLog.info(
+                    "loadContainer: existing load for \(name, privacy: .public) was cancelled mid-flight; retrying with fresh task"
+                )
+                loadingTasks[name] = nil
+                // fall through to create a new task below
+            }
         }
 
         guard let localURL = Self.findLocalDirectory(forModelId: id) else {
@@ -196,6 +211,9 @@ actor ModelRuntime {
                 userInfo: [NSLocalizedDescriptionKey: "Model not downloaded: \(name)"]
             )
         }
+
+        let probe = MLXModel(id: id, name: name, description: "", downloadURL: "")
+        await ModelDownloadService.ensureComplete(for: probe, directory: localURL)
 
         let task = Task<SessionHolder, Error> {
             let tokenizerLoader = SwiftTransformersTokenizerLoader()
@@ -341,6 +359,19 @@ actor ModelRuntime {
 
         let cfg = await getConfig()
         trace?.mark("load_container_start")
+        // Scoped start/finish around ONLY the container load. Symmetric
+        // bookkeeping via a do/catch pair — we can't use `defer` at
+        // function scope here because the function returns early (before
+        // generation runs, which happens inside `gatedGenTask`), and a
+        // function-scoped defer would keep `isLoadingModel` true through
+        // the MetalGate wait and the rest of setup. We want the flag to
+        // flip off as soon as the container is actually loaded, matching
+        // the pre-fix timing.
+        //
+        // The refcount in `InferenceProgressManager` guarantees that
+        // concurrent loads (two chat windows) don't corrupt each other,
+        // and `max(0, _ - 1)` on decrement floors the count so a
+        // double-fire from a future refactor can't drive it negative.
         InferenceProgressManager.shared.modelLoadWillStartAsync()
         let holder: SessionHolder
         do {

@@ -57,6 +57,7 @@ struct ThemeEditorView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     appearanceSection
+                    codeSection
                     colorsSection
                     messagesSection
                     textAndFontsSection
@@ -139,7 +140,6 @@ struct ThemeEditorView: View {
         VStack(alignment: .leading, spacing: 16) {
             editorSection("Appearance") {
                 colorRow("Accent Color", hex: $editingTheme.colors.accentColor)
-                colorRow("Accent Light", hex: $editingTheme.colors.accentColorLight)
 
                 HStack {
                     Text("Mode", bundle: .module)
@@ -166,7 +166,21 @@ struct ThemeEditorView: View {
         }
     }
 
-    // MARK: - Section 2: Colors
+    // MARK: - Section 2: Code
+
+    private var codeSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            editorSection("Code") {
+                codeHighlightThemePicker
+                colorRow("Code Block BG", hex: $editingTheme.colors.codeBlockBackground)
+                colorRow("Text Selection", hex: $editingTheme.colors.selectionColor)
+                colorRow("Cursor", hex: $editingTheme.colors.cursorColor)
+                colorRow("Shadow", hex: $editingTheme.colors.shadowColor)
+            }
+        }
+    }
+
+    // MARK: - Section 3: Colors
 
     private var colorsSection: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -182,15 +196,8 @@ struct ThemeEditorView: View {
                 colorRow("Tertiary BG", hex: $editingTheme.colors.tertiaryBackground)
             }
 
-            editorSection("Advanced Colors", itemCount: 18) {
+            editorSection("Advanced Colors", itemCount: 7) {
                 colorRowOptional("Placeholder", hex: $editingTheme.colors.placeholderText)
-
-                Text("Sidebar", bundle: .module).font(.system(size: 11, weight: .semibold)).foregroundColor(
-                    currentTheme.tertiaryText
-                )
-                .textCase(.uppercase)
-                colorRow("Sidebar BG", hex: $editingTheme.colors.sidebarBackground)
-                colorRow("Sidebar Selected", hex: $editingTheme.colors.sidebarSelectedBackground)
 
                 Text("Status", bundle: .module).font(.system(size: 11, weight: .semibold)).foregroundColor(
                     currentTheme.tertiaryText
@@ -199,7 +206,6 @@ struct ThemeEditorView: View {
                 colorRow("Success", hex: $editingTheme.colors.successColor)
                 colorRow("Warning", hex: $editingTheme.colors.warningColor)
                 colorRow("Error", hex: $editingTheme.colors.errorColor)
-                colorRow("Info", hex: $editingTheme.colors.infoColor)
 
                 Text("Components", bundle: .module).font(.system(size: 11, weight: .semibold)).foregroundColor(
                     currentTheme.tertiaryText
@@ -207,19 +213,8 @@ struct ThemeEditorView: View {
                 .textCase(.uppercase)
                 colorRow("Card BG", hex: $editingTheme.colors.cardBackground)
                 colorRow("Card Border", hex: $editingTheme.colors.cardBorder)
-                colorRow("Button BG", hex: $editingTheme.colors.buttonBackground)
-                colorRow("Button Border", hex: $editingTheme.colors.buttonBorder)
                 colorRow("Input BG", hex: $editingTheme.colors.inputBackground)
                 colorRow("Input Border", hex: $editingTheme.colors.inputBorder)
-
-                Text("Code & Selection", bundle: .module).font(.system(size: 11, weight: .semibold)).foregroundColor(
-                    currentTheme.tertiaryText
-                ).textCase(.uppercase)
-                colorRow("Glass Tint", hex: $editingTheme.colors.glassTintOverlay)
-                colorRow("Code Block BG", hex: $editingTheme.colors.codeBlockBackground)
-                colorRow("Text Selection", hex: $editingTheme.colors.selectionColor)
-                colorRow("Cursor", hex: $editingTheme.colors.cursorColor)
-                colorRow("Shadow", hex: $editingTheme.colors.shadowColor)
             }
         }
     }
@@ -242,13 +237,6 @@ struct ThemeEditorView: View {
                 ).textCase(.uppercase)
                 colorRowOptional("Bubble Color", hex: $editingTheme.messages.assistantBubbleColor)
                 sliderRow("Opacity", value: $editingTheme.messages.assistantBubbleOpacity, range: 0 ... 1)
-
-                Divider().opacity(0.3)
-
-                Text("Bubble Style", bundle: .module).font(.system(size: 11, weight: .semibold)).foregroundColor(
-                    currentTheme.tertiaryText
-                ).textCase(.uppercase)
-                sliderRow("Corner Radius", value: $editingTheme.messages.bubbleCornerRadius, range: 0 ... 40)
             }
         }
     }
@@ -282,8 +270,6 @@ struct ThemeEditorView: View {
                 )
                 .textCase(.uppercase)
                 colorRow("Border Color", hex: $editingTheme.colors.primaryBorder)
-                colorRow("Secondary Border", hex: $editingTheme.colors.secondaryBorder)
-                colorRow("Focus Border", hex: $editingTheme.colors.focusBorder)
                 sliderRow("Border Width", value: $editingTheme.borders.defaultWidth, range: 0 ... 4)
                 sliderRow("Border Opacity", value: $editingTheme.borders.borderOpacity, range: 0 ... 1)
 
@@ -292,18 +278,7 @@ struct ThemeEditorView: View {
                 Text("Corner Radius", bundle: .module).font(.system(size: 11, weight: .semibold)).foregroundColor(
                     currentTheme.tertiaryText
                 ).textCase(.uppercase)
-                sliderRow("Card Radius", value: $editingTheme.borders.cardCornerRadius, range: 0 ... 30)
                 sliderRow("Input Radius", value: $editingTheme.borders.inputCornerRadius, range: 0 ... 20)
-
-                Divider().opacity(0.3)
-
-                Text("Shadows", bundle: .module).font(.system(size: 11, weight: .semibold)).foregroundColor(
-                    currentTheme.tertiaryText
-                )
-                .textCase(.uppercase)
-                sliderRow("Shadow Opacity", value: $editingTheme.shadows.shadowOpacity, range: 0 ... 1)
-                sliderRow("Card Shadow", value: $editingTheme.shadows.cardShadowRadius, range: 0 ... 30)
-                sliderRow("Hover Shadow", value: $editingTheme.shadows.cardShadowRadiusHover, range: 0 ... 40)
             }
         }
     }
@@ -346,7 +321,6 @@ struct ThemeEditorView: View {
                 }
 
                 sliderRow("Quick", value: $editingTheme.animationConfig.durationQuick, range: 0.05 ... 0.5)
-                sliderRow("Medium", value: $editingTheme.animationConfig.durationMedium, range: 0.1 ... 0.8)
                 sliderRow("Slow", value: $editingTheme.animationConfig.durationSlow, range: 0.2 ... 1.0)
                 sliderRow("Response", value: $editingTheme.animationConfig.springResponse, range: 0.1 ... 1.0)
                 sliderRow("Damping", value: $editingTheme.animationConfig.springDamping, range: 0.3 ... 1.0)
@@ -504,29 +478,6 @@ struct ThemeEditorView: View {
                     }
                 }
 
-                Divider().opacity(0.3)
-
-                Text("Overlay", bundle: .module).font(.system(size: 11, weight: .semibold)).foregroundColor(
-                    currentTheme.tertiaryText
-                )
-                .textCase(.uppercase)
-                colorRowOptional("Color", hex: $editingTheme.background.overlayColor)
-                sliderRow(
-                    "Opacity",
-                    value: Binding(
-                        get: { editingTheme.background.overlayOpacity ?? 0 },
-                        set: { editingTheme.background.overlayOpacity = $0 }
-                    ),
-                    range: 0 ... 1
-                )
-
-                Divider().opacity(0.3)
-
-                Text("Shadow Position", bundle: .module).font(.system(size: 11, weight: .semibold)).foregroundColor(
-                    currentTheme.tertiaryText
-                ).textCase(.uppercase)
-                sliderRow("Card Y Offset", value: $editingTheme.shadows.cardShadowY, range: 0 ... 20)
-                sliderRow("Hover Y Offset", value: $editingTheme.shadows.cardShadowYHover, range: 0 ... 20)
             }
         }
     }
@@ -634,6 +585,26 @@ struct ThemeEditorView: View {
                 .background(RoundedRectangle(cornerRadius: 8).fill(currentTheme.cardBackground))
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
+        }
+    }
+
+    private var codeHighlightThemePicker: some View {
+        HStack(spacing: 8) {
+            Text("Syntax Theme", bundle: .module)
+                .font(.system(size: 13))
+                .foregroundColor(currentTheme.primaryText)
+            Spacer()
+            Picker("", selection: Binding<String>(
+                get: { editingTheme.codeHighlightTheme ?? "auto" },
+                set: { editingTheme.codeHighlightTheme = $0 == "auto" ? nil : $0 }
+            )) {
+                Text("Auto", bundle: .module).tag("auto")
+                Divider()
+                ForEach(availableHighlightrThemes(), id: \.self) { name in
+                    Text(name).tag(name)
+                }
+            }
+            .frame(width: 180)
         }
     }
 
@@ -915,24 +886,21 @@ struct ThemeChatPreview: View {
 
             VStack(spacing: 0) {
                 previewHeader
-                    .padding(.horizontal, 16)
-                    .padding(.top, 14)
-                    .padding(.bottom, 6)
 
                 ScrollView {
                     VStack(spacing: 0) {
                         previewUserMessage("Hey there! Can you help me with something?")
                         previewAssistantMessage()
                     }
-                    .padding(.horizontal, 12)
-                    .padding(.top, 8)
+                    .padding(.horizontal, 4)
+                    .padding(.top, 4)
                 }
 
                 Spacer()
 
                 previewInput
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 16)
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 12)
             }
         }
         .background(c(theme.colors.primaryBackground))
@@ -950,57 +918,108 @@ struct ThemeChatPreview: View {
         return c(theme.colors.accentColor)
     }
 
+    private var assistantBubbleColor: Color? {
+        guard let hex = theme.messages.assistantBubbleColor else { return nil }
+        return c(hex)
+    }
+
+    private func messageHeader(_ name: String, color: Color) -> some View {
+        Text(name)
+            .font(primaryFont(size: captionSize + 1, weight: .semibold))
+            .foregroundColor(color)
+            .padding(.horizontal, 16)
+            .padding(.top, 10)
+            .padding(.bottom, 2)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     private func previewUserMessage(_ content: String) -> some View {
-        let radius: CGFloat = 10
+        let radius: CGFloat = 8
         let opacity = theme.messages.userBubbleOpacity
 
-        return Text(content)
-            .font(bodyFont)
-            .foregroundColor(c(theme.colors.primaryText))
-            .padding(.horizontal, 12)
-            .padding(.top, 10)
-            .padding(.bottom, 10)
-            .background(
-                RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .fill(userBubbleColor.opacity(opacity))
-            )
-            .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .frame(maxWidth: .infinity, alignment: .trailing)
+        return VStack(alignment: .trailing, spacing: 0) {
+            Text(content)
+                .font(bodyFont)
+                .foregroundColor(c(theme.colors.primaryText))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(
+                    RoundedRectangle(cornerRadius: radius, style: .continuous)
+                        .fill(userBubbleColor.opacity(opacity))
+                )
+                .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+                .padding(.horizontal, 10)
+        }
+        .padding(.bottom, 4)
+        .frame(maxWidth: .infinity, alignment: .trailing)
     }
 
     private func previewAssistantMessage() -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Assistant", bundle: .module)
-                .font(primaryFont(size: captionSize + 1, weight: .semibold))
-                .foregroundColor(c(theme.colors.secondaryText))
+        VStack(alignment: .leading, spacing: 0) {
+            messageHeader("Assistant", color: c(theme.colors.secondaryText))
 
-            Text("Sure! Here's an example:", bundle: .module)
-                .font(bodyFont)
-                .foregroundColor(c(theme.colors.primaryText))
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text("swift", bundle: .module)
-                    .font(monoFont(size: captionSize, weight: .medium))
-                    .foregroundColor(c(theme.colors.tertiaryText))
-                    .padding(.horizontal, 10).padding(.top, 8)
-
-                Text("print(\"Hello, World!\")", bundle: .module)
-                    .font(codeFont)
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Sure! Here's an example:", bundle: .module)
+                    .font(bodyFont)
                     .foregroundColor(c(theme.colors.primaryText))
-                    .padding(.horizontal, 10).padding(.bottom, 10)
+
+                previewCodeBlock
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
             .background(
-                RoundedRectangle(cornerRadius: CGFloat(theme.borders.inputCornerRadius)).fill(
-                    c(theme.colors.codeBlockBackground)
-                )
+                Group {
+                    if let bubbleColor = assistantBubbleColor {
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .fill(bubbleColor.opacity(theme.messages.assistantBubbleOpacity))
+                    }
+                }
             )
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 14)
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    // MARK: - Code Block Preview
+
+    private var previewCodeBlock: some View {
+        let themeProtocol = CustomizableTheme(config: theme)
+        let sampleCode = "print(\"Hello, World!\")"
+        let _ = ensureHighlightrTheme(for: themeProtocol)
+        let bgColor = highlightrThemeBackgroundColor()
+
+        return VStack(alignment: .leading, spacing: 0) {
+            // Header bar
+            HStack {
+                Text("swift", bundle: .module)
+                    .font(monoFont(size: captionSize - 1, weight: .medium))
+                    .foregroundColor(c(theme.colors.tertiaryText))
+                Spacer()
+                Image(systemName: "doc.on.doc")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(c(theme.colors.tertiaryText).opacity(0.45))
+            }
+            .padding(.horizontal, 12)
+            .frame(height: 28)
+            .background(bgColor.opacity(0.6))
+
+            // Syntax-highlighted code via CodeContentView
+            GeometryReader { geo in
+                CodeContentView(
+                    code: sampleCode,
+                    language: "swift",
+                    baseWidth: geo.size.width - 24,
+                    theme: themeProtocol
+                )
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+            }
+            .frame(height: 36)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 8).fill(bgColor)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
     // MARK: - Background
@@ -1070,93 +1089,50 @@ struct ThemeChatPreview: View {
     // MARK: - Header
 
     private var previewHeader: some View {
-        HStack(spacing: 10) {
-            headerButton("sidebar.left")
-
-            // Chat / Work mode toggle
-            HStack(spacing: 0) {
-                modeSegment("bubble.left.and.bubble.right", "Chat", isActive: true)
-                modeSegment("bolt.fill", "Work", isActive: false)
-            }
-            .padding(3)
-            .background(Capsule().fill(c(theme.colors.secondaryBackground).opacity(0.6)))
-
-            // Model badge
-            HStack(spacing: 5) {
-                Circle().fill(c(theme.colors.successColor)).frame(width: 6, height: 6)
-                Text("gpt-4", bundle: .module)
-                    .font(primaryFont(size: captionSize - 1, weight: .medium))
-                    .foregroundColor(c(theme.colors.secondaryText))
-            }
-
-            Spacer()
-
-            headerButton("plus")
-            headerButton("pin")
-        }
-    }
-
-    private func headerButton(_ icon: String) -> some View {
-        Image(systemName: icon)
-            .font(.system(size: 12, weight: .medium))
-            .foregroundColor(c(theme.colors.secondaryText))
-            .frame(width: 28, height: 28)
-            .background(Circle().fill(c(theme.colors.secondaryBackground).opacity(0.6)))
-    }
-
-    private func modeSegment(_ icon: String, _ label: String, isActive: Bool) -> some View {
-        HStack(spacing: 4) {
-            Image(systemName: icon).font(.system(size: 10, weight: .medium))
-            Text(label).font(primaryFont(size: captionSize - 1, weight: .medium))
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 5)
-        .background(isActive ? Capsule().fill(c(theme.colors.accentColor).opacity(0.15)) : nil)
-        .foregroundColor(isActive ? c(theme.colors.accentColor) : c(theme.colors.tertiaryText))
+        Color.clear.frame(height: 20)
     }
 
     // MARK: - Input
 
     private var previewInput: some View {
         VStack(spacing: 8) {
-            // Selector row
-            HStack(spacing: 10) {
+            // Selector row — outside the card
+            HStack(spacing: 8) {
                 selectorChip {
-                    Circle().fill(c(theme.colors.successColor)).frame(width: 6, height: 6)
-                    Text("gpt-4", bundle: .module).font(primaryFont(size: captionSize - 1, weight: .medium))
-                    Image(systemName: "chevron.up.chevron.down").font(.system(size: 8, weight: .semibold))
-                }
-
-                selectorChip {
-                    Image(systemName: "sparkles").font(.system(size: 9, weight: .medium))
-                    Text("3 tools", bundle: .module).font(primaryFont(size: captionSize - 1, weight: .medium))
+                    Circle().fill(c(theme.colors.successColor)).frame(width: 5, height: 5)
+                    Text("claude-4-sonnet", bundle: .module).font(primaryFont(size: captionSize - 1, weight: .medium))
+                    Image(systemName: "chevron.up.chevron.down").font(.system(size: 7, weight: .semibold))
                 }
 
                 Spacer()
 
-                HStack(spacing: 3) {
-                    Text("⏎").font(primaryFont(size: captionSize - 2, weight: .medium))
-                    Text("to send", bundle: .module).font(primaryFont(size: captionSize - 1))
-                }
-                .foregroundColor(c(theme.colors.tertiaryText).opacity(0.6))
+                Text("~2k / 200k", bundle: .module)
+                    .font(primaryFont(size: captionSize - 1, weight: .medium))
+                    .foregroundColor(c(theme.colors.tertiaryText).opacity(0.6))
             }
 
             // Input card
             VStack(alignment: .leading, spacing: 0) {
-                Text("Message or paste image...", bundle: .module)
+                // Text input placeholder
+                Text("Message or attach files...", bundle: .module)
                     .font(bodyFont)
                     .foregroundColor(c(theme.colors.placeholderText ?? theme.colors.tertiaryText))
                     .padding(.horizontal, 14)
                     .padding(.top, 12)
                     .padding(.bottom, 8)
 
-                HStack(spacing: 8) {
-                    Image(systemName: "photo.badge.plus").font(.system(size: 13, weight: .medium))
-                        .foregroundColor(c(theme.colors.tertiaryText))
-                    Image(systemName: "mic.fill").font(.system(size: 13, weight: .medium))
-                        .foregroundColor(c(theme.colors.tertiaryText))
+                // Button bar
+                HStack(spacing: 6) {
+                    previewActionButton(icon: "paperclip")
+                    previewSlashButton
 
                     Spacer()
+
+                    HStack(spacing: 3) {
+                        Text("⏎", bundle: .module).font(primaryFont(size: captionSize - 2, weight: .medium))
+                        Text("to send", bundle: .module).font(primaryFont(size: captionSize - 1))
+                    }
+                    .foregroundColor(c(theme.colors.tertiaryText).opacity(0.5))
 
                     Circle()
                         .fill(
@@ -1166,57 +1142,95 @@ struct ThemeChatPreview: View {
                                 endPoint: .bottom
                             )
                         )
-                        .frame(width: 30, height: 30)
+                        .frame(width: 26, height: 26)
                         .overlay(
-                            Image(systemName: "arrow.up").font(.system(size: 13, weight: .bold)).foregroundColor(.white)
-                        )
-                        .shadow(
-                            color: c(theme.colors.accentColor).opacity(theme.shadows.shadowOpacity * 0.5),
-                            radius: 4,
-                            x: 0,
-                            y: 2
+                            Image(systemName: "arrow.up").font(.system(size: 11, weight: .bold)).foregroundColor(.white)
                         )
                 }
-                .padding(.horizontal, 14)
+                .padding(.horizontal, 12)
                 .padding(.bottom, 10)
             }
             .background(
-                RoundedRectangle(cornerRadius: CGFloat(theme.messages.bubbleCornerRadius), style: .continuous)
-                    .fill(c(theme.colors.inputBackground))
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .fill(c(theme.colors.primaryBackground).opacity(0.9))
             )
-            .clipShape(RoundedRectangle(cornerRadius: CGFloat(theme.messages.bubbleCornerRadius), style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: CGFloat(theme.messages.bubbleCornerRadius), style: .continuous)
-                    .stroke(
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .strokeBorder(
                         LinearGradient(
                             colors: [
-                                c(theme.colors.primaryBorder),
-                                c(theme.colors.primaryBorder).opacity(0.35),
+                                .white.opacity(theme.isDark ? 0.2 : 0.3),
+                                c(theme.colors.primaryBorder).opacity(0.12),
                             ],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
                         ),
-                        lineWidth: CGFloat(theme.messages.borderWidth)
+                        lineWidth: 0.5
                     )
-            )
-            .shadow(
-                color: c(theme.colors.shadowColor).opacity(theme.shadows.shadowOpacity),
-                radius: CGFloat(theme.shadows.cardShadowRadius),
-                x: 0,
-                y: CGFloat(theme.shadows.cardShadowY)
             )
         }
     }
 
+    private func previewActionButton(icon: String) -> some View {
+        ZStack {
+            Circle()
+                .fill(c(theme.colors.tertiaryBackground).opacity(0.8))
+            Image(systemName: icon)
+                .font(.system(size: CGFloat(theme.typography.bodySize), weight: .medium))
+                .foregroundColor(c(theme.colors.secondaryText))
+        }
+        .frame(width: 32, height: 32)
+        .overlay(
+            Circle()
+                .strokeBorder(
+                    LinearGradient(
+                        colors: [
+                            .white.opacity(0.15),
+                            c(theme.colors.primaryBorder).opacity(0.1),
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    lineWidth: 0.5
+                )
+        )
+    }
+
+    private var previewSlashButton: some View {
+        ZStack {
+            Circle()
+                .fill(c(theme.colors.tertiaryBackground).opacity(0.8))
+            Text("/")
+                .font(.system(size: 16, weight: .medium, design: .monospaced))
+                .foregroundColor(c(theme.colors.secondaryText))
+        }
+        .frame(width: 32, height: 32)
+        .overlay(
+            Circle()
+                .strokeBorder(
+                    LinearGradient(
+                        colors: [
+                            .white.opacity(0.15),
+                            c(theme.colors.primaryBorder).opacity(0.1),
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    lineWidth: 0.5
+                )
+        )
+    }
+
     private func selectorChip<Content: View>(@ViewBuilder content: () -> Content) -> some View {
-        HStack(spacing: 5) { content() }
+        HStack(spacing: 4) { content() }
             .foregroundColor(c(theme.colors.secondaryText))
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
             .background(
                 Capsule()
-                    .fill(c(theme.colors.secondaryBackground).opacity(0.8))
-                    .overlay(Capsule().stroke(c(theme.colors.primaryBorder).opacity(0.4), lineWidth: 0.5))
+                    .fill(c(theme.colors.secondaryBackground).opacity(0.6))
+                    .overlay(Capsule().stroke(c(theme.colors.primaryBorder).opacity(0.3), lineWidth: 0.5))
             )
     }
 }
