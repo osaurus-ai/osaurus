@@ -225,6 +225,7 @@ public actor RemoteProviderService: ToolCapableService {
         }
 
         let urlRequest = try buildURLRequest(for: request)
+        print("[RelayDebug][Client] streamDeltas URL: \(urlRequest.url?.absoluteString ?? "nil") method=\(urlRequest.httpMethod ?? "nil") providerType=\(self.provider.providerType)")
         let currentSession = self.session
         let providerType = self.provider.providerType
         let inactivityTimeout = self.streamInactivityTimeout
@@ -240,15 +241,20 @@ public actor RemoteProviderService: ToolCapableService {
                     return
                 }
 
-                if httpResponse.statusCode >= 400 {
+                let statusCode = httpResponse.statusCode
+                let contentType = httpResponse.value(forHTTPHeaderField: "Content-Type") ?? "nil"
+                print("[RelayDebug][Client] HTTP response: status=\(statusCode) content-type=\(contentType)")
+
+                if statusCode >= 400 {
                     var errorData = Data()
                     for try await byte in bytes {
                         errorData.append(byte)
                     }
                     let errorMessage = String(data: errorData, encoding: .utf8) ?? "Unknown error"
+                    print("[RelayDebug][Client] HTTP error body: \(errorMessage)")
                     continuation.finish(
                         throwing: RemoteProviderServiceError.requestFailed(
-                            "HTTP \(httpResponse.statusCode): \(errorMessage)"
+                            "HTTP \(statusCode): \(errorMessage)"
                         )
                     )
                     return
@@ -266,6 +272,7 @@ public actor RemoteProviderService: ToolCapableService {
                 // Parse SSE stream with UTF-8 decoding and inactivity timeout
                 var buffer = ""
                 var sseEventData = ""
+                var rawByteCount = 0
                 var utf8Buffer = Data()
                 let maxUtf8BufferSize = 1024
                 let byteRef = ByteIteratorRef(bytes.makeAsyncIterator())
@@ -285,6 +292,9 @@ public actor RemoteProviderService: ToolCapableService {
                         break
                     }
 
+                    rawByteCount += 1
+                    if rawByteCount == 1 { print("[RelayDebug][Client] First byte received") }
+
                     utf8Buffer.append(byte)
                     if let decoded = String(data: utf8Buffer, encoding: .utf8) {
                         buffer.append(decoded)
@@ -299,11 +309,14 @@ public actor RemoteProviderService: ToolCapableService {
                         let line = String(buffer[..<newlineIndex])
                         buffer = String(buffer[buffer.index(after: newlineIndex)...])
 
+                        print("[RelayDebug][Client] Line: \(line.prefix(120).debugDescription)")
+
                         // SSE event boundary: blank line dispatches accumulated data
                         if line.trimmingCharacters(in: .whitespaces).isEmpty {
                             guard !sseEventData.isEmpty else { continue }
                             let dataContent = sseEventData
                             sseEventData = ""
+                            print("[RelayDebug][Client] Dispatching SSE event (\(dataContent.count) chars): \(dataContent.prefix(120).debugDescription)")
 
                             // Check for stream end (OpenAI format)
                             if dataContent.trimmingCharacters(in: .whitespaces) == "[DONE]" {
@@ -660,6 +673,8 @@ public actor RemoteProviderService: ToolCapableService {
                     }
                 }
 
+                print("[RelayDebug][Client] Byte loop exited: totalBytes=\(rawByteCount) remainingBuffer=\(buffer.count) remainingSSEData=\(sseEventData.count)")
+
                 // Flush remaining buffer into SSE event accumulator
                 if !buffer.trimmingCharacters(in: .whitespaces).isEmpty {
                     Self.accumulateSSELine(buffer, into: &sseEventData)
@@ -682,8 +697,10 @@ public actor RemoteProviderService: ToolCapableService {
                 continuation.finish()
             } catch {
                 if Task.isCancelled {
+                    print("[RelayDebug][Client] Stream task cancelled")
                     continuation.finish()
                 } else {
+                    print("[RelayDebug][Client] Stream task error: \(error)")
                     continuation.finish(throwing: error)
                 }
             }

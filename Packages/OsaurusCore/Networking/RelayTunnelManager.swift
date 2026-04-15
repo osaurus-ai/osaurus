@@ -389,6 +389,8 @@ public final class RelayTunnelManager: ObservableObject {
             let headers = flattenHeaders(httpResponse?.allHeaderFields)
             let contentType = headers["content-type"] ?? ""
 
+            print("[RelayDebug][Server] Local response: id=\(frame.id) status=\(status) content-type=\(contentType)")
+
             if contentType.contains("text/event-stream") || contentType.contains("application/x-ndjson") {
                 await relayStreamingResponse(
                     id: frame.id,
@@ -449,17 +451,25 @@ public final class RelayTunnelManager: ObservableObject {
         bytes: URLSession.AsyncBytes,
         via webSocket: URLSessionWebSocketTask?
     ) async {
+        print("[RelayDebug][Server] relayStreamingResponse start: id=\(id) status=\(status) contentType=\(contentType)")
         sendFrame(RelayStreamStartFrame(id: id, status: status, headers: headers), via: webSocket)
 
         let isSSE = contentType.contains("text/event-stream")
         var eventBuffer = ""
+        var lineCount = 0
+        var chunkCount = 0
 
         do {
             for try await line in bytes.lines {
+                lineCount += 1
+                print("[RelayDebug][Server] Line #\(lineCount): \(line.prefix(120).debugDescription)")
                 if isSSE {
                     if line.isEmpty && !eventBuffer.isEmpty {
+                        chunkCount += 1
+                        let chunkData = eventBuffer + "\n"
+                        print("[RelayDebug][Server] Sending stream_chunk #\(chunkCount): \(chunkData.prefix(120).debugDescription)")
                         sendFrame(
-                            RelayStreamChunkFrame(id: id, data: eventBuffer + "\n"),
+                            RelayStreamChunkFrame(id: id, data: chunkData),
                             via: webSocket
                         )
                         eventBuffer = ""
@@ -467,17 +477,21 @@ public final class RelayTunnelManager: ObservableObject {
                         eventBuffer += line + "\n"
                     }
                 } else if !line.isEmpty {
+                    chunkCount += 1
                     sendFrame(RelayStreamChunkFrame(id: id, data: line + "\n"), via: webSocket)
                 }
             }
         } catch {
-            // Stream interrupted — flush what we have and close cleanly
+            print("[RelayDebug][Server] Stream read error after \(lineCount) lines: \(error)")
         }
 
         if !eventBuffer.isEmpty {
+            chunkCount += 1
+            print("[RelayDebug][Server] Flushing leftover buffer as chunk #\(chunkCount): \(eventBuffer.prefix(120).debugDescription)")
             sendFrame(RelayStreamChunkFrame(id: id, data: eventBuffer), via: webSocket)
         }
 
+        print("[RelayDebug][Server] relayStreamingResponse done: \(lineCount) lines, \(chunkCount) chunks sent")
         sendFrame(RelayStreamEndFrame(id: id), via: webSocket)
     }
 
