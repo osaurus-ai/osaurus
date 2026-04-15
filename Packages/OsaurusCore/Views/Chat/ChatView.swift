@@ -351,29 +351,28 @@ final class ChatSession: ObservableObject {
         let normalized = content.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard normalized.count >= 256 else { return false }
 
-        let characters = Array(normalized)
+        // Corruption appears as repeated trailing loops during streaming, so we only inspect a
+        // bounded suffix instead of rescanning the entire accumulated output every few deltas.
+        let scanWindow = String(normalized.suffix(512))
+        let characters = Array(scanWindow)
         for gramLength in 1 ... 8 {
             let requiredRepeats = gramLength == 1 ? 32 : 16
             let minimumSpan = gramLength * requiredRepeats
             guard characters.count >= minimumSpan else { continue }
 
-            var start = 0
-            while start + minimumSpan <= characters.count {
-                let pattern = Array(characters[start ..< (start + gramLength)])
-                var repeats = 1
-                var cursor = start + gramLength
+            let loopStart = characters.count - minimumSpan
+            let pattern = Array(characters[loopStart ..< (loopStart + gramLength)])
+            var cursor = loopStart + gramLength
+            var repeats = 1
 
-                while cursor + gramLength <= characters.count,
-                    Array(characters[cursor ..< (cursor + gramLength)]) == pattern
-                {
-                    repeats += 1
-                    if repeats >= requiredRepeats {
-                        return true
-                    }
-                    cursor += gramLength
+            while cursor + gramLength <= characters.count,
+                Array(characters[cursor ..< (cursor + gramLength)]) == pattern
+            {
+                repeats += 1
+                if repeats >= requiredRepeats {
+                    return true
                 }
-
-                start += 1
+                cursor += gramLength
             }
         }
 
@@ -390,7 +389,6 @@ final class ChatSession: ObservableObject {
     static func sanitizedCorruptedAssistantOutput(_ content: String) -> String {
         var sanitized = content
 
-        let lowercased = sanitized.lowercased()
         let markerCandidates = [
             "<channel>|<channel>thought",
             "<channel><|channel|>thought",
@@ -398,24 +396,19 @@ final class ChatSession: ObservableObject {
         ]
 
         for marker in markerCandidates {
-            if let range = lowercased.range(of: marker) {
-                let distance = lowercased.distance(from: lowercased.startIndex, to: range.lowerBound)
-                let cutoff = sanitized.index(sanitized.startIndex, offsetBy: distance)
-                sanitized = String(sanitized[..<cutoff])
+            if let range = sanitized.range(of: marker, options: [.caseInsensitive]) {
+                sanitized = String(sanitized[..<range.lowerBound])
                 break
             }
         }
 
         let words = sanitized.split(whereSeparator: \.isWhitespace)
         if let lastWordRaw = words.last {
-            let lastWord = lastWordRaw
-                .trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
-                .lowercased()
+            let lastWord = lastWordRaw.trimmingCharacters(in: CharacterSet.alphanumerics.inverted).lowercased()
             if !lastWord.isEmpty {
                 var repeatedTailCount = 0
                 for word in words.reversed() {
-                    let normalizedWord = word
-                        .trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
+                    let normalizedWord = word.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
                         .lowercased()
                     if normalizedWord == lastWord {
                         repeatedTailCount += 1
@@ -424,9 +417,12 @@ final class ChatSession: ObservableObject {
                     }
                 }
 
-                if repeatedTailCount >= 16 {
+                let minimumRepeatedTailCount = 16
+                if repeatedTailCount >= minimumRepeatedTailCount {
                     let escapedWord = NSRegularExpression.escapedPattern(for: lastWord)
-                    let pattern = "(?i)(?:\\b\(escapedWord)\\b(?:\\s+\\b\(escapedWord)\\b){15,})\\s*$"
+                    let repeatedWordSuffix = minimumRepeatedTailCount - 1
+                    let pattern =
+                        "(?i)(?:\\b\(escapedWord)\\b(?:\\s+\\b\(escapedWord)\\b){\(repeatedWordSuffix),})\\s*$"
                     sanitized = sanitized.replacingOccurrences(
                         of: pattern,
                         with: "",
@@ -1201,9 +1197,13 @@ final class ChatSession: ObservableObject {
 
                         // Flush any remaining buffered content (including partial tags)
                         processor.finalize()
-                        let sanitizedContent = Self.sanitizedCorruptedAssistantOutput(assistantTurn.content)
-                        if sanitizedContent != assistantTurn.content {
-                            assistantTurn.content = sanitizedContent
+                        if abortedForCorruption {
+                            assistantTurn.content = ""
+                        } else {
+                            let sanitizedContent = Self.sanitizedCorruptedAssistantOutput(assistantTurn.content)
+                            if sanitizedContent != assistantTurn.content {
+                                assistantTurn.content = sanitizedContent
+                            }
                         }
 
                         if let first = firstDeltaTime {

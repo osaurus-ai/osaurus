@@ -258,6 +258,16 @@ struct ChatViewSandboxTests {
 
         #expect(sanitized == "Reasonable beginning.")
     }
+
+    @Test
+    func sanitizedCorruptedAssistantOutput_preservesEmojiBeforeChannelMarker() {
+        let corrupted =
+            "Hello 🎉 world.\n<channel>|<channel>thought\n<channel>|<channel>thought"
+
+        let sanitized = ChatSession.sanitizedCorruptedAssistantOutput(corrupted)
+
+        #expect(sanitized == "Hello 🎉 world.")
+    }
 }
 
 @MainActor

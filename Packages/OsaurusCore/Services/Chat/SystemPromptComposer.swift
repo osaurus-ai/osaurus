@@ -183,6 +183,8 @@ public struct SystemPromptComposer: Sendable {
         let toolMode = AgentManager.shared.effectiveToolSelectionMode(for: agentId)
         let isManual = toolMode == .manual
 
+        // Work mode keeps the full tool set available. On-demand narrowing is chat-only so
+        // autonomous task execution never silently loses a required tool.
         if preferOnDemandTools && !isManual, case .none = executionMode {
             return resolveOnDemandLocalChatTools(query: query, preflight: preflight)
         }
@@ -239,6 +241,8 @@ public struct SystemPromptComposer: Sendable {
 
     private static func queryLikelyNeedsCapabilityDiscovery(_ query: String) -> Bool {
         let normalized = query.lowercased()
+        // This is intentionally a loose first-pass heuristic. Prefer a few false positives in
+        // local auto chat over hiding capability tools when the user is asking what Osaurus can do.
         let keywords = [
             "tool", "tools", "skill", "skills", "plugin", "plugins", "method", "methods", "capability",
             "capabilities", "workflow", "workflows",
