@@ -554,6 +554,22 @@ public actor WorkExecutionEngine {
                         await onToolArgHint(argFragment)
                         continue
                     }
+                    // Strip benchmarking sentinel (￾stats:N;TPS). Like
+                    // StreamingToolHint, the stats delta is its own
+                    // stream fragment — not part of the visible text —
+                    // so we must drop it rather than accumulate into
+                    // responseContent. Without this strip, the stats
+                    // sentinel was being persisted into the assistant's
+                    // message content and then rendered verbatim on
+                    // re-display, surfacing as the user-visible
+                    // "…￾stats:24;85.4607" string (issue #856).
+                    //
+                    // ChatView.swift:1064 already handles this for the
+                    // regular chat path; work mode uses a different
+                    // consumer (this file), which previously missed it.
+                    if StreamingStatsHint.decode(delta) != nil {
+                        continue
+                    }
                     responseContent += delta
                     await onDelta(delta, iteration)
                 }
