@@ -493,14 +493,28 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
     public func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         // Defer termination so in-flight inference tasks and MLX GPU resources are
         // released before exit() triggers C++ static destructors.
+        //
+        // Issue #860: the previous version guarded the server shutdown on
+        // `serverController.isRunning`. That flag can be false while the
+        // underlying NIO `MultiThreadedEventLoopGroup` is still alive
+        // (e.g. mid-partial-start, mid-shutdown, or Sparkle-triggered
+        // quit racing against server cleanup). When the EL group is
+        // still non-nil at `exit()`, NIO's destructor hits
+        // `preconditionFailure("EventLoopGroup is still running")` —
+        // EXC_BREAKPOINT at `NIO-ELT-3` as reported. `ensureShutdown()`
+        // itself is a no-op if everything is already nil, so always
+        // call it.
+        //
+        // We also always stop the sandbox (which in turn stops the
+        // HostAPIBridgeServer) so its 2-thread EL group can't leak
+        // past quit even when no sandbox container was started.
         Task { @MainActor in
             ChatWindowManager.shared.stopAllSessions()
             BackgroundTaskManager.shared.cancelAllTasks()
             MCPProviderManager.shared.disconnectAll()
             RemoteProviderManager.shared.disconnectAll()
-            if serverController.isRunning {
-                await serverController.ensureShutdown()
-            }
+            // Unconditional: ensureShutdown is idempotent when already clean.
+            await serverController.ensureShutdown()
             await MCPServerManager.shared.stopAll()
             await ModelRuntime.shared.clearAll()
             do {
@@ -508,6 +522,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             } catch {
                 NSLog("[Osaurus] Sandbox stop failed: \(error)")
             }
+            // Belt-and-suspenders: if the sandbox was never provisioned,
+            // `stopContainer` still stops the bridge, but if the bridge
+            // was started through some other path in a future refactor
+            // we want its EL group torn down regardless.
+            await HostAPIBridgeServer.shared.stop()
             NSApp.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater
