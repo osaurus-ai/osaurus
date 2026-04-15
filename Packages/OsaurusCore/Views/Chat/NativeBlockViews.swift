@@ -695,7 +695,8 @@ final class NativeCodeBlockView: NSView {
     // MARK: Configure
 
     func configure(code: String, language: String?, width: CGFloat, theme: any ThemeProtocol) {
-        let themeId = "\(theme.monoFontName)|\(theme.codeSize)"
+        let resolvedHL = theme.codeHighlightTheme ?? (theme.isDark ? "auto-dark" : "auto-light")
+        let themeId = "\(theme.monoFontName)|\(theme.codeSize)|\(resolvedHL)"
         let codeChanged = code != lastCode || language != lastLang
         let widthChanged = abs(width - lastWidth) > 0.5
         let themeChanged = themeId != lastThemeId

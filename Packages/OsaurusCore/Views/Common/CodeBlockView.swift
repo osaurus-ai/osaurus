@@ -16,12 +16,38 @@ import SwiftUI
 // MARK: - Shared Highlightr Instance
 
 // Highlightr wraps highlight.js via JavaScriptCore — initialisation is expensive,
-// so we keep a single instance for the process lifetime.
+// so we keep a single instance for the process lifetime. The theme is switched
+// lazily when the resolved highlight theme name changes.
 nonisolated(unsafe) private let sharedHighlightr: Highlightr? = {
     guard let h = Highlightr() else { return nil }
-    h.setTheme(to: "pop")
+    h.setTheme(to: "atom-one-dark")
     return h
 }()
+
+/// Track which Highlightr theme is currently loaded so we only call setTheme when it changes.
+nonisolated(unsafe) private var currentHighlightrTheme: String = "atom-one-dark"
+
+private let defaultDarkHighlightTheme = "atom-one-dark"
+private let defaultLightHighlightTheme = "atom-one-light"
+
+/// Returns the available Highlightr theme names (cached after first call).
+nonisolated(unsafe) private var cachedAvailableThemes: [String]?
+func availableHighlightrThemes() -> [String] {
+    if let cached = cachedAvailableThemes { return cached }
+    let themes = (sharedHighlightr?.availableThemes() ?? []).sorted()
+    cachedAvailableThemes = themes
+    return themes
+}
+
+/// Resolves which Highlightr theme to use and switches if needed.
+/// Call this before highlighting — it's a no-op when the theme hasn't changed.
+func ensureHighlightrTheme(for theme: any ThemeProtocol) {
+    let resolved = theme.codeHighlightTheme
+        ?? (theme.isDark ? defaultDarkHighlightTheme : defaultLightHighlightTheme)
+    guard resolved != currentHighlightrTheme else { return }
+    sharedHighlightr?.setTheme(to: resolved)
+    currentHighlightrTheme = resolved
+}
 
 // MARK: - CodeBlockView
 
@@ -132,7 +158,8 @@ struct CodeContentView: NSViewRepresentable {
 
     func updateNSView(_ textView: CodeNSTextView, context: Context) {
         let coord = context.coordinator
-        let themeId = "\(theme.monoFontName)|\(theme.bodySize)"
+        let resolvedHL = theme.codeHighlightTheme ?? (theme.isDark ? "auto-dark" : "auto-light")
+        let themeId = "\(theme.monoFontName)|\(theme.bodySize)|\(resolvedHL)"
 
         let codeChanged = coord.lastCode != code
         let langChanged = coord.lastLanguage != language
@@ -220,6 +247,9 @@ struct CodeContentView: NSViewRepresentable {
         let gutterDigits = "\(lines.count)".count
         let gutterWidth = CGFloat(gutterDigits + 2) * fontSize * 0.62
         let indent: CGFloat = 12 + gutterWidth
+
+        // Ensure the Highlightr theme matches the current app theme before highlighting.
+        ensureHighlightrTheme(for: theme)
 
         // use Highlightr for syntax highlighting; fall back to plain text if it returns nil.
         let result: NSMutableAttributedString

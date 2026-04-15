@@ -57,6 +57,7 @@ struct ThemeEditorView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     appearanceSection
+                    codeSection
                     colorsSection
                     messagesSection
                     textAndFontsSection
@@ -165,7 +166,21 @@ struct ThemeEditorView: View {
         }
     }
 
-    // MARK: - Section 2: Colors
+    // MARK: - Section 2: Code
+
+    private var codeSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            editorSection("Code") {
+                codeHighlightThemePicker
+                colorRow("Code Block BG", hex: $editingTheme.colors.codeBlockBackground)
+                colorRow("Text Selection", hex: $editingTheme.colors.selectionColor)
+                colorRow("Cursor", hex: $editingTheme.colors.cursorColor)
+                colorRow("Shadow", hex: $editingTheme.colors.shadowColor)
+            }
+        }
+    }
+
+    // MARK: - Section 3: Colors
 
     private var colorsSection: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -181,7 +196,7 @@ struct ThemeEditorView: View {
                 colorRow("Tertiary BG", hex: $editingTheme.colors.tertiaryBackground)
             }
 
-            editorSection("Advanced Colors", itemCount: 11) {
+            editorSection("Advanced Colors", itemCount: 7) {
                 colorRowOptional("Placeholder", hex: $editingTheme.colors.placeholderText)
 
                 Text("Status", bundle: .module).font(.system(size: 11, weight: .semibold)).foregroundColor(
@@ -200,14 +215,6 @@ struct ThemeEditorView: View {
                 colorRow("Card Border", hex: $editingTheme.colors.cardBorder)
                 colorRow("Input BG", hex: $editingTheme.colors.inputBackground)
                 colorRow("Input Border", hex: $editingTheme.colors.inputBorder)
-
-                Text("Code & Selection", bundle: .module).font(.system(size: 11, weight: .semibold)).foregroundColor(
-                    currentTheme.tertiaryText
-                ).textCase(.uppercase)
-                colorRow("Code Block BG", hex: $editingTheme.colors.codeBlockBackground)
-                colorRow("Text Selection", hex: $editingTheme.colors.selectionColor)
-                colorRow("Cursor", hex: $editingTheme.colors.cursorColor)
-                colorRow("Shadow", hex: $editingTheme.colors.shadowColor)
             }
         }
     }
@@ -581,6 +588,26 @@ struct ThemeEditorView: View {
         }
     }
 
+    private var codeHighlightThemePicker: some View {
+        HStack(spacing: 8) {
+            Text("Syntax Theme", bundle: .module)
+                .font(.system(size: 13))
+                .foregroundColor(currentTheme.primaryText)
+            Spacer()
+            Picker("", selection: Binding<String>(
+                get: { editingTheme.codeHighlightTheme ?? "auto" },
+                set: { editingTheme.codeHighlightTheme = $0 == "auto" ? nil : $0 }
+            )) {
+                Text("Auto", bundle: .module).tag("auto")
+                Divider()
+                ForEach(availableHighlightrThemes(), id: \.self) { name in
+                    Text(name).tag(name)
+                }
+            }
+            .frame(width: 180)
+        }
+    }
+
     private func colorRow(_ label: String, hex: Binding<String>) -> some View {
         HStack(spacing: 8) {
             Text(label)
@@ -934,42 +961,7 @@ struct ThemeChatPreview: View {
                     .font(bodyFont)
                     .foregroundColor(c(theme.colors.primaryText))
 
-                VStack(alignment: .leading, spacing: 0) {
-                    // Header bar
-                    HStack {
-                        Text("swift", bundle: .module)
-                            .font(monoFont(size: captionSize - 1, weight: .medium))
-                            .foregroundColor(c(theme.colors.tertiaryText))
-                        Spacer()
-                        Image(systemName: "doc.on.doc")
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundColor(c(theme.colors.tertiaryText).opacity(0.45))
-                    }
-                    .padding(.horizontal, 12)
-                    .frame(height: 28)
-                    .background(c(theme.colors.codeBlockBackground).opacity(0.6))
-
-                    // Code area
-                    HStack(alignment: .top, spacing: 0) {
-                        Text("1", bundle: .module)
-                            .font(monoFont(size: CGFloat(theme.typography.codeSize), weight: .regular))
-                            .foregroundColor(c(theme.colors.tertiaryText).opacity(0.4))
-                            .frame(width: 24, alignment: .trailing)
-                            .padding(.trailing, 8)
-                        Text("print(\"Hello, World!\")", bundle: .module)
-                            .font(codeFont)
-                            .foregroundColor(c(theme.colors.primaryText))
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(
-                    RoundedRectangle(cornerRadius: 8).fill(
-                        c(theme.colors.codeBlockBackground)
-                    )
-                )
-                .clipShape(RoundedRectangle(cornerRadius: 8))
+                previewCodeBlock
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
@@ -983,6 +975,49 @@ struct ThemeChatPreview: View {
             )
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    // MARK: - Code Block Preview
+
+    private var previewCodeBlock: some View {
+        let themeProtocol = CustomizableTheme(config: theme)
+        let sampleCode = "print(\"Hello, World!\")"
+
+        return VStack(alignment: .leading, spacing: 0) {
+            // Header bar
+            HStack {
+                Text("swift", bundle: .module)
+                    .font(monoFont(size: captionSize - 1, weight: .medium))
+                    .foregroundColor(c(theme.colors.tertiaryText))
+                Spacer()
+                Image(systemName: "doc.on.doc")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(c(theme.colors.tertiaryText).opacity(0.45))
+            }
+            .padding(.horizontal, 12)
+            .frame(height: 28)
+            .background(c(theme.colors.codeBlockBackground).opacity(0.6))
+
+            // Syntax-highlighted code via CodeContentView
+            GeometryReader { geo in
+                CodeContentView(
+                    code: sampleCode,
+                    language: "swift",
+                    baseWidth: geo.size.width - 24,
+                    theme: themeProtocol
+                )
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+            }
+            .frame(height: 36)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 8).fill(
+                c(theme.colors.codeBlockBackground)
+            )
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
     // MARK: - Background
