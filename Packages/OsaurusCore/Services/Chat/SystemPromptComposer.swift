@@ -216,6 +216,7 @@ public struct SystemPromptComposer: Sendable {
     }
 
     /// Compose a work prompt from a pre-resolved base string (e.g. base+memory from WorkEngine).
+    @MainActor
     public static func composeWorkPrompt(
         base: String,
         executionMode: WorkExecutionMode,
@@ -348,6 +349,7 @@ public struct SystemPromptComposer: Sendable {
         return composer.withWorkSections(executionMode: executionMode, compact: compact, secretNames: secretNames)
     }
 
+    @MainActor
     static func forWork(
         base: String,
         executionMode: WorkExecutionMode,
@@ -359,6 +361,7 @@ public struct SystemPromptComposer: Sendable {
         return composer.withWorkSections(executionMode: executionMode, compact: compact, secretNames: secretNames)
     }
 
+    @MainActor
     private func withWorkSections(
         executionMode: WorkExecutionMode,
         compact: Bool,
@@ -379,6 +382,15 @@ public struct SystemPromptComposer: Sendable {
                     id: "sandbox",
                     label: "Sandbox",
                     content: SystemPromptTemplates.sandbox(mode: .work, compact: compact, secretNames: secretNames)
+                )
+            )
+        }
+        if HarnessReliabilityFlags.isEnabled(.toolPromptFoundation) {
+            result.append(
+                .static(
+                    id: "toolGuide",
+                    label: "Tool Guide",
+                    content: ToolRegistry.shared.workPromptGuide(mode: executionMode, compact: compact)
                 )
             )
         }
