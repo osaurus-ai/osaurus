@@ -94,6 +94,48 @@ struct ChatViewSandboxTests {
     }
 
     @Test
+    func resolveTools_localAutoChatUsesOnDemandSet() {
+        let specs = SystemPromptComposer.resolveTools(
+            agentId: Agent.defaultId,
+            executionMode: .none,
+            preflight: .empty,
+            query: "What is the capital of France?",
+            preferOnDemandTools: true
+        )
+
+        #expect(specs.isEmpty)
+    }
+
+    @Test
+    func resolveTools_localAutoChatAddsCapabilityAndPreflightToolsWhenNeeded() {
+        let memoryTool = ToolRegistry.shared.specs(forTools: ["search_working_memory"]).first
+        #expect(memoryTool != nil)
+
+        let preflight = PreflightResult(
+            toolSpecs: memoryTool.map { [$0] } ?? [],
+            contextSnippet: "## Available Skills\n- skill/Sandbox Plugin Creator: Create tools on demand",
+            items: [
+                .init(type: .skill, name: "Sandbox Plugin Creator", description: "Create sandbox plugins")
+            ]
+        )
+
+        let specs = SystemPromptComposer.resolveTools(
+            agentId: Agent.defaultId,
+            executionMode: .none,
+            preflight: preflight,
+            query: "What tools do you have for working with files?",
+            preferOnDemandTools: true
+        )
+
+        let names = Set(specs.map(\.function.name))
+        #expect(names.contains("capabilities_search"))
+        #expect(names.contains("capabilities_load"))
+        #expect(names.contains("search_working_memory"))
+        #expect(names.contains("methods_save") == false)
+        #expect(names.contains("methods_report") == false)
+    }
+
+    @Test
     func prepareChatExecutionMode_usesSessionAgentInsteadOfActiveAgent() async {
         let manager = AgentManager.shared
         let registrar = SandboxToolRegistrar.shared
@@ -168,6 +210,53 @@ struct ChatViewSandboxTests {
             #expect(sandboxToolTokens > inactiveToolTokens)
             #expect(sandboxToolTokens == ToolRegistry.shared.totalEstimatedTokens(for: sandboxTools))
         }
+    }
+
+    @Test
+    func isLocalModel_treatsSlashStyleLocalPickerIdsAsLocal() {
+        let modelId = "TheCluster/Gemma-4-31B-Heretic-MLX-mxfp4"
+
+        #expect(SystemPromptTemplates.isLocalModel(modelId))
+    }
+
+    @Test
+    func isLikelyCorruptedAssistantOutput_detectsRepeatedNGramLoops() {
+        let corrupted =
+            "Based on the chat logs, Carola is interesting. "
+            + String(repeating: "eded", count: 80)
+
+        #expect(ChatSession.isLikelyCorruptedAssistantOutput(corrupted))
+    }
+
+    @Test
+    func isLikelyCorruptedAssistantOutput_allowsNormalAssistantText() {
+        let normal =
+            "Based on the provided notes, the person appears guarded, inconsistent, and highly reactive under stress, but the text does not support stronger claims without more context."
+
+        #expect(!ChatSession.isLikelyCorruptedAssistantOutput(normal))
+    }
+
+    @Test
+    func sanitizedCorruptedAssistantOutput_trimsRepeatedWordTail() {
+        let corrupted =
+            "**Location Inference**\n\nThe street markings suggest Spain. "
+            + String(repeating: "own ", count: 40)
+
+        let sanitized = ChatSession.sanitizedCorruptedAssistantOutput(corrupted)
+
+        #expect(sanitized.contains("The street markings suggest Spain."))
+        #expect(!sanitized.contains("own own own own own"))
+        #expect(sanitized.count < corrupted.count)
+    }
+
+    @Test
+    func sanitizedCorruptedAssistantOutput_trimsLeakedChannelMarkers() {
+        let corrupted =
+            "Reasonable beginning.\n<channel>|<channel>thought\n<channel>|<channel>thought"
+
+        let sanitized = ChatSession.sanitizedCorruptedAssistantOutput(corrupted)
+
+        #expect(sanitized == "Reasonable beginning.")
     }
 }
 

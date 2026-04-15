@@ -83,6 +83,7 @@ public struct SystemPromptComposer: Sendable {
             composer: composer,
             agentId: agentId,
             executionMode: executionMode,
+            preferOnDemandTools: model.map(SystemPromptTemplates.isLocalModel) ?? false,
             query: query,
             toolsDisabled: toolsDisabled,
             model: model,
@@ -98,6 +99,7 @@ public struct SystemPromptComposer: Sendable {
         composer: SystemPromptComposer,
         agentId: UUID,
         executionMode: WorkExecutionMode,
+        preferOnDemandTools: Bool = false,
         query: String,
         toolsDisabled: Bool,
         model: String? = nil,
@@ -137,13 +139,18 @@ public struct SystemPromptComposer: Sendable {
             agentId: agentId,
             executionMode: executionMode,
             toolsDisabled: effectiveToolsOff,
-            preflight: preflight
+            preflight: preflight,
+            query: query,
+            preferOnDemandTools: preferOnDemandTools
         )
         trace?.mark("resolve_tools_done")
 
         let manifest = comp.manifest()
         let toolNames = tools.map { $0.function.name }
         debugLog("[Context] \(manifest.debugDescription)")
+        debugLog(
+            "[Context] resolvedTools count=\(toolNames.count) preferOnDemand=\(preferOnDemandTools) names=\(toolNames)"
+        )
 
         let rendered = comp.render()
         trace?.set("systemPromptChars", rendered.count)
@@ -167,12 +174,18 @@ public struct SystemPromptComposer: Sendable {
         agentId: UUID,
         executionMode: WorkExecutionMode,
         toolsDisabled: Bool = false,
-        preflight: PreflightResult = .empty
+        preflight: PreflightResult = .empty,
+        query: String = "",
+        preferOnDemandTools: Bool = false
     ) -> [Tool] {
         guard !toolsDisabled else { return [] }
 
         let toolMode = AgentManager.shared.effectiveToolSelectionMode(for: agentId)
         let isManual = toolMode == .manual
+
+        if preferOnDemandTools && !isManual, case .none = executionMode {
+            return resolveOnDemandLocalChatTools(query: query, preflight: preflight)
+        }
 
         var tools = ToolRegistry.shared.alwaysLoadedSpecs(
             mode: executionMode,
@@ -195,6 +208,42 @@ public struct SystemPromptComposer: Sendable {
         }
 
         return tools
+    }
+
+    @MainActor
+    private static func resolveOnDemandLocalChatTools(
+        query: String,
+        preflight: PreflightResult
+    ) -> [Tool] {
+        var tools: [Tool] = []
+        var seen: Set<String> = []
+
+        let needsCapabilityTools =
+            queryLikelyNeedsCapabilityDiscovery(query)
+            || preflight.items.contains(where: { $0.type == .skill })
+
+        if needsCapabilityTools {
+            for spec in ToolRegistry.shared.specs(forTools: ["capabilities_search", "capabilities_load"])
+            where seen.insert(spec.function.name).inserted {
+                tools.append(spec)
+            }
+        }
+
+        for spec in preflight.toolSpecs
+        where seen.insert(spec.function.name).inserted {
+            tools.append(spec)
+        }
+
+        return tools
+    }
+
+    private static func queryLikelyNeedsCapabilityDiscovery(_ query: String) -> Bool {
+        let normalized = query.lowercased()
+        let keywords = [
+            "tool", "tools", "skill", "skills", "plugin", "plugins", "method", "methods", "capability",
+            "capabilities", "workflow", "workflows",
+        ]
+        return keywords.contains { normalized.contains($0) }
     }
 
     /// Compose the full work system prompt: base + workMode + sandbox.
@@ -249,6 +298,7 @@ public struct SystemPromptComposer: Sendable {
             composer: composer,
             agentId: agentId,
             executionMode: executionMode,
+            preferOnDemandTools: false,
             query: query,
             toolsDisabled: toolsDisabled
         )

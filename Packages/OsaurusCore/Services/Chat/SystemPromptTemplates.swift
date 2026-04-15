@@ -390,8 +390,8 @@ public enum SystemPromptTemplates {
         if trimmed.isEmpty || trimmed == "default" || trimmed == "foundation" {
             return true
         }
-        if trimmed.contains("/") {
-            return false
+        if ModelInfo.load(modelId: modelId ?? "") != nil {
+            return true
         }
         return ModelManager.findInstalledModel(named: trimmed) != nil
     }
