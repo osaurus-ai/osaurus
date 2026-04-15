@@ -53,6 +53,10 @@ struct ToolMetadata: Sendable, Equatable {
 }
 
 struct ToolPromptCard: Sendable, Equatable {
+    private static let summaryMaxLength = 160
+    private static let detailMaxLength = 160
+    private static let nonCompactExampleMaxLength = 320
+
     let name: String
     let summary: String
     let whenToUse: String?
@@ -63,10 +67,13 @@ struct ToolPromptCard: Sendable, Equatable {
     init(name: String, description: String, metadata: ToolMetadata) {
         self.name = Self.sanitize(name, maxLength: 80)
         let fallbackSummary = description.isEmpty ? metadata.purpose : description
-        self.summary = Self.sanitize(metadata.purpose.isEmpty ? fallbackSummary : metadata.purpose, maxLength: 160)
-        self.whenToUse = Self.optionalSanitize(metadata.whenToUse, maxLength: 160)
-        self.avoidWhen = Self.optionalSanitize(metadata.avoidWhen, maxLength: 160)
-        self.example = Self.optionalSanitize(metadata.example, maxLength: 160)
+        self.summary = Self.sanitize(
+            metadata.purpose.isEmpty ? fallbackSummary : metadata.purpose,
+            maxLength: Self.summaryMaxLength
+        )
+        self.whenToUse = Self.optionalSanitize(metadata.whenToUse, maxLength: Self.detailMaxLength)
+        self.avoidWhen = Self.optionalSanitize(metadata.avoidWhen, maxLength: Self.detailMaxLength)
+        self.example = Self.optionalSanitize(metadata.example, maxLength: Self.nonCompactExampleMaxLength)
         self.promptPriority = metadata.promptPriority
     }
 
@@ -372,14 +379,16 @@ enum ToolMetadataCatalog {
         toolDescriptions: [String: String],
         executionMode: WorkExecutionMode
     ) -> [ToolPromptCard] {
-        let orderedNames = orderedPromptToolNames(for: executionMode)
+        let candidateNames = candidatePromptToolNames(for: executionMode)
         var seen = Set<String>()
 
-        return orderedNames.compactMap { name in
+        return candidateNames.compactMap { name in
             guard seen.insert(name).inserted, let metadata = metadata(for: name) else { return nil }
             let description = toolDescriptions[name] ?? metadata.purpose
             return ToolPromptCard(name: name, description: description, metadata: metadata)
         }
+        // Candidate enumeration decides inclusion and de-duplication. Final card order is
+        // always driven by prompt priority so the rendered guide stays predictable.
         .sorted {
             if $0.promptPriority != $1.promptPriority {
                 return $0.promptPriority > $1.promptPriority
@@ -388,7 +397,7 @@ enum ToolMetadataCatalog {
         }
     }
 
-    private static func orderedPromptToolNames(for executionMode: WorkExecutionMode) -> [String] {
+    private static func candidatePromptToolNames(for executionMode: WorkExecutionMode) -> [String] {
         let core = [
             "complete_task",
             "share_artifact",

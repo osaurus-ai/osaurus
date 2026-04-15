@@ -53,6 +53,23 @@ struct WorkPromptToolGuideTests {
     }
 
     @Test
+    func sandboxPromptIncludesBudgetedToolGuide() {
+        let prompt = HarnessReliabilityFlags.withOverride(true, for: .toolPromptFoundation) {
+            let (prompt, _) = SystemPromptComposer.composeWorkPrompt(
+                base: "Base prompt",
+                executionMode: .sandbox
+            )
+            return prompt
+        }
+
+        #expect(prompt.contains("## Tool Guide"))
+        #expect(prompt.contains("`sandbox_read_file`"))
+        #expect(prompt.contains("`sandbox_edit_file`"))
+        #expect(prompt.contains("`sandbox_exec`"))
+        #expect(prompt.contains("`complete_task`"))
+    }
+
+    @Test
     func compactToolGuideStaysWithinBudget() {
         let context = WorkFolderContext(
             rootPath: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString),
@@ -93,5 +110,26 @@ struct ToolPromptCardTests {
         #expect(!rendered.contains("```"))
         #expect(!rendered.contains("\n## injected"))
         #expect(rendered.contains("`file_read ## injected`"))
+    }
+
+    @Test
+    func preservesMoreExampleRoomInNonCompactMode() {
+        let longExample =
+            #"{"path":"Sources/App.swift","replacement":"let result = input.filter { value in value.isLetter || value.isNumber || value == "-" || value == "_" }","notes":"keep enough structured context so longer examples survive non-compact rendering"}"#
+        let metadata = ToolMetadata(
+            purpose: "Read the file",
+            example: longExample,
+            promptPriority: 50
+        )
+
+        let card = ToolPromptCard(
+            name: "file_read",
+            description: "Read a file",
+            metadata: metadata
+        )
+
+        let rendered = card.render(compact: false)
+        #expect(rendered.contains("replacement"))
+        #expect(rendered.contains("structured context"))
     }
 }
