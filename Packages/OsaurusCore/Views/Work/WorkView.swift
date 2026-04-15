@@ -693,9 +693,12 @@ enum WorkViewErrorClassifier {
             }
             return ("Not Found", detail)
         }
+        let isInvalidModelClientError =
+            lowercased.contains("invalid ")
+            && (lowercased.contains(" model") || lowercased.contains("gemini"))
         if lowercased.contains(" 400") || lowercased.contains("400:") || lowercased.contains("bad request")
             || lowercased.contains("invalid argument") || lowercased.contains("invalid model")
-            || lowercased.contains("invalid ") && (lowercased.contains(" model") || lowercased.contains("gemini"))
+            || isInvalidModelClientError
         {
             // HTTP 400 from provider — usually a malformed request or an
             // unrecognized model name. Also catches osaurus's own
