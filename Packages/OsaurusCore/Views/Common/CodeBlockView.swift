@@ -49,6 +49,20 @@ func ensureHighlightrTheme(for theme: any ThemeProtocol) {
     currentHighlightrTheme = resolved
 }
 
+/// Returns the background color from the current Highlightr theme as a SwiftUI Color.
+/// Falls back to a sensible default if unavailable.
+func highlightrThemeBackgroundColor() -> Color {
+    if let bg = sharedHighlightr?.theme.themeBackgroundColor {
+        return Color(bg)
+    }
+    return Color(white: 0.1)
+}
+
+/// Returns the background color from the current Highlightr theme as an NSColor.
+func highlightrThemeBackgroundNSColor() -> NSColor {
+    sharedHighlightr?.theme.themeBackgroundColor ?? NSColor(white: 0.1, alpha: 1)
+}
+
 // MARK: - CodeBlockView
 
 struct CodeBlockView: View {
@@ -61,8 +75,11 @@ struct CodeBlockView: View {
     @State private var isHovered = false
 
     var body: some View {
+        let _ = ensureHighlightrTheme(for: theme)
+        let bgColor = highlightrThemeBackgroundColor()
+
         VStack(alignment: .leading, spacing: 0) {
-            headerBar
+            headerBar(bgColor: bgColor)
             CodeContentView(
                 code: code,
                 language: language,
@@ -74,14 +91,14 @@ struct CodeBlockView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(theme.codeBlockBackground)
+                .fill(bgColor)
         )
         .onHover { isHovered = $0 }
     }
 
     // MARK: - Header Bar
 
-    private var headerBar: some View {
+    private func headerBar(bgColor: Color) -> some View {
         HStack {
             Text(language?.lowercased() ?? "code")
                 .font(theme.monoFont(size: CGFloat(theme.captionSize) - 1, weight: .medium))
@@ -257,6 +274,9 @@ struct CodeContentView: NSViewRepresentable {
         if let highlighted = highlightedCode {
             result = NSMutableAttributedString(attributedString: highlighted)
             let fullRange = NSRange(location: 0, length: result.length)
+            // Strip background colors injected by the Highlightr CSS theme —
+            // the app's own codeBlockBackground is used instead.
+            result.removeAttribute(.backgroundColor, range: fullRange)
             result.enumerateAttribute(.font, in: fullRange, options: []) { value, range, _ in
                 let isBold = (value as? NSFont)?.fontDescriptor.symbolicTraits.contains(.bold) ?? false
                 result.addAttribute(

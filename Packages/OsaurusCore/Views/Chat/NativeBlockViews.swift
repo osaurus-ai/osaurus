@@ -708,12 +708,15 @@ final class NativeCodeBlockView: NSView {
         lastWidth = width
         lastThemeId = themeId
 
+        ensureHighlightrTheme(for: theme)
+        let bgColor = highlightrThemeBackgroundNSColor()
+
         langLabel.stringValue = language?.lowercased() ?? "code"
         langLabel.font = NSFont.monospacedSystemFont(ofSize: CGFloat(theme.captionSize) - 1, weight: .medium)
         langLabel.textColor = NSColor(theme.tertiaryText)
 
-        headerView.layer?.backgroundColor = NSColor(theme.codeBlockBackground).withAlphaComponent(0.6).cgColor
-        layer?.backgroundColor = NSColor(theme.codeBlockBackground).cgColor
+        headerView.layer?.backgroundColor = bgColor.withAlphaComponent(0.6).cgColor
+        layer?.backgroundColor = bgColor.cgColor
 
         let cv = ensureCodeView(theme: theme)
         if widthChanged {

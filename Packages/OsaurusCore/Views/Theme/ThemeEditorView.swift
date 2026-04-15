@@ -982,6 +982,8 @@ struct ThemeChatPreview: View {
     private var previewCodeBlock: some View {
         let themeProtocol = CustomizableTheme(config: theme)
         let sampleCode = "print(\"Hello, World!\")"
+        let _ = ensureHighlightrTheme(for: themeProtocol)
+        let bgColor = highlightrThemeBackgroundColor()
 
         return VStack(alignment: .leading, spacing: 0) {
             // Header bar
@@ -996,7 +998,7 @@ struct ThemeChatPreview: View {
             }
             .padding(.horizontal, 12)
             .frame(height: 28)
-            .background(c(theme.colors.codeBlockBackground).opacity(0.6))
+            .background(bgColor.opacity(0.6))
 
             // Syntax-highlighted code via CodeContentView
             GeometryReader { geo in
@@ -1013,9 +1015,7 @@ struct ThemeChatPreview: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: 8).fill(
-                c(theme.colors.codeBlockBackground)
-            )
+            RoundedRectangle(cornerRadius: 8).fill(bgColor)
         )
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }
