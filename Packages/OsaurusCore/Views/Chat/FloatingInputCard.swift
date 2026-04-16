@@ -1018,7 +1018,7 @@ extension FloatingInputCard {
             if let clearChat = onClearChat {
                 clearChat()
             } else {
-                ToastManager.shared.info("Clear Chat", message: "Pass an onClearChat handler to enable /clear")
+                ToastManager.shared.info(L("Clear Chat"), message: L("Pass an onClearChat handler to enable /clear"))
             }
         case "model":
             showModelPicker = true
@@ -1799,7 +1799,7 @@ extension FloatingInputCard {
                         }
                     } catch {
                         await MainActor.run {
-                            ToastManager.shared.error("Could not attach file", message: error.localizedDescription)
+                            ToastManager.shared.error(L("Could not attach file"), message: error.localizedDescription)
                         }
                     }
                 }
@@ -2046,7 +2046,7 @@ extension FloatingInputCard {
         panel.allowsMultipleSelection = true
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
-        panel.message = "Select files to attach"
+        panel.message = L("Select files to attach")
 
         if panel.runModal() == .OK {
             for url in panel.urls {

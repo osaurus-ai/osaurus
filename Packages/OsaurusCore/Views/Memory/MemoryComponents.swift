@@ -230,9 +230,14 @@ struct MemoryEntryRow: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(
-            "\(entry.type.displayName) memory: \(entry.content). Confidence \(Int(entry.confidence * 100)) percent"
+            String(
+                format: L("%@ memory: %@. Confidence %lld percent"),
+                entry.type.displayName,
+                entry.content,
+                Int64(entry.confidence * 100)
+            )
         )
-        .accessibilityHint("Hover to reveal delete option")
+        .accessibilityHint(L("Hover to reveal delete option"))
     }
 }
 

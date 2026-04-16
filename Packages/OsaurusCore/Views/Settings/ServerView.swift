@@ -15,7 +15,12 @@ enum ServerTab: String, CaseIterable, AnimatedTabItem {
     case overview = "Overview"
     case apiReference = "API Reference"
 
-    var title: String { rawValue }
+    var title: String {
+        switch self {
+        case .overview: L("Overview")
+        case .apiReference: L("API Reference")
+        }
+    }
 }
 
 // MARK: - Cached Formatters
@@ -2219,8 +2224,8 @@ private struct TranscriptionTestRow: View {
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
         panel.allowedContentTypes = [.audio, .wav, .mp3, .mpeg4Audio]
-        panel.message = "Select an audio file to transcribe"
-        panel.prompt = "Select"
+        panel.message = L("Select an audio file to transcribe")
+        panel.prompt = L("Select")
 
         if panel.runModal() == .OK, let url = panel.url {
             loadFile(from: url)
@@ -2235,14 +2240,14 @@ private struct TranscriptionTestRow: View {
 
             let data = try Data(contentsOf: url)
             if data.count > 25 * 1024 * 1024 {
-                fileError = "File too large (max 25MB)"
+                fileError = L("File too large (max 25MB)")
                 return
             }
             audioData = data
             selectedFileURL = url
             selectedFileName = url.lastPathComponent
         } catch {
-            fileError = "Failed to read file: \(error.localizedDescription)"
+            fileError = String(format: L("Failed to read file: %@"), error.localizedDescription)
         }
     }
 

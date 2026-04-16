@@ -789,19 +789,19 @@ struct ConfigurationView: View {
         tempMaxKV = ""
         tempEvictionPolicy = serverDefaults.modelEvictionPolicy
 
-        showSuccess("Settings restored to defaults")
+        showSuccess(L("Settings restored to defaults"))
     }
 
     // MARK: - Factory Reset
 
     private func showFactoryResetConfirmation() {
         let alert = NSAlert()
-        alert.messageText = "Factory Reset Osaurus?"
+        alert.messageText = L("Factory Reset Osaurus?")
         alert.informativeText =
-            "This will permanently delete all your data, including chat history, agents, memory, and your identity keys. This action cannot be undone and the application will close."
+            L("This will permanently delete all your data, including chat history, agents, memory, and your identity keys. This action cannot be undone and the application will close.")
         alert.alertStyle = .critical
-        alert.addButton(withTitle: "Factory Reset")
-        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: L("Factory Reset"))
+        alert.addButton(withTitle: L("Cancel"))
 
         let response = alert.runModal()
         if response == .alertFirstButtonReturn {
@@ -979,7 +979,7 @@ struct ConfigurationView: View {
             }
         }
 
-        showSuccess("Settings saved successfully")
+        showSuccess(L("Settings saved successfully"))
     }
 
     // MARK: - Core Model Picker
@@ -1036,7 +1036,7 @@ extension ConfigurationView {
 
         guard let cliURL = resolveCLIExecutableURL() else {
             cliInstallSuccess = false
-            cliInstallMessage = "CLI not found. Build the app with 'make app' or install via release DMG."
+            cliInstallMessage = L("CLI not found. Build the app with 'make app' or install via release DMG.")
             return
         }
 
@@ -1049,13 +1049,13 @@ extension ConfigurationView {
 
         if tryInstall(cliURL: cliURL, into: brewBin) {
             cliInstallSuccess = true
-            cliInstallMessage = "Installed to \(brewBin.appendingPathComponent("osaurus").path)"
+            cliInstallMessage = String(format: L("Installed to %@"), brewBin.appendingPathComponent("osaurus").path)
             return
         }
 
         if tryInstall(cliURL: cliURL, into: usrLocalBin) {
             cliInstallSuccess = true
-            cliInstallMessage = "Installed to \(usrLocalBin.appendingPathComponent("osaurus").path)"
+            cliInstallMessage = String(format: L("Installed to %@"), usrLocalBin.appendingPathComponent("osaurus").path)
             return
         }
 
@@ -1064,7 +1064,7 @@ extension ConfigurationView {
             try fm.createDirectory(at: userLocalBin, withIntermediateDirectories: true)
         } catch {
             cliInstallSuccess = false
-            cliInstallMessage = "Failed to prepare ~/.local/bin (\(error.localizedDescription))"
+            cliInstallMessage = String(format: L("Failed to prepare ~/.local/bin (%@)"), error.localizedDescription)
             return
         }
 
@@ -1074,13 +1074,13 @@ extension ConfigurationView {
             cliInstallSuccess = true
             cliInstallMessage =
                 inPath
-                ? "Installed to \(linkPath)"
-                : "Installed to \(linkPath). Add to PATH."
+                ? String(format: L("Installed to %@"), linkPath)
+                : String(format: L("Installed to %@. Add to PATH."), linkPath)
             return
         }
 
         cliInstallSuccess = false
-        cliInstallMessage = "Installation failed. Try: scripts/install_cli_symlink.sh"
+        cliInstallMessage = L("Installation failed. Try: scripts/install_cli_symlink.sh")
     }
 
     private func resolveCLIExecutableURL() -> URL? {
@@ -1892,18 +1892,18 @@ private struct VoiceSettingsSection: View {
 
     private var modelStatusText: String {
         if speechService.isLoadingModel {
-            return "Loading model..."
+            return L("Loading model...")
         } else if speechService.isModelLoaded {
             if let modelId = speechService.loadedModelId,
                 let model = modelManager.availableModels.first(where: { $0.id == modelId })
             {
                 return model.name
             }
-            return "Model Loaded"
+            return L("Model Loaded")
         } else if modelManager.downloadedModelsCount == 0 {
-            return "No models downloaded"
+            return L("No models downloaded")
         } else {
-            return "Model not loaded"
+            return L("Model not loaded")
         }
     }
 

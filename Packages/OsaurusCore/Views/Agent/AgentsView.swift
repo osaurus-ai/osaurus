@@ -88,7 +88,7 @@ struct AgentsView: View {
                 onSave: { agent in
                     agentManager.add(agent)
                     isCreating = false
-                    showSuccess("Created \"\(agent.name)\"")
+                    showSuccess(String(format: L("Created \"%@\""), agent.name))
                 },
                 onCancel: {
                     isCreating = false
@@ -237,10 +237,10 @@ struct AgentsView: View {
         Task { @MainActor in
             let result = await agentManager.delete(id: agent.id)
             guard result.deleted else {
-                ToastManager.shared.error("Failed to delete agent", message: "Please try again.")
+                ToastManager.shared.error(L("Failed to delete agent"), message: L("Please try again."))
                 return
             }
-            showSuccess("Deleted \"\(agent.name)\"")
+            showSuccess(String(format: L("Deleted \"%@\""), agent.name))
             sandboxCleanupNotice = result.sandboxCleanupNotice
         }
     }
@@ -274,7 +274,7 @@ struct AgentsView: View {
 
         AgentStore.save(duplicated)
         agentManager.refresh()
-        showSuccess("Duplicated as \"\(newName)\"")
+        showSuccess(String(format: L("Duplicated as \"%@\""), newName))
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
             withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
@@ -290,7 +290,7 @@ struct AgentsView: View {
         case .success(let urls):
             guard let url = urls.first else { return }
             guard url.startAccessingSecurityScopedResource() else {
-                importError = "Unable to access the selected file"
+                importError = L("Unable to access the selected file")
                 return
             }
             defer { url.stopAccessingSecurityScopedResource() }
@@ -298,13 +298,13 @@ struct AgentsView: View {
             do {
                 let data = try Data(contentsOf: url)
                 try agentManager.importAgent(from: data)
-                showSuccess("Imported agent successfully")
+                showSuccess(L("Imported agent successfully"))
             } catch {
-                importError = "Failed to import agent: \(error.localizedDescription)"
+                importError = String(format: L("Failed to import agent: %@"), error.localizedDescription)
             }
 
         case .failure(let error):
-            importError = "Failed to select file: \(error.localizedDescription)"
+            importError = String(format: L("Failed to select file: %@"), error.localizedDescription)
         }
     }
 
@@ -315,12 +315,12 @@ struct AgentsView: View {
             let panel = NSSavePanel()
             panel.allowedContentTypes = [.json]
             panel.nameFieldStringValue = "\(agent.name).json"
-            panel.title = "Export Agent"
-            panel.message = "Choose where to save the agent file"
+            panel.title = L("Export Agent")
+            panel.message = L("Choose where to save the agent file")
 
             if panel.runModal() == .OK, let url = panel.url {
                 try data.write(to: url)
-                showSuccess("Exported \"\(agent.name)\"")
+                showSuccess(String(format: L("Exported \"%@\""), agent.name))
             }
         } catch {
             print("[Osaurus] Failed to export agent: \(error)")
@@ -597,10 +597,10 @@ private enum DetailTab: String, CaseIterable {
 
     var label: String {
         switch self {
-        case .configure: return "Configure"
-        case .sandbox: return "Sandbox"
-        case .automation: return "Automation"
-        case .memory: return "Memory"
+        case .configure: return L("Configure")
+        case .sandbox: return L("Sandbox")
+        case .automation: return L("Automation")
+        case .memory: return L("Memory")
         }
     }
 
@@ -615,10 +615,10 @@ private enum DetailTab: String, CaseIterable {
 
     var helperText: String {
         switch self {
-        case .configure: return "Set up instructions, model settings, shortcuts, and appearance."
-        case .sandbox: return "Configure sandbox execution and relay tunnel access."
-        case .automation: return "Set up schedules and file watchers for autonomous behavior."
-        case .memory: return "View conversation history, working memory, and summaries."
+        case .configure: return L("Set up instructions, model settings, shortcuts, and appearance.")
+        case .sandbox: return L("Configure sandbox execution and relay tunnel access.")
+        case .automation: return L("Set up schedules and file watchers for autonomous behavior.")
+        case .memory: return L("View conversation history, working memory, and summaries.")
         }
     }
 }
@@ -819,7 +819,7 @@ struct AgentDetailView: View {
                         isEnabled: schedule.isEnabled
                     )
                     showCreateSchedule = false
-                    showSuccess("Created schedule \"\(schedule.name)\"")
+                    showSuccess(String(format: L("Created schedule \"%@\""), schedule.name))
                 },
                 onCancel: { showCreateSchedule = false },
                 initialAgentId: agent.id
@@ -841,7 +841,7 @@ struct AgentDetailView: View {
                         responsiveness: watcher.responsiveness
                     )
                     showCreateWatcher = false
-                    showSuccess("Created watcher \"\(watcher.name)\"")
+                    showSuccess(String(format: L("Created watcher \"%@\""), watcher.name))
                 },
                 onCancel: { showCreateWatcher = false },
                 initialAgentId: agent.id
@@ -1459,7 +1459,14 @@ struct AgentDetailView: View {
 
     private func pluralized(_ word: String, count: Int) -> String? {
         guard count > 0 else { return nil }
-        return "\(count) \(word)\(count == 1 ? "" : "s")"
+        switch word {
+        case "tool":
+            return L("\(count) tools enabled")
+        case "skill":
+            return L("\(count) skills enabled")
+        default:
+            return "\(count) \(word)"
+        }
     }
 
     private func selectableSection<Content: View>(
@@ -1819,9 +1826,9 @@ struct AgentDetailView: View {
         }
 
         let sandboxSubtitle: String = {
-            if sandboxRunning { return "Running" }
-            if sandboxAvailable { return "Not Running" }
-            return "Unavailable"
+            if sandboxRunning { return L("Running") }
+            if sandboxAvailable { return L("Not Running") }
+            return L("Unavailable")
         }()
 
         AgentDetailSection(
@@ -2824,7 +2831,7 @@ struct AgentDetailView: View {
     private func deleteMemoryEntry(_ entryId: String) {
         try? MemoryDatabase.shared.deleteMemoryEntry(id: entryId)
         loadMemoryData()
-        showSuccess("Memory entry deleted")
+        showSuccess(L("Memory entry deleted"))
     }
 
     private func taskStatusColor(_ status: WorkTaskStatus) -> Color {
@@ -2931,7 +2938,7 @@ struct AgentDetailView: View {
     @MainActor
     private func showSaveIndicator() {
         withAnimation(.easeOut(duration: 0.2)) {
-            saveIndicator = "Saved"
+            saveIndicator = L("Saved")
         }
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 1_500_000_000)

@@ -631,20 +631,20 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             switch serverController.serverHealth {
             case .stopped:
                 tooltip =
-                    serverController.isRestarting ? "Osaurus — Restarting…" : "Osaurus — Ready to start"
+                    serverController.isRestarting ? L("Osaurus — Restarting…") : L("Osaurus — Ready to start")
             case .starting:
-                tooltip = "Osaurus — Starting…"
+                tooltip = L("Osaurus — Starting…")
             case .restarting:
-                tooltip = "Osaurus — Restarting…"
+                tooltip = L("Osaurus — Restarting…")
             case .running:
-                tooltip = "Osaurus — Running on port \(serverController.port)"
+                tooltip = L("Osaurus — Running on port \(serverController.port)")
             case .stopping:
-                tooltip = "Osaurus — Stopping…"
+                tooltip = L("Osaurus — Stopping…")
             case .error(let message):
-                tooltip = "Osaurus — Error: \(message)"
+                tooltip = String(format: L("Osaurus — Error: %@"), message)
             }
             if serverController.activeRequestCount > 0 {
-                tooltip += " — Generating…"
+                tooltip += L(" — Generating…")
             }
 
             // Update VAD status dot
@@ -666,7 +666,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                             layer.add(anim, forKey: "vadPulse")
                         }
                     }
-                    tooltip += " — Voice: Listening"
+                    tooltip += L(" — Voice: Listening")
 
                 case .error:
                     vDot.isHidden = false
@@ -674,7 +674,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                         layer.backgroundColor = NSColor.systemRed.cgColor
                         layer.removeAnimation(forKey: "vadPulse")
                     }
-                    tooltip += " — Voice: Error"
+                    tooltip += L(" — Voice: Error")
 
                 default:
                     if let layer = vDot.layer {
@@ -883,10 +883,10 @@ extension AppDelegate {
         Task { @MainActor in
             if await ModelManager.shared.resolveModelIfMLXCompatible(byRepoId: modelId) == nil {
                 let alert = NSAlert()
-                alert.messageText = "Unsupported model"
-                alert.informativeText = "Osaurus only supports MLX-compatible Hugging Face repositories."
+                alert.messageText = L("Unsupported model")
+                alert.informativeText = L("Osaurus only supports MLX-compatible Hugging Face repositories.")
                 alert.alertStyle = .warning
-                alert.addButton(withTitle: "OK")
+                alert.addButton(withTitle: L("OK"))
                 alert.runModal()
                 return
             }
@@ -1005,7 +1005,7 @@ extension AppDelegate {
                 backing: .buffered,
                 defer: false
             )
-            window.title = "Acknowledgements"
+            window.title = L("Acknowledgements")
             window.contentViewController = hostingController
             window.center()
             window.isReleasedWhenClosed = false

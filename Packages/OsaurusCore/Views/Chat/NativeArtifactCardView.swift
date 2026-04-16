@@ -517,7 +517,7 @@ final class NativeArtifactCardView: NSView {
                 guard let page = doc.page(at: 0) else { return }
                 let thumb = page.thumbnail(of: CGSize(width: 400, height: 520), for: .mediaBox)
                 iv.image = thumb
-                self.pdfPageBadge.stringValue = "\(count) page\(count == 1 ? "" : "s")"
+                self.pdfPageBadge.stringValue = String(format: L("%lld pages"), count)
                 self.pdfPageBadge.isHidden = false
                 self.pdfBadgeBackdrop.isHidden = false
                 self.notifyHeightChanged()
@@ -696,7 +696,7 @@ final class NativeArtifactCardView: NSView {
         htmlIcon.contentTintColor = NSColor(theme.secondaryText)
         htmlIcon.imageScaling = .scaleProportionallyUpOrDown
 
-        htmlTitleLabel.stringValue = "Web Page"
+        htmlTitleLabel.stringValue = L("Web Page")
         htmlTitleLabel.font = NSFont.systemFont(ofSize: CGFloat(theme.captionSize), weight: .medium)
         htmlTitleLabel.textColor = NSColor(theme.secondaryText)
 

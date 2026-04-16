@@ -357,7 +357,7 @@ private struct SystemPermissionRow: View {
             case .accessibility:
                 result = SystemPermissionService.debugTestAccessibilityAccess()
             default:
-                result = "Test not available"
+                result = L("Test not available")
             }
 
             await MainActor.run {

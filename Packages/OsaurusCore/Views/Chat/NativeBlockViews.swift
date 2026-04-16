@@ -94,8 +94,8 @@ final class NativeTypingIndicatorView: NSView {
             dotStack.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
 
-        // "Loading Model..." label (hidden by default, shown during model load)
-        loadingLabel.stringValue = "Loading Model..."
+        // Hidden by default, shown during model load.
+        loadingLabel.stringValue = L("Loading Model...")
         loadingLabel.font = .systemFont(ofSize: 12, weight: .medium)
         loadingLabel.textColor = .secondaryLabelColor
         loadingLabel.translatesAutoresizingMaskIntoConstraints = false

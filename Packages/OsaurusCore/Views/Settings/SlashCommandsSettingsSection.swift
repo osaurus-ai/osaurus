@@ -409,7 +409,7 @@ struct SlashCommandEditorSheet: View {
     private func save() {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
-            nameError = "Name is required"
+            nameError = L("Name is required")
             return
         }
 

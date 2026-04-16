@@ -1503,7 +1503,7 @@ private struct SandboxAgentsView: View {
             do {
                 try await agentManager.updateAutonomousExec(config, for: agentId)
             } catch {
-                ToastManager.shared.error("Failed to update sandbox access", message: error.localizedDescription)
+                ToastManager.shared.error(L("Failed to update sandbox access"), message: error.localizedDescription)
             }
             provisioningAgents.remove(agentId)
         }

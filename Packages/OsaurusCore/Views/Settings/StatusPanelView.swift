@@ -109,7 +109,7 @@ struct StatusPanelView: View {
     private func toggleServer() {
         guard server.serverHealth != .running else { return }
         guard let port = Int(portString), (1 ..< 65536).contains(port) else {
-            server.lastErrorMessage = "Please enter a valid port between 1 and 65535"
+            server.lastErrorMessage = L("Please enter a valid port between 1 and 65535")
             showError = true
             return
         }

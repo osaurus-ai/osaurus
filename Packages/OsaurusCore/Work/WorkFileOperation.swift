@@ -71,12 +71,12 @@ extension WorkFileOperationType {
     /// Human-readable description
     public var displayName: String {
         switch self {
-        case .create: return "Created"
-        case .write: return "Modified"
-        case .move: return "Moved"
-        case .copy: return "Copied"
-        case .delete: return "Deleted"
-        case .dirCreate: return "Created folder"
+        case .create: return L("Created")
+        case .write: return L("Modified")
+        case .move: return L("Moved")
+        case .copy: return L("Copied")
+        case .delete: return L("Deleted")
+        case .dirCreate: return L("Created folder")
         }
     }
 }

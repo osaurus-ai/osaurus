@@ -78,14 +78,14 @@ struct WatchersView: View {
                                     },
                                     onRunNow: {
                                         watcherManager.runNow(watcher.id)
-                                        showSuccess("Triggered \"\(watcher.name)\"")
+                                        showSuccess(String(format: L("Triggered \"%@\""), watcher.name))
                                     },
                                     onEdit: {
                                         editingWatcher = watcher
                                     },
                                     onDelete: {
                                         watcherManager.delete(id: watcher.id)
-                                        showSuccess("Deleted \"\(watcher.name)\"")
+                                        showSuccess(String(format: L("Deleted \"%@\""), watcher.name))
                                     }
                                 )
                             }
@@ -125,7 +125,7 @@ struct WatchersView: View {
                         responsiveness: watcher.responsiveness
                     )
                     isCreating = false
-                    showSuccess("Created \"\(watcher.name)\"")
+                    showSuccess(String(format: L("Created \"%@\""), watcher.name))
                 },
                 onCancel: {
                     isCreating = false
@@ -138,7 +138,7 @@ struct WatchersView: View {
                 onSave: { updated in
                     watcherManager.update(updated)
                     editingWatcher = nil
-                    showSuccess("Updated \"\(updated.name)\"")
+                    showSuccess(String(format: L("Updated \"%@\""), updated.name))
                 },
                 onCancel: {
                     editingWatcher = nil
@@ -747,8 +747,8 @@ struct WatcherEditorSheet: View {
         panel.canChooseDirectories = true
         panel.canCreateDirectories = false
         panel.allowsMultipleSelection = false
-        panel.title = "Select Folder to Watch"
-        panel.prompt = "Select"
+        panel.title = L("Select Folder to Watch")
+        panel.prompt = L("Select")
 
         guard panel.runModal() == .OK, let url = panel.url else { return }
 

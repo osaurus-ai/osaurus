@@ -17020,6 +17020,1520 @@
           }
         }
       }
+    },
+    "%@ has an update available.": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 有可用更新。"
+          }
+        }
+      }
+    },
+    "%@ is downloaded and ready to use.": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 已下载并可使用。"
+          }
+        }
+      }
+    },
+    "%@ memory: %@. Confidence %lld percent": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 记忆：%@。置信度 %lld%%"
+          }
+        }
+      }
+    },
+    "%lld plugins have updates available": {
+      "localizations": {
+        "zh-Hans": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld 个插件有可用更新"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld 个插件有可用更新"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "1 plugin": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "1 个插件"
+          }
+        }
+      }
+    },
+    "All memory cleared": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已清除所有记忆"
+          }
+        }
+      }
+    },
+    "Applied \"%@\"": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已应用“%@”"
+          }
+        }
+      }
+    },
+    "Cannot access file": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法访问文件"
+          }
+        }
+      }
+    },
+    "Choose Models Directory": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "选择模型目录"
+          }
+        }
+      }
+    },
+    "Choose a folder for the AI to work with": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "选择供 AI 使用的文件夹"
+          }
+        }
+      }
+    },
+    "Choose where to save the agent file": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "选择保存智能体文件的位置"
+          }
+        }
+      }
+    },
+    "Created \"%@\"": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已创建“%@”"
+          }
+        }
+      }
+    },
+    "Created schedule \"%@\"": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已创建计划任务“%@”"
+          }
+        }
+      }
+    },
+    "Created watcher \"%@\"": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已创建监听器“%@”"
+          }
+        }
+      }
+    },
+    "Clear Chat": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "清空聊天"
+          }
+        }
+      }
+    },
+    "Could not attach file": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法附加文件"
+          }
+        }
+      }
+    },
+    "Deleted \"%@\"": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已删除“%@”"
+          }
+        }
+      }
+    },
+    "Duplicated as \"%@\"": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已复制为“%@”"
+          }
+        }
+      }
+    },
+    "Export Agent": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "导出智能体"
+          }
+        }
+      }
+    },
+    "Export Skill (Agent Skills Format)": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "导出技能（Agent Skills 格式）"
+          }
+        }
+      }
+    },
+    "Export as Agent Skills compatible SKILL.md file": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "导出为兼容 Agent Skills 的 SKILL.md 文件"
+          }
+        }
+      }
+    },
+    "Export as ZIP archive with all associated files": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "导出为包含所有关联文件的 ZIP 归档"
+          }
+        }
+      }
+    },
+    "Export failed: %@": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "导出失败：%@"
+          }
+        }
+      }
+    },
+    "Exported \"%@\"": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已导出“%@”"
+          }
+        }
+      }
+    },
+    "Exported \"%@\" as SKILL.md": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已将“%@”导出为 SKILL.md"
+          }
+        }
+      }
+    },
+    "Exported \"%@\" as ZIP": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已将“%@”导出为 ZIP"
+          }
+        }
+      }
+    },
+    "Factory Reset": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "恢复出厂设置"
+          }
+        }
+      }
+    },
+    "Factory Reset Osaurus?": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "恢复 Osaurus 出厂设置？"
+          }
+        }
+      }
+    },
+    "Failed to add override": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "添加覆盖项失败"
+          }
+        }
+      }
+    },
+    "Failed to open memory database": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "打开记忆数据库失败"
+          }
+        }
+      }
+    },
+    "Failed to remove override": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "移除覆盖项失败"
+          }
+        }
+      }
+    },
+    "Failed to save profile": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保存个人资料失败"
+          }
+        }
+      }
+    },
+    "Failed to update sandbox access": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "更新沙盒访问权限失败"
+          }
+        }
+      }
+    },
+    "Hover to reveal delete option": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "悬停以显示删除选项"
+          }
+        }
+      }
+    },
+    "Import failed: %@": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "导入失败：%@"
+          }
+        }
+      }
+    },
+    "Imported \"%@\"": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已导入“%@”"
+          }
+        }
+      }
+    },
+    "Imported \"%@\" with %lld files": {
+      "localizations": {
+        "zh-Hans": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "已导入“%@”，包含 %lld 个文件"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "已导入“%@”，包含 %lld 个文件"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "Imported %lld skills": {
+      "localizations": {
+        "zh-Hans": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "已导入 %lld 个技能"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "已导入 %lld 个技能"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "Imported agent successfully": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "智能体导入成功"
+          }
+        }
+      }
+    },
+    "Invalid file content": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "文件内容无效"
+          }
+        }
+      }
+    },
+    "Memory enabled": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "记忆已启用"
+          }
+        }
+      }
+    },
+    "Memory entry deleted": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已删除记忆条目"
+          }
+        }
+      }
+    },
+    "Open Models": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "打开模型"
+          }
+        }
+      }
+    },
+    "Osaurus only supports MLX-compatible Hugging Face repositories.": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Osaurus 仅支持兼容 MLX 的 Hugging Face 仓库。"
+          }
+        }
+      }
+    },
+    "Osaurus started in safe mode": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Osaurus 已在安全模式下启动"
+          }
+        }
+      }
+    },
+    "Override removed": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已移除覆盖项"
+          }
+        }
+      }
+    },
+    "Pass an onClearChat handler to enable /clear": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "传入 onClearChat 处理器以启用 /clear"
+          }
+        }
+      }
+    },
+    "Plugin updates available": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "有可用插件更新"
+          }
+        }
+      }
+    },
+    "Plugin verification failed": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "插件验证失败"
+          }
+        }
+      }
+    },
+    "Plugins disabled after repeated crashes. Run \"osaurus tools reset\" in Terminal to recover.": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "插件因反复崩溃已被禁用。请在终端运行“osaurus tools reset”进行恢复。"
+          }
+        }
+      }
+    },
+    "Reset to default theme": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已重置为默认主题"
+          }
+        }
+      }
+    },
+    "Select": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "选择"
+          }
+        }
+      }
+    },
+    "Select Folder to Watch": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "选择要监听的文件夹"
+          }
+        }
+      }
+    },
+    "Select Working Directory": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "选择工作目录"
+          }
+        }
+      }
+    },
+    "Select a directory where MLX models will be stored": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "选择用于存储 MLX 模型的目录"
+          }
+        }
+      }
+    },
+    "Select an audio file to transcribe": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "选择要转写的音频文件"
+          }
+        }
+      }
+    },
+    "Select files to attach": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "选择要附加的文件"
+          }
+        }
+      }
+    },
+    "Settings restored to defaults": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "设置已恢复为默认值"
+          }
+        }
+      }
+    },
+    "Settings saved successfully": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "设置已保存"
+          }
+        }
+      }
+    },
+    "Started \"%@\"": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已启动“%@”"
+          }
+        }
+      }
+    },
+    "This will permanently delete all your data, including chat history, agents, memory, and your identity keys. This action cannot be undone and the application will close.": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "这将永久删除你的所有数据，包括聊天历史、智能体、记忆和身份密钥。此操作无法撤销，应用将会关闭。"
+          }
+        }
+      }
+    },
+    "Triggered \"%@\"": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已触发“%@”"
+          }
+        }
+      }
+    },
+    "Unsupported model": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "不支持的模型"
+          }
+        }
+      }
+    },
+    "Updated \"%@\"": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已更新“%@”"
+          }
+        }
+      }
+    },
+    "API Reference": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "API 参考"
+          }
+        }
+      }
+    },
+    "Bottom Center": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "底部居中"
+          }
+        }
+      }
+    },
+    "Bottom Left": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "左下角"
+          }
+        }
+      }
+    },
+    "Bottom Right": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "右下角"
+          }
+        }
+      }
+    },
+    "CLI not found. Build the app with 'make app' or install via release DMG.": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未找到 CLI。请使用“make app”构建应用，或通过发布版 DMG 安装。"
+          }
+        }
+      }
+    },
+    "Configure sandbox execution and relay tunnel access.": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "配置沙盒执行和中继隧道访问。"
+          }
+        }
+      }
+    },
+    "Could not estimate size right now.": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "暂时无法估算大小。"
+          }
+        }
+      }
+    },
+    "Created": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已创建"
+          }
+        }
+      }
+    },
+    "Created folder": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已创建文件夹"
+          }
+        }
+      }
+    },
+    "Failed to import agent: %@": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "导入智能体失败：%@"
+          }
+        }
+      }
+    },
+    "Failed to load overrides": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "加载覆盖项失败"
+          }
+        }
+      }
+    },
+    "Failed to load profile": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "加载个人资料失败"
+          }
+        }
+      }
+    },
+    "Failed to prepare ~/.local/bin (%@)": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "准备 ~/.local/bin 失败（%@）"
+          }
+        }
+      }
+    },
+    "Failed to read file: %@": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "读取文件失败：%@"
+          }
+        }
+      }
+    },
+    "Failed to select file: %@": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "选择文件失败：%@"
+          }
+        }
+      }
+    },
+    "File too large (max 25MB)": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "文件过大（最大 25MB）"
+          }
+        }
+      }
+    },
+    "Installation failed. Try: scripts/install_cli_symlink.sh": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "安装失败。请尝试：scripts/install_cli_symlink.sh"
+          }
+        }
+      }
+    },
+    "Installed to %@": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已安装到 %@"
+          }
+        }
+      }
+    },
+    "Installed to %@. Add to PATH.": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已安装到 %@。请添加到 PATH。"
+          }
+        }
+      }
+    },
+    "Invalid format": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "格式无效"
+          }
+        }
+      }
+    },
+    "Last triggered %@": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "上次触发：%@"
+          }
+        }
+      }
+    },
+    "Loading model...": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在加载模型..."
+          }
+        }
+      }
+    },
+    "Model Loaded": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "模型已加载"
+          }
+        }
+      }
+    },
+    "Model not loaded": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "模型未加载"
+          }
+        }
+      }
+    },
+    "Modified": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已修改"
+          }
+        }
+      }
+    },
+    "Moved": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已移动"
+          }
+        }
+      }
+    },
+    "No themes could be loaded from disk.": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法从磁盘加载任何主题。"
+          }
+        }
+      }
+    },
+    "Not Running": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未运行"
+          }
+        }
+      }
+    },
+    "Open Chat": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "打开聊天"
+          }
+        }
+      }
+    },
+    "Open Settings": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "打开设置"
+          }
+        }
+      }
+    },
+    "Osaurus — Error: %@": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Osaurus — 错误：%@"
+          }
+        }
+      }
+    },
+    "Osaurus — Ready to start": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Osaurus — 准备启动"
+          }
+        }
+      }
+    },
+    "Osaurus — Restarting…": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Osaurus — 正在重启…"
+          }
+        }
+      }
+    },
+    "Osaurus — Running on port %lld": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Osaurus — 正在端口 %lld 上运行"
+          }
+        }
+      }
+    },
+    "Osaurus — Starting…": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Osaurus — 正在启动…"
+          }
+        }
+      }
+    },
+    "Osaurus — Stopping…": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Osaurus — 正在停止…"
+          }
+        }
+      }
+    },
+    "Set up instructions, model settings, shortcuts, and appearance.": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "设置指令、模型设置、快捷操作和外观。"
+          }
+        }
+      }
+    },
+    "Show": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "显示"
+          }
+        }
+      }
+    },
+    "Test not available": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "测试不可用"
+          }
+        }
+      }
+    },
+    "Top Center": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "顶部居中"
+          }
+        }
+      }
+    },
+    "Top Left": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "左上角"
+          }
+        }
+      }
+    },
+    "Top Right": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "右上角"
+          }
+        }
+      }
+    },
+    "View Session": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "查看会话"
+          }
+        }
+      }
+    },
+    "View conversation history, working memory, and summaries.": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "查看对话历史、工作记忆和摘要。"
+          }
+        }
+      }
+    },
+    " — Generating…": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": " — 正在生成…"
+          }
+        }
+      }
+    },
+    " — Voice: Error": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": " — 语音：错误"
+          }
+        }
+      }
+    },
+    " — Voice: Listening": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": " — 语音：正在聆听"
+          }
+        }
+      }
+    },
+    "%@ is required": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 为必填项"
+          }
+        }
+      }
+    },
+    "%@ must be at least %@": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 必须至少为 %@"
+          }
+        }
+      }
+    },
+    "%@ must be at least %lld characters": {
+      "localizations": {
+        "zh-Hans": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%@ 必须至少包含 %lld 个字符"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%@ 必须至少包含 %lld 个字符"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "%@ must be at most %@": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 必须最多为 %@"
+          }
+        }
+      }
+    },
+    "%@ must be at most %lld characters": {
+      "localizations": {
+        "zh-Hans": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%@ 最多只能包含 %lld 个字符"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%@ 最多只能包含 %lld 个字符"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "%lld connected • %lld models available": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld 个已连接 • %lld 个模型可用"
+          }
+        }
+      }
+    },
+    "%lld models available": {
+      "localizations": {
+        "zh-Hans": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld 个模型可用"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld 个模型可用"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "%lld providers configured": {
+      "localizations": {
+        "zh-Hans": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "已配置 %lld 个提供商"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "已配置 %lld 个提供商"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "%lld skills enabled": {
+      "localizations": {
+        "zh-Hans": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "已启用 %lld 个技能"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "已启用 %lld 个技能"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "%lld tools enabled": {
+      "localizations": {
+        "zh-Hans": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "已启用 %lld 个工具"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "已启用 %lld 个工具"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "%lld models": {
+      "localizations": {
+        "zh-Hans": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld 个模型"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld 个模型"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "%lld models • %@": {
+      "localizations": {
+        "zh-Hans": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld 个模型 • %@"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld 个模型 • %@"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "%lld pages": {
+      "localizations": {
+        "zh-Hans": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld 页"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld 页"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "Every %@": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "每%@"
+          }
+        }
+      }
+    },
+    "Every %@ at %@": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "每%@ %@"
+          }
+        }
+      }
+    },
+    "Every day at %@": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "每天 %@"
+          }
+        }
+      }
+    },
+    "Loading Model...": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在加载模型..."
+          }
+        }
+      }
+    },
+    "Monthly on day %lld": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "每月 %lld 日"
+          }
+        }
+      }
+    },
+    "Monthly on day %lld at %@": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "每月 %lld 日 %@"
+          }
+        }
+      }
+    },
+    "Name is required": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "名称不能为空"
+          }
+        }
+      }
+    },
+    "Please enter a valid port between 1 and 65535": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请输入 1 到 65535 之间的有效端口"
+          }
+        }
+      }
+    },
+    "Today at %@": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "今天 %@"
+          }
+        }
+      }
+    },
+    "Tomorrow at %@": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "明天 %@"
+          }
+        }
+      }
+    },
+    "Web Page": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "网页"
+          }
+        }
+      }
+    },
+    "Yearly on %@ %lld": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "每年 %@ %lld 日"
+          }
+        }
+      }
+    },
+    "Yearly on %@ %lld at %@": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "每年 %@ %lld 日 %@"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

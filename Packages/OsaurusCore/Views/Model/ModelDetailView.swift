@@ -596,7 +596,7 @@ struct ModelDetailView: View, Identifiable {
         let size = await modelManager.estimateDownloadSize(for: model)
         await MainActor.run {
             self.estimatedSize = size
-            if size == nil { self.estimateError = "Could not estimate size right now." }
+            if size == nil { self.estimateError = L("Could not estimate size right now.") }
             self.isEstimating = false
         }
     }

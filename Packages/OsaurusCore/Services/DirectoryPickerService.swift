@@ -165,8 +165,8 @@ final class DirectoryPickerService: ObservableObject {
         panel.canChooseDirectories = true
         panel.canCreateDirectories = true
         panel.allowsMultipleSelection = false
-        panel.title = "Choose Models Directory"
-        panel.message = "Select a directory where MLX models will be stored"
+        panel.title = L("Choose Models Directory")
+        panel.message = L("Select a directory where MLX models will be stored")
 
         guard panel.runModal() == .OK, let url = panel.url else {
             return

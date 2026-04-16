@@ -18,7 +18,16 @@ enum VoiceTab: String, CaseIterable, AnimatedTabItem {
     case vadMode = "VAD Mode"
     case models = "Models"
 
-    var title: String { rawValue }
+    var title: String {
+        switch self {
+        case .setup: L("Setup")
+        case .audioSettings: L("Audio")
+        case .voiceInput: L("Voice Input")
+        case .transcription: L("Transcription")
+        case .vadMode: L("VAD Mode")
+        case .models: L("Models")
+        }
+    }
 }
 
 // MARK: - Voice View
@@ -104,7 +113,7 @@ struct VoiceView: View {
         if !isSetupComplete {
             return L("Complete setup to enable voice")
         } else if modelManager.downloadedModelsCount > 0 {
-            return "\(modelManager.downloadedModelsCount) models • \(modelManager.totalDownloadedSizeString)"
+            return String(format: L("%lld models • %@"), modelManager.downloadedModelsCount, modelManager.totalDownloadedSizeString)
         } else {
             return L("Voice transcription ready")
         }

@@ -78,14 +78,14 @@ struct SchedulesView: View {
                                     },
                                     onRunNow: {
                                         scheduleManager.runNow(schedule.id)
-                                        showSuccess("Started \"\(schedule.name)\"")
+                                        showSuccess(String(format: L("Started \"%@\""), schedule.name))
                                     },
                                     onEdit: {
                                         editingSchedule = schedule
                                     },
                                     onDelete: {
                                         scheduleManager.delete(id: schedule.id)
-                                        showSuccess("Deleted \"\(schedule.name)\"")
+                                        showSuccess(String(format: L("Deleted \"%@\""), schedule.name))
                                     }
                                 )
                             }
@@ -125,7 +125,7 @@ struct SchedulesView: View {
                         isEnabled: schedule.isEnabled
                     )
                     isCreating = false
-                    showSuccess("Created \"\(schedule.name)\"")
+                    showSuccess(String(format: L("Created \"%@\""), schedule.name))
                 },
                 onCancel: {
                     isCreating = false
@@ -138,7 +138,7 @@ struct SchedulesView: View {
                 onSave: { updated in
                     scheduleManager.update(updated)
                     editingSchedule = nil
-                    showSuccess("Updated \"\(updated.name)\"")
+                    showSuccess(String(format: L("Updated \"%@\""), updated.name))
                 },
                 onCancel: {
                     editingSchedule = nil
@@ -1885,8 +1885,8 @@ struct ScheduleEditorSheet: View {
         panel.canChooseDirectories = true
         panel.canCreateDirectories = false
         panel.allowsMultipleSelection = false
-        panel.title = "Select Working Directory"
-        panel.prompt = "Select"
+        panel.title = L("Select Working Directory")
+        panel.prompt = L("Select")
 
         guard panel.runModal() == .OK, let url = panel.url else { return }
 
@@ -2069,18 +2069,21 @@ struct ScheduleEditorSheet: View {
     }
 
     private var formattedOnceDate: String {
-        let formatter = DateFormatter()
+        let timeFormatter = DateFormatter()
+        timeFormatter.dateStyle = .none
+        timeFormatter.timeStyle = .short
         let calendar = Calendar.current
 
         if calendar.isDateInToday(selectedDate) {
-            formatter.dateFormat = "'Today at' h:mm a"
+            return String(format: L("Today at %@"), timeFormatter.string(from: selectedDate))
         } else if calendar.isDateInTomorrow(selectedDate) {
-            formatter.dateFormat = "'Tomorrow at' h:mm a"
-        } else {
-            formatter.dateFormat = "EEEE, MMM d, yyyy 'at' h:mm a"
+            return String(format: L("Tomorrow at %@"), timeFormatter.string(from: selectedDate))
         }
 
-        return formatter.string(from: selectedDate)
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateStyle = .full
+        dateFormatter.timeStyle = .short
+        return dateFormatter.string(from: selectedDate)
     }
 
     // MARK: - Every N Minutes Options
@@ -2180,16 +2183,17 @@ struct ScheduleEditorSheet: View {
 
     private var dailyPreviewText: String {
         let formatter = DateFormatter()
-        formatter.dateFormat = "h:mm a"
+        formatter.dateStyle = .none
+        formatter.timeStyle = .short
 
         var components = DateComponents()
         components.hour = selectedHour
         components.minute = selectedMinute
 
         if let date = Calendar.current.date(from: components) {
-            return "Every day at \(formatter.string(from: date))"
+            return String(format: L("Every day at %@"), formatter.string(from: date))
         }
-        return "Every day at \(selectedHour):\(String(format: "%02d", selectedMinute))"
+        return String(format: L("Every day at %@"), "\(selectedHour):\(String(format: "%02d", selectedMinute))")
     }
 
     private var weeklyOptions: some View {
@@ -2229,16 +2233,17 @@ struct ScheduleEditorSheet: View {
     private var weeklyPreviewText: String {
         let dayName = Calendar.current.weekdaySymbols[selectedDayOfWeek - 1]
         let formatter = DateFormatter()
-        formatter.dateFormat = "h:mm a"
+        formatter.dateStyle = .none
+        formatter.timeStyle = .short
 
         var components = DateComponents()
         components.hour = selectedHour
         components.minute = selectedMinute
 
         if let date = Calendar.current.date(from: components) {
-            return "Every \(dayName) at \(formatter.string(from: date))"
+            return String(format: L("Every %@ at %@"), dayName, formatter.string(from: date))
         }
-        return "Every \(dayName)"
+        return String(format: L("Every %@"), dayName)
     }
 
     private var monthlyOptions: some View {
@@ -2273,27 +2278,18 @@ struct ScheduleEditorSheet: View {
     }
 
     private var monthlyPreviewText: String {
-        let suffix = daySuffix(selectedDayOfMonth)
         let formatter = DateFormatter()
-        formatter.dateFormat = "h:mm a"
+        formatter.dateStyle = .none
+        formatter.timeStyle = .short
 
         var components = DateComponents()
         components.hour = selectedHour
         components.minute = selectedMinute
 
         if let date = Calendar.current.date(from: components) {
-            return "Monthly on the \(selectedDayOfMonth)\(suffix) at \(formatter.string(from: date))"
+            return String(format: L("Monthly on day %lld at %@"), selectedDayOfMonth, formatter.string(from: date))
         }
-        return "Monthly on the \(selectedDayOfMonth)\(suffix)"
-    }
-
-    private func daySuffix(_ day: Int) -> String {
-        switch day {
-        case 1, 21, 31: return "st"
-        case 2, 22: return "nd"
-        case 3, 23: return "rd"
-        default: return "th"
-        }
+        return String(format: L("Monthly on day %lld"), selectedDayOfMonth)
     }
 
     private var yearlyOptions: some View {
@@ -2332,18 +2328,18 @@ struct ScheduleEditorSheet: View {
 
     private var yearlyPreviewText: String {
         let monthName = Calendar.current.monthSymbols[selectedMonth - 1]
-        let suffix = daySuffix(selectedDay)
         let formatter = DateFormatter()
-        formatter.dateFormat = "h:mm a"
+        formatter.dateStyle = .none
+        formatter.timeStyle = .short
 
         var components = DateComponents()
         components.hour = selectedHour
         components.minute = selectedMinute
 
         if let date = Calendar.current.date(from: components) {
-            return "Yearly on \(monthName) \(selectedDay)\(suffix) at \(formatter.string(from: date))"
+            return String(format: L("Yearly on %@ %lld at %@"), monthName, selectedDay, formatter.string(from: date))
         }
-        return "Yearly on \(monthName) \(selectedDay)\(suffix)"
+        return String(format: L("Yearly on %@ %lld"), monthName, selectedDay)
     }
 
     private var timePicker: some View {

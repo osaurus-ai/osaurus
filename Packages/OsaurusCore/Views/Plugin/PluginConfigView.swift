@@ -48,7 +48,7 @@ struct PluginConfigView: View {
 
                     Button {
                         saveConfig()
-                        withAnimation { saveIndicator = "Saved" }
+                        withAnimation { saveIndicator = L("Saved") }
                         DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
                             withAnimation { saveIndicator = nil }
                         }
@@ -635,17 +635,17 @@ struct PluginConfigView: View {
                 errors.removeValue(forKey: key)
                 return true
             }
-            errors[key] = "\(field.label) is required"
+            errors[key] = String(format: L("%@ is required"), field.label)
             return false
         }
 
         if let minLen = validation.min_length, value.count < minLen {
-            errors[key] = "\(field.label) must be at least \(minLen) characters"
+            errors[key] = String(format: L("%@ must be at least %lld characters"), field.label, Int64(minLen))
             return false
         }
 
         if let maxLen = validation.max_length, value.count > maxLen {
-            errors[key] = "\(field.label) must be at most \(maxLen) characters"
+            errors[key] = String(format: L("%@ must be at most %lld characters"), field.label, Int64(maxLen))
             return false
         }
 
@@ -653,17 +653,17 @@ struct PluginConfigView: View {
             let regex = try? NSRegularExpression(pattern: pattern),
             regex.firstMatch(in: value, range: NSRange(value.startIndex..., in: value)) == nil
         {
-            errors[key] = validation.pattern_hint ?? "Invalid format"
+            errors[key] = validation.pattern_hint ?? L("Invalid format")
             return false
         }
 
         if field.type == .number, let numVal = Double(value) {
             if let min = validation.min, numVal < min {
-                errors[key] = "\(field.label) must be at least \(min)"
+                errors[key] = String(format: L("%@ must be at least %@"), field.label, String(min))
                 return false
             }
             if let max = validation.max, numVal > max {
-                errors[key] = "\(field.label) must be at most \(max)"
+                errors[key] = String(format: L("%@ must be at most %@"), field.label, String(max))
                 return false
             }
         }

@@ -196,19 +196,19 @@ public struct Watcher: Codable, Identifiable, Sendable, Equatable {
     /// Human-readable status description
     public var statusDescription: String {
         if !isEnabled {
-            return "Paused"
+            return L("Paused")
         }
         if let lastTriggered = lastTriggeredAt {
             let formatter = RelativeDateTimeFormatter()
             formatter.unitsStyle = .short
-            return "Last triggered \(formatter.localizedString(for: lastTriggered, relativeTo: Date()))"
+            return String(format: L("Last triggered %@"), formatter.localizedString(for: lastTriggered, relativeTo: Date()))
         }
-        return "Watching"
+        return L("Watching")
     }
 
     /// Short display path for the watched folder
     public var displayWatchPath: String {
-        guard let path = watchPath else { return "No folder selected" }
+        guard let path = watchPath else { return L("No folder selected") }
         // Abbreviate home directory
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         if path.hasPrefix(home) {

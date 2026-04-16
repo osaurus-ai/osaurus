@@ -98,7 +98,7 @@ struct SkillsView: View {
                                             isProcessing = true
                                             defer { isProcessing = false }
                                             await skillManager.delete(id: skill.id)
-                                            showToast("Deleted \"\(skill.name)\"")
+                                            showToast(String(format: L("Deleted \"%@\""), skill.name))
                                         }
                                     }
                                 )
@@ -139,7 +139,7 @@ struct SkillsView: View {
                             instructions: skill.instructions
                         )
                         isCreating = false
-                        showToast("Created \"\(skill.name)\"")
+                        showToast(String(format: L("Created \"%@\""), skill.name))
                     }
                 },
                 onCancel: {
@@ -156,7 +156,7 @@ struct SkillsView: View {
                         defer { isProcessing = false }
                         await skillManager.update(updated)
                         editingSkill = nil
-                        showToast("Updated \"\(updated.name)\"")
+                        showToast(String(format: L("Updated \"%@\""), updated.name))
                     }
                 },
                 onCancel: {
@@ -173,9 +173,9 @@ struct SkillsView: View {
                         let imported = await skillManager.importSkillsFromMarkdown(skills)
                         showGitHubImport = false
                         if imported.count == 1 {
-                            showToast("Imported \"\(imported[0].name)\"")
+                            showToast(String(format: L("Imported \"%@\""), imported[0].name))
                         } else {
-                            showToast("Imported \(imported.count) skills")
+                            showToast(L("Imported \(imported.count) skills"))
                         }
                     }
                 },
@@ -245,7 +245,7 @@ struct SkillsView: View {
             do {
                 // Start accessing the security-scoped resource
                 guard url.startAccessingSecurityScopedResource() else {
-                    showToast("Cannot access file", isError: true)
+                    showToast(L("Cannot access file"), isError: true)
                     return
                 }
                 defer { url.stopAccessingSecurityScopedResource() }
@@ -257,31 +257,31 @@ struct SkillsView: View {
                     let skill = try await skillManager.importSkillFromZip(url)
                     let fileCount = skill.totalFileCount
                     if fileCount > 0 {
-                        showToast("Imported \"\(skill.name)\" with \(fileCount) files")
+                        showToast(String(format: L("Imported \"%@\" with %lld files"), skill.name, Int64(fileCount)))
                     } else {
-                        showToast("Imported \"\(skill.name)\"")
+                        showToast(String(format: L("Imported \"%@\""), skill.name))
                     }
                 } else if ext == "json" {
                     // Import from JSON
                     let content = try String(contentsOf: url, encoding: .utf8)
                     guard let data = content.data(using: .utf8) else {
-                        showToast("Invalid file content", isError: true)
+                        showToast(L("Invalid file content"), isError: true)
                         return
                     }
                     let skill = try await skillManager.importSkill(from: data)
-                    showToast("Imported \"\(skill.name)\"")
+                    showToast(String(format: L("Imported \"%@\""), skill.name))
                 } else {
                     // Import from Markdown (SKILL.md or .md)
                     let content = try String(contentsOf: url, encoding: .utf8)
                     let skill = try await skillManager.importSkillFromMarkdown(content)
-                    showToast("Imported \"\(skill.name)\"")
+                    showToast(String(format: L("Imported \"%@\""), skill.name))
                 }
             } catch {
-                showToast("Import failed: \(error.localizedDescription)", isError: true)
+                showToast(String(format: L("Import failed: %@"), error.localizedDescription), isError: true)
             }
 
         case .failure(let error):
-            showToast("Import failed: \(error.localizedDescription)", isError: true)
+            showToast(String(format: L("Import failed: %@"), error.localizedDescription), isError: true)
         }
     }
 
@@ -293,13 +293,13 @@ struct SkillsView: View {
         if skill.hasAssociatedFiles {
             panel.allowedContentTypes = [.zip]
             panel.nameFieldStringValue = "\(skill.xplaceholder_agentSkillsNamex).zip"
-            panel.title = "Export Skill (Agent Skills Format)"
-            panel.message = "Export as ZIP archive with all associated files"
+            panel.title = L("Export Skill (Agent Skills Format)")
+            panel.message = L("Export as ZIP archive with all associated files")
         } else {
             panel.allowedContentTypes = [UTType(filenameExtension: "md") ?? .plainText]
             panel.nameFieldStringValue = "SKILL.md"
-            panel.title = "Export Skill (Agent Skills Format)"
-            panel.message = "Export as Agent Skills compatible SKILL.md file"
+            panel.title = L("Export Skill (Agent Skills Format)")
+            panel.message = L("Export as Agent Skills compatible SKILL.md file")
         }
 
         panel.begin { response in
@@ -313,15 +313,15 @@ struct SkillsView: View {
                             let zipURL = try await skillManager.exportSkillAsZip(skill)
                             try FileManager.default.copyItem(at: zipURL, to: url)
                             try? FileManager.default.removeItem(at: zipURL)
-                            self.showToast("Exported \"\(skill.name)\" as ZIP")
+                            self.showToast(String(format: L("Exported \"%@\" as ZIP"), skill.name))
                         } else {
                             // export as SKILL.md
                             let content = skillManager.exportSkillAsAgentSkills(skill)
                             try content.write(to: url, atomically: true, encoding: .utf8)
-                            self.showToast("Exported \"\(skill.name)\" as SKILL.md")
+                            self.showToast(String(format: L("Exported \"%@\" as SKILL.md"), skill.name))
                         }
                     } catch {
-                        self.showToast("Export failed: \(error.localizedDescription)", isError: true)
+                        self.showToast(String(format: L("Export failed: %@"), error.localizedDescription), isError: true)
                     }
                 }
             }

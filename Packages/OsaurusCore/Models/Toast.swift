@@ -57,12 +57,12 @@ public enum ToastPosition: String, Codable, Sendable, CaseIterable {
     /// Display name for UI
     public var displayName: String {
         switch self {
-        case .topRight: return "Top Right"
-        case .topLeft: return "Top Left"
-        case .topCenter: return "Top Center"
-        case .bottomRight: return "Bottom Right"
-        case .bottomLeft: return "Bottom Left"
-        case .bottomCenter: return "Bottom Center"
+        case .topRight: return L("Top Right")
+        case .topLeft: return L("Top Left")
+        case .topCenter: return L("Top Center")
+        case .bottomRight: return L("Bottom Right")
+        case .bottomLeft: return L("Bottom Left")
+        case .bottomCenter: return L("Bottom Center")
         }
     }
 
@@ -316,21 +316,21 @@ public enum ToastAction: Equatable, Sendable {
     public var defaultButtonTitle: String {
         switch self {
         case .openChat:
-            return "Open Chat"
+            return L("Open Chat")
         case .openChatSession:
-            return "View Session"
+            return L("View Session")
         case .showChatWindow:
-            return "View"
+            return L("View")
         case .openSettings:
-            return "Open Settings"
+            return L("Open Settings")
         case .openURL:
-            return "Open"
+            return L("Open")
         case .showMainWindow:
-            return "Show"
+            return L("Show")
         case .showExecutionContext:
-            return "View"
+            return L("View")
         case .custom:
-            return "Action"
+            return L("Action")
         }
     }
 

@@ -41,7 +41,7 @@ final class ChatSession: ObservableObject {
 
     // MARK: - Persistence Properties
     @Published var sessionId: UUID?
-    @Published var title: String = "New Chat"
+    @Published var title: String = L("New Chat")
     var createdAt: Date = Date()
     var updatedAt: Date = Date()
 
@@ -390,7 +390,7 @@ final class ChatSession: ObservableObject {
         showVoiceOverlay = false
         // Clear session identity for new chat
         sessionId = nil
-        title = "New Chat"
+        title = L("New Chat")
         createdAt = Date()
         updatedAt = Date()
         isDirty = false
@@ -466,7 +466,7 @@ final class ChatSession: ObservableObject {
         }
 
         // Auto-generate title from first user message if still default
-        if title == "New Chat" {
+        if title == L("New Chat") {
             let turnData = turns.map { ChatTurnData(from: $0) }
             title = ChatSessionData.generateTitle(from: turnData)
         }

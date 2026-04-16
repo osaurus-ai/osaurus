@@ -326,7 +326,7 @@ public struct TranscriptionPreviewView: View {
     var isTranscribing: Bool = false
 
     /// Placeholder text when empty
-    var placeholder: String = "Listening..."
+    var placeholder: String = L("Listening...")
 
     @Environment(\.theme) private var theme
     @State private var cursorVisible = true
@@ -334,7 +334,7 @@ public struct TranscriptionPreviewView: View {
     public init(
         text: String,
         isTranscribing: Bool = false,
-        placeholder: String = "Listening..."
+        placeholder: String = L("Listening...")
     ) {
         self.text = text
         self.isTranscribing = isTranscribing
@@ -870,7 +870,7 @@ public struct CountdownTimerView: View {
     let remaining: Double
 
     /// Label to show (e.g., "Sending...")
-    var label: String = "Sending..."
+    var label: String = L("Sending...")
 
     /// Called when countdown completes
     var onComplete: (() -> Void)?
@@ -883,7 +883,7 @@ public struct CountdownTimerView: View {
     public init(
         duration: Double,
         remaining: Double,
-        label: String = "Sending...",
+        label: String = L("Sending..."),
         onComplete: (() -> Void)? = nil,
         onCancel: (() -> Void)? = nil
     ) {

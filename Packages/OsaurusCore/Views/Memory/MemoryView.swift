@@ -154,7 +154,7 @@ struct MemoryView: View {
                 profile: profile,
                 onSave: { newContent in
                     saveProfileEdit(newContent)
-                    showToast("Profile saved")
+                    showToast(L("Profile saved"))
                 }
             )
             .frame(minWidth: 500, minHeight: 400)
@@ -163,7 +163,7 @@ struct MemoryView: View {
             AddOverrideSheet(
                 onAdd: { text in
                     addOverride(text)
-                    showToast("Override added")
+                    showToast(L("Override added"))
                 }
             )
             .frame(minWidth: 440, minHeight: 220)
@@ -216,7 +216,7 @@ struct MemoryView: View {
                 config.enabled = true
                 MemoryConfigurationStore.save(config)
                 loadData()
-                showToast("Memory enabled")
+                showToast(L("Memory enabled"))
             } label: {
                 Text("Enable", bundle: .module)
                     .font(.system(size: 13, weight: .semibold))
@@ -250,7 +250,7 @@ struct MemoryView: View {
                     await MainActor.run {
                         isSyncing = false
                         loadData()
-                        showToast("Sync complete")
+                        showToast(L("Sync complete"))
                     }
                 }
             }
@@ -343,7 +343,7 @@ struct MemoryView: View {
                             edit: edit,
                             onDelete: {
                                 removeOverride(id: edit.id)
-                                showToast("Override removed")
+                                showToast(L("Override removed"))
                             }
                         )
                     }
@@ -755,7 +755,7 @@ struct MemoryView: View {
                     await MainActor.run {
                         isLoading = false
                         onComplete?()
-                        showToast("Failed to open memory database", isError: true)
+                        showToast(L("Failed to open memory database"), isError: true)
                     }
                     return
                 }
@@ -770,14 +770,14 @@ struct MemoryView: View {
             } catch {
                 MemoryLogger.database.error("Failed to load profile: \(error)")
                 loadedProfile = nil
-                loadError = "Failed to load profile"
+                loadError = L("Failed to load profile")
             }
             do {
                 loadedEdits = try db.loadUserEdits()
             } catch {
                 MemoryLogger.database.error("Failed to load edits: \(error)")
                 loadedEdits = []
-                loadError = loadError ?? "Failed to load overrides"
+                loadError = loadError ?? L("Failed to load overrides")
             }
             do {
                 loadedStats = try db.processingStats()
@@ -827,7 +827,7 @@ struct MemoryView: View {
             try MemoryDatabase.shared.deleteUserEdit(id: id)
         } catch {
             MemoryLogger.database.error("Failed to remove override: \(error)")
-            showToast("Failed to remove override", isError: true)
+            showToast(L("Failed to remove override"), isError: true)
         }
         loadData()
     }
@@ -844,7 +844,7 @@ struct MemoryView: View {
             )
         } catch {
             MemoryLogger.database.error("Failed to add override: \(error)")
-            showToast("Failed to add override", isError: true)
+            showToast(L("Failed to add override"), isError: true)
         }
         loadData()
     }
@@ -873,7 +873,7 @@ struct MemoryView: View {
             )
         } catch {
             MemoryLogger.database.error("Failed to save profile: \(error)")
-            showToast("Failed to save profile", isError: true)
+            showToast(L("Failed to save profile"), isError: true)
         }
         loadData()
     }
@@ -886,7 +886,7 @@ struct MemoryView: View {
         try? db.open()
         Task { await MemorySearchService.shared.clearIndex() }
         loadData()
-        showToast("All memory cleared")
+        showToast(L("All memory cleared"))
     }
 
     private func formatBytes(_ bytes: Int64) -> String {
