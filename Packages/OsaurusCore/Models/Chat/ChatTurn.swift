@@ -133,6 +133,32 @@ final class ChatTurn: ObservableObject, Identifiable {
         objectWillChange.send()
     }
 
+    /// Atomically move everything accumulated in `content` plus `tail` into the
+    /// thinking channel and clear content. Single `objectWillChange` notification.
+    /// Used by the retroactive-thinking path when a model emits `</think>` without
+    /// ever opening a block — all prior content is actually reasoning. Returns the
+    /// number of characters moved so callers can keep their own counters in sync.
+    @discardableResult
+    func moveContentToThinking(tail: String) -> Int {
+        let priorContent = contentChunks.joined()
+        let moved = priorContent + tail
+        guard !moved.isEmpty else { return 0 }
+
+        // Append to thinking without firing its setter's notification.
+        thinkingChunks.append(moved)
+        _thinkingLength += moved.count
+        _cachedThinking = nil
+
+        // Clear content without firing its setter's notification.
+        contentChunks = []
+        _cachedContent = ""
+        _contentLength = 0
+
+        // Single notification for the batched mutation.
+        objectWillChange.send()
+        return moved.count
+    }
+
     /// Consolidate chunks into single strings after streaming completes
     func consolidateContent() {
         if contentChunks.count > 1 {

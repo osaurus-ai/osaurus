@@ -1086,9 +1086,20 @@ final class ChatSession: ObservableObject {
                             // Fall back to estimated tok/s when MLX stats weren't propagated (remote APIs).
                             // Use the codebase's chars/4 heuristic to approximate tokens from generated text
                             // rather than raw delta count, which doesn't map 1:1 to tokens for most providers.
-                            if assistantTurn.generationTokensPerSecond == nil, !assistantTurn.contentIsEmpty {
+                            if assistantTurn.generationTokensPerSecond == nil,
+                                !assistantTurn.contentIsEmpty || !assistantTurn.thinkingIsEmpty
+                            {
                                 let genTime = Date().timeIntervalSince(first)
-                                let estimatedTokens = ContextBudgetManager.estimateTokens(for: assistantTurn.content)
+                                // Reasoning tokens are generated on the same clock as the
+                                // answer; leaving them out of the numerator while keeping
+                                // them in the denominator under-reports throughput on
+                                // thinking models. Count both.
+                                let answerTokens = ContextBudgetManager.estimateTokens(for: assistantTurn.content)
+                                let reasoningTokens =
+                                    assistantTurn.thinkingIsEmpty
+                                    ? 0
+                                    : ContextBudgetManager.estimateTokens(for: assistantTurn.thinking)
+                                let estimatedTokens = answerTokens + reasoningTokens
                                 if genTime > 0 && estimatedTokens > 0 {
                                     assistantTurn.generationTokenCount = estimatedTokens
                                     assistantTurn.generationTokensPerSecond = Double(estimatedTokens) / genTime

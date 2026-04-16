@@ -81,6 +81,7 @@ enum ModelProfileRegistry {
         Gemini31FlashImageProfile.self,
         GeminiProImageProfile.self,
         GeminiFlashImageProfile.self,
+        AutoThinkingProfile.self,
     ]
 
     static func profile(for modelId: String) -> (any ModelProfile.Type)? {
@@ -153,6 +154,34 @@ struct QwenThinkingProfile: ModelProfile {
 
     static let defaults: [String: ModelOptionValue] = [
         "disableThinking": .bool(true)
+    ]
+
+    static let thinkingOption: (id: String, inverted: Bool)? = ("disableThinking", true)
+}
+
+// MARK: - Auto Thinking Profile (chat-template driven)
+
+/// Fallback profile that activates for any locally-installed model whose
+/// chat template reads an `enable_thinking` kwarg. Registered last so that
+/// explicit family profiles (Qwen, Venice, etc.) still win when they match.
+struct AutoThinkingProfile: ModelProfile {
+    static let displayName = "Thinking"
+
+    static func matches(modelId: String) -> Bool {
+        LocalReasoningCapability.capability(forModelId: modelId).hasEnableThinkingKwarg
+    }
+
+    static let options: [ModelOptionDefinition] = [
+        ModelOptionDefinition(
+            id: "disableThinking",
+            label: "Disable Thinking",
+            icon: "brain.head.profile",
+            kind: .toggle(default: false)
+        )
+    ]
+
+    static let defaults: [String: ModelOptionValue] = [
+        "disableThinking": .bool(false)
     ]
 
     static let thinkingOption: (id: String, inverted: Bool)? = ("disableThinking", true)

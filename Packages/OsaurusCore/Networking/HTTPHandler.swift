@@ -2681,11 +2681,25 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         finishReason: finishReason
                     )
                 } catch {
-                    let body = "Internal error: \(error.localizedDescription)"
+                    // Map ChatEngine.EngineError to its intended HTTP
+                    // status (e.g. 404 for unknown model) instead of
+                    // blanket-500 on every failure. The WorkView
+                    // classifier / external API consumers rely on the
+                    // status code to give users actionable feedback.
+                    // See PR #863 / issue #858.
+                    let status: HTTPResponseStatus
+                    let body: String
+                    if let engineError = error as? ChatEngine.EngineError {
+                        status = HTTPResponseStatus(statusCode: engineError.httpStatus)
+                        body = engineError.errorDescription ?? error.localizedDescription
+                    } else {
+                        status = .internalServerError
+                        body = "Internal error: \(error.localizedDescription)"
+                    }
                     let headers: [(String, String)] = [("Content-Type", "text/plain; charset=utf-8")]
                     let headersCopy = headers
                     hop {
-                        var responseHead = HTTPResponseHead(version: head.version, status: .internalServerError)
+                        var responseHead = HTTPResponseHead(version: head.version, status: status)
                         var buffer = ctx.value.channel.allocator.buffer(capacity: body.utf8.count)
                         buffer.writeString(body)
                         var nioHeaders = HTTPHeaders()

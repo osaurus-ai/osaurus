@@ -25,7 +25,43 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         self.installedModelsProvider = installedModelsProvider
         self.inferenceSource = source
     }
-    struct EngineError: Error {}
+    /// Errors thrown by `ChatEngine` that carry a classification so the
+    /// HTTP layer can emit a proper 4xx/5xx instead of a generic 500.
+    /// Before this type was specialized, `EngineError` was an empty
+    /// struct `{}` and every failure (unknown model, routing collapse,
+    /// etc.) surfaced as HTTP 500 → the classifier in `WorkView` would
+    /// then label it "Server Error / service temporarily unavailable"
+    /// when the real cause was user input (issue #858).
+    struct EngineError: Error, LocalizedError {
+        enum Kind {
+            /// No service or remote provider could handle the requested model ID.
+            /// Maps to HTTP 404 (or 400 if you prefer "bad request"; we use 404
+            /// because the resource — the model — is what's missing).
+            case modelNotFound(requested: String)
+            /// Routing returned `.none` for a non-empty model request for some
+            /// other reason (e.g. provider marked disconnected). Maps to 503.
+            case noServiceAvailable(requested: String)
+        }
+
+        let kind: Kind
+
+        var errorDescription: String? {
+            switch kind {
+            case .modelNotFound(let requested):
+                return "Model '\(requested)' is not installed or registered with any provider."
+            case .noServiceAvailable(let requested):
+                return "No service is currently available to handle model '\(requested)'."
+            }
+        }
+
+        /// The HTTP status code the API layer should return for this error.
+        var httpStatus: Int {
+            switch kind {
+            case .modelNotFound: return 404
+            case .noServiceAvailable: return 503
+            }
+        }
+    }
 
     /// Estimate input tokens from messages (rough heuristic: ~4 chars per token)
     private func estimateInputTokens(_ messages: [ChatMessage]) -> Int {
@@ -127,7 +163,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             )
 
         case .none:
-            throw EngineError()
+            throw EngineError(kind: .modelNotFound(requested: request.model))
         }
     }
 
@@ -437,7 +473,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                 system_fingerprint: nil
             )
         case .none:
-            throw EngineError()
+            throw EngineError(kind: .modelNotFound(requested: request.model))
         }
     }
 
