@@ -639,17 +639,7 @@ public actor RemoteProviderService: ToolCapableService {
                                         }
                                     }
                                 } catch {
-                                    // Check if this is a server-side error payload before discarding
-                                    if let errorResponse = try? JSONDecoder().decode(
-                                        OpenAIError.self, from: jsonData
-                                    ) {
-                                        continuation.finish(
-                                            throwing: RemoteProviderServiceError.streamingError(
-                                                errorResponse.error.message
-                                            )
-                                        )
-                                        return
-                                    }
+                                    // Log parsing errors for debugging
                                     print(
                                         "[Osaurus] Warning: Failed to parse SSE chunk in streamDeltas: \(error.localizedDescription)"
                                     )
@@ -1287,17 +1277,7 @@ public actor RemoteProviderService: ToolCapableService {
                                         }
                                     }
                                 } catch {
-                                    // Check if this is a server-side error payload before discarding
-                                    if let errorResponse = try? JSONDecoder().decode(
-                                        OpenAIError.self, from: jsonData
-                                    ) {
-                                        continuation.finish(
-                                            throwing: RemoteProviderServiceError.streamingError(
-                                                errorResponse.error.message
-                                            )
-                                        )
-                                        return
-                                    }
+                                    // Log parsing errors for debugging instead of silently ignoring
                                     print(
                                         "[Osaurus] Warning: Failed to parse SSE chunk: \(error.localizedDescription)"
                                     )
