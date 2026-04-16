@@ -166,8 +166,11 @@ fi
 
 require_command git
 require_command swift
-require_command swift-format
 require_command xcodebuild
+
+if (( skip_lint == 0 )); then
+  require_command swift-format
+fi
 
 if (( launch_check == 1 )); then
   require_command open
