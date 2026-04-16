@@ -17,6 +17,7 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
     case xai
     case venice
     case openrouter
+    case azure
     case custom
 
     var id: String { rawValue }
@@ -30,6 +31,7 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
         case .xai: return "xAI"
         case .venice: return "Venice AI"
         case .openrouter: return "OpenRouter"
+        case .azure: return "Azure OpenAI"
         case .custom: return "Custom"
         }
     }
@@ -43,6 +45,7 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
         case .xai: return "Grok models"
         case .venice: return "Privacy-first AI"
         case .openrouter: return "Multi-provider"
+        case .azure: return "Azure AI Foundry"
         case .custom: return "Custom endpoint"
         }
     }
@@ -56,6 +59,7 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
         case .xai: return "bolt.fill"
         case .venice: return "lock.shield.fill"
         case .openrouter: return "arrow.triangle.branch"
+        case .azure: return "cloud.fill"
         case .custom: return "slider.horizontal.3"
         }
     }
@@ -69,6 +73,8 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
         case .xai: return [Color(red: 0.1, green: 0.1, blue: 0.1), Color(red: 0.2, green: 0.2, blue: 0.2)]
         case .venice: return [Color(red: 0.83, green: 0.66, blue: 0.33), Color(red: 0.72, green: 0.53, blue: 0.17)]
         case .openrouter: return [Color(red: 0.95, green: 0.55, blue: 0.25), Color(red: 0.85, green: 0.4, blue: 0.2)]
+        // Azure blue brand colors
+        case .azure: return [Color(red: 0.0, green: 0.47, blue: 0.84), Color(red: 0.0, green: 0.35, blue: 0.69)]
         case .custom: return [Color(red: 0.55, green: 0.55, blue: 0.6), Color(red: 0.4, green: 0.4, blue: 0.45)]
         }
     }
@@ -82,6 +88,7 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
         case .xai: return "https://console.x.ai/"
         case .venice: return "https://venice.ai/settings/api"
         case .openrouter: return "https://openrouter.ai/keys"
+        case .azure: return "https://portal.azure.com/#blade/Microsoft_Azure_ProjectOxford/CognitiveServicesHub/OpenAI"
         case .custom: return ""
         }
     }
@@ -98,6 +105,7 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
     var documentationURL: String? {
         switch self {
         case .venice: return "https://docs.venice.ai"
+        case .azure: return "https://learn.microsoft.com/en-us/azure/ai-services/openai/"
         default: return nil
         }
     }
@@ -120,6 +128,13 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
                 "Sign in or create an account",
                 "Generate a new API key",
                 "Copy and paste it here",
+            ]
+        case .azure:
+            return [
+                "Open Azure Portal and go to your OpenAI resource",
+                "Click \"Keys and Endpoint\" in the left menu",
+                "Copy KEY 1 or KEY 2",
+                "Paste it here — also set your resource name and deployment",
             ]
         default:
             return [
@@ -204,6 +219,19 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
                 authType: .apiKey,
                 providerType: .openaiLegacy
             )
+        case .azure:
+            // Host is intentionally empty: the user must supply their Azure resource name.
+            // The actual host will be "<resource>.openai.azure.com".
+            // basePath is unused for Azure — the full URL is constructed from azureDeploymentName.
+            return ProviderPresetConfiguration(
+                name: "Azure OpenAI",
+                host: "",
+                providerProtocol: .https,
+                port: nil,
+                basePath: "/",
+                authType: .apiKey,
+                providerType: .azureOpenAI
+            )
         case .custom:
             return ProviderPresetConfiguration(
                 name: "",
@@ -222,6 +250,10 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
     /// Attempts to match an existing RemoteProvider to a known preset by host.
     static func matching(provider: RemoteProvider) -> ProviderPreset? {
         let host = provider.host.lowercased().trimmingCharacters(in: .whitespaces)
+        // Match Azure by provider type (host varies per resource name)
+        if provider.providerType == .azureOpenAI {
+            return .azure
+        }
         return knownPresets.first { preset in
             preset.configuration.host.lowercased() == host
         }

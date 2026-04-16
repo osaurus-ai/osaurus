@@ -1662,6 +1662,12 @@ public actor RemoteProviderService: ToolCapableService {
                 throw RemoteProviderServiceError.invalidURL
             }
             url = agentURL
+        } else if provider.providerType == .azureOpenAI {
+            // Azure OpenAI uses deployment-based URL with api-version query parameter
+            guard let azureURL = provider.azureChatCompletionsURL() else {
+                throw RemoteProviderServiceError.invalidURL
+            }
+            url = azureURL
         } else {
             let endpoint = provider.providerType.chatEndpoint
             guard let standardURL = provider.url(for: endpoint) else {
@@ -1710,6 +1716,9 @@ public actor RemoteProviderService: ToolCapableService {
             bodyData = try encoder.encode(geminiRequest)
         case .osaurus:
             // Native Osaurus agent uses OpenAI-compatible request format
+            bodyData = try encoder.encode(request)
+        case .azureOpenAI:
+            // Azure OpenAI uses the same request format as OpenAI /chat/completions
             bodyData = try encoder.encode(request)
         }
         urlRequest.httpBody = bodyData
@@ -1815,6 +1824,13 @@ public actor RemoteProviderService: ToolCapableService {
             let response = try JSONDecoder().decode(ChatCompletionResponse.self, from: data)
             let content = response.choices.first?.message.content
             return (content, nil)
+
+        case .azureOpenAI:
+            // Azure OpenAI returns standard OpenAI-compatible chat completion responses
+            let response = try JSONDecoder().decode(ChatCompletionResponse.self, from: data)
+            let content = response.choices.first?.message.content
+            let toolCalls = response.choices.first?.message.tool_calls
+            return (content, toolCalls)
         }
     }
 
@@ -2468,6 +2484,11 @@ extension RemoteProviderService {
             return try await fetchOsaurusModels(from: provider)
         }
 
+        // Azure OpenAI uses its own models endpoint with api-version query param
+        if provider.providerType == .azureOpenAI {
+            return try await fetchAzureOpenAIModels(from: provider)
+        }
+
         // OpenAI-compatible providers use /models endpoint
         guard let url = provider.url(for: "/models") else {
             throw RemoteProviderServiceError.invalidURL
@@ -2540,6 +2561,46 @@ extension RemoteProviderService {
     }
 
     /// Fetch models from Gemini API (different response format from OpenAI)
+
+    /// Fetch available deployments from Azure OpenAI.
+    ///
+    /// Azure OpenAI exposes deployments (not raw models) via:
+    ///   GET https://<resource>.openai.azure.com/openai/models?api-version=<version>
+    ///
+    /// The response follows the standard OpenAI /models format, so we reuse ModelsResponse.
+    private static func fetchAzureOpenAIModels(from provider: RemoteProvider) async throws -> [String] {
+        guard let url = provider.azureModelsURL() else {
+            throw RemoteProviderServiceError.invalidURL
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+
+        // Add provider headers — includes the api-key header resolved by resolvedHeaders()
+        for (key, value) in provider.resolvedHeaders() {
+            request.setValue(value, forHTTPHeaderField: key)
+        }
+
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = min(provider.timeout, 30)
+        let session = URLSession(configuration: config)
+
+        let (data, response) = try await session.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw RemoteProviderServiceError.invalidResponse
+        }
+
+        if httpResponse.statusCode >= 400 {
+            let errorMessage = extractErrorMessage(from: data, statusCode: httpResponse.statusCode)
+            throw RemoteProviderServiceError.requestFailed(errorMessage)
+        }
+
+        let modelsResponse = try JSONDecoder().decode(ModelsResponse.self, from: data)
+        return modelsResponse.data.map { $0.id }
+    }
+
     private static func fetchGeminiModels(from provider: RemoteProvider) async throws -> [String] {
         guard let url = provider.url(for: "/models") else {
             throw RemoteProviderServiceError.invalidURL
