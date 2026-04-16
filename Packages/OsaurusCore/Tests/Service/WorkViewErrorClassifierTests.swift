@@ -28,7 +28,8 @@ struct WorkViewErrorClassifierTests {
         // with an explanatory string. This must surface as "Request
         // Rejected" with the underlying message, NOT as "Server Error
         // / service temporarily unavailable".
-        let err = "Invalid Gemini model name 'gemini 3.1 flash lite preview': only letters, digits, '-', '_', and '.' are allowed. Check provider settings."
+        let err =
+            "Invalid Gemini model name 'gemini 3.1 flash lite preview': only letters, digits, '-', '_', and '.' are allowed. Check provider settings."
         let (title, message) = WorkViewErrorClassifier.classify(err)
         #expect(title == "Request Rejected")
         #expect(message.contains("gemini 3.1 flash lite preview"))

@@ -130,9 +130,13 @@ struct PairingApprovalView: View {
 
     private var addressBlock: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Label { Text("Device Address", bundle: .module) } icon: { Image(systemName: "person.badge.key.fill") }
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(theme.secondaryText)
+            Label {
+                Text("Device Address", bundle: .module)
+            } icon: {
+                Image(systemName: "person.badge.key.fill")
+            }
+            .font(.system(size: 11, weight: .medium))
+            .foregroundColor(theme.secondaryText)
 
             Text(connectorAddress)
                 .font(theme.monoFont(size: 11.5))

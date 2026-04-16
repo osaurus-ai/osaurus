@@ -255,7 +255,8 @@ struct AgentPill: View {
                         Button(action: { onSelectRelayAgent?(relay) }) {
                             Label(
                                 relay.name,
-                                systemImage: activeRelayAgent?.id == relay.id ? "checkmark" : "antenna.radiowaves.left.and.right"
+                                systemImage: activeRelayAgent?.id == relay.id
+                                    ? "checkmark" : "antenna.radiowaves.left.and.right"
                             )
                         }
                     }

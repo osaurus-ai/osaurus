@@ -649,22 +649,22 @@ struct OnboardingTextField: View {
             TextField(text: $text, prompt: Text(LocalizedStringKey(placeholder), bundle: .module)) {
                 Text(LocalizedStringKey(placeholder), bundle: .module)
             }
-                .textFieldStyle(.plain)
-                .font(isMonospaced ? .system(size: 14, design: .monospaced) : theme.font(size: 14))
-                .foregroundColor(theme.primaryText)
-                .padding(12)
-                .focused($isFocused)
-                .background(
-                    RoundedRectangle(cornerRadius: OnboardingLayout.buttonCornerRadius, style: .continuous)
-                        .fill(theme.inputBackground)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: OnboardingLayout.buttonCornerRadius, style: .continuous)
-                        .strokeBorder(
-                            isFocused ? theme.accentColor : theme.inputBorder,
-                            lineWidth: isFocused ? 2 : 1
-                        )
-                )
+            .textFieldStyle(.plain)
+            .font(isMonospaced ? .system(size: 14, design: .monospaced) : theme.font(size: 14))
+            .foregroundColor(theme.primaryText)
+            .padding(12)
+            .focused($isFocused)
+            .background(
+                RoundedRectangle(cornerRadius: OnboardingLayout.buttonCornerRadius, style: .continuous)
+                    .fill(theme.inputBackground)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: OnboardingLayout.buttonCornerRadius, style: .continuous)
+                    .strokeBorder(
+                        isFocused ? theme.accentColor : theme.inputBorder,
+                        lineWidth: isFocused ? 2 : 1
+                    )
+            )
         }
     }
 }

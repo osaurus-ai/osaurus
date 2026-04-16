@@ -2101,9 +2101,13 @@ private struct PairingSheet: View {
             }
 
             HStack {
-                Button { onCancel() } label: { Text("Cancel", bundle: .module) }
-                    .keyboardShortcut(.cancelAction)
-                    .disabled(isPairing)
+                Button {
+                    onCancel()
+                } label: {
+                    Text("Cancel", bundle: .module)
+                }
+                .keyboardShortcut(.cancelAction)
+                .disabled(isPairing)
                 Spacer()
                 if isPairing {
                     ProgressView()

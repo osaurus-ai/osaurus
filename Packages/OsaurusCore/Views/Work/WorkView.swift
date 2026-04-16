@@ -716,7 +716,8 @@ enum WorkViewErrorClassifier {
         }
         if lowercased.contains(" 500") || lowercased.contains("500:") || lowercased.contains(" 502")
             || lowercased.contains("502:") || lowercased.contains(" 503") || lowercased.contains("503:")
-            || lowercased.contains(" 504") || lowercased.contains("504:") || lowercased.contains("internal server error")
+            || lowercased.contains(" 504") || lowercased.contains("504:")
+            || lowercased.contains("internal server error")
             || lowercased.contains("service unavailable") || lowercased.contains("bad gateway")
             || lowercased.contains("gateway timeout") || lowercased.contains("overloaded")
         {

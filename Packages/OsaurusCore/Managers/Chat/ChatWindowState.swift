@@ -328,10 +328,10 @@ final class ChatWindowState: ObservableObject {
         let manager = RemoteProviderManager.shared
         pairedRelayAgents = manager.configuration.providers.compactMap { provider in
             guard provider.providerType == .osaurus,
-                  !manager.isEphemeral(id: provider.id),
-                  let agentId = provider.remoteAgentId,
-                  let relayAddress = provider.remoteAgentAddress,
-                  !discoveredIds.contains(agentId)
+                !manager.isEphemeral(id: provider.id),
+                let agentId = provider.remoteAgentId,
+                let relayAddress = provider.remoteAgentAddress,
+                !discoveredIds.contains(agentId)
             else { return nil }
             return PairedRelayAgent(
                 id: agentId,
@@ -419,7 +419,7 @@ final class ChatWindowState: ObservableObject {
             ) { [weak self] _ in
                 Task { @MainActor in
                     guard let self,
-                          let providerId = self.selectedDiscoveredAgentProviderId
+                        let providerId = self.selectedDiscoveredAgentProviderId
                     else { return }
                     let providerExists = RemoteProviderManager.shared.configuration.providers
                         .contains(where: { $0.id == providerId })

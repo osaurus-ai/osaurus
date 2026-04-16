@@ -89,7 +89,9 @@ private extension osaurusApp {
 
     var settingsCommand: some Commands {
         CommandGroup(replacing: .appSettings) {
-            Button { openManagementTab(nil) } label: {
+            Button {
+                openManagementTab(nil)
+            } label: {
                 Text(verbatim: L("Settings…"))
             }
             .keyboardShortcut(",", modifiers: .command)
@@ -136,7 +138,9 @@ private extension osaurusApp {
 
                 Divider()
 
-                Button { openManagementTab(.themes) } label: {
+                Button {
+                    openManagementTab(.themes)
+                } label: {
                     Text(verbatim: L("Manage Themes…"))
                 }
             } label: {
@@ -150,9 +154,21 @@ private extension osaurusApp {
     var windowMenuCommands: some Commands {
         CommandGroup(after: .windowList) {
             Divider()
-            Button { openManagementTab(.models) } label: { Text(verbatim: L("Models")) }
-            Button { openManagementTab(.plugins) } label: { Text(verbatim: L("Plugins")) }
-            Button { openManagementTab(.server) } label: { Text(verbatim: L("Server")) }
+            Button {
+                openManagementTab(.models)
+            } label: {
+                Text(verbatim: L("Models"))
+            }
+            Button {
+                openManagementTab(.plugins)
+            } label: {
+                Text(verbatim: L("Plugins"))
+            }
+            Button {
+                openManagementTab(.server)
+            } label: {
+                Text(verbatim: L("Server"))
+            }
         }
     }
 
@@ -215,7 +231,9 @@ private extension osaurusApp {
     var schedulesMenu: some View {
         Menu {
             ForEach(scheduleManager.schedules) { schedule in
-                Button { openManagementTab(.schedules) } label: {
+                Button {
+                    openManagementTab(.schedules)
+                } label: {
                     Text(verbatim: schedule.name)
                 }
             }
@@ -224,11 +242,15 @@ private extension osaurusApp {
                 Divider()
             }
 
-            Button { openManagementTab(.schedules) } label: {
+            Button {
+                openManagementTab(.schedules)
+            } label: {
                 Text(verbatim: L("New Schedule…"))
             }
 
-            Button { openManagementTab(.schedules) } label: {
+            Button {
+                openManagementTab(.schedules)
+            } label: {
                 Text(verbatim: L("Manage Schedules…"))
             }
         } label: {
@@ -239,7 +261,9 @@ private extension osaurusApp {
     var watchersMenu: some View {
         Menu {
             ForEach(watcherManager.watchers) { watcher in
-                Button { openManagementTab(.watchers) } label: {
+                Button {
+                    openManagementTab(.watchers)
+                } label: {
                     Text(verbatim: watcher.name)
                 }
             }
@@ -248,11 +272,15 @@ private extension osaurusApp {
                 Divider()
             }
 
-            Button { openManagementTab(.watchers) } label: {
+            Button {
+                openManagementTab(.watchers)
+            } label: {
                 Text(verbatim: L("New Watcher…"))
             }
 
-            Button { openManagementTab(.watchers) } label: {
+            Button {
+                openManagementTab(.watchers)
+            } label: {
                 Text(verbatim: L("Manage Watchers…"))
             }
         } label: {
@@ -274,7 +302,9 @@ private extension osaurusApp {
 
             Divider()
 
-            Button { openManagementTab(.agents) } label: {
+            Button {
+                openManagementTab(.agents)
+            } label: {
                 Text(verbatim: L("Manage Agents…"))
             }
         } label: {
@@ -294,7 +324,8 @@ private extension osaurusApp {
     var vadToggleLabel: String {
         let config = VADConfigurationStore.load()
         guard canToggleVAD else { return String(localized: "Toggle Voice Detection") }
-        return config.vadModeEnabled ? String(localized: "Disable Voice Detection") : String(localized: "Enable Voice Detection")
+        return config.vadModeEnabled
+            ? String(localized: "Disable Voice Detection") : String(localized: "Enable Voice Detection")
     }
 
     func toggleVAD() {
