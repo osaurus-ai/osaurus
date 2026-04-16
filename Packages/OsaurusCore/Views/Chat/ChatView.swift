@@ -347,6 +347,94 @@ final class ChatSession: ObservableObject {
         return parts.joined(separator: "\n\n")
     }
 
+    static func isLikelyCorruptedAssistantOutput(_ content: String) -> Bool {
+        let normalized = content.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard normalized.count >= 256 else { return false }
+
+        // Corruption appears as repeated trailing loops during streaming, so we only inspect a
+        // bounded suffix instead of rescanning the entire accumulated output every few deltas.
+        let scanWindow = String(normalized.suffix(512))
+        let characters = Array(scanWindow)
+        for gramLength in 1 ... 8 {
+            let requiredRepeats = gramLength == 1 ? 32 : 16
+            let minimumSpan = gramLength * requiredRepeats
+            guard characters.count >= minimumSpan else { continue }
+
+            let loopStart = characters.count - minimumSpan
+            let pattern = Array(characters[loopStart ..< (loopStart + gramLength)])
+            var cursor = loopStart + gramLength
+            var repeats = 1
+
+            while cursor + gramLength <= characters.count,
+                Array(characters[cursor ..< (cursor + gramLength)]) == pattern
+            {
+                repeats += 1
+                if repeats >= requiredRepeats {
+                    return true
+                }
+                cursor += gramLength
+            }
+        }
+
+        return false
+    }
+
+    static func containsLeakedChannelThoughtMarkers(_ content: String) -> Bool {
+        let normalized = content.lowercased()
+        return normalized.contains("<channel>|<channel>thought")
+            || normalized.contains("<channel><|channel|>thought")
+            || normalized.contains("<channel><channel>thought")
+    }
+
+    static func sanitizedCorruptedAssistantOutput(_ content: String) -> String {
+        var sanitized = content
+
+        let markerCandidates = [
+            "<channel>|<channel>thought",
+            "<channel><|channel|>thought",
+            "<channel><channel>thought",
+        ]
+
+        for marker in markerCandidates {
+            if let range = sanitized.range(of: marker, options: [.caseInsensitive]) {
+                sanitized = String(sanitized[..<range.lowerBound])
+                break
+            }
+        }
+
+        let words = sanitized.split(whereSeparator: \.isWhitespace)
+        if let lastWordRaw = words.last {
+            let lastWord = lastWordRaw.trimmingCharacters(in: CharacterSet.alphanumerics.inverted).lowercased()
+            if !lastWord.isEmpty {
+                var repeatedTailCount = 0
+                for word in words.reversed() {
+                    let normalizedWord = word.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
+                        .lowercased()
+                    if normalizedWord == lastWord {
+                        repeatedTailCount += 1
+                    } else {
+                        break
+                    }
+                }
+
+                let minimumRepeatedTailCount = 16
+                if repeatedTailCount >= minimumRepeatedTailCount {
+                    let escapedWord = NSRegularExpression.escapedPattern(for: lastWord)
+                    let repeatedWordSuffix = minimumRepeatedTailCount - 1
+                    let pattern =
+                        "(?i)(?:\\b\(escapedWord)\\b(?:\\s+\\b\(escapedWord)\\b){\(repeatedWordSuffix),})\\s*$"
+                    sanitized = sanitized.replacingOccurrences(
+                        of: pattern,
+                        with: "",
+                        options: .regularExpression
+                    )
+                }
+            }
+        }
+
+        return sanitized.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     /// Format token count for display (e.g., "1.2K", "15K")
     static func formatTokenCount(_ tokens: Int) -> String {
         if tokens < 1000 {
@@ -886,7 +974,23 @@ final class ChatSession: ObservableObject {
                             return nil
                         }
 
-                        let content: String? = t.contentIsEmpty ? nil : t.content
+                        let assistantContent = t.content
+                        if Self.isLikelyCorruptedAssistantOutput(assistantContent) {
+                            debugLog(
+                                "[ChatSession] skipping corrupted assistant turn id=\(t.id.uuidString) len=\(assistantContent.count)"
+                            )
+                            if t.toolCalls == nil || t.toolCalls!.isEmpty {
+                                return nil
+                            }
+                            return ChatMessage(
+                                role: "assistant",
+                                content: nil,
+                                tool_calls: t.toolCalls,
+                                tool_call_id: nil
+                            )
+                        }
+
+                        let content: String? = t.contentIsEmpty ? nil : assistantContent
 
                         return ChatMessage(
                             role: "assistant",
@@ -998,6 +1102,7 @@ final class ChatSession: ObservableObject {
                     do {
                         var uiDeltaCount = 0
                         var firstDeltaTime: Date?
+                        var abortedForCorruption = false
 
                         var processor = StreamingDeltaProcessor(
                             turn: assistantTurn,
@@ -1075,11 +1180,31 @@ final class ChatSession: ObservableObject {
                                 }
                                 uiDeltaCount += 1
                                 processor.receiveDelta(delta)
+                                if assistantTurn.contentLength >= 256, uiDeltaCount % 8 == 0 {
+                                    let currentContent = assistantTurn.content
+                                    if Self.containsLeakedChannelThoughtMarkers(currentContent)
+                                        || Self.isLikelyCorruptedAssistantOutput(currentContent)
+                                    {
+                                        abortedForCorruption = true
+                                        debugLog(
+                                            "[ChatSession] aborting stream due to detected corrupted output id=\(assistantTurn.id.uuidString) len=\(currentContent.count)"
+                                        )
+                                        break
+                                    }
+                                }
                             }
                         }
 
                         // Flush any remaining buffered content (including partial tags)
                         processor.finalize()
+                        if abortedForCorruption {
+                            assistantTurn.content = ""
+                        } else {
+                            let sanitizedContent = Self.sanitizedCorruptedAssistantOutput(assistantTurn.content)
+                            if sanitizedContent != assistantTurn.content {
+                                assistantTurn.content = sanitizedContent
+                            }
+                        }
 
                         if let first = firstDeltaTime {
                             assistantTurn.timeToFirstToken = first.timeIntervalSince(streamStartTime)
@@ -1100,6 +1225,10 @@ final class ChatSession: ObservableObject {
                         print(
                             "[Osaurus][UI] Stream consumption completed: \(uiDeltaCount) deltas in \(String(format: "%.2f", totalTime))s, final contentLen=\(assistantTurn.contentLength)"
                         )
+
+                        if abortedForCorruption {
+                            break
+                        }
 
                         break  // finished normally
                     } catch let inv as ServiceToolInvocation {

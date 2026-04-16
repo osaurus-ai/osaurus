@@ -390,9 +390,26 @@ public enum SystemPromptTemplates {
         if trimmed.isEmpty || trimmed == "default" || trimmed == "foundation" {
             return true
         }
-        if trimmed.contains("/") {
-            return false
+        if ModelInfo.load(modelId: modelId ?? "") != nil {
+            return true
         }
-        return ModelManager.findInstalledModel(named: trimmed) != nil
+        if ModelManager.findInstalledModel(named: trimmed) != nil {
+            return true
+        }
+        if let repoComponent = trimmed.split(separator: "/").last.map(String.init),
+            repoComponent != trimmed,
+            ModelManager.findInstalledModel(named: repoComponent) != nil
+        {
+            return true
+        }
+
+        // Local MLX picker items keep full org/repo ids, but remote providers also use
+        // slash-style prefixes. Only fall back to "local" when the repo id still looks
+        // like an MLX/local model identifier.
+        guard trimmed.contains("/") else { return false }
+        return trimmed.contains("mlx")
+            || ModelMetadataParser.parameterCount(from: trimmed) != nil
+            || ModelMetadataParser.quantization(from: trimmed) != nil
+            || ModelMetadataParser.quantizationOllama(from: trimmed) != nil
     }
 }

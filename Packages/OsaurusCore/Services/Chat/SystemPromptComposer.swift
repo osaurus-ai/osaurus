@@ -83,6 +83,7 @@ public struct SystemPromptComposer: Sendable {
             composer: composer,
             agentId: agentId,
             executionMode: executionMode,
+            preferOnDemandTools: model.map(SystemPromptTemplates.isLocalModel) ?? false,
             query: query,
             toolsDisabled: toolsDisabled,
             model: model,
@@ -98,6 +99,7 @@ public struct SystemPromptComposer: Sendable {
         composer: SystemPromptComposer,
         agentId: UUID,
         executionMode: WorkExecutionMode,
+        preferOnDemandTools: Bool = false,
         query: String,
         toolsDisabled: Bool,
         model: String? = nil,
@@ -137,13 +139,18 @@ public struct SystemPromptComposer: Sendable {
             agentId: agentId,
             executionMode: executionMode,
             toolsDisabled: effectiveToolsOff,
-            preflight: preflight
+            preflight: preflight,
+            query: query,
+            preferOnDemandTools: preferOnDemandTools
         )
         trace?.mark("resolve_tools_done")
 
         let manifest = comp.manifest()
         let toolNames = tools.map { $0.function.name }
         debugLog("[Context] \(manifest.debugDescription)")
+        debugLog(
+            "[Context] resolvedTools count=\(toolNames.count) preferOnDemand=\(preferOnDemandTools) names=\(toolNames)"
+        )
 
         let rendered = comp.render()
         trace?.set("systemPromptChars", rendered.count)
@@ -167,12 +174,20 @@ public struct SystemPromptComposer: Sendable {
         agentId: UUID,
         executionMode: WorkExecutionMode,
         toolsDisabled: Bool = false,
-        preflight: PreflightResult = .empty
+        preflight: PreflightResult = .empty,
+        query: String = "",
+        preferOnDemandTools: Bool = false
     ) -> [Tool] {
         guard !toolsDisabled else { return [] }
 
         let toolMode = AgentManager.shared.effectiveToolSelectionMode(for: agentId)
         let isManual = toolMode == .manual
+
+        // Work mode keeps the full tool set available. On-demand narrowing is chat-only so
+        // autonomous task execution never silently loses a required tool.
+        if preferOnDemandTools && !isManual, case .none = executionMode {
+            return resolveOnDemandLocalChatTools(query: query, preflight: preflight)
+        }
 
         var tools = ToolRegistry.shared.alwaysLoadedSpecs(
             mode: executionMode,
@@ -195,6 +210,61 @@ public struct SystemPromptComposer: Sendable {
         }
 
         return tools
+    }
+
+    @MainActor
+    private static func resolveOnDemandLocalChatTools(
+        query: String,
+        preflight: PreflightResult
+    ) -> [Tool] {
+        var tools: [Tool] = []
+        var seen: Set<String> = []
+
+        let needsCapabilityTools =
+            queryLikelyNeedsCapabilityDiscovery(query)
+            || preflight.items.contains(where: { $0.type == .skill })
+
+        if needsCapabilityTools {
+            for spec in ToolRegistry.shared.specs(forTools: ["capabilities_search", "capabilities_load"])
+            where seen.insert(spec.function.name).inserted {
+                tools.append(spec)
+            }
+        }
+
+        for spec in preflight.toolSpecs
+        where seen.insert(spec.function.name).inserted {
+            tools.append(spec)
+        }
+
+        return tools
+    }
+
+    private static func queryLikelyNeedsCapabilityDiscovery(_ query: String) -> Bool {
+        let normalized = query.lowercased()
+        // Keep this heuristic intentionally lightweight, but prefer word-boundary matches plus a
+        // handful of explicit "what can you do" phrasings so benign queries like "best method
+        // for making pasta" stay out of the capability path.
+        let tokens = Set(
+            normalized.split { !$0.isLetter && !$0.isNumber }
+                .map(String.init)
+        )
+        let keywords = [
+            "tool", "tools", "skill", "skills", "plugin", "plugins", "capability",
+            "capabilities", "workflow", "workflows",
+        ]
+        if keywords.contains(where: tokens.contains) {
+            return true
+        }
+
+        let capabilityPhrases = [
+            "what can you do",
+            "what can you help me with",
+            "what are you able to do",
+            "what are your capabilities",
+            "which tools do you have",
+            "which skills do you have",
+        ]
+        return capabilityPhrases.contains(where: normalized.contains)
     }
 
     /// Compose the full work system prompt: base + workMode + sandbox.
@@ -249,6 +319,7 @@ public struct SystemPromptComposer: Sendable {
             composer: composer,
             agentId: agentId,
             executionMode: executionMode,
+            preferOnDemandTools: false,
             query: query,
             toolsDisabled: toolsDisabled
         )
