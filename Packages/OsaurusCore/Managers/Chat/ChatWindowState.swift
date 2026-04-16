@@ -410,5 +410,26 @@ final class ChatWindowState: ObservableObject {
                 }
             }
         )
+        // Clear selected paired/relay agent pill when its provider is removed from settings
+        notificationObservers.append(
+            NotificationCenter.default.addObserver(
+                forName: .remoteProviderStatusChanged,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor in
+                    guard let self,
+                          let providerId = self.selectedDiscoveredAgentProviderId
+                    else { return }
+                    let providerExists = RemoteProviderManager.shared.configuration.providers
+                        .contains(where: { $0.id == providerId })
+                    guard !providerExists else { return }
+                    self.selectedDiscoveredAgent = nil
+                    self.selectedRelayAgent = nil
+                    self.selectedDiscoveredAgentProviderId = nil
+                    self.refreshPairedRelayAgents()
+                }
+            }
+        )
     }
 }
