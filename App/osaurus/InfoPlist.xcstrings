@@ -218,8 +218,15 @@
       }
     },
     "NSScreenCaptureUsageDescription": {
-      "extractionState": "stale",
+      "comment": "Privacy - Screen Capture Usage Description",
+      "extractionState": "extracted_with_value",
       "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "new",
+            "value": "Osaurus can capture system audio for transcription. Screen content is not recorded."
+          }
+        },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
