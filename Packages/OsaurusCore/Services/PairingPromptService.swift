@@ -11,6 +11,12 @@ import SwiftUI
 
 @MainActor
 enum PairingPromptService {
+    enum ShortcutAction: Equatable {
+        case allow(isPermanent: Bool)
+        case deny
+        case none
+    }
+
     private static var pairingWindow: NSPanel?
     private static var localKeyMonitor: Any?
     private static var globalKeyMonitor: Any?
@@ -37,10 +43,12 @@ enum PairingPromptService {
                 continuation.resume(returning: (approved: false, isPermanent: false))
             }
 
+            let approvalState = PairingApprovalState()
             let themeManager = ThemeManager.shared
             let approvalView = PairingApprovalView(
                 agentName: agentName,
                 connectorAddress: connectorAddress,
+                state: approvalState,
                 onAllow: onAllow,
                 onDeny: onDeny
             )
@@ -97,14 +105,16 @@ enum PairingPromptService {
             }
 
             let handleKeyEvent: (NSEvent) -> Bool = { event in
-                if event.keyCode == 36 {  // Enter — approve as temporary (checkbox state drives permanent)
-                    onAllow(false)
+                switch shortcutAction(for: event.keyCode, isPermanent: approvalState.isPermanent) {
+                case .allow(let isPermanent):
+                    onAllow(isPermanent)
                     return true
-                } else if event.keyCode == 53 {  // Escape
+                case .deny:
                     onDeny()
                     return true
+                case .none:
+                    return false
                 }
-                return false
             }
 
             localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
@@ -144,5 +154,13 @@ enum PairingPromptService {
         }
         pairingWindow?.orderOut(nil)
         pairingWindow = nil
+    }
+
+    nonisolated static func shortcutAction(for keyCode: UInt16, isPermanent: Bool) -> ShortcutAction {
+        switch keyCode {
+        case 36: return .allow(isPermanent: isPermanent)
+        case 53: return .deny
+        default: return .none
+        }
     }
 }
