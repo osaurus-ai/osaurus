@@ -86,6 +86,25 @@ require_command() {
   fi
 }
 
+require_swift_format() {
+  if command -v swift-format >/dev/null 2>&1; then
+    return 0
+  fi
+  if xcrun --find swift-format >/dev/null 2>&1; then
+    return 0
+  fi
+  echo "Missing required command: swift-format" >&2
+  exit 1
+}
+
+run_swift_format() {
+  if command -v swift-format >/dev/null 2>&1; then
+    swift-format "$@"
+    return
+  fi
+  xcrun swift-format "$@"
+}
+
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 scheme="osaurus"
 scratch_path=""
@@ -169,7 +188,7 @@ require_command swift
 require_command xcodebuild
 
 if (( skip_lint == 0 )); then
-  require_command swift-format
+  require_swift_format
 fi
 
 if (( launch_check == 1 )); then
@@ -209,13 +228,13 @@ if (( skip_lint == 0 )); then
   done < <(collect_swift_lint_targets || true)
 
   if ((${#lint_targets[@]} > 0)); then
-    swift-format lint --strict "${lint_targets[@]}"
+    run_swift_format lint --strict "${lint_targets[@]}"
   else
     if resolve_base_ref >/dev/null 2>&1; then
       echo "No PR-local Swift files changed; skipping swift-format lint."
     else
       echo "Could not resolve a base ref for diff-aware linting; falling back to full tree."
-      swift-format lint --strict --recursive Packages App
+      run_swift_format lint --strict --recursive Packages App
     fi
   fi
 fi
