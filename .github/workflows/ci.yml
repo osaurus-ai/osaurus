@@ -54,6 +54,50 @@ jobs:
           -skip-testing OsaurusCoreTests/KVCacheStoreTests
           -skip-testing OsaurusCoreTests/MLXGenerationEngineTests
 
+  build-app:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    env:
+      WORKSPACE: osaurus.xcworkspace
+      SPM_CACHE: .spm-cache
+      DERIVED_DATA: build/DerivedData-ci
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Install Metal Toolchain
+        run: xcodebuild -downloadComponent MetalToolchain
+
+      - name: Cache SPM packages
+        uses: actions/cache@v4
+        with:
+          path: .spm-cache
+          key: spm-${{ runner.os }}-${{ hashFiles('osaurus.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+
+      - name: Resolve dependencies
+        run: >-
+          xcodebuild -resolvePackageDependencies
+          -workspace $WORKSPACE
+          -scheme osaurus
+          -clonedSourcePackagesDirPath $SPM_CACHE
+
+      - name: Build osaurus app
+        run: >-
+          xcodebuild build
+          -workspace $WORKSPACE
+          -scheme osaurus
+          -configuration Debug
+          -disableAutomaticPackageResolution
+          -clonedSourcePackagesDirPath $SPM_CACHE
+          -derivedDataPath $DERIVED_DATA
+          CODE_SIGNING_ALLOWED=NO
+          CODE_SIGNING_REQUIRED=NO
+
   test-cli:
     runs-on: macos-latest
     timeout-minutes: 45
