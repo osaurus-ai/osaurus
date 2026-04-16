@@ -1253,7 +1253,13 @@ private struct SandboxAgentsView: View {
 
                     HStack(spacing: 8) {
                         pill(execEnabled ? "Autonomous" : "Manual", color: execEnabled ? .green : theme.tertiaryText)
-                        if secretCount > 0 { pill(String(format: L("%lld secrets"), Int64(secretCount))) }
+                        if secretCount > 0 {
+                            if secretCount == 1 {
+                                pill(L("1 secret"))
+                            } else {
+                                pill(String(format: L("%lld secrets"), Int64(secretCount)))
+                            }
+                        }
                     }
                 }
 
