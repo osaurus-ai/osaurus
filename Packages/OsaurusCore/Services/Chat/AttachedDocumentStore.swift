@@ -503,7 +503,8 @@ actor AttachedDocumentStore {
             let excerptEnd = squashed.index(squashed.startIndex, offsetBy: end)
             let prefix = start > 0 ? "..." : ""
             let suffix = end < squashed.count ? "..." : ""
-            return prefix + squashed[excerptStart ..< excerptEnd] + suffix
+            let excerpt = String(squashed[excerptStart ..< excerptEnd])
+            return prefix + excerpt + suffix
         }
 
         return preview(for: squashed, maxCharacters: maxCharacters)
