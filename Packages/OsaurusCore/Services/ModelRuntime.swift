@@ -720,17 +720,35 @@ actor ModelRuntime {
     }
 
     private static func findLocalDirectory(forModelId id: String) -> URL? {
+        return resolveLocalModelDirectory(forModelId: id, in: DirectoryPickerService.effectiveModelsDirectory())
+    }
+
+    /// Pure, testable sibling of `findLocalDirectory` that takes the root
+    /// explicitly. Exposed at module scope so the symlink-resolution
+    /// behavior (the reason `findLocalDirectory` doesn't silently disagree
+    /// with `ModelManager.scanLocalModels` anymore) can be covered by a
+    /// unit test without standing up an `actor` or a bookmarked picker dir.
+    static func resolveLocalModelDirectory(forModelId id: String, in base: URL) -> URL? {
         let parts = id.split(separator: "/").map(String.init)
-        let base = DirectoryPickerService.effectiveModelsDirectory()
         let url = parts.reduce(base) { partial, component in
             partial.appendingPathComponent(component, isDirectory: true)
         }
         let fm = FileManager.default
-        let hasConfig = fm.fileExists(atPath: url.appendingPathComponent("config.json").path)
-        if let items = try? fm.contentsOfDirectory(at: url, includingPropertiesForKeys: nil),
+        // Resolve symlinks before `contentsOfDirectory`: on macOS
+        // `contentsOfDirectory(at:)` returns POSIX ENOTDIR when the URL points
+        // at a symbolic link to a directory (even though the target itself is
+        // a directory and `fileExists` happily follows the link). Users who
+        // keep models outside the default root and symlink them into the
+        // picker directory would otherwise hit "Model not downloaded" on
+        // every load despite `scanLocalModels` discovering the same repo —
+        // that discovery path already resolves symlinks per-level, so keeping
+        // the two symmetric here closes the asymmetry.
+        let resolved = url.resolvingSymlinksInPath()
+        let hasConfig = fm.fileExists(atPath: resolved.appendingPathComponent("config.json").path)
+        if let items = try? fm.contentsOfDirectory(at: resolved, includingPropertiesForKeys: nil),
             hasConfig && items.contains(where: { $0.pathExtension == "safetensors" })
         {
-            return url
+            return resolved
         }
         return nil
     }

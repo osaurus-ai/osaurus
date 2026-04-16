@@ -609,6 +609,32 @@ extension ModelManager {
             modelType: "qwen3_5_moe"
         ),
 
+        // MARK: Qwen 3.6
+        //
+        // Qwen 3.6 keeps the `qwen3_5_moe` / `qwen3_5` model_type identifier,
+        // so vmlx-swift-lm's existing Qwen35Model / Qwen35MoEModel classes
+        // handle it. JANGTQ variants use the same model_type but are routed
+        // to Qwen35JANGTQModel at load time based on jang_config.weight_format
+        // (`"mxtq"`) — no osaurus-side branching required.
+
+        MLXModel(
+            id: "OsaurusAI/Qwen3.6-35B-A3B-mxfp4",
+            name: ModelMetadataParser.friendlyName(from: "OsaurusAI/Qwen3.6-35B-A3B-mxfp4"),
+            description: "Qwen 3.6 35B MoE vision model. MXFP4 quantization — best quality per byte.",
+            downloadURL: "https://huggingface.co/OsaurusAI/Qwen3.6-35B-A3B-mxfp4",
+            downloadSizeBytes: 19_350_002_112,
+            modelType: "qwen3_5_moe"
+        ),
+
+        MLXModel(
+            id: "Qwen/Qwen3.6-35B-A3B",
+            name: ModelMetadataParser.friendlyName(from: "Qwen/Qwen3.6-35B-A3B"),
+            description: "Qwen 3.6 35B MoE vision model, raw BF16 weights from Qwen. Large download; prefer the MXFP4 variant.",
+            downloadURL: "https://huggingface.co/Qwen/Qwen3.6-35B-A3B",
+            downloadSizeBytes: 71_926_854_840,
+            modelType: "qwen3_5_moe"
+        ),
+
         // MARK: Compact Models
 
         MLXModel(
