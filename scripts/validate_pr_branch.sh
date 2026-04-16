@@ -62,7 +62,7 @@ collect_swift_lint_targets() {
   git diff --name-only --diff-filter=ACMR "$merge_base"...HEAD -- . \
     | while IFS= read -r path; do
       case "$path" in
-        *.swift|Package.swift)
+        *.swift)
           printf '%s\n' "$path"
           ;;
       esac
