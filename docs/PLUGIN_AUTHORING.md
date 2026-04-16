@@ -2,6 +2,12 @@
 
 This document describes how to build external plugins for Osaurus using the Generic C ABI. Plugins are `.dylib` shared libraries distributed in a zip file. They can expose tools to the AI, register HTTP routes, ship web frontends, and call back into the host for storage, inference, and agent dispatch.
 
+For file import and export plugins, also read:
+
+- [development/file-import-plugin-contract.md](./development/file-import-plugin-contract.md)
+- [development/file-generator-export-contract.md](./development/file-generator-export-contract.md)
+- [development/file-management-dependency-review-template.md](./development/file-management-dependency-review-template.md)
+
 ## Table of Contents
 
 - [Quick Start](#quick-start)
