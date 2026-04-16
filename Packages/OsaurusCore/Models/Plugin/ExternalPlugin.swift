@@ -179,6 +179,23 @@ public struct PluginManifest: Decodable, Sendable {
         public let config: ConfigSpec?
         public let web: WebSpec?
         public let artifact_handler: Bool?
+        public let file_importers: [FileImporterSpec]?
+
+        public init(
+            tools: [ToolSpec]? = nil,
+            routes: [RouteSpec]? = nil,
+            config: ConfigSpec? = nil,
+            web: WebSpec? = nil,
+            artifact_handler: Bool? = nil,
+            file_importers: [FileImporterSpec]? = nil
+        ) {
+            self.tools = tools
+            self.routes = routes
+            self.config = config
+            self.web = web
+            self.artifact_handler = artifact_handler
+            self.file_importers = file_importers
+        }
     }
 
     public struct ToolSpec: Decodable, Sendable {
@@ -187,6 +204,37 @@ public struct PluginManifest: Decodable, Sendable {
         public let parameters: JSONValue?
         public let requirements: [String]?
         public let permission_policy: String?
+    }
+
+    public struct FileImporterSpec: Decodable, Sendable {
+        public let id: String
+        public let tool_id: String
+        public let extensions: [String]
+        public let ut_types: [String]
+        public let mime_types: [String]
+        public let max_bytes: Int
+        public let output_mode: FileImportOutputMode
+        public let output_schema_version: Int
+
+        public init(
+            id: String,
+            tool_id: String,
+            extensions: [String],
+            ut_types: [String] = [],
+            mime_types: [String] = [],
+            max_bytes: Int,
+            output_mode: FileImportOutputMode = .normalizedText,
+            output_schema_version: Int = 1
+        ) {
+            self.id = id
+            self.tool_id = tool_id
+            self.extensions = extensions
+            self.ut_types = ut_types
+            self.mime_types = mime_types
+            self.max_bytes = max_bytes
+            self.output_mode = output_mode
+            self.output_schema_version = output_schema_version
+        }
     }
 
     /// Specification for a secret that a plugin requires (e.g., API key)
