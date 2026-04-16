@@ -8,10 +8,25 @@
 
 import Foundation
 
+// MARK: - PairedRelayAgent
+
+/// A remote Osaurus agent that is persistently paired and reachable via the relay tunnel,
+/// but is not currently discoverable on the local network via Bonjour.
+public struct PairedRelayAgent: Identifiable, Equatable, Sendable {
+    /// The UUID of the agent on the remote Osaurus server.
+    public let id: UUID
+    /// Display name of the remote agent.
+    public let name: String
+    /// The crypto address (e.g. "0x...") used to construct the relay tunnel URL.
+    public let remoteAgentAddress: String
+    /// The local provider ID used to connect to this agent.
+    public let providerId: UUID
+}
+
 // MARK: - DiscoveredAgent
 
 /// A remote Osaurus agent discovered via Bonjour on the local network.
-public struct DiscoveredAgent: Identifiable, Equatable {
+public struct DiscoveredAgent: Identifiable, Equatable, Sendable {
     public let id: UUID
     public let name: String
     public let agentDescription: String

@@ -96,9 +96,16 @@ struct MLXGenerationEngine {
                 repetitionPenalty: generation.repetitionPenalty,
                 maxKV: runtime.maxKV
             )
-            let additionalContext: [String: any Sendable]? =
-                generation.modelOptions["disableThinking"]?.boolValue == true
-                ? ["enable_thinking": false] : nil
+            // When the caller has an opinion on thinking (toggle is present), forward
+            // it explicitly as `enable_thinking: true/false` — models whose templates
+            // default the kwarg OFF when it's absent would otherwise silently stay
+            // off even with the UI toggle enabled.
+            let additionalContext: [String: any Sendable]?
+            if let disableThinking = generation.modelOptions["disableThinking"]?.boolValue {
+                additionalContext = ["enable_thinking": !disableThinking]
+            } else {
+                additionalContext = nil
+            }
             let fullInput = MLXLMCommon.UserInput(
                 chat: chat,
                 processing: .init(),

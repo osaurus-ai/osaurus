@@ -40,9 +40,11 @@ enum StreamingMiddlewareResolver {
         let thinkingDisabled = modelOptions["disableThinking"]?.boolValue == true
         let id = modelId.lowercased()
 
+        let autoInjects = LocalReasoningCapability.capability(forModelId: modelId).templateInjectsThinkTag
         let needsPrependThink =
             !thinkingDisabled
-            && ((id.contains("glm") && id.contains("flash"))
+            && (autoInjects
+                || (id.contains("glm") && id.contains("flash"))
                 || (id.contains("qwen") && id.contains("3.5") && hasParamSize(id, anyOf: "4b", "9b", "27b")))
 
         return needsPrependThink ? PrependThinkTagMiddleware() : nil

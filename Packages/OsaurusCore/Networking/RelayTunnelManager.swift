@@ -452,30 +452,23 @@ public final class RelayTunnelManager: ObservableObject {
         sendFrame(RelayStreamStartFrame(id: id, status: status, headers: headers), via: webSocket)
 
         let isSSE = contentType.contains("text/event-stream")
-        var eventBuffer = ""
 
         do {
             for try await line in bytes.lines {
+                guard !line.isEmpty else { continue }
                 if isSSE {
-                    if line.isEmpty && !eventBuffer.isEmpty {
-                        sendFrame(
-                            RelayStreamChunkFrame(id: id, data: eventBuffer + "\n"),
-                            via: webSocket
-                        )
-                        eventBuffer = ""
-                    } else if !line.isEmpty {
-                        eventBuffer += line + "\n"
-                    }
-                } else if !line.isEmpty {
+                    // URLSession.AsyncBytes.lines does not yield empty strings for consecutive
+                    // newlines, so blank-line SSE event boundaries are never observed here.
+                    // Each non-empty line from the NIO server is one complete SSE event
+                    // (e.g. "data: {...}"), so forward it immediately with the required \n\n
+                    // terminator so Machine A's SSE parser sees proper event boundaries.
+                    sendFrame(RelayStreamChunkFrame(id: id, data: line + "\n\n"), via: webSocket)
+                } else {
                     sendFrame(RelayStreamChunkFrame(id: id, data: line + "\n"), via: webSocket)
                 }
             }
         } catch {
-            // Stream interrupted — flush what we have and close cleanly
-        }
-
-        if !eventBuffer.isEmpty {
-            sendFrame(RelayStreamChunkFrame(id: id, data: eventBuffer), via: webSocket)
+            // Stream interrupted — close cleanly
         }
 
         sendFrame(RelayStreamEndFrame(id: id), via: webSocket)

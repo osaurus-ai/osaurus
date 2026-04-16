@@ -47,6 +47,8 @@ final class ChatWindowState: ObservableObject {
     @Published private(set) var discoveredAgents: [DiscoveredAgent] = []
     @Published var selectedDiscoveredAgent: DiscoveredAgent?
     @Published var selectedDiscoveredAgentProviderId: UUID?
+    @Published private(set) var pairedRelayAgents: [PairedRelayAgent] = []
+    @Published var selectedRelayAgent: PairedRelayAgent?
 
     // MARK: - Theme State
 
@@ -98,6 +100,7 @@ final class ChatWindowState: ObservableObject {
 
         setupNotificationObservers()
         observeBonjourBrowser()
+        refreshPairedRelayAgents()
     }
 
     /// Wrap an existing `ExecutionContext`, reusing its sessions without duplication.
@@ -129,6 +132,7 @@ final class ChatWindowState: ObservableObject {
 
         setupNotificationObservers()
         observeBonjourBrowser()
+        refreshPairedRelayAgents()
     }
 
     deinit {
@@ -141,6 +145,7 @@ final class ChatWindowState: ObservableObject {
         removeEphemeralProviderIfNeeded()
         selectedDiscoveredAgent = nil
         selectedDiscoveredAgentProviderId = nil
+        selectedRelayAgent = nil
         workSession?.cancelExecution()
         session.stop()
         workSession = nil
@@ -161,6 +166,7 @@ final class ChatWindowState: ObservableObject {
         removeEphemeralProviderIfNeeded()
         selectedDiscoveredAgent = nil
         selectedDiscoveredAgentProviderId = nil
+        selectedRelayAgent = nil
         session.reset(for: newAgentId)
         refreshTheme()
         refreshSessions()
@@ -312,7 +318,28 @@ final class ChatWindowState: ObservableObject {
                     self?.selectedDiscoveredAgent = nil
                     self?.selectedDiscoveredAgentProviderId = nil
                 }
+                self?.refreshPairedRelayAgents(discoveredAgents: agents)
             }
+    }
+
+    func refreshPairedRelayAgents(discoveredAgents: [DiscoveredAgent]? = nil) {
+        let knownAgents = discoveredAgents ?? self.discoveredAgents
+        let discoveredIds = Set(knownAgents.map(\.id))
+        let manager = RemoteProviderManager.shared
+        pairedRelayAgents = manager.configuration.providers.compactMap { provider in
+            guard provider.providerType == .osaurus,
+                  !manager.isEphemeral(id: provider.id),
+                  let agentId = provider.remoteAgentId,
+                  let relayAddress = provider.remoteAgentAddress,
+                  !discoveredIds.contains(agentId)
+            else { return nil }
+            return PairedRelayAgent(
+                id: agentId,
+                name: provider.name,
+                remoteAgentAddress: relayAddress,
+                providerId: provider.id
+            )
+        }
     }
 
     private func removeEphemeralProviderIfNeeded() {
@@ -380,6 +407,27 @@ final class ChatWindowState: ObservableObject {
                         self.refreshTheme()
                         self.refreshAgentConfig()
                     }
+                }
+            }
+        )
+        // Clear selected paired/relay agent pill when its provider is removed from settings
+        notificationObservers.append(
+            NotificationCenter.default.addObserver(
+                forName: .remoteProviderStatusChanged,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor in
+                    guard let self,
+                          let providerId = self.selectedDiscoveredAgentProviderId
+                    else { return }
+                    let providerExists = RemoteProviderManager.shared.configuration.providers
+                        .contains(where: { $0.id == providerId })
+                    guard !providerExists else { return }
+                    self.selectedDiscoveredAgent = nil
+                    self.selectedRelayAgent = nil
+                    self.selectedDiscoveredAgentProviderId = nil
+                    self.refreshPairedRelayAgents()
                 }
             }
         )

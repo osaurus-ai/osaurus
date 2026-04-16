@@ -122,13 +122,27 @@ final class StreamingDeltaProcessor {
         invalidateTimer()
 
         if !deltaBuffer.isEmpty || !pendingTagBuffer.isEmpty {
-            let remaining = pendingTagBuffer + deltaBuffer
+            var remaining = pendingTagBuffer + deltaBuffer
             pendingTagBuffer = ""
             deltaBuffer = ""
-            if isInsideThinking {
-                appendThinking(remaining)
-            } else {
-                appendContent(remaining)
+
+            // If the stream ended on an unresolved partial `<think` or
+            // `</think` fragment, drop it rather than leaking literal tag
+            // characters into user-visible content — the completing byte
+            // never arrived.
+            let lowered = remaining.lowercased()
+            if let partial = Self.closePartials.first(where: { lowered.hasSuffix($0) })
+                ?? Self.openPartials.first(where: { lowered.hasSuffix($0) })
+            {
+                remaining = String(remaining.dropLast(partial.count))
+            }
+
+            if !remaining.isEmpty {
+                if isInsideThinking {
+                    appendThinking(remaining)
+                } else {
+                    appendContent(remaining)
+                }
             }
         }
 
@@ -243,11 +257,55 @@ final class StreamingDeltaProcessor {
                     text = ""
                 }
             } else {
-                if let openRange = text.range(of: "<think>", options: .caseInsensitive) {
+                // Look up both tags so we can choose the earliest one deterministically.
+                let openRange = text.range(of: "<think>", options: .caseInsensitive)
+                let closeRange = text.range(of: "</think>", options: .caseInsensitive)
+
+                // Prefer the normal open-tag path whenever `<think>` appears at or
+                // before the next `</think>` — otherwise a buffered opener tag
+                // would get vacuumed into the thinking channel as literal text
+                // by the retroactive branch.
+                let takeOpen: Bool = {
+                    switch (openRange, closeRange) {
+                    case (nil, _): return false
+                    case (_, nil): return true
+                    case (let o?, let c?): return o.lowerBound <= c.lowerBound
+                    }
+                }()
+
+                if takeOpen, let openRange {
                     appendContent(String(text[..<openRange.lowerBound]))
                     text = String(text[openRange.upperBound...])
                     isInsideThinking = true
-                } else if let partial = Self.openPartials.first(where: { text.lowercased().hasSuffix($0) }) {
+                    continue
+                }
+
+                // Retroactive thinking: model emitted `</think>` without opening
+                // a `<think>` block (either the template didn't inject it, or the
+                // user disabled reasoning but this model reasons anyway). Move
+                // everything we've accumulated — prior content on the turn plus
+                // the in-buffer text up to the close tag — into the thinking
+                // channel, then continue parsing remainder as normal content.
+                if let closeRange {
+                    let tailBeforeTag = String(text[..<closeRange.lowerBound])
+                    let movedCount = turn.moveContentToThinking(tail: tailBeforeTag)
+                    if movedCount > 0 {
+                        thinkingLength += movedCount
+                        contentLength = 0
+                        hasPendingContent = true
+                    }
+                    text = String(text[closeRange.upperBound...])
+                    continue
+                }
+
+                // No full tag in this chunk — check for partial tags at the tail
+                // so a split tag across delta boundaries doesn't leak bytes.
+                let lower = text.lowercased()
+                if let partialClose = Self.closePartials.first(where: { lower.hasSuffix($0) }) {
+                    appendContent(String(text.dropLast(partialClose.count)))
+                    pendingTagBuffer = String(text.suffix(partialClose.count))
+                    text = ""
+                } else if let partial = Self.openPartials.first(where: { lower.hasSuffix($0) }) {
                     appendContent(String(text.dropLast(partial.count)))
                     pendingTagBuffer = String(text.suffix(partial.count))
                     text = ""

@@ -412,6 +412,10 @@ private struct AccessKeysSection: View {
                         keyBadge("Active", color: theme.successColor)
                     }
 
+                    if TemporaryPairedKeyStore.shared.isTemporary(id: key.id) {
+                        keyBadge("Temporary", color: theme.warningColor)
+                    }
+
                     if key.aud == key.iss {
                         keyBadge("All Agents", color: theme.accentColor)
                     }

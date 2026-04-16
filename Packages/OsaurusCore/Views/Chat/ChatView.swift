@@ -7,6 +7,7 @@
 
 import AppKit
 import Combine
+import LocalAuthentication
 import SwiftUI
 
 @MainActor
@@ -998,6 +999,11 @@ final class ChatSession: ObservableObject {
                     do {
                         var uiDeltaCount = 0
                         var firstDeltaTime: Date?
+                        // Track the wall-clock time of the last non-empty delta so
+                        // the fallback tok/s calculation uses the actual last-token
+                        // moment as the denominator, not the stream's close time
+                        // (which is after cancellation / teardown).
+                        var lastDeltaTime: Date?
 
                         var processor = StreamingDeltaProcessor(
                             turn: assistantTurn,
@@ -1067,12 +1073,14 @@ final class ChatSession: ObservableObject {
                                 continue
                             }
                             if !delta.isEmpty {
+                                let now = Date()
                                 if firstDeltaTime == nil {
-                                    firstDeltaTime = Date()
+                                    firstDeltaTime = now
                                     ttftTrace?.mark("first_text_delta")
                                     ttftTrace?.set("model", selectedModel ?? "unknown")
                                     ttftTrace?.emit()
                                 }
+                                lastDeltaTime = now
                                 uiDeltaCount += 1
                                 processor.receiveDelta(delta)
                             }
@@ -1086,9 +1094,21 @@ final class ChatSession: ObservableObject {
                             // Fall back to estimated tok/s when MLX stats weren't propagated (remote APIs).
                             // Use the codebase's chars/4 heuristic to approximate tokens from generated text
                             // rather than raw delta count, which doesn't map 1:1 to tokens for most providers.
-                            if assistantTurn.generationTokensPerSecond == nil, !assistantTurn.contentIsEmpty {
-                                let genTime = Date().timeIntervalSince(first)
-                                let estimatedTokens = ContextBudgetManager.estimateTokens(for: assistantTurn.content)
+                            if assistantTurn.generationTokensPerSecond == nil,
+                                !assistantTurn.contentIsEmpty || !assistantTurn.thinkingIsEmpty
+                            {
+                                let endTime = lastDeltaTime ?? Date()
+                                let genTime = endTime.timeIntervalSince(first)
+                                // Reasoning tokens are generated on the same clock as the
+                                // answer; leaving them out of the numerator while keeping
+                                // them in the denominator under-reports throughput on
+                                // thinking models. Count both.
+                                let answerTokens = ContextBudgetManager.estimateTokens(for: assistantTurn.content)
+                                let reasoningTokens =
+                                    assistantTurn.thinkingIsEmpty
+                                    ? 0
+                                    : ContextBudgetManager.estimateTokens(for: assistantTurn.thinking)
+                                let estimatedTokens = answerTokens + reasoningTokens
                                 if genTime > 0 && estimatedTokens > 0 {
                                     assistantTurn.generationTokenCount = estimatedTokens
                                     assistantTurn.generationTokensPerSecond = Double(estimatedTokens) / genTime
@@ -1303,14 +1323,19 @@ struct ChatView: View {
     /// Convenience accessor for the window ID
     private var windowId: UUID { windowState.windowId }
 
-    /// Picker items filtered to the active Bonjour provider, or all items when no Bonjour agent is selected.
+    /// Picker items filtered to the active Bonjour provider's models when a remote agent is selected,
+    /// or local/foundation models only when no remote agent is active.
     private var filteredPickerItems: [ModelPickerItem] {
-        guard let providerId = windowState.selectedDiscoveredAgentProviderId else {
-            return session.pickerItems
+        if let providerId = windowState.selectedDiscoveredAgentProviderId {
+            return session.pickerItems.filter {
+                if case .remote(_, let id) = $0.source { return id == providerId }
+                return false
+            }
         }
+        // No remote agent selected: hide all remote models so the picker stays local.
         return session.pickerItems.filter {
-            if case .remote(_, let id) = $0.source { return id == providerId }
-            return false
+            if case .remote = $0.source { return false }
+            return true
         }
     }
 
@@ -1484,8 +1509,11 @@ struct ChatView: View {
                                     },
                                     onOpenOnboarding: nil,
                                     discoveredAgents: windowState.discoveredAgents,
-                                    onSelectDiscoveredAgent: { agent in pendingDiscoveredAgent = agent },
-                                    activeDiscoveredAgent: windowState.selectedDiscoveredAgent
+                                    onSelectDiscoveredAgent: { agent in selectDiscoveredAgent(agent) },
+                                    activeDiscoveredAgent: windowState.selectedDiscoveredAgent,
+                                    pairedRelayAgents: windowState.pairedRelayAgents,
+                                    onSelectRelayAgent: { relay in connectToRelayAgent(relay) },
+                                    activeRelayAgent: windowState.selectedRelayAgent
                                 )
                                 .transition(.opacity.combined(with: .scale(scale: 0.98)))
                             } else {
@@ -1564,7 +1592,9 @@ struct ChatView: View {
                                     AppDelegate.shared?.showOnboardingWindow()
                                 },
                                 discoveredAgents: windowState.discoveredAgents,
-                                onSelectDiscoveredAgent: { agent in pendingDiscoveredAgent = agent }
+                                onSelectDiscoveredAgent: { agent in selectDiscoveredAgent(agent) },
+                                pairedRelayAgents: windowState.pairedRelayAgents,
+                                onSelectRelayAgent: { relay in connectToRelayAgent(relay) }
                             )
                         }
                     }
@@ -1638,17 +1668,44 @@ struct ChatView: View {
         .environment(\.theme, windowState.theme)
         .tint(theme.accentColor)
         .sheet(item: $pendingDiscoveredAgent) { agent in
-            BonjourTokenSheet(agentName: agent.name) { token in
-                connectToDiscoveredAgent(agent, token: token)
-                pendingDiscoveredAgent = nil
-            } onCancel: {
-                pendingDiscoveredAgent = nil
+            if agent.address != nil {
+                PairingSheet(agent: agent) { apiKey, isPermanent in
+                    connectToDiscoveredAgent(agent, token: apiKey, isEphemeral: !isPermanent)
+                    pendingDiscoveredAgent = nil
+                } onCancel: {
+                    pendingDiscoveredAgent = nil
+                }
+                .environment(\.theme, windowState.theme)
+            } else {
+                BonjourTokenSheet(agentName: agent.name) { token in
+                    connectToDiscoveredAgent(agent, token: token)
+                    pendingDiscoveredAgent = nil
+                } onCancel: {
+                    pendingDiscoveredAgent = nil
+                }
+                .environment(\.theme, windowState.theme)
             }
-            .environment(\.theme, windowState.theme)
         }
     }
 
-    private func connectToDiscoveredAgent(_ agent: DiscoveredAgent, token: String) {
+    /// Called when the user picks a discovered agent from the menu.
+    /// If a persistent (non-ephemeral) paired provider already exists for this agent,
+    /// connect directly without showing the pairing sheet.
+    private func selectDiscoveredAgent(_ agent: DiscoveredAgent) {
+        let manager = RemoteProviderManager.shared
+        let hasPersistentProvider = manager.configuration.providers.contains(where: {
+            $0.providerType == .osaurus
+                && $0.remoteAgentId == agent.id
+                && !manager.isEphemeral(id: $0.id)
+        })
+        if hasPersistentProvider {
+            connectToDiscoveredAgent(agent, token: "", isEphemeral: false)
+        } else {
+            pendingDiscoveredAgent = agent
+        }
+    }
+
+    private func connectToDiscoveredAgent(_ agent: DiscoveredAgent, token: String, isEphemeral: Bool = true) {
         // Strip trailing dot from mDNS hostnames (e.g. "device.local." -> "device.local")
         let rawHost = agent.host ?? "localhost"
         let host = rawHost.hasSuffix(".") ? String(rawHost.dropLast()) : rawHost
@@ -1662,8 +1719,10 @@ struct ChatView: View {
             providerId = existing.id
             var updated = existing
             updated.host = host
+            updated.providerProtocol = .http
             updated.port = agent.port
             updated.enabled = true
+            if let address = agent.address { updated.remoteAgentAddress = address }
             if !token.isEmpty {
                 updated.authType = .apiKey
                 manager.updateProvider(updated, apiKey: token)
@@ -1683,14 +1742,40 @@ struct ChatView: View {
                 providerType: .osaurus,
                 enabled: true,
                 autoConnect: true,
-                remoteAgentId: agent.id
+                remoteAgentId: agent.id,
+                remoteAgentAddress: agent.address
             )
             providerId = provider.id
-            manager.addProvider(provider, apiKey: token.isEmpty ? nil : token, isEphemeral: true)
+            manager.addProvider(provider, apiKey: token.isEmpty ? nil : token, isEphemeral: isEphemeral)
         }
 
+        windowState.selectedRelayAgent = nil
         windowState.selectedDiscoveredAgent = agent
         windowState.selectedDiscoveredAgentProviderId = providerId
+        windowState.refreshPairedRelayAgents()
+        session.reset()
+        Task { await session.refreshPickerItems() }
+    }
+
+    private func connectToRelayAgent(_ relay: PairedRelayAgent) {
+        let relayHost = "\(relay.remoteAgentAddress).agent.osaurus.ai"
+        let manager = RemoteProviderManager.shared
+
+        guard let existing = manager.configuration.providers.first(where: { $0.id == relay.providerId }) else {
+            return
+        }
+
+        var updated = existing
+        updated.host = relayHost
+        updated.providerProtocol = .https
+        updated.port = nil
+        updated.enabled = true
+        manager.updateProvider(updated, apiKey: nil)
+        Task { try? await manager.connect(providerId: relay.providerId) }
+
+        windowState.selectedDiscoveredAgent = nil
+        windowState.selectedRelayAgent = relay
+        windowState.selectedDiscoveredAgentProviderId = relay.providerId
         session.reset()
         Task { await session.refreshPickerItems() }
     }
@@ -1976,6 +2061,165 @@ private struct BonjourTokenSheet: View {
         }
         .padding(24)
         .frame(width: 380)
+    }
+}
+
+// MARK: - Pairing Sheet
+
+/// Sheet shown when the user selects a Bonjour-discovered agent that has a crypto address.
+/// Performs cryptographic pairing instead of prompting for a manual server token.
+private struct PairingSheet: View {
+    let agent: DiscoveredAgent
+    let onSuccess: (String, Bool) -> Void  // (apiKey, isPermanent)
+    let onCancel: () -> Void
+
+    @State private var isPairing = false
+    @State private var errorMessage: String? = nil
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Pair with \(agent.name)", bundle: .module)
+                    .font(theme.font(size: 16, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+
+                Text(
+                    "This will cryptographically verify both devices. The remote device will show an approval prompt.",
+                    bundle: .module
+                )
+                .font(theme.font(size: 13))
+                .foregroundColor(theme.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if let error = errorMessage {
+                Text(error)
+                    .font(theme.font(size: 12))
+                    .foregroundColor(theme.errorColor)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            HStack {
+                Button { onCancel() } label: { Text("Cancel", bundle: .module) }
+                    .keyboardShortcut(.cancelAction)
+                    .disabled(isPairing)
+                Spacer()
+                if isPairing {
+                    ProgressView()
+                        .controlSize(.small)
+                        .padding(.trailing, 4)
+                } else {
+                    Button {
+                        Task { await performPairing() }
+                    } label: {
+                        Text("Pair", bundle: .module)
+                    }
+                    .keyboardShortcut(.defaultAction)
+                    .buttonStyle(.borderedProminent)
+                }
+            }
+        }
+        .padding(24)
+        .frame(width: 380)
+    }
+
+    private func performPairing() async {
+        isPairing = true
+        errorMessage = nil
+        defer { isPairing = false }
+
+        do {
+            let (apiKey, isPermanent) = try await PairingClient.pair(with: agent)
+            onSuccess(apiKey, isPermanent)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+}
+
+// MARK: - Pairing Client
+
+private enum PairingClient {
+    struct PairRequestBody: Codable {
+        let connectorAddress: String
+        let agentId: String
+        let nonce: String
+        let signature: String
+    }
+
+    struct PairResponseBody: Codable {
+        let agentAddress: String
+        let apiKey: String
+        let isPermanent: Bool
+    }
+
+    enum PairingError: LocalizedError {
+        case missingHost
+        case signFailed
+        case networkError(Int)
+        case decodingFailed
+        case denied
+
+        var errorDescription: String? {
+            switch self {
+            case .missingHost: return "Could not resolve the agent's network address."
+            case .signFailed: return "Failed to sign the pairing request."
+            case .networkError(let code): return "Pairing request failed (HTTP \(code))."
+            case .decodingFailed: return "Unexpected response from the remote device."
+            case .denied: return "Pairing was denied by the remote device."
+            }
+        }
+    }
+
+    static func pair(with agent: DiscoveredAgent) async throws -> (apiKey: String, isPermanent: Bool) {
+        let context = LAContext()
+        context.touchIDAuthenticationAllowableReuseDuration = 300
+
+        var masterKey = try MasterKey.getPrivateKey(context: context)
+        defer {
+            masterKey.withUnsafeMutableBytes { ptr in
+                if let base = ptr.baseAddress { memset(base, 0, ptr.count) }
+            }
+        }
+
+        let connectorAddress = try PairingKey.deriveAddress(masterKey: masterKey)
+        let nonce = UUID().uuidString
+
+        let signature = try PairingKey.sign(payload: Data(nonce.utf8), masterKey: masterKey)
+        let hexSig = "0x" + signature.hexEncodedString
+
+        let rawHost = agent.host ?? ""
+        guard !rawHost.isEmpty else { throw PairingError.missingHost }
+        let host = rawHost.hasSuffix(".") ? String(rawHost.dropLast()) : rawHost
+
+        let urlString = "http://\(host):\(agent.port)/pair"
+        guard let url = URL(string: urlString) else { throw PairingError.missingHost }
+
+        let body = PairRequestBody(
+            connectorAddress: connectorAddress,
+            agentId: agent.id.uuidString,
+            nonce: nonce,
+            signature: hexSig
+        )
+        let bodyData = try JSONEncoder().encode(body)
+
+        var request = URLRequest(url: url, timeoutInterval: 120)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = bodyData
+
+        let (responseData, response) = try await URLSession.shared.data(for: request)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+
+        if statusCode == 403 { throw PairingError.denied }
+        guard statusCode == 200 else { throw PairingError.networkError(statusCode) }
+
+        guard let decoded = try? JSONDecoder().decode(PairResponseBody.self, from: responseData) else {
+            throw PairingError.decodingFailed
+        }
+
+        return (apiKey: decoded.apiKey, isPermanent: decoded.isPermanent)
     }
 }
 

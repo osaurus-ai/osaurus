@@ -151,6 +151,13 @@ struct StreamAccumulator: AsyncSequence, Sendable {
         /// across token boundaries).  8 tokens is enough for any known tokeniser.
         private static let decodeContextSize = 8
         private var decodeContextIds: [Int] = []
+        /// Token IDs whose decoded slice ends with U+FFFD (replacement char) —
+        /// a strong signal that a multi-byte UTF-8 codepoint (e.g. emoji) is
+        /// split across this token boundary. Held back until a subsequent
+        /// token completes the sequence. Cap prevents unbounded buffering
+        /// when the model legitimately emits an <unk> that decodes as FFFD.
+        private var pendingPartialIds: [Int] = []
+        private static let maxPendingPartial = 4
 
         init(
             eventIterator: AsyncStream<TokenGeneration>.AsyncIterator,
@@ -252,10 +259,12 @@ struct StreamAccumulator: AsyncSequence, Sendable {
                 generatedTokenIds.append(tokenId)
 
                 // Incremental decode — O(1) per token regardless of sequence length.
-                // Decode [context ++ newToken] minus [context] to isolate the new text.
-                // The context window handles BPE / byte-level tokenisers that need a
-                // few preceding tokens to correctly decode the newest one.
-                let contextWithNew = decodeContextIds + [tokenId]
+                // Decode [context ++ pending ++ newToken] minus [context] to isolate
+                // the new text. `pending` accumulates tokens whose isolated decode
+                // ended in U+FFFD (partial multi-byte codepoint); once a subsequent
+                // token completes the sequence the entire group is emitted at once.
+                let combinedNew = pendingPartialIds + [tokenId]
+                let contextWithNew = decodeContextIds + combinedNew
                 let withNewDecoded = tokenizer.decode(tokenIds: contextWithNew)
                 let contextDecoded =
                     decodeContextIds.isEmpty
@@ -267,11 +276,23 @@ struct StreamAccumulator: AsyncSequence, Sendable {
                 } else {
                     token = ""
                 }
+
+                // Defer emission if the tail is still a partial UTF-8 sequence,
+                // unless we've already buffered the maximum — at which point the
+                // FFFD is real (e.g. legitimate <unk>) and we flush as-is to
+                // avoid losing user-visible characters.
+                if token.last == "\u{FFFD}" && pendingPartialIds.count < Self.maxPendingPartial {
+                    pendingPartialIds.append(tokenId)
+                    continue
+                }
+
                 decodedSoFar += token
 
-                // Advance the sliding context window.
-                decodeContextIds.append(tokenId)
-                if decodeContextIds.count > Self.decodeContextSize {
+                // Advance the sliding context window to cover every token we just
+                // emitted (any buffered partials plus this one).
+                decodeContextIds.append(contentsOf: combinedNew)
+                pendingPartialIds.removeAll(keepingCapacity: true)
+                while decodeContextIds.count > Self.decodeContextSize {
                     decodeContextIds.removeFirst()
                 }
 
@@ -467,6 +488,39 @@ struct StreamAccumulator: AsyncSequence, Sendable {
                     InferenceProgressManager.shared.prefillDidFinishAsync()
                     onGeneratedTokenIds?(generatedTokenIds)
                     return
+                }
+            }
+
+            // Flush any tokens still in the partial-UTF-8 buffer. They would
+            // otherwise be lost if the stream ends with a deferred tail, or if
+            // the model emits a legitimate <unk> that never got a completing
+            // codepoint. Accept whatever the tokenizer produces (possibly a
+            // U+FFFD) rather than dropping characters.
+            if !pendingPartialIds.isEmpty {
+                let contextWithPending = decodeContextIds + pendingPartialIds
+                let withPendingDecoded = tokenizer.decode(tokenIds: contextWithPending)
+                let contextDecoded =
+                    decodeContextIds.isEmpty
+                    ? ""
+                    : tokenizer.decode(tokenIds: decodeContextIds)
+                if withPendingDecoded.count > contextDecoded.count {
+                    let tail = String(withPendingDecoded.dropFirst(contextDecoded.count))
+                    if !tail.isEmpty {
+                        decodedSoFar += tail
+                        if shouldCheckStop {
+                            // Let the stop-sequence flush below surface it.
+                            rollingBuffer += tail
+                        } else {
+                            // No stop-sequence path: emit directly.
+                            pendingEvents.append(.tokens(tail))
+                            emittedCount += tail.count
+                        }
+                    }
+                }
+                decodeContextIds.append(contentsOf: pendingPartialIds)
+                pendingPartialIds.removeAll(keepingCapacity: false)
+                while decodeContextIds.count > Self.decodeContextSize {
+                    decodeContextIds.removeFirst()
                 }
             }
 
