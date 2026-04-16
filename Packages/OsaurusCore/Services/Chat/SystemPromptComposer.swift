@@ -241,13 +241,30 @@ public struct SystemPromptComposer: Sendable {
 
     private static func queryLikelyNeedsCapabilityDiscovery(_ query: String) -> Bool {
         let normalized = query.lowercased()
-        // This is intentionally a loose first-pass heuristic. Prefer a few false positives in
-        // local auto chat over hiding capability tools when the user is asking what Osaurus can do.
+        // Keep this heuristic intentionally lightweight, but prefer word-boundary matches plus a
+        // handful of explicit "what can you do" phrasings so benign queries like "best method
+        // for making pasta" stay out of the capability path.
+        let tokens = Set(
+            normalized.split { !$0.isLetter && !$0.isNumber }
+                .map(String.init)
+        )
         let keywords = [
-            "tool", "tools", "skill", "skills", "plugin", "plugins", "method", "methods", "capability",
+            "tool", "tools", "skill", "skills", "plugin", "plugins", "capability",
             "capabilities", "workflow", "workflows",
         ]
-        return keywords.contains { normalized.contains($0) }
+        if keywords.contains(where: tokens.contains) {
+            return true
+        }
+
+        let capabilityPhrases = [
+            "what can you do",
+            "what can you help me with",
+            "what are you able to do",
+            "what are your capabilities",
+            "which tools do you have",
+            "which skills do you have",
+        ]
+        return capabilityPhrases.contains(where: normalized.contains)
     }
 
     /// Compose the full work system prompt: base + workMode + sandbox.

@@ -136,6 +136,34 @@ struct ChatViewSandboxTests {
     }
 
     @Test
+    func resolveTools_localAutoChatIgnoresBenignMethodQueries() {
+        let specs = SystemPromptComposer.resolveTools(
+            agentId: Agent.defaultId,
+            executionMode: .none,
+            preflight: .empty,
+            query: "What's the best method for making pasta?",
+            preferOnDemandTools: true
+        )
+
+        #expect(specs.isEmpty)
+    }
+
+    @Test
+    func resolveTools_localAutoChatAddsCapabilityToolsForBroadCapabilityQuestion() {
+        let specs = SystemPromptComposer.resolveTools(
+            agentId: Agent.defaultId,
+            executionMode: .none,
+            preflight: .empty,
+            query: "What can you help me with?",
+            preferOnDemandTools: true
+        )
+
+        let names = Set(specs.map(\.function.name))
+        #expect(names.contains("capabilities_search"))
+        #expect(names.contains("capabilities_load"))
+    }
+
+    @Test
     func prepareChatExecutionMode_usesSessionAgentInsteadOfActiveAgent() async {
         let manager = AgentManager.shared
         let registrar = SandboxToolRegistrar.shared
@@ -217,6 +245,13 @@ struct ChatViewSandboxTests {
         let modelId = "TheCluster/Gemma-4-31B-Heretic-MLX-mxfp4"
 
         #expect(SystemPromptTemplates.isLocalModel(modelId))
+    }
+
+    @Test
+    func isLocalModel_keepsRemoteProviderPrefixesRemote() {
+        let modelId = "openai/gpt-4.1"
+
+        #expect(SystemPromptTemplates.isLocalModel(modelId) == false)
     }
 
     @Test
