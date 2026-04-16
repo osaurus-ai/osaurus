@@ -18,8 +18,14 @@ import os.log
 
 private let genLog = Logger(subsystem: "com.dinoki.osaurus", category: "Generation")
 
-// Force-link MLXVLM so ModelFactoryRegistry discovers the VLM trampoline at runtime.
+// Force-link both trampolines so ModelFactoryRegistry discovers them at runtime.
+// `loadModelContainer` iterates factories in order — without touching each
+// `.shared` the trampoline's static initializer may never run, and a model
+// that isn't a VLM (e.g. MiniMax, Qwen, DeepSeek LLMs) would see the VLM
+// factory fail its `unsupportedModelType` check and then find no LLM factory
+// registered to take over, leaving the load hung or throwing silently.
 private let _vlmFactory = MLXVLM.VLMModelFactory.shared
+private let _llmFactory = MLXLLM.LLMModelFactory.shared
 
 actor ModelRuntime {
     // MARK: - Types

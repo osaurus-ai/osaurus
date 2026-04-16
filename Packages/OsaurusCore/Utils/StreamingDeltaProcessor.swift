@@ -122,13 +122,27 @@ final class StreamingDeltaProcessor {
         invalidateTimer()
 
         if !deltaBuffer.isEmpty || !pendingTagBuffer.isEmpty {
-            let remaining = pendingTagBuffer + deltaBuffer
+            var remaining = pendingTagBuffer + deltaBuffer
             pendingTagBuffer = ""
             deltaBuffer = ""
-            if isInsideThinking {
-                appendThinking(remaining)
-            } else {
-                appendContent(remaining)
+
+            // If the stream ended on an unresolved partial `<think` or
+            // `</think` fragment, drop it rather than leaking literal tag
+            // characters into user-visible content — the completing byte
+            // never arrived.
+            let lowered = remaining.lowercased()
+            if let partial = Self.closePartials.first(where: { lowered.hasSuffix($0) })
+                ?? Self.openPartials.first(where: { lowered.hasSuffix($0) })
+            {
+                remaining = String(remaining.dropLast(partial.count))
+            }
+
+            if !remaining.isEmpty {
+                if isInsideThinking {
+                    appendThinking(remaining)
+                } else {
+                    appendContent(remaining)
+                }
             }
         }
 

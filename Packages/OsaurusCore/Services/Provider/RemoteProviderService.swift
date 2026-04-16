@@ -257,6 +257,11 @@ public actor RemoteProviderService: ToolCapableService {
                 // Track accumulated tool calls by index (even in streamDeltas for robustness)
                 var accumulatedToolCalls: [Int: (id: String?, name: String?, args: String, thoughtSignature: String?)] =
                     [:]
+                // Tracks whether a synthetic `<think>` has been emitted for the
+                // current stream's `reasoning_content` channel. Used to match it
+                // with a closing `</think>` exactly once at the reasoning→content
+                // boundary (or at stream end).
+                var reasoningOpen = false
 
                 // Parse SSE stream with UTF-8 decoding and inactivity timeout
                 var buffer = ""
@@ -583,11 +588,32 @@ public actor RemoteProviderService: ToolCapableService {
                                             }
                                         }
 
+                                        // Reasoning text from providers that stream it on a dedicated
+                                        // `reasoning_content` field (DeepSeek, Qwen, vLLM, etc.). Wrap
+                                        // with synthetic `<think>` tags so the rest of the pipeline
+                                        // routes it into the thinking channel transparently. First
+                                        // reasoning chunk opens the block; first content chunk after
+                                        // reasoning closes it.
+                                        if accumulatedToolCalls.isEmpty,
+                                            let reasoning = chunk.choices.first?.delta.reasoning_content,
+                                            !reasoning.isEmpty
+                                        {
+                                            if !reasoningOpen {
+                                                reasoningOpen = true
+                                                continuation.yield("<think>")
+                                            }
+                                            continuation.yield(reasoning)
+                                        }
+
                                         // Only yield content if no tool calls have been detected
                                         // This prevents function-call JSON from leaking into the chat UI
                                         if accumulatedToolCalls.isEmpty,
                                             let delta = chunk.choices.first?.delta.content, !delta.isEmpty
                                         {
+                                            if reasoningOpen {
+                                                reasoningOpen = false
+                                                continuation.yield("</think>")
+                                            }
                                             // Check stop sequences
                                             var output = delta
                                             for seq in stopSequences {
@@ -633,6 +659,14 @@ public actor RemoteProviderService: ToolCapableService {
                 if let invocation = Self.makeToolInvocation(from: accumulatedToolCalls) {
                     continuation.finish(throwing: invocation)
                     return
+                }
+
+                // Close a still-open synthetic `<think>` so the client never
+                // observes an unterminated thinking block (provider finished
+                // while still streaming reasoning, or never sent any content).
+                if reasoningOpen {
+                    continuation.yield("</think>")
+                    reasoningOpen = false
                 }
 
                 continuation.finish()
@@ -805,6 +839,12 @@ public actor RemoteProviderService: ToolCapableService {
                 // Some models (e.g., Llama) embed tool calls inline in text instead
                 // of using the structured tool_calls field.
                 var accumulatedContent = ""
+
+                // Tracks a still-open synthetic `<think>` wrapper around
+                // OpenAI-compatible `reasoning_content` deltas — matched with a
+                // closing `</think>` at the reasoning→content boundary or at
+                // stream end.
+                var reasoningOpen = false
 
                 // Parse SSE stream with UTF-8 decoding and inactivity timeout
                 var buffer = ""
@@ -1182,11 +1222,30 @@ public actor RemoteProviderService: ToolCapableService {
                                             }
                                         }
 
+                                        // Providers that expose reasoning on a dedicated
+                                        // `reasoning_content` channel (DeepSeek, Qwen, vLLM, etc.)
+                                        // get wrapped in synthetic `<think>` tags so the pipeline
+                                        // routes them into the thinking channel transparently.
+                                        if accumulatedToolCalls.isEmpty,
+                                            let reasoning = chunk.choices.first?.delta.reasoning_content,
+                                            !reasoning.isEmpty
+                                        {
+                                            if !reasoningOpen {
+                                                reasoningOpen = true
+                                                continuation.yield("<think>")
+                                            }
+                                            continuation.yield(reasoning)
+                                        }
+
                                         // Only yield content if no tool calls have been detected
                                         // This prevents function-call JSON from leaking into the chat UI
                                         if accumulatedToolCalls.isEmpty,
                                             let delta = chunk.choices.first?.delta.content, !delta.isEmpty
                                         {
+                                            if reasoningOpen {
+                                                reasoningOpen = false
+                                                continuation.yield("</think>")
+                                            }
                                             var output = delta
                                             for seq in stopSequences {
                                                 if let range = output.range(of: seq) {
@@ -1241,6 +1300,13 @@ public actor RemoteProviderService: ToolCapableService {
                     )
                     continuation.finish(throwing: invocation)
                     return
+                }
+
+                // Close a still-open synthetic `<think>` wrapper so the client
+                // never observes an unterminated thinking block.
+                if reasoningOpen {
+                    continuation.yield("</think>")
+                    reasoningOpen = false
                 }
 
                 // Fallback: detect inline tool calls in text content (e.g., Llama)

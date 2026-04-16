@@ -915,8 +915,20 @@ extension MessageTableRepresentable {
             // return cached height if we have it
             if let cached = heightCache[block.id] { return cached }
 
-            // estimate height and cache it
-            let isExpanded = expandedIds.contains(block.id)
+            // Thinking blocks auto-expand while their OWNING turn is streaming
+            // (not just while they are the streaming block) so the panel stays
+            // visible through the `<think>`→content transition. Matches the
+            // cell's configureAsThinking logic.
+            let isStreamingThinkingTurn: Bool = {
+                guard ctx.isStreaming,
+                    let streamingTurnId = ctx.lastAssistantTurnId,
+                    block.turnId == streamingTurnId
+                else { return false }
+                if case .thinking = block.kind { return true }
+                return false
+            }()
+
+            let isExpanded = isStreamingThinkingTurn || expandedIds.contains(block.id)
             let h = NativeCellHeightEstimator.estimatedHeight(
                 for: block,
                 width: ctx.width,

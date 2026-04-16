@@ -998,6 +998,11 @@ final class ChatSession: ObservableObject {
                     do {
                         var uiDeltaCount = 0
                         var firstDeltaTime: Date?
+                        // Track the wall-clock time of the last non-empty delta so
+                        // the fallback tok/s calculation uses the actual last-token
+                        // moment as the denominator, not the stream's close time
+                        // (which is after cancellation / teardown).
+                        var lastDeltaTime: Date?
 
                         var processor = StreamingDeltaProcessor(
                             turn: assistantTurn,
@@ -1067,12 +1072,14 @@ final class ChatSession: ObservableObject {
                                 continue
                             }
                             if !delta.isEmpty {
+                                let now = Date()
                                 if firstDeltaTime == nil {
-                                    firstDeltaTime = Date()
+                                    firstDeltaTime = now
                                     ttftTrace?.mark("first_text_delta")
                                     ttftTrace?.set("model", selectedModel ?? "unknown")
                                     ttftTrace?.emit()
                                 }
+                                lastDeltaTime = now
                                 uiDeltaCount += 1
                                 processor.receiveDelta(delta)
                             }
@@ -1089,7 +1096,8 @@ final class ChatSession: ObservableObject {
                             if assistantTurn.generationTokensPerSecond == nil,
                                 !assistantTurn.contentIsEmpty || !assistantTurn.thinkingIsEmpty
                             {
-                                let genTime = Date().timeIntervalSince(first)
+                                let endTime = lastDeltaTime ?? Date()
+                                let genTime = endTime.timeIntervalSince(first)
                                 // Reasoning tokens are generated on the same clock as the
                                 // answer; leaving them out of the numerator while keeping
                                 // them in the denominator under-reports throughput on

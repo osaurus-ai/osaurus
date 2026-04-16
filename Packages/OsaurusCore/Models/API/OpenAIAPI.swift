@@ -432,17 +432,24 @@ struct DeltaContent: Codable, Sendable {
     let refusal: String?
     /// Incremental tool_calls information (OpenAI-compatible)
     let tool_calls: [DeltaToolCall]?
+    /// Reasoning/thinking text streamed in a separate channel by OpenAI-compatible
+    /// providers (DeepSeek, Qwen, Together, vLLM). Absent on providers that only
+    /// emit content. The stream parser wraps these chunks with synthetic `<think>`
+    /// tags so the rest of the pipeline can route them as reasoning.
+    let reasoning_content: String?
 
     init(
         role: String? = nil,
         content: String? = nil,
         refusal: String? = nil,
-        tool_calls: [DeltaToolCall]? = nil
+        tool_calls: [DeltaToolCall]? = nil,
+        reasoning_content: String? = nil
     ) {
         self.role = role
         self.content = content
         self.refusal = refusal
         self.tool_calls = tool_calls
+        self.reasoning_content = reasoning_content
     }
 }
 
