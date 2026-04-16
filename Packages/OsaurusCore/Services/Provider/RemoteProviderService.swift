@@ -2598,7 +2598,7 @@ extension RemoteProviderService {
         }
 
         let modelsResponse = try JSONDecoder().decode(ModelsResponse.self, from: data)
-        return modelsResponse.data.map { /usr/bin/bash.id }
+        return modelsResponse.data.map { $0.id }
     }
 
     private static func fetchGeminiModels(from provider: RemoteProvider) async throws -> [String] {

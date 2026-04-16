@@ -403,6 +403,10 @@ public final class RemoteProviderManager: ObservableObject {
                 if testHeaders["x-goog-api-key"] == nil {
                     testHeaders["x-goog-api-key"] = apiKey
                 }
+            case .azureOpenAI:
+                if testHeaders["api-key"] == nil {
+                    testHeaders["api-key"] = apiKey
+                }
             case .openaiLegacy, .openResponses, .osaurus:
                 if testHeaders["Authorization"] == nil {
                     testHeaders["Authorization"] = "Bearer \(apiKey)"
