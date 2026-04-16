@@ -123,6 +123,23 @@ final class ToolRegistry: ObservableObject {
         tool.asOpenAITool().function.name.count + (tool.description.count / 4)
     }
 
+    private func alwaysLoadedTools(
+        mode: WorkExecutionMode,
+        excludeCapabilityTools: Bool = false
+    ) -> [OsaurusTool] {
+        let builtInNames = Set(builtInToolNames)
+        let runtimeNames = runtimeManagedToolNames
+        let excluded = excludedToolNames(for: mode)
+
+        return toolsByName.values
+            .filter { tool in
+                builtInNames.contains(tool.name) || runtimeNames.contains(tool.name)
+            }
+            .filter { !excluded.contains($0.name) }
+            .filter { !excludeCapabilityTools || !Self.capabilityToolNames.contains($0.name) }
+            .sorted { $0.name < $1.name }
+    }
+
     /// Get specs for specific tools by name (ignores enabled state)
     func specs(forTools toolNames: [String]) -> [Tool] {
         return toolNames.compactMap { name in
@@ -591,17 +608,18 @@ final class ToolRegistry: ObservableObject {
     /// dynamic discovery tools are stripped so the model only sees
     /// the user's explicitly chosen tools.
     func alwaysLoadedSpecs(mode: WorkExecutionMode, excludeCapabilityTools: Bool = false) -> [Tool] {
-        let builtInNames = Set(builtInToolNames)
-        let runtimeNames = runtimeManagedToolNames
-        let excluded = excludedToolNames(for: mode)
-
-        return toolsByName.values
-            .filter { tool in
-                builtInNames.contains(tool.name) || runtimeNames.contains(tool.name)
-            }
-            .filter { !excluded.contains($0.name) }
-            .filter { !excludeCapabilityTools || !Self.capabilityToolNames.contains($0.name) }
-            .sorted { $0.name < $1.name }
+        alwaysLoadedTools(mode: mode, excludeCapabilityTools: excludeCapabilityTools)
             .map { $0.asOpenAITool() }
+    }
+
+    func workPromptGuide(mode: WorkExecutionMode, compact: Bool) -> String {
+        let activeDescriptions = Dictionary(
+            uniqueKeysWithValues: alwaysLoadedTools(mode: mode).map { ($0.name, $0.description) }
+        )
+        return ToolMetadataCatalog.workPromptGuide(
+            toolDescriptions: activeDescriptions,
+            executionMode: mode,
+            compact: compact
+        )
     }
 }

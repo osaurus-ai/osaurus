@@ -14,12 +14,18 @@ protocol OsaurusTool: Sendable {
     var description: String { get }
     /// JSON schema for function parameters (OpenAI-compatible minimal subset)
     var parameters: JSONValue? { get }
+    /// Internal metadata for budgeted prompt guidance and future scheduling.
+    var promptMetadata: ToolMetadata? { get }
 
     /// Execute the tool with arguments provided as a JSON string
     func execute(argumentsJSON: String) async throws -> String
 }
 
 extension OsaurusTool {
+    var promptMetadata: ToolMetadata? {
+        ToolMetadataCatalog.metadata(for: name)
+    }
+
     /// Build OpenAI-compatible Tool specification
     func asOpenAITool() -> Tool {
         Tool(

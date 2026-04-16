@@ -56,7 +56,7 @@ struct WorkExecutionEngineTests {
         #expect((decoded["stderr"] as? String)?.contains(WorkExecutionEngine.truncationOmissionMarker) == true)
     }
 
-    @Test func buildAgentSystemPrompt_sandboxIncludesWorkflowGuidance() async {
+    @Test @MainActor func buildAgentSystemPrompt_sandboxIncludesWorkflowGuidance() async {
         let (prompt, _) = SystemPromptComposer.composeWorkPrompt(
             base: "Base prompt",
             executionMode: .sandbox
