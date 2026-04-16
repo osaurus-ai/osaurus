@@ -214,6 +214,21 @@ final class ChatSession: ObservableObject {
         return pickerItems.first { $0.id == model }
     }
 
+    var selectedModelIsLocal: Bool {
+        guard let model = selectedModel else { return true }
+        let trimmed = model.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if trimmed.isEmpty || trimmed == "default" || trimmed == "foundation" {
+            return true
+        }
+        if let selectedPickerItem {
+            if case .remote = selectedPickerItem.source {
+                return false
+            }
+            return true
+        }
+        return ModelInfo.load(modelId: model) != nil
+    }
+
     /// Flattened content blocks for NSTableView rendering.
     /// Stored and updated explicitly (not recomputed on every body pass).
     /// Call `rebuildVisibleBlocks()` after any turn mutation to refresh.
@@ -329,22 +344,203 @@ final class ChatSession: ObservableObject {
     }
 
     /// Builds the full user message text, prepending any attached document contents wrapped in XML tags.
-    static func buildUserMessageText(content: String, attachments: [Attachment]) -> String {
+    /// When a token budget is supplied, attached documents are truncated conservatively because
+    /// structured logs and XML wrappers tokenize denser than plain prose on local models.
+    static func buildUserMessageText(
+        content: String,
+        attachments: [Attachment],
+        maxInputTokens: Int? = nil,
+        documentTokenCap: Int? = nil,
+        documentPromptBlock: String? = nil,
+        documentReferences: [AttachedDocumentReference] = [],
+        includeDocumentPreviews: Bool = true
+    ) -> String {
         let docs = attachments.filter(\.isDocument)
-        guard !docs.isEmpty else { return content }
+        guard !docs.isEmpty else {
+            guard let maxInputTokens, maxInputTokens > 0 else { return content }
+            return trimFreeformText(content, maxCharacters: max(256, maxInputTokens * 2))
+        }
+
+        if !documentReferences.isEmpty {
+            var parts: [String] = []
+            parts.append(
+                buildAttachedDocumentReferenceBlock(
+                    references: documentReferences,
+                    includePreviews: includeDocumentPreviews
+                )
+            )
+            if let documentPromptBlock, !documentPromptBlock.isEmpty {
+                parts.append(documentPromptBlock)
+            }
+            if !content.isEmpty {
+                parts.append(content)
+            }
+            return parts.joined(separator: "\n\n")
+        }
+
+        if let documentPromptBlock, !documentPromptBlock.isEmpty {
+            var parts = [documentPromptBlock]
+            if !content.isEmpty {
+                parts.append(content)
+            }
+            return parts.joined(separator: "\n\n")
+        }
+
+        let effectiveDocumentTokenBudget: Int? = {
+            switch (maxInputTokens, documentTokenCap) {
+            case let (input?, cap?):
+                return min(input, cap)
+            case let (input?, nil):
+                return input
+            case let (nil, cap?):
+                return cap
+            default:
+                return nil
+            }
+        }()
+
+        guard let effectiveDocumentTokenBudget, effectiveDocumentTokenBudget > 0 else {
+            var parts: [String] = []
+            for doc in docs {
+                if let name = doc.filename, let text = doc.documentContent {
+                    parts.append("<attached_document name=\"\(name)\">\n\(text)\n</attached_document>")
+                }
+            }
+
+            if !content.isEmpty {
+                parts.append(content)
+            }
+
+            return parts.joined(separator: "\n\n")
+        }
 
         var parts: [String] = []
-        for doc in docs {
+        let maxCharacters = max(512, effectiveDocumentTokenBudget * 2)
+        let reservedContentChars = content.isEmpty ? 0 : min(content.count, max(256, maxCharacters / 6))
+        var remainingDocumentChars = max(256, maxCharacters - reservedContentChars)
+
+        for (index, doc) in docs.enumerated() {
             if let name = doc.filename, let text = doc.documentContent {
-                parts.append("<attached_document name=\"\(name)\">\n\(text)\n</attached_document>")
+                let docsRemaining = max(1, docs.count - index)
+                let perDocumentBudget = max(512, remainingDocumentChars / docsRemaining)
+                parts.append(
+                    buildDocumentBlock(
+                        filename: name,
+                        content: text,
+                        maxCharacters: perDocumentBudget
+                    )
+                )
+                remainingDocumentChars = max(0, remainingDocumentChars - perDocumentBudget)
             }
         }
 
         if !content.isEmpty {
-            parts.append(content)
+            let usedCharacters = parts.joined(separator: "\n\n").count
+            let remainingContentChars = max(256, maxCharacters - usedCharacters)
+            parts.append(trimFreeformText(content, maxCharacters: remainingContentChars))
         }
 
         return parts.joined(separator: "\n\n")
+    }
+
+    private static func buildDocumentBlock(
+        filename: String,
+        content: String,
+        maxCharacters: Int
+    ) -> String {
+        let full = "<attached_document name=\"\(filename)\">\n\(content)\n</attached_document>"
+        guard content.count > maxCharacters else { return full }
+
+        let note =
+            "[Document truncated to fit local model context. Showing the beginning and end of \(content.count) characters.]"
+        let wrapperOverhead = filename.count + note.count + 64
+        let excerptBudget = max(256, maxCharacters - wrapperOverhead)
+        let headBudget = max(160, Int(Double(excerptBudget) * 0.7))
+        let tailBudget = max(96, excerptBudget - headBudget)
+        let excerpt = String(content.prefix(headBudget)) + "\n...\n" + String(content.suffix(tailBudget))
+        return "<attached_document name=\"\(filename)\">\n\(note)\n\(excerpt)\n</attached_document>"
+    }
+
+    private static func trimFreeformText(_ text: String, maxCharacters: Int) -> String {
+        guard !text.isEmpty, text.count > maxCharacters else { return text }
+
+        let note = "[Text truncated to fit local model context.]"
+        let excerptBudget = max(128, maxCharacters - note.count - 6)
+        let headBudget = max(96, Int(Double(excerptBudget) * 0.75))
+        let tailBudget = max(32, excerptBudget - headBudget)
+        return String(text.prefix(headBudget)) + "\n\(note)\n" + String(text.suffix(tailBudget))
+    }
+
+    private static func buildAttachedDocumentReferenceBlock(
+        references: [AttachedDocumentReference],
+        includePreviews: Bool
+    ) -> String {
+        var lines = [
+            "<attached_documents>",
+            "The full contents of these attached documents are available through tools.",
+            "Use `search_attached_documents` to find relevant excerpts and `read_attached_document` to inspect specific chunks.",
+            "For documents containing multiple people or sections, do not infer a person's profile from previews or one excerpt alone. Search by the exact name or role and read the matching chunk before answering.",
+        ]
+
+        for reference in references {
+            if includePreviews {
+                lines.append(
+                    "<attached_document id=\"\(reference.attachmentId)\" name=\"\(reference.filename)\" characters=\"\(reference.characterCount)\" chunks=\"\(reference.chunkCount)\">"
+                )
+                lines.append(reference.preview)
+                lines.append("</attached_document>")
+            } else {
+                lines.append(
+                    "<attached_document_ref id=\"\(reference.attachmentId)\" name=\"\(reference.filename)\" characters=\"\(reference.characterCount)\" chunks=\"\(reference.chunkCount)\" />"
+                )
+            }
+        }
+
+        lines.append("</attached_documents>")
+        return lines.joined(separator: "\n")
+    }
+
+    private static let localCurrentDocumentTokenCap = 2_048
+    private static let localHistoricalDocumentTokenCap = 768
+
+    private static func localDocumentTokenCap(
+        attachments: [Attachment],
+        isCurrentTurn: Bool
+    ) -> Int? {
+        guard attachments.hasDocuments else { return nil }
+        return isCurrentTurn ? localCurrentDocumentTokenCap : localHistoricalDocumentTokenCap
+    }
+
+    static func shouldInjectHistoricalDocumentContext(for currentTurn: ChatTurn?) -> Bool {
+        guard let currentTurn else { return true }
+        return !(currentTurn.attachments.hasImages && !currentTurn.attachments.hasDocuments)
+    }
+
+    static func isFailedAttachedDocumentProbe(_ turn: ChatTurn) -> Bool {
+        guard turn.role == .assistant, turn.contentIsEmpty, let toolCalls = turn.toolCalls, !toolCalls.isEmpty else {
+            return false
+        }
+
+        let attachedDocumentToolNames = Set(AttachedDocumentTools.toolNames)
+        let toolNames = Set(toolCalls.map(\.function.name))
+        guard toolNames.isSubset(of: attachedDocumentToolNames) else { return false }
+
+        let results = Array(turn.toolResults.values)
+        guard !results.isEmpty else { return false }
+        return results.allSatisfy { result in
+            result.contains("No matching excerpts found")
+                || result.contains("attached document or chunk not found")
+                || result.contains("attachment_ids")
+                || result.contains("attachment_id")
+        }
+    }
+
+    static func isStaleExcerptOnlyAttachedDocumentAnswer(_ turn: ChatTurn) -> Bool {
+        guard turn.role == .assistant, !turn.contentIsEmpty else { return false }
+
+        let normalized = turn.content.lowercased()
+        return normalized.contains("i only have access to the specific excerpts provided in the prompt")
+            || normalized.contains("based on the provided excerpts")
     }
 
     /// Format token count for display (e.g., "1.2K", "15K")
@@ -793,6 +989,7 @@ final class ChatSession: ObservableObject {
 
         let memoryAgentId = (agentId ?? Agent.defaultId).uuidString
         let memoryConversationId = (sessionId ?? UUID()).uuidString
+        let currentUserTurnId = hasContent ? turns.last(where: { $0.role == .user })?.id : nil
         if hasContent {
             ActivityTracker.shared.recordActivity(agentId: memoryAgentId)
         }
@@ -868,9 +1065,60 @@ final class ChatSession: ObservableObject {
                     assistantTurn.preflightCapabilities = context.preflightItems
                 }
 
+                var documentReferencesByTurnId: [UUID: [AttachedDocumentReference]] = [:]
+                var documentPromptBlocksByTurnId: [UUID: String] = [:]
+                if selectedModelIsLocal {
+                    let currentTurn = turns.first { $0.id == currentUserTurnId }
+                    let injectHistoricalDocumentContext = Self.shouldInjectHistoricalDocumentContext(
+                        for: currentTurn
+                    )
+
+                    for turn in turns where turn.attachments.hasDocuments {
+                        let isCurrentTurn = turn.id == currentUserTurnId
+                        if !isCurrentTurn && !injectHistoricalDocumentContext {
+                            continue
+                        }
+
+                        let references = await AttachedDocumentStore.shared.register(
+                            attachments: turn.attachments.documents
+                        )
+                        documentReferencesByTurnId[turn.id] = references
+
+                        let promptContext = await AttachedDocumentStore.shared.buildPromptContext(
+                            attachmentIds: references.map(\.attachmentId),
+                            query: trimmed,
+                            maxResults: isCurrentTurn ? 6 : 3,
+                            maxTotalCharacters: isCurrentTurn ? 8_000 : 2_400,
+                            allowFallback: isCurrentTurn && !turn.attachments.hasImages
+                        )
+                        if !promptContext.isEmpty {
+                            documentPromptBlocksByTurnId[turn.id] = promptContext
+                        }
+                    }
+                }
+
+                if selectedModelIsLocal, !documentReferencesByTurnId.isEmpty {
+                    AttachedDocumentTools.registerIfNeeded()
+                    for tool in ToolRegistry.shared.specs(forTools: AttachedDocumentTools.toolNames)
+                    where !toolSpecs.contains(where: { $0.function.name == tool.function.name }) {
+                        toolSpecs.append(tool)
+                    }
+
+                    let attachedDocumentRefs = documentReferencesByTurnId.values.flatMap { $0 }
+                    let totalCharacters = attachedDocumentRefs.reduce(0) { $0 + $1.characterCount }
+                    debugLog(
+                        "[AttachedDocuments] manifest+tools enabled turns=\(documentReferencesByTurnId.count) excerptBlocks=\(documentPromptBlocksByTurnId.count) docs=\(attachedDocumentRefs.count) chars=\(totalCharacters) tools=\(AttachedDocumentTools.toolNames.joined(separator: ","))"
+                    )
+                }
+
                 budgetTracker.snapshot(context: context)
 
                 let effectiveMaxTokensForAgent = AgentManager.shared.effectiveMaxTokens(for: effectiveAgentId)
+                let suppressedAttachedDocumentToolCallIds = Set(
+                    turns.flatMap { turn in
+                        Self.isFailedAttachedDocumentProbe(turn) ? (turn.toolCalls?.map(\.id) ?? []) : []
+                    }
+                )
 
                 /// Convert a single turn to a ChatMessage (returns nil if should be skipped)
                 @MainActor
@@ -886,6 +1134,10 @@ final class ChatSession: ObservableObject {
                             return nil
                         }
 
+                        if Self.isFailedAttachedDocumentProbe(t) || Self.isStaleExcerptOnlyAttachedDocumentAnswer(t) {
+                            return nil
+                        }
+
                         let content: String? = t.contentIsEmpty ? nil : t.content
 
                         return ChatMessage(
@@ -895,6 +1147,11 @@ final class ChatSession: ObservableObject {
                             tool_call_id: nil
                         )
                     case .tool:
+                        if let toolCallId = t.toolCallId,
+                            suppressedAttachedDocumentToolCallIds.contains(toolCallId)
+                        {
+                            return nil
+                        }
                         return ChatMessage(
                             role: "tool",
                             content: t.content,
@@ -902,7 +1159,20 @@ final class ChatSession: ObservableObject {
                             tool_call_id: t.toolCallId
                         )
                     case .user:
-                        let messageText = Self.buildUserMessageText(content: t.content, attachments: t.attachments)
+                        let isCurrentUserTurn = t.id == currentUserTurnId
+                        let messageText = Self.buildUserMessageText(
+                            content: t.content,
+                            attachments: t.attachments,
+                            documentTokenCap:
+                                selectedModelIsLocal && documentPromptBlocksByTurnId[t.id] == nil
+                                ? Self.localDocumentTokenCap(
+                                    attachments: t.attachments,
+                                    isCurrentTurn: isCurrentUserTurn
+                                ) : nil,
+                            documentPromptBlock: selectedModelIsLocal ? documentPromptBlocksByTurnId[t.id] : nil,
+                            documentReferences: selectedModelIsLocal ? (documentReferencesByTurnId[t.id] ?? []) : [],
+                            includeDocumentPreviews: isCurrentUserTurn
+                        )
                         let imageData = selectedModelSupportsImages ? t.attachments.images : []
                         if !imageData.isEmpty {
                             return ChatMessage(role: "user", text: messageText, imageData: imageData)
