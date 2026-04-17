@@ -155,6 +155,10 @@ final class ModelManager: NSObject, ObservableObject {
     @Published var suggestedModels: [MLXModel] = ModelManager.curatedSuggestedModels
     @Published var deprecationNotices: [DeprecationNotice] = []
 
+    /// True while a refresh of the OsaurusAI org listing is in flight. Drives
+    /// the spinner on the Recommended tab's refresh button.
+    @Published var isLoadingSuggested: Bool = false
+
     var modelsDirectory: URL {
         return DirectoryPickerService.shared.effectiveModelsDirectory
     }
@@ -181,6 +185,10 @@ final class ModelManager: NSObject, ObservableObject {
                 self?.objectWillChange.send()
             }
             .store(in: &cancellables)
+
+        // Pull the OsaurusAI HF org listing once on launch so newly published
+        // models surface in the Recommended tab without requiring a code push.
+        Task { [weak self] in await self?.loadOsaurusAIOrgModels() }
     }
 
     // MARK: - Public Methods
@@ -467,8 +475,22 @@ final class ModelManager: NSObject, ObservableObject {
 // MARK: - Dynamic model discovery (Hugging Face)
 
 extension ModelManager {
-    /// Fully curated models with descriptions we control. Order matters.
-    fileprivate static let curatedSuggestedModels: [MLXModel] = [
+    /// Parses a "yyyy-MM-dd" string into a UTC `Date`.
+    /// Used to keep the curated date literals readable. Falls back to the epoch
+    /// on parse failure so the sort order stays deterministic.
+    nonisolated fileprivate static func date(_ ymd: String) -> Date {
+        let f = DateFormatter()
+        f.calendar = Calendar(identifier: .iso8601)
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = TimeZone(secondsFromGMT: 0)
+        f.dateFormat = "yyyy-MM-dd"
+        return f.date(from: ymd) ?? Date(timeIntervalSince1970: 0)
+    }
+
+    /// Fully curated models with descriptions we control.
+    /// Order is a fallback only — `ModelDownloadView.filteredSuggestedModels`
+    /// sorts by curated-first → top-pick → `releasedAt` desc → name.
+    nonisolated fileprivate static let curatedSuggestedModels: [MLXModel] = [
         // MARK: Top Picks
 
         MLXModel(
@@ -478,7 +500,8 @@ extension ModelManager {
             downloadURL: "https://huggingface.co/OsaurusAI/gemma-4-E2B-it-4bit",
             isTopSuggestion: true,
             downloadSizeBytes: 4_392_120_539,
-            modelType: "gemma4"
+            modelType: "gemma4",
+            releasedAt: date("2026-04-06")
         ),
 
         MLXModel(
@@ -488,7 +511,8 @@ extension ModelManager {
             downloadURL: "https://huggingface.co/OsaurusAI/gemma-4-E4B-it-4bit",
             isTopSuggestion: true,
             downloadSizeBytes: 6_901_389_946,
-            modelType: "gemma4"
+            modelType: "gemma4",
+            releasedAt: date("2026-04-06")
         ),
 
         MLXModel(
@@ -498,7 +522,8 @@ extension ModelManager {
             downloadURL: "https://huggingface.co/OsaurusAI/gemma-4-26B-A4B-it-mxfp4",
             isTopSuggestion: true,
             downloadSizeBytes: 14_869_637_520,
-            modelType: "gemma4"
+            modelType: "gemma4",
+            releasedAt: date("2026-04-07")
         ),
 
         MLXModel(
@@ -508,6 +533,35 @@ extension ModelManager {
             downloadURL: "https://huggingface.co/LiquidAI/LFM2-24B-A2B-MLX-8bit",
             isTopSuggestion: true,
             downloadSizeBytes: 23_600_000_000
+        ),
+
+        // MARK: MiniMax M2.7 (JANGTQ MoE)
+        //
+        // 228.7B total / ~1.4B active MoE (256 experts, top-8) with 192K context.
+        // Always-reasoning chat template. Auto-routed to MiniMaxJANGTQModel via
+        // jang_config.json (`weight_format: mxtq`) at load time — no osaurus-side
+        // branching required.
+
+        MLXModel(
+            id: "OsaurusAI/MiniMax-M2.7-JANGTQ4",
+            name: ModelMetadataParser.friendlyName(from: "OsaurusAI/MiniMax-M2.7-JANGTQ4"),
+            description:
+                "MiniMax M2.7 228B agentic MoE, 4-bit TurboQuant routed experts. Near-bf16 quality at ~25% of bf16 disk. 192K context.",
+            downloadURL: "https://huggingface.co/OsaurusAI/MiniMax-M2.7-JANGTQ4",
+            downloadSizeBytes: 116_874_305_053,
+            modelType: "minimax_m2",
+            releasedAt: date("2026-04-17")
+        ),
+
+        MLXModel(
+            id: "OsaurusAI/MiniMax-M2.7-JANGTQ",
+            name: ModelMetadataParser.friendlyName(from: "OsaurusAI/MiniMax-M2.7-JANGTQ"),
+            description:
+                "MiniMax M2.7 228B agentic MoE, 2-bit TurboQuant routed experts. Smallest footprint of the family. 192K context.",
+            downloadURL: "https://huggingface.co/OsaurusAI/MiniMax-M2.7-JANGTQ",
+            downloadSizeBytes: 60_705_324_126,
+            modelType: "minimax_m2",
+            releasedAt: date("2026-04-17")
         ),
 
         // MARK: Large Models
@@ -532,7 +586,8 @@ extension ModelManager {
             description: "Gemma 4 31B dense vision model. Top-tier quality with optimized quantization.",
             downloadURL: "https://huggingface.co/OsaurusAI/Gemma-4-31B-it-JANG_4M",
             downloadSizeBytes: 22_692_183_936,
-            modelType: "gemma4"
+            modelType: "gemma4",
+            releasedAt: date("2026-04-16")
         ),
 
         // MARK: Vision Language Models (VLM)
@@ -543,7 +598,8 @@ extension ModelManager {
             description: "MoE vision model with standard 4-bit quantization. 4B active params.",
             downloadURL: "https://huggingface.co/OsaurusAI/gemma-4-26B-A4B-it-4bit",
             downloadSizeBytes: 15_641_238_761,
-            modelType: "gemma4"
+            modelType: "gemma4",
+            releasedAt: date("2026-04-07")
         ),
 
         MLXModel(
@@ -552,7 +608,8 @@ extension ModelManager {
             description: "Efficient MoE vision model. Only 4B active params. 256K context.",
             downloadURL: "https://huggingface.co/OsaurusAI/Gemma-4-26B-A4B-it-JANG_2L",
             downloadSizeBytes: 10_676_011_439,
-            modelType: "gemma4"
+            modelType: "gemma4",
+            releasedAt: date("2026-04-16")
         ),
 
         MLXModel(
@@ -561,7 +618,8 @@ extension ModelManager {
             description: "Higher-quality MoE vision model. 4B active params with 256K context.",
             downloadURL: "https://huggingface.co/OsaurusAI/Gemma-4-26B-A4B-it-JANG_4M",
             downloadSizeBytes: 16_200_957_903,
-            modelType: "gemma4"
+            modelType: "gemma4",
+            releasedAt: date("2026-04-16")
         ),
 
         MLXModel(
@@ -570,7 +628,8 @@ extension ModelManager {
             description: "Multimodal edge model at 8-bit precision. Best quality for the E4B family.",
             downloadURL: "https://huggingface.co/OsaurusAI/gemma-4-E4B-it-8bit",
             downloadSizeBytes: 8_997_820_763,
-            modelType: "gemma4"
+            modelType: "gemma4",
+            releasedAt: date("2026-04-06")
         ),
 
         MLXModel(
@@ -579,7 +638,8 @@ extension ModelManager {
             description: "Largest Qwen3.5 MoE vision model. 10B active params with top-tier reasoning.",
             downloadURL: "https://huggingface.co/OsaurusAI/Qwen3.5-122B-A10B-JANG_4K",
             downloadSizeBytes: 66_458_339_463,
-            modelType: "qwen3_5_moe"
+            modelType: "qwen3_5_moe",
+            releasedAt: date("2026-04-16")
         ),
 
         MLXModel(
@@ -588,7 +648,8 @@ extension ModelManager {
             description: "Qwen3.5 122B MoE vision model. Compact quantization, smaller download.",
             downloadURL: "https://huggingface.co/OsaurusAI/Qwen3.5-122B-A10B-JANG_2S",
             downloadSizeBytes: 37_770_467_212,
-            modelType: "qwen3_5_moe"
+            modelType: "qwen3_5_moe",
+            releasedAt: date("2026-04-16")
         ),
 
         MLXModel(
@@ -597,7 +658,8 @@ extension ModelManager {
             description: "Efficient Qwen3.5 MoE vision model. Only 3B active params.",
             downloadURL: "https://huggingface.co/OsaurusAI/Qwen3.5-35B-A3B-JANG_4K",
             downloadSizeBytes: 19_667_902_931,
-            modelType: "qwen3_5_moe"
+            modelType: "qwen3_5_moe",
+            releasedAt: date("2026-04-16")
         ),
 
         MLXModel(
@@ -606,7 +668,8 @@ extension ModelManager {
             description: "Compact Qwen3.5 MoE vision model. Fast and lightweight.",
             downloadURL: "https://huggingface.co/OsaurusAI/Qwen3.5-35B-A3B-JANG_2S",
             downloadSizeBytes: 11_665_353_755,
-            modelType: "qwen3_5_moe"
+            modelType: "qwen3_5_moe",
+            releasedAt: date("2026-04-16")
         ),
 
         // MARK: Qwen 3.6
@@ -623,17 +686,8 @@ extension ModelManager {
             description: "Qwen 3.6 35B MoE vision model. MXFP4 quantization — best quality per byte.",
             downloadURL: "https://huggingface.co/OsaurusAI/Qwen3.6-35B-A3B-mxfp4",
             downloadSizeBytes: 19_350_002_112,
-            modelType: "qwen3_5_moe"
-        ),
-
-        MLXModel(
-            id: "Qwen/Qwen3.6-35B-A3B",
-            name: ModelMetadataParser.friendlyName(from: "Qwen/Qwen3.6-35B-A3B"),
-            description:
-                "Qwen 3.6 35B MoE vision model, raw BF16 weights from Qwen. Large download; prefer the MXFP4 variant.",
-            downloadURL: "https://huggingface.co/Qwen/Qwen3.6-35B-A3B",
-            downloadSizeBytes: 71_926_854_840,
-            modelType: "qwen3_5_moe"
+            modelType: "qwen3_5_moe",
+            releasedAt: date("2026-04-16")
         ),
 
         // MARK: Compact Models
@@ -644,11 +698,17 @@ extension ModelManager {
             description: "Smallest Gemma 4 at 8-bit precision. Better quality, still runs on any Mac.",
             downloadURL: "https://huggingface.co/OsaurusAI/gemma-4-E2B-it-8bit",
             downloadSizeBytes: 5_932_058_274,
-            modelType: "gemma4"
+            modelType: "gemma4",
+            releasedAt: date("2026-04-06")
         ),
 
     ]
 
+    /// Lowercased IDs of curated entries. Used by the Recommended-tab sort to
+    /// pin curated models above auto-fetched org listings.
+    nonisolated static let curatedSuggestedIds: Set<String> = Set(
+        curatedSuggestedModels.map { $0.id.lowercased() }
+    )
 }
 
 // MARK: - Installed models helpers for services
@@ -701,6 +761,7 @@ extension ModelManager {
     fileprivate struct HFModel: Decodable {
         let id: String
         let tags: [String]?
+        let lastModified: String?
     }
 
     /// Build the HF models API URL
@@ -735,6 +796,27 @@ extension ModelManager {
         }
     }
 
+    /// Parse a HF `lastModified` ISO8601 string into a `Date`.
+    fileprivate static func parseHFTimestamp(_ s: String?) -> Date? {
+        guard let s, !s.isEmpty else { return nil }
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let d = formatter.date(from: s) { return d }
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.date(from: s)
+    }
+
+    /// Map HF tags to a known `model_type` string when possible.
+    /// Returns the first tag that matches the VLM type registry, otherwise nil
+    /// (auto-fetched LLM entries fall back to post-download detection).
+    fileprivate static func inferModelType(from tags: [String]?) -> String? {
+        guard let tags else { return nil }
+        for tag in tags {
+            if VLMDetection.isVLM(modelType: tag) { return tag }
+        }
+        return nil
+    }
+
     fileprivate func mergeAvailable(with newModels: [MLXModel]) {
         var existingLower: Set<String> = Set(
             (availableModels + suggestedModels).map { $0.id.lowercased() }
@@ -750,6 +832,90 @@ extension ModelManager {
         guard !appended.isEmpty else { return }
         availableModels.append(contentsOf: appended)
         downloadService.syncStates(for: appended)
+    }
+}
+
+// MARK: - OsaurusAI org auto-discovery
+
+extension ModelManager {
+    /// HF org whose entire repo listing is auto-discovered into the Recommended tab.
+    fileprivate static let osaurusOrgAuthor = "OsaurusAI"
+
+    /// True if `id` is `"<osaurusOrgAuthor>/<repo>"` (case-insensitive).
+    fileprivate static func isOsaurusOrgRepo(_ id: String) -> Bool {
+        guard let org = id.split(separator: "/").first.map(String.init) else { return false }
+        return org.caseInsensitiveCompare(osaurusOrgAuthor) == .orderedSame
+    }
+
+    /// Builds an `MLXModel` for an HF repo that isn't in the curated list.
+    fileprivate static func makeAutoFetchedModel(from hf: HFModel) -> MLXModel {
+        MLXModel(
+            id: hf.id,
+            name: ModelMetadataParser.friendlyName(from: hf.id),
+            description: "From OsaurusAI on Hugging Face.",
+            downloadURL: "https://huggingface.co/\(hf.id)",
+            modelType: inferModelType(from: hf.tags),
+            releasedAt: parseHFTimestamp(hf.lastModified)
+        )
+    }
+
+    /// Fetch every repo published under the OsaurusAI org from HF and merge
+    /// them into `suggestedModels`. Curated entries always win on duplicate
+    /// IDs so editorial descriptions and Top-Pick flags survive.
+    func loadOsaurusAIOrgModels() async {
+        guard
+            let url = Self.makeHFModelsURL(
+                author: Self.osaurusOrgAuthor,
+                search: "",
+                limit: 100
+            )
+        else { return }
+
+        let raw = (try? await Self.requestHFModels(at: url)) ?? []
+        guard !raw.isEmpty else { return }
+
+        let curatedIds = Self.curatedSuggestedIds
+        let autoFetched: [MLXModel] =
+            raw
+            .filter { !curatedIds.contains($0.id.lowercased()) }
+            .map(Self.makeAutoFetchedModel(from:))
+
+        applyOsaurusOrgFetch(autoFetched: autoFetched)
+    }
+
+    /// Replace the auto-fetched portion of `suggestedModels` while preserving
+    /// curated entries (and any unrelated entries that may have been added).
+    /// Internal so tests can drive the merge without hitting the network.
+    func applyOsaurusOrgFetch(autoFetched: [MLXModel]) {
+        let curated = Self.curatedSuggestedModels
+        let curatedIds = Self.curatedSuggestedIds
+
+        // Drop previous OsaurusAI auto-fetched entries, keeping curated and
+        // any non-OsaurusAI entries other code may have injected.
+        let preserved = suggestedModels.filter { model in
+            let key = model.id.lowercased()
+            if curatedIds.contains(key) { return false }
+            return !Self.isOsaurusOrgRepo(model.id)
+        }
+
+        var merged: [MLXModel] = curated + preserved
+        var seen = Set(merged.map { $0.id.lowercased() })
+        for model in autoFetched {
+            let key = model.id.lowercased()
+            if seen.insert(key).inserted {
+                merged.append(model)
+            }
+        }
+
+        suggestedModels = merged
+        downloadService.syncStates(for: merged)
+    }
+
+    /// Public refresh entry point used by the Recommended tab's refresh button.
+    func refreshSuggestedModels() async {
+        isLoadingSuggested = true
+        await loadOsaurusAIOrgModels()
+        isLoadingSuggested = false
     }
 }
 
