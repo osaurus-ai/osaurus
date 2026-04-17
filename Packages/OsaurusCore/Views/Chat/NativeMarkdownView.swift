@@ -256,6 +256,9 @@ final class NativeMarkdownView: NSView {
         if let cb = view as? NativeCodeBlockView {
             return cb.measureHeightForOuterWidth(width)
         }
+        if let tb = view as? NativeMarkdownTableView {
+            return tb.measuredHeight()
+        }
         if let iv = view as? NSImageView {
             return iv.bounds.height > 0 ? iv.bounds.height : 160
         }
@@ -454,6 +457,20 @@ final class NativeMarkdownView: NSView {
                 }
                 if case .math(let latex) = seg.kind { lv.stringValue = latex }
                 segView = lv
+
+            case .table(let headers, let rows):
+                let tv: NativeMarkdownTableView
+                if let existing = existingEntry?.view as? NativeMarkdownTableView {
+                    tv = existing
+                } else {
+                    tv = NativeMarkdownTableView()
+                    addSubview(tv)
+                }
+                tv.onHeightChanged = { [weak self] in
+                    self?.onHeightChanged?()
+                }
+                tv.configure(headers: headers, rows: rows, width: width, theme: theme)
+                segView = tv
             }
 
             NSLayoutConstraint.activate([
