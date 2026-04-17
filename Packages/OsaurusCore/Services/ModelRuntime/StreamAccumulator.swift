@@ -39,6 +39,7 @@ struct StreamAccumulator: AsyncSequence, Sendable {
     private let toolsSpec: [[String: any Sendable]]?
     private let generationTask: Task<Void, Never>?
     private let onGeneratedTokenIds: (@Sendable ([Int]) -> Void)?
+    private let priority: InferencePriority
 
     // MARK: - Public factory
 
@@ -67,7 +68,8 @@ struct StreamAccumulator: AsyncSequence, Sendable {
         toolCallFormat: ToolCallFormat = .json,
         toolsSpec: [[String: any Sendable]]? = nil,
         generationTask: Task<Void, Never>? = nil,
-        onGeneratedTokenIds: (@Sendable ([Int]) -> Void)? = nil
+        onGeneratedTokenIds: (@Sendable ([Int]) -> Void)? = nil,
+        priority: InferencePriority = .plugin
     ) -> StreamAccumulator {
         StreamAccumulator(
             events: events,
@@ -77,7 +79,8 @@ struct StreamAccumulator: AsyncSequence, Sendable {
             toolCallFormat: toolCallFormat,
             toolsSpec: toolsSpec,
             generationTask: generationTask,
-            onGeneratedTokenIds: onGeneratedTokenIds
+            onGeneratedTokenIds: onGeneratedTokenIds,
+            priority: priority
         )
     }
 
@@ -105,7 +108,8 @@ struct StreamAccumulator: AsyncSequence, Sendable {
             toolCallFormat: toolCallFormat,
             toolsSpec: toolsSpec,
             generationTask: generationTask,
-            onGeneratedTokenIds: onGeneratedTokenIds
+            onGeneratedTokenIds: onGeneratedTokenIds,
+            priority: priority
         )
     }
 
@@ -120,6 +124,13 @@ struct StreamAccumulator: AsyncSequence, Sendable {
         private let tools: [Tool]?
         private let generationTask: Task<Void, Never>?
         private let onGeneratedTokenIds: (@Sendable ([Int]) -> Void)?
+        private let priority: InferencePriority
+
+        /// Tokens emitted since the last cooperative yield check. Throttles
+        /// scheduler snapshot calls to ~1 per 16 tokens so the yield path
+        /// adds negligible per-token overhead when nothing is queued.
+        private var tokensSinceYieldCheck = 0
+        private static let yieldCheckInterval = 16
 
         // Upstream tool-call processor — nil when no tools are present.
         private let processor: ToolCallProcessor?
@@ -167,7 +178,8 @@ struct StreamAccumulator: AsyncSequence, Sendable {
             toolCallFormat: ToolCallFormat,
             toolsSpec: [[String: any Sendable]]?,
             generationTask: Task<Void, Never>?,
-            onGeneratedTokenIds: (@Sendable ([Int]) -> Void)?
+            onGeneratedTokenIds: (@Sendable ([Int]) -> Void)?,
+            priority: InferencePriority
         ) {
             self.eventIterator = eventIterator
             self.tokenizer = tokenizer
@@ -175,6 +187,7 @@ struct StreamAccumulator: AsyncSequence, Sendable {
             self.tools = tools
             self.generationTask = generationTask
             self.onGeneratedTokenIds = onGeneratedTokenIds
+            self.priority = priority
             self.maxStopLen = stopSequences.map { $0.count }.max() ?? 0
             self.shouldCheckStop = !stopSequences.isEmpty
             self.hasTools = tools != nil && !(tools?.isEmpty ?? true)
@@ -197,6 +210,28 @@ struct StreamAccumulator: AsyncSequence, Sendable {
                 if Task.isCancelled {
                     await finish(cancelled: true)
                     return nil
+                }
+
+                // Cooperative yield checkpoint (feature-flagged).
+                //
+                // When higher-priority work is queued behind us, briefly yield
+                // the cooperative pool so other Swift Concurrency work — plugin
+                // event delivery, SwiftUI redraws, log flushing — can run while
+                // the GPU produces the next token.
+                //
+                // This does NOT preempt MLX (it still holds MetalGate and the
+                // model context); true preemption requires deeper integration
+                // with `MLXLMCommon.TokenIterator` and is tracked for Phase 3.
+                if InferenceFeatureFlags.cooperativeYieldEnabled {
+                    tokensSinceYieldCheck &+= 1
+                    if tokensSinceYieldCheck >= Self.yieldCheckInterval {
+                        tokensSinceYieldCheck = 0
+                        let myPriority = priority
+                        let shouldYield = await InferenceScheduler.shared.shouldYield(above: myPriority)
+                        if shouldYield {
+                            await Task.yield()
+                        }
+                    }
                 }
 
                 // Drain pending (may have been filled by previous iteration).
@@ -570,7 +605,8 @@ struct StreamAccumulator: AsyncSequence, Sendable {
         toolCallFormat: ToolCallFormat,
         toolsSpec: [[String: any Sendable]]?,
         generationTask: Task<Void, Never>?,
-        onGeneratedTokenIds: (@Sendable ([Int]) -> Void)?
+        onGeneratedTokenIds: (@Sendable ([Int]) -> Void)?,
+        priority: InferencePriority
     ) {
         self.events = events
         self.tokenizer = tokenizer
@@ -580,5 +616,6 @@ struct StreamAccumulator: AsyncSequence, Sendable {
         self.toolsSpec = toolsSpec
         self.generationTask = generationTask
         self.onGeneratedTokenIds = onGeneratedTokenIds
+        self.priority = priority
     }
 }

@@ -260,7 +260,13 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         windowStates[id]
     }
 
-    /// Returns the set of local model names currently selected across all open windows.
+    /// Returns the set of local model names selected by currently-open chat
+    /// windows. Used as a "keep loaded for next interaction" hint for GC.
+    ///
+    /// Safety against unloading a model mid-stream is enforced by `ModelLease`
+    /// inside `ModelRuntime.unloadModelsNotIn` — this set only needs to cover
+    /// the UX heuristic of "the user still has a window open with this model
+    /// selected, don't pay reload cost on their next keystroke".
     func activeLocalModelNames() -> Set<String> {
         Set(
             windowStates.values.compactMap { state in
