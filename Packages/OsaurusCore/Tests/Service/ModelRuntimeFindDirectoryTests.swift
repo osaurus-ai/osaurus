@@ -64,6 +64,51 @@ struct ModelRuntimeFindDirectoryTests {
         #expect(resolved == nil)
     }
 
+    // MARK: - JANGTQ sidecar preflight
+    //
+    // vmlx's LLMModelFactory dispatches to the JANGTQ class purely on
+    // `jang_config.json.weight_format == "mxtq"`, and then
+    // `TurboQuantSwitchLinear.callAsFunction` `fatalError`s on the first
+    // forward pass when the `jangtq_runtime.safetensors` sidecar isn't in
+    // the runtime cache. `validateJANGTQSidecarIfRequired` closes that gap
+    // with a clear Swift error *before* vmlx aborts the whole process.
+
+    @Test("Missing sidecar on mxtq model throws a clear error")
+    func jangtq_missingSidecar_throws() throws {
+        let dir = try makeIsolatedDir()
+        try writeJangConfig(weightFormat: "mxtq", at: dir)
+        // Deliberately DO NOT create jangtq_runtime.safetensors.
+        #expect(throws: Error.self) {
+            try ModelRuntime.validateJANGTQSidecarIfRequired(at: dir, name: "MiniMax-JANGTQ")
+        }
+    }
+
+    @Test("Sidecar present on mxtq model passes")
+    func jangtq_sidecarPresent_passes() throws {
+        let dir = try makeIsolatedDir()
+        try writeJangConfig(weightFormat: "mxtq", at: dir)
+        try Data("dummy".utf8).write(to: dir.appendingPathComponent("jangtq_runtime.safetensors"))
+        // Should not throw.
+        try ModelRuntime.validateJANGTQSidecarIfRequired(at: dir, name: "MiniMax-JANGTQ-OK")
+    }
+
+    @Test("Non-JANGTQ jang_config is passed through (no sidecar required)")
+    func jangtq_nonMxtqFormat_passes() throws {
+        let dir = try makeIsolatedDir()
+        try writeJangConfig(weightFormat: "jang_v2", at: dir)
+        // No sidecar; should not throw because this isn't a JANGTQ/mxtq variant.
+        try ModelRuntime.validateJANGTQSidecarIfRequired(at: dir, name: "MiniMax-JANG")
+    }
+
+    @Test("Model with no jang_config.json is passed through")
+    func jangtq_noJangConfig_passes() throws {
+        let dir = try makeIsolatedDir()
+        // Plain HF model directory — no jang_config.json at all.
+        try ModelRuntime.validateJANGTQSidecarIfRequired(at: dir, name: "Gemma-vanilla")
+    }
+
+    // MARK: - Existing resolveLocalModelDirectory tests (below)
+
     @Test("Nonexistent path returns nil")
     func nonexistentReturnsNil() throws {
         let tmp = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
@@ -124,5 +169,21 @@ struct ModelRuntimeFindDirectoryTests {
         }
         try Data(#"{"model_type":"test"}"#.utf8).write(to: dir.appendingPathComponent("config.json"))
         try Data("dummy".utf8).write(to: dir.appendingPathComponent("model.safetensors"))
+    }
+
+    /// Ad-hoc isolated tmp directory for JANGTQ preflight tests — kept
+    /// separate from `makeRoot` because those tests also create an inner
+    /// `ORG/REPO` layout we don't need here.
+    private func makeIsolatedDir() throws -> URL {
+        let url = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("osaurus-jangtq-test-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }
+
+    /// Writes a minimal `jang_config.json` with a chosen `weight_format`.
+    private func writeJangConfig(weightFormat: String, at dir: URL) throws {
+        let json = #"{"weight_format":"\#(weightFormat)"}"#
+        try Data(json.utf8).write(to: dir.appendingPathComponent("jang_config.json"))
     }
 }

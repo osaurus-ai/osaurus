@@ -221,6 +221,17 @@ actor ModelRuntime {
         let probe = MLXModel(id: id, name: name, description: "", downloadURL: "")
         await ModelDownloadService.ensureComplete(for: probe, directory: localURL)
 
+        // Preflight: JANGTQ/TurboQuant variants need a `jangtq_runtime.safetensors`
+        // sidecar (signs + codebook arrays for the Metal kernels). vmlx's
+        // LLMModelFactory dispatches to the JANGTQ class strictly on
+        // `jang_config.json.weight_format == "mxtq"`, but the runtime cache is
+        // only populated when the sidecar file exists. If the config asks for
+        // JANGTQ and the sidecar is missing, vmlx reaches the first forward
+        // pass, hits a precondition in TurboQuantSwitchLinear, and abort()s
+        // the whole process — taking osaurus with it. Caught here so the user
+        // gets a clear error and the server stays up.
+        try Self.validateJANGTQSidecarIfRequired(at: localURL, name: name)
+
         let task = Task<SessionHolder, Error> {
             let tokenizerLoader = SwiftTransformersTokenizerLoader()
             let container = try await loadModelContainer(
@@ -721,6 +732,44 @@ actor ModelRuntime {
 
     private static func findLocalDirectory(forModelId id: String) -> URL? {
         return resolveLocalModelDirectory(forModelId: id, in: DirectoryPickerService.effectiveModelsDirectory())
+    }
+
+    /// Preflight check for JANGTQ-routed models. Reads `jang_config.json`
+    /// and, if `weight_format == "mxtq"`, verifies the `jangtq_runtime.safetensors`
+    /// sidecar is present in the model directory. Throws a clear error on
+    /// mismatch so callers see a message instead of vmlx's fatalError abort.
+    /// Exposed at module scope for unit testing (same pattern as
+    /// `resolveLocalModelDirectory`).
+    static func validateJANGTQSidecarIfRequired(at directory: URL, name: String) throws {
+        let jangConfigURL = directory.appendingPathComponent("jang_config.json")
+        // Non-JANG models have no jang_config.json — nothing to validate.
+        guard FileManager.default.fileExists(atPath: jangConfigURL.path) else { return }
+
+        // Only read the `weight_format` field; ignore anything else so format
+        // drift (new fields, missing optionals) doesn't break the preflight.
+        struct JangConfigProbe: Decodable {
+            let weight_format: String?
+        }
+        guard let data = try? Data(contentsOf: jangConfigURL),
+            let probe = try? JSONDecoder().decode(JangConfigProbe.self, from: data),
+            probe.weight_format == "mxtq"
+        else {
+            return
+        }
+
+        let sidecarURL = directory.appendingPathComponent("jangtq_runtime.safetensors")
+        guard !FileManager.default.fileExists(atPath: sidecarURL.path) else { return }
+
+        throw NSError(
+            domain: "ModelRuntime",
+            code: 2,
+            userInfo: [
+                NSLocalizedDescriptionKey:
+                    "Model '\(name)' declares JANGTQ (weight_format: \"mxtq\") but is missing "
+                    + "required sidecar file 'jangtq_runtime.safetensors'. "
+                    + "Re-download the full model or obtain the sidecar from the original publisher."
+            ]
+        )
     }
 
     /// Pure, testable sibling of `findLocalDirectory` that takes the root
