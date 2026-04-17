@@ -124,7 +124,8 @@ public actor WorkEngine {
         tools: [Tool],
         executionMode: WorkExecutionMode,
         cacheHint: String? = nil,
-        staticPrefix: String? = nil
+        staticPrefix: String? = nil,
+        modelOptions: [String: ModelOptionValue] = [:]
     ) async throws -> ExecutionResult {
         guard !isExecuting else {
             throw WorkEngineError.alreadyExecuting
@@ -142,7 +143,8 @@ public actor WorkEngine {
             executionMode: executionMode,
             attemptResume: true,
             cacheHint: cacheHint,
-            staticPrefix: staticPrefix
+            staticPrefix: staticPrefix,
+            modelOptions: modelOptions
         )
     }
 
@@ -343,7 +345,8 @@ public actor WorkEngine {
         images: [Data] = [],
         attemptResume: Bool = false,
         cacheHint: String? = nil,
-        staticPrefix: String? = nil
+        staticPrefix: String? = nil,
+        modelOptions: [String: ModelOptionValue] = [:]
     ) async throws -> ExecutionResult {
         isExecuting = true
         interruptRequested = false
@@ -450,6 +453,7 @@ public actor WorkEngine {
                 agentId: agentId,
                 cacheHint: agentCacheHint,
                 staticPrefix: agentStaticPrefix,
+                modelOptions: modelOptions,
                 shouldInterrupt: { await self.shouldInterruptExecution(for: issue.id) },
                 onIterationStart: { [weak self] iteration in
                     guard let self = self else { return }
@@ -869,7 +873,8 @@ public actor WorkEngine {
         executionMode: WorkExecutionMode,
         images: [Data] = [],
         cacheHint: String? = nil,
-        staticPrefix: String? = nil
+        staticPrefix: String? = nil,
+        modelOptions: [String: ModelOptionValue] = [:]
     ) async throws -> ExecutionResult {
         guard let issue = try IssueStore.getIssue(id: issueId) else {
             throw WorkEngineError.issueNotFound(issueId)
@@ -901,7 +906,8 @@ public actor WorkEngine {
                     images: images,
                     attemptResume: attempt > 0,
                     cacheHint: cacheHint,
-                    staticPrefix: staticPrefix
+                    staticPrefix: staticPrefix,
+                    modelOptions: modelOptions
                 )
 
                 // Success - clear any error state
