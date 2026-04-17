@@ -232,6 +232,15 @@ actor ModelRuntime {
         // gets a clear error and the server stays up.
         try Self.validateJANGTQSidecarIfRequired(at: localURL, name: name)
 
+        // Resolve the JANG capability stamp (if any) and log the detection
+        // source exactly once per cold load. The result is cached inside the
+        // resolver; `StreamingDeltaProcessor` picks it up per-session without
+        // this `actor` having to forward it down four call layers.
+        let resolution = JANGReasoningResolver.resolve(modelKey: name, directory: localURL)
+        genLog.info(
+            "loadContainer: parser detection_source_reasoning=\(resolution.reasoningSource.rawValue, privacy: .public) detection_source_tool=\(resolution.toolCallSource.rawValue, privacy: .public) hasReasoningParser=\(resolution.reasoningParser != nil, privacy: .public) toolFormat=\(resolution.toolCallFormat?.rawValue ?? "none", privacy: .public) model=\(name, privacy: .public)"
+        )
+
         let task = Task<SessionHolder, Error> {
             let tokenizerLoader = SwiftTransformersTokenizerLoader()
             let container = try await loadModelContainer(

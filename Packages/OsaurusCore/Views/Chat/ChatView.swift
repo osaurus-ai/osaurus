@@ -8,6 +8,7 @@
 import AppKit
 import Combine
 import LocalAuthentication
+@preconcurrency import MLXLMCommon
 import SwiftUI
 
 @MainActor
@@ -1005,10 +1006,28 @@ final class ChatSession: ObservableObject {
                         // (which is after cancellation / teardown).
                         var lastDeltaTime: Date?
 
+                        // Resolve vmlx's streaming reasoning parser if this
+                        // model is JANG-stamped AND thinking is enabled. Non-
+                        // stamped models keep osaurus's in-house `<think>`
+                        // scanner. Thinking-disabled sessions also fall back
+                        // to the in-house path so a rogue model that ignores
+                        // `enable_thinking: false` still gets routed via the
+                        // retroactive-thinking path instead of being shunted
+                        // straight into the (hidden) think pane.
+                        let vmlxParser: ReasoningParser? = {
+                            let disabled = activeModelOptions["disableThinking"]?.boolValue == true
+                            guard !disabled, let model = selectedModel else { return nil }
+                            guard let resolution = JANGReasoningResolver.resolve(modelKey: model) else {
+                                return nil
+                            }
+                            return resolution.isStamped ? resolution.reasoningParser : nil
+                        }()
+
                         var processor = StreamingDeltaProcessor(
                             turn: assistantTurn,
                             modelId: selectedModel ?? "default",
-                            modelOptions: activeModelOptions
+                            modelOptions: activeModelOptions,
+                            vmlxReasoningParser: vmlxParser
                         ) { [weak self] in
                             // rebuildVisibleBlocks mutates @Published properties which already
                             // emit objectWillChange — the extra send() below is redundant.

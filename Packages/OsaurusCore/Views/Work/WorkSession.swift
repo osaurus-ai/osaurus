@@ -8,6 +8,7 @@
 
 @preconcurrency import Combine
 import Foundation
+@preconcurrency import MLXLMCommon
 import SwiftUI
 
 // MARK: - Work Activity Events (for background toast mini-log)
@@ -1370,9 +1371,23 @@ extension WorkSession: WorkEngineDelegate {
 
         selectedIssueId = issue.id
 
-        // Initialize streaming processor with the assistant turn
+        // Initialize streaming processor with the assistant turn.
+        // For JANG-stamped models, fetch the vmlx reasoning parser so
+        // Work-mode streaming routes reasoning via the centralised parser
+        // exactly like Chat mode does.
         let turn = lastAssistantTurn()
-        deltaProcessor = StreamingDeltaProcessor(turn: turn, modelId: selectedModel ?? "default") { [weak self] in
+        let resolvedParser: ReasoningParser? = {
+            guard let model = selectedModel,
+                let resolution = JANGReasoningResolver.resolve(modelKey: model),
+                resolution.isStamped
+            else { return nil }
+            return resolution.reasoningParser
+        }()
+        deltaProcessor = StreamingDeltaProcessor(
+            turn: turn,
+            modelId: selectedModel ?? "default",
+            vmlxReasoningParser: resolvedParser
+        ) { [weak self] in
             self?.notifyIfSelected(self?.activeIssue?.id)
         }
 

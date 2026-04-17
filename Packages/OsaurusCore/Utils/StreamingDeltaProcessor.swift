@@ -8,6 +8,7 @@
 //
 
 import Foundation
+@preconcurrency import MLXLMCommon
 
 /// Processes streaming LLM deltas into a ChatTurn with buffering,
 /// thinking tag parsing, and throttled UI updates.
@@ -36,6 +37,14 @@ final class StreamingDeltaProcessor {
     private var isInsideThinking = false
     private var pendingTagBuffer = ""
 
+    /// vmlx-provided reasoning parser. Set when the active model is
+    /// JANG-stamped (the JANG converter emits a `capabilities.reasoning_parser`
+    /// field that `ParserResolution.reasoning` maps to a concrete parser).
+    /// When non-nil, we route through `feed`/`flush` instead of the in-house
+    /// `<think>` tag scanner below. Non-JANG models keep the old scanner so
+    /// their behaviour is untouched by this change.
+    private var vmlxReasoningParser: ReasoningParser?
+
     /// Adaptive flush tuning — tracked lengths avoid calling String.count on large buffers
     private var contentLength = 0
     private var thinkingLength = 0
@@ -56,6 +65,7 @@ final class StreamingDeltaProcessor {
         turn: ChatTurn,
         modelId: String = "",
         modelOptions: [String: ModelOptionValue] = [:],
+        vmlxReasoningParser: ReasoningParser? = nil,
         onSync: (() -> Void)? = nil
     ) {
         self.turn = turn
@@ -63,6 +73,11 @@ final class StreamingDeltaProcessor {
         self.modelOptions = modelOptions
         self.onSync = onSync
         self.middleware = StreamingMiddlewareResolver.resolve(for: modelId, modelOptions: modelOptions)
+        // Non-nil only when the caller resolved a JANG-stamped model AND
+        // the user hasn't toggled thinking off — see callers in ChatView /
+        // WorkSession. When non-nil, `parseAndRoute` defers to vmlx's
+        // parser instead of the in-house `<think>` scanner.
+        self.vmlxReasoningParser = vmlxReasoningParser
     }
 
     // MARK: - Public API
@@ -110,11 +125,43 @@ final class StreamingDeltaProcessor {
         pendingTagBuffer = ""
         deltaBuffer = ""
 
-        parseAndRoute(&textToProcess)
+        // JANG-stamped models: delegate reasoning segmentation to vmlx's
+        // `ReasoningParser` instead of the in-house scanner below. vmlx is
+        // the authoritative source on which tags each family uses, and
+        // keeping the logic in one place prevents osaurus and vmlx from
+        // disagreeing on partial-tag handling for new families.
+        if vmlxReasoningParser != nil {
+            feedThroughVMLXParser(&textToProcess)
+        } else {
+            parseAndRoute(&textToProcess)
+        }
 
         lastFlushTime = Date()
         let flushMs = lastFlushTime.timeIntervalSince(flushStart) * 1000
         if flushMs > longestFlushMs { longestFlushMs = flushMs }
+    }
+
+    /// Drains `text` through the vmlx reasoning parser, appending each
+    /// segment to the correct channel on the turn. `text` is consumed.
+    private func feedThroughVMLXParser(_ text: inout String) {
+        guard var parser = vmlxReasoningParser else {
+            appendContent(text)
+            text = ""
+            return
+        }
+        let segments = parser.feed(text)
+        vmlxReasoningParser = parser  // value type — write back
+        text = ""
+        for segment in segments {
+            switch segment {
+            case .content(let s):
+                appendContent(s)
+                isInsideThinking = false
+            case .reasoning(let s):
+                appendThinking(s)
+                isInsideThinking = true
+            }
+        }
     }
 
     /// Finalize streaming: drain remaining buffers and partial tags, sync to UI.
@@ -126,22 +173,40 @@ final class StreamingDeltaProcessor {
             pendingTagBuffer = ""
             deltaBuffer = ""
 
-            // If the stream ended on an unresolved partial `<think` or
-            // `</think` fragment, drop it rather than leaking literal tag
-            // characters into user-visible content — the completing byte
-            // never arrived.
-            let lowered = remaining.lowercased()
-            if let partial = Self.closePartials.first(where: { lowered.hasSuffix($0) })
-                ?? Self.openPartials.first(where: { lowered.hasSuffix($0) })
-            {
-                remaining = String(remaining.dropLast(partial.count))
-            }
+            if vmlxReasoningParser != nil {
+                // Push whatever's left through feed, then flush once so the
+                // parser's internal hold-back buffer emits. Anything still
+                // buffered at flush time is routed to the current-mode
+                // channel by `ReasoningParser.flush` itself.
+                feedThroughVMLXParser(&remaining)
+                if var parser = vmlxReasoningParser {
+                    let segments = parser.flush()
+                    vmlxReasoningParser = parser
+                    for segment in segments {
+                        switch segment {
+                        case .content(let s):    appendContent(s)
+                        case .reasoning(let s):  appendThinking(s)
+                        }
+                    }
+                }
+            } else {
+                // If the stream ended on an unresolved partial `<think` or
+                // `</think` fragment, drop it rather than leaking literal
+                // tag characters into user-visible content — the completing
+                // byte never arrived.
+                let lowered = remaining.lowercased()
+                if let partial = Self.closePartials.first(where: { lowered.hasSuffix($0) })
+                    ?? Self.openPartials.first(where: { lowered.hasSuffix($0) })
+                {
+                    remaining = String(remaining.dropLast(partial.count))
+                }
 
-            if !remaining.isEmpty {
-                if isInsideThinking {
-                    appendThinking(remaining)
-                } else {
-                    appendContent(remaining)
+                if !remaining.isEmpty {
+                    if isInsideThinking {
+                        appendThinking(remaining)
+                    } else {
+                        appendContent(remaining)
+                    }
                 }
             }
         }
@@ -166,6 +231,12 @@ final class StreamingDeltaProcessor {
         lastFlushTime = Date()
         syncCount = 0
         middleware = StreamingMiddlewareResolver.resolve(for: modelId, modelOptions: modelOptions)
+        // Fresh parser buffer per turn — the old one may have held back a
+        // partial `<think` prefix at the end of the previous turn that
+        // would otherwise splice into the next turn's opening bytes.
+        if vmlxReasoningParser != nil {
+            vmlxReasoningParser = ReasoningParser()
+        }
     }
 
     // MARK: - Private
