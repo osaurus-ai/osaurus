@@ -587,25 +587,57 @@ func parseBlocks(_ input: String) -> [MessageBlock] {
             continue
         }
 
-        // Table detection: | header | header | followed by | --- | --- |
-        if trimmed.hasPrefix("|"), i + 1 < lines.count {
-            let nextLine = lines[i + 1].trimmingWhitespace()
-            if isTableSeparatorLine(nextLine) {
+        // Table detection: pipe-delimited header followed by a separator-ish row
+        // or at minimum another pipe-delimited row. Tolerate blank lines between
+        // rows and malformed separators (some small models emit `| :/| :---/|`).
+        if trimmed.hasPrefix("|"), pipeCount(trimmed) >= 2 {
+            var nextIdx: Int? = nil
+            var j = i + 1
+            while j < lines.count {
+                let lt = lines[j].trimmingWhitespace()
+                if lt.isEmpty {
+                    j += 1
+                    continue
+                }
+                if lt.hasPrefix("|") && pipeCount(lt) >= 2 {
+                    nextIdx = j
+                }
+                break
+            }
+
+            if let ni = nextIdx {
                 flushParagraph()
                 flushBlockquote()
                 flushList()
 
-                // Parse headers from the current line
                 let headers = parseTableRow(trimmed)
 
-                // Skip the separator line
-                i += 2
+                // If the next line looks like a separator, skip it. Otherwise treat
+                // it as the first data row (headerless/separatorless tables).
+                var start = ni
+                let nextLine = lines[ni].trimmingWhitespace()
+                if isTableSeparatorLine(nextLine) || looksLikeSeparatorRow(nextLine) {
+                    start = ni + 1
+                }
 
-                // Parse data rows
                 var rows: [[String]] = []
+                i = start
                 while i < lines.count {
                     let rowLine = lines[i].trimmingWhitespace()
+                    if rowLine.isEmpty {
+                        var k = i + 1
+                        while k < lines.count, lines[k].trimmingWhitespace().isEmpty { k += 1 }
+                        if k < lines.count, lines[k].trimmingWhitespace().hasPrefix("|") {
+                            i = k
+                            continue
+                        }
+                        break
+                    }
                     if rowLine.hasPrefix("|") {
+                        if isTableSeparatorLine(rowLine) || looksLikeSeparatorRow(rowLine) {
+                            i += 1
+                            continue
+                        }
                         rows.append(parseTableRow(rowLine))
                         i += 1
                     } else {
@@ -815,6 +847,28 @@ private func isTableSeparatorLine(_ line: Substring) -> Bool {
 
     // Must have at least one dash
     return line.contains("-")
+}
+
+/// Loose separator detection — catches malformed separators that some small models emit
+/// (e.g., `| :/| :---/|`). Accepts any pipe-delimited row with no letters/digits and
+/// at least one `-` or `:`.
+@inline(__always)
+private func looksLikeSeparatorRow(_ line: Substring) -> Bool {
+    guard line.hasPrefix("|") else { return false }
+    var hasMarker = false
+    for char in line {
+        if char.isLetter || char.isNumber { return false }
+        if char == "-" || char == ":" { hasMarker = true }
+    }
+    return hasMarker
+}
+
+/// Count of `|` characters in a line — used to detect multi-column pipe-delimited rows.
+@inline(__always)
+private func pipeCount(_ line: Substring) -> Int {
+    var n = 0
+    for char in line where char == "|" { n += 1 }
+    return n
 }
 
 /// Parse a table row into cells

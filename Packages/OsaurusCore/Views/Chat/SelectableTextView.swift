@@ -404,65 +404,140 @@ struct SelectableTextView: NSViewRepresentable {
             return hrAttr
 
         case .table(let headers, let rows):
-            let tableText = renderTableAsText(headers: headers, rows: rows)
-            let tableAttr = NSMutableAttributedString(
-                string: tableText,
-                attributes: [
-                    .font: cachedMonoFont(size: bodyFontSize * 0.85, weight: .regular),
-                    .foregroundColor: NSColor(theme.primaryText),
-                ]
+            return renderTable(
+                headers: headers,
+                rows: rows,
+                bodyFontSize: bodyFontSize,
+                spacingBefore: spacing
             )
-            let style = NSMutableParagraphStyle()
-            style.lineSpacing = 2
-            style.paragraphSpacingBefore = spacing
-            tableAttr.addAttribute(.paragraphStyle, value: style, range: NSRange(location: 0, length: tableAttr.length))
-
-            // Bold header row
-            if let firstNewline = tableText.firstIndex(of: "\n") {
-                let headerLength = tableText.distance(from: tableText.startIndex, to: firstNewline)
-                tableAttr.addAttribute(
-                    .font,
-                    value: cachedMonoFont(size: bodyFontSize * 0.85, weight: .semibold),
-                    range: NSRange(location: 0, length: headerLength)
-                )
-            }
-            return tableAttr
         }
     }
 
-    /// Render a markdown table as aligned monospace text
-    private func renderTableAsText(headers: [String], rows: [[String]]) -> String {
-        // Calculate column widths
-        var colWidths = headers.map { $0.count }
-        for row in rows {
-            for (i, cell) in row.enumerated() where i < colWidths.count {
-                colWidths[i] = max(colWidths[i], cell.count)
+    /// Render a markdown table as an attributed string with inline markdown per cell
+    /// and tab-stop-based column alignment.
+    /// - Header row is rendered with semibold weight.
+    /// - `**bold**` and other inline syntax in cells render as formatted text, not literal.
+    /// - Long cells are capped at `maxColumnWidth` (truncated with ellipsis) so the
+    ///   wrapped line never bleeds into the next column's tab stop.
+    private func renderTable(
+        headers: [String],
+        rows: [[String]],
+        bodyFontSize: CGFloat,
+        spacingBefore: CGFloat
+    ) -> NSMutableAttributedString {
+        let fontSize = bodyFontSize * 0.95
+        let columnGap: CGFloat = 16
+        let maxColumnWidth: CGFloat = 280
+
+        let columnCount = max(headers.count, rows.map(\.count).max() ?? 0)
+        guard columnCount > 0 else {
+            return NSMutableAttributedString(string: "")
+        }
+
+        // Render each cell (with inline markdown) into an attributed string.
+        // Header cells use semibold weight.
+        let headerCells: [NSMutableAttributedString] = (0 ..< columnCount).map { i in
+            let text = i < headers.count ? headers[i] : ""
+            return renderInlineMarkdown(text, fontSize: fontSize, weight: .semibold)
+        }
+        let bodyCells: [[NSMutableAttributedString]] = rows.map { row in
+            (0 ..< columnCount).map { i in
+                let text = i < row.count ? row[i] : ""
+                return renderInlineMarkdown(text, fontSize: fontSize, weight: .regular)
             }
         }
 
-        func padCell(_ text: String, width: Int) -> String {
-            text + String(repeating: " ", count: max(0, width - text.count))
+        // Cap each cell's rendered width by truncating underlying text with an ellipsis.
+        func capWidth(_ cell: NSMutableAttributedString) -> NSMutableAttributedString {
+            if cell.size().width <= maxColumnWidth { return cell }
+            let ellipsisAttr = cell.length > 0
+                ? cell.attributes(at: max(cell.length - 1, 0), effectiveRange: nil)
+                : [:]
+            // drop characters from the end until the measured width + "…" fits
+            let mutable = NSMutableAttributedString(attributedString: cell)
+            while mutable.length > 0 {
+                let ellipsis = NSAttributedString(string: "…", attributes: ellipsisAttr)
+                let probe = NSMutableAttributedString(attributedString: mutable)
+                probe.append(ellipsis)
+                if probe.size().width <= maxColumnWidth {
+                    mutable.append(ellipsis)
+                    return mutable
+                }
+                mutable.deleteCharacters(in: NSRange(location: mutable.length - 1, length: 1))
+            }
+            return NSMutableAttributedString(string: "…", attributes: ellipsisAttr)
         }
 
-        var lines: [String] = []
+        let cappedHeaders = headerCells.map(capWidth)
+        let cappedRows = bodyCells.map { $0.map(capWidth) }
 
-        // Header
-        let headerLine = headers.enumerated().map { i, h in padCell(h, width: colWidths[i]) }.joined(separator: "  ")
-        lines.append(headerLine)
+        // Column widths — max rendered width across header + rows, capped.
+        var colWidths: [CGFloat] = (0 ..< columnCount).map { i in
+            var w = cappedHeaders[i].size().width
+            for row in cappedRows where i < row.count {
+                w = max(w, row[i].size().width)
+            }
+            return min(ceil(w), maxColumnWidth)
+        }
+        // ensure non-zero widths so tab stops advance
+        colWidths = colWidths.map { max($0, 1) }
 
-        // Separator
-        let separator = colWidths.map { String(repeating: "\u{2500}", count: $0) }.joined(separator: "  ")
-        lines.append(separator)
-
-        // Rows
-        for row in rows {
-            let rowLine = row.enumerated().map { i, cell in
-                padCell(cell, width: i < colWidths.count ? colWidths[i] : cell.count)
-            }.joined(separator: "  ")
-            lines.append(rowLine)
+        // Tab stops: cumulative column starts (column i lands at tab stop i-1).
+        var tabStops: [NSTextTab] = []
+        var cursor: CGFloat = 0
+        for i in 0 ..< (columnCount - 1) {
+            cursor += colWidths[i] + columnGap
+            tabStops.append(NSTextTab(textAlignment: .left, location: cursor, options: [:]))
         }
 
-        return lines.joined(separator: "\n")
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.lineSpacing = 2
+        paragraphStyle.paragraphSpacingBefore = spacingBefore
+        paragraphStyle.tabStops = tabStops
+        paragraphStyle.defaultTabInterval = max(columnGap, 1)
+        paragraphStyle.lineBreakMode = .byTruncatingTail
+
+        let result = NSMutableAttributedString()
+
+        func appendRow(_ cells: [NSMutableAttributedString], isLast: Bool) {
+            for (i, cell) in cells.enumerated() {
+                result.append(cell)
+                if i < cells.count - 1 {
+                    result.append(NSAttributedString(string: "\t"))
+                }
+            }
+            if !isLast {
+                result.append(NSAttributedString(string: "\n"))
+            }
+        }
+
+        // Header row
+        appendRow(cappedHeaders, isLast: false)
+
+        // Separator — horizontal rule beneath headers
+        let separatorFont = cachedFont(size: fontSize * 0.5, weight: .ultraLight, italic: false)
+        let separatorWidth = (cursor + colWidths.last! )
+        let separator = NSMutableAttributedString(
+            string: String(repeating: "\u{2500}", count: max(Int(separatorWidth / (fontSize * 0.3)), 8)),
+            attributes: [
+                .font: separatorFont,
+                .foregroundColor: NSColor(theme.primaryBorder.opacity(0.5)),
+            ]
+        )
+        result.append(separator)
+        result.append(NSAttributedString(string: "\n"))
+
+        // Body rows
+        for (idx, row) in cappedRows.enumerated() {
+            appendRow(row, isLast: idx == cappedRows.count - 1)
+        }
+
+        result.addAttribute(
+            .paragraphStyle,
+            value: paragraphStyle,
+            range: NSRange(location: 0, length: result.length)
+        )
+        return result
     }
 
     // MARK: - Paragraph Style Helpers
