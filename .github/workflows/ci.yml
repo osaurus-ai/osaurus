@@ -112,31 +112,6 @@ jobs:
           # wall-clock cost of every hang for zero diagnostic gain. Both
           # are off by default — re-add only if you have a per-PR reason
           # and an exit plan.
-          #
-          # Why `-parallel-testing-enabled NO`: PR #881 run 24574829591
-          # had build complete cleanly, then xctest spawned two worker
-          # processes; one ran the 12 `@Suite(.serialized)` suites
-          # (including the MLX-heavy ones — MetalGateTests,
-          # BatchEngineAdapterTests, InferenceSchedulerTests) and passed
-          # all 57 tests. The OTHER worker tried to run the remaining
-          # ~80 unserialized suites (SQLite, crypto, search — none of
-          # them MLX-related) in parallel and SIGSEGV'd before any test
-          # body executed. xcresult logged 641 tests as "Test crashed
-          # with signal segv." and `XCTHTestOperationCoordinatorErrorDomain
-          # code 5` (worker connection lost), with no stack trace because
-          # the crash happened in worker bootstrap before xctest's
-          # diagnostic handlers attached.
-          #
-          # The runner is `Apple Virtual Machine 1` (virtualized macOS),
-          # which has a known history of flakiness when many tests
-          # concurrently touch shared system resources (SQLite handles,
-          # Keychain, Security framework, Bonjour discovery). Single-
-          # worker serial execution is the cheapest reliable workaround
-          # — adds ~2-5 min runtime, well within the 30-min budget.
-          # The underlying race is still a real bug worth fixing, but it
-          # only affects this particular VM-on-runner profile and is not
-          # CI-blocking; tracked separately. If you remove this flag,
-          # you OWN re-diagnosing the SIGSEGV.
           xcodebuild test \
             -workspace "$WORKSPACE" \
             -scheme OsaurusCoreTests \
@@ -146,7 +121,6 @@ jobs:
             -skipPackagePluginValidation \
             -skipMacroValidation \
             -enableCodeCoverage NO \
-            -parallel-testing-enabled NO \
             -test-timeouts-enabled YES \
             -default-test-execution-time-allowance 60 \
             -maximum-test-execution-time-allowance 120 \

@@ -23,7 +23,20 @@ struct ModelProfileRegistryTests {
     @Test("Qwen 3.5 matches QwenThinkingProfile and exposes disableThinking toggle")
     func qwen3_5() {
         let profile = ModelProfileRegistry.profile(for: "qwen3.5-35b-a3b-4bit")
-        #expect(profile != nil)
+        // Bind the boolean to a local `let` before `#expect` sees it.
+        // Direct `#expect(profile != nil)` makes the macro reflect on the
+        // operand type for diagnostic capture — and the operand here is
+        // `(any ModelProfile.Type)?`, an *optional protocol existential
+        // metatype*. Reflecting that through Swift Testing's `Expression.
+        // captureValue` walks the existential's witness-table set and
+        // segfaults on the GitHub Actions `Apple Virtual Machine 1`
+        // macOS 15.7.4 ARM64e runner (worked locally on dev Macs).
+        // Reproducer:
+        // https://github.com/osaurus-ai/osaurus/actions/runs/24576426664/job/71862829833
+        // Binding to `Bool` first makes the macro reflect on `Bool`, which
+        // is safe.
+        let hasProfile = profile != nil
+        #expect(hasProfile, "QwenThinkingProfile should match `qwen3.5-*` ids")
         #expect(profile?.displayName == QwenThinkingProfile.displayName)
         #expect(profile?.thinkingOption?.id == "disableThinking")
         #expect(profile?.thinkingOption?.inverted == true)
@@ -55,13 +68,19 @@ struct ModelProfileRegistryTests {
         // Qwen3-Coder is non-thinking only; registering the toggle
         // would show users a control that silently does nothing.
         let profile = ModelProfileRegistry.profile(for: "qwen3-coder-plus")
-        #expect(profile == nil || profile?.thinkingOption == nil)
+        // See `qwen3_5()` for why the boolean is bound to a local first
+        // instead of being inlined into `#expect(...)`.
+        let hasNoThinkingToggle = profile == nil || profile?.thinkingOption == nil
+        #expect(hasNoThinkingToggle, "Qwen3-Coder is non-thinking; toggle would silently no-op")
     }
 
     @Test("Foundation (Apple built-in) does not match any thinking profile")
     func foundation_noProfile() {
         let profile = ModelProfileRegistry.profile(for: "foundation")
-        #expect(profile == nil)
+        // See `qwen3_5()` for why the boolean is bound to a local first
+        // instead of being inlined into `#expect(...)`.
+        let hasNoProfile = profile == nil
+        #expect(hasNoProfile, "`foundation` is Apple's built-in model and has no MLX/HF profile")
     }
 
     @Test("Non-reasoning Gemma variants do not get a thinking toggle")
