@@ -184,8 +184,8 @@ final class StreamingDeltaProcessor {
                     vmlxReasoningParser = parser
                     for segment in segments {
                         switch segment {
-                        case .content(let s):    appendContent(s)
-                        case .reasoning(let s):  appendThinking(s)
+                        case .content(let s): appendContent(s)
+                        case .reasoning(let s): appendThinking(s)
                         }
                     }
                 }

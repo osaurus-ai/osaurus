@@ -253,6 +253,7 @@ The Server Explorer requires the server to be running. If endpoints show as disa
 
 ## Related Documentation
 
+- [Inference Runtime](INFERENCE_RUNTIME.md) — Scheduler, model leases, BatchEngine, and feature flags for tuning the runtime without rebuilding
 - [OpenAI API Guide](OpenAI_API_GUIDE.md) — API usage and examples
 - [FEATURES.md](FEATURES.md) — Feature inventory
 - [README](../README.md) — Quick start guide

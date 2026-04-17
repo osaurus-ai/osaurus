@@ -17,6 +17,17 @@ import os.log
 private let engineLog = Logger(subsystem: "ai.osaurus", category: "Generation")
 private let engineSignposter = OSSignposter(subsystem: "ai.osaurus", category: "Generation")
 
+/// Result tuple produced by `MLXGenerationEngine.prepareAndGenerate`. Lifted
+/// to module scope so callers (`ModelRuntime`, `BatchEngineAdapter`) can refer
+/// to it by name instead of repeating the long inline tuple type.
+typealias MLXGenerationEngineResult = (
+    stream: AsyncStream<MLXLMCommon.TokenGeneration>,
+    tokenizer: any Tokenizer,
+    promptTokens: [Int],
+    genTask: Task<Void, Never>,
+    toolCallFormat: ToolCallFormat
+)
+
 struct MLXGenerationEngine {
 
     private static let maxImageSize = CGSize(width: 1024, height: 1024)
@@ -53,13 +64,7 @@ struct MLXGenerationEngine {
         generation: GenerationParameters,
         runtime: RuntimeConfig,
         wiredMemoryTicket: WiredMemoryTicket?
-    ) async throws -> (
-        stream: AsyncStream<MLXLMCommon.TokenGeneration>,
-        tokenizer: any Tokenizer,
-        promptTokens: [Int],
-        genTask: Task<Void, Never>,
-        toolCallFormat: ToolCallFormat
-    ) {
+    ) async throws -> MLXGenerationEngineResult {
         let spState = engineSignposter.beginInterval("prepareAndGenerate", id: engineSignposter.makeSignpostID())
         let t0 = CFAbsoluteTimeGetCurrent()
         defer { engineSignposter.endInterval("prepareAndGenerate", spState) }

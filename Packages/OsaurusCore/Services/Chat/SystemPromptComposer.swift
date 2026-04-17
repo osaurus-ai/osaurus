@@ -291,7 +291,11 @@ public struct SystemPromptComposer: Sendable {
         // keep the mac app responsive during HTTP API requests
         var composer = await MainActor.run { forChat(agentId: agentId, executionMode: .none) }
         let toolsOff = await AgentManager.shared.effectiveToolsDisabled(for: agentId)
-        await composer.appendMemory(agentId: agentId.uuidString, query: query.isEmpty ? nil : query, toolsAvailable: !toolsOff)
+        await composer.appendMemory(
+            agentId: agentId.uuidString,
+            query: query.isEmpty ? nil : query,
+            toolsAvailable: !toolsOff
+        )
         let manifest = composer.manifest()
         let rendered = composer.render()
         debugLog("[Context:inject] \(manifest.debugDescription)")
@@ -382,7 +386,7 @@ public struct SystemPromptComposer: Sendable {
             .static(
                 id: "workMode",
                 label: "Work Mode",
-                content: SystemPromptTemplates.workMode(variant)
+                content: SystemPromptTemplates.workMode(variant, hasSandbox: executionMode.usesSandboxTools)
             )
         )
         if case .sandbox = executionMode {

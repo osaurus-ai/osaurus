@@ -450,7 +450,8 @@ struct SelectableTextView: NSViewRepresentable {
         // Cap each cell's rendered width by truncating underlying text with an ellipsis.
         func capWidth(_ cell: NSMutableAttributedString) -> NSMutableAttributedString {
             if cell.size().width <= maxColumnWidth { return cell }
-            let ellipsisAttr = cell.length > 0
+            let ellipsisAttr =
+                cell.length > 0
                 ? cell.attributes(at: max(cell.length - 1, 0), effectiveRange: nil)
                 : [:]
             // drop characters from the end until the measured width + "…" fits
@@ -516,7 +517,7 @@ struct SelectableTextView: NSViewRepresentable {
 
         // Separator — horizontal rule beneath headers
         let separatorFont = cachedFont(size: fontSize * 0.5, weight: .ultraLight, italic: false)
-        let separatorWidth = (cursor + colWidths.last! )
+        let separatorWidth = (cursor + colWidths.last!)
         let separator = NSMutableAttributedString(
             string: String(repeating: "\u{2500}", count: max(Int(separatorWidth / (fontSize * 0.3)), 8)),
             attributes: [

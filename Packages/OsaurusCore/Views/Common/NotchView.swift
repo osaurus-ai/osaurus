@@ -478,6 +478,10 @@ struct NotchView: View {
                 .font(.system(size: 11, weight: .medium))
                 .foregroundColor(notchSecondaryText)
             if hasActivityItems { expandedActivityFeed(task: task) }
+
+            notchActionButton(task.mode == .chat ? "View Chat" : "View Details") {
+                BackgroundTaskManager.shared.openTaskWindow(task.id)
+            }
         }
     }
 
