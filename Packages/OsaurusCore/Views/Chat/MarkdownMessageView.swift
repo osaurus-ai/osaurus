@@ -214,8 +214,48 @@ private struct MemoizedMarkdownView: View {
 
             case .math(let latex):
                 MathBlockView(latex: latex, baseWidth: baseWidth)
+
+            case .table(let headers, let rows):
+                MarkdownTableBlockView(headers: headers, rows: rows, baseWidth: baseWidth)
             }
         }
+    }
+}
+
+// MARK: - Markdown Table (SwiftUI wrapper around NativeMarkdownTableView)
+
+struct MarkdownTableBlockView: View {
+    let headers: [String]
+    let rows: [[String]]
+    let baseWidth: CGFloat
+
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        MarkdownTableRepresentable(
+            headers: headers,
+            rows: rows,
+            width: baseWidth,
+            theme: theme
+        )
+        .frame(maxWidth: baseWidth, alignment: .leading)
+    }
+}
+
+private struct MarkdownTableRepresentable: NSViewRepresentable {
+    let headers: [String]
+    let rows: [[String]]
+    let width: CGFloat
+    let theme: any ThemeProtocol
+
+    func makeNSView(context: Context) -> NativeMarkdownTableView {
+        let v = NativeMarkdownTableView()
+        v.configure(headers: headers, rows: rows, width: width, theme: theme)
+        return v
+    }
+
+    func updateNSView(_ nsView: NativeMarkdownTableView, context: Context) {
+        nsView.configure(headers: headers, rows: rows, width: width, theme: theme)
     }
 }
 
@@ -228,6 +268,7 @@ struct ContentSegment: Identifiable {
         case codeBlock(code: String, language: String?)
         case image(url: String, altText: String)
         case math(latex: String)
+        case table(headers: [String], rows: [[String]])
     }
 
     let id: String
@@ -336,8 +377,18 @@ func groupBlocksIntoSegments(_ blocks: [MessageBlock]) -> [ContentSegment] {
             currentTextBlocks.append(.horizontalRule)
 
         case .table(let headers, let rows):
-            // Keep tables inline in the text group for continuous selection
-            currentTextBlocks.append(.table(headers: headers, rows: rows))
+            // Render tables as their own grid segment — inline monospace-padded layout
+            // can't wrap multi-line cells without breaking column alignment.
+            flushTextGroup()
+            let spacing = segments.isEmpty ? 0 : imageSpacing
+            segments.append(
+                ContentSegment(
+                    id: "table-\(segmentIndex)",
+                    kind: .table(headers: headers, rows: rows),
+                    spacingBefore: spacing
+                )
+            )
+            segmentIndex += 1
 
         case .math(let latex):
             flushTextGroup()
