@@ -163,7 +163,19 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v5
 
+      # OsaurusCLI's Package.swift requires `swift-tools-version: 6.2`, which
+      # ships with Xcode 26.3. The runner's default `swift` may be older
+      # (currently 6.1), so point xcrun at the pinned Xcode for these steps.
+      # GitHub Actions doesn't let job-level `env:` reference workflow-level
+      # `env:`, so keep XCODE_VERSION in sync here if it ever changes.
+      - name: Verify Swift toolchain
+        env:
+          DEVELOPER_DIR: /Applications/Xcode_${{ env.XCODE_VERSION }}.app/Contents/Developer
+        run: swift --version
+
       - name: Run CLI tests
+        env:
+          DEVELOPER_DIR: /Applications/Xcode_${{ env.XCODE_VERSION }}.app/Contents/Developer
         run: swift test --package-path Packages/OsaurusCLI --parallel
 
       - name: Annotate timing
