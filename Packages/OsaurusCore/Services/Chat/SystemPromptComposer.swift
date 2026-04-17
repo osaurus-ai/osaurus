@@ -290,7 +290,7 @@ public struct SystemPromptComposer: Sendable {
         // appendMemory (memory search + embeddings) then runs on the cooperative thread pool to
         // keep the mac app responsive during HTTP API requests
         var composer = await MainActor.run { forChat(agentId: agentId, executionMode: .none) }
-        let toolsOff = AgentManager.shared.effectiveToolsDisabled(for: agentId)
+        let toolsOff = await AgentManager.shared.effectiveToolsDisabled(for: agentId)
         await composer.appendMemory(agentId: agentId.uuidString, query: query.isEmpty ? nil : query, toolsAvailable: !toolsOff)
         let manifest = composer.manifest()
         let rendered = composer.render()
