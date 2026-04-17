@@ -18,15 +18,6 @@ import os.log
 
 private let genLog = Logger(subsystem: "com.dinoki.osaurus", category: "Generation")
 
-// Force-link both trampolines so ModelFactoryRegistry discovers them at runtime.
-// `loadModelContainer` iterates factories in order — without touching each
-// `.shared` the trampoline's static initializer may never run, and a model
-// that isn't a VLM (e.g. MiniMax, Qwen, DeepSeek LLMs) would see the VLM
-// factory fail its `unsupportedModelType` check and then find no LLM factory
-// registered to take over, leaving the load hung or throwing silently.
-private let _vlmFactory = MLXVLM.VLMModelFactory.shared
-private let _llmFactory = MLXLLM.LLMModelFactory.shared
-
 actor ModelRuntime {
     // MARK: - Types
 
@@ -57,6 +48,55 @@ actor ModelRuntime {
     // MARK: - Singleton
 
     static let shared = ModelRuntime()
+
+    // MARK: - Lazy MLX factory force-link
+    //
+    // `loadModelContainer` iterates `ModelFactoryRegistry.shared` looking for
+    // a factory that claims the model's `model_type`. The two `.shared`
+    // singletons below register `MLXVLM`/`MLXLLM` factories with the registry
+    // as a side-effect of their initializers — without touching them, a
+    // non-VLM model (MiniMax, Qwen, DeepSeek) goes through the VLM factory
+    // first, fails the `unsupportedModelType` check, then finds no LLM
+    // factory registered and the load throws or hangs.
+    //
+    // Why this lives as a `static let Void` on the actor instead of two
+    // file-scope `private let`s as before:
+    //
+    // 1. Touching either `MLXVLM.VLMModelFactory.shared` or
+    //    `MLXLLM.LLMModelFactory.shared` transitively pulls in every model
+    //    file vmlx links in (the new `Qwen35JANGTQ.swift` in
+    //    vmlx-swift-lm c101739 has a file-level
+    //    `let qwen35JANGTQCompiledSigmoidGate = { … MLX.compile(…) }()`
+    //    that calls into MLX's Metal JIT). On the GitHub Actions
+    //    `macos-latest` runner that compile step never returns — which is
+    //    what was producing the 70-minute "test bundle silent" hang in
+    //    PR #878 (run 24563175247).
+    // 2. The pure-filesystem helpers `resolveLocalModelDirectory(forModelId:in:)`
+    //    and `validateJANGTQSidecarIfRequired(at:name:)` (covered by
+    //    `ModelRuntimeFindDirectoryTests`) live in this file. As file-scope
+    //    `let`s, the force-link initializers were liable to evaluate the
+    //    first time *anything* in this file ran, which dragged MLX into
+    //    every test that exercised those helpers.
+    // 3. As a `static let Void` on the actor, evaluation only happens when
+    //    we explicitly write `_ = Self._registerFactoriesOnce` — which we
+    //    do exactly once, inside `loadContainer`, right before the
+    //    `loadModelContainer` call that actually needs the registry.
+    private static let _registerFactoriesOnce: Void = {
+        _ = MLXVLM.VLMModelFactory.shared
+        _ = MLXLLM.LLMModelFactory.shared
+        _factoriesRegisteredHookCount &+= 1
+    }()
+
+    /// Test-only odometer that ticks the first (and only) time
+    /// `_registerFactoriesOnce` evaluates. Callers in production code MUST
+    /// NOT read this — it exists so `ModelRuntimeFindDirectoryTests` can
+    /// pin the invariant that the pure-filesystem helpers
+    /// (`resolveLocalModelDirectory`, `validateJANGTQSidecarIfRequired`)
+    /// do not transitively pull in `MLXVLM`/`MLXLLM` factories.
+    /// `nonisolated(unsafe)` because the Swift `Once` machinery already
+    /// guarantees single-writer semantics; the test reads it from any
+    /// thread.
+    nonisolated(unsafe) static var _factoriesRegisteredHookCount: Int = 0
 
     // MARK: - State
 
@@ -273,6 +313,11 @@ actor ModelRuntime {
         genLog.info(
             "loadContainer: parser detection_source_reasoning=\(resolution.reasoningSource.rawValue, privacy: .public) detection_source_tool=\(resolution.toolCallSource.rawValue, privacy: .public) hasReasoningParser=\(resolution.reasoningParser != nil, privacy: .public) toolFormat=\(resolution.toolCallFormat?.rawValue ?? "none", privacy: .public) model=\(name, privacy: .public)"
         )
+
+        // Force-link MLX VLM + LLM factories the first time we actually need
+        // them. See `_registerFactoriesOnce` for why this is gated behind a
+        // single explicit reference instead of a file-level `let`.
+        _ = Self._registerFactoriesOnce
 
         let task = Task<SessionHolder, Error> {
             let tokenizerLoader = SwiftTransformersTokenizerLoader()

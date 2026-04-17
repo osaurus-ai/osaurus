@@ -84,24 +84,35 @@ jobs:
           # We deliberately pass a dummy resultBundlePath check first because
           # xcodebuild refuses to overwrite an existing bundle.
           rm -rf "$XCRESULT_PATH"
+          # Per-test-case allowance (60s / 120s hard cap) is what surfaces a
+          # hung test BEFORE the 15-min job timeout — and crucially, surfaces
+          # it WITH A NAME ATTACHED in the xcresult bundle, which the failure
+          # summary step below relies on.
+          #
+          # Why no `--quiet` on xcbeautify and no `-test-iterations` here:
+          # both were band-aids that landed during PR #878's launch-hang
+          # incident. `--quiet` strips per-test "Started/Passed" lines so a
+          # hung test that takes the entire 15-min job timeout produces no
+          # output telling us WHICH test hung. `-test-iterations 2
+          # -retry-tests-on-failure` doubles the wall-clock cost of every
+          # hang (2 × 15 min = 30 min before the wall-timeout fires) for
+          # zero diagnostic gain. Both are off by default — re-add only if
+          # you have a per-PR reason and an exit plan.
           xcodebuild test \
             -workspace "$WORKSPACE" \
             -scheme OsaurusCoreTests \
             -disableAutomaticPackageResolution \
             -clonedSourcePackagesDirPath "$SPM_CACHE" \
             -resultBundlePath "$XCRESULT_PATH" \
-            -quiet \
             -skipPackagePluginValidation \
             -skipMacroValidation \
             -enableCodeCoverage NO \
             -test-timeouts-enabled YES \
             -default-test-execution-time-allowance 60 \
             -maximum-test-execution-time-allowance 120 \
-            -test-iterations 2 \
-            -retry-tests-on-failure \
             COMPILER_INDEX_STORE_ENABLE=NO \
             SWIFT_COMPILATION_MODE=incremental \
-            | xcbeautify --renderer github-actions --quiet --is-ci
+            | xcbeautify --renderer github-actions --is-ci
 
       - name: Annotate timing
         if: always()
@@ -112,19 +123,51 @@ jobs:
         run: |
           set +e
           echo "## test-core failures" >> "$GITHUB_STEP_SUMMARY"
+
+          # Three real failure modes we want to disambiguate, because PR #878
+          # taught us that conflating them ("tests didn't start" when they
+          # actually started and one hung) costs hours of diagnosis time:
+          #
+          # 1. No xcresult bundle  →  the build failed, OR xctest failed to
+          #    launch at all (true dyld-time hang). Look at the build log
+          #    above for compiler errors first; if the build succeeded,
+          #    suspect a module-init hang in OsaurusCore or its deps.
+          #
+          # 2. xcresult exists, contains zero test cases  →  test execution
+          #    was killed mid-flight (job wall-timeout, runner crash). The
+          #    last test that started in the build log is the prime suspect
+          #    for hanging — `--quiet` is intentionally NOT passed to
+          #    xcbeautify above so that "Started" line is in the log.
+          #
+          # 3. xcresult exists, contains failed test cases  →  ordinary test
+          #    failures; render them as a table.
           if [ ! -d "$XCRESULT_PATH" ]; then
-            echo "_No xcresult bundle was produced (job likely hit the 15m timeout before tests started)._" >> "$GITHUB_STEP_SUMMARY"
+            echo "_No xcresult bundle was produced. Either the build failed or the test bundle hung at launch (dyld load / module init). Check the **Test OsaurusCore** step log above for the last successful build phase before cancellation; if `Touch …xctest` was the last line, the hang is at xctest launch, not during a test._" >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
+
           # `xcresulttool get test-results tests` is the modern (Xcode 16+)
           # JSON view of the test outcomes. Older flag is now deprecated.
-          xcrun xcresulttool get test-results tests \
+          XCRESULT_JSON="$(xcrun xcresulttool get test-results tests \
             --path "$XCRESULT_PATH" \
-            --format json 2>/dev/null \
-          | jq -r '
+            --format json 2>/dev/null)"
+
+          # Count test cases regardless of outcome so we can detect the
+          # "started, killed mid-flight" case where there are no Failure
+          # nodes but also no Passed nodes.
+          TEST_CASE_COUNT="$(printf '%s' "$XCRESULT_JSON" \
+            | jq '[ .. | objects | select(.nodeType? == "Test Case" or .nodeType? == "Test") ] | length' \
+            2>/dev/null || echo 0)"
+
+          if [ "${TEST_CASE_COUNT:-0}" = "0" ]; then
+            echo "_xcresult bundle exists but contains zero test cases. Test execution was killed before any test recorded a result — most likely a hung test that ate the 15-min job wall-timeout, or a runner crash. Check the build log for the last 'Test Case ... started' line; that's the prime suspect for the hang._" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          printf '%s' "$XCRESULT_JSON" | jq -r '
               [ .. | objects | select(.result? == "Failed" and (.nodeType? == "Test Case" or .nodeType? == "Test")) ]
               | if length == 0 then
-                  "_No individual failed tests reported (likely a build error or runner crash — see logs above)._"
+                  "_No individual failed tests reported despite a non-zero exit. Likely a build error, post-test cleanup failure, or runner crash — see the raw log above._"
                 else
                   ( "| Test | Failure |\n| --- | --- |" )
                   + ( map(

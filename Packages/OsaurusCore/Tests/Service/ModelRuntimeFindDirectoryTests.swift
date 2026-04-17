@@ -107,6 +107,63 @@ struct ModelRuntimeFindDirectoryTests {
         try ModelRuntime.validateJANGTQSidecarIfRequired(at: dir, name: "Gemma-vanilla")
     }
 
+    // MARK: - Regression guard: pure-filesystem helpers must not pull in MLX
+    //
+    // PR #878 surfaced a CI launch hang where the `OsaurusCoreTests` xctest
+    // bundle launched, ran silently for 70+ minutes, then was cancelled —
+    // root caused to file-level `let _vlmFactory = MLXVLM.VLMModelFactory.shared`
+    // / `let _llmFactory = MLXLLM.LLMModelFactory.shared` declarations in
+    // `ModelRuntime.swift` that, on first reference of *any* symbol from
+    // that file, transitively materialized vmlx-swift-lm c101739's new
+    // `Qwen35JANGTQ.swift` file-level `qwen35JANGTQCompiledSigmoidGate`
+    // (which calls `MLX.compile(shapeless: true, body)` — a Metal JIT step
+    // that doesn't return on the GitHub Actions `macos-latest` runner).
+    //
+    // The fix moved factory force-link off file scope and onto an explicit
+    // `_ = ModelRuntime._registerFactoriesOnce` reference inside
+    // `loadContainer` only. This test pins that invariant: calling the two
+    // static helpers must NOT increment `_factoriesRegisteredHookCount`,
+    // because the helpers are pure filesystem operations that have no
+    // business loading MLX.
+    //
+    // If a future change re-introduces an eager MLX touch in the helpers
+    // (or adds a new file-level `let` in ModelRuntime.swift that pulls in
+    // a heavy MLX symbol), this test will start failing locally and the
+    // CI launch hang will be caught BEFORE it burns a 15-minute job
+    // timeout on `main`.
+
+    @Test("resolveLocalModelDirectory does not force-link MLX factories")
+    func resolveLocalModelDirectory_doesNotPullInMLX() throws {
+        let before = ModelRuntime._factoriesRegisteredHookCount
+        let (root, realModel) = try makeRoot()
+        try populateValidModel(at: realModel)
+        _ = ModelRuntime.resolveLocalModelDirectory(forModelId: "OsaurusAI/TestModel", in: root)
+        let after = ModelRuntime._factoriesRegisteredHookCount
+        #expect(before == after, .init(rawValue: regressionMessage))
+    }
+
+    @Test("validateJANGTQSidecarIfRequired does not force-link MLX factories")
+    func validateJANGTQSidecarIfRequired_doesNotPullInMLX() throws {
+        let before = ModelRuntime._factoriesRegisteredHookCount
+        let dir = try makeIsolatedDir()
+        try writeJangConfig(weightFormat: "jang_v2", at: dir)
+        try ModelRuntime.validateJANGTQSidecarIfRequired(at: dir, name: "regression-probe")
+        let after = ModelRuntime._factoriesRegisteredHookCount
+        #expect(before == after, .init(rawValue: regressionMessage))
+    }
+
+    /// Pulled out as a stored constant because Swift Testing's `#expect(_, _)`
+    /// expects a `Comment?` and the long inline string was tripping the
+    /// compiler's type-checker time budget.
+    private var regressionMessage: String {
+        "Static helper transitively triggered _registerFactoriesOnce — MLX factories "
+            + "are being eagerly initialized from a path that doesn't need them, which is "
+            + "the regression class that caused PR #878's 70-minute CI launch hang. "
+            + "Inspect any new file-level `let` in ModelRuntime.swift that references "
+            + "MLX*Factory.shared, or any new MLX touch in resolveLocalModelDirectory / "
+            + "validateJANGTQSidecarIfRequired."
+    }
+
     // MARK: - Existing resolveLocalModelDirectory tests (below)
 
     @Test("Nonexistent path returns nil")
