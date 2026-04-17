@@ -1535,12 +1535,14 @@ extension WorkSession: WorkEngineDelegate {
             !AgentManager.shared.effectiveMemoryDisabled(for: agentId)
         {
             let convId = issue.id
+            let sourceMode = estimatedExecutionModeForBudget().memorySourceMode
             Task.detached {
                 await MemoryService.shared.recordConversationTurn(
                     userMessage: userMessage,
                     assistantMessage: assistantContent,
                     agentId: agentStr,
-                    conversationId: convId
+                    conversationId: convId,
+                    sourceMode: sourceMode
                 )
             }
         }

@@ -1432,7 +1432,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         role: role,
                         content: content,
                         tokenCount: tokens,
-                        createdAt: turnDate
+                        createdAt: turnDate,
+                        sourceMode: .chat
                     )
                     await MemorySearchService.shared.indexConversationChunk(chunk)
                 }
@@ -1443,6 +1444,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         assistantMessage: turn.assistant,
                         agentId: req.agent_id,
                         conversationId: req.conversation_id,
+                        sourceMode: .chat,
                         sessionDate: turnDate
                     )
                 }

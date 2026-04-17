@@ -35,6 +35,7 @@ public struct ProfileEvent: Codable, Sendable, Identifiable {
     public var status: String
     public var incorporatedIn: Int?
     public var createdAt: String
+    public var sourceMode: MemorySourceMode?
 
     public init(
         id: Int = 0,
@@ -45,7 +46,8 @@ public struct ProfileEvent: Codable, Sendable, Identifiable {
         model: String? = nil,
         status: String = "active",
         incorporatedIn: Int? = nil,
-        createdAt: String = ""
+        createdAt: String = "",
+        sourceMode: MemorySourceMode? = nil
     ) {
         self.id = id
         self.agentId = agentId
@@ -56,6 +58,7 @@ public struct ProfileEvent: Codable, Sendable, Identifiable {
         self.status = status
         self.incorporatedIn = incorporatedIn
         self.createdAt = createdAt
+        self.sourceMode = sourceMode
     }
 }
 
@@ -113,13 +116,14 @@ public struct MemoryEntry: Codable, Sendable, Identifiable {
     public var accessCount: Int
     public var validFrom: String
     public var validUntil: String?
+    public var sourceMode: MemorySourceMode?
 
     public var tags: [String]
 
     private enum CodingKeys: String, CodingKey {
         case id, agentId, type, content, confidence, model, sourceConversationId
         case tagsJSON, status, supersededBy, createdAt, lastAccessed, accessCount
-        case validFrom, validUntil
+        case validFrom, validUntil, sourceMode
     }
 
     private static func decodeTags(from json: String?) -> [String] {
@@ -144,7 +148,8 @@ public struct MemoryEntry: Codable, Sendable, Identifiable {
         lastAccessed: String = "",
         accessCount: Int = 0,
         validFrom: String = "",
-        validUntil: String? = nil
+        validUntil: String? = nil,
+        sourceMode: MemorySourceMode? = nil
     ) {
         self.id = id
         self.agentId = agentId
@@ -161,6 +166,7 @@ public struct MemoryEntry: Codable, Sendable, Identifiable {
         self.accessCount = max(0, accessCount)
         self.validFrom = validFrom
         self.validUntil = validUntil
+        self.sourceMode = sourceMode
         self.tags = Self.decodeTags(from: tagsJSON)
     }
 
@@ -181,6 +187,7 @@ public struct MemoryEntry: Codable, Sendable, Identifiable {
         accessCount = try c.decode(Int.self, forKey: .accessCount)
         validFrom = try c.decode(String.self, forKey: .validFrom)
         validUntil = try c.decodeIfPresent(String.self, forKey: .validUntil)
+        sourceMode = try c.decodeIfPresent(MemorySourceMode.self, forKey: .sourceMode)
         tags = Self.decodeTags(from: tagsJSON)
     }
 }
@@ -197,6 +204,7 @@ public struct ConversationSummary: Codable, Sendable, Identifiable {
     public var conversationAt: String
     public var status: String
     public var createdAt: String
+    public var sourceMode: MemorySourceMode?
 
     public init(
         id: Int = 0,
@@ -207,7 +215,8 @@ public struct ConversationSummary: Codable, Sendable, Identifiable {
         model: String,
         conversationAt: String,
         status: String = "active",
-        createdAt: String = ""
+        createdAt: String = "",
+        sourceMode: MemorySourceMode? = nil
     ) {
         self.id = id
         self.agentId = agentId
@@ -218,6 +227,7 @@ public struct ConversationSummary: Codable, Sendable, Identifiable {
         self.conversationAt = conversationAt
         self.status = status
         self.createdAt = createdAt
+        self.sourceMode = sourceMode
     }
 }
 
@@ -268,6 +278,7 @@ public struct PendingSignal: Codable, Sendable {
     public var assistantMessage: String?
     public var status: String
     public var createdAt: String
+    public var sourceMode: MemorySourceMode?
 
     public init(
         id: Int = 0,
@@ -277,7 +288,8 @@ public struct PendingSignal: Codable, Sendable {
         userMessage: String,
         assistantMessage: String? = nil,
         status: String = "pending",
-        createdAt: String = ""
+        createdAt: String = "",
+        sourceMode: MemorySourceMode? = nil
     ) {
         self.id = id
         self.agentId = agentId
@@ -287,6 +299,7 @@ public struct PendingSignal: Codable, Sendable {
         self.assistantMessage = assistantMessage
         self.status = status
         self.createdAt = createdAt
+        self.sourceMode = sourceMode
     }
 }
 

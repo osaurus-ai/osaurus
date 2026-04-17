@@ -35,6 +35,7 @@ public actor MemoryService {
         assistantMessage: String?,
         agentId: String,
         conversationId: String,
+        sourceMode: MemorySourceMode = .chat,
         sessionDate: String? = nil
     ) async {
         do {
@@ -44,7 +45,8 @@ public actor MemoryService {
                     conversationId: conversationId,
                     signalType: "conversation",
                     userMessage: userMessage,
-                    assistantMessage: assistantMessage
+                    assistantMessage: assistantMessage,
+                    sourceMode: sourceMode
                 )
             )
         } catch {
@@ -85,7 +87,8 @@ public actor MemoryService {
                 from: parsed.entries,
                 agentId: agentId,
                 conversationId: conversationId,
-                model: coreModelId
+                model: coreModelId,
+                sourceMode: sourceMode
             )
 
             let verifyResult = await verifyAndInsertEntries(
@@ -99,7 +102,8 @@ public actor MemoryService {
                 parsed.profileFacts,
                 agentId: agentId,
                 conversationId: conversationId,
-                model: coreModelId
+                model: coreModelId,
+                sourceMode: sourceMode
             )
             insertGraphData(parsed.graph, model: coreModelId)
 
@@ -183,7 +187,11 @@ public actor MemoryService {
 
         do {
             let currentProfile = try db.loadUserProfile()
-            let allContributions = try db.loadActiveContributions()
+            // Compile the user profile from chat-origin contributions only.
+            // Tool/sandbox-origin facts ("User opened admin.py", "User ran
+            // sandbox_exec") stay out of the global profile so pure-chat
+            // prompts aren't primed with phantom tool affordances.
+            let allContributions = try db.loadActiveContributions(chatOnly: true)
             let edits = try db.loadUserEdits()
             let contributions = allContributions.filter { $0.incorporatedIn == nil }
             MemoryLogger.service.info(
@@ -394,13 +402,18 @@ public actor MemoryService {
             }
 
             let tokenCount = max(1, summaryText.count / MemoryConfiguration.charsPerToken)
+            // Inherit source_mode from the signals being summarized so the
+            // summary filters identically on recall. Falls back to .chat for
+            // pre-v4 signals with NULL mode.
+            let inheritedMode = signals.compactMap(\.sourceMode).first ?? .chat
             let summaryObj = ConversationSummary(
                 agentId: agentId,
                 conversationId: conversationId,
                 summary: summaryText,
                 tokenCount: tokenCount,
                 model: coreModelId,
-                conversationAt: conversationAt
+                conversationAt: conversationAt,
+                sourceMode: inheritedMode
             )
             do {
                 try db.insertSummaryAndMarkProcessed(summaryObj)
@@ -700,7 +713,8 @@ public actor MemoryService {
         from parsed: [ExtractionParseResult.EntryData],
         agentId: String,
         conversationId: String,
-        model: String
+        model: String,
+        sourceMode: MemorySourceMode
     ) -> [MemoryEntry] {
         let entries = parsed.compactMap { entry -> MemoryEntry? in
             guard let entryType = MemoryEntryType(rawValue: entry.type) else { return nil }
@@ -718,7 +732,8 @@ public actor MemoryService {
                 model: model,
                 sourceConversationId: conversationId,
                 tagsJSON: tagsJSON,
-                validFrom: entry.valid_from ?? ""
+                validFrom: entry.valid_from ?? "",
+                sourceMode: sourceMode
             )
         }
 
@@ -792,9 +807,13 @@ public actor MemoryService {
 
     /// Insert profile facts, skipping duplicates. Returns number of facts stored.
     @discardableResult
-    private func insertProfileFacts(_ facts: [String], agentId: String, conversationId: String? = nil, model: String)
-        -> Int
-    {
+    private func insertProfileFacts(
+        _ facts: [String],
+        agentId: String,
+        conversationId: String? = nil,
+        model: String,
+        sourceMode: MemorySourceMode
+    ) -> Int {
         guard !facts.isEmpty else { return 0 }
         let existingContributions: [ProfileEvent]
         do {
@@ -820,7 +839,8 @@ public actor MemoryService {
                         conversationId: conversationId,
                         eventType: "contribution",
                         content: fact,
-                        model: model
+                        model: model,
+                        sourceMode: sourceMode
                     )
                 )
                 stored += 1

@@ -529,9 +529,11 @@ final class ChatSession: ObservableObject {
             }
             return
         }
+        let toolsOff = AgentManager.shared.effectiveToolsDisabled(for: effectiveAgentId)
         let context = await MemoryContextAssembler.assembleContext(
             agentId: effectiveAgentId.uuidString,
-            config: MemoryConfigurationStore.load()
+            config: MemoryConfigurationStore.load(),
+            toolsAvailable: !toolsOff
         )
         let newTokens = ContextBudgetManager.estimateTokens(for: context)
         guard newTokens != cachedContext?.manifest.memoryTokens ?? 0 else { return }
@@ -668,6 +670,10 @@ final class ChatSession: ObservableObject {
         let agentUUID = UUID(uuidString: context.memoryAgentId) ?? Agent.defaultId
         let memoryOff = AgentManager.shared.effectiveMemoryDisabled(for: agentUUID)
 
+        // Tag memory writes with the execution mode active for this agent so
+        // pure-chat recall can filter out tool-mode contributions.
+        let sourceMode: MemorySourceMode = estimatedChatExecutionMode(agentId: agentUUID).memorySourceMode
+
         if !memoryOff, context.hasContent, let sid = sessionId {
             let convId = sid.uuidString
             let aid = context.memoryAgentId
@@ -683,7 +689,8 @@ final class ChatSession: ObservableObject {
                     chunkIndex: userChunkIndex,
                     role: "user",
                     content: context.userContent,
-                    tokenCount: max(1, context.userContent.count / 4)
+                    tokenCount: max(1, context.userContent.count / 4),
+                    sourceMode: sourceMode
                 )
             } catch {
                 MemoryLogger.database.warning("Failed to insert user chunk: \(error)")
@@ -705,7 +712,8 @@ final class ChatSession: ObservableObject {
                         chunkIndex: chunkIdx,
                         role: "assistant",
                         content: assistantContent,
-                        tokenCount: max(1, assistantContent.count / 4)
+                        tokenCount: max(1, assistantContent.count / 4),
+                        sourceMode: sourceMode
                     )
                 } catch {
                     MemoryLogger.database.warning("Failed to insert assistant chunk: \(error)")
@@ -735,6 +743,7 @@ final class ChatSession: ObservableObject {
                     assistantMessage: assistantContent,
                     agentId: context.memoryAgentId,
                     conversationId: context.memoryConversationId,
+                    sourceMode: sourceMode,
                     sessionDate: today
                 )
             }
