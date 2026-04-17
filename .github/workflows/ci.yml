@@ -29,10 +29,25 @@ env:
 jobs:
   test-core:
     runs-on: macos-latest
-    # Caps any future launch-hang at 15 min instead of burning 1h+ runners.
-    # If we ever genuinely need longer, the right fix is to make tests faster
-    # rather than raising this.
-    timeout-minutes: 15
+    # 30 min, not 15. Two-bucket budget:
+    #   ~13–14 min — full cold build (mlx-swift `Cmlx` C++ + OsaurusCore +
+    #                 OsaurusCoreTests Swift) when both SPM and DerivedData
+    #                 caches miss. Empirically that's the budget on a
+    #                 `macos-latest` runner; PR #881 (run 24573707695) hit
+    #                 exactly the 15-min wall mid-Swift-compile because no
+    #                 DerivedData cache existed (main hadn't successfully
+    #                 saved one since PR #878).
+    #   ~ 2– 3 min — actual `xcodebuild test` once the build is warm.
+    #   ~ 5–10 min — buffer / future growth, runner variance.
+    #
+    # Once any successful run lands on `main`, the `Save DerivedData cache`
+    # step at the bottom populates the cache and subsequent runs return to
+    # ~5 min total. The 30-min ceiling is an "even a worst-case cold build
+    # finishes" guard, NOT an expected duration. If you find yourself
+    # raising it again, the right fix is to split this into a separate
+    # build-cache-warm job that runs nightly on `main`, not to bump the
+    # ceiling indefinitely.
+    timeout-minutes: 30
     env:
       WORKSPACE: osaurus.xcworkspace
       SPM_CACHE: .spm-cache
@@ -120,29 +135,75 @@ jobs:
 
       - name: Print failure summary
         if: failure()
+        env:
+          # Surface the cache outcome inside the summary so the next person
+          # can immediately tell "cold-cache compile timeout" from "warm
+          # cache + actual hang" without scrolling the log.
+          DD_CACHE_HIT: ${{ steps.dd-cache.outputs.cache-hit }}
         run: |
           set +e
           echo "## test-core failures" >> "$GITHUB_STEP_SUMMARY"
 
-          # Three real failure modes we want to disambiguate, because PR #878
-          # taught us that conflating them ("tests didn't start" when they
-          # actually started and one hung) costs hours of diagnosis time:
+          # Four real failure modes we want to disambiguate. Each conflation
+          # has historically cost us hours of misdirected debugging, so this
+          # step exists specifically to put the right diagnosis at the top
+          # of the GitHub job summary instead of forcing the next person to
+          # re-derive it from raw logs.
           #
-          # 1. No xcresult bundle  →  the build failed, OR xctest failed to
-          #    launch at all (true dyld-time hang). Look at the build log
-          #    above for compiler errors first; if the build succeeded,
-          #    suspect a module-init hang in OsaurusCore or its deps.
+          # Mode A — xctest binary doesn't exist on disk
+          #          ⇒ build phase didn't finish (compile error, OR cold
+          #          cache + 30-min wall-timeout fired mid-Swift-compile,
+          #          OR linker failure). PR #881 (run 24573707695) hit this
+          #          flavor: both SPM and DerivedData caches missed because
+          #          main hadn't ever saved one, so the cold build ran out
+          #          of clock during OsaurusCoreTests Swift compilation.
           #
-          # 2. xcresult exists, contains zero test cases  →  test execution
-          #    was killed mid-flight (job wall-timeout, runner crash). The
-          #    last test that started in the build log is the prime suspect
-          #    for hanging — `--quiet` is intentionally NOT passed to
-          #    xcbeautify above so that "Started" line is in the log.
+          # Mode B — xctest binary built BUT no xcresult bundle
+          #          ⇒ test bundle launched but produced zero output before
+          #          the wall-timeout / cancellation. Real launch-time hang
+          #          (dyld load, +load methods, or first-test module init).
+          #          PR #878 (run 24563175247) hit this flavor — see the
+          #          comment block atop `_registerFactoriesOnce` in
+          #          ModelRuntime.swift.
           #
-          # 3. xcresult exists, contains failed test cases  →  ordinary test
-          #    failures; render them as a table.
+          # Mode C — xcresult exists with zero test cases
+          #          ⇒ test execution was killed mid-flight. Look for the
+          #          last `Test Case ... started` line in the raw log;
+          #          that's the prime suspect for the hang. (`--quiet` is
+          #          intentionally NOT passed to xcbeautify so the line is
+          #          present.)
+          #
+          # Mode D — xcresult exists with failed test cases
+          #          ⇒ ordinary test failures; render the failures table.
+
+          # Resolve the xctest binary path. Xcode hashes the DerivedData
+          # subdirectory off the workspace path, so glob rather than
+          # hardcode. We only care about existence, not the actual binary.
+          XCTEST_BINARY="$(find "$HOME/Library/Developer/Xcode/DerivedData" \
+            -maxdepth 6 -name 'OsaurusCoreTests.xctest' -type d 2>/dev/null \
+            | head -1)"
+
           if [ ! -d "$XCRESULT_PATH" ]; then
-            echo "_No xcresult bundle was produced. Either the build failed or the test bundle hung at launch (dyld load / module init). Check the **Test OsaurusCore** step log above for the last successful build phase before cancellation; if `Touch …xctest` was the last line, the hang is at xctest launch, not during a test._" >> "$GITHUB_STEP_SUMMARY"
+            if [ -z "$XCTEST_BINARY" ]; then
+              # Mode A.
+              CACHE_NOTE="_(DerivedData cache hit: \`${DD_CACHE_HIT:-unknown}\`)_"
+              {
+                echo "**Mode A — build phase did not complete (no xctest bundle on disk).**"
+                echo
+                echo "Either a compile/link error fired (scroll the **Test OsaurusCore** log above for the first \`error:\` line), OR the cold build ran past the 30-min job timeout. ${CACHE_NOTE}"
+                echo
+                echo "If \`cache-hit: false\` AND no \`error:\` lines appear in the raw log, this is the cold-cache-timeout flavor. The fix is to land one successful run on \`main\` so the \`Save DerivedData cache\` step at the bottom of this job populates the cache; subsequent PR runs warm-start from it and finish in ~5 min. Re-running this same job will hit the cache the second time only IF the first attempt finishes successfully."
+              } >> "$GITHUB_STEP_SUMMARY"
+            else
+              # Mode B.
+              {
+                echo "**Mode B — xctest bundle built but launched silently (real launch-time hang).**"
+                echo
+                echo "The \`OsaurusCoreTests.xctest\` binary exists in DerivedData (\`$XCTEST_BINARY\`), so the build phase finished. The hang is in dyld load, an ObjC \`+load\` method, a Swift module initializer, or the first test's module init."
+                echo
+                echo "Prime suspects: any file-level \`let\` in OsaurusCore that touches MLX/Metal at first reference (this is the regression class that PR #878 surfaced — see \`_registerFactoriesOnce\` in \`Packages/OsaurusCore/Services/ModelRuntime.swift\` and the matching tests in \`Packages/OsaurusCore/Tests/Service/ModelRuntimeFindDirectoryTests.swift\`)."
+              } >> "$GITHUB_STEP_SUMMARY"
+            fi
             exit 0
           fi
 
@@ -160,9 +221,13 @@ jobs:
             2>/dev/null || echo 0)"
 
           if [ "${TEST_CASE_COUNT:-0}" = "0" ]; then
-            echo "_xcresult bundle exists but contains zero test cases. Test execution was killed before any test recorded a result — most likely a hung test that ate the 15-min job wall-timeout, or a runner crash. Check the build log for the last 'Test Case ... started' line; that's the prime suspect for the hang._" >> "$GITHUB_STEP_SUMMARY"
+            echo "**Mode C — xcresult bundle exists but contains zero test cases.**" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "Test execution was killed before any test recorded a result — most likely a hung test that ate the job wall-timeout, or a runner crash. Check the raw log for the last \`Test Case ... started\` line; that's the prime suspect for the hang." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
+          echo "**Mode D — failed test cases:**" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
 
           printf '%s' "$XCRESULT_JSON" | jq -r '
               [ .. | objects | select(.result? == "Failed" and (.nodeType? == "Test Case" or .nodeType? == "Test")) ]
