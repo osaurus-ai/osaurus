@@ -3249,14 +3249,27 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         }
 
         struct ShowRequest: Decodable {
-            let name: String
+            let model: String
+
+            init(from decoder: any Decoder) throws {
+                let container = try decoder.container(keyedBy: CodingKeys.self)
+                if let model = try container.decodeIfPresent(String.self, forKey: .model) {
+                    self.model = model
+                } else {
+                    self.model = try container.decode(String.self, forKey: .name)
+                }
+            }
+
+            private enum CodingKeys: String, CodingKey {
+                case model, name
+            }
         }
 
         guard let req = try? JSONDecoder().decode(ShowRequest.self, from: data) else {
             var headers = [("Content-Type", "application/json; charset=utf-8")]
             headers.append(contentsOf: stateRef.value.corsHeaders)
             let errorBody =
-                #"{"error":{"message":"Invalid request: expected {\"name\": \"<model_id>\"}","type":"invalid_request_error"}}"#
+                #"{"error":{"message":"Invalid request: expected {\"model\": \"<model_id>\"}","type":"invalid_request_error"}}"#
             sendResponse(
                 context: context,
                 version: head.version,
@@ -3285,7 +3298,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logUserAgent = userAgent
         let logRequestBody = requestBodyString
         let logSelf = self
-        let modelName = req.name
+        let modelName = req.model
 
         Task(priority: .userInitiated) {
             // Handle "foundation" model specially
