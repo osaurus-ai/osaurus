@@ -271,14 +271,16 @@ public struct SystemPromptComposer: Sendable {
 
     /// Compose agent context (base prompt + memory) and inject into an existing message array.
     /// Returns `(cacheHint, staticPrefix)` for the caller to set on the request.
-    @MainActor
     @discardableResult
     static func injectAgentContext(
         agentId: UUID,
         query: String = "",
         into messages: inout [ChatMessage]
     ) async -> (cacheHint: String, staticPrefix: String) {
-        var composer = forChat(agentId: agentId, executionMode: .none)
+        // only forChat needs @MainActor. so hop there briefly and return the value type composer.
+        // appendMemory (memory search + embeddings) then runs on the cooperative thread pool to
+        // keep the mac app responsive during HTTP API requests
+        var composer = await MainActor.run { forChat(agentId: agentId, executionMode: .none) }
         await composer.appendMemory(agentId: agentId.uuidString, query: query.isEmpty ? nil : query)
         let manifest = composer.manifest()
         let rendered = composer.render()
