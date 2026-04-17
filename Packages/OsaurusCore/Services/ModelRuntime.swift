@@ -737,7 +737,15 @@ actor ModelRuntime {
     /// Preflight check for JANGTQ-routed models. Reads `jang_config.json`
     /// and, if `weight_format == "mxtq"`, verifies the `jangtq_runtime.safetensors`
     /// sidecar is present in the model directory. Throws a clear error on
-    /// mismatch so callers see a message instead of vmlx's fatalError abort.
+    /// mismatch so callers see a message instead of waiting for vmlx to
+    /// report the same problem later.
+    ///
+    /// As of `vmlx-swift-lm 9e647a6`, vmlx itself fails-fast with an equivalent
+    /// NSError at weight-load time, so this osaurus-side check is primarily a
+    /// speed optimization: we refuse before the 60+ safetensors shards start
+    /// loading, giving users an instant error instead of a multi-second wait.
+    /// It also defends against older vmlx pins where the same mismatch would
+    /// instead reach `TurboQuantSwitchLinear.fatalError` and abort the process.
     /// Exposed at module scope for unit testing (same pattern as
     /// `resolveLocalModelDirectory`).
     static func validateJANGTQSidecarIfRequired(at directory: URL, name: String) throws {
