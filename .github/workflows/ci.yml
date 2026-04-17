@@ -99,20 +99,44 @@ jobs:
           # We deliberately pass a dummy resultBundlePath check first because
           # xcodebuild refuses to overwrite an existing bundle.
           rm -rf "$XCRESULT_PATH"
-          # Per-test-case allowance (60s / 120s hard cap) is what surfaces a
-          # hung test BEFORE the 15-min job timeout — and crucially, surfaces
-          # it WITH A NAME ATTACHED in the xcresult bundle, which the failure
+          # Per-test-case allowance (60s / 120s hard cap) surfaces a hung
+          # test BEFORE the job wall-timeout — and crucially, surfaces it
+          # WITH A NAME ATTACHED in the xcresult bundle, which the failure
           # summary step below relies on.
           #
-          # Why no `--quiet` on xcbeautify and no `-test-iterations` here:
+          # Why no `--quiet` on xcbeautify and no `-test-iterations`:
           # both were band-aids that landed during PR #878's launch-hang
           # incident. `--quiet` strips per-test "Started/Passed" lines so a
-          # hung test that takes the entire 15-min job timeout produces no
-          # output telling us WHICH test hung. `-test-iterations 2
-          # -retry-tests-on-failure` doubles the wall-clock cost of every
-          # hang (2 × 15 min = 30 min before the wall-timeout fires) for
-          # zero diagnostic gain. Both are off by default — re-add only if
-          # you have a per-PR reason and an exit plan.
+          # hung test produces no output telling us WHICH test hung.
+          # `-test-iterations 2 -retry-tests-on-failure` doubles the
+          # wall-clock cost of every hang for zero diagnostic gain. Both
+          # are off by default — re-add only if you have a per-PR reason
+          # and an exit plan.
+          #
+          # Why `-parallel-testing-enabled NO`: PR #881 run 24574829591
+          # had build complete cleanly, then xctest spawned two worker
+          # processes; one ran the 12 `@Suite(.serialized)` suites
+          # (including the MLX-heavy ones — MetalGateTests,
+          # BatchEngineAdapterTests, InferenceSchedulerTests) and passed
+          # all 57 tests. The OTHER worker tried to run the remaining
+          # ~80 unserialized suites (SQLite, crypto, search — none of
+          # them MLX-related) in parallel and SIGSEGV'd before any test
+          # body executed. xcresult logged 641 tests as "Test crashed
+          # with signal segv." and `XCTHTestOperationCoordinatorErrorDomain
+          # code 5` (worker connection lost), with no stack trace because
+          # the crash happened in worker bootstrap before xctest's
+          # diagnostic handlers attached.
+          #
+          # The runner is `Apple Virtual Machine 1` (virtualized macOS),
+          # which has a known history of flakiness when many tests
+          # concurrently touch shared system resources (SQLite handles,
+          # Keychain, Security framework, Bonjour discovery). Single-
+          # worker serial execution is the cheapest reliable workaround
+          # — adds ~2-5 min runtime, well within the 30-min budget.
+          # The underlying race is still a real bug worth fixing, but it
+          # only affects this particular VM-on-runner profile and is not
+          # CI-blocking; tracked separately. If you remove this flag,
+          # you OWN re-diagnosing the SIGSEGV.
           xcodebuild test \
             -workspace "$WORKSPACE" \
             -scheme OsaurusCoreTests \
@@ -122,6 +146,7 @@ jobs:
             -skipPackagePluginValidation \
             -skipMacroValidation \
             -enableCodeCoverage NO \
+            -parallel-testing-enabled NO \
             -test-timeouts-enabled YES \
             -default-test-execution-time-allowance 60 \
             -maximum-test-execution-time-allowance 120 \
