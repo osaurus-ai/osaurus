@@ -629,7 +629,8 @@ extension ModelManager {
         MLXModel(
             id: "Qwen/Qwen3.6-35B-A3B",
             name: ModelMetadataParser.friendlyName(from: "Qwen/Qwen3.6-35B-A3B"),
-            description: "Qwen 3.6 35B MoE vision model, raw BF16 weights from Qwen. Large download; prefer the MXFP4 variant.",
+            description:
+                "Qwen 3.6 35B MoE vision model, raw BF16 weights from Qwen. Large download; prefer the MXFP4 variant.",
             downloadURL: "https://huggingface.co/Qwen/Qwen3.6-35B-A3B",
             downloadSizeBytes: 71_926_854_840,
             modelType: "qwen3_5_moe"

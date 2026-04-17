@@ -13,31 +13,22 @@ import Testing
 struct ModelManagerTests {
 
     @Test func loadAvailableModels_initializesStates() async throws {
+        // `ModelManager.init` calls `loadAvailableModels()` synchronously, which
+        // populates `availableModels` + `downloadStates` before init returns. No
+        // sleep needed; the previous 2s `Task.sleep` predated the sync refactor.
         let manager = await MainActor.run { ModelManager() }
-
-        // Wait for models to load (async operation)
-        await MainActor.run {
-            // Give the async task time to complete
-            manager.isLoadingModels = true
-        }
-
-        // Wait a bit for the async model loading
-        try await Task.sleep(nanoseconds: 2_000_000_000)  // 2 seconds
 
         let isLoading = await MainActor.run { manager.isLoadingModels }
         let models = await MainActor.run { manager.availableModels }
         let states = await MainActor.run { manager.downloadStates }
 
-        // If models loaded successfully, check states
+        #expect(isLoading == false)
+
         if models.count > 0 {
             for model in models {
                 #expect(states[model.id] != nil)
             }
-        } else {
-            // It's ok if no models loaded in test environment
-            #expect(isLoading == false || isLoading == true)
         }
-
     }
 
     @Test func cancelDownload_resetsStateWithoutTask() async throws {

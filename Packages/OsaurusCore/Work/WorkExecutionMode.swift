@@ -51,9 +51,9 @@ public extension WorkExecutionMode {
     /// `.none` here maps to `.chat` as a safe default.
     var memorySourceMode: MemorySourceMode {
         switch self {
-        case .none:       return .chat
+        case .none: return .chat
         case .hostFolder: return .workHost
-        case .sandbox:    return .workSandbox
+        case .sandbox: return .workSandbox
         }
     }
 }

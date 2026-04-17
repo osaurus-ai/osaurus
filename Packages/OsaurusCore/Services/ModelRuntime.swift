@@ -64,6 +64,12 @@ actor ModelRuntime {
     private var loadingTasks: [String: Task<SessionHolder, Error>] = [:]
     private var currentModelName: String?
     private var cachedConfig: RuntimeConfig?
+
+    /// Most recently launched generation wrapper task. `ModelLease` is the
+    /// authoritative "is anyone still using the model" signal; this property
+    /// only exists so `cancelActiveGeneration()` can defensively kill an
+    /// in-flight task during shutdown / `clearAll`. It tracks at most one
+    /// task even when many are active — the lease drains the rest.
     private var activeGenerationTask: Task<Void, Never>?
 
     private init() {}
@@ -85,16 +91,30 @@ actor ModelRuntime {
 
     // MARK: - Model lifecycle
 
-    /// Cancels any in-flight generation and waits for the GPU work to finish
-    /// so that subsequent `Memory.clearCache()` calls don't free buffers that
-    /// are still being read on the cooperative thread pool.
+    /// Defensive helper: cancels and awaits the most recently launched
+    /// generation task. With `ModelLease` enforcing per-stream lifetime
+    /// the unload paths already wait on `waitForZero(name)` first, so this
+    /// only catches the rare race where a task was launched but never made
+    /// it to `acquire`. Callers should still treat the lease as authoritative.
     private func cancelActiveGeneration() async {
         activeGenerationTask?.cancel()
         _ = await activeGenerationTask?.value
         activeGenerationTask = nil
     }
 
+    /// Unload `name`, blocking until any in-flight generation against this
+    /// model has fully released its lease. The lease is held for the entire
+    /// stream lifetime (see `generateEventStream`), so this guarantees we
+    /// never free buffers that an active Metal command buffer still references.
     func unload(name: String) async {
+        // Shut the BatchEngine first so its scheduling loop stops issuing
+        // new model forward passes; then wait for any in-flight per-request
+        // leases to drain before we touch the container.
+        await BatchEngineAdapter.Registry.shared.shutdownEngine(for: name)
+        await ModelLease.shared.waitForZero(name)
+        // Defensive: cancel any single-slot tracked task (legacy pre-lease path).
+        // With leases, in-flight tasks already drained above; this only catches
+        // the rare case where a task was cancelled mid-setup before acquiring.
         await cancelActiveGeneration()
 
         if let holder = modelCache[name] {
@@ -113,9 +133,15 @@ actor ModelRuntime {
         Memory.clearCache()
     }
 
-    /// Unloads any loaded model not referenced by an active window.
+    /// Unloads any loaded model whose name is not in `activeNames`.
+    /// Models with active leases (in-flight generations) are also kept; the
+    /// per-model `unload` call internally waits for the lease to drop before
+    /// freeing buffers, so this method is safe to call with a stale `activeNames`
+    /// snapshot — at worst the unload is briefly deferred, never a crash.
     func unloadModelsNotIn(_ activeNames: Set<String>) async {
-        let toUnload = modelCache.keys.filter { !activeNames.contains($0) }
+        let leaseHeld = await ModelLease.shared.activeNames()
+        let keep = activeNames.union(leaseHeld)
+        let toUnload = modelCache.keys.filter { !keep.contains($0) }
         for name in toUnload {
             print("[ModelRuntime] GC: Unloading unused model \(name)")
             await unload(name: name)
@@ -123,7 +149,14 @@ actor ModelRuntime {
     }
 
     func clearAll() async {
+        // Shut down every BatchEngine so they stop scheduling new forward
+        // passes, then cancel the legacy single-slot tracked task and wait
+        // for every leased model to drain before we touch any container.
+        await BatchEngineAdapter.Registry.shared.shutdownAll()
         await cancelActiveGeneration()
+        for name in modelCache.keys {
+            await ModelLease.shared.waitForZero(name)
+        }
 
         for holder in modelCache.values {
             holder.container.disableCaching()
@@ -361,10 +394,14 @@ actor ModelRuntime {
 
     // MARK: - Generation driver
 
-    /// Builds and returns an event stream for a single generation request.
-    /// Cache management is handled by the package's CacheCoordinator — the
-    /// TokenIterator performs prefix fetch, KV restore, partial prefill,
-    /// and post-generation cache store automatically.
+    /// Top-level dispatcher: loads the container, takes the model lease, and
+    /// hands off to the appropriate per-path runner. The per-path runners
+    /// own all subsequent locking and release the lease in their producer
+    /// task — every throw path here MUST release the lease before returning.
+    ///
+    /// Cache management is handled by the package's `CacheCoordinator` — the
+    /// `TokenIterator` (or `BatchEngine`) performs prefix fetch, KV restore,
+    /// partial prefill, and post-generation cache store automatically.
     private func generateEventStream(
         chatBuilder: @Sendable () -> [MLXLMCommon.Chat.Message],
         parameters: GenerationParameters,
@@ -383,21 +420,14 @@ actor ModelRuntime {
 
         genLog.info("generateEventStream: start model=\(modelName, privacy: .public)")
 
+        // Scoped start/finish around ONLY the container load — we want the
+        // "loading model" UI flag to flip off as soon as the container is
+        // ready, not after gate/scheduler waits below. The do/catch pairs
+        // ensure symmetric bookkeeping on every exit; the refcount in
+        // `InferenceProgressManager` keeps concurrent loads (e.g. two chat
+        // windows starting different models) from corrupting each other.
         let cfg = await getConfig()
         trace?.mark("load_container_start")
-        // Scoped start/finish around ONLY the container load. Symmetric
-        // bookkeeping via a do/catch pair — we can't use `defer` at
-        // function scope here because the function returns early (before
-        // generation runs, which happens inside `gatedGenTask`), and a
-        // function-scoped defer would keep `isLoadingModel` true through
-        // the MetalGate wait and the rest of setup. We want the flag to
-        // flip off as soon as the container is actually loaded, matching
-        // the pre-fix timing.
-        //
-        // The refcount in `InferenceProgressManager` guarantees that
-        // concurrent loads (two chat windows) don't corrupt each other,
-        // and `max(0, _ - 1)` on decrement floors the count so a
-        // double-fire from a future refactor can't drive it negative.
         InferenceProgressManager.shared.modelLoadWillStartAsync()
         let holder: SessionHolder
         do {
@@ -409,91 +439,261 @@ actor ModelRuntime {
         InferenceProgressManager.shared.modelLoadDidFinishAsync()
         trace?.mark("load_container_done")
 
-        let wiredPolicy = MLXLMCommon.WiredSumPolicy()
-        let wiredTicket = wiredPolicy.ticket(
+        // Pin the model against eviction for the lifetime of this stream.
+        // The runner that we hand off to releases the lease in its producer
+        // task; if the runner itself throws before launching that task it is
+        // responsible for releasing too.
+        await ModelLease.shared.acquire(modelName)
+
+        let chatMessages = chatBuilder()
+        let buildChat: @Sendable () -> [MLXLMCommon.Chat.Message] = { chatMessages }
+        let buildTools: @Sendable () -> [[String: any Sendable]]? = {
+            ModelRuntime.makeTokenizerTools(tools: tools, toolChoice: toolChoice)
+        }
+        let priority = parameters.priority ?? .plugin
+
+        // Branch: `BatchEngine` runs its own actor scheduling loop, so when
+        // it's enabled we deliberately bypass MetalGate / InferenceScheduler /
+        // ModelWorker — those layers serialize MLX access globally, which
+        // would defeat the point of continuous batching. `ModelLease` (above)
+        // and per-plugin in-flight caps (PluginHostAPI) still apply.
+        if InferenceFeatureFlags.mlxBatchEngineEnabled {
+            return try await runBatchEngineStream(
+                holder: holder,
+                modelName: modelName,
+                buildChat: buildChat,
+                buildTools: buildTools,
+                tools: tools,
+                stopSequences: stopSequences,
+                parameters: parameters,
+                runtime: cfg,
+                priority: priority,
+                trace: trace
+            )
+        }
+
+        return try await runDirectStream(
+            holder: holder,
+            modelName: modelName,
+            buildChat: buildChat,
+            buildTools: buildTools,
+            tools: tools,
+            stopSequences: stopSequences,
+            parameters: parameters,
+            runtime: cfg,
+            priority: priority,
+            trace: trace
+        )
+    }
+
+    // MARK: - Direct (TokenIterator) path
+
+    /// Resource locks held for the lifetime of one direct-path stream, in
+    /// release order. Released exactly once via `releaseAll()`. The order
+    /// matters: gate first frees the Metal layer for the next caller; the
+    /// scheduler then admits the next priority winner; the worker admits the
+    /// next same-model waiter; the lease is last so any queued unload can
+    /// finally proceed.
+    private struct DirectStreamLocks: Sendable {
+        let modelName: String
+        let worker: ModelWorker
+        let useGlobalScheduler: Bool
+
+        func releaseAll() async {
+            await MetalGate.shared.exitGeneration()
+            if useGlobalScheduler {
+                await InferenceScheduler.shared.release()
+            }
+            await worker.release()
+            await ModelLease.shared.release(modelName)
+        }
+    }
+
+    /// Non-batched path: take per-model worker → optional priority slot →
+    /// MetalGate → run a single-request `TokenIterator`. Holds wired memory
+    /// for the duration so the model's weights aren't paged out mid-decode.
+    private func runDirectStream(
+        holder: SessionHolder,
+        modelName: String,
+        buildChat: @Sendable () -> [MLXLMCommon.Chat.Message],
+        buildTools: @Sendable () -> [[String: any Sendable]]?,
+        tools: [Tool]?,
+        stopSequences: [String],
+        parameters: GenerationParameters,
+        runtime: RuntimeConfig,
+        priority: InferencePriority,
+        trace: TTFTTrace?
+    ) async throws -> AsyncThrowingStream<ModelRuntimeEvent, Error> {
+        let wiredTicket = MLXLMCommon.WiredSumPolicy().ticket(
             size: Int(holder.weightsSizeBytes),
             kind: .active
         )
 
-        let effectiveStopSequences = stopSequences
-        let chatMessages = chatBuilder()
+        // Per-model worker first. With multi-model concurrency OFF (default)
+        // this is largely redundant with the global scheduler — only one
+        // stream runs at a time. With it ON, the worker is the only thing
+        // preventing same-model races.
+        let worker = await ModelWorkerRegistry.shared.worker(for: modelName)
+        trace?.mark("worker_enter")
+        await worker.acquire(priority: priority)
+        trace?.mark("worker_acquired")
 
-        let capturedMessages = chatMessages
-        let buildChat: @Sendable () -> [MLXLMCommon.Chat.Message] = { capturedMessages }
-        let buildTools: @Sendable () -> [[String: any Sendable]]? = {
-            ModelRuntime.makeTokenizerTools(tools: tools, toolChoice: toolChoice)
+        // Priority slot in front of MetalGate. The scheduler decides queue
+        // ORDER (priority-aware) across all models while MetalGate still
+        // serializes MLX-vs-CoreML access at the Metal layer. With
+        // `mlxAllowConcurrentStreams` ON, the global scheduler step is
+        // skipped so streams of different models can interleave; the
+        // per-model worker above is what prevents same-model races.
+        let useGlobalScheduler = !InferenceFeatureFlags.mlxAllowConcurrentStreams
+        if useGlobalScheduler {
+            trace?.mark("scheduler_enter")
+            await InferenceScheduler.shared.acquire(priority: priority)
+            trace?.mark("scheduler_acquired")
         }
 
-        // Acquire exclusive Metal access after all throwing setup is complete.
-        // This ensures the gate is never left locked by a loadContainer failure.
+        // Exclusive Metal access. Acquired after all throwing setup so the
+        // gate is never left locked by a loadContainer failure. With
+        // `mlxAllowConcurrentStreams` ON, this only waits for embeddings.
         trace?.mark("metal_gate_enter")
         await MetalGate.shared.enterGeneration()
         trace?.mark("metal_gate_acquired")
+
+        let locks = DirectStreamLocks(
+            modelName: modelName,
+            worker: worker,
+            useGlobalScheduler: useGlobalScheduler
+        )
+
         if Task.isCancelled {
-            await MetalGate.shared.exitGeneration()
+            await locks.releaseAll()
             throw CancellationError()
         }
 
-        // Signal prefill starting (count unknown until prepareAndGenerate returns).
+        // Prefill count is unknown until `prepareAndGenerate` returns; signal
+        // start with 0, then update once we have the real count.
         InferenceProgressManager.shared.prefillWillStartAsync(tokenCount: 0)
 
         trace?.mark("prepare_and_generate_start")
-        let genResult:
-            (
-                stream: AsyncStream<MLXLMCommon.TokenGeneration>,
-                tokenizer: any Tokenizer,
-                promptTokens: [Int],
-                genTask: Task<Void, Never>,
-                toolCallFormat: ToolCallFormat
-            )
+        let genResult: MLXGenerationEngineResult
         do {
             genResult = try await MLXGenerationEngine.prepareAndGenerate(
                 container: holder.container,
                 buildChat: buildChat,
                 buildToolsSpec: buildTools,
                 generation: parameters,
-                runtime: cfg,
+                runtime: runtime,
                 wiredMemoryTicket: wiredTicket
             )
             trace?.mark("prepare_and_generate_done")
             trace?.set("promptTokens", genResult.promptTokens.count)
         } catch {
             InferenceProgressManager.shared.prefillDidFinishAsync()
-            await MetalGate.shared.exitGeneration()
+            await locks.releaseAll()
             throw error
         }
 
-        let (rawStream, tokenizer, newTokens, genTask, toolCallFormat) = genResult
+        genLog.info(
+            "generateEventStream: stream created tokenCount=\(genResult.promptTokens.count, privacy: .public)"
+        )
+        InferenceProgressManager.shared.prefillWillStartAsync(tokenCount: genResult.promptTokens.count)
 
-        genLog.info("generateEventStream: stream created tokenCount=\(newTokens.count, privacy: .public)")
-        InferenceProgressManager.shared.prefillWillStartAsync(tokenCount: newTokens.count)
-
-        // Wrap genTask so the MetalGate is released when generation finishes.
-        let innerGenTask = genTask
-        let gatedGenTask = Task<Void, Never> {
+        // Wrap genTask so every lock is released when generation finishes
+        // (success or cancellation), in the order documented on
+        // `DirectStreamLocks.releaseAll`.
+        let innerTask = genResult.genTask
+        activeGenerationTask = Task<Void, Never> {
             await withTaskCancellationHandler {
-                await innerGenTask.value
+                await innerTask.value
             } onCancel: {
-                innerGenTask.cancel()
+                innerTask.cancel()
             }
-            await MetalGate.shared.exitGeneration()
+            await locks.releaseAll()
         }
-        activeGenerationTask = gatedGenTask
 
-        // Thread the tokenizer into StreamAccumulator so it can decode token IDs to text.
-        let capturedToolsSpec = buildTools()
-        let eventStream = StreamAccumulator.accumulate(
-            events: rawStream,
-            tokenizer: tokenizer,
-            stopSequences: effectiveStopSequences,
+        return StreamAccumulator.accumulate(
+            events: genResult.stream,
+            tokenizer: genResult.tokenizer,
+            stopSequences: stopSequences,
             tools: tools,
-            toolCallFormat: toolCallFormat,
-            toolsSpec: capturedToolsSpec,
-            generationTask: genTask,
-            onGeneratedTokenIds: { _ in }
+            toolCallFormat: genResult.toolCallFormat,
+            toolsSpec: buildTools(),
+            generationTask: innerTask,
+            onGeneratedTokenIds: { _ in },
+            priority: priority
         ).asAsyncThrowingStream()
+    }
 
-        return eventStream
+    // MARK: - BatchEngine path
+
+    /// Submit one request through the per-model `BatchEngine` and adapt its
+    /// stream into the same `ModelRuntimeEvent` shape callers already consume.
+    ///
+    /// Concurrency: this path holds **only** the model lease (already acquired
+    /// by the caller). The engine's own actor loop serializes model access,
+    /// so MetalGate / InferenceScheduler / ModelWorker would only add latency
+    /// without any safety benefit. Per-plugin in-flight caps in
+    /// `PluginHostAPI` continue to back-pressure misbehaving plugins.
+    private func runBatchEngineStream(
+        holder: SessionHolder,
+        modelName: String,
+        buildChat: @Sendable () -> [MLXLMCommon.Chat.Message],
+        buildTools: @Sendable () -> [[String: any Sendable]]?,
+        tools: [Tool]?,
+        stopSequences: [String],
+        parameters: GenerationParameters,
+        runtime: RuntimeConfig,
+        priority: InferencePriority,
+        trace: TTFTTrace?
+    ) async throws -> AsyncThrowingStream<ModelRuntimeEvent, Error> {
+        InferenceProgressManager.shared.prefillWillStartAsync(tokenCount: 0)
+
+        let prepared: BatchEngineAdapter.PreparedStream
+        do {
+            prepared = try await BatchEngineAdapter.prepareAndSubmit(
+                modelName: modelName,
+                container: holder.container,
+                buildChat: buildChat,
+                buildToolsSpec: buildTools,
+                generation: parameters,
+                runtime: runtime,
+                maxBatchSize: InferenceFeatureFlags.mlxBatchEngineMaxBatchSize
+            )
+        } catch {
+            InferenceProgressManager.shared.prefillDidFinishAsync()
+            await ModelLease.shared.release(modelName)
+            throw error
+        }
+
+        trace?.set("promptTokens", prepared.promptTokens.count)
+        InferenceProgressManager.shared.prefillWillStartAsync(tokenCount: prepared.promptTokens.count)
+        genLog.info(
+            "generateEventStream(batch): stream created tokenCount=\(prepared.promptTokens.count, privacy: .public)"
+        )
+
+        // Wrap the producer task so the lease is released when the stream
+        // finishes (success or cancellation). The adapter's producer task
+        // already routes Swift cancellation into `BatchEngine.cancel(id)`.
+        let innerProducer = prepared.genTask
+        activeGenerationTask = Task<Void, Never> {
+            await withTaskCancellationHandler {
+                await innerProducer.value
+            } onCancel: {
+                innerProducer.cancel()
+            }
+            await ModelLease.shared.release(modelName)
+        }
+
+        return StreamAccumulator.accumulate(
+            events: prepared.stream,
+            tokenizer: prepared.tokenizer,
+            stopSequences: stopSequences,
+            tools: tools,
+            toolCallFormat: prepared.toolCallFormat,
+            toolsSpec: buildTools(),
+            generationTask: prepared.genTask,
+            onGeneratedTokenIds: { _ in },
+            priority: priority
+        ).asAsyncThrowingStream()
     }
 
     // MARK: - New message-based (OpenAI ChatMessage) APIs

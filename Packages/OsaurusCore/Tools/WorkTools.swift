@@ -13,7 +13,7 @@ import Foundation
 public struct CompleteTaskTool: OsaurusTool {
     public let name = "complete_task"
     public let description =
-        "Finish the current task with a structured completion report. IMPORTANT: Call share_artifact for any generated files BEFORE calling this tool."
+        "Finish the current task with a structured completion report."
 
     public let parameters: JSONValue? = .object([
         "type": .string("object"),
