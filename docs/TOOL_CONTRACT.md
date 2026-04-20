@@ -134,10 +134,13 @@ emits `invalid_args` with `field: <offending-key>` for the model.
 
 Scalar types are intentionally lenient: `integer`, `number`, and
 `boolean` properties accept native JSON values *and* string-encoded
-equivalents (`"15"`, `"3.14"`, `"true"`/`"yes"`/`"1"`). This matches the
-tool-side `ArgumentCoercion` helpers so local models that emit slightly
-off types don't bounce on the preflight when the body would coerce
-anyway. `string`, `object`, `array`, and `enum` checks remain strict.
+equivalents (`"15"`, `"3.14"`, `"true"`/`"yes"`/`"1"`). `array`
+properties additionally accept a string that JSON-decodes to an array
+(`"[\"a\",\"b\"]"`). This matches the tool-side `ArgumentCoercion`
+helpers so local models that emit slightly off types don't bounce on
+the preflight when the body would coerce anyway. `string`, `object`,
+and `enum` checks remain strict, and `array` still rejects bare
+non-array strings so the model gets a clear signal.
 
 Prefer:
 

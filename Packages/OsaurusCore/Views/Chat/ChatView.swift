@@ -178,10 +178,14 @@ final class ChatSession: ObservableObject {
                 }
             }
 
-        if !cache.isLoaded {
-            Task { [weak self] in
-                await self?.refreshPickerItems()
-            }
+        // Always reconcile on init: the cache may already be loaded with a
+        // snapshot taken before remote providers finished connecting (or
+        // before this window's notification observer was registered, in
+        // which case we'd otherwise miss the .remoteProviderModelsChanged
+        // notification entirely). `refreshPickerItems` short-circuits when
+        // nothing changed, so this is cheap on the happy path.
+        Task { [weak self] in
+            await self?.refreshPickerItems()
         }
 
         if MockChatData.isEnabled {

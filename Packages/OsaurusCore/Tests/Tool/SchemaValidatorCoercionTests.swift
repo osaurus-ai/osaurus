@@ -51,6 +51,16 @@ struct SchemaValidatorCoercionTests {
         ]),
     ])
 
+    private let arraySchema: JSONValue = .object([
+        "type": .string("object"),
+        "properties": .object([
+            "xs": .object([
+                "type": .string("array"),
+                "items": .object(["type": .string("string")]),
+            ])
+        ]),
+    ])
+
     // MARK: - Integer
 
     @Test func integerAcceptsNativeInt() {
@@ -165,6 +175,55 @@ struct SchemaValidatorCoercionTests {
         #expect(r.field == "b")
     }
 
+    // MARK: - Array
+
+    @Test func arrayAcceptsNative() {
+        let r = SchemaValidator.validate(
+            arguments: ["xs": ["matplotlib", "numpy"]],
+            against: arraySchema
+        )
+        #expect(r.isValid, "got: \(r.errorMessage ?? "?")")
+    }
+
+    @Test func arrayAcceptsJSONEncodedString() {
+        // The screenshot bug: `sandbox_pip_install` got
+        // `"packages": "[\"matplotlib\", \"numpy\"]"`.
+        let r = SchemaValidator.validate(
+            arguments: ["xs": "[\"matplotlib\", \"numpy\"]"],
+            against: arraySchema
+        )
+        #expect(r.isValid, "got: \(r.errorMessage ?? "?")")
+    }
+
+    @Test func arrayAcceptsJSONEncodedEmptyArrayString() {
+        let r = SchemaValidator.validate(
+            arguments: ["xs": "[]"],
+            against: arraySchema
+        )
+        #expect(r.isValid)
+    }
+
+    @Test func arrayRejectsBareString() {
+        // `"numpy"` (single string) is a real arg bug worth surfacing —
+        // the tool's `requireStringArray` has its own wrap fallback but
+        // the validator stays strict so the model gets a clear signal.
+        let r = SchemaValidator.validate(
+            arguments: ["xs": "numpy"],
+            against: arraySchema
+        )
+        #expect(!r.isValid)
+        #expect(r.field == "xs")
+    }
+
+    @Test func arrayRejectsObjectEncodedString() {
+        let r = SchemaValidator.validate(
+            arguments: ["xs": "{\"a\": 1}"],
+            against: arraySchema
+        )
+        #expect(!r.isValid)
+        #expect(r.field == "xs")
+    }
+
     // MARK: - String (regression guard — must stay strict)
 
     @Test func stringStillRejectsInteger() {
@@ -194,6 +253,27 @@ struct SchemaValidatorCoercionTests {
     }
 
     // MARK: - Realistic sandbox_exec shape
+
+    @Test func sandboxPipInstallLikeSchemaAcceptsStringEncodedPackages() {
+        // Mirrors `SandboxPipInstallTool.parameters` — second user-reported
+        // screenshot. Model emitted the array as a JSON-encoded string.
+        let schema: JSONValue = .object([
+            "type": .string("object"),
+            "additionalProperties": .bool(false),
+            "properties": .object([
+                "packages": .object([
+                    "type": .string("array"),
+                    "items": .object(["type": .string("string")]),
+                ])
+            ]),
+            "required": .array([.string("packages")]),
+        ])
+        let r = SchemaValidator.validate(
+            arguments: ["packages": "[\"matplotlib\", \"numpy\"]"],
+            against: schema
+        )
+        #expect(r.isValid, "got: \(r.errorMessage ?? "?")")
+    }
 
     @Test func sandboxExecLikeSchemaAcceptsStringTimeout() {
         // Mirrors `SandboxExecTool.parameters` shape — the case in the

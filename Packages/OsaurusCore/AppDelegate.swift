@@ -134,9 +134,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             PluginRepositoryService.shared.startBackgroundRefresh()
         }
 
-        // Pre-warm caches immediately for instant first window (no async deps)
+        // Pre-warm caches immediately for instant first window (no async deps).
+        // The unified prewarm builds the picker with whatever is currently
+        // available; once remote providers finish connecting below they post
+        // .remoteProviderModelsChanged and the cache rebuilds automatically.
         _ = SpeechConfigurationStore.load()
-        ModelPickerItemCache.shared.prewarmLocalModelsOnly()
+        ModelPickerItemCache.shared.prewarm()
 
         // Auto-connect to enabled providers, then update model cache with remote models
         Task { @MainActor in

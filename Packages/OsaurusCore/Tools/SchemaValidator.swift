@@ -6,11 +6,12 @@
 //  Supports `type` (object/string/integer/number/boolean/array),
 //  `properties`, `required`, `additionalProperties: false`, and `enum`.
 //
-//  Scalar types (`integer`, `number`, `boolean`) are intentionally lenient
-//  about string-encoded equivalents (`"15"`, `"3.14"`, `"true"`) to match
-//  the tool-side `ArgumentCoercion` helpers in `OsaurusTool.swift`. Local
-//  models often emit slightly off types and the tool body would coerce
-//  them anyway; rejecting at the preflight is pure noise.
+//  Scalar types (`integer`, `number`, `boolean`) and `array` are
+//  intentionally lenient about string-encoded equivalents (`"15"`,
+//  `"3.14"`, `"true"`, `"[\"a\",\"b\"]"`) to match the tool-side
+//  `ArgumentCoercion` helpers in `OsaurusTool.swift`. Local models
+//  often emit slightly off types and the tool body would coerce them
+//  anyway; rejecting at the preflight is pure noise.
 //
 
 import Foundation
@@ -38,9 +39,9 @@ struct SchemaValidator {
         guard case .object(let schemaObj) = schema else {
             return .fail("Schema must be an object")
         }
-        // Top-level scalar schema: validate the raw value directly.
+        // Non-object top-level schema: validate the raw value directly.
         if case .string(let t)? = schemaObj["type"], t != "object" {
-            return validateScalar(value: arguments, schemaObject: schemaObj)
+            return validateValue(arguments, schemaObject: schemaObj, key: nil)
         }
         guard let dict = arguments as? [String: Any] else {
             return .fail("Arguments must be an object")
@@ -74,54 +75,31 @@ struct SchemaValidator {
         }
 
         for (key, value) in obj {
-            guard let propSchemaVal = properties[key],
-                case .object(let propSchemaObj) = propSchemaVal
-            else { continue }
-            let res = validateProperty(key: key, value: value, schemaObject: propSchemaObj)
+            guard case .object(let propSchemaObj)? = properties[key] else { continue }
+            let res = validateValue(value, schemaObject: propSchemaObj, key: key)
             if !res.isValid { return res }
+            // Recurse into nested objects that declare their own properties.
+            if case .string("object")? = propSchemaObj["type"],
+                case .object? = propSchemaObj["properties"],
+                let nested = value as? [String: Any]
+            {
+                let inner = validateObject(nested, schemaObject: propSchemaObj)
+                if !inner.isValid { return inner }
+            }
         }
         return .ok()
     }
 
-    /// Type + enum check for a single property. Recurses into
-    /// `validateObject` for nested objects that declare their own
-    /// `properties`. All atomic types delegate to `validateScalar` so
-    /// type-mismatch messages and lenient scalar coercion stay in one
-    /// place.
-    private static func validateProperty(
-        key: String,
-        value: Any,
-        schemaObject: [String: JSONValue]
-    ) -> ValidationResult {
-        if case .string(let t)? = schemaObject["type"] {
-            switch t {
-            case "object":
-                guard let dict = value as? [String: Any] else {
-                    return typeMismatch("object", key: key)
-                }
-                if case .object? = schemaObject["properties"] {
-                    let nested = validateObject(dict, schemaObject: schemaObject)
-                    if !nested.isValid { return nested }
-                }
-            case "array":
-                guard value is [Any] else { return typeMismatch("array", key: key) }
-            // Item-level validation is intentionally not implemented.
-            case "string", "integer", "number", "boolean":
-                let res = validateScalar(value: value, schemaObject: schemaObject, key: key)
-                if !res.isValid { return res }
-            default:
-                break
-            }
-        }
-        return enumCheck(value: value, schemaObject: schemaObject, key: key)
-    }
+    // MARK: - Value validation (single value against its schema)
 
-    // MARK: - Scalar validation
-
-    private static func validateScalar(
-        value: Any,
+    /// Run the type and `enum` checks for one value against its schema.
+    /// Used for object properties (via `validateObject`) and for top-level
+    /// non-object schemas. Does NOT recurse into nested objects — that's
+    /// `validateObject`'s job.
+    private static func validateValue(
+        _ value: Any,
         schemaObject: [String: JSONValue],
-        key: String? = nil
+        key: String?
     ) -> ValidationResult {
         if case .string(let t)? = schemaObject["type"] {
             switch t {
@@ -136,7 +114,8 @@ struct SchemaValidator {
             case "object":
                 guard value is [String: Any] else { return typeMismatch("object", key: key) }
             case "array":
-                guard value is [Any] else { return typeMismatch("array", key: key) }
+                guard isArrayLike(value) else { return typeMismatch("array", key: key) }
+            // Item-level validation is intentionally not implemented.
             default:
                 break
             }
@@ -184,11 +163,11 @@ struct SchemaValidator {
         return "aeiouAEIOU".contains(c)
     }
 
-    // MARK: - Lenient scalar type checks
+    // MARK: - Lenient type checks
     //
     // Mirror the coercion vocabulary used by `ArgumentCoercion` in
     // `OsaurusTool.swift` so the preflight validator and the tool body
-    // agree on what counts as an acceptable scalar.
+    // agree on what counts as an acceptable value.
 
     /// True when `value` is an integer, an integral floating-point number,
     /// or a string that parses to either. Excludes `Bool` so `true`/
@@ -234,6 +213,25 @@ struct SchemaValidator {
     /// `NSNumber` ⇄ `Bool` bridging trap (`NSNumber(1) as? Bool == true`).
     private static func isObjCBool(_ n: NSNumber) -> Bool {
         CFGetTypeID(n) == CFBooleanGetTypeID()
+    }
+
+    /// True when `value` is a native array or a string that JSON-decodes
+    /// to an array. Mirrors the JSON-decode branch of
+    /// `ArgumentCoercion.stringArray` so models that send
+    /// `"packages": "[\"a\",\"b\"]"` (a stringified array) get past the
+    /// preflight and let the tool body coerce. A bare non-empty string is
+    /// not accepted here — the tool can wrap it itself if it wants the
+    /// single-element fallback, but the validator surfaces the type
+    /// mismatch so the model gets a clear signal.
+    private static func isArrayLike(_ value: Any) -> Bool {
+        if value is [Any] { return true }
+        if let s = value as? String,
+            let data = s.data(using: .utf8),
+            (try? JSONSerialization.jsonObject(with: data)) is [Any]
+        {
+            return true
+        }
+        return false
     }
 
     private static func equalJSONValues(_ a: Any, _ b: Any) -> Bool {
