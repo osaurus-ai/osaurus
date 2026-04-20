@@ -1071,7 +1071,7 @@ extension FloatingInputCard {
 
     private var selectorRow: some View {
         HStack(spacing: 6) {
-            if pickerItems.count > 1 {
+            if !pickerItems.isEmpty {
                 modelSelectorChip
             }
 
