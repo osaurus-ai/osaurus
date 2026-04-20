@@ -116,8 +116,6 @@ struct ModelManagerSuggestedTests {
     }
 
     @Test func applyOsaurusOrgFetch_dropsStaleAutoFetchedOnReapply() async {
-        let manager = await MainActor.run { ModelManager() }
-
         let stale = MLXModel(
             id: "OsaurusAI/Stale-Repo",
             name: "Stale Repo",
@@ -131,14 +129,13 @@ struct ModelManagerSuggestedTests {
             downloadURL: "https://huggingface.co/OsaurusAI/Kept-Repo"
         )
 
-        await MainActor.run {
+        // keep init + both applies + read atomic on MainActor to block it out
+        let after = await MainActor.run { () -> [MLXModel] in
+            let manager = ModelManager()
             manager.applyOsaurusOrgFetch(autoFetched: [stale])
-        }
-        await MainActor.run {
             manager.applyOsaurusOrgFetch(autoFetched: [kept])
+            return manager.suggestedModels
         }
-
-        let after = await MainActor.run { manager.suggestedModels }
         #expect(after.contains { $0.id == kept.id })
         #expect(!after.contains { $0.id == stale.id })
     }
