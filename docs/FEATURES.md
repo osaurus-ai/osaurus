@@ -16,7 +16,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 | MCP Server                       | Stable    | "MCP Server"       | (in README)                   | Networking/OsaurusServer.swift, Services/MCP/MCPServerManager.swift                       |
 | Tools & Plugins                  | Stable    | "Tools & Plugins"  | PLUGIN_AUTHORING.md           | Tools/, Managers/Plugin/PluginManager.swift, Services/Plugin/PluginHostAPI.swift, Storage/PluginDatabase.swift, Models/Plugin/PluginHTTP.swift, Views/Plugin/PluginConfigView.swift |
 | Skills                           | Stable    | "Skills"           | SKILLS.md                     | Managers/SkillManager.swift, Views/Skill/SkillsView.swift, Services/Skill/SkillSearchService.swift |
-| Methods                          | Stable    | "Skills & Methods" | SKILLS.md                     | Models/Method/Method.swift, Services/Method/MethodService.swift, Services/Method/MethodSearchService.swift, Storage/MethodDatabase.swift, Tools/MethodTools.swift |
+| Methods                          | Stable    | "Skills & Methods" | SKILLS.md                     | Models/Method/Method.swift, Services/Method/MethodService.swift, Services/Method/MethodSearchService.swift, Storage/MethodDatabase.swift |
 | Context Management               | Stable    | -                  | SKILLS.md                     | Services/Context/PreflightCapabilitySearch.swift, Tools/CapabilityTools.swift, Services/Tool/ToolSearchService.swift, Services/Tool/ToolIndexService.swift |
 | Memory                           | Stable    | "Key Features"     | MEMORY.md                     | Services/Memory/MemoryService.swift, Services/Memory/MemorySearchService.swift, Services/Memory/MemoryContextAssembler.swift |
 | Agents                         | Stable    | "Agents"         | (in README)                   | Managers/AgentManager.swift, Models/Agent/Agent.swift, Views/Agent/AgentsView.swift         |
@@ -497,8 +497,8 @@ See [INFERENCE_RUNTIME.md](./INFERENCE_RUNTIME.md) for the full runtime architec
 
 **Components:**
 
-- `Tools/AgentLoopTools.swift` — The three engine-intercepted loop tools (`todo`, `complete`, `clarify`)
-- `Tools/FolderToolManager.swift` — Registers folder tools when a working folder is selected; unregisters on clear
+- `Tools/AgentLoopTools.swift` — The three chat-layer-intercepted loop tools (`todo`, `complete`, `clarify`); registered as global built-ins
+- `Tools/FolderToolManager.swift` — Registers folder tools when a working folder is selected; unregisters on clear. `share_artifact` is no longer registered here — it lives as a global built-in alongside the loop tools.
 - `Folder/FolderContext.swift` — Project type, file tree, manifest, git status, optional `AGENTS.md`/`CLAUDE.md`/`.cursorrules`
 - `Folder/FolderContextService.swift` — `NSOpenPanel`, security-scoped bookmark persistence, MainActor service
 - `Folder/FolderTools.swift` — File/coding/git tool implementations + `FolderToolFactory`
@@ -512,7 +512,8 @@ See [INFERENCE_RUNTIME.md](./INFERENCE_RUNTIME.md) for the full runtime architec
 **Features:**
 
 - **Unified loop** — One chat is one task; no separate Agent/Work tab
-- **`todo` / `complete` / `clarify`** — Three minimal-schema tools the chat engine intercepts
+- **`todo` / `complete` / `clarify`** — Three minimal-schema global built-in tools whose results the chat layer intercepts to drive the inline UI (not a pre-dispatch hook — the registry runs them like any other tool)
+- **Single mode resolver** — `ToolRegistry.resolveExecutionMode(folderContext:autonomousEnabled:)` decides sandbox > host folder > none for chat, plugin, and HTTP entry points
 - **Working folder picker** — Per-chat folder via `FolderContextService`, with security-scoped bookmark persistence
 - **Project-aware tools** — File/coding/git tools registered automatically when a folder is selected; tool kit varies by project type and git status
 - **Sandbox toggle** — Mutually exclusive with the working-folder backend; selecting a folder disables sandbox autonomous exec and vice versa
@@ -541,9 +542,7 @@ See [INFERENCE_RUNTIME.md](./INFERENCE_RUNTIME.md) for the full runtime architec
 | `file_copy`       | Core     | Duplicate                                                         |
 | `file_delete`     | Core     | Remove                                                            |
 | `dir_create`      | Core     | Create directories                                                |
-| `file_metadata`   | Core     | Size, dates, attributes                                           |
 | `batch`           | Core     | Run up to 30 ops in sequence; reports per-op results              |
-| `share_artifact`  | Core     | Surface a file or inline content to the user                      |
 | `shell_run`       | Coding   | Run a shell command (requires approval). Registered when project type detected. |
 | `git_status`      | Git      | Repository status. Registered when `.git` present.                |
 | `git_diff`        | Git      | Show diffs                                                        |
@@ -624,17 +623,15 @@ See [AGENT_LOOP.md](AGENT_LOOP.md) for the full guide.
 | `sandbox_delete` | Write | Delete files or directories |
 | `sandbox_exec` | Exec | Run shell command (timeout, rate limited) |
 | `sandbox_exec_background` | Exec | Start background process |
-| `sandbox_exec_kill` | Exec | Kill background process |
 | `sandbox_install` | Package | Install via apk (root) |
 | `sandbox_pip_install` | Package | Install via pip |
 | `sandbox_npm_install` | Package | Install via npm |
 | `sandbox_run_script` | Exec | Run a script file (Python, Node, Bash, etc.) |
-| `sandbox_whoami` | Info | Agent identity and environment |
-| `sandbox_processes` | Info | List agent processes |
-| `share_artifact` | Artifact | Share a file as a downloadable artifact |
 | `sandbox_secret_check` | Secret | Check whether a secret exists (never reveals value) |
 | `sandbox_secret_set` | Secret | Store a secret directly or prompt the user |
 | `sandbox_plugin_register` | Plugin | Register an agent-created plugin (requires `pluginCreate`) |
+
+`share_artifact` is a global built-in (registered in `ToolRegistry`, available in plain chat / folder / sandbox alike) so it does not appear in this sandbox-specific table.
 
 Read-only tools are always available. Write/exec/package/secret tools require `autonomous_exec.enabled` on the agent. `sandbox_plugin_register` additionally requires `pluginCreate` to be enabled.
 
@@ -790,7 +787,6 @@ Methods are YAML sequences of tool-call steps that represent learned procedures.
 - `Storage/MethodDatabase.swift` — SQLite storage (methods, events, scores)
 - `Services/Method/MethodService.swift` — CRUD orchestrator, YAML extraction, scoring
 - `Services/Method/MethodSearchService.swift` — VecturaKit hybrid search (BM25 + vector)
-- `Tools/MethodTools.swift` — Agent-facing tools (`methods_save`, `methods_report`)
 - `Utils/MethodLogger.swift` — Structured logging
 
 **Features:**
@@ -825,12 +821,7 @@ recencyWeight = 1.0 / (1.0 + daysSinceUsed / 30.0)
 
 Each time a method is used, a `MethodEvent` is recorded (`loaded`, `succeeded`, `failed`), and the score is recalculated.
 
-**Agent Tools:**
-
-| Tool              | Description                                      |
-| ----------------- | ------------------------------------------------ |
-| `methods_save`    | Save a new method from a YAML workflow           |
-| `methods_report`  | Report success or failure to update method score |
+**Agent Tools:** Methods are loaded by the agent indirectly via `capabilities_search` / `capabilities_load` (loading a method auto-loads its referenced tools and skills). The dedicated `methods_save` / `methods_report` tools were removed from the schema — recording method outcomes is now an internal observation, not an agent-facing concern.
 
 **Storage:** `~/.osaurus/methods/methods.db` (SQLite with WAL mode)
 

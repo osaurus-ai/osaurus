@@ -114,6 +114,10 @@ enum ModelFamilyGuidance {
     /// Google Gemma / Gemini: anti-hallucination + execute-don't-narrate.
     /// Includes an explicit "do not enumerate tools" line because Gemma
     /// has been observed listing fictional tool names in its thinking.
+    /// The path-style line is intentionally absent — folder mode requires
+    /// relative paths for `file_*` tools and sandbox mode is path-agnostic
+    /// inside the container, so a global "use absolute paths" directive
+    /// would actively conflict with the active mode template.
     static let googleGemmaGuidance = """
         # Operational directives
 
@@ -123,7 +127,6 @@ enum ModelFamilyGuidance {
           name that isn't in your schema.
         - **Verify before you act.** Read the file or list the directory first \
           when a path is involved; never guess at file contents.
-        - **Use absolute paths** when invoking shell tools.
         - **Be concise.** Brief plain-language answers — a few sentences, not \
           paragraphs. Save the exposition for when the user asks for it.
         - **Parallel tool calls when independent.** When you need to read three \

@@ -247,6 +247,26 @@ public struct SystemPromptComposer: Sendable {
                 .subtracting([BuiltinSandboxTools.initPendingToolName])
         }
 
+        // Agent-loop guidance: short cheat-sheet for the chat-layer-
+        // intercepted tools (todo / complete / clarify / share_artifact).
+        // Gated on at least one of those names appearing in the resolved
+        // schema — in practice that's every chat where tools are on, but
+        // the gate keeps tools-off sessions from carrying dead text.
+        // Static section so it joins the cached prefix.
+        if !effectiveToolsOff {
+            let resolvedNames = Set(tools.map { $0.function.name })
+            let loopNames: Set<String> = ["todo", "complete", "clarify", "share_artifact"]
+            if !resolvedNames.isDisjoint(with: loopNames) {
+                comp.append(
+                    .static(
+                        id: "agentLoopGuidance",
+                        label: "Agent Loop",
+                        content: SystemPromptTemplates.agentLoopGuidance
+                    )
+                )
+            }
+        }
+
         // Capability-discovery nudge: explain how to recover when the
         // current tool kit is incomplete. Gated to auto mode + presence of
         // `capabilities_search` so manual-mode agents and tools-disabled
@@ -567,15 +587,20 @@ public struct SystemPromptComposer: Sendable {
             }
         }
 
+        // Always-loaded baseline: built-ins (agent loop, share_artifact,
+        // capability discovery, render_chart, search_memory) + sandbox/
+        // folder runtime when the mode is active. Manual mode then layers
+        // user picks on top; auto mode layers preflight specs on top.
+        // Manual mode opts out of the LLM-driven preflight only — it does
+        // NOT strip the always-loaded surface (the chat layer depends on
+        // the loop tools).
+        add(filtered(ToolRegistry.shared.alwaysLoadedSpecs(mode: executionMode)))
+
         if isManual {
-            if executionMode.usesSandboxTools {
-                add(filtered(ToolRegistry.shared.sandboxBuiltInSpecs(mode: executionMode)))
-            }
             if let manualNames = AgentManager.shared.effectiveManualToolNames(for: agentId) {
                 add(ToolRegistry.shared.specs(forTools: manualNames))
             }
         } else {
-            add(filtered(ToolRegistry.shared.alwaysLoadedSpecs(mode: executionMode)))
             add(preflight.toolSpecs)
         }
 
@@ -586,26 +611,38 @@ public struct SystemPromptComposer: Sendable {
         return canonicalToolOrder(Array(byName.values))
     }
 
-    /// Stable order: built-in sandbox tools (alphabetical) first, then the
-    /// fixed-order capability tools, then everything else alphabetically.
-    /// The fixed capability order keeps `capabilities_search` at the head
-    /// of its group so the model sees the discovery tool before the loader.
+    /// Stable order:
+    ///   0. Agent-loop tools (`todo`, `complete`, `clarify`, `share_artifact`)
+    ///      in fixed order. Pinned at the very top so a model scanning the
+    ///      schema sees the loop API first; also keeps the rendered byte
+    ///      sequence stable across sends regardless of what plugins or MCP
+    ///      providers register later (KV-cache reuse).
+    ///   1. Built-in sandbox tools (alphabetical).
+    ///   2. Capability discovery tools (`capabilities_search`, then
+    ///      `capabilities_load`) in fixed order so the discovery tool sits
+    ///      ahead of the loader in the model's view.
+    ///   3. Everything else, alphabetical.
     @MainActor
     static func canonicalToolOrder(_ tools: [Tool]) -> [Tool] {
         let sandboxNames = ToolRegistry.shared.builtInSandboxToolNamesSnapshot
+        let loopIndex = Dictionary(
+            uniqueKeysWithValues: ["todo", "complete", "clarify", "share_artifact"]
+                .enumerated().map { ($1, $0) }
+        )
         let capabilityIndex = Dictionary(
-            uniqueKeysWithValues: ["capabilities_search", "capabilities_load", "methods_save", "methods_report"]
+            uniqueKeysWithValues: ["capabilities_search", "capabilities_load"]
                 .enumerated().map { ($1, $0) }
         )
 
-        // Sort key: (bucket, capability-order index, name). `Int.max` for
-        // non-capability tools collapses the index dimension to a no-op,
-        // leaving the alphabetical name as the tiebreaker.
+        // Sort key: (bucket, intra-bucket order, name). `Int.max` for
+        // alphabetical-only buckets collapses the index dimension to a
+        // no-op so the name is the only tiebreaker.
         func sortKey(_ tool: Tool) -> (Int, Int, String) {
             let name = tool.function.name
-            if sandboxNames.contains(name) { return (0, .max, name) }
-            if let order = capabilityIndex[name] { return (1, order, name) }
-            return (2, .max, name)
+            if let order = loopIndex[name] { return (0, order, name) }
+            if sandboxNames.contains(name) { return (1, .max, name) }
+            if let order = capabilityIndex[name] { return (2, order, name) }
+            return (3, .max, name)
         }
 
         return tools.sorted { sortKey($0) < sortKey($1) }

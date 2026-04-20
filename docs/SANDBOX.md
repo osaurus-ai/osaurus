@@ -143,17 +143,15 @@ When the container is running, sandbox tools are automatically registered for th
 | `sandbox_delete` | Delete files or directories |
 | `sandbox_exec` | Run a shell command (configurable timeout, max 300s) |
 | `sandbox_exec_background` | Start a background process with log file output |
-| `sandbox_exec_kill` | Kill a background process by PID |
 | `sandbox_install` | Install system packages via `apk` (runs as root) |
 | `sandbox_pip_install` | Install Python packages via `pip install --user` |
 | `sandbox_npm_install` | Install Node.js packages via `npm install` |
 | `sandbox_run_script` | Run a script file (auto-detects Python, Node, Bash, etc.) |
-| `sandbox_whoami` | Get agent identity, home directory, installed plugins, and disk usage |
-| `sandbox_processes` | List running processes for this agent |
-| `share_artifact` | Share a file as a downloadable artifact |
 | `sandbox_secret_check` | Check whether a secret exists for this agent (never reveals the value) |
 | `sandbox_secret_set` | Store a secret securely — pass `value` directly or omit to prompt the user |
 | `sandbox_plugin_register` | Register an agent-created plugin (requires `pluginCreate` permission) |
+
+`share_artifact` is a global built-in (registered in `ToolRegistry`) and is the only way for sandbox-generated content to reach the chat thread. It's not in this sandbox-specific list because it's available everywhere, not just in sandbox mode.
 
 All file paths are validated on the host side before container execution. Path traversal attacks are blocked by `SandboxPathSanitizer`.
 

@@ -89,8 +89,33 @@ struct ChatViewSandboxTests {
 
         #expect(specs.contains(where: { $0.function.name == "capabilities_search" }))
         #expect(specs.contains(where: { $0.function.name == "capabilities_load" }))
-        #expect(specs.contains(where: { $0.function.name == "methods_save" }))
-        #expect(specs.contains(where: { $0.function.name == "methods_report" }))
+    }
+
+    @Test
+    func alwaysLoadedSpecs_includesAgentLoopTools() {
+        let specs = ToolRegistry.shared.alwaysLoadedSpecs(mode: .none)
+
+        #expect(specs.contains(where: { $0.function.name == "todo" }))
+        #expect(specs.contains(where: { $0.function.name == "complete" }))
+        #expect(specs.contains(where: { $0.function.name == "clarify" }))
+    }
+
+    @Test
+    func alwaysLoadedSpecs_includesShareArtifactGlobally() {
+        let specs = ToolRegistry.shared.alwaysLoadedSpecs(mode: .none)
+
+        #expect(specs.contains(where: { $0.function.name == "share_artifact" }))
+    }
+
+    @Test
+    func alwaysLoadedSpecs_includesUnifiedSearchMemory() {
+        let specs = ToolRegistry.shared.alwaysLoadedSpecs(mode: .none)
+
+        #expect(specs.contains(where: { $0.function.name == "search_memory" }))
+        #expect(!specs.contains(where: { $0.function.name == "search_working_memory" }))
+        #expect(!specs.contains(where: { $0.function.name == "search_conversations" }))
+        #expect(!specs.contains(where: { $0.function.name == "search_summaries" }))
+        #expect(!specs.contains(where: { $0.function.name == "search_graph" }))
     }
 
     @Test

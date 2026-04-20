@@ -8,15 +8,15 @@
 //    - `complete(summary)` — finish the task with a one-paragraph summary
 //    - `clarify(question)` — pause and wait for the user
 //
-//  Each tool has a single required field — minimum schema surface so
-//  small local models can call them without confusion, while remaining
-//  expressive enough for frontier models.
+//  Each has a single required field — smallest schema small local models
+//  can reliably call, while remaining expressive enough for frontier ones.
 //
-//  The chat engine intercepts each of these BEFORE dispatching to the
-//  registry's normal execute path so it can:
-//    - mirror todo state into AgentTodoStore + UI
-//    - end the loop cleanly on `complete`
-//    - pause for user input on `clarify`
+//  These are normal `OsaurusTool`s. They execute through `ToolRegistry`
+//  like any other tool; the chat layer (`ChatView`'s post-execute branch)
+//  then inspects the tool name and result to drive the inline UI: mirror
+//  `todo` into `AgentTodoStore`, end the loop on `complete`, pause for
+//  input on `clarify`. HTTP-API callers see the raw result strings (no
+//  inline UI) — that divergence is intentional and documented.
 //
 
 import Foundation

@@ -2,7 +2,7 @@
 
 Every chat in Osaurus is an agent loop. The agent picks a model, decides what to do next, calls tools, and either finishes (`complete`), pauses for input (`clarify`), or keeps iterating until its task list is empty.
 
-There is no separate "Agent" or "Work" tab — the same chat window handles a one-line question and a multi-step refactor. What changes between the two is the tool kit: pick a working folder to give the agent file tools, or toggle the Linux Sandbox to give it shell access.
+There is no separate "Agent" or "Work" tab — the same chat window handles a one-line question and a multi-step refactor. What changes between the two is the tool kit: pick a working folder to give the agent file tools, or toggle the Linux Sandbox to give it shell access. The four "always-on" loop tools (`todo`, `complete`, `clarify`, `share_artifact`) are global built-ins and present in every chat regardless of mode.
 
 ---
 
@@ -22,13 +22,13 @@ There is no separate "Agent" or "Work" tab — the same chat window handles a on
                                      loop ends
 ```
 
-The chat engine intercepts three special tools so the loop has structure without a separate planner: `todo`, `complete`, and `clarify`. Every other tool (file, sandbox, plugin, MCP, …) just runs and returns its output to the model on the next turn.
+The chat layer intercepts three special tool results so the loop has structure without a separate planner: `todo`, `complete`, and `clarify`. The intercept fires AFTER `ToolRegistry.execute` returns — the registry runs the tool body like any other tool, and the chat view (`ChatView`'s post-execute branch) inspects the tool name and result string to drive the inline UI. Every other tool (file, sandbox, plugin, MCP, …) just runs and returns its output to the model on the next turn.
 
 ---
 
 ## The Three Loop Tools
 
-These live in [`Tools/AgentLoopTools.swift`](../Packages/OsaurusCore/Tools/AgentLoopTools.swift). Each one has a single required field — the smallest schema we can give a small local model and still get the right behavior — but they're called identically by frontier models too.
+These live in [`Tools/AgentLoopTools.swift`](../Packages/OsaurusCore/Tools/AgentLoopTools.swift). Each one has a single required field — the smallest schema we can give a small local model and still get the right behavior — but they're called identically by frontier models too. They're registered as global built-ins in [`ToolRegistry`](../Packages/OsaurusCore/Tools/ToolRegistry.swift) so the model sees them in every chat (folder, sandbox, plain Q&A) and the system prompt's "Agent Loop" guidance block reinforces when to call which.
 
 ### `todo` — write or replace the task checklist
 
@@ -88,7 +88,7 @@ Project type is auto-detected from manifests (defined in [`FolderContext.swift`]
 
 ### Folder tool inventory
 
-Built by [`FolderToolFactory`](../Packages/OsaurusCore/Folder/FolderTools.swift) when the folder is selected. Tools that operate on the filesystem all enforce the same path contract: paths must be relative to the working folder, and after `..`/`.` standardisation must stay strictly under it.
+Built by [`FolderToolFactory`](../Packages/OsaurusCore/Folder/FolderTools.swift) when the folder is selected. Tools that operate on the filesystem all enforce the same path contract: paths must be relative to the working folder, and after `..`/`.` standardisation must stay strictly under it. `share_artifact` is NOT in this table — it lives as a global built-in (see below) so it's available in every chat.
 
 **Core (always registered):**
 
@@ -103,9 +103,7 @@ Built by [`FolderToolFactory`](../Packages/OsaurusCore/Folder/FolderTools.swift)
 | `file_copy`     | Duplicate                                                    |
 | `file_delete`   | Remove files                                                 |
 | `dir_create`    | Create directories                                           |
-| `file_metadata` | Size, dates, attributes                                      |
 | `batch`         | Execute up to 30 registered tool ops in sequence (continues on error, reports per-op status). `shell_run`, `git_commit`, and nested `batch` are denied. |
-| `share_artifact` | The only way the user sees a file or content the agent produced — see below |
 
 **Coding (registered when project type is detected):**
 
@@ -139,13 +137,13 @@ public enum ExecutionMode: Sendable {
 }
 ```
 
-`ExecutionMode` is what the system prompt composer, tool registry, and memory layer all key off when deciding which tools and instructions to surface.
+`ExecutionMode` is what the system prompt composer, tool registry, and memory layer all key off when deciding which tools and instructions to surface. The single resolver is [`ToolRegistry.resolveExecutionMode(folderContext:autonomousEnabled:)`](../Packages/OsaurusCore/Tools/ToolRegistry.swift) and its priority is **sandbox > host folder > none**: if the user has both an open folder and the autonomous-exec toggle on (with `sandbox_exec` registered), the sandbox wins. Plugin and HTTP entry points use the same resolver so the same agent gets the same mode regardless of how it's invoked.
 
 ---
 
 ## `share_artifact` — Handing Files Back to the User
 
-If the agent generates an image, chart, website, report, or any binary file, it **must** call `share_artifact`. The user does not see arbitrary files the agent writes to disk; the artifact tool is what surfaces them in chat.
+`share_artifact` is a **global built-in** registered in [`ToolRegistry.registerBuiltInTools()`](../Packages/OsaurusCore/Tools/ToolRegistry.swift) — it's available in plain chat, folder, and sandbox alike. If the agent generates an image, chart, website, report, or any file, it **must** call this tool. The user does not see arbitrary files the agent writes to disk or to the sandbox; the artifact tool is what surfaces them as cards in chat.
 
 | Field         | Type   | Description                                                                                       |
 | ------------- | ------ | ------------------------------------------------------------------------------------------------- |
@@ -176,6 +174,10 @@ When the current request has no tools, memory entries written under `*Sandbox` /
 ## Headless / HTTP / Plugin Use
 
 Plugins and HTTP API callers reach the same loop through [`TaskDispatcher`](../Packages/OsaurusCore/Managers/TaskDispatcher.swift) and [`BackgroundTaskManager`](../Packages/OsaurusCore/Managers/BackgroundTaskManager.swift). Each dispatched task runs as a background chat session — same engine, same loop tools, same intercepts. See the [Plugin Authoring Guide](PLUGIN_AUTHORING.md) for the dispatch JSON schema and event types.
+
+### HTTP API divergence (intentional)
+
+The OpenAI-compatible HTTP endpoint is **stateless** — there's no Osaurus session id on the request, so it cannot reuse `SessionToolStateStore.loadedToolNames`, run a real LLM-driven preflight, or freeze a per-session schema snapshot. To keep the schema predictable for HTTP callers (and to avoid paying a preflight LLM call on every request), the HTTP path deliberately bypasses [`SystemPromptComposer.resolveTools`](../Packages/OsaurusCore/Services/Chat/SystemPromptComposer.swift) and uses bare `ToolRegistry.alwaysLoadedSpecs(mode:)`. Manual-mode user picks, mid-session `capabilities_load` additions, and the inline `clarify` UI are chat-only. This is **by design** — see the comment block in [`HTTPHandler.swift`](../Packages/OsaurusCore/Networking/HTTPHandler.swift) before "fixing" it.
 
 ---
 

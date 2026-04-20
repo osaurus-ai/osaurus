@@ -91,15 +91,36 @@ struct SessionToolState: Sendable {
     /// `capabilities_load` path (which writes loadedToolNames).
     /// `nil` means "no snapshot yet" — the next compose will record one.
     var initialAlwaysLoadedNames: Set<String>?
+    /// Compact signature of the (executionMode, toolSelectionMode) that
+    /// captured this state. The send path compares the live signature on
+    /// every turn and invalidates on a flip, so dynamically-loaded tools
+    /// from one mode cannot leak into another and an empty manual-mode
+    /// preflight cache cannot survive a flip back to auto. `nil` only for
+    /// legacy entries created before this field existed.
+    var sessionFingerprint: String?
 
     init(
         initialPreflight: PreflightResult,
         loadedToolNames: Set<String> = [],
-        initialAlwaysLoadedNames: Set<String>? = nil
+        initialAlwaysLoadedNames: Set<String>? = nil,
+        sessionFingerprint: String? = nil
     ) {
         self.initialPreflight = initialPreflight
         self.loadedToolNames = loadedToolNames
         self.initialAlwaysLoadedNames = initialAlwaysLoadedNames
+        self.sessionFingerprint = sessionFingerprint
+    }
+
+    /// Canonical fingerprint string for a (mode, toolSelectionMode) pair.
+    /// Centralised so the read and write sides cannot drift in shape.
+    static func fingerprint(executionMode: ExecutionMode, toolMode: ToolSelectionMode) -> String {
+        let modeTag: String
+        switch executionMode {
+        case .hostFolder: modeTag = "host"
+        case .sandbox: modeTag = "sandbox"
+        case .none: modeTag = "none"
+        }
+        return "\(modeTag)/\(toolMode.rawValue)"
     }
 }
 

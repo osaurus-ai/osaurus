@@ -46,10 +46,10 @@ struct SessionPreflightCacheTests {
             agentId: agent.id,
             executionMode: .none,
             preflight: PreflightResult(toolSpecs: [], items: []),
-            additionalToolNames: ["methods_save"]
+            additionalToolNames: ["search_memory"]
         )
         let names = tools.map { $0.function.name }
-        #expect(names.contains("methods_save"))
+        #expect(names.contains("search_memory"))
     }
 
     @Test
@@ -63,13 +63,13 @@ struct SessionPreflightCacheTests {
 
         // Seed cache with a known PreflightResult that includes a specific
         // tool we can fingerprint in the rendered output.
-        let methodsSaveSpec = ToolRegistry.shared.specs(forTools: ["methods_save"]).first
-        guard let methodsSaveSpec else {
-            // methods_save isn't registered in this test environment — skip
+        let memorySpec = ToolRegistry.shared.specs(forTools: ["search_memory"]).first
+        guard let memorySpec else {
+            // search_memory isn't registered in this test environment — skip
             // (the property under test is exercised by other tests anyway).
             return
         }
-        let cached = PreflightResult(toolSpecs: [methodsSaveSpec], items: [])
+        let cached = PreflightResult(toolSpecs: [memorySpec], items: [])
 
         let ctx = await SystemPromptComposer.composeChatContext(
             agentId: agent.id,
@@ -81,10 +81,10 @@ struct SessionPreflightCacheTests {
         // The cached preflight must echo back through ComposedContext.preflight
         // so the caller can re-stash it.
         let cachedNames = Set(ctx.preflight.toolSpecs.map { $0.function.name })
-        #expect(cachedNames == ["methods_save"])
+        #expect(cachedNames == ["search_memory"])
         // And the resolved tool union must contain the cached preflight tool.
         let resolvedNames = ctx.tools.map { $0.function.name }
-        #expect(resolvedNames.contains("methods_save"))
+        #expect(resolvedNames.contains("search_memory"))
     }
 
     @Test

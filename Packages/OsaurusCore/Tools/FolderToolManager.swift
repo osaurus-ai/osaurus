@@ -16,7 +16,11 @@ import Foundation
 public struct ShareArtifactTool: OsaurusTool {
     public let name = "share_artifact"
     public let description =
-        "Share a file, directory, or text content with the user. The user cannot see any files you create unless you call this tool. Always call this for generated images, charts, websites, reports, code output, etc."
+        "Surface an artifact to the user in the chat thread. The chat does NOT show files you wrote to disk or "
+        + "to the sandbox unless you also call this tool — it is the only path that creates an artifact card the "
+        + "user can click. Use for generated images, charts, websites, reports, code blobs, and any deliverable. "
+        + "Pass `path` to share an existing file (folder/sandbox path), or `content` + `filename` to share inline "
+        + "text/markdown without writing to disk first."
 
     public let parameters: JSONValue? = .object([
         "type": .string("object"),

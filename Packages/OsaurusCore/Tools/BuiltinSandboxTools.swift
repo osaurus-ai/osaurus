@@ -74,7 +74,6 @@ enum BuiltinSandboxTools {
             ),
             runtimeManaged: true
         )
-        registry.registerSandboxTool(SandboxExecKillTool(agentName: agentName), runtimeManaged: true)
         registry.registerSandboxTool(SandboxInstallTool(agentName: agentName), runtimeManaged: true)
         registry.registerSandboxTool(
             SandboxPipInstallTool(agentId: agentId, agentName: agentName, home: home),
@@ -94,12 +93,6 @@ enum BuiltinSandboxTools {
             ),
             runtimeManaged: true
         )
-        registry.registerSandboxTool(
-            SandboxWhoamiTool(agentName: agentName, home: home),
-            runtimeManaged: true
-        )
-        registry.registerSandboxTool(SandboxProcessesTool(agentName: agentName), runtimeManaged: true)
-        registry.registerSandboxTool(ShareArtifactTool(), runtimeManaged: true)
 
         // Secret management tools
         registry.registerSandboxTool(
@@ -136,23 +129,10 @@ enum BuiltinSandboxTools {
         )
     }
 
-    /// Unregister all built-in sandbox tools.
-    @MainActor
-    static func unregisterAll() {
-        let names = [
-            "sandbox_read_file", "sandbox_list_directory", "sandbox_search_files", "sandbox_find_files",
-            "sandbox_write_file", "sandbox_edit_file", "sandbox_move", "sandbox_delete",
-            "sandbox_exec", "sandbox_exec_background", "sandbox_exec_kill",
-            "sandbox_install", "sandbox_pip_install", "sandbox_npm_install",
-            "sandbox_run_script",
-            "sandbox_whoami", "sandbox_processes",
-            "share_artifact",
-            "sandbox_secret_check", "sandbox_secret_set",
-            "sandbox_plugin_register",
-            BuiltinSandboxTools.initPendingToolName,
-        ]
-        ToolRegistry.shared.unregister(names: names)
-    }
+    // No `unregisterAll()` here on purpose — tear-down goes through
+    // `ToolRegistry.unregisterAllBuiltinSandboxTools()`, which uses the
+    // registry's live `builtInSandboxToolNames` set so it can't drift
+    // from what `register(...)` actually installed.
 }
 
 // MARK: - sandbox_init_pending (placeholder while sandbox boots)
@@ -1058,40 +1038,6 @@ private struct SandboxExecBackgroundTool: OsaurusTool, @unchecked Sendable {
     }
 }
 
-// MARK: - sandbox_exec_kill
-
-private struct SandboxExecKillTool: OsaurusTool, @unchecked Sendable {
-    let name = "sandbox_exec_kill"
-    let description = "Kill a background process in the sandbox."
-    let agentName: String
-
-    var parameters: JSONValue? {
-        .object([
-            "type": .string("object"),
-            "properties": .object([
-                "pid": .object(["type": .string("integer"), "description": .string("Process ID to kill")])
-            ]),
-            "required": .array([.string("pid")]),
-        ])
-    }
-
-    func execute(argumentsJSON: String) async throws -> String {
-        guard let args = parseArguments(argumentsJSON),
-            let pid = coerceInt(args["pid"])
-        else {
-            return jsonResult([
-                "error": "Invalid pid argument. Expected an integer, e.g. {\"pid\": 1234}"
-            ])
-        }
-
-        let result = try await SandboxToolCommandRunnerRegistry.shared.exec(
-            user: "agent-\(agentName)",
-            command: "kill \(pid) 2>/dev/null"
-        )
-        return jsonResult(["killed": result.succeeded])
-    }
-}
-
 // MARK: - sandbox_install
 
 private struct SandboxInstallTool: OsaurusTool, @unchecked Sendable {
@@ -1352,102 +1298,5 @@ private struct SandboxRunScriptTool: OsaurusTool, @unchecked Sendable {
             "output": truncateForModel(result.stdout + result.stderr),
             "exit_code": Int(result.exitCode),
         ])
-    }
-}
-
-// MARK: - sandbox_whoami
-
-private struct SandboxWhoamiTool: OsaurusTool, @unchecked Sendable {
-    let name = "sandbox_whoami"
-    let description = "Get current agent identity and sandbox environment info."
-    let agentName: String
-    let home: String
-
-    var parameters: JSONValue? { nil }
-
-    func execute(argumentsJSON: String) async throws -> String {
-        let venvPath = agentVenvPath(home: home)
-        var info: [String: Any] = [
-            "agent_name": agentName,
-            "linux_user": "agent-\(agentName)",
-            "home": home,
-            "workspace": home,
-            "venv_path": venvPath,
-        ]
-
-        if let pluginsResult = try? await SandboxToolCommandRunnerRegistry.shared.execAsAgent(
-            agentName,
-            command: "ls \(home)/plugins 2>/dev/null"
-        ), pluginsResult.succeeded {
-            let plugins = pluginsResult.stdout.split(separator: "\n").map(String.init)
-            info["plugins"] = plugins
-        }
-
-        if let diskResult = try? await SandboxToolCommandRunnerRegistry.shared.execAsAgent(
-            agentName,
-            command: "du -sh \(home) 2>/dev/null | cut -f1"
-        ), diskResult.succeeded {
-            info["disk_usage"] = diskResult.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-
-        if let venvResult = try? await SandboxToolCommandRunnerRegistry.shared.execAsAgent(
-            agentName,
-            command: "test -x '\(venvPath)/bin/python3' && echo true || echo false"
-        ), venvResult.succeeded {
-            info["venv_exists"] = venvResult.stdout.trimmingCharacters(in: .whitespacesAndNewlines) == "true"
-        }
-
-        let versionScript = [
-            "bash:bash --version | head -1",
-            "python3:python3 --version 2>&1",
-            "node:node --version 2>&1",
-            "npm:npm --version 2>&1",
-            "git:git --version 2>&1",
-            "gcc:gcc --version | head -1",
-            "cmake:cmake --version | head -1",
-            "sqlite3:sqlite3 --version 2>&1",
-            "rg:rg --version | head -1",
-        ].map { "\"\($0)\"" }.joined(separator: " ")
-
-        let versionCmd =
-            "for pair in \(versionScript); do "
-            + "tool=\"${pair%%:*}\"; cmd=\"${pair#*:}\"; "
-            + "if command -v \"$tool\" >/dev/null 2>&1; then "
-            + "ver=$(eval \"$cmd\" 2>/dev/null); printf '%s=%s\\n' \"$tool\" \"$ver\"; fi; done"
-
-        if let toolsResult = try? await SandboxToolCommandRunnerRegistry.shared.execAsAgent(
-            agentName,
-            command: versionCmd
-        ), toolsResult.succeeded {
-            let toolMap = toolsResult.stdout
-                .split(separator: "\n")
-                .reduce(into: [String: String]()) { partial, line in
-                    let pieces = line.split(separator: "=", maxSplits: 1).map(String.init)
-                    if pieces.count == 2 {
-                        partial[pieces[0]] = pieces[1]
-                    }
-                }
-            info["tool_versions"] = toolMap
-        }
-
-        return jsonResult(info)
-    }
-}
-
-// MARK: - sandbox_processes
-
-private struct SandboxProcessesTool: OsaurusTool, @unchecked Sendable {
-    let name = "sandbox_processes"
-    let description = "List running processes for this agent in the sandbox."
-    let agentName: String
-
-    var parameters: JSONValue? { nil }
-
-    func execute(argumentsJSON: String) async throws -> String {
-        let result = try await SandboxToolCommandRunnerRegistry.shared.exec(
-            user: "agent-\(agentName)",
-            command: "ps aux 2>/dev/null"
-        )
-        return jsonResult(["processes": result.stdout])
     }
 }

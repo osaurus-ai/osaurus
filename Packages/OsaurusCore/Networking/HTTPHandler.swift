@@ -1960,11 +1960,18 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             // Enrich with agent context (system prompt + memory)
             var messages = await Self.enrichWithAgentContext(req, agentId: agentId.uuidString).messages
 
-            // Load tools: use sandbox mode when the agent has Autonomous Execution enabled
+            // INTENTIONAL DIVERGENCE FROM CHAT: the OpenAI-compatible HTTP
+            // API is stateless (no Osaurus session id), so we cannot reuse
+            // SessionToolStateStore, run a preflight LLM, or freeze a
+            // per-session schema. Bare `alwaysLoadedSpecs(mode:)` keeps the
+            // HTTP schema predictable and avoids per-request preflight cost.
+            // See docs/AGENT_LOOP.md before "fixing" this onto resolveTools.
             let tools = await MainActor.run {
                 let autonomousEnabled = AgentManager.shared.effectiveAutonomousExec(for: agentId)?.enabled == true
-                let mode: ExecutionMode =
-                    autonomousEnabled ? ToolRegistry.shared.resolveExecutionMode(folderContext: nil) : .none
+                let mode = ToolRegistry.shared.resolveExecutionMode(
+                    folderContext: nil,
+                    autonomousEnabled: autonomousEnabled
+                )
                 return ToolRegistry.shared.alwaysLoadedSpecs(mode: mode)
             }
 

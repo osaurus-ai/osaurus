@@ -390,12 +390,20 @@ final class ChatSession: ObservableObject {
         }
 
         let manifest = buildPreviewManifest(agentId: effectiveId, executionMode: executionMode)
-        let toolTokens =
-            AgentManager.shared.effectiveToolsDisabled(for: effectiveId)
-            ? 0
-            : ToolRegistry.shared.totalEstimatedTokens(
-                for: ToolRegistry.shared.alwaysLoadedSpecs(mode: executionMode)
+        // Estimate via `resolveTools` so the preview matches what the next
+        // send actually produces (manual filter, frozen snapshot). Preflight
+        // specs are not plumbed in (preview is sync) so the auto-mode
+        // estimate can under-count by the preflight delta on turn 1.
+        let toolTokens: Int
+        if AgentManager.shared.effectiveToolsDisabled(for: effectiveId) {
+            toolTokens = 0
+        } else {
+            let resolvedTools = SystemPromptComposer.resolveTools(
+                agentId: effectiveId,
+                executionMode: executionMode
             )
+            toolTokens = ToolRegistry.shared.totalEstimatedTokens(for: resolvedTools)
+        }
         return .from(
             manifest: manifest,
             toolTokens: toolTokens,
@@ -975,13 +983,25 @@ final class ChatSession: ObservableObject {
                 }
 
                 // Reuse the per-session preflight + capabilities_load union
-                // when this isn't the first send. Subsequent sends skip the
-                // LLM-based selection entirely; the agent uses
-                // capabilities_search / capabilities_load to pick up more
-                // tools mid-session.
+                // on subsequent sends so we skip the LLM-based selection.
+                // First, ask the store to drop the cache if the
+                // (executionMode, toolMode) fingerprint flipped since the
+                // last turn — otherwise stale dynamically-loaded tools or
+                // an empty manual-mode preflight would leak into the new
+                // mode's schema.
+                let liveToolMode = AgentManager.shared.effectiveToolSelectionMode(for: effectiveAgentId)
+                let liveFingerprint = SessionToolState.fingerprint(
+                    executionMode: executionMode,
+                    toolMode: liveToolMode
+                )
                 let cachedSession: SessionToolState?
                 if let sid = sessionId {
-                    cachedSession = await SessionToolStateStore.shared.get(sessionStateKey(sid))
+                    let key = sessionStateKey(sid)
+                    await SessionToolStateStore.shared.invalidateIfFingerprintChanged(
+                        key,
+                        liveFingerprint: liveFingerprint
+                    )
+                    cachedSession = await SessionToolStateStore.shared.get(key)
                 } else {
                     cachedSession = nil
                 }
@@ -1010,7 +1030,7 @@ final class ChatSession: ObservableObject {
                 }
 
                 var toolSpecs = context.tools
-                let isManualTools = AgentManager.shared.effectiveToolSelectionMode(for: effectiveAgentId) == .manual
+                let isManualTools = liveToolMode == .manual
                 cachedContext = context
 
                 // Persist the (possibly fresh) preflight + always-loaded
@@ -1018,16 +1038,23 @@ final class ChatSession: ObservableObject {
                 // both — preflight skips the LLM call, the always-loaded
                 // snapshot freezes the schema against tools that register
                 // mid-session. Preserves any capabilities_load names
-                // already accumulated this session.
+                // already accumulated this session. Stamp the live
+                // fingerprint so the invalidation rule above can detect
+                // a flip on the next turn.
                 if let sid = sessionId, cachedSession == nil {
                     await SessionToolStateStore.shared.setInitial(
                         sessionStateKey(sid),
                         preflight: context.preflight,
-                        alwaysLoadedNames: context.alwaysLoadedNames
+                        alwaysLoadedNames: context.alwaysLoadedNames,
+                        fingerprint: liveFingerprint
                     )
                 }
 
-                if !context.preflightItems.isEmpty {
+                // Manual mode ignores the preflight in `resolveTools`, so
+                // surfacing a preflight panel from a stale auto-mode cache
+                // would lie to the user about which tools the model is
+                // actually getting. Gate on the live tool mode.
+                if !isManualTools, !context.preflightItems.isEmpty {
                     assistantTurn.preflightCapabilities = context.preflightItems
                 }
 

@@ -13,7 +13,10 @@ import Foundation
 struct RenderChartTool: OsaurusTool {
     let name = "render_chart"
     let description =
-        "Render a chart from attachment data. Use when the user has attached a data file (CSV, TSV, JSON). Pass the raw file content and column names — the tool handles all parsing and downsampling."
+        "Render a chart card inline in the chat from tabular data. Supported chart types: "
+        + "column, bar, line, spline, area, areaspline, pie, scatter, bubble, gauge, waterfall, boxplot. "
+        + "Pass the raw file content + column names; the tool handles parsing, type coercion, and downsampling. "
+        + "Use when the user has attached a data file (CSV/TSV/JSON) — for arbitrary images or saved chart files, use `share_artifact` instead."
 
     let parameters: JSONValue? = .object([
         "type": .string("object"),

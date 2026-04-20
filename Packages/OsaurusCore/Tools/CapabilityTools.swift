@@ -35,9 +35,10 @@ actor CapabilityLoadBuffer {
 final class CapabilitiesSearchTool: OsaurusTool, @unchecked Sendable {
     let name = "capabilities_search"
     let description =
-        "Search for additional methods, tools, and skills beyond what was pre-loaded. "
-        + "Relevant capabilities are already loaded based on your task — use this only when you "
-        + "need something not already available. Returns ranked results tagged by type."
+        "Find additional tools or skills the current schema does not include. "
+        + "Use ONLY when your existing tools cannot do the task — your initial set was pre-selected for relevance. "
+        + "Returns ranked IDs (e.g. `tool/sandbox_exec`, `skill/plot-data`) you then pass to `capabilities_load`. "
+        + "Example: `{\"queries\": [\"convert csv to json\", \"send http request\"]}`."
 
     let agentId: UUID?
 
@@ -146,9 +147,10 @@ final class CapabilitiesSearchTool: OsaurusTool, @unchecked Sendable {
 final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
     let name = "capabilities_load"
     let description =
-        "Load additional capabilities into the current session by ID (from capabilities_search results). "
-        + "Methods load their full steps plus auto-load referenced tools and skills. "
-        + "Tools become available as function calls. Skills load instruction text into context."
+        "Load capabilities into the current session by ID. IDs MUST come from `capabilities_search` results — "
+        + "do not invent IDs. After loading, the named tools are callable for the rest of the session and named "
+        + "skills are appended to your instructions. "
+        + "Example: `{\"ids\": [\"tool/sandbox_exec\", \"skill/plot-data\"]}`."
 
     let parameters: JSONValue? = .object([
         "type": .string("object"),

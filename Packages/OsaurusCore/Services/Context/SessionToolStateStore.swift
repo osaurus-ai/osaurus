@@ -41,19 +41,50 @@ actor SessionToolStateStore {
     // MARK: - Writes
 
     /// Initialise a session entry on first send. Caller passes the freshly
-    /// computed preflight + always-loaded snapshot. Idempotent: if an entry
-    /// already exists (e.g. another turn raced ahead) we leave it alone so
-    /// the snapshot stays stable.
+    /// computed preflight + always-loaded snapshot, plus the optional
+    /// (executionMode, toolSelectionMode) fingerprint that captured them
+    /// so a later send can detect a flip and invalidate.
+    /// Idempotent: if an entry already exists (e.g. another turn raced
+    /// ahead) we leave it alone so the snapshot stays stable.
     func setInitial(
         _ sessionId: String,
         preflight: PreflightResult,
-        alwaysLoadedNames: Set<String>?
+        alwaysLoadedNames: Set<String>?,
+        fingerprint: String? = nil
     ) {
         guard states[sessionId] == nil else { return }
         states[sessionId] = SessionToolState(
             initialPreflight: preflight,
-            initialAlwaysLoadedNames: alwaysLoadedNames
+            initialAlwaysLoadedNames: alwaysLoadedNames,
+            sessionFingerprint: fingerprint
         )
+    }
+
+    /// Drop the cached state for a session if its recorded (mode, toolMode)
+    /// fingerprint no longer matches the live one. Called on every send
+    /// before reading the cache so dynamically-loaded tools from one mode
+    /// cannot leak into another, and a manual-mode empty-preflight cache
+    /// cannot survive a flip back to auto.
+    /// Returns `true` if an invalidation actually happened.
+    @discardableResult
+    func invalidateIfFingerprintChanged(
+        _ sessionId: String,
+        liveFingerprint: String
+    ) -> Bool {
+        guard let entry = states[sessionId] else { return false }
+        // Legacy entries (pre-fingerprint) get stamped on first inspection
+        // instead of invalidated — the live mode is presumed to be what
+        // they were running under; the next genuine flip will catch it.
+        guard let recorded = entry.sessionFingerprint else {
+            var updated = entry
+            updated.sessionFingerprint = liveFingerprint
+            states[sessionId] = updated
+            return false
+        }
+        if recorded == liveFingerprint { return false }
+        states.removeValue(forKey: sessionId)
+        lastSendCacheHint.removeValue(forKey: sessionId)
+        return true
     }
 
     /// Append tool names loaded mid-session (via `capabilities_load` /

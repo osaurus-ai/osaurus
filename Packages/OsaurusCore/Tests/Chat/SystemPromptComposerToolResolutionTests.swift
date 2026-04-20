@@ -6,8 +6,9 @@
 //  matrix of (toolMode: auto|manual) x (executionMode: none|sandbox) x
 //  (manualNames empty|set). These tests pin down the user-facing spec:
 //   - Auto mode = always-loaded built-ins + preflight additions.
-//   - Manual mode = strict user selection (PLUS sandbox built-ins when
-//     execution mode is sandbox/autonomous).
+//   - Manual mode (pragmatic) = always-loaded built-ins + sandbox/folder
+//     runtime when active + user-picked names. Same shape as auto, minus
+//     the LLM-driven preflight specs (manual mode is opt-in).
 //
 
 import Foundation
@@ -72,22 +73,28 @@ struct SystemPromptComposerToolResolutionTests {
         }
     }
 
-    // MARK: - Manual mode (strict)
+    // MARK: - Manual mode (pragmatic)
 
     @Test
-    func manualMode_excludesAlwaysLoadedToolsWhenSandboxOff() async {
+    func manualMode_includesAlwaysLoadedBuiltinsAndUserPicks() async {
         await withSandboxAgent(autonomous: false, manualToolNames: ["render_chart"]) { agentId in
             let tools = SystemPromptComposer.resolveTools(
                 agentId: agentId,
                 executionMode: .none
             )
-            // Manual mode is strict: nothing besides the user's selection.
-            #expect(tools.count == 1)
-            #expect(tools.first?.function.name == "render_chart")
-            // Capability discovery tools must be absent.
-            #expect(tools.contains { $0.function.name == "capabilities_search" } == false)
-            // Memory/graph/charts built-ins must NOT leak in.
-            #expect(tools.contains { $0.function.name == "search_working_memory" } == false)
+            let names = Set(tools.map { $0.function.name })
+            // User pick is present.
+            #expect(names.contains("render_chart"))
+            // Pragmatic manual mode keeps the always-loaded built-ins so
+            // the agent loop, share_artifact, and capability discovery
+            // remain usable without the user having to re-pick them.
+            #expect(names.contains("todo"))
+            #expect(names.contains("complete"))
+            #expect(names.contains("clarify"))
+            #expect(names.contains("share_artifact"))
+            #expect(names.contains("capabilities_search"))
+            #expect(names.contains("capabilities_load"))
+            #expect(names.contains("search_memory"))
         }
     }
 
@@ -99,32 +106,81 @@ struct SystemPromptComposerToolResolutionTests {
                     agentId: agentId,
                     executionMode: .sandbox
                 )
-                #expect(tools.contains { $0.function.name == "render_chart" })
+                let names = Set(tools.map { $0.function.name })
+                #expect(names.contains("render_chart"))
                 // Sandbox built-ins are additive when sandbox is active.
-                #expect(tools.contains { $0.function.name == "sandbox_exec" })
-                // Non-sandbox built-ins are still excluded.
-                #expect(tools.contains { $0.function.name == "search_working_memory" } == false)
+                #expect(names.contains("sandbox_exec"))
+                // Always-loaded built-ins remain present too.
+                #expect(names.contains("todo"))
+                #expect(names.contains("share_artifact"))
             }
         }
     }
 
     @Test
-    func manualMode_emptyManualNames_yieldsOnlySandboxBuiltinsInSandboxMode() async {
+    func manualMode_emptyManualNames_stillIncludesAlwaysLoaded() async {
         await withSandboxAgent(autonomous: true, manualToolNames: []) { agentId in
             registerSandboxBuiltins {
                 let tools = SystemPromptComposer.resolveTools(
                     agentId: agentId,
                     executionMode: .sandbox
                 )
-                // No manual selection → only sandbox built-ins remain. The
-                // built-in set includes `share_artifact` alongside the
-                // `sandbox_*` family, so we assert membership in the live
-                // registry's snapshot rather than a name prefix.
                 let names = Set(tools.map { $0.function.name })
-                let allowed = ToolRegistry.shared.builtInSandboxToolNamesSnapshot
-                #expect(names.isSubset(of: allowed) || names.isEmpty)
-                // Built-ins like capabilities_search MUST NOT be there.
-                #expect(names.contains("capabilities_search") == false)
+                // No manual selection — but always-loaded built-ins and
+                // sandbox runtime tools are still present (pragmatic mode).
+                #expect(names.contains("todo"))
+                #expect(names.contains("share_artifact"))
+                #expect(names.contains("sandbox_exec"))
+                #expect(names.contains("capabilities_search"))
+            }
+        }
+    }
+
+    // MARK: - Loop tools + share_artifact visibility
+
+    @Test
+    func loopToolsAreVisibleAcrossEveryMode() async {
+        let modes: [ExecutionMode] = [.none]
+        for mode in modes {
+            await withSandboxAgent(autonomous: false) { agentId in
+                let names = Set(
+                    SystemPromptComposer.resolveTools(agentId: agentId, executionMode: mode)
+                        .map { $0.function.name }
+                )
+                #expect(names.contains("todo"))
+                #expect(names.contains("complete"))
+                #expect(names.contains("clarify"))
+                #expect(names.contains("share_artifact"))
+            }
+        }
+
+        await withSandboxAgent(autonomous: true) { agentId in
+            registerSandboxBuiltins {
+                let names = Set(
+                    SystemPromptComposer.resolveTools(agentId: agentId, executionMode: .sandbox)
+                        .map { $0.function.name }
+                )
+                #expect(names.contains("todo"))
+                #expect(names.contains("complete"))
+                #expect(names.contains("clarify"))
+                #expect(names.contains("share_artifact"))
+            }
+        }
+    }
+
+    @Test
+    func canonicalToolOrder_pinsLoopToolsToTheTop() async {
+        await withSandboxAgent(autonomous: true) { agentId in
+            registerSandboxBuiltins {
+                let names = SystemPromptComposer.resolveTools(
+                    agentId: agentId,
+                    executionMode: .sandbox
+                ).map { $0.function.name }
+                // The first four entries must be the loop tools in fixed
+                // order. This is what makes the rendered <tools> prefix
+                // stable across sends regardless of what late-arriving
+                // plugins or MCP providers register.
+                #expect(names.prefix(4) == ["todo", "complete", "clarify", "share_artifact"])
             }
         }
     }
@@ -187,16 +243,17 @@ struct SystemPromptComposerToolResolutionTests {
     @Test
     func resolveTools_autoMode_mergesAdditionalToolNames() async {
         await withSandboxAgent(autonomous: false) { agentId in
-            // search_working_memory is a built-in always-loaded tool; ask the
-            // resolver to also include `methods_save` via additionalToolNames
-            // and verify it lands in the union without duplicates.
+            // share_artifact is a built-in always-loaded tool; ask the
+            // resolver to also include `search_memory` via additionalToolNames
+            // and verify the union has no duplicates (search_memory is already
+            // a built-in but additional should still be a no-op merge).
             let tools = SystemPromptComposer.resolveTools(
                 agentId: agentId,
                 executionMode: .none,
-                additionalToolNames: ["methods_save"]
+                additionalToolNames: ["search_memory"]
             )
             let names = tools.map { $0.function.name }
-            #expect(names.contains("methods_save"))
+            #expect(names.contains("search_memory"))
             #expect(Set(names).count == names.count)
         }
     }

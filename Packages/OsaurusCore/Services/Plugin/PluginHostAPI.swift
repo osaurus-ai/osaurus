@@ -493,7 +493,17 @@ final class PluginHostContext: @unchecked Sendable {
             await SandboxToolRegistrar.shared.registerTools(for: agentId)
         }
 
-        let execMode = await MainActor.run { ToolRegistry.shared.resolveExecutionMode(folderContext: nil) }
+        // Honour the same execution-mode rules the chat UI uses so a
+        // plugin invocation against this agent sees the same tool surface
+        // (sandbox > host folder > none). Previously this path was hard-
+        // coded to `folderContext: nil`, so a host-folder agent driven via
+        // a plugin would silently lose its folder tools.
+        let execMode = await MainActor.run {
+            ToolRegistry.shared.resolveExecutionMode(
+                folderContext: FolderContextService.shared.currentContext,
+                autonomousEnabled: resolved.autonomousEnabled
+            )
+        }
         let composed = await SystemPromptComposer.composeChatContext(agentId: agentId, executionMode: execMode)
         return await MainActor.run {
             let mgr = AgentManager.shared
@@ -631,30 +641,30 @@ final class PluginHostContext: @unchecked Sendable {
         }
         let isManualTools = toolMode == .manual
 
-        // Manual mode: merge user-selected tools, skip RAG entirely.
-        // Also strip any capability tools that may already be on the inference
-        // from resolveAgentContext, since manual mode disables dynamic discovery.
+        // Manual mode mirrors the pragmatic chat-side rule (always-loaded
+        // baseline + user picks), just without the LLM-driven preflight.
+        // Same shape across chat / plugin so the agent's schema doesn't
+        // change with entry point. See SystemPromptComposer.resolveTools.
         if isManualTools {
-            let (builtInTools, manualSpecs, capNames) = await MainActor.run {
-                let base = ToolRegistry.shared.alwaysLoadedSpecs(
-                    mode: executionMode,
-                    excludeCapabilityTools: true
-                )
+            let (builtInTools, manualSpecs) = await MainActor.run {
+                let base = ToolRegistry.shared.alwaysLoadedSpecs(mode: executionMode)
                 let names = AgentManager.shared.effectiveManualToolNames(for: agentId) ?? []
                 let manual = ToolRegistry.shared.specs(forTools: names)
-                return (base, manual, ToolRegistry.capabilityToolNames)
+                return (base, manual)
             }
-            let filteredExisting = (inference.tools ?? []).filter { !capNames.contains($0.function.name) }
-            let cleanInference = EnrichedInference(
-                request: inference.request,
-                tools: filteredExisting.isEmpty ? nil : filteredExisting
-            )
             let empty = PreflightResult(toolSpecs: manualSpecs, items: [])
-            return applyPreflightResult(empty, to: cleanInference, builtInTools: builtInTools)
+            return applyPreflightResult(empty, to: inference, builtInTools: builtInTools)
         }
 
         // Auto mode: RAG-based preflight
         if let sid = inference.request.session_id {
+            // Drop the cache if the (mode, toolMode) signature changed
+            // since last turn — same rule as the chat send path.
+            let liveFp = SessionToolState.fingerprint(
+                executionMode: executionMode,
+                toolMode: toolMode
+            )
+            await SessionToolStateStore.shared.invalidateIfFingerprintChanged(sid, liveFingerprint: liveFp)
             let cached = await SessionToolStateStore.shared.get(sid)
             if let cached {
                 // Honour the session's first-turn always-loaded snapshot
@@ -693,12 +703,19 @@ final class PluginHostContext: @unchecked Sendable {
 
         if let sid = inference.request.session_id {
             // Snapshot the always-loaded names this turn so subsequent
-            // turns freeze against them.
+            // turns freeze against them. Stamp the (mode, toolMode)
+            // fingerprint so a flip on a later turn invalidates the
+            // cache (mirrors `ChatView`'s behaviour).
             let builtInNames = Set(builtInTools.map { $0.function.name })
+            let fp = SessionToolState.fingerprint(
+                executionMode: executionMode,
+                toolMode: toolMode
+            )
             await SessionToolStateStore.shared.setInitial(
                 sid,
                 preflight: preflight,
-                alwaysLoadedNames: builtInNames
+                alwaysLoadedNames: builtInNames,
+                fingerprint: fp
             )
         }
 

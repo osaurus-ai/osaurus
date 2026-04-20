@@ -701,86 +701,6 @@ struct DirCreateTool: OsaurusTool, PermissionedTool {
     }
 }
 
-// MARK: File Metadata Tool
-
-struct FileMetadataTool: OsaurusTool {
-    let name = "file_metadata"
-    let description = "Get metadata about a file or directory (size, dates, type)."
-    let parameters: JSONValue? = .object([
-        "type": .string("object"),
-        "properties": .object([
-            "path": .object([
-                "type": .string("string"),
-                "description": .string("Relative path of the file or directory"),
-            ])
-        ]),
-        "required": .array([.string("path")]),
-    ])
-
-    private let rootPath: URL
-
-    init(rootPath: URL) {
-        self.rootPath = rootPath
-    }
-
-    func execute(argumentsJSON: String) async throws -> String {
-        let args = try FolderToolHelpers.parseArguments(argumentsJSON)
-
-        guard let relativePath = args["path"] as? String else {
-            throw FolderToolError.invalidArguments("Missing required parameter: path")
-        }
-
-        let fileURL = try FolderToolHelpers.resolvePath(relativePath, rootPath: rootPath)
-
-        guard FileManager.default.fileExists(atPath: fileURL.path) else {
-            throw FolderToolError.fileNotFound(relativePath)
-        }
-
-        let attributes = try FileManager.default.attributesOfItem(atPath: fileURL.path)
-
-        var isDirectory: ObjCBool = false
-        FileManager.default.fileExists(atPath: fileURL.path, isDirectory: &isDirectory)
-
-        let fileType = isDirectory.boolValue ? "directory" : "file"
-        let size = attributes[.size] as? Int64 ?? 0
-        let created = attributes[.creationDate] as? Date
-        let modified = attributes[.modificationDate] as? Date
-
-        let formatter = DateFormatter()
-        formatter.dateStyle = .medium
-        formatter.timeStyle = .medium
-
-        var result = """
-            Path: \(relativePath)
-            Type: \(fileType)
-            Size: \(formatBytes(size))
-            """
-
-        if let created = created {
-            result += "\nCreated: \(formatter.string(from: created))"
-        }
-        if let modified = modified {
-            result += "\nModified: \(formatter.string(from: modified))"
-        }
-
-        // For files, also show line count
-        if !isDirectory.boolValue {
-            if let content = try? String(contentsOf: fileURL, encoding: .utf8) {
-                let lineCount = content.components(separatedBy: .newlines).count
-                result += "\nLines: \(lineCount)"
-            }
-        }
-
-        return result
-    }
-
-    private func formatBytes(_ bytes: Int64) -> String {
-        let formatter = ByteCountFormatter()
-        formatter.countStyle = .file
-        return formatter.string(fromByteCount: bytes)
-    }
-}
-
 // MARK: - Coding Tools
 
 // MARK: File Edit Tool
@@ -1282,7 +1202,9 @@ struct GitCommitTool: OsaurusTool, PermissionedTool {
 
 /// Factory for creating folder tool instances
 enum FolderToolFactory {
-    /// Build all core file tools
+    /// Build all core file tools. `share_artifact` is NOT here — it's a
+    /// global built-in (registered in `ToolRegistry.registerBuiltInTools`)
+    /// so it works in plain chat / folder / sandbox alike.
     static func buildCoreTools(rootPath: URL) -> [OsaurusTool] {
         return [
             FileTreeTool(rootPath: rootPath),
@@ -1294,8 +1216,6 @@ enum FolderToolFactory {
             FileCopyTool(rootPath: rootPath),
             FileDeleteTool(rootPath: rootPath),
             DirCreateTool(rootPath: rootPath),
-            ShareArtifactTool(),
-            FileMetadataTool(rootPath: rootPath),
             BatchTool(rootPath: rootPath),
         ]
     }
@@ -1321,8 +1241,7 @@ enum FolderToolFactory {
         return [
             // Core
             "file_tree", "file_read", "file_write", "file_move",
-            "file_copy", "file_delete", "dir_create", "file_metadata",
-            "batch", "share_artifact",
+            "file_copy", "file_delete", "dir_create", "batch",
             // Coding
             "file_edit", "file_search", "shell_run",
             // Git

@@ -17,14 +17,6 @@ final class ToolRegistry: ObservableObject {
     /// Names of tools registered via registerBuiltInTools (always loaded).
     private(set) var builtInToolNames: Set<String> = []
 
-    /// Tool names that are reserved for agent-loop intercepts and must NOT
-    /// appear in the schema sent to the model. They stay registered so the
-    /// chat engine can dispatch them internally if it ever needs to surface
-    /// them (e.g. mid-loop nudge), but the model never sees them by default.
-    /// Hiding them keeps the schema small and prevents the model from
-    /// pattern-matching the names into "I should plan" behaviour.
-    static let agentInterceptToolNames: Set<String> = ["todo", "complete", "clarify"]
-
     /// Tool names that require the sandbox container to be running
     private var sandboxToolNames: Set<String> = []
     /// Built-in sandbox execution tools managed by runtime context.
@@ -97,20 +89,20 @@ final class ToolRegistry: ObservableObject {
     /// (built-in tools are always loaded regardless, but this keeps config consistent).
     private func registerBuiltInTools() {
         let builtIns: [OsaurusTool] = [
-            // Unified Chat agent loop tools (always on; chat engine
-            // intercepts these to drive the inline UI + loop control).
+            // Agent loop — `ChatView` intercepts execute results to drive
+            // the inline UI; the registry runs them like any other tool.
             TodoTool(),
             CompleteTool(),
             ClarifyTool(),
-            // Existing chat-side built-ins.
+            // Only sanctioned path for surfacing files / inline blobs to
+            // the user (file_write / sandbox writes do not show in chat).
+            ShareArtifactTool(),
+            // Capability discovery (search -> load) for mid-session growth.
             CapabilitiesSearchTool(),
             CapabilitiesLoadTool(),
-            MethodsSaveTool(),
-            MethodsReportTool(),
-            SearchWorkingMemoryTool(),
-            SearchConversationsTool(),
-            SearchSummariesTool(),
-            SearchGraphTool(),
+            // Persistent memory recall — one tool, dispatched by `scope`.
+            SearchMemoryTool(),
+            // Inline data visualization rendered as a chart card.
             RenderChartTool(),
         ]
         var configChanged = false
@@ -129,10 +121,13 @@ final class ToolRegistry: ObservableObject {
         }
     }
 
-    /// Register a tool. Names are sanitised to satisfy
-    /// `^[a-zA-Z0-9_-]{1,64}$` (OpenAI / common chat-template constraint).
-    /// Cross-type collisions are warned because they would route the
-    /// model's call to the wrong target.
+    /// Register a plain (non-bucketed) tool. Used by built-in registration
+    /// and folder-tool installation; sandbox / MCP / plugin paths use the
+    /// dedicated typed helpers so they can also stamp their bucket sets.
+    ///
+    /// Names are sanitised to `^[a-zA-Z0-9_-]{1,64}$`. Cross-type collisions
+    /// are warned. Overwrites strip stale bucket flags so `isSandboxTool`
+    /// / `isMCPTool` / `isPluginTool` reflect the live registration source.
     func register(_ tool: OsaurusTool) {
         let sanitized = Self.sanitizeToolName(tool.name)
         if sanitized != tool.name {
@@ -148,6 +143,10 @@ final class ToolRegistry: ObservableObject {
                     "[ToolRegistry] WARNING: tool name collision on '\(sanitized)'; existing=\(existingType) new=\(newType). Previous registration will be overwritten — consider namespacing the providers."
                 )
             }
+            sandboxToolNames.remove(sanitized)
+            builtInSandboxToolNames.remove(sanitized)
+            mcpToolNames.remove(sanitized)
+            pluginToolNames.remove(sanitized)
         }
         toolsByName[sanitized] = tool
     }
@@ -175,12 +174,9 @@ final class ToolRegistry: ObservableObject {
     }
 
     /// Get specs for specific tools by name (ignores enabled state).
-    /// Agent-intercept tools are filtered out — they never appear in the
-    /// schema sent to the model.
     func specs(forTools toolNames: [String]) -> [Tool] {
         return toolNames.compactMap { name in
-            guard !Self.agentInterceptToolNames.contains(name) else { return nil }
-            return toolsByName[name]?.asOpenAITool()
+            toolsByName[name]?.asOpenAITool()
         }
     }
 
@@ -429,11 +425,14 @@ final class ToolRegistry: ObservableObject {
     /// Register a tool that requires the sandbox container.
     /// Non-runtime-managed tools are auto-enabled on first registration so they
     /// are immediately usable; subsequent registrations preserve the user's choice.
+    /// Strips any pre-existing MCP / plugin bucket flag — live registration wins.
     func registerSandboxTool(_ tool: OsaurusTool, runtimeManaged: Bool = false) {
         let firstTime =
             toolsByName[tool.name] == nil
             && !configuration.enabled.keys.contains(tool.name)
         toolsByName[tool.name] = tool
+        mcpToolNames.remove(tool.name)
+        pluginToolNames.remove(tool.name)
         sandboxToolNames.insert(tool.name)
         if runtimeManaged {
             builtInSandboxToolNames.insert(tool.name)
@@ -511,6 +510,9 @@ final class ToolRegistry: ObservableObject {
             toolsByName[tool.name] == nil
             && !configuration.enabled.keys.contains(tool.name)
         toolsByName[tool.name] = tool
+        sandboxToolNames.remove(tool.name)
+        builtInSandboxToolNames.remove(tool.name)
+        pluginToolNames.remove(tool.name)
         mcpToolNames.insert(tool.name)
         if firstTime {
             setEnabled(true, for: tool.name)
@@ -541,6 +543,9 @@ final class ToolRegistry: ObservableObject {
             toolsByName[tool.name] == nil
             && !configuration.enabled.keys.contains(tool.name)
         toolsByName[tool.name] = tool
+        sandboxToolNames.remove(tool.name)
+        builtInSandboxToolNames.remove(tool.name)
+        mcpToolNames.remove(tool.name)
         pluginToolNames.insert(tool.name)
         if firstTime {
             setEnabled(true, for: tool.name)
@@ -666,14 +671,6 @@ final class ToolRegistry: ObservableObject {
         return .none
     }
 
-    /// Backwards-compatible overload for callers that haven't been migrated.
-    /// Folder context wins when present; otherwise sandbox is reported when
-    /// `sandbox_exec` is registered. Prefer the two-argument form.
-    func resolveExecutionMode(folderContext: FolderContext?) -> ExecutionMode {
-        if let folderContext { return .hostFolder(folderContext) }
-        return toolsByName.keys.contains("sandbox_exec") ? .sandbox : .none
-    }
-
     /// Runtime-managed tools for diagnostics and execution-mode decisions.
     func listRuntimeManagedTools() -> [ToolEntry] {
         listTools().filter { runtimeManagedToolNames.contains($0.name) }
@@ -705,7 +702,7 @@ final class ToolRegistry: ObservableObject {
     }
 
     static let capabilityToolNames: Set<String> = [
-        "capabilities_search", "capabilities_load", "methods_save", "methods_report",
+        "capabilities_search", "capabilities_load",
     ]
 
     /// Always-loaded tool specs: built-in + runtime-managed tools.
@@ -726,7 +723,6 @@ final class ToolRegistry: ObservableObject {
                 builtInNames.contains(tool.name) || runtimeNames.contains(tool.name)
             }
             .filter { !excluded.contains($0.name) }
-            .filter { !Self.agentInterceptToolNames.contains($0.name) }
             .filter { !excludeCapabilityTools || !Self.capabilityToolNames.contains($0.name) }
             .sorted { $0.name < $1.name }
             .map { $0.asOpenAITool() }
