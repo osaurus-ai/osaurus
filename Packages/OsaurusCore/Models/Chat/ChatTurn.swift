@@ -163,6 +163,12 @@ final class ChatTurn: ObservableObject, Identifiable {
     var pendingToolArgPreview: String? = nil
     /// Total bytes of tool arguments received during streaming
     var pendingToolArgSize: Int = 0
+    /// Number of arg fragments received during streaming. Used by the chat
+    /// view to throttle UI refresh — byte-size mod-5 was the original throttle
+    /// but it almost never lands on a multiple of 5 (especially when remote
+    /// providers ship args in a single chunk), so the UI never refreshed
+    /// mid-stream. A fragment counter makes the throttle predictable.
+    var pendingToolArgFragmentCount: Int = 0
     /// Capabilities selected by preflight search (ephemeral, not persisted)
     var preflightCapabilities: [PreflightCapabilityItem]? = nil
 
@@ -180,6 +186,7 @@ final class ChatTurn: ObservableObject, Identifiable {
     /// Appends a tool-argument fragment to the preview, keeping only the trailing window.
     func appendToolArgFragment(_ fragment: String) {
         pendingToolArgSize += fragment.utf8.count
+        pendingToolArgFragmentCount += 1
         let current = pendingToolArgPreview ?? ""
         let updated = current + fragment
         pendingToolArgPreview =
@@ -192,6 +199,7 @@ final class ChatTurn: ObservableObject, Identifiable {
     func clearPendingToolArgs() {
         pendingToolArgPreview = nil
         pendingToolArgSize = 0
+        pendingToolArgFragmentCount = 0
     }
 
     // MARK: - Initializers

@@ -930,6 +930,166 @@ final class ChatSession: ObservableObject {
         return composer.manifest()
     }
 
+    // MARK: - Private Helpers
+
+    /// Processes the streaming delta loop from the chat engine, updating the given
+    /// assistant turn and UI state. Returns any parsed tool invocations and the
+    /// final updated assistant turn.
+    private func processStreamDeltas(
+        stream: AsyncThrowingStream<String, Error>,
+        assistantTurn: ChatTurn,
+        runId: UUID,
+        streamStartTime: Date,
+        ttftTrace: TTFTTrace?,
+        selectedModel: String?
+    ) async throws -> (invocations: [ServiceToolInvocation], finalTurn: ChatTurn) {
+        var currentTurn = assistantTurn
+        var uiDeltaCount = 0
+        var firstDeltaTime: Date?
+        // Track the wall-clock time of the last non-empty delta so
+        // the fallback tok/s calculation uses the actual last-token
+        // moment as the denominator, not the stream's close time
+        // (which is after cancellation / teardown).
+        var lastDeltaTime: Date?
+        // Throttle key for streaming tool-call argument rebuilds.
+        var lastToolArgRebuildAt: Date = .distantPast
+        // Throttle key to ensure the MainActor runloop gets a turn
+        // to render SwiftUI updates even if the AsyncStream buffer
+        // is saturated by a fast producer.
+        var lastRunloopYieldAt: Date = .distantPast
+
+        // Reasoning routing is owned by the engine: vmlx-swift-lm
+        // strips `<think>` segments from the chunk text inside
+        // `BatchEngine.generate` (and will eventually emit a
+        // dedicated `.reasoning` event). Reasoning text reaches
+        // ChatView via the `StreamingReasoningHint` sentinel,
+        // which `processor.receiveReasoning` routes into the
+        // Think panel. Remote providers feed the same sentinel.
+        var processor = StreamingDeltaProcessor(
+            turn: currentTurn
+        ) { [weak self] in
+            // rebuildVisibleBlocks mutates @Published properties which already
+            // emit objectWillChange — the extra send() below is redundant.
+            self?.rebuildVisibleBlocks()
+        }
+
+        debugLog("send: got stream, entering delta loop")
+        for try await delta in stream {
+            if !isRunActive(runId) {
+                processor.finalize()
+                return ([], currentTurn)
+            }
+            // Server-side tool call complete: add the call card + result turn to the chat log
+            if let done = StreamingToolHint.decodeDone(delta) {
+                processor.finalize()
+                let call = ToolCall(
+                    id: done.callId,
+                    type: "function",
+                    function: ToolCallFunction(name: done.name, arguments: done.arguments)
+                )
+                currentTurn.pendingToolName = nil
+                currentTurn.clearPendingToolArgs()
+                if currentTurn.toolCalls == nil { currentTurn.toolCalls = [] }
+                currentTurn.toolCalls!.append(call)
+                currentTurn.toolResults[done.callId] = done.result
+                let toolTurn = ChatTurn(role: .tool, content: done.result)
+                toolTurn.toolCallId = done.callId
+                let newAssistantTurn = ChatTurn(role: .assistant, content: "")
+                turns.append(contentsOf: [toolTurn, newAssistantTurn])
+                currentTurn = newAssistantTurn
+                processor = StreamingDeltaProcessor(
+                    turn: newAssistantTurn
+                ) { [weak self] in self?.rebuildVisibleBlocks() }
+                rebuildVisibleBlocks()
+                continue
+            }
+            if let toolName = StreamingToolHint.decode(delta) {
+                currentTurn.pendingToolName = toolName.isEmpty ? nil : toolName
+                rebuildVisibleBlocks()
+                continue
+            }
+            if let argFragment = StreamingToolHint.decodeArgs(delta) {
+                currentTurn.appendToolArgFragment(argFragment)
+                // Always rebuild for the first few fragments so the chip
+                // appears immediately; afterwards cap at ~12 rebuilds/sec
+                // so the table stays responsive during long arg streams
+                // without hiding chunky provider deltas.
+                let count = currentTurn.pendingToolArgFragmentCount
+                let now = Date()
+                if count <= 3 || now.timeIntervalSince(lastToolArgRebuildAt) >= 0.08 {
+                    lastToolArgRebuildAt = now
+                    rebuildVisibleBlocks()
+                }
+            } else if let stats = StreamingStatsHint.decode(delta) {
+                currentTurn.generationTokenCount = stats.tokenCount
+                currentTurn.generationTokensPerSecond = stats.tokensPerSecond
+            } else if let reasoning = StreamingReasoningHint.decode(delta) {
+                processor.receiveReasoning(reasoning)
+            } else if !delta.isEmpty {
+                let now = Date()
+                if firstDeltaTime == nil {
+                    firstDeltaTime = now
+                    ttftTrace?.mark("first_text_delta")
+                    ttftTrace?.set("model", selectedModel ?? "unknown")
+                    ttftTrace?.emit()
+                }
+                lastDeltaTime = now
+                uiDeltaCount += 1
+                processor.receiveDelta(delta)
+            }
+
+            // Hand the main run loop a turn so SwiftUI can actually paint
+            // any @Published mutations we just performed. Without this,
+            // when many deltas land back-to-back (e.g. Venice tool args or
+            // fast text streams) the consumer task monopolises the MainActor
+            // and the render pass never fires — the UI appears to stall
+            // mid-stream until the loop finishes. Gated to ~12 yields/sec
+            // to avoid slowing down the stream with excessive 1ms sleeps.
+            let now = Date()
+            if now.timeIntervalSince(lastRunloopYieldAt) >= 0.08 {
+                lastRunloopYieldAt = now
+                try? await Task.sleep(nanoseconds: 1_000_000)
+            }
+        }
+
+        // Flush any remaining buffered content (including partial tags)
+        processor.finalize()
+
+        if let first = firstDeltaTime {
+            currentTurn.timeToFirstToken = first.timeIntervalSince(streamStartTime)
+            // Fall back to estimated tok/s when MLX stats weren't propagated (remote APIs).
+            // Use the codebase's chars/4 heuristic to approximate tokens from generated text
+            // rather than raw delta count, which doesn't map 1:1 to tokens for most providers.
+            if currentTurn.generationTokensPerSecond == nil,
+                !currentTurn.contentIsEmpty || !currentTurn.thinkingIsEmpty
+            {
+                let endTime = lastDeltaTime ?? Date()
+                let genTime = endTime.timeIntervalSince(first)
+                // Reasoning tokens are generated on the same clock as the
+                // answer; leaving them out of the numerator while keeping
+                // them in the denominator under-reports throughput on
+                // thinking models. Count both.
+                let answerTokens = ContextBudgetManager.estimateTokens(for: currentTurn.content)
+                let reasoningTokens =
+                    currentTurn.thinkingIsEmpty
+                    ? 0
+                    : ContextBudgetManager.estimateTokens(for: currentTurn.thinking)
+                let estimatedTokens = answerTokens + reasoningTokens
+                if genTime > 0 && estimatedTokens > 0 {
+                    currentTurn.generationTokenCount = estimatedTokens
+                    currentTurn.generationTokensPerSecond = Double(estimatedTokens) / genTime
+                }
+            }
+        }
+
+        let totalTime = Date().timeIntervalSince(streamStartTime)
+        print(
+            "[Osaurus][UI] Stream consumption completed: \(uiDeltaCount) deltas in \(String(format: "%.2f", totalTime))s, final contentLen=\(currentTurn.contentLength)"
+        )
+
+        return ([], currentTurn)
+    }
+
     func send(_ text: String, attachments: [Attachment] = []) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let hasContent = !trimmed.isEmpty || !attachments.isEmpty
@@ -1158,6 +1318,15 @@ final class ChatSession: ObservableObject {
                 var attempts = 0
                 var reachedToolLimit = false
                 var pendingBudgetNotice: String?
+                // Transient stream errors (e.g. provider closes connection
+                // mid-tool-args, see `RemoteProviderService` truncation
+                // detection) shouldn't immediately surface to the user — they
+                // tend to retry cleanly. We retry the same iteration up to
+                // `maxTransientRetries` times before giving up. The counter
+                // is reset whenever a stream finishes naturally so unrelated
+                // future failures get a fresh budget.
+                let maxTransientRetries = 2
+                var transientRetries = 0
                 let effectiveTemp = AgentManager.shared.effectiveTemperature(for: effectiveAgentId)
 
                 ttftTrace?.mark("pre_ttft_done")
@@ -1243,147 +1412,49 @@ final class ChatSession: ObservableObject {
                     // shared per-tool block then iterates through it.
                     var pendingInvocations: [ServiceToolInvocation] = []
                     do {
-                        var uiDeltaCount = 0
-                        var firstDeltaTime: Date?
-                        // Track the wall-clock time of the last non-empty delta so
-                        // the fallback tok/s calculation uses the actual last-token
-                        // moment as the denominator, not the stream's close time
-                        // (which is after cancellation / teardown).
-                        var lastDeltaTime: Date?
-
-                        // Reasoning routing is owned by the engine: vmlx-swift-lm
-                        // strips `<think>` segments from the chunk text inside
-                        // `BatchEngine.generate` (and will eventually emit a
-                        // dedicated `.reasoning` event). Reasoning text reaches
-                        // ChatView via the `StreamingReasoningHint` sentinel,
-                        // which `processor.receiveReasoning` routes into the
-                        // Think panel. Remote providers feed the same sentinel.
-                        var processor = StreamingDeltaProcessor(
-                            turn: assistantTurn
-                        ) { [weak self] in
-                            // rebuildVisibleBlocks mutates @Published properties which already
-                            // emit objectWillChange — the extra send() below is redundant.
-                            self?.rebuildVisibleBlocks()
-                        }
-
-                        ttftTrace?.mark("engine_streamChat_start")
-                        let stream = try await engine.streamChat(request: req)
-                        ttftTrace?.mark("engine_streamChat_returned")
-                        // Start TTFT timer after model is loaded and stream is ready.
-                        // This excludes model loading time from the displayed TTFT.
                         let streamStartTime = Date()
-                        debugLog("send: got stream, entering delta loop")
-                        for try await delta in stream {
-                            if !isRunActive(runId) {
-                                processor.finalize()
-                                break outer
-                            }
-                            // Server-side tool call complete: add the call card + result turn to the chat log
-                            if let done = StreamingToolHint.decodeDone(delta) {
-                                processor.finalize()
-                                let call = ToolCall(
-                                    id: done.callId,
-                                    type: "function",
-                                    function: ToolCallFunction(name: done.name, arguments: done.arguments)
-                                )
-                                assistantTurn.pendingToolName = nil
-                                assistantTurn.clearPendingToolArgs()
-                                if assistantTurn.toolCalls == nil { assistantTurn.toolCalls = [] }
-                                assistantTurn.toolCalls!.append(call)
-                                assistantTurn.toolResults[done.callId] = done.result
-                                let toolTurn = ChatTurn(role: .tool, content: done.result)
-                                toolTurn.toolCallId = done.callId
-                                let newAssistantTurn = ChatTurn(role: .assistant, content: "")
-                                turns.append(contentsOf: [toolTurn, newAssistantTurn])
-                                assistantTurn = newAssistantTurn
-                                processor = StreamingDeltaProcessor(
-                                    turn: newAssistantTurn
-                                ) { [weak self] in self?.rebuildVisibleBlocks() }
-                                rebuildVisibleBlocks()
-                                continue
-                            }
-                            if let toolName = StreamingToolHint.decode(delta) {
-                                assistantTurn.pendingToolName = toolName.isEmpty ? nil : toolName
-                                rebuildVisibleBlocks()
-                                continue
-                            }
-                            if let argFragment = StreamingToolHint.decodeArgs(delta) {
-                                assistantTurn.appendToolArgFragment(argFragment)
-                                // throttle: only refresh every 5 fragments to avoid flooding the
-                                // table with row reconfigurations during arg streaming.
-                                if assistantTurn.pendingToolArgSize % 5 == 0 {
-                                    rebuildVisibleBlocks()
-                                }
-                                continue
-                            }
-                            if let stats = StreamingStatsHint.decode(delta) {
-                                assistantTurn.generationTokenCount = stats.tokenCount
-                                assistantTurn.generationTokensPerSecond = stats.tokensPerSecond
-                                continue
-                            }
-                            if let reasoning = StreamingReasoningHint.decode(delta) {
-                                processor.receiveReasoning(reasoning)
-                                continue
-                            }
-                            if !delta.isEmpty {
-                                let now = Date()
-                                if firstDeltaTime == nil {
-                                    firstDeltaTime = now
-                                    ttftTrace?.mark("first_text_delta")
-                                    ttftTrace?.set("model", selectedModel ?? "unknown")
-                                    ttftTrace?.emit()
-                                }
-                                lastDeltaTime = now
-                                uiDeltaCount += 1
-                                processor.receiveDelta(delta)
-                            }
-                        }
-
-                        // Flush any remaining buffered content (including partial tags)
-                        processor.finalize()
-
-                        if let first = firstDeltaTime {
-                            assistantTurn.timeToFirstToken = first.timeIntervalSince(streamStartTime)
-                            // Fall back to estimated tok/s when MLX stats weren't propagated (remote APIs).
-                            // Use the codebase's chars/4 heuristic to approximate tokens from generated text
-                            // rather than raw delta count, which doesn't map 1:1 to tokens for most providers.
-                            if assistantTurn.generationTokensPerSecond == nil,
-                                !assistantTurn.contentIsEmpty || !assistantTurn.thinkingIsEmpty
-                            {
-                                let endTime = lastDeltaTime ?? Date()
-                                let genTime = endTime.timeIntervalSince(first)
-                                // Reasoning tokens are generated on the same clock as the
-                                // answer; leaving them out of the numerator while keeping
-                                // them in the denominator under-reports throughput on
-                                // thinking models. Count both.
-                                let answerTokens = ContextBudgetManager.estimateTokens(for: assistantTurn.content)
-                                let reasoningTokens =
-                                    assistantTurn.thinkingIsEmpty
-                                    ? 0
-                                    : ContextBudgetManager.estimateTokens(for: assistantTurn.thinking)
-                                let estimatedTokens = answerTokens + reasoningTokens
-                                if genTime > 0 && estimatedTokens > 0 {
-                                    assistantTurn.generationTokenCount = estimatedTokens
-                                    assistantTurn.generationTokensPerSecond = Double(estimatedTokens) / genTime
-                                }
-                            }
-                        }
-
-                        let totalTime = Date().timeIntervalSince(streamStartTime)
-                        print(
-                            "[Osaurus][UI] Stream consumption completed: \(uiDeltaCount) deltas in \(String(format: "%.2f", totalTime))s, final contentLen=\(assistantTurn.contentLength)"
+                        let (invocations, finalTurn) = try await processStreamDeltas(
+                            stream: try await engine.streamChat(request: req),
+                            assistantTurn: assistantTurn,
+                            runId: runId,
+                            streamStartTime: streamStartTime,
+                            ttftTrace: ttftTrace,
+                            selectedModel: selectedModel
                         )
+                        assistantTurn = finalTurn
+                        pendingInvocations = invocations
 
-                        break  // finished normally
-                    } catch let invs as ServiceToolInvocations {
-                        // Multi-tool completion (MLX models can emit multiple
-                        // <tool_call> blocks per response). Process each in
-                        // order; falls through to the shared per-tool block
-                        // below.
-                        pendingInvocations = invs.invocations
-                    } catch let inv as ServiceToolInvocation {
-                        // Single-tool completion (the common case for chat).
-                        pendingInvocations = [inv]
+                        // Stream finished naturally without a tool call — reset
+                        // the transient-retry budget so a future, unrelated
+                        // failure later in the conversation gets a fresh
+                        // allowance.
+                        if pendingInvocations.isEmpty {
+                            transientRetries = 0
+                            break  // finished normally
+                        }
+                    } catch let error as RemoteProviderServiceError {
+                        // Transient provider-side stream errors — most commonly
+                        // mid-tool-args truncation flagged by
+                        // `RemoteProviderService.makeToolInvocation`'s
+                        // `wasRepaired` guard. Silently retry the same
+                        // iteration up to `maxTransientRetries` times before
+                        // surfacing to the user; the model can't see what it
+                        // actually streamed last time so it would just retry
+                        // with the same broken args.
+                        if transientRetries < maxTransientRetries {
+                            transientRetries += 1
+                            attempts -= 1  // don't charge this against the tool-iteration budget
+                            print(
+                                "[Osaurus] Transient stream error (retry \(transientRetries)/\(maxTransientRetries)): \(error.localizedDescription)"
+                            )
+                            // Roll back any partial UI state from the failed
+                            // attempt so the retry starts clean.
+                            assistantTurn.pendingToolName = nil
+                            assistantTurn.clearPendingToolArgs()
+                            rebuildVisibleBlocks()
+                            continue outer
+                        }
+                        throw error
                     }
 
                     // Shared per-tool processing for both single and batched
