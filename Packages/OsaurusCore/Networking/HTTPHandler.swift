@@ -2110,11 +2110,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                             }
                         }
                     } catch {
-                        toolResult = ToolErrorEnvelope(
-                            kind: .executionError,
-                            reason: error.localizedDescription,
-                            toolName: invocation.toolName
-                        ).toJSONString()
+                        toolResult = ToolEnvelope.fromError(error, tool: invocation.toolName)
                     }
 
                     hop {

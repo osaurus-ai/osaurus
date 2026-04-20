@@ -2,16 +2,19 @@
 //  ToolErrorEnvelope.swift
 //  osaurus
 //
-//  Standardized JSON error envelope returned to the model as the body of a
-//  failed `tool` message. Local models often misinterpret unstructured prefix
-//  strings like `[REJECTED]` as policy refusals and give up; a structured
-//  envelope makes the failure mode unambiguous so the model can react
-//  appropriately (retry, pivot, ask the user).
+//  Compatibility shim. The canonical envelope shape is now `ToolEnvelope`
+//  in `ToolEnvelope.swift`; this file preserves the legacy `ToolErrorEnvelope`
+//  surface so HTTP / plugin / chat catch sites that constructed envelopes
+//  the old way continue to compile and produce the new wire format.
+//
+//  Prefer `ToolEnvelope.failure(...)` / `ToolEnvelope.fromError(...)` in new
+//  code. This shim will be removed in a future release.
 //
 
 import Foundation
 
-/// Serializable error returned to the model in a tool-result message.
+/// Legacy envelope type. Forwards to `ToolEnvelope.failure(...)` so any
+/// caller that builds one of these still emits the new on-the-wire shape.
 public struct ToolErrorEnvelope: Sendable {
     public enum Kind: String, Sendable {
         case rejected
@@ -20,6 +23,17 @@ public struct ToolErrorEnvelope: Sendable {
         case executionError
         case toolNotFound
         case unavailable
+
+        fileprivate var asEnvelopeKind: ToolEnvelope.Kind {
+            switch self {
+            case .rejected: return .rejected
+            case .timeout: return .timeout
+            case .invalidArguments: return .invalidArgs
+            case .executionError: return .executionError
+            case .toolNotFound: return .toolNotFound
+            case .unavailable: return .unavailable
+            }
+        }
     }
 
     public let kind: Kind
@@ -39,33 +53,20 @@ public struct ToolErrorEnvelope: Sendable {
         self.retryable = retryable ?? Self.defaultRetryable(for: kind)
     }
 
-    /// Encode the envelope as a compact JSON string suitable for embedding in
-    /// a `tool`-role message's `content` field. Falls back to a hand-built
-    /// JSON string on encoding failure so we never return malformed output.
-    ///
-    /// We deliberately do NOT include any `suggested_tools` field — listing
-    /// other tool names in an error response was the leading cause of
-    /// hallucinated tool calls (the model treats the suggestion as proof
-    /// the tool exists and starts inventing siblings).
+    /// Encode as a JSON string in the new `ToolEnvelope` wire format.
     public func toJSONString() -> String {
-        var dict: [String: Any] = [
-            "error": kind.rawValue,
-            "reason": reason,
-            "retryable": retryable,
-        ]
-        if let toolName { dict["tool"] = toolName }
-        if let data = try? JSONSerialization.data(withJSONObject: dict, options: [.sortedKeys]),
-            let json = String(data: data, encoding: .utf8)
-        {
-            return json
-        }
-        // Defensive fallback. JSONSerialization should never fail on this
-        // shape, but if it somehow does, ensure the model still gets a
-        // recognizable error envelope.
-        let escapedReason = Self.escape(reason)
-        let toolField = toolName.map { ",\"tool\":\"\(Self.escape($0))\"" } ?? ""
-        return
-            "{\"error\":\"\(kind.rawValue)\",\"reason\":\"\(escapedReason)\",\"retryable\":\(retryable)\(toolField)}"
+        ToolEnvelope.failure(
+            kind: kind.asEnvelopeKind,
+            message: reason,
+            tool: toolName,
+            retryable: retryable
+        )
+    }
+
+    /// True for any failure-shaped result string. Delegates to
+    /// `ToolEnvelope.isError` so legacy and new shapes are both detected.
+    public static func isErrorResult(_ result: String) -> Bool {
+        ToolEnvelope.isError(result)
     }
 
     private static func defaultRetryable(for kind: Kind) -> Bool {
@@ -73,36 +74,5 @@ public struct ToolErrorEnvelope: Sendable {
         case .rejected, .toolNotFound: return false
         case .timeout, .invalidArguments, .executionError, .unavailable: return true
         }
-    }
-
-    /// Detect either the legacy `[REJECTED] ...` / `[TIMEOUT] ...` string
-    /// prefix OR the new JSON envelope shape. Used by UI / accounting code
-    /// that needs to distinguish failed tool results from successful ones
-    /// without parsing the full envelope.
-    public static func isErrorResult(_ result: String) -> Bool {
-        let trimmed = result.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.hasPrefix("[REJECTED]") || trimmed.hasPrefix("[TIMEOUT]") {
-            return true
-        }
-        // Cheap structural sniff: does this look like the JSON envelope?
-        // (Avoids a full JSON parse on every UI redraw.)
-        guard trimmed.first == "{" else { return false }
-        return trimmed.contains("\"error\":") && trimmed.contains("\"retryable\":")
-    }
-
-    private static func escape(_ s: String) -> String {
-        var out = ""
-        out.reserveCapacity(s.count + 2)
-        for ch in s {
-            switch ch {
-            case "\\": out += "\\\\"
-            case "\"": out += "\\\""
-            case "\n": out += "\\n"
-            case "\r": out += "\\r"
-            case "\t": out += "\\t"
-            default: out.append(ch)
-            }
-        }
-        return out
     }
 }

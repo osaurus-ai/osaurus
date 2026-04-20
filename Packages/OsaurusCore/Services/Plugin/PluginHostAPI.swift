@@ -889,11 +889,7 @@ final class PluginHostContext: @unchecked Sendable {
                         )
                     }
                 } catch {
-                    return ToolErrorEnvelope(
-                        kind: .executionError,
-                        reason: error.localizedDescription,
-                        toolName: name
-                    ).toJSONString()
+                    return ToolEnvelope.fromError(error, tool: name)
                 }
             }
             group.addTask {

@@ -22,7 +22,9 @@ There is no separate "Agent" or "Work" tab — the same chat window handles a on
                                      loop ends
 ```
 
-The chat layer intercepts three special tool results so the loop has structure without a separate planner: `todo`, `complete`, and `clarify`. The intercept fires AFTER `ToolRegistry.execute` returns — the registry runs the tool body like any other tool, and the chat view (`ChatView`'s post-execute branch) inspects the tool name and result string to drive the inline UI. Every other tool (file, sandbox, plugin, MCP, …) just runs and returns its output to the model on the next turn.
+The chat layer intercepts three special tool results so the loop has structure without a separate planner: `todo`, `complete`, and `clarify`. The intercept fires AFTER `ToolRegistry.execute` returns — the registry runs the tool body like any other tool, and the chat view (`ChatView`'s post-execute branch) inspects the tool name and result string to drive the inline UI. The intercept is gated on `!ToolEnvelope.isError(resultText)` so a rejected summary (e.g. `complete` with a placeholder like "done") falls through to the model for a retry instead of surfacing in the completion banner. Every other tool (file, sandbox, plugin, MCP, …) just runs and returns its output to the model on the next turn.
+
+See [Tool Contract](TOOL_CONTRACT.md) for the canonical success/failure envelope shape every tool returns.
 
 ---
 

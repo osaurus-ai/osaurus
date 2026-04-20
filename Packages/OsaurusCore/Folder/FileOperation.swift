@@ -13,6 +13,7 @@ import Foundation
 public enum FileOperationType: String, Codable, Sendable {
     case create  // New file created
     case write  // Existing file modified
+    case fileEdit  // File modified by file_edit (targeted in-place replace)
     case move  // File/directory moved
     case copy  // File/directory copied
     case delete  // File/directory deleted
@@ -62,6 +63,7 @@ extension FileOperationType {
         switch self {
         case .create: return "doc.badge.plus"
         case .write: return "pencil"
+        case .fileEdit: return "pencil.line"
         case .move: return "arrow.right"
         case .copy: return "doc.on.doc"
         case .delete: return "trash"
@@ -74,6 +76,7 @@ extension FileOperationType {
         switch self {
         case .create: return "Created"
         case .write: return "Modified"
+        case .fileEdit: return "Edited"
         case .move: return "Moved"
         case .copy: return "Copied"
         case .delete: return "Deleted"

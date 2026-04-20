@@ -681,6 +681,14 @@ final class ChatSession: ObservableObject {
     /// Process share_artifact tool results in chat context.
     /// Uses the shared processing pipeline to copy files, persist to DB,
     /// and enrich the result metadata for ContentBlock display.
+    ///
+    /// `toolResult` is the new `ToolEnvelope.success` shape whose
+    /// `result.text` carries the marker-delimited artifact blob. We
+    /// extract the text, run the marker pipeline, and re-wrap the
+    /// enriched marker block back into a success envelope. When marker
+    /// parsing or file resolution fails we surface a structured
+    /// `ToolEnvelope.failure(...)` so the model is told the truth instead
+    /// of seeing a bogus "success" envelope.
     private func processShareArtifactResult(
         toolResult: String,
         executionMode: ExecutionMode
@@ -689,16 +697,42 @@ final class ChatSession: ObservableObject {
         let agentName = SandboxAgentProvisioner.linuxName(
             for: (agentId ?? Agent.defaultId).uuidString
         )
-        if let processed = SharedArtifact.processToolResult(
-            toolResult,
-            contextId: sessionId.uuidString,
-            contextType: .chat,
-            executionMode: executionMode,
-            sandboxAgentName: agentName
-        ) {
-            return processed.enrichedToolResult
+
+        // Extract the marker block from the envelope. Older shapes (raw
+        // marker-only string from before the envelope migration) are
+        // accepted too so plugin authors who emit raw markers keep working.
+        let markerText: String
+        if let payload = ToolEnvelope.successPayload(toolResult) as? [String: Any],
+            let text = payload["text"] as? String
+        {
+            markerText = text
+        } else {
+            markerText = toolResult
         }
-        return toolResult
+
+        guard
+            let processed = SharedArtifact.processToolResult(
+                markerText,
+                contextId: sessionId.uuidString,
+                contextType: .chat,
+                executionMode: executionMode,
+                sandboxAgentName: agentName
+            )
+        else {
+            // Surface the failure so the model knows the artifact did NOT
+            // make it into chat. Without this, sharing a non-existent path
+            // looked like success — model moved on assuming the user could
+            // see the file.
+            return ToolEnvelope.failure(
+                kind: .executionError,
+                message:
+                    "share_artifact failed: could not resolve or copy the artifact source. "
+                    + "Check the `path` is correct and readable, then retry.",
+                tool: "share_artifact",
+                retryable: true
+            )
+        }
+        return ToolEnvelope.success(tool: "share_artifact", text: processed.enrichedToolResult)
     }
 
     private struct RunContext {
@@ -1417,19 +1451,40 @@ final class ChatSession: ObservableObject {
                             // end the iteration loop. `todo` already wrote
                             // into AgentTodoStore via TaskLocal; the session
                             // observer mirrors it into the inline UI block.
-                            // Break out of the outer iteration loop so we
-                            // don't keep prompting the model for more.
+                            //
+                            // CRITICAL: gate the inline UI on whether the
+                            // tool result is a success envelope. The previous
+                            // implementation pulled `summary` straight from
+                            // the JSON arguments and surfaced it regardless
+                            // of whether `CompleteTool.execute` rejected it
+                            // for being a placeholder ("done", "looks good").
+                            // That let the inline completion banner show a
+                            // rejected summary as if the loop had ended
+                            // cleanly. We now only intercept when the result
+                            // is a success envelope; on rejection the loop
+                            // continues so the model sees the failure and
+                            // retries with a real summary.
                             if inv.toolName == "complete" {
-                                self.lastCompletionSummary =
-                                    Self.parseCompleteSummary(from: inv.jsonArguments) ?? resultText
-                                self.lastClarifyQuestion = nil
-                                break outer
+                                if !ToolEnvelope.isError(resultText) {
+                                    self.lastCompletionSummary =
+                                        Self.parseCompleteSummary(from: inv.jsonArguments) ?? resultText
+                                    self.lastClarifyQuestion = nil
+                                    break outer
+                                }
+                                // Fall through — let the model see the
+                                // failure envelope and try again with a
+                                // proper summary.
                             }
                             if inv.toolName == "clarify" {
-                                self.lastClarifyQuestion =
-                                    Self.parseClarifyQuestion(from: inv.jsonArguments)
-                                self.lastCompletionSummary = nil
-                                break outer
+                                if !ToolEnvelope.isError(resultText),
+                                    let question = Self.parseClarifyQuestion(from: inv.jsonArguments)
+                                {
+                                    self.lastClarifyQuestion = question
+                                    self.lastCompletionSummary = nil
+                                    break outer
+                                }
+                                // Fall through on failure (empty question,
+                                // etc.) so the model sees the rejection.
                             }
 
                             // Hot-load tools injected by capabilities_load or sandbox_plugin_register.
@@ -1497,14 +1552,13 @@ final class ChatSession: ObservableObject {
                             )
                         } catch {
                             // Store rejection/error as the result so UI shows "Rejected" instead of hanging.
-                            // The structured envelope replaces the legacy `[REJECTED] …` string so local
-                            // models read a clear `{error, reason, retryable}` rather than a marker they
-                            // misinterpret as a sticky policy refusal.
-                            let rejectionMessage = ToolErrorEnvelope(
-                                kind: .executionError,
-                                reason: error.localizedDescription,
-                                toolName: inv.toolName
-                            ).toJSONString()
+                            // The structured envelope replaces the legacy `[REJECTED] …` string so
+                            // local models read a clear `{ok, kind, message, retryable}` rather than
+                            // a marker they misinterpret as a sticky policy refusal. `fromError`
+                            // maps FolderToolError + registry permission codes to the right `kind`
+                            // so user denials, missing files, and bad arguments don't all get the
+                            // same opaque `executionError` treatment.
+                            let rejectionMessage = ToolEnvelope.fromError(error, tool: inv.toolName)
                             assistantTurn.toolResults[callId] = rejectionMessage
                             let toolTurn = ChatTurn(role: .tool, content: rejectionMessage)
                             toolTurn.toolCallId = callId

@@ -313,8 +313,22 @@ extension SharedArtifact {
 
     /// Reconstructs a SharedArtifact from an enriched tool result string (for display).
     /// Only succeeds when the result has been enriched with host_path, context_id, etc.
+    ///
+    /// Accepts both shapes:
+    ///   - the legacy raw marker-delimited string (used by mock data and any
+    ///     plugin author still emitting markers directly), and
+    ///   - the new `ToolEnvelope.success` envelope whose `result.text`
+    ///     carries the marker block — extracted before parsing.
     static func fromEnrichedToolResult(_ result: String) -> SharedArtifact? {
-        guard let parsed = parseMarkers(from: result) else { return nil }
+        let markerSource: String
+        if let payload = ToolEnvelope.successPayload(result) as? [String: Any],
+            let text = payload["text"] as? String
+        {
+            markerSource = text
+        } else {
+            markerSource = result
+        }
+        guard let parsed = parseMarkers(from: markerSource) else { return nil }
 
         let filename = parsed.filename
         let mimeType = parsed.metadata["mime_type"] as? String ?? "application/octet-stream"

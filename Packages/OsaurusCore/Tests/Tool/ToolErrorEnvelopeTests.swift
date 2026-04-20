@@ -2,6 +2,11 @@
 //  ToolErrorEnvelopeTests.swift
 //  osaurusTests
 //
+//  Tests the legacy ToolErrorEnvelope shim that now delegates to the new
+//  ToolEnvelope wire format. The shim's API stays the same so existing
+//  call sites compile; this suite verifies the JSON output matches the
+//  new contract (`ok:false`, `kind`, `message`, `tool`, `retryable`).
+//
 
 import Foundation
 import Testing
@@ -20,7 +25,9 @@ struct ToolErrorEnvelopeTests {
         let data = json.data(using: .utf8)!
         let parsed = try JSONSerialization.jsonObject(with: data) as? [String: Any]
 
-        #expect(parsed?["error"] as? String == "timeout")
+        #expect(parsed?["ok"] as? Bool == false)
+        #expect(parsed?["kind"] as? String == "timeout")
+        #expect(parsed?["message"] as? String == "Tool did not complete within 30 seconds.")
         #expect(parsed?["tool"] as? String == "my_tool")
         #expect(parsed?["retryable"] as? Bool == true)
     }
@@ -47,7 +54,7 @@ struct ToolErrorEnvelopeTests {
         #expect(ToolErrorEnvelope.isErrorResult("ok") == false)
     }
 
-    @Test func isErrorResultDetectsJSONEnvelope() {
+    @Test func isErrorResultDetectsNewEnvelope() {
         let env = ToolErrorEnvelope(kind: .executionError, reason: "boom").toJSONString()
         #expect(ToolErrorEnvelope.isErrorResult(env) == true)
     }
@@ -56,10 +63,15 @@ struct ToolErrorEnvelopeTests {
         #expect(ToolErrorEnvelope.isErrorResult("{\"value\": 42}") == false)
     }
 
+    @Test func isErrorResultDoesNotMisidentifySuccessEnvelope() {
+        let success = ToolEnvelope.success(tool: "my_tool", text: "all done")
+        #expect(ToolErrorEnvelope.isErrorResult(success) == false)
+    }
+
     @Test func envelopeNeverIncludesSuggestedTools() throws {
         // Suggestions in error envelopes were causing the model to invent
         // neighbouring tool names (it treats the suggestion as proof a
-        // tool exists). The envelope must carry only error/reason/retryable/
+        // tool exists). The envelope must carry only kind/message/retryable/
         // (tool) — no "you might mean..." list.
         let env = ToolErrorEnvelope(
             kind: .toolNotFound,
@@ -70,10 +82,10 @@ struct ToolErrorEnvelopeTests {
         let data = json.data(using: .utf8)!
         let parsed = try JSONSerialization.jsonObject(with: data) as? [String: Any]
 
-        #expect(parsed?["error"] as? String == "toolNotFound")
+        #expect(parsed?["kind"] as? String == "tool_not_found")
         #expect(parsed?["retryable"] as? Bool == false)
         #expect(parsed?["suggested_tools"] == nil)
-        let reason = parsed?["reason"] as? String ?? ""
+        let reason = parsed?["message"] as? String ?? ""
         #expect(!reason.contains("capabilities_load"))
         #expect(!reason.contains("Try:"))
     }

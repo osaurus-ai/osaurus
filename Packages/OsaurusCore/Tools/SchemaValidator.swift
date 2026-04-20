@@ -12,9 +12,19 @@ struct SchemaValidator {
     struct ValidationResult {
         let isValid: Bool
         let errorMessage: String?
+        /// Offending property name when failure is tied to a specific arg
+        /// (wrong type, missing required, unknown key under
+        /// `additionalProperties: false`). Nil for structural failures.
+        /// Surfaced as `field` in the `ToolEnvelope.failure(...)`.
+        let field: String?
 
-        static func ok() -> ValidationResult { .init(isValid: true, errorMessage: nil) }
-        static func fail(_ message: String) -> ValidationResult { .init(isValid: false, errorMessage: message) }
+        static func ok() -> ValidationResult {
+            .init(isValid: true, errorMessage: nil, field: nil)
+        }
+
+        static func fail(_ message: String, field: String? = nil) -> ValidationResult {
+            .init(isValid: false, errorMessage: message, field: field)
+        }
     }
 
     static func validate(arguments: Any, against schema: JSONValue) -> ValidationResult {
@@ -45,7 +55,7 @@ struct SchemaValidator {
         }
         for key in required {
             if obj[key] == nil || obj[key] is NSNull {
-                return .fail("Missing required property: \(key)")
+                return .fail("Missing required property: \(key)", field: key)
             }
         }
         // properties
@@ -53,6 +63,21 @@ struct SchemaValidator {
         if let propsVal = schemaObject["properties"], case .object(let props) = propsVal {
             properties = props
         }
+
+        // `additionalProperties: false` rejects keys not declared in
+        // `properties`. Default (per JSON Schema) is to allow extras.
+        // We only honour the strict `bool(false)` form — schema-typed
+        // extras are not implemented.
+        if case .bool(false) = schemaObject["additionalProperties"] {
+            for key in obj.keys where properties[key] == nil {
+                return .fail(
+                    "Unexpected property `\(key)`. Allowed: "
+                        + properties.keys.sorted().joined(separator: ", "),
+                    field: key
+                )
+            }
+        }
+
         for (key, value) in obj {
             guard let propSchemaVal = properties[key] else { continue }
             guard case .object(let propSchemaObj) = propSchemaVal else {
@@ -68,14 +93,14 @@ struct SchemaValidator {
                             let res = validateObject(dict, schemaObject: propSchemaObj)
                             if !res.isValid { return res }
                         } else {
-                            return .fail("Property '\(key)' must be an object")
+                            return .fail("Property '\(key)' must be an object", field: key)
                         }
                     } else if !(value is [String: Any]) {
-                        return .fail("Property '\(key)' must be an object")
+                        return .fail("Property '\(key)' must be an object", field: key)
                     }
                 case "array":
                     guard let arr = value as? [Any] else {
-                        return .fail("Property '\(key)' must be an array")
+                        return .fail("Property '\(key)' must be an array", field: key)
                     }
                     // Optional: item type validation could go here
                     if let _ = propSchemaObj["items"] {
@@ -94,7 +119,7 @@ struct SchemaValidator {
             if let enumVal = propSchemaObj["enum"], case .array(let enumArr) = enumVal {
                 let allowed = enumArr.map { $0.foundationValue }
                 if !allowed.contains(where: { SchemaValidator.equalJSONValues($0, value) }) {
-                    return .fail("Property '\(key)' must be one of: \(allowed)")
+                    return .fail("Property '\(key)' must be one of: \(allowed)", field: key)
                 }
             }
         }
@@ -109,25 +134,29 @@ struct SchemaValidator {
         if let typeVal = schemaObject["type"], case .string(let t) = typeVal {
             switch t {
             case "string":
-                guard value is String else { return .fail("Property\(label) must be a string") }
+                guard value is String else { return .fail("Property\(label) must be a string", field: key) }
             case "integer":
                 if let _ = value as? Int {
                     // ok
                 } else if let d = value as? Double, d.rounded() == d {
                     // accept integral doubles
                 } else {
-                    return .fail("Property\(label) must be an integer")
+                    return .fail("Property\(label) must be an integer", field: key)
                 }
             case "number":
                 guard (value is Double) || (value is Int) else {
-                    return .fail("Property\(label) must be a number")
+                    return .fail("Property\(label) must be a number", field: key)
                 }
             case "boolean":
-                guard value is Bool else { return .fail("Property\(label) must be a boolean") }
+                guard value is Bool else { return .fail("Property\(label) must be a boolean", field: key) }
             case "object":
-                guard value is [String: Any] else { return .fail("Property\(label) must be an object") }
+                guard value is [String: Any] else {
+                    return .fail("Property\(label) must be an object", field: key)
+                }
             case "array":
-                guard value is [Any] else { return .fail("Property\(label) must be an array") }
+                guard value is [Any] else {
+                    return .fail("Property\(label) must be an array", field: key)
+                }
             default:
                 break
             }
@@ -135,7 +164,7 @@ struct SchemaValidator {
         if let enumVal = schemaObject["enum"], case .array(let enumArr) = enumVal {
             let allowed = enumArr.map { $0.foundationValue }
             if !allowed.contains(where: { SchemaValidator.equalJSONValues($0, value) }) {
-                return .fail("Property\(label) must be one of: \(allowed)")
+                return .fail("Property\(label) must be one of: \(allowed)", field: key)
             }
         }
         return .ok()

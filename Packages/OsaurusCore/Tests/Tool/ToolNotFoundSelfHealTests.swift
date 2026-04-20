@@ -3,8 +3,9 @@
 //  osaurusTests
 //
 //  Verifies that ToolRegistry.execute does NOT throw on unknown tools.
-//  Instead it returns a structured ToolErrorEnvelope so the agent loop
-//  stays alive and the model can recover by calling capabilities_load.
+//  Instead it returns a structured `ToolEnvelope.failure(kind: .toolNotFound)`
+//  so the agent loop stays alive and the model can recover by calling
+//  capabilities_load.
 //
 
 import Foundation
@@ -27,15 +28,17 @@ struct ToolNotFoundSelfHealTests {
             argumentsJSON: "{}"
         )
 
-        // Result must look like our error envelope and carry the toolNotFound kind.
-        #expect(ToolErrorEnvelope.isErrorResult(result))
+        // Result must look like the new envelope and carry the toolNotFound kind.
+        #expect(ToolEnvelope.isError(result))
         let data = result.data(using: .utf8)!
         let parsed = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-        #expect(parsed?["error"] as? String == "toolNotFound")
+        #expect(parsed?["ok"] as? Bool == false)
+        #expect(parsed?["kind"] as? String == "tool_not_found")
         #expect(parsed?["tool"] as? String == unknownName)
+        #expect(parsed?["retryable"] as? Bool == false)
 
-        // Reason must mention the tool name so the model knows what failed.
-        let reason = parsed?["reason"] as? String ?? ""
-        #expect(reason.contains(unknownName))
+        // Message must mention the tool name so the model knows what failed.
+        let message = parsed?["message"] as? String ?? ""
+        #expect(message.contains(unknownName))
     }
 }

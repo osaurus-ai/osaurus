@@ -48,6 +48,7 @@ final class CapabilitiesSearchTool: OsaurusTool, @unchecked Sendable {
 
     let parameters: JSONValue? = .object([
         "type": .string("object"),
+        "additionalProperties": .bool(false),
         "properties": .object([
             "queries": .object([
                 "type": .string("array"),
@@ -59,12 +60,16 @@ final class CapabilitiesSearchTool: OsaurusTool, @unchecked Sendable {
     ])
 
     func execute(argumentsJSON: String) async throws -> String {
-        guard let args = parseArguments(argumentsJSON),
-            let queries = ArgumentCoercion.stringArray(args["queries"]),
-            !queries.isEmpty
-        else {
-            return "Error: 'queries' parameter (string array) is required."
-        }
+        let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
+        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
+
+        let queriesReq = requireStringArray(
+            args,
+            "queries",
+            expected: "non-empty array of search query strings",
+            tool: name
+        )
+        guard case .value(let queries) = queriesReq else { return queriesReq.failureEnvelope ?? "" }
 
         let query = queries.joined(separator: " ")
         let hits = await CapabilitySearch.search(
@@ -80,15 +85,18 @@ final class CapabilitiesSearchTool: OsaurusTool, @unchecked Sendable {
                 id = await MainActor.run { AgentManager.shared.activeAgent.id }
             }
 
+            let text: String
             if await CapabilitySearch.canCreatePlugins(agentId: id) {
-                return """
+                text = """
                     No capabilities found matching '\(query)'.
 
                     You can create new tools for this. Load the plugin creator skill:
                       capabilities_load("skill/Sandbox Plugin Creator")
                     """
+            } else {
+                text = "No capabilities found matching '\(query)'."
             }
-            return "No capabilities found matching '\(query)'."
+            return ToolEnvelope.success(tool: name, text: text)
         }
 
         struct ScoredResult {
@@ -138,7 +146,7 @@ final class CapabilitiesSearchTool: OsaurusTool, @unchecked Sendable {
             output += "\n"
         }
         output += "Use `capabilities_load` with the IDs to load them into this session."
-        return output
+        return ToolEnvelope.success(tool: name, text: output)
     }
 }
 
@@ -154,6 +162,7 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
 
     let parameters: JSONValue? = .object([
         "type": .string("object"),
+        "additionalProperties": .bool(false),
         "properties": .object([
             "ids": .object([
                 "type": .string("array"),
@@ -167,18 +176,24 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
     ])
 
     func execute(argumentsJSON: String) async throws -> String {
-        guard let args = parseArguments(argumentsJSON),
-            let ids = ArgumentCoercion.stringArray(args["ids"]),
-            !ids.isEmpty
-        else {
-            return "Error: 'ids' parameter (string array) is required."
-        }
+        let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
+        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
+
+        let idsReq = requireStringArray(
+            args,
+            "ids",
+            expected: "non-empty array of `<type>/<id>` strings from `capabilities_search` results",
+            tool: name
+        )
+        guard case .value(let ids) = idsReq else { return idsReq.failureEnvelope ?? "" }
 
         var output = ""
 
         for id in ids {
             guard let slashIdx = id.firstIndex(of: "/") else {
-                output += "Warning: Invalid ID format '\(id)' — expected type/id.\n"
+                output +=
+                    "Warning: Invalid ID format '\(id)' — expected `<type>/<id>` "
+                    + "(e.g. `tool/sandbox_exec`, `skill/plot-data`). Get IDs from `capabilities_search`.\n"
                 continue
             }
 
@@ -193,11 +208,14 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
             case "skill":
                 output += await loadSkill(rawId)
             default:
-                output += "Warning: Unknown type '\(typePrefix)' in ID '\(id)'.\n"
+                output +=
+                    "Warning: Unknown type '\(typePrefix)' in ID '\(id)' "
+                    + "(expected `tool`, `skill`, or `method`).\n"
             }
         }
 
-        return output.isEmpty ? "No capabilities loaded." : output
+        let text = output.isEmpty ? "No capabilities loaded." : output
+        return ToolEnvelope.success(tool: name, text: text)
     }
 
     // MARK: - Loaders

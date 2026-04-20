@@ -36,6 +36,7 @@ public final class TodoTool: OsaurusTool, @unchecked Sendable {
 
     public let parameters: JSONValue? = .object([
         "type": .string("object"),
+        "additionalProperties": .bool(false),
         "properties": .object([
             "markdown": .object([
                 "type": .string("string"),
@@ -53,26 +54,50 @@ public final class TodoTool: OsaurusTool, @unchecked Sendable {
         guard let sessionId = ChatExecutionContext.currentSessionId,
             !sessionId.isEmpty
         else {
-            return "Error: no active session — `todo` is only valid inside a chat conversation."
+            return ToolEnvelope.failure(
+                kind: .unavailable,
+                message: "No active session — `todo` is only valid inside a chat conversation.",
+                tool: name,
+                retryable: false
+            )
         }
-        guard let args = parseArguments(argumentsJSON),
-            let raw = args["markdown"] as? String
-        else {
-            return "Error: `markdown` (string) is required. Pass a checklist like `- [ ] step 1\\n- [x] step 2`."
-        }
+        let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
+        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
+
+        let mdReq = requireString(
+            args,
+            "markdown",
+            expected: "markdown checklist; each item starts with `- [ ]` or `- [x]`",
+            tool: name
+        )
+        guard case .value(let raw) = mdReq else { return mdReq.failureEnvelope ?? "" }
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
-            return "Error: `markdown` must be a non-empty checklist."
+            return ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message: "`markdown` must be a non-empty checklist.",
+                field: "markdown",
+                expected: "non-empty markdown checklist",
+                tool: name
+            )
         }
 
         let stored = await AgentTodoStore.shared.setTodo(markdown: trimmed, for: sessionId)
         if stored.totalCount == 0 {
-            return
-                "Todo updated, but no `- [ ]` / `- [x]` lines were found. Make sure each item starts with a checkbox."
+            return ToolEnvelope.success(
+                tool: name,
+                text:
+                    "Todo updated, but no `- [ ]` / `- [x]` lines were found. "
+                    + "Make sure each item starts with a checkbox.",
+                warnings: ["no checklist items detected"]
+            )
         }
-        return
-            "Todo updated: \(stored.doneCount)/\(stored.totalCount) complete. "
-            + "Continue with the next pending item, or call `complete(summary)` when all done."
+        return ToolEnvelope.success(
+            tool: name,
+            text:
+                "Todo updated: \(stored.doneCount)/\(stored.totalCount) complete. "
+                + "Continue with the next pending item, or call `complete(summary)` when all done."
+        )
     }
 }
 
@@ -91,6 +116,7 @@ public final class CompleteTool: OsaurusTool, @unchecked Sendable {
 
     public let parameters: JSONValue? = .object([
         "type": .string("object"),
+        "additionalProperties": .bool(false),
         "properties": .object([
             "summary": .object([
                 "type": .string("string"),
@@ -106,17 +132,29 @@ public final class CompleteTool: OsaurusTool, @unchecked Sendable {
 
     public func execute(argumentsJSON: String) async throws -> String {
         // Validation runs here so the runtime rejection has a useful message
-        // even if the chat engine's intercept didn't fire (e.g. when called
-        // from a bare HTTP API request).
-        guard let args = parseArguments(argumentsJSON),
-            let summary = args["summary"] as? String
-        else {
-            return "Error: `summary` (string) is required."
-        }
+        // even if the chat layer's post-execute intercept didn't fire
+        // (e.g. when called from a bare HTTP API request).
+        let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
+        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
+
+        let summaryReq = requireString(
+            args,
+            "summary",
+            expected: "≥30 chars describing what you did and how you verified it",
+            tool: name
+        )
+        guard case .value(let summary) = summaryReq else { return summaryReq.failureEnvelope ?? "" }
+
         if let validation = Self.validate(summary: summary) {
-            return "Error: \(validation)"
+            return ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message: validation,
+                field: "summary",
+                expected: "≥30 chars of meaningful prose; not a placeholder",
+                tool: name
+            )
         }
-        return "Task completed."
+        return ToolEnvelope.success(tool: name, text: "Task completed.")
     }
 
     /// Returns nil when the summary is acceptable, or a human-readable
@@ -158,6 +196,7 @@ public final class ClarifyTool: OsaurusTool, @unchecked Sendable {
 
     public let parameters: JSONValue? = .object([
         "type": .string("object"),
+        "additionalProperties": .bool(false),
         "properties": .object([
             "question": .object([
                 "type": .string("string"),
@@ -172,15 +211,26 @@ public final class ClarifyTool: OsaurusTool, @unchecked Sendable {
     public init() {}
 
     public func execute(argumentsJSON: String) async throws -> String {
-        guard let args = parseArguments(argumentsJSON),
-            let raw = args["question"] as? String
-        else {
-            return "Error: `question` (string) is required."
-        }
+        let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
+        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
+
+        let qReq = requireString(
+            args,
+            "question",
+            expected: "single concrete question (e.g. `Use Postgres or SQLite?`)",
+            tool: name
+        )
+        guard case .value(let raw) = qReq else { return qReq.failureEnvelope ?? "" }
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
-            return "Error: `question` must be a non-empty string."
+            return ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message: "`question` must be a non-empty string.",
+                field: "question",
+                expected: "non-empty question string",
+                tool: name
+            )
         }
-        return "Awaiting user response."
+        return ToolEnvelope.success(tool: name, text: "Awaiting user response.")
     }
 }

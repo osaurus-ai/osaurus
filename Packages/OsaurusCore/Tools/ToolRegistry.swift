@@ -180,24 +180,18 @@ final class ToolRegistry: ObservableObject {
         }
     }
 
-    /// Execute a tool by name with raw JSON arguments.
-    /// Any registered tool can execute — access control is handled upstream
-    /// by which tools are offered to the model (alwaysLoadedSpecs + capabilities_load).
+    /// Execute a tool by name with raw JSON arguments. Access control
+    /// happens upstream (alwaysLoadedSpecs + capabilities_load decides
+    /// which tools are visible to the model).
     ///
-    /// Unknown tools return a minimal `ToolErrorEnvelope(kind: .toolNotFound)`
-    /// with no suggestions list — listing other tool names in an error
-    /// response is a primary hallucination trigger (the model treats the
-    /// suggestion as proof a tool exists and starts inventing siblings).
-    /// We just say what failed and leave it to the model to either pick
-    /// a real tool from its schema or stop. The one exception is sandbox
-    /// tools that fail mid-startup race: those get a clear "sandbox is
-    /// initialising" notice so the model knows to wait and retry, not
-    /// invent.
+    /// Unknown tools return `kind: .toolNotFound` with no "did you mean"
+    /// list — listing other tool names triggers hallucinations (the model
+    /// treats the suggestion as proof a tool exists and invents siblings).
+    /// One exception: sandbox tools that race the container startup get a
+    /// `kind: .unavailable` "still initializing" notice so the model knows
+    /// to retry rather than pivot.
     func execute(name: String, argumentsJSON: String) async throws -> String {
         guard let tool = toolsByName[name] else {
-            // Sandbox-startup race: the model called a sandbox tool before
-            // the container finished provisioning. Tell it the truth so it
-            // doesn't pivot to a hallucinated alternative.
             if name.hasPrefix("sandbox_") {
                 return ToolErrorEnvelope(
                     kind: .unavailable,
@@ -294,6 +288,25 @@ final class ToolRegistry: ObservableObject {
                 }
             }
         }
+        // Schema preflight: catches `additionalProperties: false` violations
+        // and obvious type mismatches before the tool body sees them. Parse
+        // failure and missing schema are tolerated — tool bodies typically
+        // have richer field-aware `require…` helpers.
+        if let schema = tool.parameters,
+            let data = argumentsJSON.data(using: .utf8),
+            let parsed = try? JSONSerialization.jsonObject(with: data)
+        {
+            let result = SchemaValidator.validate(arguments: parsed, against: schema)
+            if !result.isValid, let message = result.errorMessage {
+                return ToolEnvelope.failure(
+                    kind: .invalidArgs,
+                    message: message,
+                    field: result.field,
+                    tool: name
+                )
+            }
+        }
+
         // Run the tool body off MainActor so long-running tools (file I/O,
         // network, shell) don't contend with SwiftUI layout on the main thread.
         return try await Self.runToolBody(tool, argumentsJSON: argumentsJSON)

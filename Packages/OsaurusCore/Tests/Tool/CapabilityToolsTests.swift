@@ -51,13 +51,15 @@ struct CapabilitiesSearchToolTests {
     @Test func rejectsEmptyQueries() async throws {
         let tool = CapabilitiesSearchTool()
         let result = try await tool.execute(argumentsJSON: "{\"queries\": []}")
-        #expect(result.contains("Error"))
+        #expect(ToolEnvelope.isError(result))
+        #expect(result.contains("queries"))
     }
 
     @Test func rejectsMissingQueries() async throws {
         let tool = CapabilitiesSearchTool()
         let result = try await tool.execute(argumentsJSON: "{}")
-        #expect(result.contains("Error"))
+        #expect(ToolEnvelope.isError(result))
+        #expect(result.contains("queries"))
     }
 
     @Test func returnsNoMatchMessage() async throws {
@@ -76,13 +78,15 @@ struct CapabilitiesLoadToolTests {
     @Test func rejectsEmptyIds() async throws {
         let tool = CapabilitiesLoadTool()
         let result = try await tool.execute(argumentsJSON: "{\"ids\": []}")
-        #expect(result.contains("Error"))
+        #expect(ToolEnvelope.isError(result))
+        #expect(result.contains("ids"))
     }
 
     @Test func rejectsMissingIds() async throws {
         let tool = CapabilitiesLoadTool()
         let result = try await tool.execute(argumentsJSON: "{}")
-        #expect(result.contains("Error"))
+        #expect(ToolEnvelope.isError(result))
+        #expect(result.contains("ids"))
     }
 
     @Test func handlesInvalidIdFormat() async throws {

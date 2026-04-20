@@ -227,6 +227,8 @@ See [INFERENCE_RUNTIME.md](./INFERENCE_RUNTIME.md) for the full runtime architec
 - `Services/MCP/MCPServerManager.swift` — MCP server lifecycle
 - `Networking/OsaurusServer.swift` — HTTP MCP endpoints
 - `Tools/ToolRegistry.swift` — Tool registration and lookup
+- `Tools/ToolEnvelope.swift` — Canonical success/failure envelope every tool returns (see [Tool Contract](TOOL_CONTRACT.md))
+- `Tools/SchemaValidator.swift` — Argument validator with `additionalProperties` enforcement
 
 **Endpoints:**
 | Endpoint | Method | Description |

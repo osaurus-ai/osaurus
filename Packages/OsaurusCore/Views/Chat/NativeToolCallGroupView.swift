@@ -438,7 +438,7 @@ final class NativeToolCallGroupView: NSView {
     private func statusNSColor(calls: [ToolCallItem], theme: any ThemeProtocol) -> NSColor {
         if calls.contains(where: { $0.result == nil }) {
             return NSColor(theme.accentColor)
-        } else if calls.contains(where: { ($0.result.map(ToolErrorEnvelope.isErrorResult) ?? false) }) {
+        } else if calls.contains(where: { ($0.result.map(ToolEnvelope.isError) ?? false) }) {
             return NSColor(theme.errorColor)
         } else {
             return NSColor(theme.successColor)
@@ -644,13 +644,24 @@ final class NativeToolCallRowView: NSView {
     // MARK: - Private
 
     /// JSON → fenced `json` block (pretty-printed). Anything else → raw markdown so prose/lists/**bold** render.
+    ///
+    /// Special case: a `ToolEnvelope` success result whose payload is a
+    /// `{"text": "..."}` carrier renders as the prose verbatim (markdown).
+    /// This keeps file_tree / file_read / capability listings readable in
+    /// the tool-call card instead of getting buried under a JSON wrapper.
     private static func markdownForToolResultDisplay(_ result: String) -> String {
-        if ToolErrorEnvelope.isErrorResult(result) {
+        if ToolEnvelope.isError(result) {
             return result
         }
         let trimmed = result.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             return ""
+        }
+        if let payload = ToolEnvelope.successPayload(result) as? [String: Any],
+            payload.count == 1,
+            let text = payload["text"] as? String
+        {
+            return text
         }
         if let pretty = JSONFormatter.prettyPrintedJSONIfValid(trimmed) {
             return "```json\n\(pretty)\n```"
@@ -933,7 +944,7 @@ final class NativeToolCallRowView: NSView {
 
     private func statusInfo(item: ToolCallItem, theme: any ThemeProtocol) -> (String, NSColor) {
         if item.result == nil { return ("circle.dotted", NSColor(theme.accentColor)) }
-        if let r = item.result, ToolErrorEnvelope.isErrorResult(r) {
+        if let r = item.result, ToolEnvelope.isError(r) {
             return ("xmark.circle.fill", NSColor(theme.errorColor))
         }
         return ("checkmark.circle.fill", NSColor(theme.successColor))

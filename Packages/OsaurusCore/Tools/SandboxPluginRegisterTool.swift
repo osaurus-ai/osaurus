@@ -13,8 +13,9 @@ import Foundation
 struct SandboxPluginRegisterTool: OsaurusTool, @unchecked Sendable {
     let name = "sandbox_plugin_register"
     let description =
-        "Register a sandbox plugin you created. Reads plugin.json from your plugins/{plugin_id}/ directory, "
-        + "installs dependencies, and makes tools available immediately in this session."
+        "Register a sandbox plugin you created. Reads `plugin.json` from your "
+        + "`plugins/{plugin_id}/` directory, installs dependencies, and makes tools available "
+        + "immediately in this session. The plugin must already be written to disk before this call."
 
     let agentId: String
     let agentName: String
@@ -22,10 +23,11 @@ struct SandboxPluginRegisterTool: OsaurusTool, @unchecked Sendable {
     var parameters: JSONValue? {
         .object([
             "type": .string("object"),
+            "additionalProperties": .bool(false),
             "properties": .object([
                 "plugin_id": .object([
                     "type": .string("string"),
-                    "description": .string("Plugin directory name under plugins/"),
+                    "description": .string("Plugin directory name under `plugins/` (e.g. `notion`)."),
                 ])
             ]),
             "required": .array([.string("plugin_id")]),
@@ -33,24 +35,45 @@ struct SandboxPluginRegisterTool: OsaurusTool, @unchecked Sendable {
     }
 
     func execute(argumentsJSON: String) async throws -> String {
-        guard let args = parseArguments(argumentsJSON),
-            let pluginId = args["plugin_id"] as? String,
-            !pluginId.isEmpty
-        else {
-            return jsonError("Missing required parameter: plugin_id")
+        let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
+        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
+
+        let pluginIdReq = requireString(
+            args,
+            "plugin_id",
+            expected: "plugin directory name under `plugins/`",
+            tool: name
+        )
+        guard case .value(let pluginId) = pluginIdReq else {
+            return pluginIdReq.failureEnvelope ?? ""
         }
 
         guard await SandboxManager.shared.status().isRunning else {
-            return jsonError("Sandbox container is not running")
+            return ToolEnvelope.failure(
+                kind: .unavailable,
+                message: "Sandbox container is not running.",
+                tool: name,
+                retryable: true
+            )
         }
 
         let (loaded, loadError) = loadPlugin(pluginId: pluginId)
         guard var plugin = loaded else {
-            return jsonError(loadError!)
+            return ToolEnvelope.failure(
+                kind: .executionError,
+                message: loadError!,
+                tool: name,
+                retryable: false
+            )
         }
 
         if let error = validate(plugin) {
-            return jsonError(error)
+            return ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message: error,
+                tool: name,
+                retryable: false
+            )
         }
 
         SandboxPluginDefaults.applyRestrictedDefaults(&plugin)
@@ -62,7 +85,12 @@ struct SandboxPluginRegisterTool: OsaurusTool, @unchecked Sendable {
         do {
             try await SandboxPluginManager.shared.install(plugin: plugin, for: agentId)
         } catch {
-            return jsonError("Plugin installation failed: \(error.localizedDescription)")
+            return ToolEnvelope.failure(
+                kind: .executionError,
+                message: "Plugin installation failed: \(error.localizedDescription)",
+                tool: name,
+                retryable: true
+            )
         }
 
         let registeredTools = await hotRegisterTools(plugin: plugin)
@@ -70,12 +98,14 @@ struct SandboxPluginRegisterTool: OsaurusTool, @unchecked Sendable {
         queueToast(pluginId: plugin.id, pluginName: plugin.name, toolCount: registeredTools.count)
 
         let toolList = registeredTools.map { ["name": $0.name, "description": $0.description] }
-        return jsonEncode([
-            "status": "ready",
-            "plugin_id": plugin.id,
-            "plugin_name": plugin.name,
-            "tools": toolList,
-        ])
+        return ToolEnvelope.success(
+            tool: name,
+            result: [
+                "plugin_id": plugin.id,
+                "plugin_name": plugin.name,
+                "tools": toolList,
+            ]
+        )
     }
 
     // MARK: - Private
@@ -203,14 +233,4 @@ struct SandboxPluginRegisterTool: OsaurusTool, @unchecked Sendable {
         }
     }
 
-    private func jsonError(_ message: String) -> String {
-        jsonEncode(["error": message])
-    }
-
-    private func jsonEncode(_ dict: [String: Any]) -> String {
-        guard let data = try? JSONSerialization.data(withJSONObject: dict),
-            let json = String(data: data, encoding: .utf8)
-        else { return "{\"error\":\"Failed to encode result\"}" }
-        return json
-    }
 }

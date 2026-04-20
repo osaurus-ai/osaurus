@@ -264,8 +264,10 @@ public actor FileOperationLog {
                 }
             }
 
-        case .write:
-            // Undo write: restore previous content or delete if it was new
+        case .write, .fileEdit:
+            // Undo write/edit: restore previous content or delete if it was new.
+            // file_edit always supplies previousContent (the full pre-edit
+            // file body) so undo just rewrites the file in place.
             if let previousContent = operation.previousContent {
                 do {
                     try previousContent.write(to: fileURL, atomically: true, encoding: .utf8)

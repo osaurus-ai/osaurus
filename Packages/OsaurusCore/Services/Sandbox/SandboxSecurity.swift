@@ -99,36 +99,64 @@ public final class SandboxRateLimiter: @unchecked Sendable {
 
 // MARK: - File Path Sanitizer
 
+/// Reasons a sandbox path can be rejected. Returned by
+/// `SandboxPathSanitizer.validate(_:agentHome:)` so callers can build
+/// actionable error envelopes for the model.
+public enum SandboxPathRejection: Error, Equatable, Sendable {
+    case empty
+    case traversal
+    case nullByte
+    case dangerousChar(Character)
+    case outsideAllowedRoots
+
+    /// Short model-readable reason. Callers typically interpolate the
+    /// rejected path alongside this string.
+    public var reason: String {
+        switch self {
+        case .empty: return "path is empty"
+        case .traversal: return "path contains `..` (path traversal not allowed)"
+        case .nullByte: return "path contains a NUL byte"
+        case .dangerousChar(let c): return "path contains the disallowed character `\(c)`"
+        case .outsideAllowedRoots: return "absolute path is outside the agent home and `/workspace/shared`"
+        }
+    }
+}
+
 public enum SandboxPathSanitizer {
-    /// Validates and sanitizes a file path for use in the container.
-    /// Returns nil if the path is unsafe.
-    public static func sanitize(_ path: String, agentHome: String) -> String? {
-        // Reject empty paths
-        guard !path.isEmpty else { return nil }
+    /// Validate and resolve a path. Returns the resolved absolute path on
+    /// success, or a structured rejection reason the caller can surface
+    /// to the model via `ToolEnvelope.failure(kind: .invalidArgs, ...)`.
+    public static func validate(
+        _ path: String,
+        agentHome: String
+    ) -> Result<String, SandboxPathRejection> {
+        if path.isEmpty { return .failure(.empty) }
+        if path.contains("..") { return .failure(.traversal) }
+        if path.contains("\0") { return .failure(.nullByte) }
 
-        // Reject obvious traversal attempts
-        if path.contains("..") { return nil }
-
-        // Reject null bytes
-        if path.contains("\0") { return nil }
-
-        // Reject shell metacharacters in path (includes quotes to prevent
-        // breaking out of single-quoted shell arguments)
-        let dangerous: Set<Character> = [";", "|", "&", "$", "`", "(", ")", "{", "}", "'", "\"", "\\"]
-        if path.contains(where: { dangerous.contains($0) }) { return nil }
-
-        if path.hasPrefix("/") {
-            // Absolute path: must be within allowed prefixes
-            let allowedPrefixes = [
-                agentHome,
-                "/workspace/shared",
-            ]
-            guard allowedPrefixes.contains(where: { path.hasPrefix($0) }) else { return nil }
-            return path
+        // Shell metacharacters (includes quotes to prevent breaking out
+        // of single-quoted shell arguments).
+        let dangerous: Set<Character> = [
+            ";", "|", "&", "$", "`", "(", ")", "{", "}", "'", "\"", "\\",
+        ]
+        for ch in path where dangerous.contains(ch) {
+            return .failure(.dangerousChar(ch))
         }
 
-        // Relative path: resolve against agent home
-        return "\(agentHome)/\(path)"
+        if path.hasPrefix("/") {
+            let allowedPrefixes = [agentHome, "/workspace/shared"]
+            guard allowedPrefixes.contains(where: { path.hasPrefix($0) }) else {
+                return .failure(.outsideAllowedRoots)
+            }
+            return .success(path)
+        }
+        return .success("\(agentHome)/\(path)")
+    }
+
+    /// Back-compat nil-return API. Prefer `validate(_:agentHome:)` so the
+    /// model gets a specific rejection reason instead of "Invalid path".
+    public static func sanitize(_ path: String, agentHome: String) -> String? {
+        try? validate(path, agentHome: agentHome).get()
     }
 
     /// Validate the `files` dictionary of a sandbox plugin.

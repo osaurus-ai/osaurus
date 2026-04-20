@@ -13,7 +13,10 @@ import Foundation
 /// Tool for executing multiple operations in a single call
 struct BatchTool: OsaurusTool {
     let name = "batch"
-    let description = "Execute multiple tool operations in sequence (max 30). Continues on error and reports results."
+    let description =
+        "Execute up to 30 registered tool operations in sequence. Continues on per-op error and reports per-op status. "
+        + "Denied inside batch (call them as standalone tools): `shell_run`, `git_commit`, `batch` (no nesting). "
+        + "Each operation is `{\"tool\": \"<name>\", \"args\": {...}}`."
 
     let parameters: JSONValue? = .object([
         "type": .string("object"),
@@ -51,10 +54,6 @@ struct BatchTool: OsaurusTool {
 
     /// Maximum operations per batch
     private static let maxOperations = 30
-
-    /// Error indicators in tool output (some tools return errors as strings instead of throwing)
-    private static let errorPrefixes = ["error", "failed", "unable to", "cannot "]
-    private static let errorSubstrings = ["not found", "does not exist"]
 
     // MARK: - Initialization
 
@@ -230,12 +229,12 @@ struct BatchTool: OsaurusTool {
                 )
             }
 
-            let isError = Self.isErrorResult(output)
+            let isError = ToolEnvelope.isError(output)
             return Result(
                 index: op.index,
                 tool: op.tool,
                 success: !isError,
-                message: truncate(output)
+                message: truncate(perOpMessage(output, isError: isError))
             )
         } catch {
             return Result(
@@ -274,6 +273,22 @@ struct BatchTool: OsaurusTool {
         return lines.joined(separator: "\n")
     }
 
+    /// Distil a per-op tool result to a one-line summary the model can scan.
+    /// For envelope-shaped results we extract the failure `message` or the
+    /// success `result.text` (when present) so structured payloads don't
+    /// turn into a noisy JSON blob in the batch summary.
+    private func perOpMessage(_ raw: String, isError: Bool) -> String {
+        if isError {
+            return ToolEnvelope.failureMessage(raw)
+        }
+        if let payload = ToolEnvelope.successPayload(raw) as? [String: Any],
+            let text = payload["text"] as? String
+        {
+            return text
+        }
+        return raw
+    }
+
     private func truncate(_ text: String, maxLength: Int = 100) -> String {
         let firstLine =
             text
@@ -285,11 +300,5 @@ struct BatchTool: OsaurusTool {
             return String(firstLine.prefix(maxLength - 3)) + "..."
         }
         return firstLine
-    }
-
-    private static func isErrorResult(_ result: String) -> Bool {
-        let lower = result.lowercased()
-        return errorPrefixes.contains { lower.hasPrefix($0) }
-            || errorSubstrings.contains { lower.contains($0) }
     }
 }

@@ -33,30 +33,32 @@ enum FolderToolError: LocalizedError {
 
 /// Shared utilities for folder tools
 enum FolderToolHelpers {
-    /// Resolve a tool's `path` argument under the working folder, with
-    /// two hard rules:
-    ///
-    ///   1. Absolute paths are rejected outright. The relative-path
-    ///      requirement is a security boundary, not a convenience —
-    ///      accepting an absolute that happens to land inside root would
-    ///      quietly weaken the contract for any future change to the
-    ///      resolver. The error envelope tells the model exactly what to
-    ///      pass instead, so the next call self-corrects.
-    ///   2. After `..`/`.` standardisation, the resolved path must be
-    ///      either the root itself or a strict child (`hasPrefix(root + "/")`)
-    ///      so traversal tricks and sibling directories like
-    ///      `<root>-other` can't slip through a substring match.
+    /// Resolve a tool's `path` argument under the working folder.
+    /// Accepts a relative path under root (e.g. `src/app.py`) or an
+    /// absolute path that lives inside root (e.g. `/Users/x/proj/src/app.py`
+    /// when root is `/Users/x/proj`). After `..`/`.` standardisation the
+    /// resolved path must equal root or be a strict child (`root + "/"`)
+    /// so traversal and sibling directories like `<root>-other` cannot slip
+    /// through a substring match.
     static func resolvePath(_ relativePath: String, rootPath: URL) throws -> URL {
-        if relativePath.hasPrefix("/") {
-            throw FolderToolError.invalidArguments(
-                "path must be relative to the working directory (got absolute path "
-                    + "'\(relativePath)'). Pass just the file or directory name — e.g. "
-                    + "'README.md' or 'src/app.py' — not the full filesystem path."
-            )
-        }
-
         let rootStandardized = rootPath.standardized.path
-        let resolvedURL = rootPath.appendingPathComponent(relativePath).standardized
+        let resolvedURL: URL
+        if relativePath.hasPrefix("/") {
+            let absStandardized = URL(fileURLWithPath: relativePath).standardized.path
+            let isWithinRoot =
+                absStandardized == rootStandardized
+                || absStandardized.hasPrefix(rootStandardized + "/")
+            guard isWithinRoot else {
+                throw FolderToolError.invalidArguments(
+                    "path must be relative to the working directory or absolute under it "
+                        + "(got '\(relativePath)'). Pass just the file or directory name — "
+                        + "e.g. 'README.md' or 'src/app.py'."
+                )
+            }
+            resolvedURL = URL(fileURLWithPath: absStandardized)
+        } else {
+            resolvedURL = rootPath.appendingPathComponent(relativePath).standardized
+        }
         let isWithinRoot =
             resolvedURL.path == rootStandardized
             || resolvedURL.path.hasPrefix(rootStandardized + "/")
@@ -166,6 +168,7 @@ struct FileTreeTool: OsaurusTool {
         "List the directory structure of the working directory or a subdirectory. Returns a tree view of files and folders. Skips hidden files and truncates at 300 files."
     let parameters: JSONValue? = .object([
         "type": .string("object"),
+        "additionalProperties": .bool(false),
         "properties": .object([
             "path": .object([
                 "type": .string("string"),
@@ -201,7 +204,7 @@ struct FileTreeTool: OsaurusTool {
             throw FolderToolError.directoryNotFound(relativePath)
         }
 
-        return buildTree(targetURL, maxDepth: maxDepth)
+        return ToolEnvelope.success(tool: name, text: buildTree(targetURL, maxDepth: maxDepth))
     }
 
     private func buildTree(_ url: URL, maxDepth: Int) -> String {
@@ -268,6 +271,7 @@ struct FileReadTool: OsaurusTool {
         "Read the contents of a text file. Cannot read binary files (PDFs, images, etc.). Optionally specify start_line and end_line for partial reads. Line numbers are 1-indexed."
     let parameters: JSONValue? = .object([
         "type": .string("object"),
+        "additionalProperties": .bool(false),
         "properties": .object([
             "path": .object([
                 "type": .string("string"),
@@ -335,10 +339,13 @@ struct FileReadTool: OsaurusTool {
                 "\n... (truncated at \(lastLineIncluded) of \(lines.count) lines — use start_line/end_line for specific ranges)"
         }
 
+        let text: String
         if validStart > 1 || validEnd < lines.count {
-            return "Lines \(validStart)-\(validEnd) of \(lines.count):\n" + output
+            text = "Lines \(validStart)-\(validEnd) of \(lines.count):\n" + output
+        } else {
+            text = output
         }
-        return output
+        return ToolEnvelope.success(tool: name, text: text)
     }
 }
 
@@ -350,6 +357,7 @@ struct FileWriteTool: OsaurusTool, PermissionedTool {
         "Create a new file or overwrite an existing file with the provided content. Parent directories will be created if they don't exist. You MUST provide the file contents in the `content` parameter."
     let parameters: JSONValue? = .object([
         "type": .string("object"),
+        "additionalProperties": .bool(false),
         "properties": .object([
             "path": .object([
                 "type": .string("string"),
@@ -416,7 +424,10 @@ struct FileWriteTool: OsaurusTool, PermissionedTool {
 
         let lineCount = content.components(separatedBy: .newlines).count
         let action = existed ? "Updated" : "Created"
-        return "\(action) \(relativePath) (\(lineCount) lines, \(content.count) characters)"
+        return ToolEnvelope.success(
+            tool: name,
+            text: "\(action) \(relativePath) (\(lineCount) lines, \(content.count) characters)"
+        )
     }
 }
 
@@ -427,6 +438,7 @@ struct FileMoveTool: OsaurusTool, PermissionedTool {
     let description = "Move or rename a file or directory."
     let parameters: JSONValue? = .object([
         "type": .string("object"),
+        "additionalProperties": .bool(false),
         "properties": .object([
             "source": .object([
                 "type": .string("string"),
@@ -489,7 +501,10 @@ struct FileMoveTool: OsaurusTool, PermissionedTool {
 
         try FileManager.default.moveItem(at: sourceURL, to: destURL)
 
-        return "Moved \(sourcePath) to \(destPath)"
+        return ToolEnvelope.success(
+            tool: name,
+            text: "Moved \(sourcePath) to \(destPath)"
+        )
     }
 }
 
@@ -500,6 +515,7 @@ struct FileCopyTool: OsaurusTool, PermissionedTool {
     let description = "Copy a file or directory to a new location."
     let parameters: JSONValue? = .object([
         "type": .string("object"),
+        "additionalProperties": .bool(false),
         "properties": .object([
             "source": .object([
                 "type": .string("string"),
@@ -562,7 +578,10 @@ struct FileCopyTool: OsaurusTool, PermissionedTool {
 
         try FileManager.default.copyItem(at: sourceURL, to: destURL)
 
-        return "Copied \(sourcePath) to \(destPath)"
+        return ToolEnvelope.success(
+            tool: name,
+            text: "Copied \(sourcePath) to \(destPath)"
+        )
     }
 }
 
@@ -573,6 +592,7 @@ struct FileDeleteTool: OsaurusTool, PermissionedTool {
     let description = "Delete a file or directory. This action requires approval."
     let parameters: JSONValue? = .object([
         "type": .string("object"),
+        "additionalProperties": .bool(false),
         "properties": .object([
             "path": .object([
                 "type": .string("string"),
@@ -636,7 +656,10 @@ struct FileDeleteTool: OsaurusTool, PermissionedTool {
 
         let itemType = isDirectory.boolValue ? "directory" : "file"
         let suffix = useTrash ? " (moved to Trash)" : ""
-        return "Deleted \(itemType): \(relativePath)\(suffix)"
+        return ToolEnvelope.success(
+            tool: name,
+            text: "Deleted \(itemType): \(relativePath)\(suffix)"
+        )
     }
 }
 
@@ -648,6 +671,7 @@ struct DirCreateTool: OsaurusTool, PermissionedTool {
         "Create a new directory. Parent directories will be created if they don't exist."
     let parameters: JSONValue? = .object([
         "type": .string("object"),
+        "additionalProperties": .bool(false),
         "properties": .object([
             "path": .object([
                 "type": .string("string"),
@@ -697,7 +721,10 @@ struct DirCreateTool: OsaurusTool, PermissionedTool {
             attributes: nil
         )
 
-        return "Created directory: \(relativePath)"
+        return ToolEnvelope.success(
+            tool: name,
+            text: "Created directory: \(relativePath)"
+        )
     }
 }
 
@@ -711,6 +738,7 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
         "Edit a file by replacing specific text. old_string must uniquely match exactly one location in the file — include surrounding context lines if needed to ensure uniqueness. The tool will fail if old_string is not found or matches multiple locations. You MUST provide the strings in the parameters."
     let parameters: JSONValue? = .object([
         "type": .string("object"),
+        "additionalProperties": .bool(false),
         "properties": .object([
             "path": .object([
                 "type": .string("string"),
@@ -750,6 +778,13 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
         guard let oldString = args["old_string"] as? String else {
             throw FolderToolError.invalidArguments("Missing required parameter: old_string")
         }
+        // Empty `old_string` is ambiguous — reject explicitly (matches
+        // `sandbox_edit_file`).
+        guard !oldString.isEmpty else {
+            throw FolderToolError.invalidArguments(
+                "old_string must not be empty. Pass the exact text you want to replace."
+            )
+        }
         guard let newString = args["new_string"] as? String else {
             throw FolderToolError.invalidArguments("Missing required parameter: new_string")
         }
@@ -760,32 +795,46 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
             throw FolderToolError.fileNotFound(relativePath)
         }
 
-        var content = try String(contentsOf: fileURL, encoding: .utf8)
+        // Capture pre-edit contents for the operation log (undo support).
+        let originalContent = try String(contentsOf: fileURL, encoding: .utf8)
+        var content = originalContent
 
-        // Find the old string
         guard let range = content.range(of: oldString) else {
             throw FolderToolError.operationFailed(
                 "Could not find the specified text in the file. Make sure old_string exactly matches the file content."
             )
         }
 
-        // Check for multiple matches
         let matches = content.ranges(of: oldString)
         if matches.count > 1 {
             throw FolderToolError.operationFailed(
-                "Found \(matches.count) matches for old_string. Include more context to uniquely identify the location."
+                "Found \(matches.count) matches for old_string — include more context to uniquely identify the location."
             )
         }
 
-        // Replace
         content.replaceSubrange(range, with: newString)
         try content.write(to: fileURL, atomically: true, encoding: .utf8)
 
-        // Calculate affected lines
+        // Log for undo parity with `file_write`. Skipped when no session.
+        if let sid = ChatExecutionContext.currentSessionId {
+            await FileOperationLog.shared.log(
+                FileOperation(
+                    type: .fileEdit,
+                    path: relativePath,
+                    previousContent: originalContent,
+                    sessionId: sid,
+                    batchId: ChatExecutionContext.currentBatchId
+                )
+            )
+        }
+
         let beforeLines = oldString.components(separatedBy: .newlines).count
         let afterLines = newString.components(separatedBy: .newlines).count
 
-        return "Edited \(relativePath): replaced \(beforeLines) line(s) with \(afterLines) line(s)"
+        return ToolEnvelope.success(
+            tool: name,
+            text: "Edited \(relativePath): replaced \(beforeLines) line(s) with \(afterLines) line(s)"
+        )
     }
 }
 
@@ -797,6 +846,7 @@ struct FileSearchTool: OsaurusTool {
         "Search for text in files using case-insensitive substring matching. Returns matching lines with file paths and line numbers."
     let parameters: JSONValue? = .object([
         "type": .string("object"),
+        "additionalProperties": .bool(false),
         "properties": .object([
             "pattern": .object([
                 "type": .string("string"),
@@ -892,7 +942,10 @@ struct FileSearchTool: OsaurusTool {
         }
 
         if results.isEmpty {
-            return "No matches found for '\(pattern)'"
+            return ToolEnvelope.success(
+                tool: name,
+                text: "No matches found for '\(pattern)'"
+            )
         }
 
         var output = "Found \(totalMatches) match(es):\n\n"
@@ -902,7 +955,7 @@ struct FileSearchTool: OsaurusTool {
             output += "\n\n(results truncated at \(maxResults))"
         }
 
-        return output
+        return ToolEnvelope.success(tool: name, text: output)
     }
 
     private func searchFile(_ url: URL, pattern: String, maxResults: Int) -> [String]? {
@@ -937,6 +990,7 @@ struct ShellRunTool: OsaurusTool, PermissionedTool {
         "Run a shell command in the working directory. This action requires approval. Output is truncated to 10,000 characters. Use for builds, tests, or other commands."
     let parameters: JSONValue? = .object([
         "type": .string("object"),
+        "additionalProperties": .bool(false),
         "properties": .object([
             "command": .object([
                 "type": .string("string"),
@@ -1008,20 +1062,14 @@ struct ShellRunTool: OsaurusTool, PermissionedTool {
 
         let exitCode = process.terminationStatus
 
-        var result = "Exit code: \(exitCode)\n"
-
-        if !stdout.isEmpty {
-            result += "\n--- stdout ---\n\(truncateOutput(stdout))"
-        }
-        if !stderr.isEmpty {
-            result += "\n\n--- stderr ---\n\(truncateOutput(stderr))"
-        }
-
-        if stdout.isEmpty && stderr.isEmpty {
-            result += "\n(no output)"
-        }
-
-        return result
+        return ToolEnvelope.success(
+            tool: name,
+            result: [
+                "stdout": truncateOutput(stdout),
+                "stderr": truncateOutput(stderr),
+                "exit_code": Int(exitCode),
+            ]
+        )
     }
 
     private func truncateOutput(_ output: String, maxLength: Int = 10000) -> String {
@@ -1041,6 +1089,7 @@ struct GitStatusTool: OsaurusTool {
     let description = "Show the current git status including branch name and uncommitted changes."
     let parameters: JSONValue? = .object([
         "type": .string("object"),
+        "additionalProperties": .bool(false),
         "properties": .object([:]),
         "required": .array([]),
     ])
@@ -1061,7 +1110,10 @@ struct GitStatusTool: OsaurusTool {
             throw FolderToolError.operationFailed("git status failed: \(output)")
         }
 
-        return output.isEmpty ? "No changes" : output
+        return ToolEnvelope.success(
+            tool: name,
+            text: output.isEmpty ? "No changes" : output
+        )
     }
 }
 
@@ -1073,6 +1125,7 @@ struct GitDiffTool: OsaurusTool {
         "Show git diff for files. Can show staged changes, unstaged changes, or diff between commits."
     let parameters: JSONValue? = .object([
         "type": .string("object"),
+        "additionalProperties": .bool(false),
         "properties": .object([
             "path": .object([
                 "type": .string("string"),
@@ -1103,6 +1156,16 @@ struct GitDiffTool: OsaurusTool {
         let staged = coerceBool(args["staged"]) ?? false
         let commit = args["commit"] as? String
 
+        // Validate `path` through the same resolver every other folder
+        // tool uses. Previously the path went straight to `git diff --`,
+        // which silently accepted absolute paths and `..`-style traversal.
+        // The resolver throws `FolderToolError.invalidArguments` /
+        // `pathOutsideRoot` so the model gets the standard message on a
+        // bad path.
+        if let filePath {
+            _ = try FolderToolHelpers.resolvePath(filePath, rootPath: rootPath)
+        }
+
         var arguments = ["diff"]
         if staged { arguments.append("--cached") }
         if let commit = commit { arguments.append(commit) }
@@ -1118,11 +1181,13 @@ struct GitDiffTool: OsaurusTool {
         }
 
         // Truncate if too long
+        let text: String
         if output.count > 20000 {
-            return String(output.prefix(20000)) + "\n... (diff truncated)"
+            text = String(output.prefix(20000)) + "\n... (diff truncated)"
+        } else {
+            text = output.isEmpty ? "No differences" : output
         }
-
-        return output.isEmpty ? "No differences" : output
+        return ToolEnvelope.success(tool: name, text: text)
     }
 }
 
@@ -1134,6 +1199,7 @@ struct GitCommitTool: OsaurusTool, PermissionedTool {
         "Stage and commit changes to git. This action requires approval. Optionally specify files to stage, otherwise runs `git add -A` to stage all tracked and untracked changes."
     let parameters: JSONValue? = .object([
         "type": .string("object"),
+        "additionalProperties": .bool(false),
         "properties": .object([
             "message": .object([
                 "type": .string("string"),
@@ -1170,6 +1236,15 @@ struct GitCommitTool: OsaurusTool, PermissionedTool {
 
         let files = coerceStringArray(args["files"])
 
+        // Validate every staged path through the resolver — same security
+        // boundary as the rest of the folder tools. `git add` would
+        // otherwise silently accept absolutes / traversal.
+        if let files {
+            for file in files {
+                _ = try FolderToolHelpers.resolvePath(file, rootPath: rootPath)
+            }
+        }
+
         // Stage files
         let stageArgs = (files != nil && !files!.isEmpty) ? ["add"] + files! : ["add", "-A"]
         let (stageOutput, stageExitCode) = try await FolderToolHelpers.runGitCommand(
@@ -1189,12 +1264,15 @@ struct GitCommitTool: OsaurusTool, PermissionedTool {
 
         if commitExitCode != 0 {
             if commitOutput.contains("nothing to commit") {
-                return "Nothing to commit"
+                return ToolEnvelope.success(tool: name, text: "Nothing to commit")
             }
             throw FolderToolError.operationFailed("git commit failed: \(commitOutput)")
         }
 
-        return "Committed successfully:\n\(commitOutput)"
+        return ToolEnvelope.success(
+            tool: name,
+            text: "Committed successfully:\n\(commitOutput)"
+        )
     }
 }
 
@@ -1220,14 +1298,15 @@ enum FolderToolFactory {
         ]
     }
 
-    /// Build coding tools
+    /// Build project-aware coding tools. Installed when the working folder
+    /// has a detected project type (swift/node/python/rust/go).
     static func buildCodingTools(rootPath: URL) -> [OsaurusTool] {
         return [
             ShellRunTool(rootPath: rootPath)
         ]
     }
 
-    /// Build git tools
+    /// Build git tools. Installed when the working folder is a git repo.
     static func buildGitTools(rootPath: URL) -> [OsaurusTool] {
         return [
             GitStatusTool(rootPath: rootPath),
@@ -1235,19 +1314,10 @@ enum FolderToolFactory {
             GitCommitTool(rootPath: rootPath),
         ]
     }
-
-    /// Get all tool names (for filtering)
-    static var allToolNames: [String] {
-        return [
-            // Core
-            "file_tree", "file_read", "file_write", "file_move",
-            "file_copy", "file_delete", "dir_create", "batch",
-            // Coding
-            "file_edit", "file_search", "shell_run",
-            // Git
-            "git_status", "git_diff", "git_commit",
-        ]
-    }
+    // Note: no `allToolNames` helper — the live tool list is the source of
+    // truth (via `FolderToolManager.folderToolNames`). A hand-maintained
+    // mirror would silently go stale every time a tool is added, renamed,
+    // or moved between Core/Coding/Git groups.
 }
 
 // MARK: - String Extension

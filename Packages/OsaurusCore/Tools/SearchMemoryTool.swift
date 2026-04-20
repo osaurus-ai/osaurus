@@ -28,6 +28,7 @@ final class SearchMemoryTool: OsaurusTool, @unchecked Sendable {
 
     let parameters: JSONValue? = .object([
         "type": .string("object"),
+        "additionalProperties": .bool(false),
         "properties": .object([
             "scope": .object([
                 "type": .string("string"),
@@ -86,77 +87,160 @@ final class SearchMemoryTool: OsaurusTool, @unchecked Sendable {
         "required": .array([.string("scope")]),
     ])
 
+    private static let allScopes: Set<String> = ["working", "conversations", "summaries", "graph", "all"]
+    private static let scopeListPipe = "working|conversations|summaries|graph|all"
+
+    /// Param-name -> set of scopes where it has any effect. Used to reject
+    /// scope-incompatible params with `invalid_args` so the model doesn't
+    /// think a silently-ignored `as_of` actually applied.
+    private static let scopeAllowedParams: [String: Set<String>] = [
+        "scope": allScopes,
+        "agent_id": ["working", "conversations", "summaries", "all"],
+        "query": ["working", "conversations", "summaries", "all"],
+        "days": ["conversations", "summaries", "all"],
+        "as_of": ["working"],
+        "entity_name": ["graph"],
+        "relation": ["graph"],
+        "depth": ["graph"],
+    ]
+
     func execute(argumentsJSON: String) async throws -> String {
-        guard let args = parseArguments(argumentsJSON),
-            let scopeRaw = (args["scope"] as? String)?.lowercased()
-        else {
-            return "Error: 'scope' is required (working|conversations|summaries|graph|all)."
+        let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
+        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
+
+        guard let scopeRaw = (args["scope"] as? String)?.lowercased() else {
+            return ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message: "Missing required argument `scope`. Use one of: \(Self.scopeListPipe).",
+                field: "scope",
+                expected: "one of \(Self.scopeListPipe)",
+                tool: name
+            )
         }
 
-        // Validate arguments BEFORE touching the database. The model
-        // gets the same actionable error whether memory is open or not,
-        // and tests can exercise the contract without a real DB.
+        // Reject scope-incompatible params up front so the model isn't
+        // tricked by silent ignores. E.g. `as_of` only applies to
+        // `scope=working`; passing it with `scope=conversations` used to
+        // be silently dropped, leaving the model thinking the temporal
+        // filter took effect.
+        for key in args.keys {
+            guard let allowed = Self.scopeAllowedParams[key] else { continue }
+            if !allowed.contains(scopeRaw) {
+                return ToolEnvelope.failure(
+                    kind: .invalidArgs,
+                    message:
+                        "`\(key)` is not valid with `scope=\(scopeRaw)`. "
+                        + "Valid scopes for `\(key)`: \(allowed.sorted().joined(separator: ", ")).",
+                    field: key,
+                    expected: "scope in \(allowed.sorted().joined(separator: "|"))",
+                    tool: name
+                )
+            }
+        }
+
+        // Validate scope-required arguments before touching the database
+        // (so tests / no-DB environments still get the right error).
         if let argError = validate(scope: scopeRaw, args: args) {
             return argError
         }
 
         guard MemoryDatabase.shared.isOpen else {
-            return "Memory system is not available."
+            return ToolEnvelope.failure(
+                kind: .unavailable,
+                message: "Memory system is not available.",
+                tool: name,
+                retryable: true
+            )
         }
 
+        // Each per-scope dispatcher returns raw prose; we wrap once here.
+        let text: String
         switch scopeRaw {
         case "working":
-            return await searchWorking(args: args)
+            text = await searchWorking(args: args)
         case "conversations":
-            return await searchConversations(args: args)
+            text = await searchConversations(args: args)
         case "summaries":
-            return await searchSummaries(args: args)
+            text = await searchSummaries(args: args)
         case "graph":
-            return await searchGraph(args: args)
+            text = await searchGraph(args: args)
         case "all":
-            return await searchAll(args: args)
+            text = await searchAll(args: args)
         default:
-            // `validate` already rejects unknown scopes; this is unreachable
-            // but kept for exhaustiveness in case validate's set diverges.
-            return "Error: unknown scope '\(scopeRaw)'. Use working|conversations|summaries|graph|all."
+            return unknownScopeFailure(scopeRaw)
         }
+        return ToolEnvelope.success(tool: name, text: text)
     }
 
-    /// Per-scope argument validation. Returns nil when args are acceptable
-    /// or an error string the model can read.
+    private func unknownScopeFailure(_ scope: String) -> String {
+        ToolEnvelope.failure(
+            kind: .invalidArgs,
+            message: "Unknown scope `\(scope)`. Use one of: \(Self.scopeListPipe).",
+            field: "scope",
+            expected: "one of \(Self.scopeListPipe)",
+            tool: name
+        )
+    }
+
+    /// Per-scope required-argument validation. Returns nil when args are
+    /// acceptable or a ready-to-return failure envelope. The cross-scope
+    /// rejection (`as_of` on the wrong scope, etc.) lives in `execute` —
+    /// this function only enforces the required keys per scope.
     private func validate(scope: String, args: [String: Any]) -> String? {
         switch scope {
         case "working", "conversations", "summaries", "all":
             guard let q = args["query"] as? String, !q.isEmpty else {
-                return "Error: 'query' is required for scope=\(scope)."
+                return ToolEnvelope.failure(
+                    kind: .invalidArgs,
+                    message: "Missing required argument `query` for scope=\(scope).",
+                    field: "query",
+                    expected: "non-empty natural-language query string",
+                    tool: name
+                )
+            }
+            // `as_of` (working-only) requires a specific agent — without it
+            // the temporal lookup has nothing to anchor against.
+            if scope == "working", args["as_of"] != nil, args["agent_id"] == nil {
+                return ToolEnvelope.failure(
+                    kind: .invalidArgs,
+                    message: "`agent_id` is required when `as_of` is specified.",
+                    field: "agent_id",
+                    expected: "agent UUID string",
+                    tool: name
+                )
             }
             return nil
         case "graph":
             let entityName = args["entity_name"] as? String
             let relation = args["relation"] as? String
             if entityName == nil && relation == nil {
-                return "Error: scope=graph requires at least one of 'entity_name' or 'relation'."
+                return ToolEnvelope.failure(
+                    kind: .invalidArgs,
+                    message:
+                        "scope=graph requires at least one of `entity_name` or `relation`.",
+                    field: "entity_name",
+                    expected: "either `entity_name` or `relation` (or both)",
+                    tool: name
+                )
             }
             return nil
         default:
-            return "Error: unknown scope '\(scope)'. Use working|conversations|summaries|graph|all."
+            return unknownScopeFailure(scope)
         }
     }
 
     // MARK: - Per-scope dispatchers
 
+    /// Caller has already verified `query` (and `agent_id` when `as_of`
+    /// is set) via `validate(scope:args:)`. This dispatcher is for
+    /// scope=working only.
     private func searchWorking(args: [String: Any]) async -> String {
-        guard let query = args["query"] as? String, !query.isEmpty else {
-            return "Error: 'query' is required for scope=working."
-        }
+        let query = args["query"] as? String ?? ""
         let agentId = args["agent_id"] as? String
         let asOfString = args["as_of"] as? String
 
         let entries: [MemoryEntry]
-        if let asOfString {
-            guard let agentId else {
-                return "Error: 'agent_id' is required when using 'as_of'."
-            }
+        if let asOfString, let agentId {
             let temporal = (try? MemoryDatabase.shared.loadEntriesAsOf(agentId: agentId, asOf: asOfString)) ?? []
             entries = temporal.filter { $0.content.localizedCaseInsensitiveContains(query) }
         } else {
@@ -189,11 +273,9 @@ final class SearchMemoryTool: OsaurusTool, @unchecked Sendable {
     }
 
     private func searchConversations(args: [String: Any]) async -> String {
-        guard let query = args["query"] as? String, !query.isEmpty else {
-            return "Error: 'query' is required for scope=conversations."
-        }
+        let query = args["query"] as? String ?? ""
         let agentId = args["agent_id"] as? String
-        let days = (args["days"] as? Int) ?? 30
+        let days = ArgumentCoercion.int(args["days"]) ?? 30
 
         let chunks = await MemorySearchService.shared.searchConversations(
             query: query,
@@ -216,11 +298,9 @@ final class SearchMemoryTool: OsaurusTool, @unchecked Sendable {
     }
 
     private func searchSummaries(args: [String: Any]) async -> String {
-        guard let query = args["query"] as? String, !query.isEmpty else {
-            return "Error: 'query' is required for scope=summaries."
-        }
+        let query = args["query"] as? String ?? ""
         let agentId = args["agent_id"] as? String
-        let days = (args["days"] as? Int) ?? 30
+        let days = ArgumentCoercion.int(args["days"]) ?? 30
 
         let summaries = await MemorySearchService.shared.searchSummaries(
             query: query,
@@ -241,13 +321,11 @@ final class SearchMemoryTool: OsaurusTool, @unchecked Sendable {
     }
 
     private func searchGraph(args: [String: Any]) async -> String {
+        // Caller validated that at least one of entity_name/relation exists.
         let entityName = args["entity_name"] as? String
         let relation = args["relation"] as? String
-        let depth = (args["depth"] as? NSNumber)?.intValue ?? 2
-
-        guard entityName != nil || relation != nil else {
-            return "Error: scope=graph requires at least one of 'entity_name' or 'relation'."
-        }
+        let rawDepth = ArgumentCoercion.int(args["depth"]) ?? 2
+        let depth = max(1, min(rawDepth, 4))
 
         let results = await MemorySearchService.shared.searchGraph(
             entityName: entityName,
@@ -276,10 +354,6 @@ final class SearchMemoryTool: OsaurusTool, @unchecked Sendable {
     /// so `async let` doesn't apply, and the SQLite backends are quick
     /// enough that parallelism wouldn't move the needle on turn time.
     private func searchAll(args: [String: Any]) async -> String {
-        guard let query = args["query"] as? String, !query.isEmpty else {
-            return "Error: 'query' is required for scope=all."
-        }
-
         let working = await searchWorking(args: args)
         let conversations = await searchConversations(args: args)
         let summaries = await searchSummaries(args: args)

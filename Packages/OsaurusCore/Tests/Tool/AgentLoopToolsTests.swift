@@ -39,8 +39,9 @@ struct AgentLoopToolsTests {
                     {"markdown": "- [ ] Read existing config\n- [ ] Add new field\n- [x] Stub test"}
                     """#
             )
+            #expect(ToolEnvelope.isSuccess(result))
             #expect(result.contains("Todo updated"))
-            #expect(result.contains("1/3 complete"))
+            #expect(result.contains("1\\/3 complete"))
 
             let stored = await AgentTodoStore.shared.todo(for: sessionId)
             #expect(stored?.totalCount == 3)
@@ -70,6 +71,7 @@ struct AgentLoopToolsTests {
     func todo_emptyMarkdownRejected() async throws {
         try await withSession { _ in
             let result = try await TodoTool().execute(argumentsJSON: #"{"markdown": "   "}"#)
+            #expect(ToolEnvelope.isError(result))
             #expect(result.contains("non-empty"))
         }
     }
@@ -81,7 +83,11 @@ struct AgentLoopToolsTests {
                 argumentsJSON: #"{"markdown": "Just prose, no checkboxes"}"#
             )
             // Stored — but the response warns the model the format is wrong.
-            #expect(result.contains("no `- [ ]` / `- [x]` lines were found"))
+            // JSON-encoding turns `/` into `\/` inside the envelope's `text`
+            // field, so assert on the escaped form.
+            #expect(ToolEnvelope.isSuccess(result))
+            #expect(result.contains("- [ ]") && result.contains("- [x]"))
+            #expect(result.contains("lines were found"))
         }
     }
 
@@ -91,7 +97,8 @@ struct AgentLoopToolsTests {
         let result = try await TodoTool().execute(
             argumentsJSON: #"{"markdown": "- [ ] step"}"#
         )
-        #expect(result.contains("no active session"))
+        #expect(ToolEnvelope.isError(result))
+        #expect(result.lowercased().contains("no active session"))
     }
 
     // MARK: - complete
@@ -103,7 +110,8 @@ struct AgentLoopToolsTests {
                 {"summary": "Added /health route in app.py and verified with curl returning 200 OK."}
                 """#
         )
-        #expect(result == "Task completed.")
+        #expect(ToolEnvelope.isSuccess(result))
+        #expect(result.contains("Task completed"))
     }
 
     @Test
@@ -141,12 +149,15 @@ struct AgentLoopToolsTests {
         let result = try await ClarifyTool().execute(
             argumentsJSON: #"{"question": "Use Postgres or SQLite?"}"#
         )
+        #expect(ToolEnvelope.isSuccess(result))
         #expect(result.contains("Awaiting"))
     }
 
     @Test
     func clarify_rejectsEmptyQuestion() async throws {
         let result = try await ClarifyTool().execute(argumentsJSON: #"{"question": ""}"#)
-        #expect(result.contains("non-empty"))
+        #expect(ToolEnvelope.isError(result))
+        // requireString with allowEmpty=false emits "must not be empty".
+        #expect(result.contains("must not be empty") || result.contains("non-empty"))
     }
 }

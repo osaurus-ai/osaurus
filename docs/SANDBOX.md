@@ -153,7 +153,18 @@ When the container is running, sandbox tools are automatically registered for th
 
 `share_artifact` is a global built-in (registered in `ToolRegistry`) and is the only way for sandbox-generated content to reach the chat thread. It's not in this sandbox-specific list because it's available everywhere, not just in sandbox mode.
 
-All file paths are validated on the host side before container execution. Path traversal attacks are blocked by `SandboxPathSanitizer`.
+All file paths are validated on the host side before container execution by `SandboxPathSanitizer`, which now returns structured rejection reasons (empty, traversal, null byte, dangerous character, outside allowed roots). Tools surface the reason to the model in an `invalid_args` envelope so the next call self-corrects instead of retrying with the same bad path.
+
+### Result shape
+
+Every sandbox tool returns a [ToolEnvelope](TOOL_CONTRACT.md) JSON string. Success payloads in `result`:
+
+- Read/inspect: `{path, content, size}` (+ optional `start_line`/`line_count`/`tail_lines`/`max_chars`)
+- Exec family: `{stdout, stderr, exit_code, cwd}` — `sandbox_run_script` adds `combined: stdout+stderr` and `language`.
+- Install family: `{installed, exit_code, output}` on success; `execution_error` envelope on non-zero exit.
+- Mutations: `{path, ...}` / `{source, destination}` / `{deleted, recursive}`.
+
+Failures use `kind: invalid_args` with `field` pointing at the offending argument (`path`, `cwd`, `content`, etc.) so the model can self-correct on the next turn.
 
 ---
 
