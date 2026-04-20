@@ -320,7 +320,6 @@ struct FloatingInputCard: View {
                     silenceTimeoutProgress: displayedSilenceTimeoutDuration,
                     isContinuousMode: isContinuousVoiceMode,
                     isStreaming: isStreaming,
-                    useClipboardPaste: voiceConfig.useClipboardPaste,
                     transcriptionStopMode: voiceConfig.transcriptionStopMode,
                     onCancel: { cancelVoiceInput() },
                     onSend: { message in sendVoiceMessage(message) },
@@ -509,8 +508,9 @@ struct FloatingInputCard: View {
                         resetPauseDetectionForRecording()
                     }
                 } else {
-                    // If service stopped recording (e.g. via Esc key in ChatView), sync local state
-                    if voiceInputState != .idle {
+                    // If service stopped recording (e.g. via Esc key in ChatView), sync local state.
+                    // Preserve `.sending` so the overlay stays up during LLM cleanup.
+                    if voiceInputState != .idle && voiceInputState != .sending {
                         voiceInputState = .idle
                         showVoiceOverlay = false
                     }
@@ -884,33 +884,30 @@ extension FloatingInputCard {
             speechService.clearTranscription()
             logVoiceState(trigger: "sendVoiceMessage-afterStop")
 
+            print("[FloatingInputCard] Invoking cleanup for voice message (\(message.count) chars)")
+            let cleanedMessage = await TranscriptionCleanupService.shared.clean(message)
+            print("[FloatingInputCard] Cleanup done. Original: \(message) | Cleaned: \(cleanedMessage)")
+
             await MainActor.run {
                 voiceInputState = .idle
                 showVoiceOverlay = false
 
                 let existing = localText.trimmingCharacters(in: .whitespacesAndNewlines)
-                let fullMessage = existing.isEmpty ? message : "\(existing) \(message)"
+                let fullMessage = existing.isEmpty ? cleanedMessage : "\(existing) \(cleanedMessage)"
 
-                if voiceConfig.useClipboardPaste {
-                    // try to paste. if it fails (permissions), we fall back to direct text setting
-                    if KeyboardSimulationService.shared.pasteText(message) {
-                        // Success: clear UI state immediately
-                        localText = ""
-                        text = ""
-                        // small delay before sending to let UI breathe before model starts streaming
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                            localText = ""
-                            text = ""
-                            onSend(fullMessage)
-                        }
-                    } else {
-                        // failed (no permission): set text and clear local buffer before sending
+                // try to paste. if it fails (permissions), we fall back to direct text setting
+                if KeyboardSimulationService.shared.pasteText(cleanedMessage) {
+                    // success: clear UI state immediately
+                    localText = ""
+                    text = ""
+                    // small delay before sending to let UI breathe before model starts streaming
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                         localText = ""
                         text = ""
                         onSend(fullMessage)
                     }
                 } else {
-                    // clear local buffer before sending
+                    // failed (no permission): set text and clear local buffer before sending
                     localText = ""
                     text = ""
                     onSend(fullMessage)
@@ -929,32 +926,32 @@ extension FloatingInputCard {
         .filter { !$0.isEmpty }
         .joined(separator: " ")
 
+        voiceInputState = .sending
+        // exit continuous mode when switching to text
+        isContinuousVoiceMode = false
+
         Task {
             _ = await speechService.stopStreamingTranscription()
             speechService.clearTranscription()
-        }
 
-        voiceInputState = .idle
-        showVoiceOverlay = false
-        isContinuousVoiceMode = false  // Exit continuous mode when switching to text
+            let cleaned = await TranscriptionCleanupService.shared.clean(transcribedText)
 
-        let existing = localText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let fullCombined = existing.isEmpty ? transcribedText : "\(existing) \(transcribedText)"
+            await MainActor.run {
+                voiceInputState = .idle
+                showVoiceOverlay = false
 
-        if voiceConfig.useClipboardPaste {
-            if KeyboardSimulationService.shared.pasteText(transcribedText) {
-                isFocused = true
-            } else {
-                // Fallback if paste fails
-                localText = fullCombined
-                text = fullCombined
-                isFocused = true
+                let existing = localText.trimmingCharacters(in: .whitespacesAndNewlines)
+                let fullCombined = existing.isEmpty ? cleaned : "\(existing) \(cleaned)"
+
+                if KeyboardSimulationService.shared.pasteText(cleaned) {
+                    isFocused = true
+                } else {
+                    // Fallback if paste fails
+                    localText = fullCombined
+                    text = fullCombined
+                    isFocused = true
+                }
             }
-        } else {
-            // Set the text input directly
-            localText = fullCombined
-            text = fullCombined
-            isFocused = true
         }
     }
 

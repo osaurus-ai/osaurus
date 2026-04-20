@@ -82,9 +82,6 @@ public struct SpeechConfiguration: Codable, Equatable, Sendable {
     /// Seconds of silence before closing voice input (0 = disabled, 10-120 seconds)
     public var silenceTimeoutSeconds: Double
 
-    /// Whether to paste the full transcription via clipboard instead of live-typing
-    public var useClipboardPaste: Bool
-
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let defaults = SpeechConfiguration.default
@@ -113,9 +110,6 @@ public struct SpeechConfiguration: Codable, Equatable, Sendable {
         self.silenceTimeoutSeconds =
             try container.decodeIfPresent(Double.self, forKey: .silenceTimeoutSeconds)
             ?? defaults.silenceTimeoutSeconds
-        self.useClipboardPaste =
-            try container.decodeIfPresent(Bool.self, forKey: .useClipboardPaste)
-            ?? defaults.useClipboardPaste
     }
 
     public init(
@@ -127,8 +121,7 @@ public struct SpeechConfiguration: Codable, Equatable, Sendable {
         transcriptionStopMode: TranscriptionStopMode = .automatic,
         pauseDuration: Double = 1.5,
         confirmationDelay: Double = 2.0,
-        silenceTimeoutSeconds: Double = 30.0,
-        useClipboardPaste: Bool = true
+        silenceTimeoutSeconds: Double = 30.0
     ) {
         self.modelVersion = modelVersion
         self.selectedInputDeviceId = selectedInputDeviceId
@@ -139,7 +132,6 @@ public struct SpeechConfiguration: Codable, Equatable, Sendable {
         self.pauseDuration = pauseDuration
         self.confirmationDelay = confirmationDelay
         self.silenceTimeoutSeconds = silenceTimeoutSeconds
-        self.useClipboardPaste = useClipboardPaste
     }
 
     public static var `default`: SpeechConfiguration {
@@ -152,8 +144,7 @@ public struct SpeechConfiguration: Codable, Equatable, Sendable {
             transcriptionStopMode: .automatic,
             pauseDuration: 1.5,
             confirmationDelay: 2.0,
-            silenceTimeoutSeconds: 30.0,
-            useClipboardPaste: true
+            silenceTimeoutSeconds: 30.0
         )
     }
 }

@@ -45,14 +45,13 @@ public final class TranscriptionModeService: ObservableObject {
 
     // MARK: - Private State
 
-    private var lastTypedText: String = ""
     private var configCancellables = Set<AnyCancellable>()
-    private var transcriptionCancellables = Set<AnyCancellable>()
     private var escKeyMonitor: Any?
 
     private init() {
         loadConfiguration()
         setupOverlayCallbacks()
+        observeStateForOverlay()
     }
 
     // MARK: - Public API
@@ -104,7 +103,6 @@ public final class TranscriptionModeService: ObservableObject {
         }
 
         state = .starting
-        lastTypedText = ""
         overlayService.show()
         startEscKeyMonitoring()
 
@@ -112,7 +110,7 @@ public final class TranscriptionModeService: ObservableObject {
             do {
                 try await speechService.startStreamingTranscription()
                 state = .transcribing
-                subscribeToTranscriptionUpdates()
+                subscribeToAudioLevel()
                 print("[TranscriptionMode] Started transcription")
             } catch {
                 state = .error(error.localizedDescription)
@@ -128,24 +126,19 @@ public final class TranscriptionModeService: ObservableObject {
 
         state = .stopping
         stopEscKeyMonitoring()
-        transcriptionCancellables.removeAll()
 
         Task {
-            // stop recording and get final result
             _ = await speechService.stopStreamingTranscription()
 
-            // if using clipboard paste, do it now at the end
-            if configuration.useClipboardPaste {
-                let fullText = speechService.confirmedTranscription
-                if !fullText.isEmpty {
-                    print("[TranscriptionMode] Pasting \(fullText.count) characters via clipboard")
-                    keyboardService.pasteText(fullText)
-                }
+            let rawText = speechService.confirmedTranscription
+            speechService.clearTranscription()
+
+            if !rawText.isEmpty {
+                let finalText = await TranscriptionCleanupService.shared.clean(rawText)
+                keyboardService.pasteText(finalText)
             }
 
-            speechService.clearTranscription()
             overlayService.hide()
-            lastTypedText = ""
             state = .idle
             print("[TranscriptionMode] Stopped transcription")
         }
@@ -181,70 +174,22 @@ public final class TranscriptionModeService: ObservableObject {
         }
     }
 
-    private func subscribeToTranscriptionUpdates() {
-        speechService.$confirmedTranscription
-            .combineLatest(speechService.$currentTranscription)
+    private func observeStateForOverlay() {
+        $state
             .receive(on: RunLoop.main)
-            .sink { [weak self] _, _ in
-                self?.handleTranscriptionUpdate()
+            .sink { [weak self] newState in
+                self?.overlayService.updateProcessing(newState == .stopping)
             }
-            .store(in: &transcriptionCancellables)
+            .store(in: &configCancellables)
+    }
 
-        speechService.$audioLevel
+    private var audioLevelCancellable: AnyCancellable?
+
+    private func subscribeToAudioLevel() {
+        audioLevelCancellable = speechService.$audioLevel
             .sink { [weak self] level in
                 self?.overlayService.updateAudioLevel(level)
             }
-            .store(in: &transcriptionCancellables)
-    }
-
-    private func handleTranscriptionUpdate() {
-        guard state == .transcribing else { return }
-
-        // skip live typing if clipboard paste is enabled
-        if configuration.useClipboardPaste {
-            return
-        }
-
-        let fullText: String
-        if speechService.confirmedTranscription.isEmpty {
-            fullText = speechService.currentTranscription
-        } else if speechService.currentTranscription.isEmpty {
-            fullText = speechService.confirmedTranscription
-        } else {
-            fullText = speechService.confirmedTranscription + " " + speechService.currentTranscription
-        }
-
-        typeNewText(fullText)
-    }
-
-    /// Diff-based typing: compares `fullText` against `lastTypedText` and
-    /// issues only the minimal keystrokes (append, delete, or correct) needed.
-    private func typeNewText(_ fullText: String) {
-        if fullText.hasPrefix(lastTypedText) {
-            let newPart = String(fullText.dropFirst(lastTypedText.count))
-            if !newPart.isEmpty {
-                keyboardService.typeText(newPart)
-                lastTypedText = fullText
-            }
-        } else if lastTypedText.hasPrefix(fullText) {
-            let charsToDelete = lastTypedText.count - fullText.count
-            if charsToDelete > 0 {
-                keyboardService.typeBackspace(count: charsToDelete)
-                lastTypedText = fullText
-            }
-        } else {
-            let commonPrefixLength = zip(lastTypedText, fullText).prefix(while: { $0 == $1 }).count
-            let charsToDelete = lastTypedText.count - commonPrefixLength
-            let newPart = String(fullText.dropFirst(commonPrefixLength))
-
-            if charsToDelete > 0 {
-                keyboardService.typeBackspace(count: charsToDelete)
-            }
-            if !newPart.isEmpty {
-                keyboardService.typeText(newPart)
-            }
-            lastTypedText = fullText
-        }
     }
 
     // MARK: - Esc Key Monitoring
