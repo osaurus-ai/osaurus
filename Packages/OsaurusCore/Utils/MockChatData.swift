@@ -71,7 +71,7 @@
             return turns
         }
 
-        private static let assistantVariantCount = 13
+        private static let assistantVariantCount = 14
 
         /// Cycles assistant shapes so `ContentBlock.generateBlocks` hits paragraphs (markdown/code),
         /// thinking, tool groups, preflight rows, share_artifact (text + PNG on disk), and pending-style tool rows.
@@ -277,6 +277,12 @@
                 turn.toolResults[readId] = "# title\n\nbody\n"
                 turn.content = "Artifact plus file read in one turn."
 
+            case 13:
+                // markdown tables: exercises NativeMarkdownTableView (wrapping cells,
+                // inline bold/italic/code, and the tolerant parser that handles
+                // blank lines between rows + garbled separators).
+                turn.content = markdownTableSample
+
             default:
                 preconditionFailure("unexpected mock variant \(v) (count=\(assistantVariantCount))")
             }
@@ -306,6 +312,41 @@
             ```bash
             xcodebuild -scheme osaurus -destination 'platform=macOS' build 2>&1 | tail -n 20
             ```
+            """
+
+        /// Three tables covering the rendering cases the table view has to handle:
+        /// 1) short cells, 2) wide cells that must wrap inside a column, 3) a malformed
+        /// separator (`| :/| :---/|`) plus blank lines between rows — parser should still
+        /// detect the table.
+        private static let markdownTableSample = """
+            ## table rendering checks
+
+            ### 1. compact cells — inline bold / italic / code
+
+            | Feature | **ARM64** | **x86_64** |
+            | --- | --- | --- |
+            | Design | *RISC* | *CISC* |
+            | Registers | 31 GPRs | fewer, `%rax` etc. |
+            | Typical use | phones, `M-series` | desktops, servers |
+
+            ### 2. wide cells that must wrap
+
+            | Topic | Summary |
+            | --- | --- |
+            | **Core Definition** | Atoms of the same element that have the same number of **protons** but different **neutrons**. Long enough that the cell has to wrap onto multiple lines inside its column. |
+            | **Example** | $^{12}\\text{C}$ (Carbon-12) and $^{14}\\text{C}$ (Carbon-14) are isotopes. They share atomic number ($Z$) but differ in mass number ($A$). |
+
+            ### 3. malformed separator + blank lines between rows (parser tolerance)
+
+            | Feature | ARM64 (AArch64) | x86_64 (Intel/AMD) |
+
+            | :/| :---/|
+
+            | **Design Philosophy** | RISC (Reduced Instruction Set Computer). Focuses on simplicity and efficiency. | CISC (Complex Instruction Set Computer). Focuses on performance through complexity. |
+
+            | **Power Efficiency** | **High.** Designed for mobile and high-efficiency cloud computing. | **Lower.** Historically higher power consumption; optimized for raw performance. |
+
+            | **Typical Hardware** | Apple M-series, AWS Graviton, Raspberry Pi, Android devices. | Intel Core, AMD Ryzen, Intel Xeon, AMD Epyc. |
             """
 
         private static func markdownExtraNoise(length: Int, rng: inout SplitMix64) -> String {

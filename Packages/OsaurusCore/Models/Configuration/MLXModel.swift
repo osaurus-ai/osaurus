@@ -24,6 +24,10 @@ struct MLXModel: Identifiable, Codable {
     /// Set on curated entries to enable pre-download VLM detection via VLMTypeRegistry.
     let modelType: String?
 
+    /// HF Hub `lastModified` timestamp for this repo, when known.
+    /// Used to sort the Recommended tab so newer releases appear near the top.
+    let releasedAt: Date?
+
     // When non-nil, pins the model to a specific directory (used by tests).
     // When nil, `localDirectory` resolves dynamically so that user-selected
     // storage path changes are always respected.
@@ -37,6 +41,7 @@ struct MLXModel: Identifiable, Codable {
         isTopSuggestion: Bool = false,
         downloadSizeBytes: Int64? = nil,
         modelType: String? = nil,
+        releasedAt: Date? = nil,
         rootDirectory: URL? = nil
     ) {
         self.id = id
@@ -46,6 +51,7 @@ struct MLXModel: Identifiable, Codable {
         self.isTopSuggestion = isTopSuggestion
         self.downloadSizeBytes = downloadSizeBytes
         self.modelType = modelType
+        self.releasedAt = releasedAt
         self.rootDirectory = rootDirectory
     }
 

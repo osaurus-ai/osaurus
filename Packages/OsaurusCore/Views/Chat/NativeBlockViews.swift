@@ -915,3 +915,272 @@ final class NativeCodeBlockView: NSView {
         }
     }
 }
+
+// MARK: - CellTextView
+
+/// NSTextView subclass used as a grid cell. Keeps attributed-string formatting
+/// intact on focus and supports native selection within the cell.
+final class CellTextView: NSTextView {
+    override var isFlipped: Bool { true }
+    override var acceptsFirstResponder: Bool { isSelectable }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { isSelectable }
+}
+
+// MARK: - NativeMarkdownTableView
+
+/// Grid-based renderer for markdown tables. Each cell is a wrapping NSTextField,
+/// so long cell content flows onto additional lines within its column instead of
+/// overflowing into neighbours
+/// Inline markdown in cells is rendered via SelectableTextView's attributed-string
+/// builder so `**bold**` etc. work uniformly with the rest of the message.
+final class NativeMarkdownTableView: NSView {
+
+    // MARK: State
+
+    private var headers: [String] = []
+    private var rows: [[String]] = []
+    private var lastWidth: CGFloat = 0
+    private var lastThemeFingerprint: String = ""
+    private var heightConstraint: NSLayoutConstraint?
+
+    // [row][col]; row 0 is headers
+    private var cellFields: [[CellTextView]] = []
+    private let separator = NSBox()
+
+    /// Called after the grid re-measures and its height changes.
+    var onHeightChanged: (() -> Void)?
+
+    override var isFlipped: Bool { true }
+
+    // MARK: Init
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        translatesAutoresizingMaskIntoConstraints = false
+        wantsLayer = true
+
+        separator.boxType = .separator
+        separator.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(separator)
+
+        let hc = heightAnchor.constraint(equalToConstant: 24)
+        hc.priority = .required
+        hc.isActive = true
+        heightConstraint = hc
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    // MARK: Configure
+
+    func configure(headers: [String], rows: [[String]], width: CGFloat, theme: any ThemeProtocol) {
+        let fingerprint = "\(theme.primaryFontName)|\(theme.bodySize)|\(theme.isDark)"
+        let contentChanged = headers != self.headers || rows != self.rows
+        let widthChanged = abs(width - lastWidth) > 0.5
+        let themeChanged = fingerprint != lastThemeFingerprint
+        guard contentChanged || widthChanged || themeChanged else { return }
+
+        self.headers = headers
+        self.rows = rows
+        lastWidth = width
+        lastThemeFingerprint = fingerprint
+
+        rebuildCells(theme: theme)
+        relayout(width: width)
+    }
+
+    // MARK: Measurement
+
+    func measuredHeight() -> CGFloat { heightConstraint?.constant ?? 24 }
+
+    override func layout() {
+        super.layout()
+        if bounds.width > 0.5 {
+            relayout(width: bounds.width)
+        }
+    }
+
+    // MARK: - Private: Cell Construction
+
+    private func rebuildCells(theme: any ThemeProtocol) {
+        for row in cellFields { for cell in row { cell.removeFromSuperview() } }
+        cellFields.removeAll()
+
+        let columnCount = max(headers.count, rows.map(\.count).max() ?? 0)
+        guard columnCount > 0 else { return }
+
+        let scale = Typography.scale(for: max(lastWidth, 1))
+        let bodyFontSize = CGFloat(theme.bodySize) * scale
+
+        // Header row
+        let headerCells: [CellTextView] = (0 ..< columnCount).map { i in
+            let text = i < headers.count ? headers[i] : ""
+            return makeCellField(
+                text: text,
+                weight: .semibold,
+                fontSize: bodyFontSize,
+                theme: theme
+            )
+        }
+        cellFields.append(headerCells)
+        for cell in headerCells { addSubview(cell) }
+
+        // Body rows
+        for row in rows {
+            let cells: [CellTextView] = (0 ..< columnCount).map { i in
+                let text = i < row.count ? row[i] : ""
+                return makeCellField(
+                    text: text,
+                    weight: .regular,
+                    fontSize: bodyFontSize,
+                    theme: theme
+                )
+            }
+            cellFields.append(cells)
+            for cell in cells { addSubview(cell) }
+        }
+    }
+
+    private func makeCellField(
+        text: String,
+        weight: NSFont.Weight,
+        fontSize: CGFloat,
+        theme: any ThemeProtocol
+    ) -> CellTextView {
+        let tv = CellTextView(frame: .zero)
+        tv.translatesAutoresizingMaskIntoConstraints = false
+        tv.isEditable = false
+        tv.isSelectable = true
+        tv.isRichText = true
+        tv.drawsBackground = false
+        tv.backgroundColor = .clear
+        tv.textContainerInset = .zero
+        tv.isVerticallyResizable = false
+        tv.isHorizontallyResizable = false
+        tv.textContainer?.widthTracksTextView = false
+        tv.textContainer?.lineFragmentPadding = 0
+        tv.selectedTextAttributes = [.backgroundColor: NSColor(theme.selectionColor)]
+        tv.insertionPointColor = NSColor(theme.cursorColor)
+        let attr = renderCellAttributedString(
+            text: text,
+            weight: weight,
+            fontSize: fontSize,
+            theme: theme
+        )
+        tv.textStorage?.setAttributedString(attr)
+        return tv
+    }
+
+    /// Render a cell's inline markdown via `NSAttributedString(markdown:)`, then apply
+    /// theme fonts/weights/colors. Header cells get semibold applied to every run.
+    private func renderCellAttributedString(
+        text: String,
+        weight: NSFont.Weight,
+        fontSize: CGFloat,
+        theme: any ThemeProtocol
+    ) -> NSAttributedString {
+        // Render as a paragraph so font size stays at body size. SelectableTextView
+        // handles inline bold/italic/code and math.
+        let attr = SelectableTextView.attributedString(
+            for: [.paragraph(text)],
+            width: lastWidth,
+            theme: theme
+        )
+        let mutable = NSMutableAttributedString(attributedString: attr)
+        let fullRange = NSRange(location: 0, length: mutable.length)
+
+        // Tighten cell spacing.
+        let tight = NSMutableParagraphStyle()
+        tight.lineSpacing = 2
+        tight.paragraphSpacingBefore = 0
+        tight.paragraphSpacing = 0
+        tight.lineBreakMode = .byWordWrapping
+        mutable.addAttribute(.paragraphStyle, value: tight, range: fullRange)
+
+        // Header row: upgrade every run's font to semibold (preserving italic/monospace).
+        if weight == .semibold {
+            let fontManager = NSFontManager.shared
+            mutable.enumerateAttribute(.font, in: fullRange, options: []) { value, range, _ in
+                guard let font = value as? NSFont else { return }
+                let bold = fontManager.convert(font, toHaveTrait: .boldFontMask)
+                mutable.addAttribute(.font, value: bold, range: range)
+            }
+        }
+        return mutable
+    }
+
+    // MARK: - Private: Layout
+
+    private func relayout(width: CGFloat) {
+        let columnCount = cellFields.first?.count ?? 0
+        guard columnCount > 0, width > 1 else {
+            heightConstraint?.constant = 1
+            return
+        }
+
+        let columnGap: CGFloat = 16
+        let rowGap: CGFloat = 8
+        let separatorGap: CGFloat = 6
+        let headerPaddingBottom: CGFloat = 6
+
+        let totalGaps = CGFloat(columnCount - 1) * columnGap
+        let usable = max(width - totalGaps, CGFloat(columnCount) * 40)
+        let columnWidth = floor(usable / CGFloat(columnCount))
+
+        // Measure row heights via each cell's own TextKit layout
+        var rowHeights: [CGFloat] = []
+        for row in cellFields {
+            var maxH: CGFloat = 0
+            for cell in row {
+                cell.textContainer?.containerSize = NSSize(
+                    width: columnWidth,
+                    height: .greatestFiniteMagnitude
+                )
+                if let lm = cell.layoutManager, let tc = cell.textContainer {
+                    lm.ensureLayout(for: tc)
+                    let h = ceil(lm.usedRect(for: tc).height)
+                    maxH = max(maxH, h + 2)
+                }
+            }
+            rowHeights.append(max(maxH, 18))
+        }
+
+        // Place cells
+        var y: CGFloat = 0
+        for (rowIdx, row) in cellFields.enumerated() {
+            var x: CGFloat = 0
+            let rowH = rowHeights[rowIdx]
+            for (colIdx, field) in row.enumerated() {
+                field.frame = NSRect(
+                    x: x,
+                    y: y,
+                    width: columnWidth,
+                    height: rowH
+                )
+                x += columnWidth
+                if colIdx < row.count - 1 { x += columnGap }
+            }
+            y += rowH
+            if rowIdx == 0 {
+                // Header → separator
+                y += headerPaddingBottom
+                separator.frame = NSRect(x: 0, y: y, width: width, height: 1)
+                separator.isHidden = false
+                y += separatorGap
+            } else if rowIdx < cellFields.count - 1 {
+                y += rowGap
+            }
+        }
+
+        let newH = max(y, 1)
+        if abs((heightConstraint?.constant ?? 0) - newH) > 0.5 {
+            heightConstraint?.constant = newH
+            invalidateIntrinsicContentSize()
+            onHeightChanged?()
+        }
+    }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: NSView.noIntrinsicMetric, height: heightConstraint?.constant ?? 1)
+    }
+}

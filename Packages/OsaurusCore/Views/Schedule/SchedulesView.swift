@@ -1784,14 +1784,20 @@ struct ScheduleEditorSheet: View {
             .frame(maxWidth: .infinity)
             .padding(.vertical, 10)
             .background(
-                ZStack {
-                    if isSelected {
-                        RoundedRectangle(cornerRadius: 7)
-                            .fill(theme.cardBackground)
-                            .shadow(color: theme.shadowColor.opacity(0.1), radius: 3, x: 0, y: 1)
-                            .matchedGeometryEffect(id: "mode_indicator", in: modeNamespace)
-                    }
-                }
+                // Same Debug-precondition pattern as SidebarNavigation/AnimatedTabSelector:
+                // multiple mode buttons share `modeNamespace` + `"mode_indicator"` id,
+                // and SwiftUI enforces a single geometry source per (id, namespace).
+                // Replaced the effect with a conditional fill so selection transitions
+                // don't briefly claim two sources.
+                RoundedRectangle(cornerRadius: 7)
+                    .fill(isSelected ? theme.cardBackground : Color.clear)
+                    .shadow(
+                        color: isSelected ? theme.shadowColor.opacity(0.1) : .clear,
+                        radius: isSelected ? 3 : 0,
+                        x: 0,
+                        y: isSelected ? 1 : 0
+                    )
+                    .animation(.easeOut(duration: 0.2), value: isSelected)
             )
             .contentShape(RoundedRectangle(cornerRadius: 7))
         }

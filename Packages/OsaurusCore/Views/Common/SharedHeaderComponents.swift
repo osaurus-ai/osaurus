@@ -86,12 +86,20 @@ struct ModeToggleButton: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 5)
         .background {
-            if isSelected {
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .fill(theme.secondaryBackground.opacity(0.8))
-                    .shadow(color: theme.shadowColor.opacity(0.08), radius: 1.5, x: 0, y: 0.5)
-                    .matchedGeometryEffect(id: "modeIndicator", in: animation)
-            }
+            // Dropped `.matchedGeometryEffect(id: "modeIndicator", in: animation)`
+            // because every mode-selector instance shares the same namespace + id,
+            // and SwiftUI's Debug-only single-source precondition trips when two
+            // selectors briefly consider themselves the source during a transition
+            // (EXC_BREAKPOINT on Settings open / mode switch). The remaining
+            // `.animation` directive preserves the selected fade.
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(isSelected ? theme.secondaryBackground.opacity(0.8) : Color.clear)
+                .shadow(
+                    color: isSelected ? theme.shadowColor.opacity(0.08) : .clear,
+                    radius: isSelected ? 1.5 : 0,
+                    x: 0,
+                    y: isSelected ? 0.5 : 0
+                )
         }
         .contentShape(Rectangle())
         .animation(theme.springAnimation(), value: isSelected)

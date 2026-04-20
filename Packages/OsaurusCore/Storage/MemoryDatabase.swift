@@ -31,11 +31,11 @@ public enum MemoryDatabaseError: Error, LocalizedError {
 public final class MemoryDatabase: @unchecked Sendable {
     public static let shared = MemoryDatabase()
 
-    private static let schemaVersion = 3
+    private static let schemaVersion = 4
 
     private static let memoryEntryColumns = """
         id, agent_id, type, content, confidence, model, source_conversation_id, tags, status,
-        superseded_by, created_at, last_accessed, access_count, valid_from, valid_until
+        superseded_by, created_at, last_accessed, access_count, valid_from, valid_until, source_mode
         """
 
     private static let insertMemoryEventSQL =
@@ -157,6 +157,7 @@ public final class MemoryDatabase: @unchecked Sendable {
         if currentVersion < 1 { try migrateToV1() }
         if currentVersion < 2 { try migrateToV2() }
         if currentVersion < 3 { try migrateToV3() }
+        if currentVersion < 4 { try migrateToV4() }
     }
 
     private func getSchemaVersion() throws -> Int {
@@ -488,6 +489,45 @@ public final class MemoryDatabase: @unchecked Sendable {
         MemoryLogger.database.info("Migration to v3 completed")
     }
 
+    /// V4 migration: tag memory writes with their source execution mode so
+    /// reads can exclude tool-using contributions from pure-chat contexts.
+    /// Pre-v4 rows remain NULL (treated as chat-compatible).
+    /// The compiled user_profile is cleared to force regeneration under the new filter.
+    private func migrateToV4() throws {
+        MemoryLogger.database.info("Running migration to v4")
+
+        for table in [
+            "memory_entries",
+            "profile_events",
+            "conversation_summaries",
+            "conversation_chunks",
+            "pending_signals",
+        ] {
+            try executeRaw("ALTER TABLE \(table) ADD COLUMN source_mode TEXT")
+        }
+
+        try executeRaw(
+            "CREATE INDEX IF NOT EXISTS idx_entries_source_mode ON memory_entries(agent_id, status, source_mode)"
+        )
+        try executeRaw(
+            "CREATE INDEX IF NOT EXISTS idx_summaries_source_mode ON conversation_summaries(agent_id, status, source_mode)"
+        )
+        try executeRaw(
+            "CREATE INDEX IF NOT EXISTS idx_profile_events_source_mode ON profile_events(event_type, status, source_mode)"
+        )
+
+        // Force profile regeneration: existing profile was compiled from
+        // mixed-mode contributions. Clearing it lets the next regen apply the
+        // new chat-only filter.
+        try executeRaw("DELETE FROM user_profile")
+
+        try executeRaw(
+            "INSERT OR IGNORE INTO schema_version (version, description) VALUES (4, 'Tag memory writes with source_mode for tools-aware filtering')"
+        )
+        try setSchemaVersion(4)
+        MemoryLogger.database.info("Migration to v4 completed")
+    }
+
     // MARK: - Query Execution
 
     private func executeRaw(_ sql: String) throws {
@@ -667,8 +707,8 @@ public final class MemoryDatabase: @unchecked Sendable {
     public func insertProfileEvent(_ event: ProfileEvent) throws {
         _ = try executeUpdate(
             """
-            INSERT INTO profile_events (agent_id, conversation_id, event_type, content, model, status)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            INSERT INTO profile_events (agent_id, conversation_id, event_type, content, model, status, source_mode)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
             """
         ) { stmt in
             Self.bindText(stmt, index: 1, value: event.agentId)
@@ -677,13 +717,14 @@ public final class MemoryDatabase: @unchecked Sendable {
             Self.bindText(stmt, index: 4, value: event.content)
             Self.bindText(stmt, index: 5, value: event.model)
             Self.bindText(stmt, index: 6, value: event.status)
+            Self.bindText(stmt, index: 7, value: event.sourceMode?.rawValue)
         }
     }
 
     public func loadRecentProfileEvents(limit: Int = 20) throws -> [ProfileEvent] {
         var events: [ProfileEvent] = []
         try prepareAndExecute(
-            "SELECT id, agent_id, conversation_id, event_type, content, model, status, incorporated_in, created_at FROM profile_events ORDER BY created_at DESC LIMIT ?1",
+            "SELECT id, agent_id, conversation_id, event_type, content, model, status, incorporated_in, created_at, source_mode FROM profile_events ORDER BY created_at DESC LIMIT ?1",
             bind: { stmt in sqlite3_bind_int(stmt, 1, Int32(limit)) },
             process: { stmt in
                 while sqlite3_step(stmt) == SQLITE_ROW {
@@ -694,15 +735,30 @@ public final class MemoryDatabase: @unchecked Sendable {
         return events
     }
 
-    public func loadActiveContributions() throws -> [ProfileEvent] {
+    /// Load active profile contributions.
+    /// When `chatOnly` is true, excludes contributions recorded under tool-using modes.
+    /// Rows with NULL source_mode are pre-v4 and always included.
+    public func loadActiveContributions(chatOnly: Bool = false) throws -> [ProfileEvent] {
         var events: [ProfileEvent] = []
+        let sql: String
+        if chatOnly {
+            sql = """
+                SELECT id, agent_id, conversation_id, event_type, content, model, status, incorporated_in, created_at, source_mode
+                FROM profile_events
+                WHERE event_type = 'contribution' AND status = 'active'
+                  AND (source_mode IS NULL OR source_mode = 'chat')
+                ORDER BY created_at ASC
+                """
+        } else {
+            sql = """
+                SELECT id, agent_id, conversation_id, event_type, content, model, status, incorporated_in, created_at, source_mode
+                FROM profile_events
+                WHERE event_type = 'contribution' AND status = 'active'
+                ORDER BY created_at ASC
+                """
+        }
         try prepareAndExecute(
-            """
-            SELECT id, agent_id, conversation_id, event_type, content, model, status, incorporated_in, created_at
-            FROM profile_events
-            WHERE event_type = 'contribution' AND status = 'active'
-            ORDER BY created_at ASC
-            """,
+            sql,
             bind: { _ in },
             process: { stmt in
                 while sqlite3_step(stmt) == SQLITE_ROW {
@@ -723,7 +779,8 @@ public final class MemoryDatabase: @unchecked Sendable {
             model: sqlite3_column_text(stmt, 5).map { String(cString: $0) },
             status: String(cString: sqlite3_column_text(stmt, 6)),
             incorporatedIn: sqlite3_column_type(stmt, 7) != SQLITE_NULL ? Int(sqlite3_column_int(stmt, 7)) : nil,
-            createdAt: String(cString: sqlite3_column_text(stmt, 8))
+            createdAt: String(cString: sqlite3_column_text(stmt, 8)),
+            sourceMode: sqlite3_column_text(stmt, 9).flatMap { MemorySourceMode(rawValue: String(cString: $0)) }
         )
     }
 
@@ -778,8 +835,8 @@ public final class MemoryDatabase: @unchecked Sendable {
 
     private static let insertEntrySQL = """
         INSERT INTO memory_entries (id, agent_id, type, content, confidence, model,
-            source_conversation_id, tags, status, valid_from)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+            source_conversation_id, tags, status, valid_from, source_mode)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
         """
 
     private static let supersedeEntrySQL =
@@ -811,6 +868,7 @@ public final class MemoryDatabase: @unchecked Sendable {
             Self.bindText(stmt, index: 8, value: entry.tagsJSON)
             Self.bindText(stmt, index: 9, value: entry.status)
             Self.bindText(stmt, index: 10, value: validFrom)
+            Self.bindText(stmt, index: 11, value: entry.sourceMode?.rawValue)
         }
     }
 
@@ -826,11 +884,19 @@ public final class MemoryDatabase: @unchecked Sendable {
         }
     }
 
-    public func loadActiveEntries(agentId: String, limit: Int = 0) throws -> [MemoryEntry] {
+    /// Load active memory entries for an agent.
+    /// When `chatOnly` is true, excludes entries recorded under tool-using modes.
+    /// Rows with NULL source_mode are pre-v4 and always included.
+    public func loadActiveEntries(
+        agentId: String,
+        limit: Int = 0,
+        chatOnly: Bool = false
+    ) throws -> [MemoryEntry] {
         var entries: [MemoryEntry] = []
+        let modeFilter = chatOnly ? " AND (source_mode IS NULL OR source_mode = 'chat')" : ""
         var sql = """
             SELECT \(Self.memoryEntryColumns)
-            FROM memory_entries WHERE agent_id = ?1 AND status = 'active'
+            FROM memory_entries WHERE agent_id = ?1 AND status = 'active'\(modeFilter)
             ORDER BY last_accessed DESC
             """
         if limit > 0 { sql += " LIMIT ?2" }
@@ -868,7 +934,11 @@ public final class MemoryDatabase: @unchecked Sendable {
         return entries
     }
 
-    public func loadEntriesByIds(_ ids: [String], agentId: String? = nil) throws -> [MemoryEntry] {
+    public func loadEntriesByIds(
+        _ ids: [String],
+        agentId: String? = nil,
+        chatOnly: Bool = false
+    ) throws -> [MemoryEntry] {
         guard !ids.isEmpty else { return [] }
         let placeholders = ids.enumerated().map { "?\($0.offset + 1)" }.joined(separator: ",")
         var sql = """
@@ -876,6 +946,7 @@ public final class MemoryDatabase: @unchecked Sendable {
             FROM memory_entries WHERE status = 'active' AND id IN (\(placeholders))
             """
         if agentId != nil { sql += " AND agent_id = ?\(ids.count + 1)" }
+        if chatOnly { sql += " AND (source_mode IS NULL OR source_mode = 'chat')" }
         sql += " ORDER BY last_accessed DESC"
 
         var entries: [MemoryEntry] = []
@@ -1069,7 +1140,8 @@ public final class MemoryDatabase: @unchecked Sendable {
             lastAccessed: String(cString: sqlite3_column_text(stmt, 11)),
             accessCount: Int(sqlite3_column_int(stmt, 12)),
             validFrom: String(cString: sqlite3_column_text(stmt, 13)),
-            validUntil: sqlite3_column_text(stmt, 14).map { String(cString: $0) }
+            validUntil: sqlite3_column_text(stmt, 14).map { String(cString: $0) },
+            sourceMode: sqlite3_column_text(stmt, 15).flatMap { MemorySourceMode(rawValue: String(cString: $0)) }
         )
     }
 
@@ -1078,8 +1150,8 @@ public final class MemoryDatabase: @unchecked Sendable {
     public func insertSummary(_ summary: ConversationSummary) throws {
         _ = try executeUpdate(
             """
-            INSERT INTO conversation_summaries (agent_id, conversation_id, summary, token_count, model, conversation_at)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            INSERT INTO conversation_summaries (agent_id, conversation_id, summary, token_count, model, conversation_at, source_mode)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
             """
         ) { stmt in
             Self.bindText(stmt, index: 1, value: summary.agentId)
@@ -1088,6 +1160,7 @@ public final class MemoryDatabase: @unchecked Sendable {
             sqlite3_bind_int(stmt, 4, Int32(summary.tokenCount))
             Self.bindText(stmt, index: 5, value: summary.model)
             Self.bindText(stmt, index: 6, value: summary.conversationAt)
+            Self.bindText(stmt, index: 7, value: summary.sourceMode?.rawValue)
         }
     }
 
@@ -1096,8 +1169,8 @@ public final class MemoryDatabase: @unchecked Sendable {
         try inTransaction { _ in
             try self.transactionalStep(
                 """
-                INSERT INTO conversation_summaries (agent_id, conversation_id, summary, token_count, model, conversation_at)
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                INSERT INTO conversation_summaries (agent_id, conversation_id, summary, token_count, model, conversation_at, source_mode)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
                 """
             ) { stmt in
                 Self.bindText(stmt, index: 1, value: summary.agentId)
@@ -1106,6 +1179,7 @@ public final class MemoryDatabase: @unchecked Sendable {
                 sqlite3_bind_int(stmt, 4, Int32(summary.tokenCount))
                 Self.bindText(stmt, index: 5, value: summary.model)
                 Self.bindText(stmt, index: 6, value: summary.conversationAt)
+                Self.bindText(stmt, index: 7, value: summary.sourceMode?.rawValue)
             }
             try self.transactionalStep(
                 "UPDATE pending_signals SET status = 'processed' WHERE conversation_id = ?1 AND status = 'pending'"
@@ -1115,22 +1189,32 @@ public final class MemoryDatabase: @unchecked Sendable {
         }
     }
 
-    public func loadSummaries(agentId: String, days: Int = 0) throws -> [ConversationSummary] {
+    /// Load conversation summaries for an agent.
+    /// When `chatOnly` is true, excludes summaries recorded under tool-using modes.
+    /// Rows with NULL source_mode are pre-v4 and always included.
+    public func loadSummaries(
+        agentId: String,
+        days: Int = 0,
+        chatOnly: Bool = false
+    ) throws -> [ConversationSummary] {
         var summaries: [ConversationSummary] = []
+        let modeFilter = chatOnly ? " AND (source_mode IS NULL OR source_mode = 'chat')" : ""
         let sql: String
         if days > 0 {
             sql = """
-                SELECT id, agent_id, conversation_id, summary, token_count, model, conversation_at, status, created_at
+                SELECT id, agent_id, conversation_id, summary, token_count, model, conversation_at, status, created_at, source_mode
                 FROM conversation_summaries
                 WHERE agent_id = ?1 AND status = 'active'
                   AND conversation_at >= datetime('now', '-' || ?2 || ' days')
+                  \(modeFilter)
                 ORDER BY conversation_at DESC
                 """
         } else {
             sql = """
-                SELECT id, agent_id, conversation_id, summary, token_count, model, conversation_at, status, created_at
+                SELECT id, agent_id, conversation_id, summary, token_count, model, conversation_at, status, created_at, source_mode
                 FROM conversation_summaries
                 WHERE agent_id = ?1 AND status = 'active'
+                  \(modeFilter)
                 ORDER BY conversation_at DESC
                 """
         }
@@ -1154,14 +1238,14 @@ public final class MemoryDatabase: @unchecked Sendable {
         let sql: String
         if days != nil {
             sql = """
-                    SELECT id, agent_id, conversation_id, summary, token_count, model, conversation_at, status, created_at
+                    SELECT id, agent_id, conversation_id, summary, token_count, model, conversation_at, status, created_at, source_mode
                     FROM conversation_summaries WHERE status = 'active'
                     AND conversation_at >= datetime('now', '-' || ?1 || ' days')
                     ORDER BY conversation_at DESC
                 """
         } else {
             sql = """
-                    SELECT id, agent_id, conversation_id, summary, token_count, model, conversation_at, status, created_at
+                    SELECT id, agent_id, conversation_id, summary, token_count, model, conversation_at, status, created_at, source_mode
                     FROM conversation_summaries WHERE status = 'active'
                     ORDER BY conversation_at DESC
                 """
@@ -1184,7 +1268,7 @@ public final class MemoryDatabase: @unchecked Sendable {
         guard !ids.isEmpty else { return [] }
         let placeholders = ids.enumerated().map { "?\($0.offset + 1)" }.joined(separator: ",")
         var sql = """
-            SELECT id, agent_id, conversation_id, summary, token_count, model, conversation_at, status, created_at
+            SELECT id, agent_id, conversation_id, summary, token_count, model, conversation_at, status, created_at, source_mode
             FROM conversation_summaries WHERE status = 'active' AND id IN (\(placeholders))
             """
         if agentId != nil { sql += " AND agent_id = ?\(ids.count + 1)" }
@@ -1239,7 +1323,8 @@ public final class MemoryDatabase: @unchecked Sendable {
             model: String(cString: sqlite3_column_text(stmt, 5)),
             conversationAt: String(cString: sqlite3_column_text(stmt, 6)),
             status: String(cString: sqlite3_column_text(stmt, 7)),
-            createdAt: String(cString: sqlite3_column_text(stmt, 8))
+            createdAt: String(cString: sqlite3_column_text(stmt, 8)),
+            sourceMode: sqlite3_column_text(stmt, 9).flatMap { MemorySourceMode(rawValue: String(cString: $0)) }
         )
     }
 
@@ -1268,13 +1353,14 @@ public final class MemoryDatabase: @unchecked Sendable {
         role: String,
         content: String,
         tokenCount: Int,
-        createdAt: String? = nil
+        createdAt: String? = nil,
+        sourceMode: MemorySourceMode? = nil
     ) throws {
         let effectiveDate = (createdAt?.isEmpty == false) ? createdAt : nil
         _ = try executeUpdate(
             """
-            INSERT INTO conversation_chunks (conversation_id, chunk_index, role, content, token_count, created_at)
-            VALUES (?1, ?2, ?3, ?4, ?5, COALESCE(?6, datetime('now')))
+            INSERT INTO conversation_chunks (conversation_id, chunk_index, role, content, token_count, created_at, source_mode)
+            VALUES (?1, ?2, ?3, ?4, ?5, COALESCE(?6, datetime('now')), ?7)
             """
         ) { stmt in
             Self.bindText(stmt, index: 1, value: conversationId)
@@ -1283,6 +1369,7 @@ public final class MemoryDatabase: @unchecked Sendable {
             Self.bindText(stmt, index: 4, value: content)
             sqlite3_bind_int(stmt, 5, Int32(tokenCount))
             Self.bindText(stmt, index: 6, value: effectiveDate)
+            Self.bindText(stmt, index: 7, value: sourceMode?.rawValue)
         }
     }
 
@@ -1324,17 +1411,21 @@ public final class MemoryDatabase: @unchecked Sendable {
         return chunks
     }
 
-    public func loadChunksByKeys(_ keys: [(conversationId: String, chunkIndex: Int)]) throws -> [ConversationChunk] {
+    public func loadChunksByKeys(
+        _ keys: [(conversationId: String, chunkIndex: Int)],
+        chatOnly: Bool = false
+    ) throws -> [ConversationChunk] {
         guard !keys.isEmpty else { return [] }
         let conditions = keys.enumerated().map { (i, _) in
             "(cc.conversation_id = ?\(i * 2 + 1) AND cc.chunk_index = ?\(i * 2 + 2))"
         }.joined(separator: " OR ")
+        let modeFilter = chatOnly ? " AND (cc.source_mode IS NULL OR cc.source_mode = 'chat')" : ""
         let sql = """
             SELECT cc.id, cc.conversation_id, cc.chunk_index, cc.role, cc.content, cc.token_count, cc.created_at,
                    c.agent_id, c.title
             FROM conversation_chunks cc
             JOIN conversations c ON c.id = cc.conversation_id
-            WHERE \(conditions)
+            WHERE (\(conditions))\(modeFilter)
             ORDER BY cc.created_at DESC
             """
         var chunks: [ConversationChunk] = []
@@ -1355,7 +1446,12 @@ public final class MemoryDatabase: @unchecked Sendable {
         return chunks
     }
 
-    public func searchChunks(query: String, agentId: String? = nil, days: Int = 30) throws -> [ConversationChunk] {
+    public func searchChunks(
+        query: String,
+        agentId: String? = nil,
+        days: Int = 30,
+        chatOnly: Bool = false
+    ) throws -> [ConversationChunk] {
         var chunks: [ConversationChunk] = []
         var sql = """
                 SELECT cc.id, cc.conversation_id, cc.chunk_index, cc.role, cc.content, cc.token_count, cc.created_at,
@@ -1366,6 +1462,7 @@ public final class MemoryDatabase: @unchecked Sendable {
                   AND cc.created_at >= datetime('now', '-' || ?2 || ' days')
             """
         if agentId != nil { sql += " AND c.agent_id = ?3" }
+        if chatOnly { sql += " AND (cc.source_mode IS NULL OR cc.source_mode = 'chat')" }
         sql += " ORDER BY cc.created_at DESC LIMIT 20"
 
         try prepareAndExecute(
@@ -1403,8 +1500,8 @@ public final class MemoryDatabase: @unchecked Sendable {
     public func insertPendingSignal(_ signal: PendingSignal) throws {
         _ = try executeUpdate(
             """
-            INSERT INTO pending_signals (agent_id, conversation_id, signal_type, user_message, assistant_message, status)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            INSERT INTO pending_signals (agent_id, conversation_id, signal_type, user_message, assistant_message, status, source_mode)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
             """
         ) { stmt in
             Self.bindText(stmt, index: 1, value: signal.agentId)
@@ -1413,28 +1510,32 @@ public final class MemoryDatabase: @unchecked Sendable {
             Self.bindText(stmt, index: 4, value: signal.userMessage)
             Self.bindText(stmt, index: 5, value: signal.assistantMessage)
             Self.bindText(stmt, index: 6, value: signal.status)
+            Self.bindText(stmt, index: 7, value: signal.sourceMode?.rawValue)
         }
+    }
+
+    private static func readPendingSignal(_ stmt: OpaquePointer) -> PendingSignal {
+        PendingSignal(
+            id: Int(sqlite3_column_int(stmt, 0)),
+            agentId: String(cString: sqlite3_column_text(stmt, 1)),
+            conversationId: String(cString: sqlite3_column_text(stmt, 2)),
+            signalType: String(cString: sqlite3_column_text(stmt, 3)),
+            userMessage: String(cString: sqlite3_column_text(stmt, 4)),
+            assistantMessage: sqlite3_column_text(stmt, 5).map { String(cString: $0) },
+            status: String(cString: sqlite3_column_text(stmt, 6)),
+            createdAt: String(cString: sqlite3_column_text(stmt, 7)),
+            sourceMode: sqlite3_column_text(stmt, 8).flatMap { MemorySourceMode(rawValue: String(cString: $0)) }
+        )
     }
 
     public func loadPendingSignals(agentId: String) throws -> [PendingSignal] {
         var signals: [PendingSignal] = []
         try prepareAndExecute(
-            "SELECT id, agent_id, conversation_id, signal_type, user_message, assistant_message, status, created_at FROM pending_signals WHERE agent_id = ?1 AND status = 'pending' ORDER BY created_at",
+            "SELECT id, agent_id, conversation_id, signal_type, user_message, assistant_message, status, created_at, source_mode FROM pending_signals WHERE agent_id = ?1 AND status = 'pending' ORDER BY created_at",
             bind: { stmt in Self.bindText(stmt, index: 1, value: agentId) },
             process: { stmt in
                 while sqlite3_step(stmt) == SQLITE_ROW {
-                    signals.append(
-                        PendingSignal(
-                            id: Int(sqlite3_column_int(stmt, 0)),
-                            agentId: String(cString: sqlite3_column_text(stmt, 1)),
-                            conversationId: String(cString: sqlite3_column_text(stmt, 2)),
-                            signalType: String(cString: sqlite3_column_text(stmt, 3)),
-                            userMessage: String(cString: sqlite3_column_text(stmt, 4)),
-                            assistantMessage: sqlite3_column_text(stmt, 5).map { String(cString: $0) },
-                            status: String(cString: sqlite3_column_text(stmt, 6)),
-                            createdAt: String(cString: sqlite3_column_text(stmt, 7))
-                        )
-                    )
+                    signals.append(Self.readPendingSignal(stmt))
                 }
             }
         )
@@ -1444,22 +1545,11 @@ public final class MemoryDatabase: @unchecked Sendable {
     public func loadPendingSignals(conversationId: String) throws -> [PendingSignal] {
         var signals: [PendingSignal] = []
         try prepareAndExecute(
-            "SELECT id, agent_id, conversation_id, signal_type, user_message, assistant_message, status, created_at FROM pending_signals WHERE conversation_id = ?1 AND status = 'pending' ORDER BY created_at",
+            "SELECT id, agent_id, conversation_id, signal_type, user_message, assistant_message, status, created_at, source_mode FROM pending_signals WHERE conversation_id = ?1 AND status = 'pending' ORDER BY created_at",
             bind: { stmt in Self.bindText(stmt, index: 1, value: conversationId) },
             process: { stmt in
                 while sqlite3_step(stmt) == SQLITE_ROW {
-                    signals.append(
-                        PendingSignal(
-                            id: Int(sqlite3_column_int(stmt, 0)),
-                            agentId: String(cString: sqlite3_column_text(stmt, 1)),
-                            conversationId: String(cString: sqlite3_column_text(stmt, 2)),
-                            signalType: String(cString: sqlite3_column_text(stmt, 3)),
-                            userMessage: String(cString: sqlite3_column_text(stmt, 4)),
-                            assistantMessage: sqlite3_column_text(stmt, 5).map { String(cString: $0) },
-                            status: String(cString: sqlite3_column_text(stmt, 6)),
-                            createdAt: String(cString: sqlite3_column_text(stmt, 7))
-                        )
-                    )
+                    signals.append(Self.readPendingSignal(stmt))
                 }
             }
         )
@@ -1611,7 +1701,11 @@ public final class MemoryDatabase: @unchecked Sendable {
 
     // MARK: - Text Search (BM25 fallback)
 
-    public func searchMemoryEntries(query: String, agentId: String? = nil) throws -> [MemoryEntry] {
+    public func searchMemoryEntries(
+        query: String,
+        agentId: String? = nil,
+        chatOnly: Bool = false
+    ) throws -> [MemoryEntry] {
         var entries: [MemoryEntry] = []
         var sql = """
                 SELECT \(Self.memoryEntryColumns)
@@ -1619,6 +1713,7 @@ public final class MemoryDatabase: @unchecked Sendable {
                 WHERE status = 'active' AND content LIKE '%' || ?1 || '%'
             """
         if agentId != nil { sql += " AND agent_id = ?2" }
+        if chatOnly { sql += " AND (source_mode IS NULL OR source_mode = 'chat')" }
         sql += " ORDER BY last_accessed DESC LIMIT 20"
 
         try prepareAndExecute(
@@ -1692,15 +1787,21 @@ public final class MemoryDatabase: @unchecked Sendable {
         return entries
     }
 
-    public func searchSummaries(query: String, agentId: String? = nil, days: Int = 30) throws -> [ConversationSummary] {
+    public func searchSummaries(
+        query: String,
+        agentId: String? = nil,
+        days: Int = 30,
+        chatOnly: Bool = false
+    ) throws -> [ConversationSummary] {
         var summaries: [ConversationSummary] = []
         var sql = """
-                SELECT id, agent_id, conversation_id, summary, token_count, model, conversation_at, status, created_at
+                SELECT id, agent_id, conversation_id, summary, token_count, model, conversation_at, status, created_at, source_mode
                 FROM conversation_summaries
                 WHERE status = 'active' AND summary LIKE '%' || ?1 || '%'
                   AND conversation_at >= datetime('now', '-' || ?2 || ' days')
             """
         if agentId != nil { sql += " AND agent_id = ?3" }
+        if chatOnly { sql += " AND (source_mode IS NULL OR source_mode = 'chat')" }
         sql += " ORDER BY conversation_at DESC LIMIT 20"
 
         try prepareAndExecute(
@@ -1769,17 +1870,19 @@ public final class MemoryDatabase: @unchecked Sendable {
 
     public func loadSummariesByCompositeKeys(
         _ keys: [(agentId: String, conversationId: String, conversationAt: String)],
-        filterAgentId: String? = nil
+        filterAgentId: String? = nil,
+        chatOnly: Bool = false
     ) throws -> [ConversationSummary] {
         guard !keys.isEmpty else { return [] }
         let conditions = keys.enumerated().map { (i, _) in
             "(agent_id = ?\(i * 3 + 1) AND conversation_id = ?\(i * 3 + 2) AND conversation_at = ?\(i * 3 + 3))"
         }.joined(separator: " OR ")
         var sql = """
-            SELECT id, agent_id, conversation_id, summary, token_count, model, conversation_at, status, created_at
+            SELECT id, agent_id, conversation_id, summary, token_count, model, conversation_at, status, created_at, source_mode
             FROM conversation_summaries WHERE status = 'active' AND (\(conditions))
             """
         if filterAgentId != nil { sql += " AND agent_id = ?\(keys.count * 3 + 1)" }
+        if chatOnly { sql += " AND (source_mode IS NULL OR source_mode = 'chat')" }
         sql += " ORDER BY conversation_at DESC"
 
         var summaries: [ConversationSummary] = []

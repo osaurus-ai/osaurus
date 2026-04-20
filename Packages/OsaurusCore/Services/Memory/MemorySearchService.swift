@@ -160,7 +160,8 @@ public actor MemorySearchService {
         agentId: String? = nil,
         topK: Int = 10,
         lambda: Double? = nil,
-        fetchMultiplier: Double? = nil
+        fetchMultiplier: Double? = nil,
+        chatOnly: Bool = false
     ) async -> [MemoryEntry] {
         guard topK > 0 else { return [] }
         if let db = vectorDB {
@@ -178,7 +179,11 @@ public actor MemorySearchService {
                 )
 
                 let idStrings = results.map { $0.id.uuidString }
-                let entries = try MemoryDatabase.shared.loadEntriesByIds(idStrings, agentId: agentId)
+                let entries = try MemoryDatabase.shared.loadEntriesByIds(
+                    idStrings,
+                    agentId: agentId,
+                    chatOnly: chatOnly
+                )
                 let scored: [(item: MemoryEntry, score: Double, content: String)] = entries.compactMap { entry in
                     guard let match = scoreMap[entry.id] else { return nil }
                     return (item: entry, score: match.score, content: entry.content)
@@ -191,7 +196,11 @@ public actor MemorySearchService {
         }
 
         do {
-            return try MemoryDatabase.shared.searchMemoryEntries(query: query, agentId: agentId)
+            return try MemoryDatabase.shared.searchMemoryEntries(
+                query: query,
+                agentId: agentId,
+                chatOnly: chatOnly
+            )
         } catch {
             MemoryLogger.search.error("Text fallback search failed: \(error)")
             return []
@@ -244,7 +253,8 @@ public actor MemorySearchService {
         days: Int = 30,
         topK: Int = 10,
         lambda: Double? = nil,
-        fetchMultiplier: Double? = nil
+        fetchMultiplier: Double? = nil,
+        chatOnly: Bool = false
     ) async -> [ConversationChunk] {
         guard topK > 0 else { return [] }
         if let db = vectorDB {
@@ -266,7 +276,7 @@ public actor MemorySearchService {
                 }
 
                 if !keys.isEmpty {
-                    let chunks = try MemoryDatabase.shared.loadChunksByKeys(keys)
+                    let chunks = try MemoryDatabase.shared.loadChunksByKeys(keys, chatOnly: chatOnly)
                     let scored: [(item: ConversationChunk, score: Double, content: String)] = chunks.compactMap {
                         chunk in
                         let compositeKey = "\(chunk.conversationId):\(chunk.chunkIndex)"
@@ -286,7 +296,12 @@ public actor MemorySearchService {
         }
 
         do {
-            return try MemoryDatabase.shared.searchChunks(query: query, agentId: agentId, days: days)
+            return try MemoryDatabase.shared.searchChunks(
+                query: query,
+                agentId: agentId,
+                days: days,
+                chatOnly: chatOnly
+            )
         } catch {
             MemoryLogger.search.error("Text fallback chunk search failed: \(error)")
             return []
@@ -302,7 +317,8 @@ public actor MemorySearchService {
         days: Int = 30,
         topK: Int = 10,
         lambda: Double? = nil,
-        fetchMultiplier: Double? = nil
+        fetchMultiplier: Double? = nil,
+        chatOnly: Bool = false
     ) async -> [ConversationSummary] {
         guard topK > 0 else { return [] }
         if let db = vectorDB {
@@ -326,7 +342,8 @@ public actor MemorySearchService {
                 if !compositeKeys.isEmpty {
                     let summaries = try MemoryDatabase.shared.loadSummariesByCompositeKeys(
                         compositeKeys,
-                        filterAgentId: agentId
+                        filterAgentId: agentId,
+                        chatOnly: chatOnly
                     )
                     let scored: [(item: ConversationSummary, score: Double, content: String)] =
                         summaries.compactMap { summary in
@@ -345,7 +362,12 @@ public actor MemorySearchService {
         }
 
         do {
-            return try MemoryDatabase.shared.searchSummaries(query: query, agentId: agentId, days: days)
+            return try MemoryDatabase.shared.searchSummaries(
+                query: query,
+                agentId: agentId,
+                days: days,
+                chatOnly: chatOnly
+            )
         } catch {
             MemoryLogger.search.error("Text fallback summary search failed: \(error)")
             return []

@@ -101,22 +101,30 @@ private struct AnimatedTabButton<Tab: AnimatedTabItem>: View {
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
             .background(
-                ZStack {
-                    if isSelected {
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(theme.cardBackground)
-                            .shadow(
-                                color: theme.shadowColor.opacity(theme.shadowOpacity),
-                                radius: 4,
-                                x: 0,
-                                y: 2
-                            )
-                            .matchedGeometryEffect(id: "tab_indicator", in: namespace)
-                    } else if isHovering {
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(theme.secondaryBackground.opacity(0.5))
-                    }
-                }
+                // Previously used `.matchedGeometryEffect(id: "tab_indicator",
+                // in: namespace)` inside the `isSelected` branch. Every
+                // `AnimatedTabButton` shares the same namespace + id, so during
+                // selection transitions SwiftUI can briefly have two rows both
+                // claim to be the geometry source, tripping a Debug-only
+                // precondition (same crash signature as SidebarNavigation).
+                // Switched to a conditional fill + animation: keeps the
+                // selected-fade + shadow, drops the cross-row slide that the
+                // geometry effect was providing.
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(
+                        isSelected
+                            ? theme.cardBackground
+                            : (isHovering ? theme.secondaryBackground.opacity(0.5) : Color.clear)
+                    )
+                    .shadow(
+                        color: isSelected
+                            ? theme.shadowColor.opacity(theme.shadowOpacity) : .clear,
+                        radius: isSelected ? 4 : 0,
+                        x: 0,
+                        y: isSelected ? 2 : 0
+                    )
+                    .animation(.easeOut(duration: 0.2), value: isSelected)
+                    .animation(.easeOut(duration: 0.15), value: isHovering)
             )
             .contentShape(RoundedRectangle(cornerRadius: 8))
         }

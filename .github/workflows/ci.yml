@@ -4,6 +4,12 @@ on:
   pull_request:
   push:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      clear_cache:
+        description: "Skip restoring the DerivedData cache (force a cold build)"
+        type: boolean
+        default: false
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -12,89 +18,283 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  # Bump to invalidate every cache entry without source surgery (e.g., after a
+  # known-bad cache or an Xcode toolchain upgrade we want to flush manually).
+  CACHE_SALT: v1
+  # Pin Xcode so cache keys are stable across runner image bumps. When you
+  # need to upgrade, change here AND in setup-xcode below.
+  XCODE_VERSION: "26.3"
+
 jobs:
   test-core:
     runs-on: macos-latest
+    # 30 min, not 15. Two-bucket budget:
+    #   ~13–14 min — full cold build (mlx-swift `Cmlx` C++ + OsaurusCore +
+    #                 OsaurusCoreTests Swift) when both SPM and DerivedData
+    #                 caches miss. Empirically that's the budget on a
+    #                 `macos-latest` runner; PR #881 (run 24573707695) hit
+    #                 exactly the 15-min wall mid-Swift-compile because no
+    #                 DerivedData cache existed (main hadn't successfully
+    #                 saved one since PR #878).
+    #   ~ 2– 3 min — actual `xcodebuild test` once the build is warm.
+    #   ~ 5–10 min — buffer / future growth, runner variance.
+    #
+    # Once any successful run lands on `main`, the `Save DerivedData cache`
+    # step at the bottom populates the cache and subsequent runs return to
+    # ~5 min total. The 30-min ceiling is an "even a worst-case cold build
+    # finishes" guard, NOT an expected duration. If you find yourself
+    # raising it again, the right fix is to split this into a separate
+    # build-cache-warm job that runs nightly on `main`, not to bump the
+    # ceiling indefinitely.
+    timeout-minutes: 30
     env:
       WORKSPACE: osaurus.xcworkspace
       SPM_CACHE: .spm-cache
+      XCRESULT_PATH: build/Tests.xcresult
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
-      - name: Set up Xcode
+      - name: Set up Xcode ${{ env.XCODE_VERSION }}
         uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: latest-stable
+          xcode-version: ${{ env.XCODE_VERSION }}
 
-      - name: Install Metal Toolchain
-        run: xcodebuild -downloadComponent MetalToolchain
+      - name: Install xcbeautify
+        run: brew install xcbeautify
 
       - name: Cache SPM packages
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
-          path: .spm-cache
-          key: spm-${{ runner.os }}-${{ hashFiles('osaurus.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
-          restore-keys: spm-${{ runner.os }}-
+          path: ${{ env.SPM_CACHE }}
+          key: spm-${{ runner.os }}-${{ env.CACHE_SALT }}-xcode${{ env.XCODE_VERSION }}-${{ hashFiles('osaurus.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+          restore-keys: |
+            spm-${{ runner.os }}-${{ env.CACHE_SALT }}-xcode${{ env.XCODE_VERSION }}-
+            spm-${{ runner.os }}-${{ env.CACHE_SALT }}-
+
+      - name: Restore DerivedData cache
+        id: dd-cache
+        if: ${{ github.event_name != 'workflow_dispatch' || !inputs.clear_cache }}
+        uses: actions/cache/restore@v5
+        with:
+          path: ~/Library/Developer/Xcode/DerivedData
+          key: dd-${{ runner.os }}-${{ env.CACHE_SALT }}-xcode${{ env.XCODE_VERSION }}-${{ hashFiles('osaurus.xcworkspace/xcshareddata/swiftpm/Package.resolved', 'Packages/**/*.swift', 'Packages/**/Package.swift', 'Packages/**/Resources/**') }}
+          restore-keys: |
+            dd-${{ runner.os }}-${{ env.CACHE_SALT }}-xcode${{ env.XCODE_VERSION }}-
 
       - name: Resolve dependencies
         run: >-
           xcodebuild -resolvePackageDependencies
-          -workspace $WORKSPACE
+          -workspace "$WORKSPACE"
           -scheme OsaurusCoreTests
-          -clonedSourcePackagesDirPath $SPM_CACHE
+          -clonedSourcePackagesDirPath "$SPM_CACHE"
+          -quiet
 
       - name: Test OsaurusCore
-        run: >-
-          xcodebuild test
-          -workspace $WORKSPACE
-          -scheme OsaurusCoreTests
-          -disableAutomaticPackageResolution
-          -clonedSourcePackagesDirPath $SPM_CACHE
-          -skip-testing OsaurusCoreTests/KVCacheStoreTests
-          -skip-testing OsaurusCoreTests/MLXGenerationEngineTests
+        id: test
+        run: |
+          set -o pipefail
+          mkdir -p build
+          # We deliberately pass a dummy resultBundlePath check first because
+          # xcodebuild refuses to overwrite an existing bundle.
+          rm -rf "$XCRESULT_PATH"
+          # Per-test-case allowance (60s / 120s hard cap) surfaces a hung
+          # test BEFORE the job wall-timeout — and crucially, surfaces it
+          # WITH A NAME ATTACHED in the xcresult bundle, which the failure
+          # summary step below relies on.
+          #
+          # Why no `--quiet` on xcbeautify and no `-test-iterations`:
+          # both were band-aids that landed during PR #878's launch-hang
+          # incident. `--quiet` strips per-test "Started/Passed" lines so a
+          # hung test produces no output telling us WHICH test hung.
+          # `-test-iterations 2 -retry-tests-on-failure` doubles the
+          # wall-clock cost of every hang for zero diagnostic gain. Both
+          # are off by default — re-add only if you have a per-PR reason
+          # and an exit plan.
+          xcodebuild test \
+            -workspace "$WORKSPACE" \
+            -scheme OsaurusCoreTests \
+            -disableAutomaticPackageResolution \
+            -clonedSourcePackagesDirPath "$SPM_CACHE" \
+            -resultBundlePath "$XCRESULT_PATH" \
+            -skipPackagePluginValidation \
+            -skipMacroValidation \
+            -enableCodeCoverage NO \
+            -test-timeouts-enabled YES \
+            -default-test-execution-time-allowance 60 \
+            -maximum-test-execution-time-allowance 120 \
+            COMPILER_INDEX_STORE_ENABLE=NO \
+            SWIFT_COMPILATION_MODE=incremental \
+            | xcbeautify --renderer github-actions --is-ci
+
+      - name: Annotate timing
+        if: always()
+        run: echo "::notice title=test-core duration::$SECONDS seconds"
+
+      - name: Print failure summary
+        if: failure()
+        env:
+          # Surface the cache outcome inside the summary so the next person
+          # can immediately tell "cold-cache compile timeout" from "warm
+          # cache + actual hang" without scrolling the log.
+          DD_CACHE_HIT: ${{ steps.dd-cache.outputs.cache-hit }}
+        run: |
+          set +e
+          echo "## test-core failures" >> "$GITHUB_STEP_SUMMARY"
+
+          # Four real failure modes we want to disambiguate. Each conflation
+          # has historically cost us hours of misdirected debugging, so this
+          # step exists specifically to put the right diagnosis at the top
+          # of the GitHub job summary instead of forcing the next person to
+          # re-derive it from raw logs.
+          #
+          # Mode A — xctest binary doesn't exist on disk
+          #          ⇒ build phase didn't finish (compile error, OR cold
+          #          cache + 30-min wall-timeout fired mid-Swift-compile,
+          #          OR linker failure). PR #881 (run 24573707695) hit this
+          #          flavor: both SPM and DerivedData caches missed because
+          #          main hadn't ever saved one, so the cold build ran out
+          #          of clock during OsaurusCoreTests Swift compilation.
+          #
+          # Mode B — xctest binary built BUT no xcresult bundle
+          #          ⇒ test bundle launched but produced zero output before
+          #          the wall-timeout / cancellation. Real launch-time hang
+          #          (dyld load, +load methods, or first-test module init).
+          #          PR #878 (run 24563175247) hit this flavor — see the
+          #          comment block atop `_registerFactoriesOnce` in
+          #          ModelRuntime.swift.
+          #
+          # Mode C — xcresult exists with zero test cases
+          #          ⇒ test execution was killed mid-flight. Look for the
+          #          last `Test Case ... started` line in the raw log;
+          #          that's the prime suspect for the hang. (`--quiet` is
+          #          intentionally NOT passed to xcbeautify so the line is
+          #          present.)
+          #
+          # Mode D — xcresult exists with failed test cases
+          #          ⇒ ordinary test failures; render the failures table.
+
+          # Resolve the xctest binary path. Xcode hashes the DerivedData
+          # subdirectory off the workspace path, so glob rather than
+          # hardcode. We only care about existence, not the actual binary.
+          XCTEST_BINARY="$(find "$HOME/Library/Developer/Xcode/DerivedData" \
+            -maxdepth 6 -name 'OsaurusCoreTests.xctest' -type d 2>/dev/null \
+            | head -1)"
+
+          if [ ! -d "$XCRESULT_PATH" ]; then
+            if [ -z "$XCTEST_BINARY" ]; then
+              # Mode A.
+              CACHE_NOTE="_(DerivedData cache hit: \`${DD_CACHE_HIT:-unknown}\`)_"
+              {
+                echo "**Mode A — build phase did not complete (no xctest bundle on disk).**"
+                echo
+                echo "Either a compile/link error fired (scroll the **Test OsaurusCore** log above for the first \`error:\` line), OR the cold build ran past the 30-min job timeout. ${CACHE_NOTE}"
+                echo
+                echo "If \`cache-hit: false\` AND no \`error:\` lines appear in the raw log, this is the cold-cache-timeout flavor. The fix is to land one successful run on \`main\` so the \`Save DerivedData cache\` step at the bottom of this job populates the cache; subsequent PR runs warm-start from it and finish in ~5 min. Re-running this same job will hit the cache the second time only IF the first attempt finishes successfully."
+              } >> "$GITHUB_STEP_SUMMARY"
+            else
+              # Mode B.
+              {
+                echo "**Mode B — xctest bundle built but launched silently (real launch-time hang).**"
+                echo
+                echo "The \`OsaurusCoreTests.xctest\` binary exists in DerivedData (\`$XCTEST_BINARY\`), so the build phase finished. The hang is in dyld load, an ObjC \`+load\` method, a Swift module initializer, or the first test's module init."
+                echo
+                echo "Prime suspects: any file-level \`let\` in OsaurusCore that touches MLX/Metal at first reference (this is the regression class that PR #878 surfaced — see \`_registerFactoriesOnce\` in \`Packages/OsaurusCore/Services/ModelRuntime.swift\` and the matching tests in \`Packages/OsaurusCore/Tests/Service/ModelRuntimeFindDirectoryTests.swift\`)."
+              } >> "$GITHUB_STEP_SUMMARY"
+            fi
+            exit 0
+          fi
+
+          # `xcresulttool get test-results tests` is the modern (Xcode 16+)
+          # JSON view of the test outcomes. Older flag is now deprecated.
+          XCRESULT_JSON="$(xcrun xcresulttool get test-results tests \
+            --path "$XCRESULT_PATH" \
+            --format json 2>/dev/null)"
+
+          # Count test cases regardless of outcome so we can detect the
+          # "started, killed mid-flight" case where there are no Failure
+          # nodes but also no Passed nodes.
+          TEST_CASE_COUNT="$(printf '%s' "$XCRESULT_JSON" \
+            | jq '[ .. | objects | select(.nodeType? == "Test Case" or .nodeType? == "Test") ] | length' \
+            2>/dev/null || echo 0)"
+
+          if [ "${TEST_CASE_COUNT:-0}" = "0" ]; then
+            echo "**Mode C — xcresult bundle exists but contains zero test cases.**" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "Test execution was killed before any test recorded a result — most likely a hung test that ate the job wall-timeout, or a runner crash. Check the raw log for the last \`Test Case ... started\` line; that's the prime suspect for the hang." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo "**Mode D — failed test cases:**" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
+          printf '%s' "$XCRESULT_JSON" | jq -r '
+              [ .. | objects | select(.result? == "Failed" and (.nodeType? == "Test Case" or .nodeType? == "Test")) ]
+              | if length == 0 then
+                  "_No individual failed tests reported despite a non-zero exit. Likely a build error, post-test cleanup failure, or runner crash — see the raw log above._"
+                else
+                  ( "| Test | Failure |\n| --- | --- |" )
+                  + ( map(
+                      "| `" + (.name // "(unknown)") + "` | "
+                      + ( ( [ .. | objects | select(.nodeType? == "Failure Message") | .name ] | join("<br>") )
+                          // "_(no message)_" )
+                      + " |"
+                    ) | join("\n") )
+                end
+            ' >> "$GITHUB_STEP_SUMMARY" || true
+
+      - name: Upload xcresult on failure
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: test-core-xcresult-${{ github.run_attempt }}
+          path: ${{ env.XCRESULT_PATH }}
+          retention-days: 7
+          if-no-files-found: warn
+
+      # Save the cache only on `main` so a half-baked PR can never poison it.
+      # If `clear_cache=true` was passed via workflow_dispatch we also skip the
+      # save (the restore step didn't run, so `cache-primary-key` is empty);
+      # the next normal `main` push will repopulate the cache.
+      - name: Save DerivedData cache
+        if: ${{ github.ref == 'refs/heads/main' && success() && steps.dd-cache.outputs.cache-primary-key != '' }}
+        uses: actions/cache/save@v5
+        with:
+          path: ~/Library/Developer/Xcode/DerivedData
+          key: ${{ steps.dd-cache.outputs.cache-primary-key }}
 
   test-cli:
     runs-on: macos-latest
-    env:
-      WORKSPACE: osaurus.xcworkspace
-      SPM_CACHE: .spm-cache
+    timeout-minutes: 10
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
-      - name: Set up Xcode
-        uses: maxim-lobanov/setup-xcode@v1
-        with:
-          xcode-version: latest-stable
+      # OsaurusCLI's Package.swift requires `swift-tools-version: 6.2`, which
+      # ships with Xcode 26.3. The runner's default `swift` may be older
+      # (currently 6.1), so point xcrun at the pinned Xcode for these steps.
+      # GitHub Actions doesn't let job-level `env:` reference workflow-level
+      # `env:`, so keep XCODE_VERSION in sync here if it ever changes.
+      - name: Verify Swift toolchain
+        env:
+          DEVELOPER_DIR: /Applications/Xcode_${{ env.XCODE_VERSION }}.app/Contents/Developer
+        run: swift --version
 
-      - name: Cache SPM packages
-        uses: actions/cache@v4
-        with:
-          path: .spm-cache
-          key: spm-${{ runner.os }}-${{ hashFiles('osaurus.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
-          restore-keys: spm-${{ runner.os }}-
+      - name: Run CLI tests
+        env:
+          DEVELOPER_DIR: /Applications/Xcode_${{ env.XCODE_VERSION }}.app/Contents/Developer
+        run: swift test --package-path Packages/OsaurusCLI --parallel
 
-      - name: Resolve dependencies
-        run: >-
-          xcodebuild -resolvePackageDependencies
-          -workspace $WORKSPACE
-          -scheme OsaurusCLITests
-          -clonedSourcePackagesDirPath $SPM_CACHE
-
-      - name: Test OsaurusCLI
-        run: >-
-          xcodebuild test
-          -workspace $WORKSPACE
-          -scheme OsaurusCLITests
-          -disableAutomaticPackageResolution
-          -clonedSourcePackagesDirPath $SPM_CACHE
+      - name: Annotate timing
+        if: always()
+        run: echo "::notice title=test-cli duration::$SECONDS seconds"
 
   swiftlint:
     runs-on: macos-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install SwiftLint
         run: brew install swiftlint
@@ -104,9 +304,10 @@ jobs:
 
   shellcheck:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install shellcheck
         run: sudo apt-get update && sudo apt-get install -y shellcheck

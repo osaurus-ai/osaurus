@@ -3,11 +3,29 @@ import Testing
 
 @testable import OsaurusCore
 
-@Suite(.serialized)
+/// These tests boot an Apple Containerization Linux VM and run real
+/// `pip install`, `npm`, and `go test` workloads inside the sandbox. They
+/// take minutes and require Containerization tooling, so they are gated by
+/// `OSAURUS_RUN_SANDBOX_INTEGRATION_TESTS=1` and reported as `Disabled`
+/// in CI rather than silently passing.
+private let isSandboxIntegrationEnabled =
+    ProcessInfo.processInfo.environment["OSAURUS_RUN_SANDBOX_INTEGRATION_TESTS"] == "1"
+
+@Suite(
+    .serialized,
+    .disabled(
+        if: !isSandboxIntegrationEnabled,
+        "Set OSAURUS_RUN_SANDBOX_INTEGRATION_TESTS=1 to run; requires Apple Containerization."
+    )
+)
 struct SandboxIntegrationTests {
     @Test
     func provisionedAgent_canExecAsSandboxUser() async throws {
-        guard sandboxIntegrationEnabled(), await sandboxAvailable() else { return }
+        // Even with the env var set, the host may not actually have Apple
+        // Containerization available (e.g., dev workstation without the
+        // toolchain). Skip the body in that case to keep `make ci-test` runs
+        // green for everyone who opts in.
+        guard await sandboxAvailable() else { return }
 
         let agentId = UUID()
         defer {
@@ -30,7 +48,7 @@ struct SandboxIntegrationTests {
 
     @Test @MainActor
     func sandboxExecTool_runsThroughRegistryForProvisionedAgent() async throws {
-        guard sandboxIntegrationEnabled(), await sandboxAvailable() else { return }
+        guard await sandboxAvailable() else { return }
 
         let agentId = UUID()
         let agentName = SandboxAgentProvisioner.linuxName(for: agentId.uuidString)
@@ -60,7 +78,7 @@ struct SandboxIntegrationTests {
 
     @Test @MainActor
     func pythonFlaskScenario_installsWritesAndPassesTests() async throws {
-        guard sandboxIntegrationEnabled(), await sandboxAvailable() else { return }
+        guard await sandboxAvailable() else { return }
 
         try await withProvisionedSandboxTools {
             let pipPayload = try await executeSandboxTool(
@@ -88,7 +106,7 @@ struct SandboxIntegrationTests {
 
     @Test @MainActor
     func nodeScenario_installsToolchainWritesAndPassesTests() async throws {
-        guard sandboxIntegrationEnabled(), await sandboxAvailable() else { return }
+        guard await sandboxAvailable() else { return }
 
         try await withProvisionedSandboxTools {
             let installPayload = try await executeSandboxTool(
@@ -116,7 +134,7 @@ struct SandboxIntegrationTests {
 
     @Test @MainActor
     func goScenario_installsToolchainWritesAndPassesTests() async throws {
-        guard sandboxIntegrationEnabled(), await sandboxAvailable() else { return }
+        guard await sandboxAvailable() else { return }
 
         try await withProvisionedSandboxTools {
             let installPayload = try await executeSandboxTool(
@@ -144,10 +162,6 @@ struct SandboxIntegrationTests {
 
     private func sandboxAvailable() async -> Bool {
         (await SandboxManager.shared.refreshAvailability()).isAvailable
-    }
-
-    private func sandboxIntegrationEnabled() -> Bool {
-        ProcessInfo.processInfo.environment["OSAURUS_RUN_SANDBOX_INTEGRATION_TESTS"] == "1"
     }
 }
 

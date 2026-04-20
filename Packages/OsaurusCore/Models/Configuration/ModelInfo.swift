@@ -279,8 +279,22 @@ extension ModelInfo {
 // MARK: - Ollama-compatible response format
 
 /// Request body for /api/show endpoint
-struct ShowRequest: Codable, Sendable {
-    let name: String
+struct ShowRequest: Decodable, Sendable {
+    let model: String
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        // Accept "model" (Ollama spec) and legacy "name"
+        if let model = try container.decodeIfPresent(String.self, forKey: .model) {
+            self.model = model
+        } else {
+            self.model = try container.decode(String.self, forKey: .name)
+        }
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case model, name
+    }
 }
 
 /// Response body for /api/show endpoint (Ollama-compatible)

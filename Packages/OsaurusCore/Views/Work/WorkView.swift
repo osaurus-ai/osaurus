@@ -70,7 +70,7 @@ struct WorkView: View {
                             voiceInputState: $session.voiceInputState,
                             showVoiceOverlay: $session.showVoiceOverlay,
                             pickerItems: session.pickerItems,
-                            activeModelOptions: .constant([:]),
+                            activeModelOptions: $session.activeModelOptions,
                             isStreaming: session.isExecuting,
                             supportsImages: session.selectedModelSupportsImages,
                             estimatedContextTokens: session.estimatedContextTokens,

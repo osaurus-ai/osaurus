@@ -121,6 +121,37 @@ struct ModelDownloadView: View {
             subtitle: "\(completedDownloadedModelsCount) downloaded • \(modelManager.totalDownloadedSizeString)"
         ) {
             HStack(spacing: 12) {
+                // Refresh OsaurusAI HF org listing (Recommended tab only)
+                if selectedTab == .suggested {
+                    Button {
+                        Task { await modelManager.refreshSuggestedModels() }
+                    } label: {
+                        HStack(spacing: 6) {
+                            if modelManager.isLoadingSuggested {
+                                ProgressView()
+                                    .controlSize(.small)
+                                    .scaleEffect(0.7)
+                                    .frame(width: 13, height: 13)
+                            } else {
+                                Image(systemName: "arrow.clockwise")
+                                    .font(.system(size: 13))
+                            }
+                            Text("Refresh", bundle: .module)
+                                .font(.system(size: 13, weight: .medium))
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 7)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(theme.tertiaryBackground.opacity(0.5))
+                        )
+                        .foregroundColor(theme.secondaryText)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .disabled(modelManager.isLoadingSuggested)
+                    .help(L("Refresh OsaurusAI models from Hugging Face"))
+                }
+
                 // Filter button
                 Button {
                     showFilterPopover.toggle()
@@ -588,16 +619,36 @@ struct ModelDownloadView: View {
         }
     }
 
-    /// Suggested (curated) models filtered by current search text and filters
+    /// Suggested (curated + auto-fetched) models filtered by current search text and filters.
+    ///
+    /// Sort order (top to bottom):
+    /// 1. Curated entries (pinned across the app) — within curated, Top Picks first.
+    /// 2. Auto-fetched entries from the OsaurusAI HF org listing.
+    /// 3. Within each tier: newer `releasedAt` first, then alphabetical.
     private var filteredSuggestedModels: [MLXModel] {
         let searched = SearchService.filterModels(modelManager.suggestedModels, with: searchText)
         let filtered = filterState.apply(to: searched)
+        let curatedIds = ModelManager.curatedSuggestedIds
         return filtered.sorted { lhs, rhs in
-            // Top suggestions first
-            if lhs.isTopSuggestion != rhs.isTopSuggestion {
+            let lhsCurated = curatedIds.contains(lhs.id.lowercased())
+            let rhsCurated = curatedIds.contains(rhs.id.lowercased())
+            if lhsCurated != rhsCurated { return lhsCurated }
+
+            if lhsCurated && lhs.isTopSuggestion != rhs.isTopSuggestion {
                 return lhs.isTopSuggestion
             }
-            // Then alphabetically
+
+            switch (lhs.releasedAt, rhs.releasedAt) {
+            case let (l?, r?) where l != r:
+                return l > r
+            case (.some, .none):
+                return true
+            case (.none, .some):
+                return false
+            default:
+                break
+            }
+
             return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
         }
     }

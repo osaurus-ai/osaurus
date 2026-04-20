@@ -3,6 +3,38 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.16.16</title>
+            <pubDate>Fri, 17 Apr 2026 22:17:31 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.16.16</sparkle:version>
+            <sparkle:shortVersionString>0.16.16</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.16.16/Osaurus-0.16.16.dmg" length="35164034" type="application/octet-stream" sparkle:edSignature="afG93rCtXbj6MN//hqyHwe4Uo3RawQ8cEkVklsHTF9oX0LomQih4XUVKTE197c0lObqZ6g8ik1+xjwi9T9UpBw=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- feat: Qwen 3.6 + JANGTQ support + Settings crash + symlink loading fixes (#878) by @jjang-ai
+- Fix pairing approval Enter shortcut ignoring persistent choice (#876) by @shaun0927
+- chore: lint (#874) by @ritave
+- feat: complete German localization (Phase 3-6) (#837) by @HolliOnRoad
+
+## 🐛 Bug Fixes
+
+- accept model param in /api/show to match ollama API spec (#882) by @RaajeevChandran
+- fix: show user-configured remote providers in model picker (#883) by @jjang-ai
+- partition memory by source mode so tool-session facts don't leak into pure chat (#877) by @RaajeevChandran
+- fix markdown table rendering (#879) by @RaajeevChandran
+- prevent app freeze during HTTP agent runs (#880) by @RaajeevChandran
+
+## 🧰 Maintenance
+
+- improved inference runtime and fixed background task issues (#881) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.16.15...0.16.16
+]]></description>
+        </item>
+        <item>
             <title>0.16.15</title>
             <pubDate>Thu, 16 Apr 2026 13:45:20 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
