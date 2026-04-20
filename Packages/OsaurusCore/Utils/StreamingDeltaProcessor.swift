@@ -6,10 +6,11 @@
 //  buffering, adaptive flush tuning, and throttled UI sync.
 //
 //  Reasoning routing is owned by the engine layer:
-//    - Local MLX models: vmlx-swift-lm strips `<think>` segments inside
-//      `BatchEngine.generate`. When upstream adds a `Generation.reasoning`
-//      event, `GenerationEventMapper` will translate it to
-//      `ModelRuntimeEvent.reasoning(_:)` → `StreamingReasoningHint`.
+//    - Local MLX models: vmlx-swift-lm's `BatchEngine.generate` emits
+//      `Generation.reasoning(String)` deltas on a dedicated channel.
+//      `GenerationEventMapper` translates each one to
+//      `ModelRuntimeEvent.reasoning(_:)`, which `streamWithTools`
+//      encodes as a `StreamingReasoningHint` sentinel.
 //    - Remote providers: `RemoteProviderService` emits
 //      `StreamingReasoningHint.encode(_:)` for streamed `reasoning_content`.
 //  ChatView decodes the sentinel and forwards the text to

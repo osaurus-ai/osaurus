@@ -958,98 +958,104 @@ final class ChatSession: ObservableObject {
         // is saturated by a fast producer.
         var lastRunloopYieldAt: Date = .distantPast
 
-        // Reasoning routing is owned by the engine: vmlx-swift-lm
-        // strips `<think>` segments from the chunk text inside
-        // `BatchEngine.generate` (and will eventually emit a
-        // dedicated `.reasoning` event). Reasoning text reaches
-        // ChatView via the `StreamingReasoningHint` sentinel,
-        // which `processor.receiveReasoning` routes into the
-        // Think panel. Remote providers feed the same sentinel.
-        var processor = StreamingDeltaProcessor(
-            turn: currentTurn
-        ) { [weak self] in
-            // rebuildVisibleBlocks mutates @Published properties which already
-            // emit objectWillChange — the extra send() below is redundant.
+        // Reasoning text arrives as `StreamingReasoningHint` sentinel deltas
+        // emitted by `GenerationEventMapper` (local MLX) or
+        // `RemoteProviderService` (remote providers). The processor's
+        // `receiveReasoning` routes it into the Think panel.
+        var processor = StreamingDeltaProcessor(turn: currentTurn) { [weak self] in
             self?.rebuildVisibleBlocks()
         }
 
-        debugLog("send: got stream, entering delta loop")
-        for try await delta in stream {
-            if !isRunActive(runId) {
-                processor.finalize()
-                return ([], currentTurn)
-            }
-            // Server-side tool call complete: add the call card + result turn to the chat log
-            if let done = StreamingToolHint.decodeDone(delta) {
-                processor.finalize()
-                let call = ToolCall(
-                    id: done.callId,
-                    type: "function",
-                    function: ToolCallFunction(name: done.name, arguments: done.arguments)
-                )
-                currentTurn.pendingToolName = nil
-                currentTurn.clearPendingToolArgs()
-                if currentTurn.toolCalls == nil { currentTurn.toolCalls = [] }
-                currentTurn.toolCalls!.append(call)
-                currentTurn.toolResults[done.callId] = done.result
-                let toolTurn = ChatTurn(role: .tool, content: done.result)
-                toolTurn.toolCallId = done.callId
-                let newAssistantTurn = ChatTurn(role: .assistant, content: "")
-                turns.append(contentsOf: [toolTurn, newAssistantTurn])
-                currentTurn = newAssistantTurn
-                processor = StreamingDeltaProcessor(
-                    turn: newAssistantTurn
-                ) { [weak self] in self?.rebuildVisibleBlocks() }
-                rebuildVisibleBlocks()
-                continue
-            }
-            if let toolName = StreamingToolHint.decode(delta) {
-                currentTurn.pendingToolName = toolName.isEmpty ? nil : toolName
-                rebuildVisibleBlocks()
-                continue
-            }
-            if let argFragment = StreamingToolHint.decodeArgs(delta) {
-                currentTurn.appendToolArgFragment(argFragment)
-                // Always rebuild for the first few fragments so the chip
-                // appears immediately; afterwards cap at ~12 rebuilds/sec
-                // so the table stays responsive during long arg streams
-                // without hiding chunky provider deltas.
-                let count = currentTurn.pendingToolArgFragmentCount
-                let now = Date()
-                if count <= 3 || now.timeIntervalSince(lastToolArgRebuildAt) >= 0.08 {
-                    lastToolArgRebuildAt = now
-                    rebuildVisibleBlocks()
-                }
-            } else if let stats = StreamingStatsHint.decode(delta) {
-                currentTurn.generationTokenCount = stats.tokenCount
-                currentTurn.generationTokensPerSecond = stats.tokensPerSecond
-            } else if let reasoning = StreamingReasoningHint.decode(delta) {
-                processor.receiveReasoning(reasoning)
-            } else if !delta.isEmpty {
-                let now = Date()
-                if firstDeltaTime == nil {
-                    firstDeltaTime = now
-                    ttftTrace?.mark("first_text_delta")
-                    ttftTrace?.set("model", selectedModel ?? "unknown")
-                    ttftTrace?.emit()
-                }
-                lastDeltaTime = now
-                uiDeltaCount += 1
-                processor.receiveDelta(delta)
-            }
+        // The engine surfaces parsed tool calls by *throwing* a
+        // `ServiceToolInvocation` (or `ServiceToolInvocations`) at end-of-
+        // stream. Catch them so this function can return them as data —
+        // letting the throw escape would surface as an "Error: …
+        // ServiceToolInvocation error 1" string in the UI.
+        var capturedInvocations: [ServiceToolInvocation] = []
 
-            // Hand the main run loop a turn so SwiftUI can actually paint
-            // any @Published mutations we just performed. Without this,
-            // when many deltas land back-to-back (e.g. Venice tool args or
-            // fast text streams) the consumer task monopolises the MainActor
-            // and the render pass never fires — the UI appears to stall
-            // mid-stream until the loop finishes. Gated to ~12 yields/sec
-            // to avoid slowing down the stream with excessive 1ms sleeps.
-            let now = Date()
-            if now.timeIntervalSince(lastRunloopYieldAt) >= 0.08 {
-                lastRunloopYieldAt = now
-                try? await Task.sleep(nanoseconds: 1_000_000)
+        debugLog("send: got stream, entering delta loop")
+        do {
+            for try await delta in stream {
+                if !isRunActive(runId) {
+                    processor.finalize()
+                    return ([], currentTurn)
+                }
+                // Server-side tool call complete: add the call card + result turn to the chat log
+                if let done = StreamingToolHint.decodeDone(delta) {
+                    processor.finalize()
+                    let call = ToolCall(
+                        id: done.callId,
+                        type: "function",
+                        function: ToolCallFunction(name: done.name, arguments: done.arguments)
+                    )
+                    currentTurn.pendingToolName = nil
+                    currentTurn.clearPendingToolArgs()
+                    if currentTurn.toolCalls == nil { currentTurn.toolCalls = [] }
+                    currentTurn.toolCalls!.append(call)
+                    currentTurn.toolResults[done.callId] = done.result
+                    let toolTurn = ChatTurn(role: .tool, content: done.result)
+                    toolTurn.toolCallId = done.callId
+                    let newAssistantTurn = ChatTurn(role: .assistant, content: "")
+                    turns.append(contentsOf: [toolTurn, newAssistantTurn])
+                    currentTurn = newAssistantTurn
+                    processor = StreamingDeltaProcessor(
+                        turn: newAssistantTurn
+                    ) { [weak self] in self?.rebuildVisibleBlocks() }
+                    rebuildVisibleBlocks()
+                    continue
+                }
+                if let toolName = StreamingToolHint.decode(delta) {
+                    currentTurn.pendingToolName = toolName.isEmpty ? nil : toolName
+                    rebuildVisibleBlocks()
+                    continue
+                }
+                if let argFragment = StreamingToolHint.decodeArgs(delta) {
+                    currentTurn.appendToolArgFragment(argFragment)
+                    // Always rebuild for the first few fragments so the chip
+                    // appears immediately; afterwards cap at ~12 rebuilds/sec
+                    // so the table stays responsive during long arg streams
+                    // without hiding chunky provider deltas.
+                    let count = currentTurn.pendingToolArgFragmentCount
+                    let now = Date()
+                    if count <= 3 || now.timeIntervalSince(lastToolArgRebuildAt) >= 0.08 {
+                        lastToolArgRebuildAt = now
+                        rebuildVisibleBlocks()
+                    }
+                } else if let stats = StreamingStatsHint.decode(delta) {
+                    currentTurn.generationTokenCount = stats.tokenCount
+                    currentTurn.generationTokensPerSecond = stats.tokensPerSecond
+                } else if let reasoning = StreamingReasoningHint.decode(delta) {
+                    processor.receiveReasoning(reasoning)
+                } else if !delta.isEmpty {
+                    let now = Date()
+                    if firstDeltaTime == nil {
+                        firstDeltaTime = now
+                        ttftTrace?.mark("first_text_delta")
+                        ttftTrace?.set("model", selectedModel ?? "unknown")
+                        ttftTrace?.emit()
+                    }
+                    lastDeltaTime = now
+                    uiDeltaCount += 1
+                    processor.receiveDelta(delta)
+                }
+
+                // Hand the main run loop a turn so SwiftUI can actually paint
+                // any @Published mutations we just performed. Without this,
+                // when many deltas land back-to-back (e.g. Venice tool args or
+                // fast text streams) the consumer task monopolises the MainActor
+                // and the render pass never fires — the UI appears to stall
+                // mid-stream until the loop finishes. Gated to ~12 yields/sec
+                // to avoid slowing down the stream with excessive 1ms sleeps.
+                let now = Date()
+                if now.timeIntervalSince(lastRunloopYieldAt) >= 0.08 {
+                    lastRunloopYieldAt = now
+                    try? await Task.sleep(nanoseconds: 1_000_000)
+                }
             }
+        } catch let invs as ServiceToolInvocations {
+            capturedInvocations = invs.invocations
+        } catch let inv as ServiceToolInvocation {
+            capturedInvocations = [inv]
         }
 
         // Flush any remaining buffered content (including partial tags)
@@ -1087,7 +1093,7 @@ final class ChatSession: ObservableObject {
             "[Osaurus][UI] Stream consumption completed: \(uiDeltaCount) deltas in \(String(format: "%.2f", totalTime))s, final contentLen=\(currentTurn.contentLength)"
         )
 
-        return ([], currentTurn)
+        return (capturedInvocations, currentTurn)
     }
 
     func send(_ text: String, attachments: [Attachment] = []) {

@@ -3,17 +3,20 @@
 //  osaurus
 //
 //  Bridge from vmlx-swift-lm `Generation` events to osaurus's typed
-//  `ModelRuntimeEvent`. Replaces the old token-level `StreamAccumulator` —
-//  reasoning stripping and tool-call extraction now live entirely inside
-//  `BatchEngine.generate`, so this layer is purely a translation step plus
-//  optional stop-sequence lookahead over emitted text chunks.
+//  `ModelRuntimeEvent`. Reasoning stripping, tool-call extraction, AND
+//  text-level stop-sequence matching all live inside `BatchEngine.generate`,
+//  so this layer is purely a translation step:
 //
-//  Forward-compat: `Generation` does not yet emit a `.reasoning(String)`
-//  case (see vmlx-swift-lm OSAURUS-INTEGRATION.md §4). The `switch` below
-//  uses `@unknown default` so when the upstream enum gains the case, mapping
-//  it to `ModelRuntimeEvent.reasoning(_:)` is a one-line patch — every
-//  consumer (HTTP `reasoning_content`, ChatView Think panel, plugin SDK)
-//  is already wired through `StreamingReasoningHint`.
+//    .chunk(text)     -> .tokens(text)         (pure user-visible answer)
+//    .reasoning(text) -> .reasoning(text)      (chain-of-thought delta)
+//    .toolCall(call)  -> .toolInvocation(...)  (parsed tool envelope)
+//    .info(info)      -> .completionInfo(...)  (final stats / stopReason)
+//
+//  Stop sequences are enforced by the library via
+//  `GenerateParameters.extraStopStrings` — when one matches, the engine
+//  emits the safe prefix as `.chunk`, halts generation, and finishes the
+//  stream with `.info(stopReason: .stop)`. Osaurus never inspects chunk
+//  text for stop-sequence matches.
 //
 
 import Foundation
@@ -27,26 +30,16 @@ enum GenerationEventMapper {
 
     /// Map a `Generation` stream into the typed `ModelRuntimeEvent` stream
     /// callers (HTTP handlers, ChatView, plugin runners) consume.
-    ///
-    /// - Parameters:
-    ///   - events: Upstream stream from `BatchEngine.generate`.
-    ///   - stopSequences: Hard-stop strings checked against emitted chunk
-    ///     text. Hits cause an early `cancel()` on the producer task and a
-    ///     truncated final `.tokens` event ending exactly at the stop match.
-    ///   - generationTask: Backing producer task; cancelled on stop hit.
     static func map(
-        events: AsyncStream<Generation>,
-        stopSequences: [String],
-        generationTask: Task<Void, Never>?
+        events: AsyncStream<Generation>
     ) -> AsyncThrowingStream<ModelRuntimeEvent, Error> {
-        AsyncThrowingStream { continuation in
+        AsyncThrowingStream<ModelRuntimeEvent, Error> { continuation in
             let task = Task {
                 let interval = mapperSignposter.beginInterval(
                     "generation",
                     id: mapperSignposter.makeSignpostID()
                 )
                 let startedAt = CFAbsoluteTimeGetCurrent()
-                var stopBuffer = StopSequenceBuffer(stopSequences: stopSequences)
                 var firstChunk = true
                 var finalTokenCount = 0
 
@@ -59,13 +52,11 @@ enum GenerationEventMapper {
                             InferenceProgressManager.shared.prefillDidFinishAsync()
                         }
                         guard !text.isEmpty else { continue }
-                        let outcome = stopBuffer.feed(text)
-                        if let prefix = outcome.emit, !prefix.isEmpty {
-                            continuation.yield(.tokens(prefix))
-                        }
-                        if outcome.stopHit {
-                            generationTask?.cancel()
-                        }
+                        continuation.yield(.tokens(text))
+
+                    case .reasoning(let text):
+                        guard !text.isEmpty else { continue }
+                        continuation.yield(.reasoning(text))
 
                     case .toolCall(let call):
                         let argsJSON = serializeArguments(
@@ -87,17 +78,10 @@ enum GenerationEventMapper {
                         )
 
                     @unknown default:
-                        // Forward-compat: when vmlx adds new `Generation`
-                        // cases (e.g. `.reasoning(String)`), translate them
-                        // here. Unknown cases are skipped so a library
-                        // bump cannot leak raw markers to the UI.
+                        // Forward-compat: unknown future cases are skipped
+                        // so a library bump cannot leak raw markers to the UI.
                         continue
                     }
-                }
-
-                // Flush any remaining stop-buffer tail on natural EOS.
-                if let tail = stopBuffer.flush(), !tail.isEmpty {
-                    continuation.yield(.tokens(tail))
                 }
 
                 let durationMs = Int((CFAbsoluteTimeGetCurrent() - startedAt) * 1000)
@@ -178,79 +162,5 @@ enum GenerationEventMapper {
     /// looking for the `_error` field — `MCPProviderTool` already does so.
     private static func errorEnvelope(toolName: String) -> String {
         "{\"_error\":\"argument_serialization_failed\",\"_tool\":\"\(toolName)\"}"
-    }
-}
-
-// MARK: - StopSequenceBuffer
-
-/// Sliding text buffer that catches stop sequences split across chunk
-/// boundaries from `BatchEngine.generate`'s `.chunk(String)` events.
-///
-/// Owns three pieces of state:
-///   - `stopSequences` — strings that terminate generation
-///   - `maxKeep` — `max(stop length) - 1`, the largest possible split tail
-///   - `buffer` — the held-back tail, never longer than `maxKeep` between
-///                emissions, never longer than `maxKeep + last chunk` during
-///                a single `feed(_:)` call
-///
-/// All methods are `O(buffer + chunk)` — the search runs over the combined
-/// buffer plus the new chunk, and emissions splice off the safe prefix.
-private struct StopSequenceBuffer {
-    let stopSequences: [String]
-    private let maxKeep: Int
-    private let isActive: Bool
-    private var buffer: String = ""
-
-    init(stopSequences: [String]) {
-        self.stopSequences = stopSequences
-        self.maxKeep = max(0, (stopSequences.map(\.count).max() ?? 0) - 1)
-        self.isActive = !stopSequences.isEmpty
-    }
-
-    struct Outcome {
-        /// Text safe to forward downstream as a `.tokens(...)` event. May
-        /// be `nil` when the chunk is entirely held back as a possible
-        /// stop-sequence prefix.
-        let emit: String?
-        /// True when a stop sequence matched in the combined buffer. The
-        /// caller should cancel the upstream producer task; the buffer
-        /// has already been cleared.
-        let stopHit: Bool
-    }
-
-    /// Feed one upstream `.chunk(_:)` text payload. Returns the prefix to
-    /// emit (if any) and whether a stop sequence matched.
-    mutating func feed(_ text: String) -> Outcome {
-        guard isActive else { return Outcome(emit: text, stopHit: false) }
-
-        buffer += text
-
-        if let hit = firstStopMatch() {
-            let prefix = String(buffer[..<hit.lowerBound])
-            buffer = ""
-            return Outcome(emit: prefix.isEmpty ? nil : prefix, stopHit: true)
-        }
-
-        // No hit. Emit everything except the trailing `maxKeep` characters
-        // (the largest possible split-stop tail), and trim the buffer.
-        guard buffer.count > maxKeep else { return Outcome(emit: nil, stopHit: false) }
-        let safeEnd = buffer.count - maxKeep
-        let cut = buffer.index(buffer.startIndex, offsetBy: safeEnd)
-        let toEmit = String(buffer[..<cut])
-        buffer = String(buffer[cut...])
-        return Outcome(emit: toEmit.isEmpty ? nil : toEmit, stopHit: false)
-    }
-
-    /// Drain whatever is still in the buffer at natural end-of-stream.
-    mutating func flush() -> String? {
-        guard isActive, !buffer.isEmpty else { return nil }
-        defer { buffer = "" }
-        return buffer
-    }
-
-    private func firstStopMatch() -> Range<String.Index>? {
-        stopSequences
-            .compactMap { buffer.range(of: $0) }
-            .min(by: { $0.lowerBound < $1.lowerBound })
     }
 }

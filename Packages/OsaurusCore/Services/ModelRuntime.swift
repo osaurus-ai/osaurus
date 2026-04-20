@@ -469,6 +469,7 @@ actor ModelRuntime {
                 buildChat: buildChat,
                 buildToolsSpec: buildTools,
                 generation: parameters,
+                stopSequences: stopSequences,
                 runtime: cfg,
                 maxBatchSize: InferenceFeatureFlags.mlxBatchEngineMaxBatchSize
             )
@@ -499,11 +500,7 @@ actor ModelRuntime {
             await ModelLease.shared.release(modelName)
         }
 
-        return GenerationEventMapper.map(
-            events: prepared.stream,
-            stopSequences: stopSequences,
-            generationTask: innerProducer
-        )
+        return GenerationEventMapper.map(events: prepared.stream)
     }
 
     // MARK: - New message-based (OpenAI ChatMessage) APIs
@@ -675,19 +672,24 @@ actor ModelRuntime {
     /// from the app layer here historically caused
     /// `[broadcast_shapes] (1,1,1,N) and (1,16,1,1024)` crashes on the
     /// first decode step. Per OSAURUS-INTEGRATION.md, the only inputs the
-    /// engine wants from us are temperature / topP / maxTokens / penalties.
+    /// engine wants from us are temperature / topP / maxTokens / penalties /
+    /// stop sequences. `stopSequences` becomes `extraStopStrings` — the
+    /// library matches against the post-reasoning, post-tool-call `.chunk`
+    /// stream and halts with `.info(stopReason: .stop)` on a hit.
     nonisolated static func makeGenerateParameters(
         temperature: Float,
         maxTokens: Int,
         topP: Float,
-        repetitionPenalty: Float?
+        repetitionPenalty: Float?,
+        stopSequences: [String] = []
     ) -> MLXLMCommon.GenerateParameters {
         MLXLMCommon.GenerateParameters(
             maxTokens: maxTokens,
             temperature: temperature,
             topP: topP,
             repetitionPenalty: repetitionPenalty,
-            repetitionContextSize: 20
+            repetitionContextSize: 20,
+            extraStopStrings: stopSequences
         )
     }
 

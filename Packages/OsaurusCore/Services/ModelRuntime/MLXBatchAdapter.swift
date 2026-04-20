@@ -3,13 +3,16 @@
 //  osaurus
 //
 //  Single MLX entry point: routes each request through `BatchEngine.generate`,
-//  which now emits authoritative `.chunk(String)` / `.toolCall(ToolCall)` /
-//  `.info(GenerateCompletionInfo)` events with reasoning + tool-call markers
-//  already stripped at the library layer (vmlx-swift-lm iter 66+).
+//  which emits authoritative `.chunk(String)` / `.reasoning(String)` /
+//  `.toolCall(ToolCall)` / `.info(GenerateCompletionInfo)` events. Reasoning,
+//  tool-call extraction, and text-level stop matching are all owned by the
+//  library — osaurus passes `stopSequences` as `GenerateParameters.extraStopStrings`
+//  and forwards every event through `GenerationEventMapper`.
 //
-//  Osaurus no longer parses tool calls or reasoning at the app layer — see
-//  `GenerationEventMapper` for the trivial `Generation` → `ModelRuntimeEvent`
-//  bridge that replaced the old token-level `StreamAccumulator`.
+//  Osaurus no longer parses tool calls, reasoning, or stop sequences at the
+//  app layer — see `GenerationEventMapper` for the trivial `Generation` →
+//  `ModelRuntimeEvent` bridge that replaced the old token-level
+//  `StreamAccumulator` and app-side `StopSequenceBuffer`.
 //
 //  Cache coordinator: captured automatically by `container.makeBatchEngine`.
 //  Multi-turn KV reuse, mediaSalt for VLMs, sliding-window cache support —
@@ -136,6 +139,7 @@ struct MLXBatchAdapter {
         buildChat: @Sendable () -> [MLXLMCommon.Chat.Message],
         buildToolsSpec: @Sendable () -> [[String: any Sendable]]?,
         generation: GenerationParameters,
+        stopSequences: [String],
         runtime: RuntimeConfig,
         maxBatchSize: Int
     ) async throws -> PreparedStream {
@@ -160,7 +164,8 @@ struct MLXBatchAdapter {
             temperature: generation.temperature ?? 0.7,
             maxTokens: generation.maxTokens,
             topP: generation.topPOverride ?? runtime.topP,
-            repetitionPenalty: generation.repetitionPenalty
+            repetitionPenalty: generation.repetitionPenalty,
+            stopSequences: stopSequences
         )
 
         // `engine.generate` returns `AsyncStream<Generation>` directly with

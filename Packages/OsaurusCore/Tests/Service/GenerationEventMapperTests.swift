@@ -3,8 +3,9 @@
 //  osaurusTests
 //
 //  Tests for `GenerationEventMapper` — translates vmlx-swift-lm `Generation`
-//  events into osaurus `ModelRuntimeEvent`. Tool-call parsing and reasoning
-//  stripping are owned by vmlx; these tests only exercise the bridge.
+//  events into osaurus `ModelRuntimeEvent`. Tool-call parsing, reasoning
+//  extraction, and text-level stop matching are all owned by vmlx; these
+//  tests only exercise the bridge.
 //
 
 import Foundation
@@ -23,16 +24,9 @@ struct GenerationEventMapperTests {
         }
     }
 
-    private func collect(
-        events: [Generation],
-        stopSequences: [String] = []
-    ) async throws -> [ModelRuntimeEvent] {
+    private func collect(events: [Generation]) async throws -> [ModelRuntimeEvent] {
         let stream = makeStream(events)
-        let mapped = GenerationEventMapper.map(
-            events: stream,
-            stopSequences: stopSequences,
-            generationTask: nil
-        )
+        let mapped = GenerationEventMapper.map(events: stream)
         var out: [ModelRuntimeEvent] = []
         for try await ev in mapped { out.append(ev) }
         return out
@@ -97,22 +91,6 @@ struct GenerationEventMapperTests {
         #expect(tps > 0)
     }
 
-    @Test func stop_sequence_truncates_chunk_emission() async throws {
-        // The stop string straddles two chunks: " STOP" → "S" + "TOP" — the
-        // mapper must hold back the trailing characters of the first chunk
-        // so the cross-chunk match is still detected.
-        let events: [Generation] = [
-            .chunk("hello S"),
-            .chunk("TOP rest"),
-        ]
-        let out = try await collect(events: events, stopSequences: ["STOP"])
-        var assembled = ""
-        for ev in out {
-            if case .tokens(let s) = ev { assembled += s }
-        }
-        #expect(assembled == "hello ")
-    }
-
     @Test func empty_chunks_are_ignored() async throws {
         let events: [Generation] = [.chunk(""), .chunk("text"), .chunk("")]
         let out = try await collect(events: events)
@@ -122,52 +100,42 @@ struct GenerationEventMapperTests {
         #expect(texts == ["text"])
     }
 
-    @Test func stop_buffer_handles_3_chunk_split() async throws {
-        // Stop sequence "o STOP" straddles three small chunks. The mapper
-        // must hold back the trailing tail across each `.chunk` until the
-        // full match assembles in the buffer.
+    @Test func reasoning_event_emits_reasoning_runtime_event() async throws {
+        // vmlx-swift-lm's BatchEngine emits `Generation.reasoning(String)`
+        // deltas on a separate channel from `.chunk`. The mapper must
+        // forward each one as `ModelRuntimeEvent.reasoning` while keeping
+        // chunk tokens on the `.tokens` channel.
         let events: [Generation] = [
-            .chunk("he"),
-            .chunk("ll"),
-            .chunk("o STOP rest"),
+            .reasoning("alpha"),
+            .reasoning("beta"),
+            .chunk("answer"),
         ]
-        let out = try await collect(events: events, stopSequences: ["o STOP"])
-        var assembled = ""
+        let out = try await collect(events: events)
+
+        var reasoningPieces: [String] = []
+        var tokenPieces: [String] = []
         for ev in out {
-            if case .tokens(let s) = ev { assembled += s }
+            switch ev {
+            case .reasoning(let s): reasoningPieces.append(s)
+            case .tokens(let s): tokenPieces.append(s)
+            default: continue
+            }
         }
-        #expect(assembled == "hell")
+        #expect(reasoningPieces == ["alpha", "beta"])
+        #expect(tokenPieces == ["answer"])
     }
 
-    @Test func stop_buffer_picks_earliest_among_multiple_stops() async throws {
-        // Two stop sequences of different lengths both appear in one
-        // chunk. The mapper must cut at the EARLIEST match so a later
-        // (potentially shorter) stop doesn't preempt an earlier one.
+    @Test func empty_reasoning_is_skipped() async throws {
         let events: [Generation] = [
-            .chunk("hello END world FIN done")
+            .reasoning(""),
+            .reasoning("kept"),
+            .reasoning(""),
         ]
-        let out = try await collect(events: events, stopSequences: ["FIN", "END"])
-        var assembled = ""
-        for ev in out {
-            if case .tokens(let s) = ev { assembled += s }
+        let out = try await collect(events: events)
+        let reasoning: [String] = out.compactMap {
+            if case .reasoning(let s) = $0 { return s } else { return nil }
         }
-        #expect(assembled == "hello ")
-    }
-
-    @Test func stop_buffer_passthrough_when_empty_list() async throws {
-        // No stop sequences -> every chunk forwards verbatim, no tail
-        // hold-back, no truncation.
-        let events: [Generation] = [
-            .chunk("alpha "),
-            .chunk("beta "),
-            .chunk("gamma"),
-        ]
-        let out = try await collect(events: events, stopSequences: [])
-        var assembled = ""
-        for ev in out {
-            if case .tokens(let s) = ev { assembled += s }
-        }
-        #expect(assembled == "alpha beta gamma")
+        #expect(reasoning == ["kept"])
     }
 
     @Test func toolCall_serialization_failure_emits_error_envelope() async throws {
