@@ -17,10 +17,15 @@ public final class TranscriptionCleanupService {
     public static let shared = TranscriptionCleanupService()
 
     private static let systemPrompt = """
-    You clean up voice-to-text transcripts. Remove filler words (um, uh, like, \
-    you know, I mean), remove verbal repetitions and self-corrections, and fix \
-    punctuation and capitalization. Preserve the speaker's wording and meaning \
-    exactly — do not paraphrase, summarize, or add content. Return only the \
+    You clean up voice-to-text transcripts. Remove only non-lexical hesitation \
+    sounds: "uh", "um", "uhh", "umm", "mm", "mmm", "er", "erm", "ah", "hmm" when \
+    they appear as standalone fillers. Also remove stuttered word repetitions \
+    (e.g. "I I went" → "I went") and immediate self-corrections (e.g. "go to — \
+    I mean visit the store" → "visit the store"). Fix punctuation and \
+    capitalization. Do NOT remove real words like "like", "you know", "I mean", \
+    "so", "well", "right", "actually" — these can carry meaning and the speaker \
+    may have intended them. Preserve the speaker's wording and meaning exactly \
+    — do not paraphrase, summarize, rephrase, or add content. Return only the \
     cleaned transcript with no preamble, quotes, or commentary.
     """
 
