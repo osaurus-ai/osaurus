@@ -153,6 +153,8 @@ struct DispatchRequestTests {
         #expect(request.parameters.isEmpty)
         #expect(request.folderPath == nil)
         #expect(request.folderBookmark == nil)
+        #expect(request.source == .chat)
+        #expect(request.externalSessionKey == nil)
     }
 
     @Test func sourcePluginIdIsPreserved() {
@@ -177,7 +179,9 @@ struct DispatchRequestTests {
             folderPath: "/tmp/test",
             folderBookmark: bookmark,
             showToast: false,
-            sourcePluginId: "com.example.plugin"
+            sourcePluginId: "com.example.plugin",
+            source: .plugin,
+            externalSessionKey: "telegram-chat-42"
         )
 
         #expect(request.id == id)
@@ -189,6 +193,20 @@ struct DispatchRequestTests {
         #expect(request.folderBookmark == bookmark)
         #expect(request.showToast == false)
         #expect(request.sourcePluginId == "com.example.plugin")
+        #expect(request.source == .plugin)
+        #expect(request.externalSessionKey == "telegram-chat-42")
+    }
+
+    @Test func sourceDefaultsToChatWhenNotSpecified() {
+        // Back-compat: existing callers that omit `source` get `.chat` so
+        // schedules / watchers / HTTP all explicitly opt in to other sources.
+        let request = DispatchRequest(prompt: "p", sourcePluginId: "com.x")
+        #expect(request.source == .chat)
+    }
+
+    @Test func externalSessionKeyDefaultsToNil() {
+        let request = DispatchRequest(prompt: "p")
+        #expect(request.externalSessionKey == nil)
     }
 }
 

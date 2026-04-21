@@ -46,6 +46,14 @@ final class ChatSession: ObservableObject {
     var createdAt: Date = Date()
     var updatedAt: Date = Date()
 
+    /// Origin of this session — populated by `ExecutionContext` for headless
+    /// (plugin / HTTP / scheduler / watcher) runs, defaults to `.chat` for
+    /// user-driven UI sessions.
+    var source: SessionSource = .chat
+    var sourcePluginId: String?
+    var externalSessionKey: String?
+    var dispatchTaskId: UUID?
+
     /// Tracks if session has unsaved content changes
     private var isDirty: Bool = false
 
@@ -542,7 +550,11 @@ final class ChatSession: ObservableObject {
             updatedAt: updatedAt,
             selectedModel: selectedModel,
             turns: turnData,
-            agentId: agentId
+            agentId: agentId,
+            source: source,
+            sourcePluginId: sourcePluginId,
+            externalSessionKey: externalSessionKey,
+            dispatchTaskId: dispatchTaskId
         )
     }
 
@@ -583,6 +595,10 @@ final class ChatSession: ObservableObject {
         createdAt = data.createdAt
         updatedAt = data.updatedAt
         agentId = data.agentId
+        source = data.source
+        sourcePluginId = data.sourcePluginId
+        externalSessionKey = data.externalSessionKey
+        dispatchTaskId = data.dispatchTaskId
 
         // Restore saved model if available, otherwise use configured default
         // Don't auto-persist when loading - this is restoring existing state

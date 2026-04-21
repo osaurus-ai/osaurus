@@ -63,9 +63,10 @@ struct BackgroundTaskToastView: View {
                     .foregroundColor(theme.primaryText)
                     .lineLimit(1)
 
-                Text(taskState.status.displayName)
+                Text(headerSubtitle)
                     .font(.system(size: 10, weight: .medium))
                     .foregroundColor(theme.tertiaryText)
+                    .lineLimit(1)
             }
 
             Spacer(minLength: 4)
@@ -310,6 +311,18 @@ struct BackgroundTaskToastView: View {
         case .completed(let success, _): return success ? theme.successColor : theme.errorColor
         case .cancelled: return theme.tertiaryText
         }
+    }
+
+    /// Status line under the task title. For non-`chat` sources we append
+    /// the origin (e.g. "Running · via Telegram") so the user can tell at a
+    /// glance which integration spawned the task.
+    private var headerSubtitle: String {
+        let status = taskState.status.displayName
+        let pluginName = taskState.sourcePluginId.map(PluginDisplayNameResolver.displayName(for:))
+        guard let origin = taskState.source.originLabel(pluginDisplayName: pluginName) else {
+            return status
+        }
+        return "\(status) · \(origin)"
     }
 }
 

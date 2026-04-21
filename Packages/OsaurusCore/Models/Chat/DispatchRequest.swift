@@ -24,6 +24,14 @@ public struct DispatchRequest: Sendable {
     public let showToast: Bool
     /// Plugin that originated this dispatch (for on_task_event callback routing).
     public let sourcePluginId: String?
+    /// Where this dispatch came from. Drives the persisted `SessionSource`
+    /// so the sidebar / DB can distinguish plugin / HTTP / scheduler runs
+    /// from user-initiated chats.
+    public let source: SessionSource
+    /// Stable external grouping key (e.g. Telegram chat id, HTTP `X-Session-Id`).
+    /// Lets repeated dispatches from the same conversation accrete into one
+    /// persisted session row instead of a fresh one per call.
+    public let externalSessionKey: String?
 
     public init(
         id: UUID = UUID(),
@@ -34,7 +42,9 @@ public struct DispatchRequest: Sendable {
         folderPath: String? = nil,
         folderBookmark: Data? = nil,
         showToast: Bool = true,
-        sourcePluginId: String? = nil
+        sourcePluginId: String? = nil,
+        source: SessionSource = .chat,
+        externalSessionKey: String? = nil
     ) {
         self.id = id
         self.prompt = prompt
@@ -45,6 +55,8 @@ public struct DispatchRequest: Sendable {
         self.folderBookmark = folderBookmark
         self.showToast = showToast
         self.sourcePluginId = sourcePluginId
+        self.source = source
+        self.externalSessionKey = externalSessionKey
     }
 }
 

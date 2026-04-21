@@ -2275,22 +2275,31 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
             let title = json["title"] as? String
             let requestId = UUID()
+            let externalSessionKey =
+                json["external_session_key"] as? String
+                ?? json["session_id"] as? String
 
             let request = DispatchRequest(
                 id: requestId,
                 prompt: prompt,
                 agentId: agentId,
                 title: title,
-                showToast: true
+                showToast: true,
+                source: .http,
+                externalSessionKey: externalSessionKey
             )
 
             let handle = await TaskDispatcher.shared.dispatch(request)
             let responseBody: String
             let status: HTTPResponseStatus
 
-            if handle != nil {
-                let pollUrl = "/v1/tasks/\(requestId.uuidString)"
-                let resp: [String: Any] = ["id": requestId.uuidString, "status": "running", "poll_url": pollUrl]
+            if let handle {
+                // Use the resolved task id — when an `external_session_key`
+                // matches an existing session the dispatcher reattaches and
+                // reports the existing session's id rather than `requestId`.
+                let resolvedId = handle.id.uuidString
+                let pollUrl = "/v1/tasks/\(resolvedId)"
+                let resp: [String: Any] = ["id": resolvedId, "status": "running", "poll_url": pollUrl]
                 responseBody =
                     (try? JSONSerialization.data(withJSONObject: resp)).flatMap { String(decoding: $0, as: UTF8.self) }
                     ?? "{}"
@@ -2721,6 +2730,18 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
         let memoryAgentId = head.headers.first(name: "X-Osaurus-Agent-Id")
 
+        // HTTP-specific persistence knobs:
+        //   X-Persist: false   → skip writing the conversation to chat history
+        //   X-Session-Id: <id> → group repeat calls under one session row
+        //                       (falls back to request.session_id when absent)
+        let persistDisabled =
+            (head.headers.first(name: "X-Persist") ?? "").lowercased() == "false"
+        let externalSessionKey: String? =
+            head.headers.first(name: "X-Session-Id") ?? req.session_id
+        let resolvedAgentUUID = memoryAgentId.flatMap { UUID(uuidString: $0) }
+        let priorMessages = req.messages
+        let persistOnSuccess = !persistDisabled
+
         if wantsSSE {
             let writer = SSEResponseWriter()
             let cors = stateRef.value.corsHeaders
@@ -2762,6 +2783,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     }
 
                     let stream = try await chatEngine.streamChat(request: enrichedReq)
+                    var accumulatedContent = ""
                     for try await delta in stream {
                         if let reasoning = StreamingReasoningHint.decode(delta) {
                             hop {
@@ -2776,6 +2798,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                             continue
                         }
                         if StreamingToolHint.isSentinel(delta) { continue }
+                        accumulatedContent += delta
                         hop {
                             writerBound.value.writeContent(
                                 delta,
@@ -2794,6 +2817,22 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                             context: ctx.value
                         )
                         writerBound.value.writeEnd(ctx.value)
+                    }
+                    if persistOnSuccess {
+                        var finalMessages = priorMessages
+                        if !accumulatedContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            finalMessages.append(
+                                ChatMessage(role: "assistant", content: accumulatedContent)
+                            )
+                        }
+                        ChatHistoryWriter.persist(
+                            source: .http,
+                            sourcePluginId: nil,
+                            agentId: resolvedAgentUUID,
+                            externalKey: externalSessionKey,
+                            finalMessages: finalMessages,
+                            model: model
+                        )
                     }
                     logSelf.logRequest(
                         method: "POST",
@@ -2925,6 +2964,18 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     let sysContent = enrichedReq.messages.first(where: { $0.role == "system" })?.content ?? ""
                     let toolNames = (enrichedReq.tools ?? []).map { $0.function.name }
                     resp.prefix_hash = ModelRuntime.computePrefixHash(systemContent: sysContent, toolNames: toolNames)
+                    if persistOnSuccess, let assistantMsg = resp.choices.first?.message {
+                        var finalMessages = priorMessages
+                        finalMessages.append(assistantMsg)
+                        ChatHistoryWriter.persist(
+                            source: .http,
+                            sourcePluginId: nil,
+                            agentId: resolvedAgentUUID,
+                            externalKey: externalSessionKey,
+                            finalMessages: finalMessages,
+                            model: model
+                        )
+                    }
                     let json = try JSONEncoder().encode(resp)
                     var headers: [(String, String)] = [("Content-Type", "application/json")]
                     headers.append(contentsOf: cors)

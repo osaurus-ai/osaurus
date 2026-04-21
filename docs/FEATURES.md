@@ -679,14 +679,16 @@ Read-only tools are always available. Write/exec/package/secret tools require `a
 
 ### Chat Session Management
 
-**Purpose:** Persist and manage chat conversations with per-session configuration.
+**Purpose:** Persist, audit, and manage chat conversations regardless of how they were started — UI, plugin (Telegram/Slack/etc.), HTTP API, schedule, or file-system watcher.
 
 **Components:**
 
 - `Managers/Chat/ChatSessionsManager.swift` — Session list management
-- `Models/Chat/ChatSessionData.swift` — Session data model
-- `Models/Chat/ChatSessionStore.swift` — Session persistence
-- `Views/Chat/ChatSessionSidebar.swift` — Session history sidebar
+- `Models/Chat/ChatSessionData.swift` — Session data model (carries `source`, `sourcePluginId`, `externalSessionKey`, `dispatchTaskId`)
+- `Models/Chat/SessionSource.swift` — Origin tag enum + shared UI helpers (badge icon, "via X" label)
+- `Models/Chat/ChatSessionStore.swift` — Session persistence facade
+- `Storage/ChatHistoryDatabase.swift` — SQLite store with indices on `source` and `(source_plugin_id, external_session_key)` for fast filtering and find-or-create
+- `Views/Chat/ChatSessionSidebar.swift` — Session history sidebar with source badge + filter rail
 
 **Features:**
 
@@ -695,6 +697,9 @@ Read-only tools are always available. Write/exec/package/secret tools require `a
 - Per-session model selection
 - Context token estimation display
 - Auto-generated titles from first message
+- **Audit dimension** — every session is tagged with its origin (`chat` / `plugin` / `http` / `schedule` / `watcher`); the sidebar shows a colored badge with plugin name in the tooltip
+- **Source filter rail** — chip-style filter above the list, auto-hidden when a single source is present
+- **Conversation grouping** — plugins that pass `external_session_key` (e.g. Telegram chat id) reattach to the same session on subsequent dispatches instead of creating a new row each time; see [Plugin Authoring Guide](PLUGIN_AUTHORING.md#conversation-grouping)
 
 ---
 

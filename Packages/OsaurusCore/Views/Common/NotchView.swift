@@ -82,6 +82,7 @@ private enum NotchExpansion: Equatable {
 
 struct NotchView: View {
     @ObservedObject private var taskManager = BackgroundTaskManager.shared
+    @ObservedObject private var pluginActivity = PluginActivityManager.shared
     @ObservedObject private var windowController = NotchWindowController.shared
     @Environment(\.theme) private var theme
 
@@ -108,6 +109,10 @@ struct NotchView: View {
 
     private var sortedTasks: [BackgroundTaskState] {
         Array(taskManager.backgroundTasks.values)
+            // Headless dispatchers (e.g. webhook responders) opt out of the
+            // notch by setting `showToast = false`. The task is still
+            // tracked for completion signaling — it just doesn't render.
+            .filter { $0.showToast }
             .sorted { a, b in
                 let ap = statusPriority(a.status), bp = statusPriority(b.status)
                 if ap != bp { return ap < bp }
@@ -130,9 +135,19 @@ struct NotchView: View {
         return sortedTasks[max(0, idx)]
     }
 
+    /// In-flight inline plugin call to surface when there's no dispatched
+    /// `BackgroundTaskState` to render. Lets the user see that, e.g., the
+    /// Telegram plugin is generating a reply via `complete_stream` even
+    /// though the call never created a task.
+    private var topPluginActivity: PluginActivityRecord? {
+        guard activeTask == nil else { return nil }
+        return pluginActivity.topActivity
+    }
+
     private var expansion: NotchExpansion {
-        guard activeTask != nil else { return .hidden }
-        return isHovering ? .expanded : .compact
+        if activeTask != nil { return isHovering ? .expanded : .compact }
+        if topPluginActivity != nil { return isHovering ? .expanded : .compact }
+        return .hidden
     }
 
     private var accentColor: Color {
@@ -306,7 +321,7 @@ struct NotchView: View {
 
     @ViewBuilder
     private var compactLeading: some View {
-        if activeTask != nil {
+        if activeTask != nil || topPluginActivity != nil {
             AnimatedOrb(
                 color: accentColor,
                 size: .custom(orbSize),
@@ -340,6 +355,9 @@ struct NotchView: View {
                 MorphingStatusIcon(state: .failed, accentColor: notchTertiaryText, size: 14)
                     .transition(.opacity.combined(with: .scale(scale: 0.5)))
             }
+        } else if topPluginActivity != nil {
+            NotchProgressRing(progress: -1, color: accentColor, size: 14, lineWidth: 1.5)
+                .transition(.opacity.combined(with: .scale(scale: 0.5)))
         }
     }
 
@@ -361,6 +379,8 @@ struct NotchView: View {
                     case .cancelled:
                         expandedCancelledBody(task: task)
                     }
+                } else if let activity = topPluginActivity {
+                    expandedPluginActivityBody(activity: activity)
                 }
 
                 if sortedTasks.count > 1 { taskDotIndicators }
@@ -393,7 +413,18 @@ struct NotchView: View {
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundColor(notchPrimaryText)
                         .lineLimit(1)
-                    Text(task.status.displayName)
+                    Text(headerSubtitle(for: task))
+                        .font(.system(size: 9.5, weight: .medium))
+                        .foregroundColor(notchTertiaryText)
+                        .lineLimit(1)
+                }
+            } else if let activity = topPluginActivity {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(activity.pluginDisplayName)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(notchPrimaryText)
+                        .lineLimit(1)
+                    Text("Working", bundle: .module)
                         .font(.system(size: 9.5, weight: .medium))
                         .foregroundColor(notchTertiaryText)
                 }
@@ -443,6 +474,16 @@ struct NotchView: View {
             notchActionButton("View Chat") {
                 BackgroundTaskManager.shared.openTaskWindow(task.id)
             }
+        }
+    }
+
+    private func expandedPluginActivityBody(activity: PluginActivityRecord) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Inline plugin inference \u{2014} \(activity.kind.rawValue)", bundle: .module)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(notchSecondaryText)
+                .lineLimit(2)
+            IndeterminateShimmerProgress(color: accentColor, height: 3)
         }
     }
 
@@ -539,6 +580,18 @@ struct NotchView: View {
         guard let task = activeTask else { return false }
         return task.activityFeed.count > 1
             || (task.activityFeed.count == 1 && task.activityFeed.first?.kind != .info)
+    }
+
+    /// Builds the second line of the expanded header, surfacing the
+    /// dispatch origin (e.g. "Running · via Telegram") so the user can tell
+    /// at a glance which integration is driving the task.
+    private func headerSubtitle(for task: BackgroundTaskState) -> String {
+        let status = task.status.displayName
+        let pluginName = task.sourcePluginId.map(PluginDisplayNameResolver.displayName(for:))
+        guard let origin = task.source.originLabel(pluginDisplayName: pluginName) else {
+            return status
+        }
+        return "\(status) · \(origin)"
     }
 
     private func notchActionButton(_ title: String, action: @escaping () -> Void) -> some View {

@@ -1243,19 +1243,45 @@ const char* result = host->dispatch(request);
 
 **Request fields:**
 
-| Field            | Type   | Required | Description                                               |
-| ---------------- | ------ | -------- | --------------------------------------------------------- |
-| `prompt`         | string | Yes      | The task prompt for the agent                             |
-| `title`          | string | No       | Display title for the task                                |
-| `agent_address`  | string | No       | Crypto address of the target agent                        |
-| `agent_id`       | string | No       | UUID of the target agent (alternative to `agent_address`) |
-| `folder_bookmark`| string | No       | Base64-encoded security-scoped bookmark for folder access |
+| Field                  | Type   | Required | Description                                                                |
+| ---------------------- | ------ | -------- | -------------------------------------------------------------------------- |
+| `prompt`               | string | Yes      | The task prompt for the agent                                              |
+| `title`                | string | No       | Display title for the task                                                 |
+| `agent_address`        | string | No       | Crypto address of the target agent                                         |
+| `agent_id`             | string | No       | UUID of the target agent (alternative to `agent_address`)                  |
+| `folder_bookmark`      | string | No       | Base64-encoded security-scoped bookmark for folder access                  |
+| `external_session_key` | string | No       | Stable conversation grouping key — see [Conversation Grouping](#conversation-grouping) below |
 
 If neither `agent_address` nor `agent_id` is provided, the task is dispatched to the default agent.
 
 **Agent addressing:** Prefer `agent_address` from the route request's `osaurus.agent_address` field — it is always present in route handler requests and ensures the task runs under the correct agent with its configured model and settings. Both `agent_address` and `agent_id` are accepted and resolved automatically.
 
 **Rate limiting:** Dispatch is limited to 10 requests per minute per plugin. Exceeding this returns an error with `"error": "rate_limit_exceeded"`.
+
+#### Conversation Grouping
+
+By default each `dispatch()` call creates a brand-new chat session row in the sidebar. Plugins that bridge multi-message conversations from an external system (Telegram chat, Slack thread, support inbox, …) can opt in to **find-or-create** behavior by passing a stable `external_session_key`:
+
+```c
+const char* request = "{"
+    "\"prompt\": \"What's the weather today?\","
+    "\"agent_address\": \"0x1a2b...\","
+    "\"external_session_key\": \"telegram:chat-12345\""
+"}";
+const char* result = host->dispatch(request);
+// result: {"id":"<uuid>","status":"running"}
+```
+
+When `external_session_key` is provided:
+
+1. Osaurus looks up an existing session matching `(plugin_id, external_session_key, agent_id)`.
+2. If found and not currently running, it **reattaches** to that session — turns are preserved and the new prompt becomes the next user turn.
+3. If not found (or the existing session is already actively streaming for another in-flight dispatch), a new session is created and tagged with the same key for future calls.
+4. The returned `id` is the **resolved task / session id** — it equals the original session's id on reattach, so polling `task_status` and the sidebar deep-link both stay stable across the conversation.
+
+Sessions persisted via this path are tagged `source = plugin` with the originating `plugin_id` and `external_session_key`, and are filterable from the chat sidebar source rail.
+
+**Without** `external_session_key`, every dispatch creates a fresh row — useful for one-shot tasks (e.g. cron-style triggers).
 
 #### Polling Task Status
 
@@ -1910,9 +1936,11 @@ curl -X POST https://127.0.0.1:1337/v1/agents/0x1a2b3c.../dispatch \
   -d '{"prompt": "Summarize recent commits"}'
 ```
 
-**Request body:** Same fields as the C `dispatch()` function (`prompt`, `title`, `folder_bookmark`). The `agent_id`/`agent_address` is inferred from the URL path.
+**Request body:** Same fields as the C `dispatch()` function — `prompt`, `title`, `folder_bookmark`, and `external_session_key` (or its alias `session_id`). The `agent_id` / `agent_address` is inferred from the URL path.
 
-**Response:** `{"id": "<uuid>", "status": "running"}`
+**Response:** `{"id": "<resolved-task-id>", "status": "running", "poll_url": "/v1/tasks/<resolved-task-id>"}`
+
+The session created by this endpoint is persisted with `source = http`. Pass `external_session_key` (or `session_id`) to opt into [Conversation Grouping](#conversation-grouping) — repeated calls with the same key for the same agent reattach to the same session row instead of creating new ones, and the response `id` reflects the reused session.
 
 ### GET /v1/tasks/{task_id}
 

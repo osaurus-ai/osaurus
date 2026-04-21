@@ -2,7 +2,10 @@
 //  ChatSessionStore.swift
 //  osaurus
 //
-//  Persistence for ChatSessionData
+//  Persistence facade for `ChatSessionData`. Delegates to the SQLite-backed
+//  `ChatHistoryDatabase`. The legacy per-session JSON files at
+//  `~/.osaurus/sessions/*.json` are imported once on first launch via
+//  `LegacySessionImporter` and archived under `~/.osaurus/sessions.archive/`.
 //
 
 import Foundation
@@ -14,95 +17,54 @@ enum ChatSessionStore {
     /// Load all sessions sorted by updatedAt (most recent first).
     /// Only metadata is loaded (turns are empty). Use `load(id:)` for full session data.
     static func loadAll() -> [ChatSessionData] {
-        let directory = sessionsDirectory()
-        OsaurusPaths.ensureExistsSilent(directory)
-
-        guard let files = try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
-        else {
-            return []
-        }
-
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-
-        return
-            files
-            .filter { $0.pathExtension == "json" }
-            .compactMap { file -> ChatSessionData? in
-                do {
-                    let metadata = try decoder.decode(ChatSessionMetadata.self, from: Data(contentsOf: file))
-                    return ChatSessionData(
-                        id: metadata.id,
-                        title: metadata.title,
-                        createdAt: metadata.createdAt,
-                        updatedAt: metadata.updatedAt,
-                        selectedModel: metadata.selectedModel,
-                        turns: [],
-                        agentId: metadata.agentId
-                    )
-                } catch {
-                    print("[Osaurus] Failed to load session from \(file.lastPathComponent): \(error)")
-                    return nil
-                }
-            }
-            .sorted { $0.updatedAt > $1.updatedAt }
-    }
-
-    /// Lightweight struct that skips decoding turns (the heaviest field).
-    private struct ChatSessionMetadata: Decodable {
-        let id: UUID
-        let title: String
-        let createdAt: Date
-        let updatedAt: Date
-        let selectedModel: String?
-        let agentId: UUID?
+        ensureOpenAndImported()
+        return ChatHistoryDatabase.shared.loadAllMetadata()
     }
 
     /// Load a specific session by ID
     static func load(id: UUID) -> ChatSessionData? {
-        let url = sessionFileURL(for: id)
-        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
-
-        do {
-            let decoder = JSONDecoder()
-            decoder.dateDecodingStrategy = .iso8601
-            return try decoder.decode(ChatSessionData.self, from: Data(contentsOf: url))
-        } catch {
-            print("[Osaurus] Failed to load session \(id): \(error)")
-            return nil
-        }
+        ensureOpenAndImported()
+        return ChatHistoryDatabase.shared.loadSession(id: id)
     }
 
     /// Save a session (creates or updates)
     static func save(_ session: ChatSessionData) {
-        let url = sessionFileURL(for: session.id)
-        OsaurusPaths.ensureExistsSilent(url.deletingLastPathComponent())
-
+        ensureOpenAndImported()
         do {
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            encoder.dateEncodingStrategy = .iso8601
-            try encoder.encode(session).write(to: url, options: [.atomic])
+            try ChatHistoryDatabase.shared.saveSession(session)
         } catch {
-            print("[Osaurus] Failed to save session \(session.id): \(error)")
+            print("[ChatSessionStore] Failed to save session \(session.id): \(error)")
         }
     }
 
     /// Delete a session by ID. Also removes the session's artifacts dir
     /// on disk (best-effort) so old shared artifacts don't accumulate.
     static func delete(id: UUID) {
-        try? FileManager.default.removeItem(at: sessionFileURL(for: id))
+        ensureOpenAndImported()
+        do {
+            try ChatHistoryDatabase.shared.deleteSession(id: id)
+        } catch {
+            print("[ChatSessionStore] Failed to delete session \(id): \(error)")
+        }
         let artifactsDir = OsaurusPaths.contextArtifactsDir(contextId: id.uuidString)
         try? FileManager.default.removeItem(at: artifactsDir)
     }
 
-    // MARK: - Private
+    // MARK: - Lifecycle
 
-    private static func sessionsDirectory() -> URL {
-        OsaurusPaths.resolvePath(new: OsaurusPaths.sessions(), legacy: "ChatSessions")
-    }
+    private static var didOpen = false
 
-    private static func sessionFileURL(for id: UUID) -> URL {
-        sessionsDirectory().appendingPathComponent("\(id.uuidString).json")
+    /// Open the database (idempotent) and run the one-time JSON-to-SQLite
+    /// import on first call. Safe to invoke from any session-touching code path.
+    private static func ensureOpenAndImported() {
+        guard !didOpen else { return }
+        didOpen = true
+        do {
+            try ChatHistoryDatabase.shared.open()
+        } catch {
+            print("[ChatSessionStore] Failed to open chat-history database: \(error)")
+            return
+        }
+        LegacySessionImporter.runIfNeeded()
     }
 }

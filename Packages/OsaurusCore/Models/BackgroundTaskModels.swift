@@ -140,6 +140,22 @@ public final class BackgroundTaskState: ObservableObject, Identifiable {
     /// Plugin that originated this dispatch (for on_task_event callback routing).
     public var sourcePluginId: String?
 
+    /// Origin of the dispatch — drives toast styling and the persisted
+    /// `SessionSource`. Defaults to `.plugin` for back-compat with the
+    /// pre-source-tagging callers that built `BackgroundTaskState` directly.
+    public var source: SessionSource = .plugin
+
+    /// External grouping key (e.g. Telegram chat id). Mirrors
+    /// `DispatchRequest.externalSessionKey` so the toast / notch can show
+    /// it inline and the manager can debounce duplicate dispatches.
+    public var externalSessionKey: String?
+
+    /// Whether the toast/notch UI should surface this task. Headless callers
+    /// (e.g. webhooks responding inline) set this to `false` to keep the
+    /// notch quiet while the task still lives in `backgroundTasks` for
+    /// completion signaling.
+    public var showToast: Bool = true
+
     /// Latest draft content sent by the plugin (e.g. for live-update messages).
     public var draftText: String?
 
@@ -152,7 +168,11 @@ public final class BackgroundTaskState: ObservableObject, Identifiable {
         chatSession: ChatSession,
         executionContext: ExecutionContext,
         status: BackgroundTaskStatus = .running,
-        currentStep: String? = nil
+        currentStep: String? = nil,
+        source: SessionSource = .plugin,
+        sourcePluginId: String? = nil,
+        externalSessionKey: String? = nil,
+        showToast: Bool = true
     ) {
         self.id = id
         self.taskTitle = taskTitle
@@ -162,6 +182,10 @@ public final class BackgroundTaskState: ObservableObject, Identifiable {
         self.status = status
         self.currentStep = currentStep
         self.createdAt = Date()
+        self.source = source
+        self.sourcePluginId = sourcePluginId
+        self.externalSessionKey = externalSessionKey
+        self.showToast = showToast
     }
 
     deinit {

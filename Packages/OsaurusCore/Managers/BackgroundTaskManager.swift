@@ -171,7 +171,19 @@ public final class BackgroundTaskManager: ObservableObject {
     public func dispatchChat(_ request: DispatchRequest) async -> DispatchHandle? {
         guard canDispatchNewTask(agentId: request.agentId) else { return nil }
 
-        let context = createContext(for: request)
+        // Opt-in conversation grouping: when `external_session_key` is set
+        // and a non-active matching session exists, reattach to it so the
+        // new prompt becomes the next turn instead of starting a fresh row.
+        let reattach = lookupReattachableSession(for: request)
+        let context: ExecutionContext
+        if let existing = reattach {
+            context = ExecutionContext(
+                reattaching: existing,
+                folderBookmark: request.folderBookmark
+            )
+        } else {
+            context = createContext(for: request)
+        }
         await context.prepare()
 
         // Register state before starting so awaitCompletion always finds the task
@@ -182,17 +194,77 @@ public final class BackgroundTaskManager: ObservableObject {
             chatSession: context.chatSession,
             executionContext: context,
             status: .running,
-            currentStep: "Running..."
+            currentStep: "Running...",
+            source: request.source,
+            sourcePluginId: request.sourcePluginId,
+            externalSessionKey: request.externalSessionKey,
+            showToast: request.showToast
         )
 
-        state.sourcePluginId = request.sourcePluginId
+        // Plugin-originated dispatches buffer their `.started` event until
+        // the trampoline returns, so the plugin's `on_task_event` callback
+        // doesn't fire before its `dispatch()` C call has unwound. Hold here
+        // (now that we know the real task id, which may differ from
+        // `request.id` after a reattach) and let the trampoline release.
+        if request.sourcePluginId != nil {
+            holdEventsForDispatch(taskId: context.id)
+        }
         registerTask(state)
         observeChatTask(state, session: context.chatSession)
 
         await context.start(prompt: request.prompt)
 
-        print("[BackgroundTaskManager] Dispatched chat task: \(request.title ?? "untitled")")
-        return DispatchHandle(id: request.id, request: request)
+        let reattachNote = reattach == nil ? "" : " (reattached to session \(context.id))"
+        print("[BackgroundTaskManager] Dispatched chat task: \(request.title ?? "untitled")\(reattachNote)")
+        // Return the resolved task id (may differ from request.id after a
+        // reattach) so callers awaiting completion poll the actual live task.
+        return DispatchHandle(id: context.id, request: request)
+    }
+
+    /// Returns an existing persisted session for this dispatch when the
+    /// request opts into grouping via `external_session_key`. Skips reattach
+    /// if a live in-memory task is already driving that session, to avoid
+    /// double-stream into the same `ChatSession`.
+    private func lookupReattachableSession(for request: DispatchRequest) -> ChatSessionData? {
+        guard let key = request.externalSessionKey,
+            !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else { return nil }
+
+        let agentId = request.agentId
+
+        let liveDuplicate = backgroundTasks.values.contains { state in
+            guard state.status.isActive,
+                state.externalSessionKey == key,
+                state.source == request.source
+            else { return false }
+            // For plugin-sourced dispatches also require the same plugin id
+            // so two plugins that happen to use the same key don't collide.
+            if request.source == .plugin {
+                return state.sourcePluginId == request.sourcePluginId
+            }
+            return true
+        }
+        if liveDuplicate { return nil }
+
+        let db = ChatHistoryDatabase.shared
+        // ChatHistoryDatabase.findSession opens lazily via shared singleton;
+        // ensure it's initialised so the lookup doesn't no-op on cold start.
+        do { try db.open() } catch {
+            print("[BackgroundTaskManager] Failed to open chat history db for reattach: \(error)")
+            return nil
+        }
+
+        // Plugin source has a guaranteed sourcePluginId; HTTP / scheduler /
+        // watcher dispatches don't, so fall back to the source-based index.
+        let metadata: ChatSessionData?
+        if request.source == .plugin, let pluginId = request.sourcePluginId {
+            metadata = db.findSession(pluginId: pluginId, externalKey: key, agentId: agentId)
+        } else {
+            metadata = db.findSession(source: request.source, externalKey: key, agentId: agentId)
+        }
+        guard let metadata else { return nil }
+        // findSession returns metadata only; hydrate turns for ChatSession.load.
+        return db.loadSession(id: metadata.id)
     }
 
     // MARK: - Completion Signaling
@@ -274,7 +346,10 @@ public final class BackgroundTaskManager: ObservableObject {
             id: request.id,
             agentId: request.agentId ?? Agent.defaultId,
             title: request.title,
-            folderBookmark: request.folderBookmark
+            folderBookmark: request.folderBookmark,
+            source: request.source,
+            sourcePluginId: request.sourcePluginId,
+            externalSessionKey: request.externalSessionKey
         )
     }
 

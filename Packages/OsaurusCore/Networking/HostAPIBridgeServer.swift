@@ -376,7 +376,9 @@ private final class HostAPIBridgeHandler: ChannelInboundHandler, RemovableChanne
         let request = DispatchRequest(
             prompt: task,
             agentId: UUID(uuidString: agentId),
-            sourcePluginId: "sandbox:\(callingUser)"
+            sourcePluginId: "sandbox:\(callingUser)",
+            source: .plugin,
+            externalSessionKey: parsed["external_session_key"] as? String
         )
 
         let manager = await MainActor.run { BackgroundTaskManager.shared }

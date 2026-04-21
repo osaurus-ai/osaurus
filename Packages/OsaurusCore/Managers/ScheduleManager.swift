@@ -321,7 +321,9 @@ public final class ScheduleManager {
             title: schedule.name,
             parameters: schedule.parameters,
             folderPath: schedule.folderPath,
-            folderBookmark: schedule.folderBookmark
+            folderBookmark: schedule.folderBookmark,
+            source: .schedule,
+            externalSessionKey: schedule.id.uuidString
         )
 
         print("[Osaurus] Executing schedule: \(schedule.name)")

@@ -38,7 +38,10 @@ public final class ExecutionContext: ObservableObject {
         id: UUID = UUID(),
         agentId: UUID,
         title: String? = nil,
-        folderBookmark: Data? = nil
+        folderBookmark: Data? = nil,
+        source: SessionSource = .chat,
+        sourcePluginId: String? = nil,
+        externalSessionKey: String? = nil
     ) {
         self.id = id
         self.agentId = agentId
@@ -47,16 +50,65 @@ public final class ExecutionContext: ObservableObject {
 
         let session = ChatSession()
         session.agentId = agentId
+        // Align persisted session id with the dispatch task id so plugins
+        // and HTTP pollers can deep-link to the same row, and so
+        // `serializeCompletedEvent`'s `session_id` field references the
+        // actual saved session.
+        session.sessionId = id
+        session.source = source
+        session.sourcePluginId = sourcePluginId
+        session.externalSessionKey = externalSessionKey
+        session.dispatchTaskId = id
         session.applyInitialModelSelection()
         if let title { session.title = title }
         self.chatSession = session
     }
+
+    /// Reattach to a previously-persisted session so a new dispatch appends
+    /// turns to the same conversation row instead of starting fresh. Used by
+    /// `BackgroundTaskManager.dispatchChat` when the request carries an
+    /// `external_session_key` that maps to an existing session.
+    ///
+    /// `existing.id` is reused as the dispatch task id, so callers polling
+    /// the original `task_id` continue to find a live entry. The persisted
+    /// model is re-applied in `prepare()` once picker items load.
+    public init(
+        reattaching existing: ChatSessionData,
+        folderBookmark: Data? = nil
+    ) {
+        self.id = existing.id
+        self.agentId = existing.agentId ?? Agent.defaultId
+        self.title = existing.title
+        self.folderBookmark = folderBookmark
+
+        let session = ChatSession()
+        session.agentId = existing.agentId
+        // Apply identity + history immediately so observers (e.g. the
+        // BackgroundTaskState activity feed) see the existing turns from
+        // the very first publish.
+        session.load(from: existing)
+        // `load(from:)` may have failed to restore the model if picker
+        // items aren't loaded yet; `prepare()` re-applies after refresh.
+        self.chatSession = session
+        self.pendingReattachSession = existing
+    }
+
+    /// Set when this context was built via `init(reattaching:)`. Lets
+    /// `prepare()` re-apply the persisted model once picker items load.
+    private var pendingReattachSession: ChatSessionData?
 
     // MARK: - Execution
 
     /// Load picker items. Call before `start(prompt:)`.
     public func prepare() async {
         await chatSession.refreshPickerItems()
+        // For reattached sessions, re-apply the persisted model now that
+        // picker items are populated — the load() call in init may have
+        // fallen back to the agent default because the picker was empty.
+        if let pending = pendingReattachSession {
+            chatSession.load(from: pending)
+            pendingReattachSession = nil
+        }
     }
 
     /// Begin execution with the given prompt.

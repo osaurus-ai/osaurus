@@ -516,7 +516,9 @@ public final class WatcherManager {
                     title: watcher.name,
                     parameters: watcher.parameters,
                     folderPath: watcher.watchPath,
-                    folderBookmark: watcher.watchBookmark
+                    folderBookmark: watcher.watchBookmark,
+                    source: .watcher,
+                    externalSessionKey: watcher.id.uuidString
                 )
 
                 guard let handle = await TaskDispatcher.shared.dispatch(request) else {
