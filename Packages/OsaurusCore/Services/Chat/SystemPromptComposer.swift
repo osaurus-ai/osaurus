@@ -51,31 +51,18 @@ public struct SystemPromptComposer: Sendable {
 
     /// Assemble the memory snippet for an agent. Returns `nil` when memory
     /// is disabled, blank, or empty after trimming. Centralised so chat,
-    /// work, and HTTP paths all produce the same output and the rest of
-    /// the composer never needs to know about the two `assembleContext`
-    /// overloads.
+    /// work, and HTTP paths all produce the same output.
     static func assembleMemorySection(
         agentId: String,
-        query: String? = nil,
-        toolsAvailable: Bool = true
+        query: String? = nil
     ) async -> String? {
         let config = MemoryConfigurationStore.load()
-        let trimmedQuery = query?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let assembled: String
-        if let trimmedQuery, !trimmedQuery.isEmpty {
-            assembled = await MemoryContextAssembler.assembleContext(
-                agentId: agentId,
-                config: config,
-                query: trimmedQuery,
-                toolsAvailable: toolsAvailable
-            )
-        } else {
-            assembled = await MemoryContextAssembler.assembleContext(
-                agentId: agentId,
-                config: config,
-                toolsAvailable: toolsAvailable
-            )
-        }
+        let trimmedQuery = query?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let assembled = await MemoryContextAssembler.assembleContext(
+            agentId: agentId,
+            config: config,
+            query: trimmedQuery
+        )
         let trimmed = assembled.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : assembled
     }
@@ -175,10 +162,7 @@ public struct SystemPromptComposer: Sendable {
         let memorySection: String? =
             memoryOff
             ? nil
-            : await assembleMemorySection(
-                agentId: agentId.uuidString,
-                toolsAvailable: !effectiveToolsOff
-            )
+            : await assembleMemorySection(agentId: agentId.uuidString)
         trace?.mark("memory_done")
 
         // Surface a "sandbox unavailable" notice when the agent wants
@@ -682,7 +666,6 @@ public struct SystemPromptComposer: Sendable {
         // Memory assembly itself runs on the cooperative thread pool so the
         // app stays responsive during HTTP requests.
         let composer = await MainActor.run { forChat(agentId: agentId, executionMode: .none) }
-        let toolsOff = await AgentManager.shared.effectiveToolsDisabled(for: agentId)
         let memoryOff = await AgentManager.shared.effectiveMemoryDisabled(for: agentId)
 
         let memorySection: String? =
@@ -690,8 +673,7 @@ public struct SystemPromptComposer: Sendable {
             ? nil
             : await assembleMemorySection(
                 agentId: agentId.uuidString,
-                query: query,
-                toolsAvailable: !toolsOff
+                query: query
             )
 
         let manifest = composer.manifest()

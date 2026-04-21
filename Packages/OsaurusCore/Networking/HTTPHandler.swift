@@ -1391,15 +1391,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
         Task(priority: .userInitiated) {
             let db = MemoryDatabase.shared
-            try? db.upsertConversation(
-                id: req.conversation_id,
-                agentId: req.agent_id,
-                title: nil
-            )
 
             let skipExtraction = req.skip_extraction ?? false
 
-            try? db.deleteChunksForConversation(req.conversation_id)
+            try? db.deleteTranscriptForConversation(req.conversation_id)
 
             for (i, turn) in req.turns.enumerated() {
                 let turnDate = turn.date ?? req.session_date
@@ -1410,7 +1405,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 ]
                 for (role, content, chunkIndex) in pairs {
                     let tokens = max(1, content.count / 4)
-                    let chunk = ConversationChunk(
+                    let storedTurn = TranscriptTurn(
                         conversationId: req.conversation_id,
                         chunkIndex: chunkIndex,
                         role: role,
@@ -1418,28 +1413,37 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         tokenCount: tokens,
                         agentId: req.agent_id
                     )
-                    try? db.insertChunk(
+                    try? db.insertTranscriptTurn(
+                        agentId: req.agent_id,
                         conversationId: req.conversation_id,
                         chunkIndex: chunkIndex,
                         role: role,
                         content: content,
                         tokenCount: tokens,
-                        createdAt: turnDate,
-                        sourceMode: .chat
+                        createdAt: turnDate
                     )
-                    await MemorySearchService.shared.indexConversationChunk(chunk)
+                    await MemorySearchService.shared.indexTranscriptTurn(storedTurn)
                 }
 
                 if !skipExtraction {
-                    await MemoryService.shared.recordConversationTurn(
+                    await MemoryService.shared.bufferTurn(
                         userMessage: turn.user,
                         assistantMessage: turn.assistant,
                         agentId: req.agent_id,
                         conversationId: req.conversation_id,
-                        sourceMode: .chat,
                         sessionDate: turnDate
                     )
                 }
+            }
+
+            // Ingestion always implies "I'm done with this conversation
+            // batch": flush distillation immediately so callers (benchmarks,
+            // bulk imports) don't have to wait for the debounce.
+            if !skipExtraction {
+                await MemoryService.shared.flushSession(
+                    agentId: req.agent_id,
+                    conversationId: req.conversation_id
+                )
             }
 
             let responseBody = "{\"status\":\"ok\",\"turns_ingested\":\(req.turns.count)}"
@@ -1737,7 +1741,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
             let db = MemoryDatabase.shared
             var memoryCounts: [String: Int] = [:]
-            if db.isOpen, let counts = try? db.agentIdsWithEntries() {
+            if db.isOpen, let counts = try? db.agentIdsWithPinnedFacts() {
                 for (agentId, count) in counts {
                     memoryCounts[agentId] = count
                 }

@@ -2,258 +2,109 @@
 //  MemoryContextAssembler.swift
 //  osaurus
 //
-//  Builds the memory context block for injection into system prompts.
-//  Assembly order: current date, user edits, profile, working memory, summaries,
-//  key relationships. Query-aware retrieval adds relevant entries, summaries, and chunks.
+//  Thin facade over MemoryRelevanceGate + MemoryPlanner. Builds the memory
+//  block to inject before the user's message.
+//
+//  v1 stitched five sections totaling ~17K tokens on every turn. v2 routes
+//  through the gate first and emits at most one section (default ~800
+//  tokens), plus the always-on identity overrides block (which is tiny).
 //
 
 import Foundation
 
 public actor MemoryContextAssembler {
-    private static let charsPerToken = MemoryConfiguration.charsPerToken
-    static let shared = MemoryContextAssembler()
+    public static let shared = MemoryContextAssembler()
 
     private struct CacheEntry {
         let context: String
         let timestamp: Date
     }
 
-    /// Cache is keyed by (agentId, toolsAvailable) so the two filter views don't
-    /// collide. Chat-only vs. full-view produce different context strings and
-    /// must not share a slot.
+    /// Cache key includes the query so different queries produce different
+    /// gate verdicts and don't share a slot.
     private var cache: [String: CacheEntry] = [:]
     private static let cacheTTL: TimeInterval = 10
 
-    private static func cacheKey(agentId: String, toolsAvailable: Bool) -> String {
-        "\(agentId)|tools=\(toolsAvailable ? 1 : 0)"
-    }
+    public init() {}
 
-    /// Assemble the full memory context string for injection before the system prompt.
-    /// User edits and profile are never trimmed. Working memory, summaries, and key
-    /// relationships are budget-trimmed. Results are cached for 10 seconds per agent.
-    ///
-    /// When `toolsAvailable` is false (pure chat), entries, summaries, and conversation
-    /// chunks recorded under tool-using modes are excluded so that agentic contributions
-    /// don't prime the model with phantom tool affordances. Pre-v4 rows (NULL source_mode)
-    /// are always included to preserve history after upgrade.
+    /// Assemble the memory block for the given agent and (optional) query.
+    /// Always includes identity overrides (cheap, user-authored). The
+    /// dynamic section is chosen by the relevance gate.
     public static func assembleContext(
         agentId: String,
         config: MemoryConfiguration,
-        toolsAvailable: Bool = true
+        query: String = ""
     ) async -> String {
-        await shared.assembleContextCached(
-            agentId: agentId,
-            config: config,
-            toolsAvailable: toolsAvailable
-        )
+        await shared.assemble(agentId: agentId, config: config, query: query)
     }
 
-    /// Assemble context with query-aware retrieval. Includes a "Relevant Memories" section
-    /// with entries and conversation chunks semantically matched to the user's query.
-    public static func assembleContext(
+    private func assemble(
         agentId: String,
         config: MemoryConfiguration,
-        query: String,
-        toolsAvailable: Bool = true
-    ) async -> String {
-        await shared.assembleContextWithQuery(
-            agentId: agentId,
-            config: config,
-            query: query,
-            toolsAvailable: toolsAvailable
-        )
-    }
-
-    private func assembleContextWithQuery(
-        agentId: String,
-        config: MemoryConfiguration,
-        query: String,
-        toolsAvailable: Bool
+        query: String
     ) async -> String {
         guard config.enabled else { return "" }
+        guard MemoryDatabase.shared.isOpen else { return "" }
 
-        let baseContext = buildContext(
-            agentId: agentId,
-            config: config,
-            toolsAvailable: toolsAvailable
-        )
-
-        guard !query.isEmpty else { return baseContext }
-
-        let relevantSection = await buildQueryRelevantSection(
-            agentId: agentId,
-            query: query,
-            config: config,
-            existingContext: baseContext,
-            toolsAvailable: toolsAvailable
-        )
-
-        if relevantSection.isEmpty {
-            return baseContext
-        }
-
-        return baseContext.isEmpty ? relevantSection : baseContext + "\n\n" + relevantSection
-    }
-
-    private func assembleContextCached(
-        agentId: String,
-        config: MemoryConfiguration,
-        toolsAvailable: Bool
-    ) -> String {
-        guard config.enabled else { return "" }
-
-        let key = Self.cacheKey(agentId: agentId, toolsAvailable: toolsAvailable)
-        if let cached = cache[key], Date().timeIntervalSince(cached.timestamp) < Self.cacheTTL {
+        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cacheKey = "\(agentId)|\(trimmedQuery.prefix(120))"
+        if let cached = cache[cacheKey], Date().timeIntervalSince(cached.timestamp) < Self.cacheTTL {
             return cached.context
         }
 
-        let context = buildContext(
-            agentId: agentId,
-            config: config,
-            toolsAvailable: toolsAvailable
+        let identity = (try? MemoryDatabase.shared.loadIdentity()) ?? Identity()
+
+        // Identity overrides are always included (and tiny).
+        let overridesBlock = MemoryPlanner.assembleIdentityOverridesOnly()
+
+        // Pull a small entity list for the gate from recent episodes.
+        let recentEpisodes =
+            (try? MemoryDatabase.shared.loadEpisodes(agentId: agentId, days: 90, limit: 25)) ?? []
+        let knownEntities = Set(
+            recentEpisodes.flatMap(\.entities)
+                + identity.overrides.flatMap { $0.split(separator: " ").map(String.init) }
+        ).filter { $0.count >= 4 }
+
+        let section = MemoryRelevanceGate.decide(
+            query: trimmedQuery,
+            identity: identity,
+            knownEntities: Array(knownEntities),
+            mode: config.relevanceGateMode
         )
-        cache[key] = CacheEntry(context: context, timestamp: Date())
-        return context
+
+        let dynamic =
+            section == .none
+            ? ""
+            : await MemoryPlanner.assemble(
+                section: section,
+                agentId: agentId,
+                query: trimmedQuery,
+                budgetTokens: config.memoryBudgetTokens
+            )
+
+        var blocks: [String] = []
+        let today = Self.naturalOutputFormatter.string(from: Date())
+        blocks.append("Current date: \(today)")
+        if !overridesBlock.isEmpty { blocks.append(overridesBlock) }
+        if !dynamic.isEmpty { blocks.append(dynamic) }
+
+        // If only the date was added, skip injection entirely so we don't
+        // pay context cost on no-op turns.
+        let dynamicHadContent = !overridesBlock.isEmpty || !dynamic.isEmpty
+        let result = dynamicHadContent ? blocks.joined(separator: "\n\n") : ""
+
+        cache[cacheKey] = CacheEntry(context: result, timestamp: Date())
+        return result
     }
 
-    /// Invalidate cached context for a specific agent.
+    /// Invalidate cache. Pass `agentId` to clear just that agent's slots.
     public func invalidateCache(agentId: String? = nil) {
         if let agentId {
-            cache.removeValue(forKey: agentId)
+            cache = cache.filter { !$0.key.hasPrefix("\(agentId)|") }
         } else {
             cache.removeAll()
         }
     }
-
-    private func buildContext(
-        agentId: String,
-        config: MemoryConfiguration,
-        toolsAvailable: Bool
-    ) -> String {
-        let db = MemoryDatabase.shared
-        guard db.isOpen else { return "" }
-
-        // Pure-chat recall filters out tool-mode contributions to prevent
-        // phantom-tool priming. Tool-capable recall sees everything.
-        let chatOnly = !toolsAvailable
-
-        var sections: [String] = []
-
-        // 0. Temporal anchor — current date for reasoning about time
-        let today = Self.naturalOutputFormatter.string(from: Date())
-        sections.append("Current date: \(today)")
-
-        // 1. User Edits (explicit overrides — never trimmed)
-        do {
-            let edits = try db.loadUserEdits()
-            if !edits.isEmpty {
-                var block = "## User Overrides\n"
-                for edit in edits {
-                    block += "- \(edit.content)\n"
-                }
-                sections.append(block)
-            }
-        } catch {
-            MemoryLogger.service.warning("Context assembly: failed to load user edits: \(error)")
-        }
-
-        // 2. User Profile (never trimmed)
-        do {
-            if let profile = try db.loadUserProfile() {
-                sections.append("## User Profile\n\(profile.content)")
-            }
-        } catch {
-            MemoryLogger.service.warning("Context assembly: failed to load user profile: \(error)")
-        }
-
-        // 3. Remembered Details (this agent's active entries)
-        do {
-            let entries = try db.loadActiveEntries(agentId: agentId, chatOnly: chatOnly)
-            if !entries.isEmpty {
-                let block = buildBudgetSection(
-                    header: "## Remembered Details",
-                    budgetTokens: config.workingMemoryBudgetTokens,
-                    items: entries,
-                    formatLine: Self.formatEntryLine
-                )
-
-                do { try db.touchMemoryEntries(ids: entries.map(\.id)) } catch {
-                    MemoryLogger.service.warning("Context assembly: failed to touch entries: \(error)")
-                }
-                sections.append(block)
-            }
-        } catch {
-            MemoryLogger.service.warning("Context assembly: failed to load working memory: \(error)")
-        }
-
-        // 4. Conversation Summaries (this agent, last N days)
-        do {
-            let summaries = try db.loadSummaries(
-                agentId: agentId,
-                days: config.summaryRetentionDays,
-                chatOnly: chatOnly
-            )
-            if !summaries.isEmpty {
-                sections.append(
-                    buildBudgetSection(
-                        header: "## Recent Conversation Summaries",
-                        budgetTokens: config.summaryBudgetTokens,
-                        items: summaries
-                    ) { "- [date: \(Self.naturalLanguageDate($0.conversationAt))] \($0.summary)" }
-                )
-            }
-        } catch {
-            MemoryLogger.service.warning("Context assembly: failed to load summaries: \(error)")
-        }
-
-        // 5. Knowledge Graph (key relationships)
-        do {
-            let relationships = try db.loadRecentRelationships(limit: 30)
-            if !relationships.isEmpty {
-                sections.append(
-                    buildBudgetSection(
-                        header: "## Key Relationships",
-                        budgetTokens: config.graphBudgetTokens,
-                        items: relationships
-                    ) { "- \($0.path)" }
-                )
-            }
-        } catch {
-            MemoryLogger.service.warning("Context assembly: failed to load relationships: \(error)")
-        }
-
-        guard !sections.isEmpty else { return "" }
-        return sections.joined(separator: "\n\n")
-    }
-
-    /// Build a markdown section from items, trimming to a token budget.
-    private func buildBudgetSection<T>(
-        header: String,
-        budgetTokens: Int,
-        items: [T],
-        formatLine: (T) -> String
-    ) -> String {
-        let budgetChars = budgetTokens * Self.charsPerToken
-        var block = "\(header)\n"
-        var usedChars = block.count
-
-        for item in items {
-            let line = "\(formatLine(item))\n"
-            if usedChars + line.count > budgetChars { break }
-            block += line
-            usedChars += line.count
-        }
-        return block
-    }
-
-    /// Convert an ISO 8601 date string (e.g. "2023-05-08") to natural language (e.g. "8 May 2023").
-    /// Returns the original string unchanged if it can't be parsed.
-    private static let isoInputFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "yyyy-MM-dd"
-        f.locale = Locale(identifier: "en_US_POSIX")
-        return f
-    }()
 
     private static let naturalOutputFormatter: DateFormatter = {
         let f = DateFormatter()
@@ -261,199 +112,4 @@ public actor MemoryContextAssembler {
         f.locale = Locale(identifier: "en_US")
         return f
     }()
-
-    static func naturalLanguageDate(_ iso: String) -> String {
-        let trimmed = String(iso.prefix(10))
-        guard let date = isoInputFormatter.date(from: trimmed) else { return iso }
-        return naturalOutputFormatter.string(from: date)
-    }
-
-    /// Format a memory entry as a context line, including type and optional date.
-    private static func formatEntryLine(_ entry: MemoryEntry) -> String {
-        var line = "- [\(entry.type.displayName)] \(entry.content)"
-        if !entry.validFrom.isEmpty {
-            line += " (date: \(naturalLanguageDate(entry.validFrom)))"
-        }
-        return line
-    }
-
-    /// Build a temporal anchor from collected ISO date strings.
-    /// Returns nil if fewer than 1 valid date is found.
-    private static func temporalAnchor(from isoDates: [String]) -> String? {
-        let parsed = isoDates.compactMap { isoInputFormatter.date(from: String($0.prefix(10))) }
-        guard let earliest = parsed.min(), let latest = parsed.max() else { return nil }
-        let today = naturalOutputFormatter.string(from: Date())
-        let e = naturalOutputFormatter.string(from: earliest)
-        let l = naturalOutputFormatter.string(from: latest)
-        if e == l {
-            return
-                "Today is \(today). The conversations below occurred around \(e). Use both the memory dates and today's date to reason about time."
-        }
-        return
-            "Today is \(today). The conversations below occurred between \(e) and \(l). Use both the memory dates and today's date to reason about time."
-    }
-
-    // MARK: - Chunk Window Expansion
-
-    /// Expand retrieved chunks by loading adjacent turns from the same conversation,
-    /// providing conversational context that helps answer cross-turn questions.
-    /// The mode filter must match the one used to retrieve the seed chunks so
-    /// window expansion cannot resurface tool-mode turns.
-    private static func expandChunkWindow(
-        _ chunks: [ConversationChunk],
-        windowSize: Int,
-        chatOnly: Bool
-    ) -> [ConversationChunk] {
-        guard !chunks.isEmpty else { return [] }
-
-        var existingKeys = Set(chunks.map { "\($0.conversationId):\($0.chunkIndex)" })
-        var expandedKeys: [(conversationId: String, chunkIndex: Int)] = []
-
-        for chunk in chunks {
-            for offset in -windowSize ... windowSize where offset != 0 {
-                let adjIndex = chunk.chunkIndex + offset
-                guard adjIndex >= 0 else { continue }
-                let key = "\(chunk.conversationId):\(adjIndex)"
-                if !existingKeys.contains(key) {
-                    existingKeys.insert(key)
-                    expandedKeys.append((chunk.conversationId, adjIndex))
-                }
-            }
-        }
-
-        var allChunks = chunks
-        if !expandedKeys.isEmpty {
-            if let adjacent = try? MemoryDatabase.shared.loadChunksByKeys(
-                expandedKeys,
-                chatOnly: chatOnly
-            ) {
-                allChunks.append(contentsOf: adjacent)
-            }
-        }
-
-        return allChunks.sorted {
-            if $0.conversationId != $1.conversationId { return $0.conversationId < $1.conversationId }
-            return $0.chunkIndex < $1.chunkIndex
-        }
-    }
-
-    // MARK: - Query-Aware Retrieval
-
-    /// Search for memory entries and conversation chunks relevant to the query,
-    /// deduplicating against entries already present in the base context.
-    private func buildQueryRelevantSection(
-        agentId: String,
-        query: String,
-        config: MemoryConfiguration,
-        existingContext: String,
-        toolsAvailable: Bool
-    ) async -> String {
-        let searchService = MemorySearchService.shared
-
-        let topK = config.recallTopK
-        let lambda = config.mmrLambda
-        let fetchMultiplier = config.mmrFetchMultiplier
-        let chatOnly = !toolsAvailable
-
-        async let entriesResult = searchService.searchMemoryEntries(
-            query: query,
-            agentId: agentId,
-            topK: topK,
-            lambda: lambda,
-            fetchMultiplier: fetchMultiplier,
-            chatOnly: chatOnly
-        )
-        async let chunksResult = searchService.searchConversations(
-            query: query,
-            agentId: agentId,
-            days: 3650,
-            topK: topK,
-            lambda: lambda,
-            fetchMultiplier: fetchMultiplier,
-            chatOnly: chatOnly
-        )
-        async let summariesResult = searchService.searchSummaries(
-            query: query,
-            agentId: agentId,
-            topK: topK,
-            lambda: lambda,
-            fetchMultiplier: fetchMultiplier,
-            chatOnly: chatOnly
-        )
-
-        let entries = await entriesResult
-        let searchedChunks = await chunksResult
-        let summaries = await summariesResult
-
-        let chunks = Self.expandChunkWindow(searchedChunks, windowSize: 2, chatOnly: chatOnly)
-
-        var sections: [String] = []
-        var allDates: [String] = []
-
-        // Chunks first — raw dialogue contains the specific details that
-        // single-hop and temporal questions target.
-        if !chunks.isEmpty {
-            for chunk in chunks where !chunk.createdAt.isEmpty {
-                allDates.append(chunk.createdAt)
-            }
-            sections.append(
-                buildBudgetSection(
-                    header: "## Relevant Conversation Excerpts",
-                    budgetTokens: config.chunkBudgetTokens,
-                    items: chunks
-                ) { chunk in
-                    var line = "- \(chunk.content)"
-                    if !chunk.createdAt.isEmpty {
-                        line += " (date: \(Self.naturalLanguageDate(chunk.createdAt)))"
-                    }
-                    return line
-                }
-            )
-        }
-
-        if !entries.isEmpty {
-            let deduplicated = entries.filter { entry in
-                !existingContext.contains(entry.content)
-            }
-            if !deduplicated.isEmpty {
-                for entry in deduplicated where !entry.validFrom.isEmpty {
-                    allDates.append(entry.validFrom)
-                }
-                sections.append(
-                    buildBudgetSection(
-                        header: "## Relevant Memories",
-                        budgetTokens: config.workingMemoryBudgetTokens,
-                        items: deduplicated,
-                        formatLine: Self.formatEntryLine
-                    )
-                )
-            }
-        }
-
-        if !summaries.isEmpty {
-            let deduplicated = summaries.filter { summary in
-                !existingContext.contains(summary.summary)
-            }
-            if !deduplicated.isEmpty {
-                for summary in deduplicated {
-                    allDates.append(summary.conversationAt)
-                }
-                sections.append(
-                    buildBudgetSection(
-                        header: "## Relevant Summaries",
-                        budgetTokens: config.summaryBudgetTokens,
-                        items: deduplicated
-                    ) { "- [date: \(Self.naturalLanguageDate($0.conversationAt))] \($0.summary)" }
-                )
-            }
-        }
-
-        guard !sections.isEmpty else { return "" }
-
-        if let anchor = Self.temporalAnchor(from: allDates) {
-            sections.insert(anchor, at: 0)
-        }
-
-        return sections.joined(separator: "\n\n")
-    }
 }

@@ -540,11 +540,11 @@ curl http://127.0.0.1:1337/v1/responses \
 
 ## Memory API
 
-Osaurus provides a persistent memory system that can be used via the API. Memory learns from conversations and injects relevant context automatically into future requests.
+Osaurus provides a persistent memory system that can be used via the API. The v2 system distills sessions in the background, then injects at most one compact memory section (~800 tokens by default) into requests where the user's query actually needs it. See [docs/MEMORY.md](MEMORY.md) for the full architecture.
 
 ### Memory Context Injection — `X-Osaurus-Agent-Id` Header
 
-Add the `X-Osaurus-Agent-Id` header to any `POST /chat/completions` request and Osaurus will automatically assemble relevant memory (user profile, working memory, conversation summaries, knowledge graph) and prepend it to the system prompt.
+Add the `X-Osaurus-Agent-Id` header to any `POST /chat/completions` request. Osaurus runs a relevance gate against the latest user message, picks at most one memory section (identity, pinned facts, episodes, or transcript), and prepends it — together with always-on identity overrides — to the user message.
 
 The header value is an arbitrary string that identifies the agent or user session whose memory should be retrieved.
 
@@ -582,7 +582,7 @@ When the header is absent or empty, the request is processed normally without me
 
 ### Memory Ingestion — `POST /memory/ingest`
 
-Bulk-ingest conversation turns into the memory system for a given agent. Osaurus processes ingested turns asynchronously — extracting facts, updating the user profile, and building the knowledge graph in the background.
+Bulk-ingest conversation turns. Osaurus inserts each turn into the transcript and then flushes session distillation immediately at the end of the batch — you do not have to wait for the writer's debounce. Distillation produces an episode and (when warranted) a small set of pinned facts.
 
 ```bash
 curl http://127.0.0.1:1337/memory/ingest \
@@ -602,6 +602,8 @@ curl http://127.0.0.1:1337/memory/ingest \
 | `agent_id` | string | Identifier for the agent whose memory is being populated (required) |
 | `conversation_id` | string | Identifier for the conversation session (required) |
 | `turns` | array | Array of turn objects, each with `user` and `assistant` string fields (required) |
+| `session_date` | string | Optional ISO 8601 date for the whole batch |
+| `skip_extraction` | bool | When `true`, only insert transcript rows; skip distillation |
 
 Response:
 
@@ -611,7 +613,7 @@ Response:
 
 ### List Agents — `GET /agents`
 
-Returns all configured agents along with their memory entry counts. Use this to discover agent IDs for the `X-Osaurus-Agent-Id` header.
+Returns all configured agents along with their pinned-fact counts. Use this to discover agent IDs for the `X-Osaurus-Agent-Id` header.
 
 ```bash
 curl http://127.0.0.1:1337/agents

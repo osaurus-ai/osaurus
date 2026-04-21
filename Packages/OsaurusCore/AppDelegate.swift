@@ -184,12 +184,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             await SkillSearchService.shared.rebuildIndex()
             await MethodSearchService.shared.rebuildIndex()
         }
-        // Start activity tracking and recover orphaned signals once DB is ready
+        // Start activity tracking, drain any pending sessions left over from
+        // the previous launch, and arm the periodic consolidator.
         Task { @MainActor in
             await embeddingInitTask.value
             if MemoryDatabase.shared.isOpen {
                 ActivityTracker.shared.start()
                 await MemoryService.shared.recoverOrphanedSignals()
+                await MemoryConsolidator.shared.start()
             }
         }
 

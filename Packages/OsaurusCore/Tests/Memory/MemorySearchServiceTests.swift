@@ -2,8 +2,8 @@
 //  MemorySearchServiceTests.swift
 //  osaurus
 //
-//  Tests for MemorySearchService: verifies graceful degradation when
-//  VecturaKit is uninitialized and validates topK guards + MMR edge cases.
+//  Tests for MemorySearchService: graceful degradation when VecturaKit is
+//  uninitialized, topK guards, and MMR edge cases.
 //
 
 import Foundation
@@ -15,59 +15,59 @@ struct MemorySearchServiceTests {
 
     // MARK: - Uninitialized behavior
 
-    @Test func searchMemoryEntriesReturnsEmptyWhenUninitialized() async {
-        let results = await MemorySearchService.shared.searchMemoryEntries(query: "test query")
+    @Test func searchPinnedFactsReturnsEmptyWhenUninitialized() async {
+        let results = await MemorySearchService.shared.searchPinnedFacts(query: "test")
         #expect(results.isEmpty)
     }
 
-    @Test func searchConversationsReturnsEmptyWhenUninitialized() async {
-        let results = await MemorySearchService.shared.searchConversations(query: "test query")
+    @Test func searchEpisodesReturnsEmptyWhenUninitialized() async {
+        let results = await MemorySearchService.shared.searchEpisodes(query: "test")
         #expect(results.isEmpty)
     }
 
-    @Test func searchSummariesReturnsEmptyWhenUninitialized() async {
-        let results = await MemorySearchService.shared.searchSummaries(query: "test query")
-        #expect(results.isEmpty)
-    }
-
-    @Test func searchMemoryEntriesWithScoresReturnsEmptyWhenUninitialized() async {
-        let results = await MemorySearchService.shared.searchMemoryEntriesWithScores(query: "test query")
+    @Test func searchTranscriptReturnsEmptyWhenUninitialized() async {
+        let results = await MemorySearchService.shared.searchTranscript(query: "test")
         #expect(results.isEmpty)
     }
 
     // MARK: - topK: 0 guard
 
-    @Test func searchMemoryEntriesWithTopKZeroReturnsEmpty() async {
-        let results = await MemorySearchService.shared.searchMemoryEntries(query: "anything", topK: 0)
+    @Test func searchPinnedFactsWithTopKZeroReturnsEmpty() async {
+        let results = await MemorySearchService.shared.searchPinnedFacts(query: "x", topK: 0)
         #expect(results.isEmpty)
     }
 
-    @Test func searchConversationsWithTopKZeroReturnsEmpty() async {
-        let results = await MemorySearchService.shared.searchConversations(query: "anything", topK: 0)
+    @Test func searchEpisodesWithTopKZeroReturnsEmpty() async {
+        let results = await MemorySearchService.shared.searchEpisodes(query: "x", topK: 0)
         #expect(results.isEmpty)
     }
 
-    @Test func searchSummariesWithTopKZeroReturnsEmpty() async {
-        let results = await MemorySearchService.shared.searchSummaries(query: "anything", topK: 0)
-        #expect(results.isEmpty)
-    }
-
-    @Test func searchWithScoresTopKZeroReturnsEmpty() async {
-        let results = await MemorySearchService.shared.searchMemoryEntriesWithScores(query: "anything", topK: 0)
+    @Test func searchTranscriptWithTopKZeroReturnsEmpty() async {
+        let results = await MemorySearchService.shared.searchTranscript(query: "x", topK: 0)
         #expect(results.isEmpty)
     }
 
     // MARK: - No-crash operations when uninitialized
 
-    @Test func indexConversationChunkDoesNotCrashWhenUninitialized() async {
-        let chunk = ConversationChunk(
-            conversationId: "conv-1",
+    @Test func indexTranscriptTurnDoesNotCrashWhenUninitialized() async {
+        let turn = TranscriptTurn(
+            conversationId: "c",
             chunkIndex: 0,
             role: "user",
-            content: "test content",
-            tokenCount: 4
+            content: "x",
+            tokenCount: 1
         )
-        await MemorySearchService.shared.indexConversationChunk(chunk)
+        await MemorySearchService.shared.indexTranscriptTurn(turn)
+    }
+
+    @Test func indexEpisodeDoesNotCrashWhenUninitialized() async {
+        let ep = Episode(
+            agentId: "a",
+            conversationId: "c",
+            summary: "x",
+            conversationAt: "2025-01-01T00:00:00Z"
+        )
+        await MemorySearchService.shared.indexEpisode(ep)
     }
 
     @Test func rebuildIndexDoesNotCrashWhenUninitialized() async {

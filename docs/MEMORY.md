@@ -1,352 +1,200 @@
 # Memory
 
-Osaurus includes a persistent memory system that learns from your conversations and provides personalized context to every AI interaction. Memory runs entirely in the background -- it extracts knowledge automatically, deduplicates entries, detects contradictions, and injects relevant context into each new conversation.
+Osaurus has a persistent, on-device memory system that learns from your conversations and surfaces relevant context only when it actually helps. Memory runs in the background, stores very little, and injects ~800 tokens (or zero) per turn instead of the firehose-style stuffing that v1 did.
+
+The mental model is simple: a smart secretary that knows what you've discussed and surfaces only what matters right now — not a tape recorder.
 
 ---
 
 ## Getting Started
 
 1. Open the Management window (`⌘ Shift M`) → **Memory**
-2. Memory is **enabled by default** -- toggle it off in the Memory settings if you prefer stateless conversations
-3. Choose a **core model** for extraction (default: `anthropic/claude-haiku-4-5`) -- this model processes conversation turns to extract structured memories
-4. Start chatting -- memories are extracted automatically from each conversation turn
+2. Memory is **enabled by default** — toggle it off in the Memory settings if you prefer stateless conversations
+3. Choose a **core model** for distillation in Settings → General (default: `anthropic/claude-haiku-4-5`)
+4. Start chatting — sessions are distilled in the background once they end
 
-No manual tagging, saving, or annotation is required. The system handles everything in the background without blocking your chat.
+No manual tagging, saving, or annotation is required.
 
 ---
 
-## 4-Layer Architecture
-
-Memory is organized into four layers, each serving a different purpose:
+## Three Layers + Transcript
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│                         Memory System                            │
+│                      Memory System (v2)                          │
 ├──────────────────────────────────────────────────────────────────┤
-│  Layer 1: User Profile                                           │
-│  Auto-generated summary of who you are, rebuilt as new           │
-│  contributions accumulate. Includes user overrides.              │
+│  Identity                                                        │
+│  Stable user facts: explicit overrides + auto-derived narrative. │
 ├──────────────────────────────────────────────────────────────────┤
-│  Layer 2: Working Memory                                         │
-│  Structured entries: facts, preferences, decisions,              │
-│  corrections, commitments, relationships, skills.                │
+│  Pinned Facts                                                    │
+│  Salience-scored facts promoted from session distillations.      │
+│  Decayed and evicted by the consolidator.                        │
 ├──────────────────────────────────────────────────────────────────┤
-│  Layer 3: Conversation Summaries                                 │
-│  Structured recaps of past sessions (topics, decisions,          │
-│  key dates, action items), generated after inactivity.           │
+│  Episodes                                                        │
+│  Per-session digests: summary, topics, decisions, entities.      │
+│  Replaces the v1 separate "working memory" and "summaries"       │
+│  tables.                                                         │
 ├──────────────────────────────────────────────────────────────────┤
-│  Layer 4: Conversation Chunks                                    │
-│  Raw conversation turns indexed for query-matched retrieval.     │
+│  Transcript                                                      │
+│  Raw conversation turns kept for fallback retrieval only.        │
+│  Never default-injected into context.                            │
 └──────────────────────────────────────────────────────────────────┘
-│                                                                   │
-│  Knowledge Graph (cross-cutting)                                  │
-│  Entities and relationships extracted from all layers.            │
-└───────────────────────────────────────────────────────────────────┘
 ```
 
-### Layer 1: User Profile
+### Identity
 
-A continuously updated summary of who you are. The profile is regenerated automatically after a configurable number of new contributions (default: 10).
+A single row containing two fields:
 
-- **Auto-generated** -- built from accumulated profile facts extracted during conversations
-- **Version tracked** -- each regeneration increments the version number
-- **User overrides** -- explicit facts you add manually that always appear in context, regardless of profile regeneration
+- **Overrides** — explicit user-authored facts ("My name is Terence", "Always reply in English"). Always surfaced in context. Authored via the **Memory** → **Your Overrides** UI.
+- **Content** — auto-derived narrative ("User builds Swift apps for macOS, prefers Postgres, lives in PT timezone."). Regenerated by the consolidator from accumulated identity-grade signals.
 
-User overrides take the highest priority in context assembly and are never overwritten by automatic extraction.
+### Pinned Facts
 
-### Layer 2: Working Memory
+The promotable pool. Each fact carries:
 
-Structured memory entries extracted from every conversation turn. Each entry has a type, confidence score, tags, and temporal validity.
+- `content` — the fact itself, in plain text
+- `salience` — score in `[0, 1]`. Decayed weekly (`exp(-Δdays / 30)`). Evicted below the floor (default `0.2`) once idle for 30+ days.
+- `sourceCount` — number of episodes that mention it
+- `useCount` / `lastUsed` — bumped every time the planner surfaces the fact in context
 
-| Entry Type | Description | Example |
-|------------|-------------|---------|
-| **Fact** | Factual information | "User works at Acme Corp as a backend engineer" |
-| **Preference** | Likes, dislikes, and preferences | "Prefers Swift over Objective-C" |
-| **Decision** | Decisions made during conversations | "Decided to use PostgreSQL for the new project" |
-| **Correction** | Corrections to previous information | "Actually uses Python 3.12, not 3.11" |
-| **Commitment** | Promises, plans, or intentions | "Plans to migrate to Kubernetes next quarter" |
-| **Relationship** | Connections between people, projects, or concepts | "Alice is the tech lead on Project Nova" |
-| **Skill** | Skills, expertise, or knowledge areas | "Experienced with Docker and CI/CD pipelines" |
+### Episodes
 
-Entries include:
+One per session. Created by `MemoryService.distillSession` once the writer's debounce expires (default 60s of inactivity) or when the user navigates away. Each episode contains:
 
-- **Confidence scores** (0.0 -- 1.0) reflecting extraction certainty
-- **Tags** for categorization
-- **Temporal validity** (`validFrom` / `validUntil`) for time-bounded facts
-- **Access tracking** (last accessed time and count) for relevance scoring
-- **Supersession tracking** when newer information replaces older entries
+- `summary` — one to three sentences
+- `topics`, `entities` — comma-separated lists
+- `decisions`, `actionItems` — newline-separated bullet items
+- `salience` — model-assigned score, decayed by the consolidator
 
-### Layer 3: Conversation Summaries
+### Transcript
 
-Structured recaps of past conversation sessions. Summaries are generated automatically using a debounced approach:
-
-- A timer starts after the last conversation turn (default: 60 seconds)
-- If no new messages arrive within the debounce window, a summary is generated
-- Session changes (switching to a different conversation) also trigger summary generation
-- On startup, any orphaned pending signals from a previous session are recovered and processed
-
-Each summary uses a structured format capturing:
-
-- **Topics** discussed
-- **Decisions** made
-- **Key dates** or deadlines mentioned
-- **Action items** or commitments
-- A brief **overall summary**
-
-### Layer 4: Conversation Chunks
-
-Raw conversation turns stored individually and indexed for query-matched retrieval. Each chunk records:
-
-- The conversation ID and chunk index
-- The role (user or assistant) and full content
-- Token count and timestamp
-- The agent ID and optional conversation title
-
-Chunks are not dumped into context wholesale. At query time, only semantically relevant chunks are retrieved via hybrid search (BM25 + vector), reranked with MMR, and included within a token budget. Adjacent turns are loaded via window expansion to preserve conversational flow. This layer acts as a lossless fallback for details the extraction pipeline may have missed.
+Raw user/assistant turns. Never injected into the default context block. Used only when the user asks for literal recall ("what did I exactly say...") or as fallback search via the `transcript` scope of `search_memory`.
 
 ---
 
-## Knowledge Graph
+## Write Path: Deferred and Debounced
 
-The memory system builds a knowledge graph from extracted entities and relationships.
+```
+[user + assistant turn]
+         │
+         ▼
+[buffered as pending_signal]   ◄── per-turn cost: one SQL insert. No LLM.
+         │
+         ▼
+   debounce 60s
+         │  (or session-change / nav-away → flush immediately)
+         ▼
+[novelty gate: combined chars >= 80?]
+         │
+         ▼
+[ONE LLM call: distill the whole session]
+         │
+         ▼
+{episode + entities + pinned candidates + identity delta}
+         │
+         ├──► insert Episode (atomically marks signals processed)
+         ├──► insert PinnedFact for each candidate that passes Jaccard dedup
+         └──► append identity overrides for any new identity-grade facts
+```
 
-**Entity types:** person, company, place, project, tool, concept, event
+The hot path (`bufferTurn`) is a single SQL insert and a debounce arm. No LLM call ever runs synchronously with chat. Distillation is one LLM call per *session* (often covering 10+ turns), not one per turn.
 
-**Relationships** connect entities with:
-
-- A descriptive relation string (e.g., "works at", "manages", "depends on")
-- A confidence score
-- Temporal validity (optional `validFrom` / `validUntil`)
-
-**Graph search** supports:
-
-- Search by entity name to find all connected relationships
-- Search by relation type to discover entities with a specific connection
-- Depth-limited traversal (default depth: 2) to explore the neighborhood of an entity
-
----
-
-## Search & Retrieval
-
-Memory search uses a hybrid approach combining text and semantic matching.
-
-### Hybrid Search
-
-When VecturaKit is available (embedding model downloaded):
-
-1. **BM25** scores documents by keyword relevance
-2. **Vector embeddings** score documents by semantic similarity
-3. Scores are combined for a unified ranking
-
-When VecturaKit is unavailable, the system falls back to **SQLite LIKE queries** for basic text matching.
-
-### MMR Reranking
-
-To avoid returning many near-identical results, search results are reranked using Maximal Marginal Relevance (MMR):
-
-1. Over-fetch results (default: 2x the requested `topK`)
-2. Iteratively select results that balance **relevance** (search score) with **diversity** (Jaccard distance from already-selected results)
-3. The `lambda` parameter controls the tradeoff: 1.0 = pure relevance, 0.0 = pure diversity (default: 0.7)
-
-### Search Scopes
-
-| Scope | What it searches | Time window |
-|-------|-----------------|-------------|
-| Memory entries | Working memory (Layer 2) | All time |
-| Conversations | Conversation chunks (Layer 4) | All time (query-aware retrieval) |
-| Summaries | Conversation summaries (Layer 3) | Retention window (default: 180 days) |
-| Graph | Knowledge graph entities and relationships | All time |
+When the core model isn't configured, signals stay pending — `recoverOrphanedSignals` (called at startup) and `syncNow` (called from the Memory UI) drain them once a model is available.
 
 ---
 
-## Verification Pipeline
+## Read Path: Gated and Single-Section
 
-Before a new memory entry is stored, it passes through a 3-layer verification pipeline. This pipeline is entirely deterministic (no LLM calls) and prevents redundant or conflicting entries.
+```
+[incoming user message]
+         │
+         ▼
+[Relevance Gate: heuristic + optional LLM fallback]
+   ├── pronouns / "we discussed" / "remember when"  → episode
+   ├── "what's my name" / "who am I"                 → identity
+   ├── entity-name hit in graph                      → pinned
+   ├── "do you remember my preference"               → pinned
+   ├── "exact words" / "verbatim"                    → transcript
+   └── nothing fired                                 → none (skip memory)
+         │
+         ▼
+[Memory Planner: fetches the chosen section under the budget]
+         │
+         ▼
+[Compact memory block ≤ memoryBudgetTokens (default 800)]
+   + always-on Identity Overrides (tiny)
+         │
+         ▼
+[Prepend to the latest user message]
+```
 
-### Layer 1: Jaccard Deduplication
-
-Compares the new entry's words against existing entries using Jaccard similarity (word overlap). If the similarity exceeds the threshold (default: 0.6), the entry is skipped as a near-duplicate.
-
-### Layer 2: Contradiction Detection
-
-For entries of the same type, if the Jaccard similarity is moderate (above 0.3 but below the dedup threshold), the new entry is flagged as a potential contradiction. The newer entry supersedes the older one.
-
-### Layer 3: Semantic Deduplication
-
-Uses vector search to find semantically similar entries. If the similarity score exceeds the threshold (default: 0.85), the entry is skipped as a semantic duplicate even if the wording differs.
+The cache layer holds the assembled block for 10s per (agent, query) pair so retries don't re-run the gate.
 
 ---
 
-## Context Assembly
+## Consolidation: Background Maintenance
 
-Before each AI interaction, the `MemoryContextAssembler` builds a memory block that is injected into the system prompt. The block always begins with the current date so the model can reason about time relative to stored memories.
+`MemoryConsolidator` runs on a low-priority background task every `consolidationIntervalHours` (default 24h) and on the explicit **Run Consolidation Now** button in the Memory UI. Each pass:
 
-Context is assembled in priority order with per-section token budgets:
+1. **Decay** — `salience *= exp(-Δdays / 30)` for both pinned facts and episodes.
+2. **Merge** — collapse near-duplicate episodes (Jaccard ≥ 0.9 over summary+topics) within the same agent. Keeps the older episode, deletes the newer near-dup.
+3. **Promote** — boost salience on pinned facts whose content overlaps with ≥ 3 recent episodes.
+4. **Evict** — delete pinned facts below `salienceFloor` that have been idle for 30+ days.
+5. **Prune** — drop episodes and transcript turns older than `episodeRetentionDays`.
+6. **Purge** — trim old `processing_log` rows.
 
-| Priority | Section | Default Budget |
-|----------|---------|---------------|
-| 0 | Current Date | Always included (temporal anchor) |
-| 1 | User Overrides | Always included (no budget limit) |
-| 2 | User Profile | 2,000 tokens |
-| 3 | Working Memory | 3,000 tokens |
-| 4 | Conversation Summaries | 3,000 tokens |
-| 5 | Key Relationships | 300 tokens |
-
-When a user query is provided, an additional **query-aware retrieval** pass runs in parallel, searching entries, summaries, and conversation chunks for semantically relevant results. These are deduplicated against the base context and appended as "Relevant Memories", "Relevant Summaries", and "Relevant Conversation Excerpts" sections with their own budgets:
-
-| Section | Default Budget |
-|---------|---------------|
-| Relevant Conversation Excerpts | 3,000 tokens |
-| Relevant Memories | 3,000 tokens |
-| Relevant Summaries | 3,000 tokens |
-
-- Results are **cached for 10 seconds** per agent to avoid redundant database queries
-- Cache is invalidated when memory content changes
-- If total memory context exceeds available space, lower-priority sections are truncated first
+Consolidation never runs on the request path, so chat latency is unaffected.
 
 ---
 
 ## Configuration Reference
 
-All settings are configurable via the Memory tab in the Management window. The configuration file is stored as JSON and validated on load.
-
-### Core Model
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `coreModelProvider` | `anthropic` | Provider for the extraction model |
-| `coreModelName` | `claude-haiku-4-5` | Model used for memory extraction and summarization |
-| `embeddingBackend` | `mlx` | Embedding backend (`mlx` or `none`) |
-| `embeddingModel` | `nomic-embed-text-v1.5` | Model used for vector embeddings |
-
-### Token Budgets
+The full configuration lives in `~/.osaurus/config/memory.json` and is editable from the Memory tab in the Management window.
 
 | Setting | Default | Range | Description |
-|---------|---------|-------|-------------|
-| `profileMaxTokens` | 2,000 | 100 -- 50,000 | Max tokens for user profile |
-| `workingMemoryBudgetTokens` | 3,000 | 50 -- 10,000 | Token budget for working memory in context |
-| `summaryBudgetTokens` | 3,000 | 50 -- 10,000 | Token budget for summaries in context |
-| `chunkBudgetTokens` | 3,000 | 50 -- 20,000 | Token budget for conversation chunk excerpts in context |
-| `graphBudgetTokens` | 300 | 50 -- 5,000 | Token budget for knowledge graph in context |
+|---|---|---|---|
+| `enabled` | `true` | true/false | Master toggle |
+| `embeddingBackend` | `mlx` | `mlx` / `none` | Embedding backend. `none` falls back to SQLite text matching. |
+| `embeddingModel` | `nomic-embed-text-v1.5` | — | Model used by VecturaKit |
+| `extractionMode` | `sessionEnd` | `sessionEnd` / `manual` | When the writer runs distillation |
+| `relevanceGateMode` | `heuristic` | `off` / `heuristic` / `llm` | How the read path decides whether to inject memory |
+| `memoryBudgetTokens` | `800` | 100 – 4,000 | Single overall budget for the dynamic section |
+| `summaryDebounceSeconds` | `60` | 10 – 3,600 | Inactivity period before distillation |
+| `consolidationIntervalHours` | `24` | 1 – 168 | How often the consolidator runs |
+| `salienceFloor` | `0.2` | 0.0 – 1.0 | Pinned facts below this and idle 30+ days are evicted |
+| `episodeRetentionDays` | `365` | 0 – 3,650 | How long episodes/transcript are kept (0 = forever) |
 
-### Profile
-
-| Setting | Default | Range | Description |
-|---------|---------|-------|-------------|
-| `profileRegenerateThreshold` | 10 | 1 -- 100 | New contributions before profile regeneration |
-
-### Summaries
-
-| Setting | Default | Range | Description |
-|---------|---------|-------|-------------|
-| `summaryDebounceSeconds` | 60 | 10 -- 3,600 | Inactivity period before summary generation |
-| `summaryRetentionDays` | 180 | 0 -- 3,650 | How long summaries are retained (0 = unlimited) |
-
-### Search
-
-| Setting | Default | Range | Description |
-|---------|---------|-------|-------------|
-| `recallTopK` | 30 | 1 -- 100 | Number of results for recall searches |
-| `temporalDecayHalfLifeDays` | 30 | 1 -- 365 | Half-life for temporal decay in ranking |
-| `mmrLambda` | 0.7 | 0.0 -- 1.0 | Relevance vs. diversity tradeoff |
-| `mmrFetchMultiplier` | 2.0 | 1.0 -- 10.0 | Over-fetch multiplier before MMR reranking |
-
-### Verification
-
-| Setting | Default | Range | Description |
-|---------|---------|-------|-------------|
-| `verificationEnabled` | true | true/false | Enable the 3-layer verification pipeline |
-| `verificationJaccardDedupThreshold` | 0.6 | 0.0 -- 1.0 | Jaccard threshold for near-duplicate detection |
-| `verificationSemanticDedupThreshold` | 0.85 | 0.0 -- 1.0 | Vector similarity threshold for semantic dedup |
-
-### Limits
-
-| Setting | Default | Range | Description |
-|---------|---------|-------|-------------|
-| `maxEntriesPerAgent` | 500 | 0 -- 10,000 | Max active entries per agent (0 = unlimited) |
-| `enabled` | true | true/false | Master toggle for the memory system |
-
----
-
-## Architecture Details
-
-### Actor-Based Concurrency
-
-`MemoryService` and `MemorySearchService` are Swift actors, ensuring all state mutations are serialized and thread-safe. Background extraction never blocks the chat UI -- conversation turns are recorded and processed asynchronously.
-
-### Core Model Guard
-
-All LLM-dependent memory operations (extraction, summarization, profile regeneration, sync, and orphaned signal recovery) check whether a core model is configured before proceeding. When no core model is set (e.g., on a fresh install or after clearing the configuration), these operations silently skip rather than producing `modelUnavailable` errors. Pending conversation signals are still persisted and will be processed once a core model is configured.
-
-### Circuit Breaker
-
-To prevent hammering a failing model service, the memory system implements a circuit breaker:
-
-- **Closed** (normal): requests proceed normally
-- **Open** (tripped): after 5 consecutive failures, all requests are short-circuited for 60 seconds
-- **Half-open**: after cooldown, one request is allowed through to test recovery
-
-### Retry Logic
-
-Failed extraction and summarization calls use exponential backoff:
-
-- Delays: 1s, 2s, 4s
-- Max retries: 3
-- Timeout: 60 seconds per attempt
-- Only retryable errors (network, transient) trigger retries
-
-### Embedding & Vector Search
-
-- Uses **VecturaKit** for hybrid BM25 + vector search
-- Embeddings generated by **SwiftEmbedder** (default model: `nomic-embed-text-v1.5`)
-- Deterministic UUIDs for indexed documents using SHA-256 hashing
-- Graceful fallback to SQLite text search when the embedding model is unavailable
+That's the entire surface. v1's 18 knobs (`mmrLambda`, `mmrFetchMultiplier`, `verification*Threshold`, per-section budgets, recall topK, profile regen thresholds, max entries per agent, …) are all gone.
 
 ---
 
 ## Storage
 
-All memory data is stored in a local SQLite database with WAL (Write-Ahead Logging) mode for concurrent read performance.
+All memory data is stored in a local SQLite database with WAL mode.
 
 **Location:** `~/.osaurus/memory/memory.sqlite`
 
 **Configuration:** `~/.osaurus/config/memory.json`
 
-The database schema is versioned with automatic migrations. Indexes are maintained on agent ID, status, temporal fields, and conversation IDs for efficient queries.
+**Vector index:** `~/.osaurus/memory/vectura/`
+
+The schema is versioned. The v1 → v2 migration ([`migrateToV5`](../Packages/OsaurusCore/Storage/MemoryDatabase.swift)) carries forward your identity, episodes (renamed from `conversation_summaries`), and transcript (renamed from `conversation_chunks`). The noisy v1 working-memory entries, profile events, verification audit log, agent activity, embeddings cache, and graph tables are all dropped — `pinned_facts` rebuilds organically from new conversations.
 
 ---
 
-## Managing Memory
+## Search and Retrieval
 
-### Viewing Memory
+When VecturaKit is available, search uses hybrid BM25 + vector matching with MMR reranking. When it's not (e.g. the embedding model isn't downloaded yet), search falls back to SQLite `LIKE` matching.
 
-Open the Management window (`⌘ Shift M`) → **Memory** to see:
-
-- Your generated **user profile** with version history
-- **User overrides** you've added manually
-- **Per-agent statistics** showing memory entry counts
-- **Processing statistics** (total calls, success rate, average duration)
-- **Database size**
-
-### Adding User Overrides
-
-User overrides are explicit facts that always appear in context. Use these for information the AI should never forget:
-
-1. Go to **Memory** → **User Overrides**
-2. Click **Add Override**
-3. Enter a fact (e.g., "I prefer tabs over spaces" or "My company uses a monorepo")
+The MMR reranker uses 4-character word shingles for cheap content overlap — much faster than the v1 Jaccard-over-tokenized-strings approach.
 
 ---
 
 ## API Integration
 
-Osaurus exposes its memory system through the HTTP API, enabling any OpenAI-compatible client to benefit from persistent, personalized context.
-
 ### Memory Context Injection — `X-Osaurus-Agent-Id`
 
-Add the `X-Osaurus-Agent-Id` header to any `POST /chat/completions` request. Osaurus will automatically assemble relevant memory (user profile, working memory, conversation summaries, knowledge graph) and prepend it to the system prompt before the request reaches the model.
-
-The header value is an arbitrary string that identifies the agent or user session whose memory should be retrieved. When the header is absent or empty, the request is processed normally without memory injection.
+Add the `X-Osaurus-Agent-Id` header to any `POST /chat/completions` request. Osaurus runs the relevance gate against the user's message, picks at most one memory section, and prepends it (along with always-on identity overrides) to the request.
 
 ```python
 from openai import OpenAI
@@ -359,13 +207,15 @@ client = OpenAI(
 
 response = client.chat.completions.create(
     model="your-model-name",
-    messages=[{"role": "user", "content": "What did we talk about last time?"}],
+    messages=[{"role": "user", "content": "What did we talk about last week?"}],
 )
 ```
 
+Header values are arbitrary strings.
+
 ### Memory Ingestion — `POST /memory/ingest`
 
-Bulk-ingest conversation turns so the memory system can learn from them. This is useful for seeding memory from existing chat logs, migrating from another system, or running benchmarks.
+Bulk-ingest conversation turns. Useful for seeding memory from existing chat logs, migrating from another system, or running benchmarks. Ingestion always flushes distillation immediately at the end of the batch — you don't have to wait for the debounce.
 
 ```bash
 curl http://127.0.0.1:1337/memory/ingest \
@@ -374,95 +224,85 @@ curl http://127.0.0.1:1337/memory/ingest \
     "agent_id": "my-agent",
     "conversation_id": "session-1",
     "turns": [
-      {"user": "Hi, my name is Alice", "assistant": "Hello Alice! Nice to meet you."},
-      {"user": "I work at Acme Corp", "assistant": "Got it, you work at Acme Corp."}
+      {"user": "Hi, my name is Alice", "assistant": "Hello Alice!"},
+      {"user": "I work at Acme Corp", "assistant": "Got it."}
     ]
   }'
 ```
 
 | Parameter | Type | Description |
-|-----------|------|-------------|
+|---|---|---|
 | `agent_id` | string | Identifier for the agent whose memory is being populated |
 | `conversation_id` | string | Identifier for the conversation session |
 | `turns` | array | Array of turn objects, each with `user` and `assistant` fields |
-
-Memory extraction runs asynchronously in the background — ingested turns are processed without blocking the API response.
+| `session_date` | string | Optional ISO 8601 date for the whole batch |
+| `skip_extraction` | bool | When `true`, only insert transcript rows; skip distillation |
 
 ### List Agents — `GET /agents`
 
-Returns all configured agents with their memory entry counts. Use this to discover valid agent IDs for the `X-Osaurus-Agent-Id` header.
+Returns all configured agents with their pinned-fact counts. Use this to discover valid agent IDs.
 
-```bash
-curl http://127.0.0.1:1337/agents
-```
-
-See the [API Guide](OpenAI_API_GUIDE.md#memory-api) for additional examples and reference.
+See the [API Guide](OpenAI_API_GUIDE.md#memory-api) for additional examples.
 
 ---
 
-## Benchmark: LoCoMo (Long-term Conversational Memory)
+## Tool: `search_memory`
 
-We evaluate memory quality using the [LoCoMo benchmark](https://arxiv.org/abs/2401.15665) (ACL 2024) via [EasyLocomo](https://github.com/playeriv65/EasyLocomo). LoCoMo tests how well systems recall facts, events, and relationships from multi-session conversations spanning weeks to months.
+Agents can search their own memory via the built-in `search_memory(scope, query)` tool. Three scopes:
 
-Our goal is to achieve state-of-the-art on this benchmark. Osaurus uses Apple Foundation Models as the base memory extraction model, making the cost of memory effectively zero for on-device use.
+| Scope | What it searches |
+|---|---|
+| `pinned` | High-salience facts |
+| `episodes` | Per-session digests |
+| `transcript` | Raw conversation excerpts |
 
-### LoCoMo Leaderboard
-
-| System | F1 Score |
-|--------|----------|
-| MemU | 92.09% |
-| CORE | 88.24% |
-| Human baseline | ~88% |
-| Memobase | 85% (temporal) |
-| Mem0 | 66.9% |
-| **Osaurus (Gemini 2.5 Flash)** | **57.08%** |
-| OpenAI Memory | 52.9% |
-| GPT-3.5-turbo-16K (no memory) | 37.8% |
-| GPT-4-turbo (no memory) | ~32% |
-
-### Osaurus Breakdown by Category
-
-| Category | Count | F1 Score |
-|----------|-------|----------|
-| Open-domain | 841 | 61.44% |
-| Adversarial | 446 | 90.36% |
-| Multi-hop | 282 | 41.94% |
-| Temporal | 321 | 23.16% |
-| Single-hop | 96 | 22.10% |
-| **Overall** | **1,986** | **57.08%** |
-
-### Running the Benchmark
-
-```bash
-# 1. Set up EasyLocomo (clones repo, applies patch, creates venv)
-make bench-setup
-
-# 2. Configure .env in benchmarks/EasyLocomo/
-echo 'OPENAI_API_KEY=osaurus' > benchmarks/EasyLocomo/.env
-echo 'OPENAI_API_BASE=http://localhost:1337/v1' >> benchmarks/EasyLocomo/.env
-
-# 3. Ingest LoCoMo data (full extraction — takes several hours, only needed once)
-make bench-ingest
-
-# 4. Fast chunk re-ingestion (no LLM calls — use after code changes)
-make bench-ingest-chunks
-
-# 5. Run evaluation
-make bench-run
-```
-
-You may want to temporarily increase token budgets in the memory configuration file (`~/.osaurus/config/memory.json`) before running benchmarks. The default production budgets are tuned for everyday use, not maximal recall.
-
-### Memory-Augmented Evaluation
-
-Osaurus uses a no-context evaluation mode where the LLM receives no conversation transcript — only the memory context assembled by the retrieval system. The `X-Osaurus-Agent-Id` header routes each question to the correct agent's memory store. This tests pure memory retrieval quality rather than full-context recall.
+The v1 scopes `working`, `summaries`, `all`, and `graph` are gone — `working` was subsumed by `pinned`, `summaries` was renamed to `episodes`, and `all` / `graph` are no longer exposed. The relevance gate already picks the right slice for context injection; the tool exists for explicit recall the agent decides it needs.
 
 ---
+
+## Managing Memory
+
+### Memory View
+
+Open the Management window (`⌘ Shift M`) → **Memory** to see:
+
+- Your **identity** (auto-derived content + manual overrides)
+- **Pinned facts** with salience bars and use counts
+- **Episodes** for the default agent
+- **Per-agent counts**
+- **Processing statistics** (total calls, success rate, average duration)
+- **Database size**
+- **Run Consolidation Now** button
+
+### Adding User Overrides
+
+Identity overrides are explicit facts that always appear in context.
+
+1. Go to **Memory** → **Your Overrides**
+2. Click **Add**
+3. Enter a fact (e.g. "I prefer tabs over spaces" or "My company uses a monorepo")
 
 ### Clearing Memory
 
-The Memory view includes a danger zone for clearing all memory data. This removes all entries, summaries, chunks, profile data, and knowledge graph entities. The action is irreversible.
+The Memory view includes a danger zone for clearing all memory data. This removes identity, pinned facts, episodes, and transcript. The action is irreversible.
 
-### Syncing
+### Sync / Run Consolidation
 
-Click **Sync Now** to force-process any pending conversation signals immediately, rather than waiting for the debounce timer.
+- **Sync Now** drains pending signals immediately, distilling any sessions that haven't yet flushed.
+- **Run Consolidation Now** kicks off a one-shot pass of the consolidator (decay, merge, promote, evict, prune).
+
+---
+
+## Migration from v1
+
+The v5 schema migration is automatic on first launch after an upgrade. It runs as pure SQL — no LLM calls — and:
+
+- Carries forward `user_profile.content` → `identity.content`
+- Carries forward `user_edits` → `identity.overrides`
+- Carries forward `conversation_summaries` → `episodes` (default `salience = 0.5`)
+- Carries forward `conversation_chunks` → `transcript`
+- Drops `memory_entries` (the noisy 7-type extractor output)
+- Drops `profile_events`, `memory_events`, `agent_activity`, `embeddings`
+- Drops the graph tables (`entities`, `relationships`)
+
+`pinned_facts` starts empty and accrues organically as new sessions are distilled. The Vectura vector index is wiped and rebuilt lazily on first read.

@@ -402,15 +402,15 @@ private final class HostAPIBridgeHandler: ChannelInboundHandler, RemovableChanne
             guard let parsed = parseJSON(body), let query = parsed["query"] as? String else {
                 return .error(400, "Body must contain query")
             }
-            let results = await MemorySearchService.shared.searchMemoryEntries(
+            let results = await MemorySearchService.shared.searchPinnedFacts(
                 query: query,
                 topK: 10
             )
-            let entries = results.map { entry -> [String: Any] in
+            let entries = results.map { fact -> [String: Any] in
                 [
-                    "content": entry.content,
-                    "type": entry.type.rawValue,
-                    "created_at": entry.createdAt,
+                    "content": fact.content,
+                    "salience": fact.salience,
+                    "created_at": fact.createdAt,
                 ]
             }
             if let data = try? JSONSerialization.data(withJSONObject: ["results": entries]),
@@ -426,14 +426,14 @@ private final class HostAPIBridgeHandler: ChannelInboundHandler, RemovableChanne
             }
             do {
                 let agentId = resolveAgentUUID(callingUser)
-                let entry = MemoryEntry(
+                let fact = PinnedFact(
                     agentId: agentId.uuidString,
-                    type: .fact,
                     content: content,
-                    model: "sandbox",
-                    tagsJSON: "[\"source:sandbox:\(callingUser)\"]"
+                    salience: 0.7,
+                    tagsCSV: "source:sandbox:\(callingUser)"
                 )
-                try MemoryDatabase.shared.insertMemoryEntry(entry)
+                try MemoryDatabase.shared.insertPinnedFact(fact)
+                await MemorySearchService.shared.indexPinnedFact(fact)
                 return .ok()
             } catch {
                 return .error(500, "Memory store failed: \(error.localizedDescription)")
