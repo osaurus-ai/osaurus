@@ -14,6 +14,7 @@ import Testing
 @testable import OsaurusCore
 
 @Suite(.serialized)
+@MainActor
 struct MCPHTTPHandlerTests {
 
     @Test func mcp_health_returns_ok() async throws {
@@ -40,9 +41,14 @@ struct MCPHTTPHandlerTests {
         }
         try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
 
-        // Register and enable a test tool
+        // Register and enable a test tool. The registry is a process-wide
+        // singleton, so leaving `EchoTool` behind would push
+        // `ToolRegistry.shared.dynamicCatalogIsEmpty()` to false and break
+        // sibling suites (e.g. PluginCreatorInjectionTests) that depend on
+        // an empty dynamic catalog.
         await ToolRegistry.shared.register(EchoTool())
         await ToolRegistry.shared.setEnabled(true, for: EchoTool.nameStatic)
+        defer { ToolRegistry.shared.unregister(names: [EchoTool.nameStatic]) }
 
         let server = try await startTestServer()
         defer { Task { await server.shutdown() } }
@@ -73,9 +79,9 @@ struct MCPHTTPHandlerTests {
         }
         try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
 
-        // Register and enable a test tool
         await ToolRegistry.shared.register(EchoTool())
         await ToolRegistry.shared.setEnabled(true, for: EchoTool.nameStatic)
+        defer { ToolRegistry.shared.unregister(names: [EchoTool.nameStatic]) }
 
         let server = try await startTestServer()
         defer { Task { await server.shutdown() } }
@@ -113,9 +119,9 @@ struct MCPHTTPHandlerTests {
         }
         try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
 
-        // Register and enable a test tool
         await ToolRegistry.shared.register(EchoTool())
         await ToolRegistry.shared.setEnabled(true, for: EchoTool.nameStatic)
+        defer { ToolRegistry.shared.unregister(names: [EchoTool.nameStatic]) }
 
         let server = try await startTestServer()
         defer { Task { await server.shutdown() } }
