@@ -1489,6 +1489,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let name: String
         let description: String
         let default_model: String?
+        let supports_vision: Bool
         let is_built_in: Bool
         let memory_entry_count: Int
         let created_at: String
@@ -1751,12 +1752,20 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             }
 
             let formatter = ISO8601DateFormatter()
+            let effectiveModels = await MainActor.run {
+                Dictionary(uniqueKeysWithValues: agents.map {
+                    ($0.id, AgentManager.shared.effectiveModel(for: $0.id))
+                })
+            }
             let items = agents.map { agent in
-                AgentListItem(
+                let modelId = effectiveModels[agent.id] ?? agent.defaultModel
+                let supportsVision = modelId.map { VLMDetection.isVLM(modelId: $0) } ?? false
+                return AgentListItem(
                     id: agent.id.uuidString,
                     name: agent.name,
                     description: agent.description,
                     default_model: agent.defaultModel,
+                    supports_vision: supportsVision,
                     is_built_in: agent.isBuiltIn,
                     memory_entry_count: memoryCounts[agent.id.uuidString] ?? 0,
                     created_at: formatter.string(from: agent.createdAt),
@@ -1844,11 +1853,16 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             }
 
             let formatter = ISO8601DateFormatter()
+            let effectiveModelId = await MainActor.run {
+                AgentManager.shared.effectiveModel(for: agent.id)
+            } ?? agent.defaultModel
+            let supportsVision = effectiveModelId.map { VLMDetection.isVLM(modelId: $0) } ?? false
             let item = AgentListItem(
                 id: agent.id.uuidString,
                 name: agent.name,
                 description: agent.description,
                 default_model: agent.defaultModel,
+                supports_vision: supportsVision,
                 is_built_in: agent.isBuiltIn,
                 memory_entry_count: 0,
                 created_at: formatter.string(from: agent.createdAt),
