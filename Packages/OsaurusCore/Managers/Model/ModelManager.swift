@@ -137,17 +137,7 @@ final class ModelManager: NSObject, ObservableObject {
     }
 
     /// Maps deprecated model IDs to their recommended OsaurusAI replacements.
-    nonisolated static let deprecatedModelReplacements: [String: String] = [
-        "mlx-community/gemma-4-31b-it-4bit": "OsaurusAI/Gemma-4-31B-it-JANG_4M",
-        "mlx-community/gemma-4-26b-a4b-it-4bit": "OsaurusAI/gemma-4-26B-A4B-it-mxfp4",
-        "mlx-community/gemma-4-e4b-it-8bit": "OsaurusAI/gemma-4-E4B-it-8bit",
-        "mlx-community/gemma-4-e2b-it-4bit": "OsaurusAI/gemma-4-E2B-it-4bit",
-        "mlx-community/Qwen3.5-27B-4bit": "OsaurusAI/Qwen3.5-122B-A10B-JANG_2S",
-        "mlx-community/Qwen3.5-9B-MLX-4bit": "OsaurusAI/Qwen3.5-35B-A3B-JANG_4K",
-        "mlx-community/Qwen3.5-4B-MLX-4bit": "OsaurusAI/Qwen3.5-35B-A3B-JANG_2S",
-        "mlx-community/Qwen3.5-2B-MLX-4bit": "OsaurusAI/Qwen3.5-35B-A3B-JANG_2S",
-        "mlx-community/Qwen3.5-0.8B-MLX-4bit": "OsaurusAI/Qwen3.5-35B-A3B-JANG_2S",
-    ]
+    nonisolated static let deprecatedModelReplacements: [String: String] = [:]
 
     // MARK: - Published Properties
     @Published var availableModels: [MLXModel] = []
@@ -507,7 +497,7 @@ extension ModelManager {
             name: ModelMetadataParser.friendlyName(from: "OsaurusAI/gemma-4-E2B-it-4bit"),
             description: "Smallest multimodal Gemma 4 model. Runs on any Mac.",
             downloadURL: "https://huggingface.co/OsaurusAI/gemma-4-E2B-it-4bit",
-            isTopSuggestion: true,
+            isTopSuggestion: false,
             downloadSizeBytes: 4_392_120_539,
             modelType: "gemma4",
             releasedAt: date("2026-04-06")
@@ -533,6 +523,25 @@ extension ModelManager {
             downloadSizeBytes: 14_869_637_520,
             modelType: "gemma4",
             releasedAt: date("2026-04-07")
+        ),
+
+        // MARK: Qwen 3.6
+        //
+        // Qwen 3.6 keeps the `qwen3_5_moe` / `qwen3_5` model_type identifier,
+        // so vmlx-swift-lm's existing Qwen35Model / Qwen35MoEModel classes
+        // handle it. JANGTQ variants use the same model_type but are routed
+        // to Qwen35JANGTQModel at load time based on jang_config.weight_format
+        // (`"mxtq"`) — no osaurus-side branching required.
+
+        MLXModel(
+            id: "OsaurusAI/Qwen3.6-35B-A3B-mxfp4",
+            name: ModelMetadataParser.friendlyName(from: "OsaurusAI/Qwen3.6-35B-A3B-mxfp4"),
+            description: "Qwen 3.6 35B MoE vision model. MXFP4 quantization — best quality per byte.",
+            downloadURL: "https://huggingface.co/OsaurusAI/Qwen3.6-35B-A3B-mxfp4",
+            isTopSuggestion: true,
+            downloadSizeBytes: 19_350_002_112,
+            modelType: "qwen3_5_moe",
+            releasedAt: date("2026-04-16")
         ),
 
         MLXModel(
@@ -677,24 +686,6 @@ extension ModelManager {
             description: "Compact Qwen3.5 MoE vision model. Fast and lightweight.",
             downloadURL: "https://huggingface.co/OsaurusAI/Qwen3.5-35B-A3B-JANG_2S",
             downloadSizeBytes: 11_665_353_755,
-            modelType: "qwen3_5_moe",
-            releasedAt: date("2026-04-16")
-        ),
-
-        // MARK: Qwen 3.6
-        //
-        // Qwen 3.6 keeps the `qwen3_5_moe` / `qwen3_5` model_type identifier,
-        // so vmlx-swift-lm's existing Qwen35Model / Qwen35MoEModel classes
-        // handle it. JANGTQ variants use the same model_type but are routed
-        // to Qwen35JANGTQModel at load time based on jang_config.weight_format
-        // (`"mxtq"`) — no osaurus-side branching required.
-
-        MLXModel(
-            id: "OsaurusAI/Qwen3.6-35B-A3B-mxfp4",
-            name: ModelMetadataParser.friendlyName(from: "OsaurusAI/Qwen3.6-35B-A3B-mxfp4"),
-            description: "Qwen 3.6 35B MoE vision model. MXFP4 quantization — best quality per byte.",
-            downloadURL: "https://huggingface.co/OsaurusAI/Qwen3.6-35B-A3B-mxfp4",
-            downloadSizeBytes: 19_350_002_112,
             modelType: "qwen3_5_moe",
             releasedAt: date("2026-04-16")
         ),
