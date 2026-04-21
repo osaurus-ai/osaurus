@@ -66,12 +66,6 @@ struct MCPHTTPHandlerTests {
             let inputSchema = echo["inputSchema"] as? [String: Any]
             #expect(inputSchema != nil)
         }
-
-        // `register` does not stamp `builtInToolNames`, so leaving
-        // `EchoTool` in the registry makes `dynamicCatalogIsEmpty()` false and
-        // breaks `PluginCreatorInjectionTests.composeChatContext_injectsPluginCreatorWhenCatalogEmpty`
-        // when it runs later in the same process.
-        await ToolRegistry.shared.unregister(names: [EchoTool.nameStatic])
     }
 
     @Test func mcp_call_executes_enabled_tool_and_returns_text_content() async throws {
@@ -112,8 +106,6 @@ struct MCPHTTPHandlerTests {
         let content = (json?["content"] as? [[String: Any]]) ?? []
         let text = content.first?["text"] as? String
         #expect(text == #"{"text":"hello"}"#)
-
-        await ToolRegistry.shared.unregister(names: [EchoTool.nameStatic])
     }
 
     @Test func mcp_call_with_missing_required_arg_returns_error() async throws {
@@ -150,8 +142,6 @@ struct MCPHTTPHandlerTests {
         let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
         let isError = (json?["isError"] as? Bool) ?? false
         #expect(isError == true)
-
-        await ToolRegistry.shared.unregister(names: [EchoTool.nameStatic])
     }
 }
 
