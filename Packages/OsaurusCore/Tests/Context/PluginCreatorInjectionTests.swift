@@ -76,12 +76,15 @@ struct PluginCreatorInjectionTests {
         defer { Task { _ = await AgentManager.shared.delete(id: agent.id) } }
 
         await ensurePluginCreatorSkill(enabled: false)
-        defer { Task { await ensurePluginCreatorSkill(enabled: true) } }
 
         let section = await PreflightCapabilitySearch.pluginCreatorSkillSection(
             for: agent.id
         )
         #expect(section == nil)
+
+        // restore the skill synchronously before returning so the persisted
+        // disabled state doesn't leak into later tests
+        await ensurePluginCreatorSkill(enabled: true)
     }
 
     // MARK: - SystemPromptComposer integration
@@ -97,16 +100,25 @@ struct PluginCreatorInjectionTests {
 
         await ensurePluginCreatorSkill(enabled: true)
 
+        // The test premise is a dynamic catalog that is empty. In an app-
+        // hosted xctest, `AppDelegate.applicationDidFinishLaunching` may
+        // have already called `PluginManager.shared.loadAll()` and
+        // registered plugin tools. Temporarily disable them (under a temp
+        // config dir so the user's real enablement isn't touched), then
+        // restore synchronously before returning so later tests see their
+        // plugin tools enabled again
+        let (restore, cleanupTempDir) = await temporarilyEmptyDynamicCatalog()
+
         let context = await SystemPromptComposer.composeChatContext(
             agentId: agent.id,
             executionMode: .sandbox
         )
-        // Plugin creator section is appended as a `dynamic` block with a
-        // known label — assert via the manifest entry rather than scraping
-        // the rendered prose.
         let labels = context.manifest.sections.map(\.label)
         #expect(labels.contains("Plugin Creator"))
         #expect(context.prompt.contains("Sandbox Plugin Creator"))
+
+        await restore()
+        cleanupTempDir()
     }
 
     @Test
@@ -143,5 +155,41 @@ struct PluginCreatorInjectionTests {
         }
         if skill.enabled == enabled { return }
         await SkillManager.shared.setEnabled(enabled, for: skill.id)
+    }
+
+    /// Snapshot the currently-enabled dynamic tools, disable them, and
+    /// return closures that restore their enablement and clean up the temp
+    /// config dir. Redirects `ToolConfigurationStore` persistence to a temp
+    /// directory for the duration so the user's real `tools.json` is never
+    /// touched — only `ToolRegistry.shared`'s in-memory configuration
+    /// mutates.
+    private func temporarilyEmptyDynamicCatalog() async -> (
+        restore: @Sendable () async -> Void,
+        cleanup: @Sendable () -> Void
+    ) {
+        let enabledNames = ToolRegistry.shared.listDynamicTools().map(\.name)
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "osaurus-plugin-creator-test-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        let previousOverride = ToolConfigurationStore.overrideDirectory
+        ToolConfigurationStore.overrideDirectory = tempDir
+        for name in enabledNames {
+            ToolRegistry.shared.setEnabled(false, for: name)
+        }
+        let namesCopy = enabledNames
+        let restore: @Sendable () async -> Void = {
+            await MainActor.run {
+                for name in namesCopy {
+                    ToolRegistry.shared.setEnabled(true, for: name)
+                }
+                ToolConfigurationStore.overrideDirectory = previousOverride
+            }
+        }
+        let cleanup: @Sendable () -> Void = {
+            try? FileManager.default.removeItem(at: tempDir)
+        }
+        return (restore, cleanup)
     }
 }
