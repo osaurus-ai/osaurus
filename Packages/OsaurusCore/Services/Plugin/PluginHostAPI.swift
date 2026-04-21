@@ -194,6 +194,16 @@ final class PluginHostContext: @unchecked Sendable {
                 )
             }
 
+            // Empty/whitespace prompts make `ChatSession.send` no-op (no Task,
+            // no `isStreaming` flip), which would leave the dispatched task
+            // hanging in `.running` until the awaitCompletion watchdog.
+            guard !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                return (
+                    Self.jsonString(["error": "invalid_request", "message": "Prompt is empty"]),
+                    UUID?.none
+                )
+            }
+
             var requestId = UUID()
             if let idStr = json["id"] as? String, let parsed = UUID(uuidString: idStr) {
                 requestId = parsed
@@ -1690,14 +1700,17 @@ extension PluginHostContext {
 
         if let draft = state.draftText, let parsed = parseJSON(draft) { result["draft"] = parsed }
 
+        // Last assistant content — partial during `.running`, final on
+        // `.completed`. Surfaced for both so HTTP pollers and `task_status`
+        // callers can read the transcript without loading the session.
+        if let output = state.chatSession?.turns.last?.content, !output.isEmpty {
+            result["output"] = output
+        }
+
         switch state.status {
         case .running:
             result["status"] = "running"
             if let step = state.currentStep { result["current_step"] = step }
-
-            if let output = state.chatSession?.turns.last?.content, !output.isEmpty {
-                result["output"] = output
-            }
 
             let activity: [[String: Any]] = state.activityFeed.suffix(20).map { item in
                 var entry: [String: Any] = [

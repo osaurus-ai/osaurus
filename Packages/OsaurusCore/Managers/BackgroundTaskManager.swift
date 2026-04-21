@@ -41,6 +41,13 @@ public final class BackgroundTaskManager: ObservableObject {
     private var dispatchHoldTasks: Set<UUID> = []
     private var heldTaskEvents: [UUID: [(type: TaskEventType, json: String)]] = [:]
 
+    /// Tasks for which `ChatSession.isStreaming` has flipped to `true` at
+    /// least once. Guards `markCompleted` against the synchronous initial
+    /// `(false, nil)` tuple that `Publishers.CombineLatest` emits the instant
+    /// `observeChatTask` subscribes (well before `ChatSession.send`'s async
+    /// Task body runs). See `handleChatStreamingChange`.
+    private var streamingObserved: Set<UUID> = []
+
     /// Subject for batching view updates with throttling
     private let viewUpdateSubject = PassthroughSubject<Void, Never>()
     private var viewUpdateCancellable: AnyCancellable?
@@ -108,6 +115,7 @@ public final class BackgroundTaskManager: ObservableObject {
         taskObservers[backgroundId]?.forEach { $0.cancel() }
         taskObservers.removeValue(forKey: backgroundId)
         chatTurnCounts.removeValue(forKey: backgroundId)
+        streamingObserved.remove(backgroundId)
 
         state.releaseReferences()
 
@@ -252,6 +260,15 @@ public final class BackgroundTaskManager: ObservableObject {
         emitPluginEvent(state, type: .started, json: PluginHostContext.serializeStartedEvent(state: state))
     }
 
+    #if DEBUG
+        /// Test-only: insert a pre-built `BackgroundTaskState` directly so
+        /// regression tests can exercise `observeChatTask` without spinning up
+        /// a real `ExecutionContext` + MLX-backed engine.
+        func registerTaskForTesting(_ state: BackgroundTaskState) {
+            backgroundTasks[state.id] = state
+        }
+    #endif
+
     private func createContext(for request: DispatchRequest) -> ExecutionContext {
         ExecutionContext(
             id: request.id,
@@ -368,7 +385,9 @@ public final class BackgroundTaskManager: ObservableObject {
 
     // MARK: - Private: Chat Observation
 
-    private func observeChatTask(_ state: BackgroundTaskState, session: ChatSession) {
+    /// Internal (rather than private) so regression tests can drive the
+    /// streaming observer directly. Production callers go through `dispatchChat`.
+    func observeChatTask(_ state: BackgroundTaskState, session: ChatSession) {
         var cancellables = Set<AnyCancellable>()
         let taskId = state.id
 
@@ -408,9 +427,10 @@ public final class BackgroundTaskManager: ObservableObject {
         guard let state = backgroundTasks[taskId] else { return }
 
         if isStreaming {
+            streamingObserved.insert(taskId)
             state.status = .running
             state.currentStep = "Running..."
-        } else if state.status == .running {
+        } else if state.status == .running, streamingObserved.contains(taskId) {
             if let lastError {
                 markCompleted(state, success: false, summary: lastError)
             } else {

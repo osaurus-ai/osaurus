@@ -2256,6 +2256,23 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 return
             }
 
+            // Empty/whitespace prompts make `ChatSession.send` no-op, leaving
+            // the dispatched task hanging in `.running` until the watchdog.
+            guard !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                hop {
+                    var headers = [("Content-Type", "application/json; charset=utf-8")]
+                    headers.append(contentsOf: cors)
+                    self.sendResponse(
+                        context: ctx.value,
+                        version: head.version,
+                        status: .badRequest,
+                        headers: headers,
+                        body: #"{"error":"invalid_request","message":"Prompt is empty"}"#
+                    )
+                }
+                return
+            }
+
             let title = json["title"] as? String
             let requestId = UUID()
 
