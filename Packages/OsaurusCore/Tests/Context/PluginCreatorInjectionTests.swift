@@ -76,12 +76,15 @@ struct PluginCreatorInjectionTests {
         defer { Task { _ = await AgentManager.shared.delete(id: agent.id) } }
 
         await ensurePluginCreatorSkill(enabled: false)
-        defer { Task { await ensurePluginCreatorSkill(enabled: true) } }
 
         let section = await PreflightCapabilitySearch.pluginCreatorSkillSection(
             for: agent.id
         )
         #expect(section == nil)
+
+        // restore the skill synchronously before returning so the persisted
+        // disabled state doesn't leak into later tests
+        await ensurePluginCreatorSkill(enabled: true)
     }
 
     // MARK: - SystemPromptComposer integration
