@@ -6,16 +6,19 @@
 //
 //    - `InlineTodoBlock`   — read-only checklist parsed from the agent's
 //                            most recent `todo(markdown)` call
-//    - `InlineClarifyBlock` — assistant question waiting for the user's
-//                             next message to answer
 //    - `InlineCompleteBlock` — "Task done" banner shown when the agent
 //                              calls `complete(summary)` and the engine
 //                              breaks the iteration loop
 //
-//  All three live alongside the message thread, keyed off `@Published`
-//  state on `ChatWindowState`. They render as compact transcript-style
-//  cards (no floating panels, no overlays) so the entire window collapses
-//  to header + thread + input.
+//  Both live alongside the message thread, keyed off `@Published` state
+//  on `ChatSession`. They render as compact transcript-style cards
+//  (no floating panels, no overlays) so the entire window collapses to
+//  header + thread + input.
+//
+//  `clarify` used to live here too (`InlineClarifyBlock`), but it has
+//  been promoted to a bottom-pinned overlay (`ClarifyPromptOverlay`)
+//  that mounts through the shared `PromptQueue` alongside secret
+//  prompts. See `ClarifyPromptOverlay.swift` and `PromptQueue.swift`.
 //
 
 import SwiftUI
@@ -103,52 +106,6 @@ struct InlineTodoBlock: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
         }
-    }
-}
-
-// MARK: - Clarify
-
-/// Assistant question rendered inline; the next user message becomes the
-/// answer. No buttons — typing in the input bar resolves it.
-struct InlineClarifyBlock: View {
-    let question: String
-
-    @Environment(\.theme) private var theme
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: "questionmark.bubble.fill")
-                .foregroundColor(theme.accentColor)
-                .padding(.top, 2)
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Quick question")
-                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .semibold))
-                    .foregroundColor(theme.tertiaryText)
-                    .textCase(.uppercase)
-
-                Text(question)
-                    .font(theme.font(size: CGFloat(theme.bodySize)))
-                    .foregroundColor(theme.primaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                Text("Type your answer below.")
-                    .font(theme.font(size: CGFloat(theme.captionSize)))
-                    .foregroundColor(theme.tertiaryText)
-            }
-
-            Spacer(minLength: 0)
-        }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(theme.accentColor.opacity(0.08))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(theme.accentColor.opacity(0.3), lineWidth: 1)
-        )
-        .padding(.horizontal, 16)
     }
 }
 

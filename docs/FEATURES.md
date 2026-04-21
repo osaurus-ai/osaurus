@@ -529,7 +529,7 @@ See [INFERENCE_RUNTIME.md](./INFERENCE_RUNTIME.md) for the full runtime architec
 | ---------- | -------------- | --------------------------------------------------------------------------------------- |
 | `todo`     | `markdown`     | Replace the per-session checklist (markdown `- [ ]` / `- [x]`). No merging.             |
 | `complete` | `summary`      | End the loop with a verified one-paragraph summary. Placeholders / short text rejected. |
-| `clarify`  | `question`     | Pause and surface a single critical question; user's next message becomes the answer.   |
+| `clarify`  | `question` (+ optional `options[]`, `allowMultiple`) | Pause and surface a single critical question in a bottom-pinned overlay; user's answer (typed or chip-tap) dispatches as the next user turn. |
 
 **Folder Tool Inventory:**
 
@@ -594,7 +594,10 @@ See [AGENT_LOOP.md](AGENT_LOOP.md) for the full guide.
 - `Tools/SandboxSecretTools.swift` — Secret check and set tools with direct-value and secure-prompt paths
 - `Tools/SandboxPluginRegisterTool.swift` — Hot-registers agent-created plugins with file auto-packaging
 - `Tools/ToolRegistry.swift` — Sandbox tool registration and namespace management
-- `Views/Chat/SecretPromptOverlay.swift` — Secure overlay for collecting secrets in chat
+- `Views/Chat/PromptCard.swift` — Shared chrome (header pill, markdown description, glass background, layered shadow + accent halo, spring entry/exit) used by every in-chat prompt overlay
+- `Views/Chat/PromptQueue.swift` — Single-slot FIFO queue for in-chat prompts so secrets and clarify never stack on top of each other
+- `Views/Chat/SecretPromptOverlay.swift` — Secure overlay for collecting secrets in chat (renders through `PromptCard`)
+- `Views/Chat/ClarifyPromptOverlay.swift` — Bottom-pinned overlay for the agent's `clarify` tool, with optional one-tap option chips and a free-form text input
 - `Networking/HostAPIBridgeServer.swift` — HTTP server over vsock for host service access
 - `Models/SandboxPlugin.swift` — Plugin model with tool specs, MCP, daemon, events, and permissions
 - `Models/Plugin/SandboxConfiguration.swift` — Container config (CPUs, memory, network, auto-start)

@@ -1745,9 +1745,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
             let formatter = ISO8601DateFormatter()
             let effectiveModels = await MainActor.run {
-                Dictionary(uniqueKeysWithValues: agents.map {
-                    ($0.id, AgentManager.shared.effectiveModel(for: $0.id))
-                })
+                Dictionary(
+                    uniqueKeysWithValues: agents.map {
+                        ($0.id, AgentManager.shared.effectiveModel(for: $0.id))
+                    }
+                )
             }
             let items = agents.map { agent in
                 let modelId = effectiveModels[agent.id] ?? agent.defaultModel
@@ -1845,9 +1847,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             }
 
             let formatter = ISO8601DateFormatter()
-            let effectiveModelId = await MainActor.run {
-                AgentManager.shared.effectiveModel(for: agent.id)
-            } ?? agent.defaultModel
+            let effectiveModelId =
+                await MainActor.run {
+                    AgentManager.shared.effectiveModel(for: agent.id)
+                } ?? agent.defaultModel
             let supportsVision = effectiveModelId.map { VLMDetection.isVLM(modelId: $0) } ?? false
             let item = AgentListItem(
                 id: agent.id.uuidString,

@@ -54,13 +54,21 @@ Honesty is preferred: if the agent couldn't finish, it should say so in the summ
 
 ### `clarify` — pause and ask one critical question
 
-The chat engine intercepts `clarify`, surfaces the question as an inline assistant bubble, and waits for the user. The user's next message becomes the answer, and the agent resumes from there.
+The chat engine intercepts `clarify`, surfaces the question in a bottom-pinned overlay (`ClarifyPromptOverlay`), and waits for the user. The user's answer dispatches as the next user turn through the existing send path, and the agent resumes from there.
 
-| Field      | Type   | Required | Description                                                                                                                       |
-| ---------- | ------ | -------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `question` | string | Yes      | A single, concrete question that would change the result if guessed wrong (e.g. "Use Postgres or SQLite?"). Avoid open-ended `what would you like?` phrasing. |
+| Field           | Type     | Required | Description                                                                                                                       |
+| --------------- | -------- | -------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `question`      | string   | Yes      | A single, concrete question that would change the result if guessed wrong (e.g. "Use Postgres or SQLite?"). Avoid open-ended `what would you like?` phrasing. |
+| `options`       | string[] | No       | Up to 6 short answer choices (≤80 chars each, deduped). When present the UI renders one chip per option; tapping a chip submits that option as the answer. Omit for free-form questions. |
+| `allowMultiple` | boolean  | No       | When `true` and `options` is set, the user can pick more than one chip and submits the joined answer. Defaults to `false` and is ignored when `options` is empty. |
 
-For minor preferences and recoverable choices the agent picks a sensible default and continues; `clarify` is reserved for genuinely blocking ambiguity.
+For minor preferences and recoverable choices the agent picks a sensible default and continues; `clarify` is reserved for genuinely blocking ambiguity. When the answer is one of a finite menu, prefer `options` over a free-form question — one tap is faster than typing.
+
+#### Inline UI
+
+The clarify card is rendered through the shared [`PromptCard`](../Packages/OsaurusCore/Views/Chat/PromptCard.swift) chrome (the same chrome the secret prompt uses) and routed through the single-slot [`PromptQueue`](../Packages/OsaurusCore/Views/Chat/PromptQueue.swift) so it cannot stack on top of a pending secret prompt — whichever arrived first stays mounted, and the second is shown after the first resolves. While the card is mounted, the message thread blurs slightly and the main chat input dims so the user's attention lands on the embedded answer affordance. Reduced-motion settings are respected.
+
+The `clarify` (along with `todo` and `complete`) tool call is filtered out of the generic tool-chip group in the message thread, so the question only renders once — as the inline overlay — instead of also showing up as a chip with truncated arguments.
 
 ---
 

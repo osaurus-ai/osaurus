@@ -160,4 +160,74 @@ struct AgentLoopToolsTests {
         // requireString with allowEmpty=false emits "must not be empty".
         #expect(result.contains("must not be empty") || result.contains("non-empty"))
     }
+
+    @Test
+    func clarify_acceptsOptions() async throws {
+        let result = try await ClarifyTool().execute(
+            argumentsJSON: #"{"question": "DB?", "options": ["Postgres", "SQLite"]}"#
+        )
+        #expect(ToolEnvelope.isSuccess(result))
+
+        let parsed = ClarifyTool.parse(
+            argumentsJSON: #"{"question": "DB?", "options": ["Postgres", "SQLite"]}"#
+        )
+        #expect(parsed?.question == "DB?")
+        #expect(parsed?.options == ["Postgres", "SQLite"])
+        #expect(parsed?.allowMultiple == false)
+    }
+
+    @Test
+    func clarify_rejectsTooManyOptions() async throws {
+        // 7 options when the cap is 6 — the model should pare the menu.
+        let result = try await ClarifyTool().execute(
+            argumentsJSON:
+                #"{"question": "Pick", "options": ["a","b","c","d","e","f","g"]}"#
+        )
+        #expect(ToolEnvelope.isError(result))
+        #expect(result.contains("capped"))
+    }
+
+    @Test
+    func clarify_rejectsOverlongOption() async throws {
+        // Build a single option that's exactly 81 chars — over the
+        // per-option ceiling. Use a string repeat to keep the literal
+        // inline and reviewable.
+        let longLabel = String(repeating: "x", count: 81)
+        let json = "{\"question\": \"Pick\", \"options\": [\"\(longLabel)\"]}"
+        let result = try await ClarifyTool().execute(argumentsJSON: json)
+        #expect(ToolEnvelope.isError(result))
+        #expect(result.contains("Use short labels") || result.contains("chars"))
+    }
+
+    @Test
+    func clarify_normalizeDedupesAndTrims() {
+        let cleaned = ClarifyTool.normalizeOptions(
+            ["Yes", "  yes  ", "No", "", "no", "Maybe"]
+        )
+        // Case-insensitive dedupe keeps the first casing seen ("Yes",
+        // "No") and drops blanks. Order is preserved by arrival.
+        #expect(cleaned == ["Yes", "No", "Maybe"])
+    }
+
+    @Test
+    func clarify_parseDropsAllowMultipleWithoutOptions() {
+        // `allowMultiple: true` with no options is meaningless — the
+        // payload should collapse it to false so callers don't render
+        // a multi-select hint over a free-form question.
+        let parsed = ClarifyTool.parse(
+            argumentsJSON: #"{"question": "Why?", "allowMultiple": true}"#
+        )
+        #expect(parsed?.options.isEmpty == true)
+        #expect(parsed?.allowMultiple == false)
+    }
+
+    @Test
+    func clarify_parseRespectsAllowMultipleWithOptions() {
+        let parsed = ClarifyTool.parse(
+            argumentsJSON:
+                #"{"question": "Pick platforms", "options": ["iOS","Android"], "allowMultiple": true}"#
+        )
+        #expect(parsed?.allowMultiple == true)
+        #expect(parsed?.options == ["iOS", "Android"])
+    }
 }

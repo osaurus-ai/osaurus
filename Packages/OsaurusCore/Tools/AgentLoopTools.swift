@@ -182,6 +182,33 @@ public final class CompleteTool: OsaurusTool, @unchecked Sendable {
 
 // MARK: - clarify
 
+/// Structured payload for a `clarify` call. Built from the JSON
+/// arguments via `ClarifyTool.parse`. The chat engine uses this to
+/// drive the inline prompt UI: free-form questions render with an
+/// embedded text field; questions with `options` render as clickable
+/// chips so the user can answer with one tap.
+public struct ClarifyPayload: Sendable {
+    public let question: String
+    public let options: [String]
+    public let allowMultiple: Bool
+
+    public init(question: String, options: [String] = [], allowMultiple: Bool = false) {
+        self.question = question
+        self.options = options
+        self.allowMultiple = allowMultiple
+    }
+}
+
+/// Maximum number of options accepted on a single clarify call. Kept
+/// small so the chip strip never overflows the card horizontally; if
+/// the model needs more than this it should ask follow-up questions
+/// instead of offering a wall of choices.
+private let kMaxClarifyOptions = 6
+
+/// Per-option character cap. Long labels collapse the chip layout and
+/// usually mean the model is dumping prose into the option slot.
+private let kMaxClarifyOptionLength = 80
+
 /// Pause the agent loop and ask the user a critical question. The chat
 /// engine intercepts this, surfaces the question as an inline assistant
 /// bubble, and the user's next input becomes the answer. The model
@@ -192,7 +219,11 @@ public final class ClarifyTool: OsaurusTool, @unchecked Sendable {
         "Ask the user a single critical question when the task is ambiguous in a way that would "
         + "lead to the wrong result if you guessed. The conversation pauses; the user's next "
         + "message becomes your answer. For minor preferences or recoverable choices, pick a "
-        + "sensible default and proceed instead of pausing."
+        + "sensible default and proceed instead of pausing. When the answer is one of a finite "
+        + "set (≤6 short choices), pass them as `options` so the user can pick with a tap "
+        + "instead of typing — e.g. `options: [\"Postgres\", \"SQLite\"]`. Set `allowMultiple` "
+        + "to true only when the user genuinely needs to pick more than one (e.g. \"which "
+        + "platforms?\")."
 
     public let parameters: JSONValue? = .object([
         "type": .string("object"),
@@ -203,7 +234,20 @@ public final class ClarifyTool: OsaurusTool, @unchecked Sendable {
                 "description": .string(
                     "Specific, concrete question. Avoid open-ended `what would you like?` style; ask the actual decision (\"Use Postgres or SQLite?\")."
                 ),
-            ])
+            ]),
+            "options": .object([
+                "type": .string("array"),
+                "items": .object(["type": .string("string")]),
+                "description": .string(
+                    "Optional list of short answer choices (≤6, ≤80 chars each). When present, the UI shows them as one-tap buttons; omit for free-form answers."
+                ),
+            ]),
+            "allowMultiple": .object([
+                "type": .string("boolean"),
+                "description": .string(
+                    "When true and `options` is set, the user can pick more than one. Defaults to false."
+                ),
+            ]),
         ]),
         "required": .array([.string("question")]),
     ])
@@ -231,6 +275,105 @@ public final class ClarifyTool: OsaurusTool, @unchecked Sendable {
                 tool: name
             )
         }
+
+        // `options` is optional. When present we validate count, length,
+        // and dedupe so a sloppy model doesn't blow up the chip layout
+        // or surface "Yes" twice with different cases. The validation
+        // gate runs in the tool — not just the UI — so HTTP-API callers
+        // see the same error envelope local UI users would.
+        if let raw = args["options"], !(raw is NSNull) {
+            guard let arr = ArgumentCoercion.stringArray(raw) else {
+                return ToolEnvelope.failure(
+                    kind: .invalidArgs,
+                    message:
+                        "`options` must be an array of strings, got \(type(of: raw)). "
+                        + "Pass e.g. `[\"Yes\", \"No\"]`.",
+                    field: "options",
+                    expected: "array of short string choices",
+                    tool: name
+                )
+            }
+            let cleaned = Self.normalizeOptions(arr)
+            if cleaned.count > kMaxClarifyOptions {
+                return ToolEnvelope.failure(
+                    kind: .invalidArgs,
+                    message:
+                        "`options` is capped at \(kMaxClarifyOptions) entries (got \(cleaned.count)). "
+                        + "Drop low-value choices or break the question into a follow-up.",
+                    field: "options",
+                    expected: "≤\(kMaxClarifyOptions) short string choices",
+                    tool: name
+                )
+            }
+            for opt in cleaned where opt.count > kMaxClarifyOptionLength {
+                return ToolEnvelope.failure(
+                    kind: .invalidArgs,
+                    message:
+                        "Option `\(opt.prefix(40))…` is \(opt.count) chars (>\(kMaxClarifyOptionLength)). "
+                        + "Use short labels — put longer detail in `question`.",
+                    field: "options",
+                    expected: "each option ≤\(kMaxClarifyOptionLength) chars",
+                    tool: name
+                )
+            }
+        }
+
         return ToolEnvelope.success(tool: name, text: "Awaiting user response.")
+    }
+
+    /// Trim, drop empties, dedupe (case-insensitive, keeping first
+    /// occurrence's casing). Pure helper — exposed so the chat
+    /// intercept can reuse the exact same normalization without
+    /// re-running validation.
+    public static func normalizeOptions(_ raw: [String]) -> [String] {
+        var seen = Set<String>()
+        var out: [String] = []
+        for opt in raw {
+            let trimmed = opt.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+            let key = trimmed.lowercased()
+            if seen.insert(key).inserted {
+                out.append(trimmed)
+            }
+        }
+        return out
+    }
+
+    /// Parse a `clarify` call's JSON arguments into a structured
+    /// payload. Returns nil when the question is missing or empty;
+    /// callers fall back to skipping the inline UI in that case (the
+    /// tool's own validation already returned an error envelope to the
+    /// model).
+    public static func parse(argumentsJSON: String) -> ClarifyPayload? {
+        guard let data = argumentsJSON.data(using: .utf8),
+            let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return nil }
+
+        guard let questionRaw = dict["question"] as? String else { return nil }
+        let question = questionRaw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !question.isEmpty else { return nil }
+
+        let options: [String]
+        if let raw = dict["options"], !(raw is NSNull),
+            let arr = ArgumentCoercion.stringArray(raw)
+        {
+            // Cap defensively even if the tool already validated — the
+            // intercept sees pre-validated args, but tests and other
+            // call sites might not.
+            let cleaned = Self.normalizeOptions(arr)
+            options = Array(cleaned.prefix(kMaxClarifyOptions))
+        } else {
+            options = []
+        }
+
+        let allowMultiple = ArgumentCoercion.bool(dict["allowMultiple"]) ?? false
+        return ClarifyPayload(
+            question: question,
+            options: options,
+            // `allowMultiple` only makes sense when there are options to
+            // multi-select; collapse it to false otherwise so callers
+            // don't have to guard.
+            allowMultiple: options.isEmpty ? false : allowMultiple
+        )
     }
 }

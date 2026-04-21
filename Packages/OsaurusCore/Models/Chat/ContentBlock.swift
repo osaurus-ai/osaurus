@@ -375,6 +375,18 @@ extension ContentBlock {
             if let toolCalls = turn.toolCalls, !toolCalls.isEmpty {
                 var regularItems: [ToolCallItem] = []
                 for call in toolCalls {
+                    // Agent-loop tools (`todo`, `complete`, `clarify`)
+                    // already drive first-class inline UI — the todo
+                    // checklist banner, the completion banner, and the
+                    // bottom-pinned clarify overlay. Rendering them as
+                    // generic tool chips on top of that would show the
+                    // same call twice (once as the rich UI, once as a
+                    // chip with truncated args), which is the duplicate
+                    // the user complained about. Skip them here.
+                    if Self.isAgentLoopToolName(call.function.name) {
+                        continue
+                    }
+
                     let result = turn.toolResults[call.id]
                     if call.function.name == "share_artifact",
                         let result,
@@ -576,6 +588,16 @@ extension ContentBlock {
                 )
             ]
             : blocks
+    }
+
+    /// Tools whose results are surfaced through dedicated inline UI
+    /// (todo banner, completion banner, clarify overlay) rather than
+    /// the generic tool-call chip group. Centralized so the chip
+    /// filter and any other render-time skip stay in lockstep.
+    private static let agentLoopToolNames: Set<String> = ["todo", "complete", "clarify"]
+
+    static func isAgentLoopToolName(_ name: String) -> Bool {
+        agentLoopToolNames.contains(name)
     }
 
     private static func assignPositions(to blocks: [ContentBlock]) -> [ContentBlock] {

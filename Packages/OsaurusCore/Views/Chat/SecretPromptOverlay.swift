@@ -3,7 +3,10 @@
 //  osaurus
 //
 //  Secure overlay for collecting secret values (API keys, tokens).
-//  Uses SecureField to keep the value out of the conversation and LLM context.
+//  Uses `SecureField` to keep the value out of the conversation and
+//  LLM context. The visual chrome is delegated to `PromptCard` so this
+//  file owns just the secret-specific lifecycle (`SecretPromptState`)
+//  and the input row.
 //
 
 import SwiftUI
@@ -58,29 +61,15 @@ struct SecretPromptOverlay: View {
     let state: SecretPromptState
     let onDismiss: () -> Void
 
-    @Environment(\.theme) private var theme
-    @State private var isAppearing = false
-
     var body: some View {
-        VStack {
-            Spacer()
-
+        PromptOverlayHost(onCancelDismiss: cancelAndDismiss) {
             SecretPromptCard(state: state, onCancel: cancelAndDismiss, onSubmitted: onDismiss)
-                .opacity(isAppearing ? 1 : 0)
-                .offset(y: isAppearing ? 0 : 30)
-                .padding(.horizontal, 20)
-                .padding(.bottom, 20)
-        }
-        .onAppear {
-            withAnimation(theme.springAnimation()) {
-                isAppearing = true
-            }
         }
         .onDisappear {
+            // Safety net: if the overlay disappears without an explicit
+            // resolution (e.g. the parent view goes away), make sure the
+            // continuation still resumes so the agent loop doesn't hang.
             state.cancel()
-        }
-        .onExitCommand {
-            cancelAndDismiss()
         }
     }
 
@@ -98,23 +87,37 @@ private struct SecretPromptCard: View {
     let onSubmitted: () -> Void
 
     @State private var secretValue: String = ""
+    @FocusState private var isInputFocused: Bool
     @Environment(\.theme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var canSubmit: Bool {
         !secretValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     var body: some View {
-        VStack(spacing: 12) {
-            header
-            descriptionArea
-            inputAndActions
+        PromptCard(
+            pillIcon: "lock.fill",
+            pillLabel: "Secret Required",
+            title: state.description,
+            descriptionMarkdown: state.instructions,
+            footnote: PromptCardFootnote(
+                icon: "shield.lefthalf.filled",
+                text: "Stored securely in Keychain as \(state.key)"
+            ),
+            onCancel: onCancel,
+            bodyContent: { EmptyView() },
+            inputRow: { inputAndActions }
+        )
+        .onAppear {
+            // Auto-focus once the entry animation has had a moment to
+            // land — the card is bottom-pinned and immediately accepts
+            // typed input, so cursor blink shouldn't precede the slide.
+            let delay: TimeInterval = reduceMotion ? 0 : 0.20
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                isInputFocused = true
+            }
         }
-        .padding(16)
-        .background(overlayBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(borderOverlay)
-        .shadow(color: theme.shadowColor.opacity(0.12), radius: 16, x: 0, y: 6)
     }
 
     private func submitSecret() {
@@ -123,88 +126,7 @@ private struct SecretPromptCard: View {
         onSubmitted()
     }
 
-    // MARK: - Header
-
-    private var header: some View {
-        HStack(alignment: .center, spacing: 12) {
-            HStack(spacing: 6) {
-                Image(systemName: "lock.fill")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.accentColor)
-
-                Text("Secret Required", bundle: .module)
-                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .semibold))
-                    .foregroundColor(theme.accentColor)
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .background(
-                Capsule()
-                    .fill(theme.accentColor.opacity(theme.isDark ? 0.15 : 0.1))
-            )
-
-            Spacer()
-
-            Button(action: onCancel) {
-                Text("Cancel", bundle: .module)
-                    .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .medium))
-                    .foregroundColor(theme.tertiaryText)
-            }
-            .buttonStyle(.plain)
-            .keyboardShortcut(.cancelAction)
-        }
-    }
-
-    // MARK: - Description
-
-    private var descriptionArea: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(state.description)
-                .font(theme.font(size: CGFloat(theme.bodySize), weight: .medium))
-                .foregroundColor(theme.primaryText)
-                .fixedSize(horizontal: false, vertical: true)
-                .textSelection(.enabled)
-
-            Text(markdownInstructions)
-                .font(theme.font(size: CGFloat(theme.captionSize), weight: .regular))
-                .foregroundColor(theme.tertiaryText)
-                .tint(theme.accentColor)
-                .fixedSize(horizontal: false, vertical: true)
-                .textSelection(.enabled)
-
-            HStack(spacing: 4) {
-                Image(systemName: "shield.lefthalf.filled")
-                    .font(.system(size: 10))
-                Text("Stored securely in Keychain as \(state.key)", bundle: .module)
-                    .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .regular))
-            }
-            .foregroundColor(theme.tertiaryText.opacity(0.7))
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 14)
-        .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(theme.inputBackground)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(theme.inputBorder, lineWidth: 1)
-        )
-    }
-
-    private var markdownInstructions: AttributedString {
-        let options = AttributedString.MarkdownParsingOptions(
-            interpretedSyntax: .inlineOnlyPreservingWhitespace
-        )
-        if var attributed = try? AttributedString(markdown: state.instructions, options: options) {
-            attributed.foregroundColor = theme.tertiaryText
-            return attributed
-        }
-        return AttributedString(state.instructions)
-    }
-
-    // MARK: - Input & Actions
+    // MARK: - Input
 
     private var inputAndActions: some View {
         HStack(spacing: 10) {
@@ -212,6 +134,7 @@ private struct SecretPromptCard: View {
                 .font(theme.font(size: CGFloat(theme.bodySize) - 1, weight: .regular))
                 .foregroundColor(theme.primaryText)
                 .textFieldStyle(.plain)
+                .focused($isInputFocused)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 9)
                 .overlay(alignment: .topLeading) {
@@ -247,42 +170,7 @@ private struct SecretPromptCard: View {
             .keyboardShortcut(.defaultAction)
             .buttonStyle(.plain)
             .disabled(!canSubmit)
+            .pointingHandCursor()
         }
-    }
-
-    // MARK: - Background & Border
-
-    private var overlayBackground: some View {
-        ZStack {
-            if theme.glassEnabled {
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(.ultraThinMaterial)
-            }
-
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(theme.cardBackground.opacity(theme.isDark ? 0.85 : 0.92))
-
-            LinearGradient(
-                colors: [theme.accentColor.opacity(theme.isDark ? 0.08 : 0.05), Color.clear],
-                startPoint: .top,
-                endPoint: .center
-            )
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        }
-    }
-
-    private var borderOverlay: some View {
-        RoundedRectangle(cornerRadius: 16, style: .continuous)
-            .strokeBorder(
-                LinearGradient(
-                    colors: [
-                        theme.glassEdgeLight.opacity(0.2),
-                        theme.cardBorder,
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                ),
-                lineWidth: 1
-            )
     }
 }
