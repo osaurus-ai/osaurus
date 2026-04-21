@@ -1534,6 +1534,23 @@ final class ChatSession: ObservableObject {
                         if assistantTurn.toolCalls == nil { assistantTurn.toolCalls = [] }
                         assistantTurn.toolCalls!.append(call)
 
+                        // Build the matching tool-result turn for this call.
+                        // Every assistant `tool_use` MUST be paired with a
+                        // tool turn before the loop yields control —
+                        // Anthropic's Messages API rejects subsequent sends
+                        // otherwise ("tool_use ids were found without
+                        // tool_result blocks immediately after"). This helper
+                        // is shared by the agent-loop intercepts (`complete`,
+                        // `clarify`) and the normal post-execution path so
+                        // there's only one place that gets the pairing right.
+                        @discardableResult
+                        func recordToolTurn(_ result: String) -> ChatTurn {
+                            assistantTurn.toolResults[callId] = result
+                            let toolTurn = ChatTurn(role: .tool, content: result)
+                            toolTurn.toolCallId = callId
+                            return toolTurn
+                        }
+
                         // Execute tool and append hidden tool result turn
                         var resultText: String
                         do {
@@ -1586,10 +1603,12 @@ final class ChatSession: ObservableObject {
                                 if !ToolEnvelope.isError(resultText) {
                                     self.lastCompletionSummary =
                                         Self.parseCompleteSummary(from: inv.jsonArguments) ?? resultText
-                                    // Drain any pending prompts so a
-                                    // stale clarify card doesn't sit
-                                    // on top of the completion banner.
+                                    // Drain any pending prompts so a stale
+                                    // clarify card doesn't sit on top of the
+                                    // completion banner.
                                     self.promptQueue.drainAll()
+                                    turns.append(recordToolTurn(resultText))
+                                    rebuildVisibleBlocks()
                                     break outer
                                 }
                                 // Fall through — let the model see the
@@ -1600,14 +1619,15 @@ final class ChatSession: ObservableObject {
                                 if !ToolEnvelope.isError(resultText),
                                     let payload = Self.parseClarifyPayload(from: inv.jsonArguments)
                                 {
-                                    // Build a ClarifyPromptState bound
-                                    // to `self.send(...)` so the user's
-                                    // answer dispatches as the next
-                                    // user turn through the existing
-                                    // chat send path. The agent loop
-                                    // ends here (`break outer`); the
-                                    // model resumes on the next send
-                                    // with the answer in history.
+                                    // Build a ClarifyPromptState bound to
+                                    // `self.send(...)` so the user's answer
+                                    // dispatches as the next user turn
+                                    // through the existing chat send path.
+                                    // The agent loop ends here; the model
+                                    // resumes on the next send with the
+                                    // answer in history.
+                                    turns.append(recordToolTurn(resultText))
+                                    rebuildVisibleBlocks()
                                     let clarifyState = ClarifyPromptState(
                                         question: payload.question,
                                         options: payload.options,
@@ -1702,17 +1722,12 @@ final class ChatSession: ObservableObject {
                             // so user denials, missing files, and bad arguments don't all get the
                             // same opaque `executionError` treatment.
                             let rejectionMessage = ToolEnvelope.fromError(error, tool: inv.toolName)
-                            assistantTurn.toolResults[callId] = rejectionMessage
-                            let toolTurn = ChatTurn(role: .tool, content: rejectionMessage)
-                            toolTurn.toolCallId = callId
-                            turns.append(toolTurn)
+                            turns.append(recordToolTurn(rejectionMessage))
                             rejectedDuringBatch = true
                             break invocations  // Stop processing remaining tools in batch
                         }
                         guard isRunActive(runId) else { break outer }
-                        assistantTurn.toolResults[callId] = resultText
-                        let toolTurn = ChatTurn(role: .tool, content: resultText)
-                        toolTurn.toolCallId = callId
+                        let toolTurn = recordToolTurn(resultText)
 
                         // Create a new assistant turn for subsequent content
                         // This ensures tool calls and text are rendered sequentially
