@@ -103,35 +103,41 @@ struct OnboardingWalkthroughView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Spacer().frame(height: 24)
+            // Top bar: Back (if any) on the left, step indicator centered
+            ZStack {
+                HStack {
+                    if currentStep > 0 {
+                        OnboardingBackButton {
+                            navigateTo(currentStep - 1)
+                        }
+                        .transition(.opacity)
+                    }
+                    Spacer()
+                }
 
-            stepIndicator
-                .opacity(hasAppeared ? 1 : 0)
-                .animation(theme.springAnimation().delay(0.1), value: hasAppeared)
-
-            Spacer().frame(height: 16)
+                stepIndicator
+                    .opacity(hasAppeared ? 1 : 0)
+                    .animation(theme.springAnimation().delay(0.1), value: hasAppeared)
+            }
+            .frame(height: OnboardingMetrics.topBarHeight)
 
             contentCard
                 .opacity(hasAppeared ? 1 : 0)
                 .animation(theme.springAnimation().delay(0.15), value: hasAppeared)
 
             Spacer()
-                .frame(minHeight: 16)
+                .frame(minHeight: OnboardingMetrics.footerToCTA)
 
-            navigationButtons
+            navigationButton
                 .opacity(hasAppeared ? 1 : 0)
                 .animation(theme.springAnimation().delay(0.35), value: hasAppeared)
 
-            Spacer().frame(height: OnboardingStyle.bottomButtonPadding)
+            Spacer().frame(height: OnboardingMetrics.bottomInset)
         }
-        .padding(.horizontal, 24)
+        .padding(.horizontal, OnboardingMetrics.contentHorizontal)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .onAppear {
-            DispatchQueue.main.asyncAfter(deadline: .now() + OnboardingStyle.appearDelay) {
-                withAnimation {
-                    hasAppeared = true
-                }
-            }
+        .onAppearAfter(OnboardingMetrics.appearDelay) {
+            withAnimation { hasAppeared = true }
         }
     }
 
@@ -199,7 +205,7 @@ struct OnboardingWalkthroughView: View {
         }
         .frame(maxWidth: .infinity)
         .background(cardBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: OnboardingMetrics.cardCornerRadius, style: .continuous))
         .overlay(cardBorder)
         .shadow(
             color: theme.shadowColor.opacity(theme.shadowOpacity * (isCardHovered ? 1.2 : 0.8)),
@@ -244,7 +250,7 @@ struct OnboardingWalkthroughView: View {
     // MARK: - Card Border
 
     private var cardBorder: some View {
-        RoundedRectangle(cornerRadius: 16, style: .continuous)
+        RoundedRectangle(cornerRadius: OnboardingMetrics.cardCornerRadius, style: .continuous)
             .strokeBorder(
                 LinearGradient(
                     colors: [
@@ -260,7 +266,7 @@ struct OnboardingWalkthroughView: View {
     }
 
     private var accentEdge: some View {
-        RoundedRectangle(cornerRadius: 16, style: .continuous)
+        RoundedRectangle(cornerRadius: OnboardingMetrics.cardCornerRadius, style: .continuous)
             .strokeBorder(
                 stepColor.opacity(isCardHovered ? 0.22 : 0.10),
                 lineWidth: 1
@@ -287,22 +293,10 @@ struct OnboardingWalkthroughView: View {
         )
     }
 
-    // MARK: - Step Indicator (Pill Style)
+    // MARK: - Step Indicator
 
     private var stepIndicator: some View {
-        HStack(spacing: 6) {
-            ForEach(0 ..< totalSteps, id: \.self) { stepIndex in
-                let indicatorStep = WalkthroughStepType(rawValue: stepIndex) ?? .modes
-                Capsule()
-                    .fill(stepIndex == currentStep ? indicatorStep.color : theme.primaryBorder.opacity(0.5))
-                    .frame(width: stepIndex == currentStep ? 24 : 8, height: 6)
-                    .animation(theme.springAnimation(), value: currentStep)
-                    .contentShape(Rectangle().inset(by: -8))
-                    .onTapGesture {
-                        navigateTo(stepIndex)
-                    }
-            }
-        }
+        OnboardingStepIndicator(current: currentStep + 1, total: totalSteps)
     }
 
     // MARK: - Illustration View
@@ -325,31 +319,21 @@ struct OnboardingWalkthroughView: View {
         }
     }
 
-    // MARK: - Navigation Buttons (Fixed Layout)
+    // MARK: - Navigation Button
 
-    private var navigationButtons: some View {
-        HStack(spacing: 12) {
-            if currentStep > 0 {
-                OnboardingSecondaryButton(title: "Back") {
-                    navigateTo(currentStep - 1)
+    private var navigationButton: some View {
+        Group {
+            if isLastStep {
+                OnboardingShimmerButton(title: "Start using Osaurus") {
+                    onComplete()
                 }
-                .frame(width: 120)
-                .transition(.opacity.combined(with: .scale(scale: 0.9)))
-            }
-
-            Group {
-                if isLastStep {
-                    OnboardingShimmerButton(title: "Start using Osaurus") {
-                        onComplete()
-                    }
-                } else {
-                    OnboardingPrimaryButton(title: "Next") {
-                        navigateTo(currentStep + 1)
-                    }
+            } else {
+                OnboardingPrimaryButton(title: "Next") {
+                    navigateTo(currentStep + 1)
                 }
             }
-            .frame(width: 180)
         }
+        .frame(width: OnboardingMetrics.ctaWidth)
     }
 
     // MARK: - Navigation
@@ -402,13 +386,11 @@ private struct WalkthroughModesIllustration: View {
             )
         }
         .onAppear {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                hasAppeared = true
-            }
             withAnimation(.easeInOut(duration: 3.0).repeatForever(autoreverses: true)) {
                 floatOffset = -5
             }
         }
+        .onAppearAfter(0.1) { hasAppeared = true }
     }
 
     private func windowCard(
@@ -584,13 +566,11 @@ private struct WalkthroughToolsIllustration: View {
             }
         }
         .onAppear {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                hasAppeared = true
-            }
             withAnimation(.linear(duration: 60).repeatForever(autoreverses: false)) {
                 orbitRotation = 360
             }
         }
+        .onAppearAfter(0.1) { hasAppeared = true }
     }
 }
 
@@ -696,9 +676,6 @@ private struct WalkthroughSandboxIllustration: View {
             isHovered = hovering
         }
         .onAppear {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                hasAppeared = true
-            }
             withAnimation(.easeInOut(duration: 2.5).repeatForever(autoreverses: true)) {
                 floatOffset = -4
             }
@@ -706,6 +683,7 @@ private struct WalkthroughSandboxIllustration: View {
                 cursorVisible = true
             }
         }
+        .onAppearAfter(0.1) { hasAppeared = true }
     }
 
     private func floatingIcon(_ name: String, offset: CGPoint, delay: Double) -> some View {
@@ -752,13 +730,11 @@ private struct WalkthroughPersonalizationIllustration: View {
             iconCard(id: "themes", icon: "paintpalette.fill", color: .pink, delay: 0.25)
         }
         .onAppear {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                hasAppeared = true
-            }
             withAnimation(.easeInOut(duration: 2.5).repeatForever(autoreverses: true)) {
                 floatOffset = -4
             }
         }
+        .onAppearAfter(0.1) { hasAppeared = true }
     }
 
     private var agentsOrbs: some View {
@@ -975,13 +951,11 @@ private struct WalkthroughMemoryIllustration: View {
             isHovered = hovering
         }
         .onAppear {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                hasAppeared = true
-            }
             withAnimation(.easeInOut(duration: 2.2).repeatForever(autoreverses: true)) {
                 pulseScale = 1.12
             }
         }
+        .onAppearAfter(0.1) { hasAppeared = true }
     }
 }
 
@@ -1051,9 +1025,6 @@ private struct WalkthroughPrivacyIllustration: View {
             isHovered = hovering
         }
         .onAppear {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                hasAppeared = true
-            }
             withAnimation(.easeInOut(duration: 2.5).repeatForever(autoreverses: true)) {
                 floatOffset = -5
             }
@@ -1064,6 +1035,7 @@ private struct WalkthroughPrivacyIllustration: View {
                 orbitAngle = 360
             }
         }
+        .onAppearAfter(0.1) { hasAppeared = true }
     }
 }
 
@@ -1073,7 +1045,7 @@ private struct WalkthroughPrivacyIllustration: View {
     struct OnboardingWalkthroughView_Previews: PreviewProvider {
         static var previews: some View {
             OnboardingWalkthroughView(onComplete: {})
-                .frame(width: OnboardingLayout.windowWidth, height: OnboardingLayout.windowHeight)
+                .frame(width: OnboardingMetrics.windowWidth, height: 700)
         }
     }
 #endif

@@ -2,7 +2,7 @@
 //  OnboardingWelcomeView.swift
 //  osaurus
 //
-//  Welcome screen with theatrical orb animation and phased reveal.
+//  Welcome screen with an orb hero and phased content reveal.
 //
 
 import SwiftUI
@@ -10,12 +10,11 @@ import SwiftUI
 // MARK: - Animation Phase
 
 private enum WelcomePhase: Int {
-    case initial = 0  // Nothing visible
-    case orbAppear = 1  // Orb fades in at center
-    case orbRise = 2  // Orb moves up, shrinks slightly
-    case headline = 3  // Headline fades in
-    case body = 4  // Body text fades in
-    case button = 5  // Button fades in
+    case initial = 0
+    case orb = 1
+    case headline = 2
+    case body = 3
+    case button = 4
 }
 
 // MARK: - Welcome View
@@ -26,134 +25,100 @@ struct OnboardingWelcomeView: View {
     @Environment(\.theme) private var theme
     @State private var phase: WelcomePhase = .initial
 
-    // Computed animation states
-    private var orbVisible: Bool { phase.rawValue >= WelcomePhase.orbAppear.rawValue }
-    private var orbRisen: Bool { phase.rawValue >= WelcomePhase.orbRise.rawValue }
+    private var orbVisible: Bool { phase.rawValue >= WelcomePhase.orb.rawValue }
     private var headlineVisible: Bool { phase.rawValue >= WelcomePhase.headline.rawValue }
     private var bodyVisible: Bool { phase.rawValue >= WelcomePhase.body.rawValue }
     private var buttonVisible: Bool { phase.rawValue >= WelcomePhase.button.rawValue }
 
     var body: some View {
-        GeometryReader { geometry in
+        VStack(spacing: 0) {
+            Spacer(minLength: 32)
+
+            // Orb hero
             ZStack {
-                // Orb - starts centered, moves up
-                orbSection
-                    .position(
-                        x: geometry.size.width / 2,
-                        y: orbRisen ? geometry.size.height * 0.28 : geometry.size.height / 2
-                    )
-                    .animation(.easeInOut(duration: 0.9), value: orbRisen)
+                Circle()
+                    .fill(theme.accentColor)
+                    .blur(radius: 50)
+                    .frame(width: 100, height: 100)
+                    .opacity(orbVisible ? 0.35 : 0)
 
-                // Content appears below orb after it rises
-                VStack(spacing: 0) {
-                    // Spacer to position content below orb
-                    Spacer()
-                        .frame(height: geometry.size.height * 0.42)
-
-                    // Headline
-                    Text("Own your AI.", bundle: .module)
-                        .font(theme.font(size: 28, weight: .bold))
-                        .foregroundColor(theme.primaryText)
-                        .multilineTextAlignment(.center)
-                        .opacity(headlineVisible ? 1 : 0)
-                        .offset(y: headlineVisible ? 0 : 20)
-                        .animation(.easeOut(duration: 0.6), value: headlineVisible)
-
-                    Spacer().frame(height: 16)
-
-                    // Body
-                    Text(
-                        "Agents, memory, tools, and identity that live on your Mac.\nModels are interchangeable — everything else compounds, stays with you.",
-                        bundle: .module
-                    )
-                    .font(theme.font(size: 13))
-                    .foregroundColor(theme.secondaryText)
-                    .multilineTextAlignment(.center)
-                    .lineSpacing(4)
-                    .opacity(bodyVisible ? 1 : 0)
-                    .offset(y: bodyVisible ? 0 : 15)
-                    .animation(.easeOut(duration: 0.6), value: bodyVisible)
-
-                    Spacer().frame(height: 40)
-
-                    // Shimmer button
-                    OnboardingShimmerButton(title: "Get Started", action: onContinue)
-                        .frame(width: 160)
-                        .opacity(buttonVisible ? 1 : 0)
-                        .scaleEffect(buttonVisible ? 1 : 0.9)
-                        .animation(theme.springAnimation(), value: buttonVisible)
-
-                    Spacer()
-                }
-                .padding(.horizontal, OnboardingStyle.backButtonHorizontalPadding + 5)
+                AnimatedOrb(
+                    color: theme.accentColor,
+                    size: .custom(96),
+                    seed: "welcome-onboarding",
+                    showGlow: true,
+                    showFloat: true,
+                    isInteractive: false
+                )
+                .frame(width: 96, height: 96)
+                .opacity(orbVisible ? 1 : 0)
+                .scaleEffect(orbVisible ? 1 : 0.5)
             }
+            .animation(.easeOut(duration: 0.8), value: orbVisible)
+
+            Spacer().frame(height: 28)
+
+            Text("Own your AI.", bundle: .module)
+                .font(theme.font(size: OnboardingMetrics.heroTitleSize, weight: .bold))
+                .foregroundColor(theme.primaryText)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .opacity(headlineVisible ? 1 : 0)
+                .offset(y: headlineVisible ? 0 : 16)
+                .animation(.easeOut(duration: 0.5), value: headlineVisible)
+
+            Spacer().frame(height: 14)
+
+            Text(
+                "Agents, memory, tools, and identity that live on your Mac.\nModels are interchangeable — everything else compounds, stays with you.",
+                bundle: .module
+            )
+            .font(theme.font(size: OnboardingMetrics.subtitleSize))
+            .foregroundColor(theme.secondaryText)
+            .multilineTextAlignment(.center)
+            .lineSpacing(4)
+            .fixedSize(horizontal: false, vertical: true)
+            .opacity(bodyVisible ? 1 : 0)
+            .offset(y: bodyVisible ? 0 : 12)
+            .animation(.easeOut(duration: 0.5), value: bodyVisible)
+
+            Spacer(minLength: 24)
+
+            OnboardingShimmerButton(title: "Get Started", action: onContinue)
+                .frame(width: OnboardingMetrics.ctaWidthCompact)
+                .opacity(buttonVisible ? 1 : 0)
+                .scaleEffect(buttonVisible ? 1 : 0.9)
+                .animation(theme.springAnimation(), value: buttonVisible)
+
+            Spacer().frame(height: OnboardingMetrics.bottomInset)
         }
+        .padding(.horizontal, OnboardingMetrics.contentHorizontal)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .contentShape(Rectangle())
         .onTapGesture {
+            // Allow impatient users to skip straight to the CTA reveal
             guard phase != .button else { return }
-            withAnimation(.easeOut(duration: 0.4)) {
+            withAnimation(.easeOut(duration: 0.35)) {
                 phase = .button
             }
         }
-        .onAppear {
-            startAnimationSequence()
-        }
+        .task { await runAnimationSequence() }
     }
 
-    // MARK: - Orb Section
-
-    private var orbSection: some View {
-        ZStack {
-            // Ambient glow
-            Circle()
-                .fill(theme.accentColor)
-                .blur(radius: 50)
-                .frame(width: 100, height: 100)
-                .opacity(orbVisible ? 0.35 : 0)
-
-            // AnimatedOrb
-            AnimatedOrb(
-                color: theme.accentColor,
-                size: .custom(orbRisen ? 90 : 110),
-                seed: "welcome-onboarding",
-                showGlow: true,
-                showFloat: true,
-                isInteractive: false
-            )
-            .frame(width: orbRisen ? 90 : 110, height: orbRisen ? 90 : 110)
-            .opacity(orbVisible ? 1 : 0)
-            .scaleEffect(orbVisible ? 1 : 0.5)
-        }
-        .animation(.easeOut(duration: 0.8), value: orbVisible)
-    }
-
-    // MARK: - Animation Sequence
-
-    private func startAnimationSequence() {
-        // Phase 1: Orb appears (0.3s delay)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            phase = .orbAppear
-        }
-
-        // Phase 2: Orb rises (1.2s delay)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-            phase = .orbRise
-        }
-
-        // Phase 3: Headline (2.0s delay)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-            phase = .headline
-        }
-
-        // Phase 4: Body (2.4s delay)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.4) {
-            phase = .body
-        }
-
-        // Phase 5: Button (2.8s delay)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.8) {
-            phase = .button
+    /// Reveal the orb, then the headline, body and CTA in a tight cadence.
+    /// Steps are sequenced via `Task.sleep` so they cancel together if the
+    /// view disappears mid-animation (e.g. user clicks "Get Started" early).
+    private func runAnimationSequence() async {
+        let cadence: [(phase: WelcomePhase, delay: UInt64)] = [
+            (.orb, 250_000_000),
+            (.headline, 650_000_000),
+            (.body, 350_000_000),
+            (.button, 350_000_000),
+        ]
+        for step in cadence {
+            try? await Task.sleep(nanoseconds: step.delay)
+            guard !Task.isCancelled else { return }
+            phase = step.phase
         }
     }
 }
@@ -164,7 +129,7 @@ struct OnboardingWelcomeView: View {
     struct OnboardingWelcomeView_Previews: PreviewProvider {
         static var previews: some View {
             OnboardingWelcomeView(onContinue: {})
-                .frame(width: 500, height: 560)
+                .frame(width: OnboardingMetrics.windowWidth, height: 560)
         }
     }
 #endif
