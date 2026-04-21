@@ -42,11 +42,11 @@ public enum RemoteProviderType: String, Codable, Sendable, CaseIterable {
 
     public var displayName: String {
         switch self {
-        case .openaiLegacy: return "OpenAI Compatible"
-        case .anthropic: return "Anthropic"
-        case .openResponses: return "Open Responses"
-        case .gemini: return "Google Gemini"
-        case .osaurus: return "Osaurus Agent"
+        case .openaiLegacy: return L("OpenAI Compatible")
+        case .anthropic: return L("Anthropic")
+        case .openResponses: return L("Open Responses")
+        case .gemini: return L("Google Gemini")
+        case .osaurus: return L("Osaurus Agent")
         }
     }
 

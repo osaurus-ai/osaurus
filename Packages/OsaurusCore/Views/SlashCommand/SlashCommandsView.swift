@@ -98,7 +98,7 @@ struct SlashCommandsView: View {
             subtitle: L("Reusable prompt shortcuts invoked by typing / in the chat input"),
             count: registry.customCommands.isEmpty ? nil : registry.customCommands.count
         ) {
-            HeaderPrimaryButton(L("New Command"), icon: "plus") {
+            HeaderPrimaryButton("New Command", icon: "plus") {
                 isCreating = true
             }
         }

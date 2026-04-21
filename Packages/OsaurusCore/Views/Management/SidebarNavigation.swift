@@ -350,16 +350,28 @@ private struct SidebarItemView: View {
     }
 
     private var expandedBackground: some View {
-        ZStack {
-            if isSelected {
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(theme.sidebarSelectedBackground)
-                    .matchedGeometryEffect(id: "sidebar_selection", in: namespace)
-            } else if isHovering {
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(theme.tertiaryBackground.opacity(0.5))
-            }
-        }
+        // Every `SidebarItemView` lives inside a parent `LazyVStack` + `ForEach`
+        // and was previously registering `.matchedGeometryEffect(id:"sidebar_selection",
+        // in: namespace)` inside the `isSelected` branch. SwiftUI requires that
+        // exactly one view own a given (id, namespace) pair at a time, but during
+        // selection transitions the outgoing selected row and the incoming one
+        // can briefly both be `isSelected == true`, tripping a Swift runtime
+        // precondition in Debug builds (EXC_BREAKPOINT at the geometry-effect
+        // source check). Release builds compile the precondition away, which is
+        // why the DMG looked fine while Xcode builds crashed on Settings open.
+        //
+        // Switching to a plain conditional fill + `.animation()` keeps the
+        // selected-highlight visual (cross-fade between selected / hover / none)
+        // without the single-source invariant. We lose the cross-row pill slide,
+        // which was subtle enough that it's not worth the crash surface.
+        RoundedRectangle(cornerRadius: 8)
+            .fill(
+                isSelected
+                    ? theme.sidebarSelectedBackground
+                    : (isHovering ? theme.tertiaryBackground.opacity(0.5) : Color.clear)
+            )
+            .animation(.easeOut(duration: 0.2), value: isSelected)
+            .animation(.easeOut(duration: 0.15), value: isHovering)
     }
 }
 

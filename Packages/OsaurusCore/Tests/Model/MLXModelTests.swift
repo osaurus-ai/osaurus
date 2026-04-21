@@ -121,4 +121,26 @@ struct MLXModelTests {
 
         #expect(model.isDownloaded == false)
     }
+
+    @Test func releasedAt_defaultsToNil() {
+        let model = MLXModel(
+            id: "org/repo",
+            name: "repo",
+            description: "",
+            downloadURL: "https://example.com/repo"
+        )
+        #expect(model.releasedAt == nil)
+    }
+
+    @Test func releasedAt_isPreservedFromInit() {
+        let date = Date(timeIntervalSince1970: 1_760_745_000)
+        let model = MLXModel(
+            id: "org/repo",
+            name: "repo",
+            description: "",
+            downloadURL: "https://example.com/repo",
+            releasedAt: date
+        )
+        #expect(model.releasedAt == date)
+    }
 }

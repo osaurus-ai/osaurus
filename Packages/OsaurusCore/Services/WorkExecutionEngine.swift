@@ -396,6 +396,7 @@ public actor WorkExecutionEngine {
         agentId: UUID? = nil,
         cacheHint: String? = nil,
         staticPrefix: String? = nil,
+        modelOptions: [String: ModelOptionValue] = [:],
         shouldInterrupt: @escaping InterruptCheckCallback = { false },
         onIterationStart: @escaping IterationStartCallback,
         onDelta: @escaping IterationStreamingCallback,
@@ -531,6 +532,12 @@ public actor WorkExecutionEngine {
             )
             request.cache_hint = cacheHint
             request.staticPrefix = staticPrefix
+            // Forward per-model options (e.g. `disableThinking: true` for
+            // Qwen3-family) so the Jinja renderer sees `enable_thinking: false`.
+            // Without this, Work mode silently ignored the reasoning toggle
+            // even after the user had flipped it — the request leaving
+            // ChatEngine had no `modelOptions` dict at all.
+            request.modelOptions = modelOptions.isEmpty ? nil : modelOptions
 
             // Stream response
             var responseContent = ""

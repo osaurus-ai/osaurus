@@ -8,6 +8,7 @@
 import AppKit
 import Combine
 import LocalAuthentication
+@preconcurrency import MLXLMCommon
 import SwiftUI
 
 @MainActor
@@ -528,9 +529,11 @@ final class ChatSession: ObservableObject {
             }
             return
         }
+        let toolsOff = AgentManager.shared.effectiveToolsDisabled(for: effectiveAgentId)
         let context = await MemoryContextAssembler.assembleContext(
             agentId: effectiveAgentId.uuidString,
-            config: MemoryConfigurationStore.load()
+            config: MemoryConfigurationStore.load(),
+            toolsAvailable: !toolsOff
         )
         let newTokens = ContextBudgetManager.estimateTokens(for: context)
         guard newTokens != cachedContext?.manifest.memoryTokens ?? 0 else { return }
@@ -667,6 +670,10 @@ final class ChatSession: ObservableObject {
         let agentUUID = UUID(uuidString: context.memoryAgentId) ?? Agent.defaultId
         let memoryOff = AgentManager.shared.effectiveMemoryDisabled(for: agentUUID)
 
+        // Tag memory writes with the execution mode active for this agent so
+        // pure-chat recall can filter out tool-mode contributions.
+        let sourceMode: MemorySourceMode = estimatedChatExecutionMode(agentId: agentUUID).memorySourceMode
+
         if !memoryOff, context.hasContent, let sid = sessionId {
             let convId = sid.uuidString
             let aid = context.memoryAgentId
@@ -682,7 +689,8 @@ final class ChatSession: ObservableObject {
                     chunkIndex: userChunkIndex,
                     role: "user",
                     content: context.userContent,
-                    tokenCount: max(1, context.userContent.count / 4)
+                    tokenCount: max(1, context.userContent.count / 4),
+                    sourceMode: sourceMode
                 )
             } catch {
                 MemoryLogger.database.warning("Failed to insert user chunk: \(error)")
@@ -704,7 +712,8 @@ final class ChatSession: ObservableObject {
                         chunkIndex: chunkIdx,
                         role: "assistant",
                         content: assistantContent,
-                        tokenCount: max(1, assistantContent.count / 4)
+                        tokenCount: max(1, assistantContent.count / 4),
+                        sourceMode: sourceMode
                     )
                 } catch {
                     MemoryLogger.database.warning("Failed to insert assistant chunk: \(error)")
@@ -734,6 +743,7 @@ final class ChatSession: ObservableObject {
                     assistantMessage: assistantContent,
                     agentId: context.memoryAgentId,
                     conversationId: context.memoryConversationId,
+                    sourceMode: sourceMode,
                     sessionDate: today
                 )
             }
@@ -1005,10 +1015,28 @@ final class ChatSession: ObservableObject {
                         // (which is after cancellation / teardown).
                         var lastDeltaTime: Date?
 
+                        // Resolve vmlx's streaming reasoning parser if this
+                        // model is JANG-stamped AND thinking is enabled. Non-
+                        // stamped models keep osaurus's in-house `<think>`
+                        // scanner. Thinking-disabled sessions also fall back
+                        // to the in-house path so a rogue model that ignores
+                        // `enable_thinking: false` still gets routed via the
+                        // retroactive-thinking path instead of being shunted
+                        // straight into the (hidden) think pane.
+                        let vmlxParser: ReasoningParser? = {
+                            let disabled = activeModelOptions["disableThinking"]?.boolValue == true
+                            guard !disabled, let model = selectedModel else { return nil }
+                            guard let resolution = JANGReasoningResolver.resolve(modelKey: model) else {
+                                return nil
+                            }
+                            return resolution.isStamped ? resolution.reasoningParser : nil
+                        }()
+
                         var processor = StreamingDeltaProcessor(
                             turn: assistantTurn,
                             modelId: selectedModel ?? "default",
-                            modelOptions: activeModelOptions
+                            modelOptions: activeModelOptions,
+                            vmlxReasoningParser: vmlxParser
                         ) { [weak self] in
                             // rebuildVisibleBlocks mutates @Published properties which already
                             // emit objectWillChange — the extra send() below is redundant.
@@ -1323,20 +1351,27 @@ struct ChatView: View {
     /// Convenience accessor for the window ID
     private var windowId: UUID { windowState.windowId }
 
-    /// Picker items filtered to the active Bonjour provider's models when a remote agent is selected,
-    /// or local/foundation models only when no remote agent is active.
+    /// Picker items filtered to the active Bonjour provider's models when a
+    /// remote agent is selected, or ALL models (local + user-configured
+    /// remote providers) when no remote agent is active.
+    ///
+    /// Prior to this fix, the no-agent branch hid every `.remote` model
+    /// from the picker — which was correct for keeping Bonjour-discovered
+    /// models from leaking into the local-only view, but also suppressed
+    /// manually-configured remote providers (Ollama, custom OpenAI
+    /// endpoints, etc.). Since user-configured providers are always
+    /// intentional, they should be visible regardless of Bonjour state.
     private var filteredPickerItems: [ModelPickerItem] {
         if let providerId = windowState.selectedDiscoveredAgentProviderId {
+            // Bonjour agent active: show only that agent's models.
             return session.pickerItems.filter {
                 if case .remote(_, let id) = $0.source { return id == providerId }
                 return false
             }
         }
-        // No remote agent selected: hide all remote models so the picker stays local.
-        return session.pickerItems.filter {
-            if case .remote = $0.source { return false }
-            return true
-        }
+        // No Bonjour agent: show everything — local, foundation, and
+        // user-configured remote providers.
+        return session.pickerItems
     }
 
     /// Observed session - needed to properly propagate @Published changes from ChatSession
@@ -2101,9 +2136,13 @@ private struct PairingSheet: View {
             }
 
             HStack {
-                Button { onCancel() } label: { Text("Cancel", bundle: .module) }
-                    .keyboardShortcut(.cancelAction)
-                    .disabled(isPairing)
+                Button {
+                    onCancel()
+                } label: {
+                    Text("Cancel", bundle: .module)
+                }
+                .keyboardShortcut(.cancelAction)
+                .disabled(isPairing)
                 Spacer()
                 if isPairing {
                     ProgressView()

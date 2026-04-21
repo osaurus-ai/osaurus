@@ -80,6 +80,46 @@ final class PluginHostContext: @unchecked Sendable {
     private static let dispatchRateLimit = 10
     private static let dispatchRateWindow: TimeInterval = 60
 
+    // MARK: - Per-Plugin In-Flight Inference Cap
+
+    /// Maximum simultaneous inference calls (`complete` + `completeStream` + `embed`)
+    /// per plugin. Bursts above this fail fast with `plugin_busy` instead of
+    /// piling up blocked plugin worker threads — every `blockingAsync` parks
+    /// a thread on a semaphore for the entire MLX serialization wait, and
+    /// without a cap a single misbehaving plugin can starve the host.
+    static let maxInflightPerPlugin = 2
+
+    private let inflightLock = NSLock()
+    private var inflightInferenceCount = 0
+
+    /// Try to take one inflight slot. Returns `false` if the plugin is already
+    /// at the per-plugin cap; the caller should reject with `plugin_busy`.
+    private func tryEnterInflightInference() -> Bool {
+        inflightLock.withLock {
+            guard inflightInferenceCount < Self.maxInflightPerPlugin else { return false }
+            inflightInferenceCount += 1
+            return true
+        }
+    }
+
+    /// Release one inflight slot. Floors at zero so a buggy double-release
+    /// can never poison the count.
+    private func exitInflightInference() {
+        inflightLock.withLock {
+            inflightInferenceCount = max(0, inflightInferenceCount - 1)
+        }
+    }
+
+    /// Reusable JSON for the "plugin already at concurrency cap" response.
+    private static func pluginBusyJSON(kind: String) -> String {
+        jsonString([
+            "error": "plugin_busy",
+            "message":
+                "Plugin already has \(maxInflightPerPlugin) concurrent \(kind) calls in flight. Retry after a previous call returns.",
+            "max_inflight": maxInflightPerPlugin,
+        ])
+    }
+
     // MARK: - Per-Request Agent Context
 
     /// Resolved agent ID for the current thread. Checks thread-local storage
@@ -832,8 +872,15 @@ final class PluginHostContext: @unchecked Sendable {
     // MARK: complete (non-streaming)
 
     func complete(requestJSON: String) -> String {
+        guard tryEnterInflightInference() else {
+            return Self.pluginBusyJSON(kind: "complete")
+        }
         let pid = self.pluginId
+        let releaseSlot: @Sendable () -> Void = { [weak self] in
+            self?.exitInflightInference()
+        }
         return Self.blockingAsync {
+            defer { releaseSlot() }
             guard let (rawJSON, sanitized) = Self.parseRawRequest(requestJSON),
                 let request = try? JSONDecoder().decode(ChatCompletionRequest.self, from: sanitized)
             else {
@@ -929,9 +976,16 @@ final class PluginHostContext: @unchecked Sendable {
         onChunk: osr_on_chunk_t?,
         userData: UnsafeMutableRawPointer?
     ) -> String {
+        guard tryEnterInflightInference() else {
+            return Self.pluginBusyJSON(kind: "complete_stream")
+        }
         let pid = self.pluginId
         nonisolated(unsafe) let userData = userData
+        let releaseSlot: @Sendable () -> Void = { [weak self] in
+            self?.exitInflightInference()
+        }
         return Self.blockingAsync {
+            defer { releaseSlot() }
             guard let (rawJSON, sanitized) = Self.parseRawRequest(requestJSON),
                 let request = try? JSONDecoder().decode(ChatCompletionRequest.self, from: sanitized)
             else {
@@ -1111,7 +1165,14 @@ final class PluginHostContext: @unchecked Sendable {
     }
 
     func embed(requestJSON: String) -> String {
-        Self.blockingAsync {
+        guard tryEnterInflightInference() else {
+            return Self.pluginBusyJSON(kind: "embed")
+        }
+        let releaseSlot: @Sendable () -> Void = { [weak self] in
+            self?.exitInflightInference()
+        }
+        return Self.blockingAsync {
+            defer { releaseSlot() }
             let data = Data(requestJSON.utf8)
             guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
                 return Self.jsonString(["error": "invalid_request", "message": "Failed to parse embedding request"])
@@ -1668,15 +1729,46 @@ private final class ResultBox<T>: @unchecked Sendable {
 }
 
 extension PluginHostContext {
+    /// Dedicated GCD queue used to run the inner async-bridge `Task` so that
+    /// the cooperative thread pool's executor cannot deadlock with the
+    /// outside semaphore wait. Concurrent so multiple plugin trampolines can
+    /// progress in parallel; QoS matches a user-initiated request.
+    ///
+    /// Why this matters: `blockingAsync` parks the *trampoline thread* on a
+    /// `DispatchSemaphore` while a Swift `Task` runs the async work. If that
+    /// trampoline thread happened to be one of the cooperative pool's worker
+    /// threads (e.g. a future refactor that calls `blockingAsync` from a
+    /// `Task`), and the inner async work needs to await on something that
+    /// also needs that pool, the system can deadlock — `sem.wait()` blocks
+    /// the only thread the inner Task could resume on.
+    ///
+    /// We can't fully prevent that — `Task.detached` still uses the cooperative
+    /// pool — but we *can* ensure that the inner Task never inherits
+    /// the caller's actor or priority. Combined with the `!Thread.isMainThread`
+    /// assert, this keeps the contract safe for plugin worker threads.
+    private static let blockingBridgeQueue = DispatchQueue(
+        label: "com.osaurus.pluginHost.blockingBridge",
+        qos: .userInitiated,
+        attributes: .concurrent
+    )
+
     /// Block the current (non-main) thread while running async work.
     /// Used by C trampolines that must return synchronously.
+    ///
+    /// Uses `Task.detached` so the inner work never inherits the caller's
+    /// actor isolation or priority, and runs the signal on a dedicated
+    /// concurrent GCD queue so the wakeup path doesn't depend on the
+    /// cooperative pool having a free worker.
     static func blockingAsync<T>(_ work: @escaping @Sendable () async -> T) -> T {
         assert(!Thread.isMainThread, "Host API trampoline must not be called from main thread")
         let sem = DispatchSemaphore(value: 0)
         let box = ResultBox<T>()
-        Task {
-            box.value = await work()
-            sem.signal()
+        Task.detached(priority: .userInitiated) {
+            let value = await work()
+            blockingBridgeQueue.async {
+                box.value = value
+                sem.signal()
+            }
         }
         sem.wait()
         return box.value!
@@ -1688,9 +1780,12 @@ extension PluginHostContext {
         assert(!Thread.isMainThread, "Host API trampoline must not be called from main thread")
         let sem = DispatchSemaphore(value: 0)
         let box = ResultBox<T>()
-        Task { @MainActor in
-            box.value = work()
-            sem.signal()
+        Task.detached(priority: .userInitiated) { @MainActor in
+            let value = work()
+            blockingBridgeQueue.async {
+                box.value = value
+                sem.signal()
+            }
         }
         sem.wait()
         return box.value!

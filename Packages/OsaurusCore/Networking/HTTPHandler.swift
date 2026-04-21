@@ -1432,7 +1432,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         role: role,
                         content: content,
                         tokenCount: tokens,
-                        createdAt: turnDate
+                        createdAt: turnDate,
+                        sourceMode: .chat
                     )
                     await MemorySearchService.shared.indexConversationChunk(chunk)
                 }
@@ -1443,6 +1444,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         assistantMessage: turn.assistant,
                         agentId: req.agent_id,
                         conversationId: req.conversation_id,
+                        sourceMode: .chat,
                         sessionDate: turnDate
                     )
                 }
@@ -1536,7 +1538,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             headers.append(contentsOf: stateRef.value.corsHeaders)
             let body = #"{"error":"Invalid pairing request"}"#
             sendResponse(context: context, version: head.version, status: .badRequest, headers: headers, body: body)
-            logRequest(method: "POST", path: "/pair", userAgent: userAgent, requestBody: requestBodyString, responseBody: body, responseStatus: 400, startTime: startTime)
+            logRequest(
+                method: "POST",
+                path: "/pair",
+                userAgent: userAgent,
+                requestBody: requestBodyString,
+                responseBody: body,
+                responseStatus: 400,
+                startTime: startTime
+            )
             return
         }
 
@@ -1549,7 +1559,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logUserAgent = userAgent
         let logRequestBody = requestBodyString
         // Strip port from Host header (e.g. "device.local:1337" → "device.local")
-        let pairingHost = (head.headers.first(name: "Host") ?? "unknown")
+        let pairingHost =
+            (head.headers.first(name: "Host") ?? "unknown")
             .components(separatedBy: ":").first ?? "unknown"
 
         Task(priority: .userInitiated) {
@@ -1567,8 +1578,22 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     var headers = [("Content-Type", "application/json; charset=utf-8")]
                     headers.append(contentsOf: cors)
                     let body = #"{"error":"Signature verification failed"}"#
-                    self.sendResponse(context: ctx.value, version: head.version, status: .unauthorized, headers: headers, body: body)
-                    logSelf.logRequest(method: "POST", path: "/pair", userAgent: logUserAgent, requestBody: logRequestBody, responseBody: body, responseStatus: 401, startTime: logStartTime)
+                    self.sendResponse(
+                        context: ctx.value,
+                        version: head.version,
+                        status: .unauthorized,
+                        headers: headers,
+                        body: body
+                    )
+                    logSelf.logRequest(
+                        method: "POST",
+                        path: "/pair",
+                        userAgent: logUserAgent,
+                        requestBody: logRequestBody,
+                        responseBody: body,
+                        responseStatus: 401,
+                        startTime: logStartTime
+                    )
                 }
                 return
             }
@@ -1583,8 +1608,22 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     var headers = [("Content-Type", "application/json; charset=utf-8")]
                     headers.append(contentsOf: cors)
                     let body = #"{"error":"Agent not found or not available for pairing"}"#
-                    self.sendResponse(context: ctx.value, version: head.version, status: .notFound, headers: headers, body: body)
-                    logSelf.logRequest(method: "POST", path: "/pair", userAgent: logUserAgent, requestBody: logRequestBody, responseBody: body, responseStatus: 404, startTime: logStartTime)
+                    self.sendResponse(
+                        context: ctx.value,
+                        version: head.version,
+                        status: .notFound,
+                        headers: headers,
+                        body: body
+                    )
+                    logSelf.logRequest(
+                        method: "POST",
+                        path: "/pair",
+                        userAgent: logUserAgent,
+                        requestBody: logRequestBody,
+                        responseBody: body,
+                        responseStatus: 404,
+                        startTime: logStartTime
+                    )
                 }
                 return
             }
@@ -1600,8 +1639,22 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     var headers = [("Content-Type", "application/json; charset=utf-8")]
                     headers.append(contentsOf: cors)
                     let body = #"{"error":"Pairing denied"}"#
-                    self.sendResponse(context: ctx.value, version: head.version, status: .forbidden, headers: headers, body: body)
-                    logSelf.logRequest(method: "POST", path: "/pair", userAgent: logUserAgent, requestBody: logRequestBody, responseBody: body, responseStatus: 403, startTime: logStartTime)
+                    self.sendResponse(
+                        context: ctx.value,
+                        version: head.version,
+                        status: .forbidden,
+                        headers: headers,
+                        body: body
+                    )
+                    logSelf.logRequest(
+                        method: "POST",
+                        path: "/pair",
+                        userAgent: logUserAgent,
+                        requestBody: logRequestBody,
+                        responseBody: body,
+                        responseStatus: 403,
+                        startTime: logStartTime
+                    )
                 }
                 return
             }
@@ -1613,17 +1666,33 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             //    audience check regardless of which agent the connector targets.
             //    This triggers biometric auth to access the Master Key.
             let label = "Paired – \(pairingHost)"
-            guard let (fullKey, keyInfo) = try? APIKeyManager.shared.generate(
-                label: label,
-                expiration: .never,
-                agentIndex: nil
-            ) else {
+            guard
+                let (fullKey, keyInfo) = try? APIKeyManager.shared.generate(
+                    label: label,
+                    expiration: .never,
+                    agentIndex: nil
+                )
+            else {
                 hop {
                     var headers = [("Content-Type", "application/json; charset=utf-8")]
                     headers.append(contentsOf: cors)
                     let body = #"{"error":"Failed to generate access key"}"#
-                    self.sendResponse(context: ctx.value, version: head.version, status: .internalServerError, headers: headers, body: body)
-                    logSelf.logRequest(method: "POST", path: "/pair", userAgent: logUserAgent, requestBody: logRequestBody, responseBody: body, responseStatus: 500, startTime: logStartTime)
+                    self.sendResponse(
+                        context: ctx.value,
+                        version: head.version,
+                        status: .internalServerError,
+                        headers: headers,
+                        body: body
+                    )
+                    logSelf.logRequest(
+                        method: "POST",
+                        path: "/pair",
+                        userAgent: logUserAgent,
+                        requestBody: logRequestBody,
+                        responseBody: body,
+                        responseStatus: 500,
+                        startTime: logStartTime
+                    )
                 }
                 return
             }
@@ -1635,13 +1704,23 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
             // 5. Return the agent's address, the generated API key, and the permanence flag.
             let response = PairResponse(agentAddress: agentAddress, apiKey: fullKey, isPermanent: isPermanent)
-            let json = (try? JSONEncoder().encode(response)).map { String(decoding: $0, as: UTF8.self) } ?? #"{"error":"Encoding failed"}"#
+            let json =
+                (try? JSONEncoder().encode(response)).map { String(decoding: $0, as: UTF8.self) }
+                ?? #"{"error":"Encoding failed"}"#
 
             hop {
                 var headers = [("Content-Type", "application/json; charset=utf-8")]
                 headers.append(contentsOf: cors)
                 self.sendResponse(context: ctx.value, version: head.version, status: .ok, headers: headers, body: json)
-                logSelf.logRequest(method: "POST", path: "/pair", userAgent: logUserAgent, requestBody: logRequestBody, responseBody: json, responseStatus: 200, startTime: logStartTime)
+                logSelf.logRequest(
+                    method: "POST",
+                    path: "/pair",
+                    userAgent: logUserAgent,
+                    requestBody: logRequestBody,
+                    responseBody: json,
+                    responseStatus: 200,
+                    startTime: logStartTime
+                )
             }
         }
     }
@@ -3170,14 +3249,27 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         }
 
         struct ShowRequest: Decodable {
-            let name: String
+            let model: String
+
+            init(from decoder: any Decoder) throws {
+                let container = try decoder.container(keyedBy: CodingKeys.self)
+                if let model = try container.decodeIfPresent(String.self, forKey: .model) {
+                    self.model = model
+                } else {
+                    self.model = try container.decode(String.self, forKey: .name)
+                }
+            }
+
+            private enum CodingKeys: String, CodingKey {
+                case model, name
+            }
         }
 
         guard let req = try? JSONDecoder().decode(ShowRequest.self, from: data) else {
             var headers = [("Content-Type", "application/json; charset=utf-8")]
             headers.append(contentsOf: stateRef.value.corsHeaders)
             let errorBody =
-                #"{"error":{"message":"Invalid request: expected {\"name\": \"<model_id>\"}","type":"invalid_request_error"}}"#
+                #"{"error":{"message":"Invalid request: expected {\"model\": \"<model_id>\"}","type":"invalid_request_error"}}"#
             sendResponse(
                 context: context,
                 version: head.version,
@@ -3206,7 +3298,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logUserAgent = userAgent
         let logRequestBody = requestBodyString
         let logSelf = self
-        let modelName = req.name
+        let modelName = req.model
 
         Task(priority: .userInitiated) {
             // Handle "foundation" model specially

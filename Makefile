@@ -8,7 +8,7 @@ CONFIG := Release
 PROJECT := App/osaurus.xcodeproj
 DERIVED := build/DerivedData
 
-.PHONY: help cli app install-cli serve status test clean bench-setup bench-ingest bench-ingest-chunks bench-run bench
+.PHONY: help cli app install-cli serve status test ci-test clean bench-setup bench-ingest bench-ingest-chunks bench-run bench
 
 help:
 	@echo "Targets:"
@@ -22,7 +22,8 @@ help:
 	@echo "  bench-ingest-chunks Fast chunk-only backfill (no LLM, ~minutes)"
 	@echo "  bench-run           Run LOCOMO benchmark only (skip ingestion)"
 	@echo "  bench               Full ingest + run LOCOMO benchmark"
-	@echo "  test           Run OsaurusCore package tests"
+	@echo "  test           Run OsaurusCore package tests via 'swift test'"
+	@echo "  ci-test        Reproduce the CI test-core job locally (xcodebuild + xcbeautify)"
 	@echo "  clean          Remove DerivedData build output"
 
 cli:
@@ -58,6 +59,34 @@ status:
 test:
 	@echo "Running OsaurusCore tests…"
 	swift test --package-path Packages/OsaurusCore
+
+# Mirrors the CI `test-core` job: same xcodebuild flags, same xcbeautify
+# pipe, same xcresult bundle. Run this locally to repro a failed CI run.
+# After it finishes (pass or fail) you can `open build/Tests.xcresult` to
+# get the same Test Navigator UI as Xcode.
+ci-test:
+	@command -v xcbeautify >/dev/null 2>&1 || { \
+		echo "xcbeautify not found. Install with: brew install xcbeautify"; \
+		exit 1; \
+	}
+	@mkdir -p build
+	@rm -rf build/Tests.xcresult
+	@set -o pipefail; xcodebuild test \
+		-workspace osaurus.xcworkspace \
+		-scheme OsaurusCoreTests \
+		-resultBundlePath build/Tests.xcresult \
+		-quiet \
+		-skipPackagePluginValidation \
+		-skipMacroValidation \
+		-enableCodeCoverage NO \
+		-test-timeouts-enabled YES \
+		-default-test-execution-time-allowance 60 \
+		-maximum-test-execution-time-allowance 120 \
+		COMPILER_INDEX_STORE_ENABLE=NO \
+		SWIFT_COMPILATION_MODE=incremental \
+		| xcbeautify --renderer terminal
+	@echo ""
+	@echo "Done. Inspect failures with: open build/Tests.xcresult"
 
 ## ── LOCOMO Benchmark ──────────────────────────────────────────────
 

@@ -17,9 +17,9 @@ public enum WindowIdentifier: Hashable, CustomStringConvertible, Sendable {
 
     public var description: String {
         switch self {
-        case .chat: return "Chat"
-        case .management: return "Management"
-        case .permission: return "Permission"
+        case .chat: return L("Chat")
+        case .management: return L("Management")
+        case .permission: return L("Permission")
         }
     }
 }

@@ -32,18 +32,18 @@ public enum Responsiveness: String, Codable, Sendable, CaseIterable, Equatable {
     /// Human-readable display name
     public var displayName: String {
         switch self {
-        case .fast: return "Fast"
-        case .balanced: return "Balanced"
-        case .patient: return "Patient"
+        case .fast: return L("Fast")
+        case .balanced: return L("Balanced")
+        case .patient: return L("Patient")
         }
     }
 
     /// Description for UI
     public var displayDescription: String {
         switch self {
-        case .fast: return "Triggers quickly. Best for screenshots, single-file drops."
-        case .balanced: return "Waits for rapid changes to settle. Good for general use."
-        case .patient: return "Waits longer for downloads and batch operations to finish."
+        case .fast: return L("Triggers quickly. Best for screenshots, single-file drops.")
+        case .balanced: return L("Waits for rapid changes to settle. Good for general use.")
+        case .patient: return L("Waits longer for downloads and batch operations to finish.")
         }
     }
 

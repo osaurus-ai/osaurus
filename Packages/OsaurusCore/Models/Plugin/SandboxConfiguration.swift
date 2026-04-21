@@ -106,11 +106,11 @@ public enum ContainerStatus: Sendable, Equatable {
 
     public var label: String {
         switch self {
-        case .notProvisioned: "Not Provisioned"
-        case .stopped: "Stopped"
-        case .starting: "Starting"
-        case .running: "Running"
-        case .error(let msg): "Error: \(msg)"
+        case .notProvisioned: L("Not Provisioned")
+        case .stopped: L("Stopped")
+        case .starting: L("Starting")
+        case .running: L("Running")
+        case .error(let msg): L("Error: \(msg)")
         }
     }
 

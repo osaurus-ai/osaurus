@@ -16,15 +16,15 @@ public enum SpeechModelVersion: String, Codable, Equatable, CaseIterable, Sendab
 
     public var displayName: String {
         switch self {
-        case .v2: return "Parakeet v2 (English)"
-        case .v3: return "Parakeet v3 (Multilingual)"
+        case .v2: return L("Parakeet v2 (English)")
+        case .v3: return L("Parakeet v3 (Multilingual)")
         }
     }
 
     public var description: String {
         switch self {
-        case .v2: return "English-only model with highest recall"
-        case .v3: return "Multilingual model supporting 25 European languages"
+        case .v2: return L("English-only model with highest recall")
+        case .v3: return L("Multilingual model supporting 25 European languages")
         }
     }
 }
@@ -38,15 +38,15 @@ public enum TranscriptionStopMode: String, Codable, Equatable, CaseIterable, Sen
 
     public var displayName: String {
         switch self {
-        case .automatic: return "Automatic"
-        case .manual: return "Manual"
+        case .automatic: return L("Automatic")
+        case .manual: return L("Manual")
         }
     }
 
     public var description: String {
         switch self {
-        case .automatic: return "Automatically sends message after a brief pause"
-        case .manual: return "Waits for you to manually click the stop button"
+        case .automatic: return L("Automatically sends message after a brief pause")
+        case .manual: return L("Waits for you to manually click the stop button")
         }
     }
 }
@@ -165,8 +165,8 @@ public enum AudioInputSource: String, Codable, Equatable, CaseIterable, Sendable
 
     public var displayName: String {
         switch self {
-        case .microphone: return "Microphone"
-        case .systemAudio: return "System Audio"
+        case .microphone: return L("Microphone")
+        case .systemAudio: return L("System Audio")
         }
     }
 
@@ -186,17 +186,17 @@ public enum VoiceSensitivity: String, Codable, CaseIterable, Sendable {
 
     public var displayName: String {
         switch self {
-        case .low: return "Low"
-        case .medium: return "Medium"
-        case .high: return "High"
+        case .low: return L("Low")
+        case .medium: return L("Medium")
+        case .high: return L("High")
         }
     }
 
     public var description: String {
         switch self {
-        case .low: return "Requires louder speech, faster response"
-        case .medium: return "Balanced for normal conversation"
-        case .high: return "Picks up quiet speech, waits longer for pauses"
+        case .low: return L("Requires louder speech, faster response")
+        case .medium: return L("Balanced for normal conversation")
+        case .high: return L("Picks up quiet speech, waits longer for pauses")
         }
     }
 

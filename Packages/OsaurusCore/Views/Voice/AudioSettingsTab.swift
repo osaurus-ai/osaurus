@@ -417,7 +417,7 @@ struct AudioSettingsTab: View {
                         : speechService.confirmedTranscription + " " + speechService.currentTranscription
                 }()
 
-                Text(displayText.isEmpty ? "Speak and see your words here..." : displayText)
+                Text(displayText.isEmpty ? L("Speak and see your words here...") : displayText)
                     .font(.system(size: 15))
                     .foregroundColor(displayText.isEmpty ? theme.tertiaryText : theme.primaryText)
                     .italic(displayText.isEmpty)

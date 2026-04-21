@@ -21,7 +21,7 @@ final class NativeThinkingView: NSView {
 
     private let headerButton = NSButton()
     private let iconView = NSImageView()
-    private let titleLabel = NSTextField(labelWithString: "Thinking")
+    private let titleLabel = NSTextField(labelWithString: L("Thinking"))
     private let streamingSpinner = NSProgressIndicator()
     private let charCountLabel = NSTextField(labelWithString: "")
     private let chevronView = NSImageView()

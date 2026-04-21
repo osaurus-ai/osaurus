@@ -35,13 +35,13 @@ public enum BackgroundTaskStatus: Equatable, Sendable {
     public var displayName: String {
         switch self {
         case .running:
-            return "Running"
+            return L("Running")
         case .awaitingClarification:
-            return "Waiting"
+            return L("Waiting")
         case .completed(let success, _):
-            return success ? "Completed" : "Failed"
+            return success ? L("Completed") : L("Failed")
         case .cancelled:
-            return "Cancelled"
+            return L("Cancelled")
         }
     }
 

@@ -42,7 +42,8 @@ func availableHighlightrThemes() -> [String] {
 /// Resolves which Highlightr theme to use and switches if needed.
 /// Call this before highlighting — it's a no-op when the theme hasn't changed.
 func ensureHighlightrTheme(for theme: any ThemeProtocol) {
-    let resolved = theme.codeHighlightTheme
+    let resolved =
+        theme.codeHighlightTheme
         ?? (theme.isDark ? defaultDarkHighlightTheme : defaultLightHighlightTheme)
     guard resolved != currentHighlightrTheme else { return }
     sharedHighlightr?.setTheme(to: resolved)

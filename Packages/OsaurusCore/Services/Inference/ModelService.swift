@@ -28,6 +28,9 @@ struct GenerationParameters: Sendable {
     let staticPrefix: String?
     /// Optional TTFT trace for diagnostic timing instrumentation.
     let ttftTrace: TTFTTrace?
+    /// Scheduler priority. When nil the runtime uses `.plugin` as a safe default
+    /// (mid-range — won't starve maintenance, won't preempt typing).
+    let priority: InferencePriority?
 
     init(
         temperature: Float?,
@@ -38,7 +41,8 @@ struct GenerationParameters: Sendable {
         sessionId: String? = nil,
         cacheHint: String? = nil,
         staticPrefix: String? = nil,
-        ttftTrace: TTFTTrace? = nil
+        ttftTrace: TTFTTrace? = nil,
+        priority: InferencePriority? = nil
     ) {
         self.temperature = temperature
         self.maxTokens = maxTokens
@@ -49,6 +53,7 @@ struct GenerationParameters: Sendable {
         self.cacheHint = cacheHint
         self.staticPrefix = staticPrefix
         self.ttftTrace = ttftTrace
+        self.priority = priority
     }
 }
 

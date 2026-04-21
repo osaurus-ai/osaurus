@@ -8,6 +8,7 @@
 
 @preconcurrency import Combine
 import Foundation
+@preconcurrency import MLXLMCommon
 import SwiftUI
 
 // MARK: - Work Activity Events (for background toast mini-log)
@@ -307,6 +308,15 @@ public final class WorkSession: ObservableObject {
     /// Selected model
     @Published var selectedModel: String?
 
+    /// Active per-model options (e.g. `disableThinking` for Qwen3 family,
+    /// `reasoningEffort` for OpenAI o-series). Mirrors the same contract
+    /// Chat mode uses — `ModelProfileRegistry` decides which options are
+    /// available for each family, so only families that actually support
+    /// toggling thinking see the toggle in the UI, and the value is
+    /// plumbed into `ChatCompletionRequest.modelOptions` so the Jinja
+    /// renderer gets the right kwargs (e.g. `enable_thinking: false`).
+    @Published var activeModelOptions: [String: ModelOptionValue] = [:]
+
     /// Skill ID to inject as one-off context for the next outgoing message.
     @Published var pendingOneOffSkillId: UUID?
 
@@ -510,6 +520,43 @@ public final class WorkSession: ObservableObject {
                     }
                 }
                 .store(in: &cancellables)
+
+            // Seed / rehydrate per-model options when the selection changes,
+            // identical in shape to ChatSession's hook so both modes share
+            // the ModelOptionsStore persistence layer. Without this, flipping
+            // the reasoning toggle in Work mode would have nowhere to land
+            // and the JSON kwargs in the outgoing request would stay empty.
+            //
+            // `.dropFirst()` intentionally skips the publisher's initial emit;
+            // the seed-on-init call below covers that first value so the user
+            // doesn't start a Work session with an empty options dict when
+            // the active profile declares defaults (e.g. Qwen's
+            // `disableThinking: true` default).
+            $selectedModel
+                .dropFirst()
+                .removeDuplicates()
+                .sink { [weak self] newModel in
+                    guard let self = self, let model = newModel else { return }
+                    if let persisted = ModelOptionsStore.shared.loadOptions(for: model) {
+                        self.activeModelOptions = persisted
+                    } else {
+                        self.activeModelOptions = ModelProfileRegistry.defaults(for: model)
+                    }
+                }
+                .store(in: &cancellables)
+        }
+
+        // One-shot seed covering the initial `selectedModel` assignment that
+        // the publisher sink above deliberately drops. Without this, a user
+        // who never touches the reasoning toggle would ship empty
+        // `modelOptions`, silently ignoring family defaults (Qwen's
+        // `disableThinking: true`, etc.) that Chat mode respects.
+        if let initialModel = selectedModel, activeModelOptions.isEmpty {
+            if let persisted = ModelOptionsStore.shared.loadOptions(for: initialModel) {
+                activeModelOptions = persisted
+            } else {
+                activeModelOptions = ModelProfileRegistry.defaults(for: initialModel)
+            }
         }
 
         AgentManager.shared.objectWillChange
@@ -793,6 +840,7 @@ public final class WorkSession: ObservableObject {
 
         executionTask = Task { [weak self, engine] in
             do {
+                let capturedModelOptions = await MainActor.run { self?.activeModelOptions ?? [:] }
                 let result =
                     if withRetry {
                         try await engine.executeWithRetry(
@@ -803,7 +851,8 @@ public final class WorkSession: ObservableObject {
                             executionMode: executionMode,
                             images: images,
                             cacheHint: workCtx.cacheHint,
-                            staticPrefix: workCtx.staticPrefix
+                            staticPrefix: workCtx.staticPrefix,
+                            modelOptions: capturedModelOptions
                         )
                     } else {
                         try await engine.resume(
@@ -813,7 +862,8 @@ public final class WorkSession: ObservableObject {
                             tools: workCtx.tools,
                             executionMode: executionMode,
                             cacheHint: workCtx.cacheHint,
-                            staticPrefix: workCtx.staticPrefix
+                            staticPrefix: workCtx.staticPrefix,
+                            modelOptions: capturedModelOptions
                         )
                     }
                 await MainActor.run { self?.handleExecutionResult(result) }
@@ -1370,9 +1420,23 @@ extension WorkSession: WorkEngineDelegate {
 
         selectedIssueId = issue.id
 
-        // Initialize streaming processor with the assistant turn
+        // Initialize streaming processor with the assistant turn.
+        // For JANG-stamped models, fetch the vmlx reasoning parser so
+        // Work-mode streaming routes reasoning via the centralised parser
+        // exactly like Chat mode does.
         let turn = lastAssistantTurn()
-        deltaProcessor = StreamingDeltaProcessor(turn: turn, modelId: selectedModel ?? "default") { [weak self] in
+        let resolvedParser: ReasoningParser? = {
+            guard let model = selectedModel,
+                let resolution = JANGReasoningResolver.resolve(modelKey: model),
+                resolution.isStamped
+            else { return nil }
+            return resolution.reasoningParser
+        }()
+        deltaProcessor = StreamingDeltaProcessor(
+            turn: turn,
+            modelId: selectedModel ?? "default",
+            vmlxReasoningParser: resolvedParser
+        ) { [weak self] in
             self?.notifyIfSelected(self?.activeIssue?.id)
         }
 
@@ -1471,12 +1535,14 @@ extension WorkSession: WorkEngineDelegate {
             !AgentManager.shared.effectiveMemoryDisabled(for: agentId)
         {
             let convId = issue.id
+            let sourceMode = estimatedExecutionModeForBudget().memorySourceMode
             Task.detached {
                 await MemoryService.shared.recordConversationTurn(
                     userMessage: userMessage,
                     assistantMessage: assistantContent,
                     agentId: agentStr,
-                    conversationId: convId
+                    conversationId: convId,
+                    sourceMode: sourceMode
                 )
             }
         }

@@ -145,12 +145,29 @@ enum SourceFilter: String, CaseIterable {
     case chatUI = "Chat"
     case httpAPI = "HTTP"
     case plugin = "Plugin"
+
+    var displayName: String {
+        switch self {
+        case .all: return L("All")
+        case .chatUI: return L("Chat")
+        case .httpAPI: return "HTTP"
+        case .plugin: return L("Plugin")
+        }
+    }
 }
 
 enum MethodFilter: String, CaseIterable {
     case all = "All"
     case get = "GET"
     case post = "POST"
+
+    var displayName: String {
+        switch self {
+        case .all: return L("All")
+        case .get: return "GET"
+        case .post: return "POST"
+        }
+    }
 }
 
 struct InsightsStats {

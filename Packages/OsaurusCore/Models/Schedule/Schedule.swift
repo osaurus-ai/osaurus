@@ -290,6 +290,19 @@ public enum ScheduleFrequencyType: String, CaseIterable, Sendable {
     case yearly = "Yearly"
     case cron = "Cron Expression"
 
+    public var displayName: String {
+        switch self {
+        case .once: return L("Once")
+        case .everyNMinutes: return L("Minutes")
+        case .hourly: return L("Hourly")
+        case .daily: return L("Daily")
+        case .weekly: return L("Weekly")
+        case .monthly: return L("Monthly")
+        case .yearly: return L("Yearly")
+        case .cron: return L("Cron Expression")
+        }
+    }
+
     public var icon: String {
         switch self {
         case .once: return "1.circle"

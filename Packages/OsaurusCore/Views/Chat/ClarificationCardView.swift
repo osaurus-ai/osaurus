@@ -187,7 +187,7 @@ struct ClarificationCardView: View {
                 .padding(.vertical, 9)
                 .overlay(alignment: .topLeading) {
                     if customResponse.isEmpty {
-                        Text(hasOptions ? "Or type a custom response..." : "Type your response...")
+                        Text(hasOptions ? L("Or type a custom response...") : L("Type your response..."))
                             .font(theme.font(size: CGFloat(theme.bodySize) - 1, weight: .regular))
                             .foregroundColor(theme.placeholderText)
                             .padding(.leading, 12)

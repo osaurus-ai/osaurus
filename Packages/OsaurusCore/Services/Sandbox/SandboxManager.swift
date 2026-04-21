@@ -940,7 +940,7 @@
 
         public var errorDescription: String? {
             switch self {
-            case .unavailable: "Sandbox is not available on this system"
+            case .unavailable: L("Sandbox is not available on this system")
             case .containerNotRunning: "Container is not running"
             case .provisionFailed(let msg): "Provisioning failed: \(msg)"
             case .startFailed(let msg): "Container start failed: \(msg)"

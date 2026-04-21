@@ -417,7 +417,8 @@ public final class BackgroundTaskManager: ObservableObject {
         completionContinuations.removeValue(forKey: id)?.resume(returning: result)
     }
 
-    /// Mark a task as completed, signal callers, and schedule auto-cleanup.
+    /// Mark a task as completed and signal callers.
+    /// The toast persists until the user views it or dismisses manually.
     private func markCompleted(_ state: BackgroundTaskState, success: Bool, summary: String) {
         state.status = .completed(success: success, summary: summary)
         state.currentStep = nil
@@ -437,8 +438,6 @@ public final class BackgroundTaskManager: ObservableObject {
         )
         emitPluginEvent(state, type: eventType, json: json)
         lastProgressEmit.removeValue(forKey: state.id)
-
-        scheduleAutoFinalize(state.id)
     }
 
     // MARK: - Private: Plugin Event Emission
@@ -477,8 +476,6 @@ public final class BackgroundTaskManager: ObservableObject {
 
     /// Release held events after the dispatch() C call has returned to the
     /// plugin. Flushes all buffered events in order via `emitPluginEvent`.
-    /// If the task already completed while events were held, schedule
-    /// auto-finalize so the toast is eventually cleaned up.
     func releaseEventsForDispatch(taskId: UUID) {
         dispatchHoldTasks.remove(taskId)
         if let events = heldTaskEvents.removeValue(forKey: taskId),
@@ -486,9 +483,6 @@ public final class BackgroundTaskManager: ObservableObject {
         {
             for event in events {
                 emitPluginEvent(state, type: event.type, json: event.json)
-            }
-            if !state.status.isActive {
-                scheduleAutoFinalize(taskId)
             }
         }
     }
@@ -754,7 +748,6 @@ public final class BackgroundTaskManager: ObservableObject {
                 json: PluginHostContext.serializeCancelledEvent(taskTitle: state.taskTitle)
             )
             lastProgressEmit.removeValue(forKey: taskId)
-            scheduleAutoFinalize(taskId)
         } else if let clarification {
             state.status = .awaitingClarification
             if !wasClarifying {
@@ -913,6 +906,9 @@ public final class BackgroundTaskManager: ObservableObject {
                 ? buildCompletionSummary(from: issues)
                 : "Task ended"
             markCompleted(state, success: success, summary: summary)
+        } else if !session.isExecuting && session.pausedIssueId == nil {
+            let summary = session.errorMessage ?? "Task failed"
+            markCompleted(state, success: false, summary: summary)
         }
     }
 

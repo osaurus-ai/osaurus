@@ -462,7 +462,7 @@ final class NativeToolCallRowView: NSView {
 
     // Expanded content
     private let contentContainer = NSView()
-    private let argumentsSectionTitle = NSTextField(labelWithString: "ARGUMENTS")
+    private let argumentsSectionTitle = NSTextField(labelWithString: L("ARGUMENTS"))
     private var resultSectionTitle: NSTextField?
     private var argsView: NativeMarkdownView?
     private var resultView: NativeMarkdownView?
@@ -830,17 +830,18 @@ final class NativeToolCallRowView: NSView {
     }
 
     private func ensureResultSectionTitle(theme: any ThemeProtocol) -> NSTextField {
+        let resultLabel = L("RESULT")
         if let t = resultSectionTitle {
-            applyToolDetailSectionHeading(to: t, text: "RESULT", theme: theme)
+            applyToolDetailSectionHeading(to: t, text: resultLabel, theme: theme)
             return t
         }
-        let t = NSTextField(labelWithString: "RESULT")
+        let t = NSTextField(labelWithString: resultLabel)
         t.translatesAutoresizingMaskIntoConstraints = false
         t.isEditable = false
         t.isBordered = false
         t.drawsBackground = false
         t.alignment = .left
-        applyToolDetailSectionHeading(to: t, text: "RESULT", theme: theme)
+        applyToolDetailSectionHeading(to: t, text: resultLabel, theme: theme)
         contentContainer.addSubview(t)
         let av = ensureArgsView()
         let top = t.topAnchor.constraint(equalTo: av.bottomAnchor, constant: 8)

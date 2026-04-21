@@ -17,6 +17,15 @@ private let logger = Logger(subsystem: "ai.osaurus", category: "PreflightSearch"
 public enum PreflightSearchMode: String, Codable, CaseIterable, Sendable {
     case off, narrow, balanced, wide
 
+    public var displayName: String {
+        switch self {
+        case .off: return L("Off")
+        case .narrow: return L("Narrow")
+        case .balanced: return L("Balanced")
+        case .wide: return L("Wide")
+        }
+    }
+
     var toolCap: Int {
         switch self {
         case .off: return 0
@@ -28,10 +37,10 @@ public enum PreflightSearchMode: String, Codable, CaseIterable, Sendable {
 
     public var helpText: String {
         switch self {
-        case .off: return "Disable pre-flight search. Only explicit tool calls are used."
-        case .narrow: return "Minimal tool injection. Up to 3 tools loaded."
-        case .balanced: return "Default. Up to 8 relevant tools loaded."
-        case .wide: return "Aggressive search. Up to 15 tools loaded, may increase prompt size."
+        case .off: return L("Disable pre-flight search. Only explicit tool calls are used.")
+        case .narrow: return L("Minimal tool injection. Up to 3 tools loaded.")
+        case .balanced: return L("Default. Up to 8 relevant tools loaded.")
+        case .wide: return L("Aggressive search. Up to 15 tools loaded, may increase prompt size.")
         }
     }
 }

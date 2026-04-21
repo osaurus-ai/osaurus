@@ -992,7 +992,8 @@ final class NativeMessageCellView: NSTableCellView {
         // Apply assistant bubble background when a custom color is set
         if role == .assistant, let bubbleColor = context.theme.assistantBubbleColor {
             self.wantsLayer = true
-            self.layer?.backgroundColor = NSColor(bubbleColor)
+            self.layer?.backgroundColor =
+                NSColor(bubbleColor)
                 .withAlphaComponent(context.theme.assistantBubbleOpacity).cgColor
             self.layer?.cornerRadius = 12
         } else {
@@ -1912,7 +1913,8 @@ enum NativeCellHeightEstimator {
             return h + 12 + 24
 
         case let .chart(spec):
-            var h: CGFloat = NativeChartView.cardPadding + NativeChartView.chartHeight + 12  // top pad + chart + cell insets
+            // top pad + chart + cell insets
+            var h: CGFloat = NativeChartView.cardPadding + NativeChartView.chartHeight + 12
             h += (spec.title ?? "").isEmpty ? 0 : (20 + 4)  // title + gap
             h +=
                 (spec.note ?? "").isEmpty

@@ -19,24 +19,24 @@ public enum ServerHealth: Equatable {
     /// User-friendly description of the current server state
     var displayTitle: String {
         switch self {
-        case .stopped: return "Server Stopped"
-        case .starting: return "Starting Server..."
-        case .restarting: return "Restarting Server..."
-        case .running: return "Server Running"
-        case .stopping: return "Stopping Server..."
-        case .error: return "Server Error"
+        case .stopped: return L("Server Stopped")
+        case .starting: return L("Starting Server...")
+        case .restarting: return L("Restarting Server...")
+        case .running: return L("Server Running")
+        case .stopping: return L("Stopping Server...")
+        case .error: return L("Server Error")
         }
     }
 
     /// Short status description
     var statusDescription: String {
         switch self {
-        case .stopped: return "Stopped"
-        case .starting: return "Starting..."
-        case .restarting: return "Restarting..."
-        case .running: return "Running"
-        case .stopping: return "Stopping..."
-        case .error: return "Error"
+        case .stopped: return L("Stopped")
+        case .starting: return L("Starting...")
+        case .restarting: return L("Restarting...")
+        case .running: return L("Running")
+        case .stopping: return L("Stopping...")
+        case .error: return L("Error")
         }
     }
 }

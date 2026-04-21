@@ -71,6 +71,18 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         return max(1, totalChars / 4)
     }
 
+    /// Map an `InferenceSource` to its default scheduler priority. Callers that
+    /// need a different priority (e.g. preflight wants `.maintenance` even
+    /// though it's invoked from a `.chatUI` request) can override on the
+    /// `GenerationParameters`.
+    static func schedulerPriority(for source: InferenceSource) -> InferencePriority {
+        switch source {
+        case .chatUI: return .interactive
+        case .httpAPI: return .httpAPI
+        case .plugin: return .plugin
+        }
+    }
+
     func streamChat(request: ChatCompletionRequest) async throws -> AsyncThrowingStream<String, Error> {
         debugLog("[ChatEngine] streamChat: start model=\(request.model)")
         let trace = request.ttftTrace
@@ -94,7 +106,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             sessionId: request.session_id,
             cacheHint: request.cache_hint,
             staticPrefix: request.staticPrefix,
-            ttftTrace: trace
+            ttftTrace: trace,
+            priority: Self.schedulerPriority(for: inferenceSource)
         )
 
         // Candidate services and installed models (injected for testability)
@@ -313,7 +326,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             modelOptions: request.modelOptions ?? [:],
             sessionId: request.session_id,
             cacheHint: request.cache_hint,
-            staticPrefix: request.staticPrefix
+            staticPrefix: request.staticPrefix,
+            priority: Self.schedulerPriority(for: inferenceSource)
         )
 
         let services = self.services

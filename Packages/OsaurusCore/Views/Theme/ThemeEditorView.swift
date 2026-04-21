@@ -594,10 +594,13 @@ struct ThemeEditorView: View {
                 .font(.system(size: 13))
                 .foregroundColor(currentTheme.primaryText)
             Spacer()
-            Picker("", selection: Binding<String>(
-                get: { editingTheme.codeHighlightTheme ?? "auto" },
-                set: { editingTheme.codeHighlightTheme = $0 == "auto" ? nil : $0 }
-            )) {
+            Picker(
+                "",
+                selection: Binding<String>(
+                    get: { editingTheme.codeHighlightTheme ?? "auto" },
+                    set: { editingTheme.codeHighlightTheme = $0 == "auto" ? nil : $0 }
+                )
+            ) {
                 Text("Auto", bundle: .module).tag("auto")
                 Divider()
                 ForEach(availableHighlightrThemes(), id: \.self) { name in

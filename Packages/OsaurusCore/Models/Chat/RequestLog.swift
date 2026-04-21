@@ -38,6 +38,14 @@ enum RequestSource: String, Sendable, CaseIterable {
     case chatUI = "Chat UI"
     case httpAPI = "HTTP API"
     case plugin = "Plugin"
+
+    var displayName: String {
+        switch self {
+        case .chatUI: return L("Chat UI")
+        case .httpAPI: return L("HTTP API")
+        case .plugin: return L("Plugin")
+        }
+    }
 }
 
 /// Represents a single request log entry with optional inference data

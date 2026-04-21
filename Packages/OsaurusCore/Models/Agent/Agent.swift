@@ -22,23 +22,32 @@ public struct AgentQuickAction: Codable, Identifiable, Sendable, Equatable {
         self.prompt = prompt
     }
 
-    public static let defaultChatQuickActions: [AgentQuickAction] = [
-        AgentQuickAction(icon: "lightbulb", text: "Explain a concept", prompt: "Explain "),
-        AgentQuickAction(icon: "doc.text", text: "Summarize text", prompt: "Summarize the following: "),
-        AgentQuickAction(
-            icon: "chevron.left.forwardslash.chevron.right",
-            text: "Write code",
-            prompt: "Write code that "
-        ),
-        AgentQuickAction(icon: "pencil.line", text: "Help me write", prompt: "Help me write "),
-    ]
+    /// Built-in chat quick actions. Localized at access time (Option A):
+    /// defaults only appear in the UI as a read-only fallback when an agent
+    /// has `chatQuickActions == nil`; they are never persisted unless the
+    /// user explicitly customizes them. A new UUID is generated on each
+    /// access, matching the previous `static let` semantics for consumers.
+    public static var defaultChatQuickActions: [AgentQuickAction] {
+        [
+            AgentQuickAction(icon: "lightbulb", text: L("Explain a concept"), prompt: L("Explain ")),
+            AgentQuickAction(icon: "doc.text", text: L("Summarize text"), prompt: L("Summarize the following: ")),
+            AgentQuickAction(
+                icon: "chevron.left.forwardslash.chevron.right",
+                text: L("Write code"),
+                prompt: L("Write code that ")
+            ),
+            AgentQuickAction(icon: "pencil.line", text: L("Help me write"), prompt: L("Help me write ")),
+        ]
+    }
 
-    public static let defaultWorkQuickActions: [AgentQuickAction] = [
-        AgentQuickAction(icon: "globe", text: "Build a site", prompt: "Build a landing page for "),
-        AgentQuickAction(icon: "magnifyingglass", text: "Research a topic", prompt: "Research "),
-        AgentQuickAction(icon: "doc.text", text: "Write a blog post", prompt: "Write a blog post about "),
-        AgentQuickAction(icon: "folder", text: "Organize my files", prompt: "Help me organize "),
-    ]
+    public static var defaultWorkQuickActions: [AgentQuickAction] {
+        [
+            AgentQuickAction(icon: "globe", text: L("Build a site"), prompt: L("Build a landing page for ")),
+            AgentQuickAction(icon: "magnifyingglass", text: L("Research a topic"), prompt: L("Research ")),
+            AgentQuickAction(icon: "doc.text", text: L("Write a blog post"), prompt: L("Write a blog post about ")),
+            AgentQuickAction(icon: "folder", text: L("Organize my files"), prompt: L("Help me organize ")),
+        ]
+    }
 }
 
 /// Controls whether tools are selected automatically via RAG or manually by the user
@@ -148,6 +157,22 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         self.manualSkillNames = manualSkillNames
         self.disableTools = disableTools
         self.disableMemory = disableMemory
+    }
+
+    // MARK: - Localized Display Helpers
+
+    /// Display name for UI rendering. Built-in agents (currently only the
+    /// Default agent) resolve their English `name` through the localization
+    /// catalog so the sidebar, pickers, menus, etc. render in the user's
+    /// language. User-created agents always render their stored name verbatim.
+    public var displayName: String {
+        isBuiltIn ? L(String.LocalizationValue(name)) : name
+    }
+
+    /// Display description for UI rendering. Same rules as `displayName`.
+    public var displayDescription: String {
+        guard isBuiltIn, !description.isEmpty else { return description }
+        return L(String.LocalizationValue(description))
     }
 
     // MARK: - Built-in Agents

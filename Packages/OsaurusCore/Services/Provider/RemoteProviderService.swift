@@ -1697,12 +1697,16 @@ public actor RemoteProviderService: ToolCapableService {
             let trimmedModel = request.model.trimmingCharacters(in: .whitespacesAndNewlines)
             if trimmedModel.isEmpty {
                 throw RemoteProviderServiceError.requestFailed(
-                    "Gemini model name is empty. Set a model ID like 'gemini-2.0-flash-exp' in provider settings.")
+                    "Gemini model name is empty. Set a model ID like 'gemini-2.0-flash-exp' in provider settings."
+                )
             }
-            let allowed = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._/")
+            let allowed = CharacterSet(
+                charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._/"
+            )
             if trimmedModel.unicodeScalars.contains(where: { !allowed.contains($0) }) {
                 throw RemoteProviderServiceError.requestFailed(
-                    "Invalid Gemini model name '\(trimmedModel)': only letters, digits, '-', '_', '.', and '/' are allowed. Check provider settings.")
+                    "Invalid Gemini model name '\(trimmedModel)': only letters, digits, '-', '_', '.', and '/' are allowed. Check provider settings."
+                )
             }
             let endpoint = "/models/\(trimmedModel):\(action)"
             guard let geminiURL = provider.url(for: endpoint) else {

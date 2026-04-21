@@ -11,6 +11,14 @@ enum ToolPermissionPolicy: String, Codable, Sendable {
     case auto
     case ask
     case deny
+
+    var displayName: String {
+        switch self {
+        case .auto: return L("Auto")
+        case .ask: return L("Ask")
+        case .deny: return L("Deny")
+        }
+    }
 }
 
 /// Optional extension protocol for tools that declare requirements and default policy.

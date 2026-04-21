@@ -194,22 +194,22 @@ public struct Router {
         let decoder = Self.makeJSONDecoder()
         guard let request = try? decoder.decode(ShowRequest.self, from: body) else {
             return errorResponse(
-                message: "Invalid request: expected {\"name\": \"<model_id>\"}",
+                message: "Invalid request: expected {\"model\": \"<model_id>\"}",
                 statusCode: .badRequest
             )
         }
-        return handleShowRequest(modelName: request.name)
+        return handleShowRequest(modelName: request.model)
     }
 
     private func showEndpoint(bodyBuffer: ByteBuffer) -> (HTTPResponseStatus, [(String, String)], String) {
         let decoder = Self.makeJSONDecoder()
         guard let request = try? decoder.decode(ShowRequest.self, from: bodyBuffer) else {
             return errorResponse(
-                message: "Invalid request: expected {\"name\": \"<model_id>\"}",
+                message: "Invalid request: expected {\"model\": \"<model_id>\"}",
                 statusCode: .badRequest
             )
         }
-        return handleShowRequest(modelName: request.name)
+        return handleShowRequest(modelName: request.model)
     }
 
     private func handleShowRequest(modelName: String) -> (HTTPResponseStatus, [(String, String)], String) {

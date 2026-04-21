@@ -15,9 +15,9 @@ public enum AppearanceMode: String, Codable, CaseIterable, Sendable {
 
     public var displayName: String {
         switch self {
-        case .system: return "System"
-        case .light: return "Light"
-        case .dark: return "Dark"
+        case .system: return L("System")
+        case .light: return L("Light")
+        case .dark: return L("Dark")
         }
     }
 }
@@ -157,12 +157,19 @@ public enum ModelEvictionPolicy: String, Codable, CaseIterable, Sendable {
     /// Allow multiple models (best for high RAM systems or rapid switching)
     case manualMultiModel = "Flexible (Multi Model)"
 
+    public var displayName: String {
+        switch self {
+        case .strictSingleModel: return L("Strict (One Model)")
+        case .manualMultiModel: return L("Flexible (Multi Model)")
+        }
+    }
+
     public var description: String {
         switch self {
         case .strictSingleModel:
-            return "Automatically unloads other models. Recommended for standard use."
+            return L("Automatically unloads other models. Recommended for standard use.")
         case .manualMultiModel:
-            return "Keeps models loaded until manually unloaded. Requires 32GB+ RAM."
+            return L("Keeps models loaded until manually unloaded. Requires 32GB+ RAM.")
         }
     }
 }

@@ -18,14 +18,34 @@ public actor MemoryContextAssembler {
         let timestamp: Date
     }
 
+    /// Cache is keyed by (agentId, toolsAvailable) so the two filter views don't
+    /// collide. Chat-only vs. full-view produce different context strings and
+    /// must not share a slot.
     private var cache: [String: CacheEntry] = [:]
     private static let cacheTTL: TimeInterval = 10
+
+    private static func cacheKey(agentId: String, toolsAvailable: Bool) -> String {
+        "\(agentId)|tools=\(toolsAvailable ? 1 : 0)"
+    }
 
     /// Assemble the full memory context string for injection before the system prompt.
     /// User edits and profile are never trimmed. Working memory, summaries, and key
     /// relationships are budget-trimmed. Results are cached for 10 seconds per agent.
-    public static func assembleContext(agentId: String, config: MemoryConfiguration) async -> String {
-        await shared.assembleContextCached(agentId: agentId, config: config)
+    ///
+    /// When `toolsAvailable` is false (pure chat), entries, summaries, and conversation
+    /// chunks recorded under tool-using modes are excluded so that agentic contributions
+    /// don't prime the model with phantom tool affordances. Pre-v4 rows (NULL source_mode)
+    /// are always included to preserve history after upgrade.
+    public static func assembleContext(
+        agentId: String,
+        config: MemoryConfiguration,
+        toolsAvailable: Bool = true
+    ) async -> String {
+        await shared.assembleContextCached(
+            agentId: agentId,
+            config: config,
+            toolsAvailable: toolsAvailable
+        )
     }
 
     /// Assemble context with query-aware retrieval. Includes a "Relevant Memories" section
@@ -33,19 +53,30 @@ public actor MemoryContextAssembler {
     public static func assembleContext(
         agentId: String,
         config: MemoryConfiguration,
-        query: String
+        query: String,
+        toolsAvailable: Bool = true
     ) async -> String {
-        await shared.assembleContextWithQuery(agentId: agentId, config: config, query: query)
+        await shared.assembleContextWithQuery(
+            agentId: agentId,
+            config: config,
+            query: query,
+            toolsAvailable: toolsAvailable
+        )
     }
 
     private func assembleContextWithQuery(
         agentId: String,
         config: MemoryConfiguration,
-        query: String
+        query: String,
+        toolsAvailable: Bool
     ) async -> String {
         guard config.enabled else { return "" }
 
-        let baseContext = buildContext(agentId: agentId, config: config)
+        let baseContext = buildContext(
+            agentId: agentId,
+            config: config,
+            toolsAvailable: toolsAvailable
+        )
 
         guard !query.isEmpty else { return baseContext }
 
@@ -53,7 +84,8 @@ public actor MemoryContextAssembler {
             agentId: agentId,
             query: query,
             config: config,
-            existingContext: baseContext
+            existingContext: baseContext,
+            toolsAvailable: toolsAvailable
         )
 
         if relevantSection.isEmpty {
@@ -63,15 +95,24 @@ public actor MemoryContextAssembler {
         return baseContext.isEmpty ? relevantSection : baseContext + "\n\n" + relevantSection
     }
 
-    private func assembleContextCached(agentId: String, config: MemoryConfiguration) -> String {
+    private func assembleContextCached(
+        agentId: String,
+        config: MemoryConfiguration,
+        toolsAvailable: Bool
+    ) -> String {
         guard config.enabled else { return "" }
 
-        if let cached = cache[agentId], Date().timeIntervalSince(cached.timestamp) < Self.cacheTTL {
+        let key = Self.cacheKey(agentId: agentId, toolsAvailable: toolsAvailable)
+        if let cached = cache[key], Date().timeIntervalSince(cached.timestamp) < Self.cacheTTL {
             return cached.context
         }
 
-        let context = buildContext(agentId: agentId, config: config)
-        cache[agentId] = CacheEntry(context: context, timestamp: Date())
+        let context = buildContext(
+            agentId: agentId,
+            config: config,
+            toolsAvailable: toolsAvailable
+        )
+        cache[key] = CacheEntry(context: context, timestamp: Date())
         return context
     }
 
@@ -84,9 +125,17 @@ public actor MemoryContextAssembler {
         }
     }
 
-    private func buildContext(agentId: String, config: MemoryConfiguration) -> String {
+    private func buildContext(
+        agentId: String,
+        config: MemoryConfiguration,
+        toolsAvailable: Bool
+    ) -> String {
         let db = MemoryDatabase.shared
         guard db.isOpen else { return "" }
+
+        // Pure-chat recall filters out tool-mode contributions to prevent
+        // phantom-tool priming. Tool-capable recall sees everything.
+        let chatOnly = !toolsAvailable
 
         var sections: [String] = []
 
@@ -119,7 +168,7 @@ public actor MemoryContextAssembler {
 
         // 3. Remembered Details (this agent's active entries)
         do {
-            let entries = try db.loadActiveEntries(agentId: agentId)
+            let entries = try db.loadActiveEntries(agentId: agentId, chatOnly: chatOnly)
             if !entries.isEmpty {
                 let block = buildBudgetSection(
                     header: "## Remembered Details",
@@ -139,7 +188,11 @@ public actor MemoryContextAssembler {
 
         // 4. Conversation Summaries (this agent, last N days)
         do {
-            let summaries = try db.loadSummaries(agentId: agentId, days: config.summaryRetentionDays)
+            let summaries = try db.loadSummaries(
+                agentId: agentId,
+                days: config.summaryRetentionDays,
+                chatOnly: chatOnly
+            )
             if !summaries.isEmpty {
                 sections.append(
                     buildBudgetSection(
@@ -244,9 +297,12 @@ public actor MemoryContextAssembler {
 
     /// Expand retrieved chunks by loading adjacent turns from the same conversation,
     /// providing conversational context that helps answer cross-turn questions.
+    /// The mode filter must match the one used to retrieve the seed chunks so
+    /// window expansion cannot resurface tool-mode turns.
     private static func expandChunkWindow(
         _ chunks: [ConversationChunk],
-        windowSize: Int
+        windowSize: Int,
+        chatOnly: Bool
     ) -> [ConversationChunk] {
         guard !chunks.isEmpty else { return [] }
 
@@ -267,7 +323,10 @@ public actor MemoryContextAssembler {
 
         var allChunks = chunks
         if !expandedKeys.isEmpty {
-            if let adjacent = try? MemoryDatabase.shared.loadChunksByKeys(expandedKeys) {
+            if let adjacent = try? MemoryDatabase.shared.loadChunksByKeys(
+                expandedKeys,
+                chatOnly: chatOnly
+            ) {
                 allChunks.append(contentsOf: adjacent)
             }
         }
@@ -286,20 +345,23 @@ public actor MemoryContextAssembler {
         agentId: String,
         query: String,
         config: MemoryConfiguration,
-        existingContext: String
+        existingContext: String,
+        toolsAvailable: Bool
     ) async -> String {
         let searchService = MemorySearchService.shared
 
         let topK = config.recallTopK
         let lambda = config.mmrLambda
         let fetchMultiplier = config.mmrFetchMultiplier
+        let chatOnly = !toolsAvailable
 
         async let entriesResult = searchService.searchMemoryEntries(
             query: query,
             agentId: agentId,
             topK: topK,
             lambda: lambda,
-            fetchMultiplier: fetchMultiplier
+            fetchMultiplier: fetchMultiplier,
+            chatOnly: chatOnly
         )
         async let chunksResult = searchService.searchConversations(
             query: query,
@@ -307,21 +369,23 @@ public actor MemoryContextAssembler {
             days: 3650,
             topK: topK,
             lambda: lambda,
-            fetchMultiplier: fetchMultiplier
+            fetchMultiplier: fetchMultiplier,
+            chatOnly: chatOnly
         )
         async let summariesResult = searchService.searchSummaries(
             query: query,
             agentId: agentId,
             topK: topK,
             lambda: lambda,
-            fetchMultiplier: fetchMultiplier
+            fetchMultiplier: fetchMultiplier,
+            chatOnly: chatOnly
         )
 
         let entries = await entriesResult
         let searchedChunks = await chunksResult
         let summaries = await summariesResult
 
-        let chunks = Self.expandChunkWindow(searchedChunks, windowSize: 2)
+        let chunks = Self.expandChunkWindow(searchedChunks, windowSize: 2, chatOnly: chatOnly)
 
         var sections: [String] = []
         var allDates: [String] = []

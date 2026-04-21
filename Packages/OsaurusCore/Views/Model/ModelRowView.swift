@@ -190,11 +190,11 @@ struct ModelRowView: View {
     private var compatibilityBadge: some View {
         switch model.compatibility(totalMemoryGB: totalMemoryGB) {
         case .compatible:
-            CompatibilityPill(text: "Runs Well", icon: "checkmark.shield", color: theme.successColor)
+            CompatibilityPill(text: L("Runs Well"), icon: "checkmark.shield", color: theme.successColor)
         case .tight:
-            CompatibilityPill(text: "Tight Fit", icon: "exclamationmark.triangle", color: theme.warningColor)
+            CompatibilityPill(text: L("Tight Fit"), icon: "exclamationmark.triangle", color: theme.warningColor)
         case .tooLarge:
-            CompatibilityPill(text: "Too Large", icon: "xmark.circle", color: theme.errorColor)
+            CompatibilityPill(text: L("Too Large"), icon: "xmark.circle", color: theme.errorColor)
         case .unknown:
             EmptyView()
         }

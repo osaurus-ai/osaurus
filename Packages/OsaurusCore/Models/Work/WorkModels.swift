@@ -379,6 +379,14 @@ public enum WorkTaskStatus: String, Codable, Sendable {
     case completed
     /// Task was cancelled
     case cancelled
+
+    public var displayName: String {
+        switch self {
+        case .active: return L("Active")
+        case .completed: return L("Completed")
+        case .cancelled: return L("Cancelled")
+        }
+    }
 }
 
 /// A task groups issues by the original user query

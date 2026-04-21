@@ -65,6 +65,8 @@ struct MetalGateTests {
     }
 
     @Test func generationExcludesSecondGeneration() async {
+        // Default behaviour (mlxAllowConcurrentStreams = false): MLX-vs-MLX
+        // serialization stays intact.
         await MetalGate.shared.enterGeneration()
 
         let secondStarted = AtomicFlag()
@@ -80,6 +82,33 @@ struct MetalGateTests {
         await MetalGate.shared.exitGeneration()
         await secondTask.value
         #expect(secondStarted.value)
+    }
+
+    @Test func multipleEmbeddingsAndGenerationStillExcludesEachOther() async {
+        // Sanity check the tri-state coordination after refactoring activeGenerations
+        // to a counter (rather than a Bool): multiple embeddings should still
+        // gate the next generation, and a single generation still gates new
+        // embeddings.
+        await MetalGate.shared.enterEmbedding()
+        await MetalGate.shared.enterEmbedding()
+
+        let genStarted = AtomicFlag()
+        let genTask = Task {
+            await MetalGate.shared.enterGeneration()
+            genStarted.set()
+            await MetalGate.shared.exitGeneration()
+        }
+
+        try? await Task.sleep(nanoseconds: 50_000_000)
+        #expect(!genStarted.value)
+
+        await MetalGate.shared.exitEmbedding()
+        try? await Task.sleep(nanoseconds: 30_000_000)
+        #expect(!genStarted.value)  // still one embedding in flight
+
+        await MetalGate.shared.exitEmbedding()
+        await genTask.value
+        #expect(genStarted.value)
     }
 }
 
