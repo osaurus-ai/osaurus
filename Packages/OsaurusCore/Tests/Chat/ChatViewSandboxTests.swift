@@ -89,8 +89,33 @@ struct ChatViewSandboxTests {
 
         #expect(specs.contains(where: { $0.function.name == "capabilities_search" }))
         #expect(specs.contains(where: { $0.function.name == "capabilities_load" }))
-        #expect(specs.contains(where: { $0.function.name == "methods_save" }))
-        #expect(specs.contains(where: { $0.function.name == "methods_report" }))
+    }
+
+    @Test
+    func alwaysLoadedSpecs_includesAgentLoopTools() {
+        let specs = ToolRegistry.shared.alwaysLoadedSpecs(mode: .none)
+
+        #expect(specs.contains(where: { $0.function.name == "todo" }))
+        #expect(specs.contains(where: { $0.function.name == "complete" }))
+        #expect(specs.contains(where: { $0.function.name == "clarify" }))
+    }
+
+    @Test
+    func alwaysLoadedSpecs_includesShareArtifactGlobally() {
+        let specs = ToolRegistry.shared.alwaysLoadedSpecs(mode: .none)
+
+        #expect(specs.contains(where: { $0.function.name == "share_artifact" }))
+    }
+
+    @Test
+    func alwaysLoadedSpecs_includesUnifiedSearchMemory() {
+        let specs = ToolRegistry.shared.alwaysLoadedSpecs(mode: .none)
+
+        #expect(specs.contains(where: { $0.function.name == "search_memory" }))
+        #expect(!specs.contains(where: { $0.function.name == "search_working_memory" }))
+        #expect(!specs.contains(where: { $0.function.name == "search_conversations" }))
+        #expect(!specs.contains(where: { $0.function.name == "search_summaries" }))
+        #expect(!specs.contains(where: { $0.function.name == "search_graph" }))
     }
 
     @Test
@@ -131,44 +156,8 @@ struct ChatViewSandboxTests {
         _ = await manager.delete(id: sandboxAgent.id)
     }
 
-    @Test
-    func workSessionEstimate_includesSandboxPromptAndToolsWhenEnabled() {
-        let manager = AgentManager.shared
-        let originalActiveAgentId = manager.activeAgentId
-        let inactiveAgent = Agent(name: "Work Estimate Off")
-        let sandboxAgent = Agent(
-            name: "Work Estimate On",
-            autonomousExec: AutonomousExecConfig(enabled: true)
-        )
-        manager.add(inactiveAgent)
-        manager.add(sandboxAgent)
-        defer {
-            manager.setActiveAgent(originalActiveAgentId)
-            Task {
-                _ = await manager.delete(id: inactiveAgent.id)
-                _ = await manager.delete(id: sandboxAgent.id)
-            }
-        }
-
-        let issue = Issue(taskId: "task-1", title: "Verify sandbox budget")
-        let inactiveSession = WorkSession(agentId: inactiveAgent.id)
-        let sandboxSession = WorkSession(agentId: sandboxAgent.id)
-
-        withRegisteredSandboxBuiltins {
-            let inactiveBreakdown = inactiveSession.estimateContextBreakdown(for: issue)
-            let sandboxBreakdown = sandboxSession.estimateContextBreakdown(for: issue)
-            let sandboxTools = ToolRegistry.shared.alwaysLoadedSpecs(mode: .sandbox)
-
-            let inactiveContextTokens = inactiveBreakdown.context.reduce(0) { $0 + $1.tokens }
-            let sandboxContextTokens = sandboxBreakdown.context.reduce(0) { $0 + $1.tokens }
-            #expect(sandboxContextTokens > inactiveContextTokens)
-
-            let sandboxToolTokens = sandboxBreakdown.context.first { $0.id == "tools" }?.tokens ?? 0
-            let inactiveToolTokens = inactiveBreakdown.context.first { $0.id == "tools" }?.tokens ?? 0
-            #expect(sandboxToolTokens > inactiveToolTokens)
-            #expect(sandboxToolTokens == ToolRegistry.shared.totalEstimatedTokens(for: sandboxTools))
-        }
-    }
+    // Chat session budget estimation is covered indirectly via
+    // SystemPromptComposer + ContextBudgetManager tests.
 }
 
 @MainActor

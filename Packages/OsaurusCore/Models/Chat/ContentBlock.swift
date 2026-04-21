@@ -443,11 +443,21 @@ extension ContentBlock {
     }
 
     /// Parses a ChartSpec from a render_chart tool result marker.
+    /// Accepts both the legacy raw marker block and the new envelope shape
+    /// where the marker block lives inside `result.text`.
     private static func parseChartSpecFromResult(_ result: String) -> ChartSpec? {
-        guard let start = result.range(of: "---CHART_START---\n"),
-            let end = result.range(of: "\n---CHART_END---")
+        let source: String
+        if let payload = ToolEnvelope.successPayload(result) as? [String: Any],
+            let text = payload["text"] as? String
+        {
+            source = text
+        } else {
+            source = result
+        }
+        guard let start = source.range(of: "---CHART_START---\n"),
+            let end = source.range(of: "\n---CHART_END---")
         else { return nil }
-        let json = String(result[start.upperBound ..< end.lowerBound])
+        let json = String(source[start.upperBound ..< end.lowerBound])
         guard let data = json.data(using: .utf8) else { return nil }
         return try? JSONDecoder().decode(ChartSpec.self, from: data)
     }

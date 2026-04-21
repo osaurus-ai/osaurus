@@ -14,6 +14,7 @@ import Testing
 @testable import OsaurusCore
 
 @Suite(.serialized)
+@MainActor
 struct MCPHTTPHandlerTests {
 
     @Test func mcp_health_returns_ok() async throws {
@@ -40,9 +41,14 @@ struct MCPHTTPHandlerTests {
         }
         try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
 
-        // Register and enable a test tool
+        // Register and enable a test tool. The registry is a process-wide
+        // singleton, so leaving `EchoTool` behind would push
+        // `ToolRegistry.shared.dynamicCatalogIsEmpty()` to false and break
+        // sibling suites (e.g. PluginCreatorInjectionTests) that depend on
+        // an empty dynamic catalog.
         await ToolRegistry.shared.register(EchoTool())
         await ToolRegistry.shared.setEnabled(true, for: EchoTool.nameStatic)
+        defer { ToolRegistry.shared.unregister(names: [EchoTool.nameStatic]) }
 
         let server = try await startTestServer()
         defer { Task { await server.shutdown() } }
@@ -60,6 +66,12 @@ struct MCPHTTPHandlerTests {
             let inputSchema = echo["inputSchema"] as? [String: Any]
             #expect(inputSchema != nil)
         }
+
+        // `register` does not stamp `builtInToolNames`, so leaving
+        // `EchoTool` in the registry makes `dynamicCatalogIsEmpty()` false and
+        // breaks `PluginCreatorInjectionTests.composeChatContext_injectsPluginCreatorWhenCatalogEmpty`
+        // when it runs later in the same process.
+        await ToolRegistry.shared.unregister(names: [EchoTool.nameStatic])
     }
 
     @Test func mcp_call_executes_enabled_tool_and_returns_text_content() async throws {
@@ -73,9 +85,9 @@ struct MCPHTTPHandlerTests {
         }
         try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
 
-        // Register and enable a test tool
         await ToolRegistry.shared.register(EchoTool())
         await ToolRegistry.shared.setEnabled(true, for: EchoTool.nameStatic)
+        defer { ToolRegistry.shared.unregister(names: [EchoTool.nameStatic]) }
 
         let server = try await startTestServer()
         defer { Task { await server.shutdown() } }
@@ -100,6 +112,8 @@ struct MCPHTTPHandlerTests {
         let content = (json?["content"] as? [[String: Any]]) ?? []
         let text = content.first?["text"] as? String
         #expect(text == #"{"text":"hello"}"#)
+
+        await ToolRegistry.shared.unregister(names: [EchoTool.nameStatic])
     }
 
     @Test func mcp_call_with_missing_required_arg_returns_error() async throws {
@@ -113,9 +127,9 @@ struct MCPHTTPHandlerTests {
         }
         try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
 
-        // Register and enable a test tool
         await ToolRegistry.shared.register(EchoTool())
         await ToolRegistry.shared.setEnabled(true, for: EchoTool.nameStatic)
+        defer { ToolRegistry.shared.unregister(names: [EchoTool.nameStatic]) }
 
         let server = try await startTestServer()
         defer { Task { await server.shutdown() } }
@@ -136,6 +150,8 @@ struct MCPHTTPHandlerTests {
         let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
         let isError = (json?["isError"] as? Bool) ?? false
         #expect(isError == true)
+
+        await ToolRegistry.shared.unregister(names: [EchoTool.nameStatic])
     }
 }
 

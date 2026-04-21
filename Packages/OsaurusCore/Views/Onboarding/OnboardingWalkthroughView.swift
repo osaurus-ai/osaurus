@@ -26,7 +26,7 @@ private enum WalkthroughStepType: Int, CaseIterable {
 
     var title: String {
         switch self {
-        case .modes: return L("Chat or let it run")
+        case .modes: return L("Chat that runs anywhere")
         case .tools: return L("Tools, skills, and plugins")
         case .sandbox: return L("Safe, isolated execution")
         case .personalization: return L("Agents, voice, and themes")
@@ -39,7 +39,7 @@ private enum WalkthroughStepType: Int, CaseIterable {
         switch self {
         case .modes:
             return L(
-                "Chat Mode — Talk back and forth, like a conversation.\nWork Mode — Give it a task and let it work in the background."
+                "Chat back and forth, or hand off long tasks. Schedules, webhooks, and plugins can dispatch a chat session that runs in the background while you keep working."
             )
         case .tools:
             return L(

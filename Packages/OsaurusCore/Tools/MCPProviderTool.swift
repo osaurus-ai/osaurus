@@ -114,12 +114,44 @@ final class MCPProviderTool: OsaurusTool, PermissionedTool, @unchecked Sendable 
 // MARK: - MCP Value to Any Conversion (for tool execution)
 
 extension MCPProviderTool {
-    /// Convert JSON arguments string to MCP.Value dictionary
+    /// Convert JSON arguments string to MCP.Value dictionary.
+    ///
+    /// Empty / `{}` inputs are accepted as a legitimate "no arguments" call.
+    /// Anything else that fails to parse as a JSON object — malformed JSON,
+    /// non-object payloads, or the upstream serialization-error envelope
+    /// emitted by `GenerationEventMapper.serializeArguments` when a tool
+    /// call's arguments fail to JSON-encode — throws so the model receives
+    /// a structured error instead of silently running with no arguments.
     static func convertArgumentsToMCPValues(_ argumentsJSON: String) throws -> [String: MCP.Value] {
-        guard let data = argumentsJSON.data(using: .utf8),
-            let jsonObject = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        else {
-            return [:]
+        let trimmed = argumentsJSON.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty || trimmed == "{}" { return [:] }
+
+        guard let data = trimmed.data(using: .utf8) else {
+            throw argumentError(code: 10, message: "Tool arguments are not valid UTF-8")
+        }
+
+        let parsed: Any
+        do {
+            parsed = try JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])
+        } catch {
+            throw argumentError(
+                code: 11,
+                message:
+                    "Tool arguments are not valid JSON: \(error.localizedDescription). Got: \(String(trimmed.prefix(200)))"
+            )
+        }
+
+        guard let jsonObject = parsed as? [String: Any] else {
+            throw argumentError(
+                code: 12,
+                message: "Tool arguments must be a JSON object, got \(type(of: parsed))"
+            )
+        }
+
+        // The upstream accumulator's serialization-failure envelope must
+        // surface as an error rather than be passed through as a bogus arg.
+        if let err = jsonObject["_error"] as? String {
+            throw argumentError(code: 13, message: "Upstream argument serialization failed: \(err)")
         }
 
         var result: [String: MCP.Value] = [:]
@@ -127,6 +159,14 @@ extension MCPProviderTool {
             result[key] = try convertToMCPValue(value)
         }
         return result
+    }
+
+    private static func argumentError(code: Int, message: String) -> NSError {
+        NSError(
+            domain: "MCPProviderTool",
+            code: code,
+            userInfo: [NSLocalizedDescriptionKey: message]
+        )
     }
 
     /// Convert Foundation types to MCP.Value

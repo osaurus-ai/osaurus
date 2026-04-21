@@ -12,43 +12,59 @@ import Foundation
 
 struct RenderChartTool: OsaurusTool {
     let name = "render_chart"
-    let description =
-        "Render a chart from attachment data. Use when the user has attached a data file (CSV, TSV, JSON). Pass the raw file content and column names — the tool handles all parsing and downsampling."
+
+    /// Canonical sorted list of chart types — single source of truth so
+    /// the JSON schema enum, the description, and the failure messages
+    /// all agree with `ChartSpec.validChartTypes`.
+    private static let sortedChartTypes: [String] = ChartSpec.validChartTypes.sorted()
+    private static let chartTypeList: String = sortedChartTypes.joined(separator: ", ")
+    private static let chartTypeEnum: JSONValue = .array(sortedChartTypes.map { .string($0) })
+
+    var description: String {
+        "Render a chart card inline in the chat from tabular data. Supported chart types: \(Self.chartTypeList). "
+            + "Pass the raw file content + column names; the tool handles parsing, type coercion, and downsampling. "
+            + "Use when the user has attached a data file (CSV/TSV/JSON) — for arbitrary images or saved chart files, use `share_artifact` instead."
+    }
 
     let parameters: JSONValue? = .object([
         "type": .string("object"),
+        // Note: NOT setting `additionalProperties: false` here — render_chart
+        // historically tolerated a nested `properties` object as a model
+        // schema-confusion fallback (see execute body). Locking the schema
+        // strict would break that compat.
         "required": .array([.string("data"), .string("chartType"), .string("series")]),
         "properties": .object([
             "data": .object([
                 "type": .string("string"),
-                "description": .string("The raw content of the attached file (CSV, TSV, or JSON array of objects)"),
+                "description": .string("The raw content of the attached file (CSV, TSV, or JSON array of objects)."),
             ]),
             "format": .object([
                 "type": .string("string"),
-                "description": .string("File format: csv, tsv, or json. Defaults to csv."),
+                "description": .string("File format: `csv`, `tsv`, or `json`."),
+                "enum": .array([.string("csv"), .string("tsv"), .string("json")]),
+                "default": .string("csv"),
             ]),
             "chartType": .object([
                 "type": .string("string"),
-                "description": .string(
-                    "Chart type: column, bar, line, spline, area, areaspline, pie, scatter, bubble, gauge, waterfall, boxplot"
-                ),
+                "description": .string("Chart type. Strict enum — invalid values are rejected with `invalid_args`."),
+                "enum": Self.chartTypeEnum,
             ]),
             "xColumn": .object([
                 "type": .string("string"),
-                "description": .string("Column name to use as x-axis labels / categories"),
+                "description": .string("Column name to use as x-axis labels / categories."),
             ]),
             "series": .object([
                 "type": .string("array"),
                 "items": .object(["type": .string("string")]),
-                "description": .string("Column names to plot as data series"),
+                "description": .string("Column names to plot as data series."),
             ]),
             "title": .object([
                 "type": .string("string"),
-                "description": .string("Chart title"),
+                "description": .string("Chart title."),
             ]),
             "tooltipSuffix": .object([
                 "type": .string("string"),
-                "description": .string("Unit suffix shown in tooltips (e.g. USD, %, ms)"),
+                "description": .string("Unit suffix shown in tooltips (e.g. `USD`, `%`, `ms`)."),
             ]),
         ]),
     ])
@@ -56,13 +72,16 @@ struct RenderChartTool: OsaurusTool {
     private static let maxRows = 500
 
     func execute(argumentsJSON: String) async throws -> String {
-        guard let args = parseArguments(argumentsJSON) else {
-            return errorResult("Invalid arguments JSON")
-        }
+        let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
+        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
 
-        guard let raw = args["data"] as? String else {
-            return errorResult("data is required — pass the full raw file content")
-        }
+        let dataReq = requireString(
+            args,
+            "data",
+            expected: "raw file content (CSV / TSV / JSON array of objects)",
+            tool: name
+        )
+        guard case .value(let raw) = dataReq else { return dataReq.failureEnvelope ?? "" }
 
         // chartType may be top-level or nested inside a "properties" object (model schema confusion)
         let chartType: String
@@ -79,12 +98,39 @@ struct RenderChartTool: OsaurusTool {
         {
             chartType = ct
         } else {
-            return errorResult("chartType is required (e.g. \"line\", \"column\", \"pie\")")
+            return ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message: "Missing required argument `chartType`.",
+                field: "chartType",
+                expected: "one of \(Self.chartTypeList)",
+                tool: name
+            )
+        }
+
+        // Reject unknown chart types up front. Previously `ChartSpec.normalized`
+        // silently coerced anything-not-in-validChartTypes to `column`, hiding
+        // the model's mistake.
+        guard ChartSpec.validChartTypes.contains(chartType) else {
+            return ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message: "Unknown `chartType`: `\(chartType)`. Use one of: \(Self.chartTypeList).",
+                field: "chartType",
+                expected: "one of \(Self.chartTypeList)",
+                tool: name
+            )
         }
 
         // series may be a proper array or a JSON-encoded string array
-        guard let seriesCols = coerceStringArray(args["series"]) ?? parseStringArrayFromJSON(args["series"]) else {
-            return errorResult("series is required — pass an array of column names to plot")
+        guard let seriesCols = coerceStringArray(args["series"]) ?? parseStringArrayFromJSON(args["series"]),
+            !seriesCols.isEmpty
+        else {
+            return ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message: "Missing required argument `series` (array of column names).",
+                field: "series",
+                expected: "non-empty array of column-name strings",
+                tool: name
+            )
         }
 
         let format = (args["format"] as? String)?.lowercased() ?? "csv"
@@ -104,11 +150,21 @@ struct RenderChartTool: OsaurusTool {
                 (headers, rows) = parseDelimited(raw, separator: ",")
             }
         } catch {
-            return errorResult(error.localizedDescription)
+            return ToolEnvelope.failure(
+                kind: .executionError,
+                message: error.localizedDescription,
+                tool: name,
+                retryable: true
+            )
         }
 
         guard !headers.isEmpty else {
-            return errorResult("Could not parse any columns from the provided data")
+            return ToolEnvelope.failure(
+                kind: .executionError,
+                message: "Could not parse any columns from the provided data.",
+                tool: name,
+                retryable: true
+            )
         }
 
         // Validate columns
@@ -120,8 +176,14 @@ struct RenderChartTool: OsaurusTool {
             missingColumns.append(x)
         }
         if !missingColumns.isEmpty {
-            return errorResult(
-                "Column(s) not found: \(missingColumns.joined(separator: ", ")). Available columns: \(headers.joined(separator: ", "))"
+            return ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message:
+                    "Column(s) not found: \(missingColumns.joined(separator: ", ")). "
+                    + "Available columns: \(headers.joined(separator: ", ")).",
+                field: missingColumns.contains(where: { seriesCols.contains($0) }) ? "series" : "xColumn",
+                expected: "column name(s) present in the parsed headers",
+                tool: name
             )
         }
 
@@ -161,7 +223,12 @@ struct RenderChartTool: OsaurusTool {
         }
 
         if chartSeries.isEmpty {
-            return errorResult("No numeric series could be extracted from the specified columns")
+            return ToolEnvelope.failure(
+                kind: .executionError,
+                message: "No numeric series could be extracted from the specified columns.",
+                tool: name,
+                retryable: true
+            )
         }
 
         let spec = ChartSpec(
@@ -177,7 +244,11 @@ struct RenderChartTool: OsaurusTool {
         encoder.outputFormatting = .sortedKeys
         let jsonData = try encoder.encode(spec)
         let jsonString = String(data: jsonData, encoding: .utf8)!
-        return "---CHART_START---\n\(jsonString)\n---CHART_END---"
+        // Marker block is parsed by `parseChartSpecFromResult` downstream.
+        // Wrapped in the success envelope's `text` so `BatchTool` and the
+        // tool-call card can detect success without parsing markers first.
+        let marker = "---CHART_START---\n\(jsonString)\n---CHART_END---"
+        return ToolEnvelope.success(tool: name, text: marker)
     }
 
     // MARK: - Parsing
@@ -226,8 +297,4 @@ struct RenderChartTool: OsaurusTool {
         return arr.isEmpty ? nil : arr
     }
 
-    private func errorResult(_ message: String) -> String {
-        let escaped = message.replacingOccurrences(of: "\"", with: "'")
-        return "{\"error\": \"\(escaped)\"}"
-    }
 }

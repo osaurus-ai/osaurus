@@ -45,7 +45,6 @@ struct ConfigurationView: View {
 
     // Local Inference settings state
     @State private var tempTopP: String = ""
-    @State private var tempMaxKV: String = ""
     @State private var tempEvictionPolicy: ModelEvictionPolicy = .strictSingleModel
 
     // Toast settings state
@@ -445,8 +444,6 @@ struct ConfigurationView: View {
                             "Inference",
                             "Sampling",
                             "Top P",
-                            "KV Cache",
-                            "Max KV",
                             "CPU",
                             "Memory"
                         ) {
@@ -474,19 +471,12 @@ struct ConfigurationView: View {
                                         }
                                     }
 
-                                    // KV Cache Settings
-                                    SettingsSubsection(label: "KV Cache") {
-                                        VStack(alignment: .leading, spacing: 12) {
-                                            SettingsStepperField(
-                                                label: "Max Context Length",
-                                                help: "Max KV cache size in tokens",
-                                                text: $tempMaxKV,
-                                                range: 1024 ... 131072,
-                                                step: 1024,
-                                                defaultValue: 8192
-                                            )
-                                        }
-                                    }
+                                    // KV cache sizing is owned end-to-end by
+                                    // vmlx-swift-lm's `CacheCoordinator` —
+                                    // surfacing a per-user override here would
+                                    // conflict with the library's per-model
+                                    // cache geometry (see the comment in
+                                    // `ModelRuntime.makeGenerateParameters`).
 
                                     SettingsDivider()
 
@@ -735,7 +725,6 @@ struct ConfigurationView: View {
 
         let defaults = ServerConfiguration.default
         tempTopP = configuration.genTopP == defaults.genTopP ? "" : String(configuration.genTopP)
-        tempMaxKV = configuration.genMaxKVSize.map(String.init) ?? ""
         tempAllowedOrigins = configuration.allowedOrigins.joined(separator: ", ")
         tempEvictionPolicy = configuration.modelEvictionPolicy
 
@@ -786,7 +775,6 @@ struct ConfigurationView: View {
         tempAgentMaxIterations = ""
 
         tempTopP = ""
-        tempMaxKV = ""
         tempEvictionPolicy = serverDefaults.modelEvictionPolicy
 
         showSuccess("Settings restored to defaults")
@@ -838,8 +826,10 @@ struct ConfigurationView: View {
             configuration.genTopP = Float(trimmedTopP) ?? defaults.genTopP
         }
 
-        let trimmedMaxKV = tempMaxKV.trimmingCharacters(in: .whitespacesAndNewlines)
-        configuration.genMaxKVSize = trimmedMaxKV.isEmpty ? nil : Int(trimmedMaxKV)
+        // `genMaxKVSize` is no longer applied at runtime (KV cache sizing is
+        // owned by vmlx-swift-lm's `CacheCoordinator`). The field stays on
+        // `ServerConfiguration` for backward-compatible decoding of existing
+        // configs but is not surfaced in the UI any more.
 
         configuration.modelEvictionPolicy = tempEvictionPolicy
 
@@ -855,7 +845,7 @@ struct ConfigurationView: View {
 
         // `serverRestartNeeded` gates restarting the NIO HTTP server. Only the
         // fields that affect how the socket is opened / CORS / eviction belong
-        // here. Generation-time settings (top-p, maxKV) flow into
+        // here. Generation-time settings (top-p) flow into
         // `RuntimeConfig.snapshot()` and are re-read on the next request via
         // `ModelRuntime.invalidateConfig()` below — they do NOT require a NIO
         // restart nor a model reload.
@@ -865,9 +855,7 @@ struct ConfigurationView: View {
             || previousServerCfg.allowedOrigins != configuration.allowedOrigins
             || previousServerCfg.modelEvictionPolicy != configuration.modelEvictionPolicy
 
-        let runtimeConfigChanged =
-            previousServerCfg.genTopP != configuration.genTopP
-            || previousServerCfg.genMaxKVSize != configuration.genMaxKVSize
+        let runtimeConfigChanged = previousServerCfg.genTopP != configuration.genTopP
 
         ServerConfigurationStore.save(configuration)
 
@@ -1990,7 +1978,7 @@ private struct AgentSettingsSection: View {
                 SettingsSubsection(label: "Permissions") {
                     VStack(alignment: .leading, spacing: 12) {
                         Text(
-                            "Control how work folder tools execute when working with folders in Work mode.",
+                            "Control how folder tools execute when chat has access to a working folder.",
                             bundle: .module
                         )
                         .font(.system(size: 12))

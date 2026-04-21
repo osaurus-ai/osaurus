@@ -166,6 +166,13 @@ final class ModelManager: NSObject, ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     private var remoteSearchTask: Task<Void, Never>? = nil
 
+    /// Test-only knob: when `true`, the constructor does NOT kick off the
+    /// background OsaurusAI HF org fetch. Production code never sets this;
+    /// tests that exercise `applyOsaurusOrgFetch(...)` flip it on so the
+    /// async HF response can't race with their assertions and replace
+    /// injected entries with whatever HF currently lists.
+    nonisolated(unsafe) static var skipBackgroundOrgFetchForTests: Bool = false
+
     // MARK: - Initialization
     override init() {
         super.init()
@@ -188,7 +195,9 @@ final class ModelManager: NSObject, ObservableObject {
 
         // Pull the OsaurusAI HF org listing once on launch so newly published
         // models surface in the Recommended tab without requiring a code push.
-        Task { [weak self] in await self?.loadOsaurusAIOrgModels() }
+        if !Self.skipBackgroundOrgFetchForTests {
+            Task { [weak self] in await self?.loadOsaurusAIOrgModels() }
+        }
     }
 
     // MARK: - Public Methods
@@ -952,7 +961,6 @@ extension ModelManager {
         cachedLocalModels = nil
         localModelsCacheLock.unlock()
         LocalReasoningCapability.invalidate()
-        JANGReasoningResolver.invalidateAll()
     }
 
     /// Discover locally downloaded models. Cached until invalidated by model download/delete.

@@ -2,7 +2,7 @@
 //  ThemedBackgroundLayer.swift
 //  osaurus
 //
-//  Shared background layer used by ChatView and WorkView.
+//  Shared background layer used by chat windows.
 //  Renders solid, gradient, or image backgrounds from the active theme config.
 //
 

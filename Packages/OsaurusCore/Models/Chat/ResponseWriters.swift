@@ -130,6 +130,34 @@ final class SSEResponseWriter: ResponseWriter {
         writeSSEChunk(chunk, context: context)
     }
 
+    /// Emit a reasoning (thinking) delta on the OpenAI `reasoning_content`
+    /// field. Routed by the HTTP handler when it decodes a
+    /// `StreamingReasoningHint` sentinel in the upstream stream.
+    @inline(__always)
+    func writeReasoning(
+        _ content: String,
+        model: String,
+        responseId: String,
+        created: Int,
+        context: ChannelHandlerContext
+    ) {
+        guard !content.isEmpty else { return }
+        let chunk = ChatCompletionChunk(
+            id: responseId,
+            created: created,
+            model: model,
+            choices: [
+                StreamChoice(
+                    index: 0,
+                    delta: DeltaContent(reasoning_content: content),
+                    finish_reason: nil
+                )
+            ],
+            system_fingerprint: nil
+        )
+        writeSSEChunk(chunk, context: context)
+    }
+
     // MARK: - Tool calling (OpenAI-style streaming deltas)
 
     @inline(__always)
@@ -387,6 +415,7 @@ final class AnthropicSSEResponseWriter {
     private var outputTokens: Int = 0
     private var currentBlockIndex: Int = 0
     private var hasStartedTextBlock: Bool = false
+    private var hasStartedThinkingBlock: Bool = false
 
     func writeHeaders(_ context: ChannelHandlerContext, extraHeaders: [(String, String)]? = nil) {
         var head = HTTPResponseHead(version: .http1_1, status: .ok)
@@ -417,6 +446,7 @@ final class AnthropicSSEResponseWriter {
         self.outputTokens = 0
         self.currentBlockIndex = 0
         self.hasStartedTextBlock = false
+        self.hasStartedThinkingBlock = false
 
         let event = MessageStartEvent(id: messageId, model: model, inputTokens: inputTokens)
         writeSSEEvent("message_start", payload: event, context: context)
@@ -436,6 +466,12 @@ final class AnthropicSSEResponseWriter {
     func writeTextDelta(_ text: String, context: ChannelHandlerContext) {
         guard !text.isEmpty else { return }
 
+        // Close any open thinking block before opening a text block —
+        // Anthropic content blocks are sequential, never nested.
+        if hasStartedThinkingBlock {
+            writeBlockStop(context: context)
+        }
+
         // Start text block if not already started
         if !hasStartedTextBlock {
             writeTextBlockStart(context: context)
@@ -454,6 +490,40 @@ final class AnthropicSSEResponseWriter {
         writeSSEEvent("content_block_stop", payload: event, context: context)
         currentBlockIndex += 1
         hasStartedTextBlock = false
+        hasStartedThinkingBlock = false
+    }
+
+    /// Write content_block_start for a thinking block (Anthropic extended
+    /// thinking). Idempotent — subsequent calls before a `writeBlockStop`
+    /// are no-ops.
+    func writeThinkingBlockStart(context: ChannelHandlerContext) {
+        guard !hasStartedThinkingBlock else { return }
+
+        // Close any open text block first — content blocks are sequential.
+        if hasStartedTextBlock {
+            writeBlockStop(context: context)
+        }
+
+        hasStartedThinkingBlock = true
+        let event = ContentBlockStartEvent(thinkingBlockAt: currentBlockIndex)
+        writeSSEEvent("content_block_start", payload: event, context: context)
+    }
+
+    /// Append a thinking_delta to the currently-open thinking block. Opens
+    /// the block on first call. Output tokens are accumulated alongside
+    /// regular text so usage reflects total work done.
+    @inline(__always)
+    func writeThinkingDelta(_ thinking: String, context: ChannelHandlerContext) {
+        guard !thinking.isEmpty else { return }
+
+        if !hasStartedThinkingBlock {
+            writeThinkingBlockStart(context: context)
+        }
+
+        outputTokens += max(1, thinking.count / 4)
+
+        let event = ContentBlockDeltaEvent(thinkingAt: currentBlockIndex, text: thinking)
+        writeSSEEvent("content_block_delta", payload: event, context: context)
     }
 
     /// Write tool_use block start
@@ -462,8 +532,9 @@ final class AnthropicSSEResponseWriter {
         toolName: String,
         context: ChannelHandlerContext
     ) {
-        // Close text block if open
-        if hasStartedTextBlock {
+        // Close any open block (text or thinking) — content blocks are
+        // sequential.
+        if hasStartedTextBlock || hasStartedThinkingBlock {
             writeBlockStop(context: context)
         }
 
@@ -517,8 +588,8 @@ final class AnthropicSSEResponseWriter {
 
     /// Complete the stream with stop reason and close connection
     func writeFinish(stopReason: String, context: ChannelHandlerContext) {
-        // Close any open text block
-        if hasStartedTextBlock {
+        // Close any open block (text or thinking) before finishing.
+        if hasStartedTextBlock || hasStartedThinkingBlock {
             writeBlockStop(context: context)
         }
 
@@ -573,6 +644,15 @@ final class OpenResponsesSSEWriter {
     private var currentOutputIndex: Int = 0
     private var accumulatedText: String = ""
 
+    // Reasoning item state. The reasoning item lives at its own
+    // `output_index` and accumulates `summary_text` deltas. Closes BEFORE
+    // the message item begins, matching OpenAI Responses semantics.
+    private var reasoningItemId: String = ""
+    private var reasoningOutputIndex: Int = 0
+    private var reasoningSummaryIndex: Int = 0
+    private var accumulatedReasoning: String = ""
+    private var hasOpenReasoningItem: Bool = false
+
     func writeHeaders(_ context: ChannelHandlerContext, extraHeaders: [(String, String)]? = nil) {
         var head = HTTPResponseHead(version: .http1_1, status: .ok)
         var headers = HTTPHeaders()
@@ -609,6 +689,11 @@ final class OpenResponsesSSEWriter {
         self.sequenceNumber = 0
         self.currentOutputIndex = 0
         self.accumulatedText = ""
+        self.reasoningItemId = ""
+        self.reasoningOutputIndex = 0
+        self.reasoningSummaryIndex = 0
+        self.accumulatedReasoning = ""
+        self.hasOpenReasoningItem = false
 
         let response = OpenResponsesResponse(
             id: responseId,
@@ -664,6 +749,90 @@ final class OpenResponsesSSEWriter {
             part: part
         )
         writeSSEEvent("response.content_part.added", payload: event, context: context)
+    }
+
+    // MARK: - Reasoning item
+
+    /// Open a reasoning output item at the current output index. Idempotent:
+    /// repeated calls before `writeReasoningItemDone(...)` are no-ops.
+    func writeReasoningItemAdded(itemId: String, context: ChannelHandlerContext) {
+        guard !hasOpenReasoningItem else { return }
+
+        self.reasoningItemId = itemId
+        self.reasoningOutputIndex = currentOutputIndex
+        self.reasoningSummaryIndex = 0
+        self.accumulatedReasoning = ""
+        self.hasOpenReasoningItem = true
+
+        let item = OpenResponsesReasoningItem(
+            id: itemId,
+            status: .inProgress,
+            summary: []
+        )
+        let event = OutputItemAddedEvent(
+            sequenceNumber: nextSequenceNumber(),
+            outputIndex: reasoningOutputIndex,
+            item: .reasoning(item)
+        )
+        writeSSEEvent("response.output_item.added", payload: event, context: context)
+    }
+
+    /// Append reasoning text to the open reasoning item. Implicitly opens a
+    /// reasoning item with the supplied id on first call.
+    @inline(__always)
+    func writeReasoningDelta(
+        _ text: String,
+        itemId: String,
+        context: ChannelHandlerContext
+    ) {
+        guard !text.isEmpty else { return }
+
+        if !hasOpenReasoningItem {
+            writeReasoningItemAdded(itemId: itemId, context: context)
+        }
+
+        accumulatedReasoning += text
+        outputTokens += max(1, text.count / 4)
+
+        let event = ReasoningSummaryTextDeltaEvent(
+            sequenceNumber: nextSequenceNumber(),
+            itemId: reasoningItemId,
+            outputIndex: reasoningOutputIndex,
+            summaryIndex: reasoningSummaryIndex,
+            delta: text
+        )
+        writeSSEEvent("response.reasoning_summary_text.delta", payload: event, context: context)
+    }
+
+    /// Close the reasoning item: emit `summary_text.done` then
+    /// `output_item.done`, advance `currentOutputIndex` so the message item
+    /// that follows lives at the next slot.
+    func writeReasoningItemDone(context: ChannelHandlerContext) {
+        guard hasOpenReasoningItem else { return }
+
+        let doneEvent = ReasoningSummaryTextDoneEvent(
+            sequenceNumber: nextSequenceNumber(),
+            itemId: reasoningItemId,
+            outputIndex: reasoningOutputIndex,
+            summaryIndex: reasoningSummaryIndex,
+            text: accumulatedReasoning
+        )
+        writeSSEEvent("response.reasoning_summary_text.done", payload: doneEvent, context: context)
+
+        let finalItem = OpenResponsesReasoningItem(
+            id: reasoningItemId,
+            status: .completed,
+            summary: [OpenResponsesReasoningSummaryText(text: accumulatedReasoning)]
+        )
+        let itemDone = OutputItemDoneEvent(
+            sequenceNumber: nextSequenceNumber(),
+            outputIndex: reasoningOutputIndex,
+            item: .reasoning(finalItem)
+        )
+        writeSSEEvent("response.output_item.done", payload: itemDone, context: context)
+
+        hasOpenReasoningItem = false
+        currentOutputIndex += 1
     }
 
     /// Write response.output_text.delta event

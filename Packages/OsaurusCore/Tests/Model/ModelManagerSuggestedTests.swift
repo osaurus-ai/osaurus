@@ -13,6 +13,15 @@ import Testing
 
 struct ModelManagerSuggestedTests {
 
+    /// Suppress the background OsaurusAI HF org fetch that `ModelManager.init()`
+    /// kicks off — without this knob, the async network response can land
+    /// between a test's `applyOsaurusOrgFetch(...)` call and its assertion,
+    /// replacing the injected entries with whatever HF currently lists and
+    /// flaking the suite (CI > local because CI consistently has network).
+    init() {
+        ModelManager.skipBackgroundOrgFetchForTests = true
+    }
+
     // MARK: - Curated catalog
 
     @Test func curatedSuggestedIds_includesNewMiniMaxEntries() {
@@ -116,8 +125,6 @@ struct ModelManagerSuggestedTests {
     }
 
     @Test func applyOsaurusOrgFetch_dropsStaleAutoFetchedOnReapply() async {
-        let manager = await MainActor.run { ModelManager() }
-
         let stale = MLXModel(
             id: "OsaurusAI/Stale-Repo",
             name: "Stale Repo",
@@ -131,14 +138,13 @@ struct ModelManagerSuggestedTests {
             downloadURL: "https://huggingface.co/OsaurusAI/Kept-Repo"
         )
 
-        await MainActor.run {
+        // keep init + both applies + read atomic on MainActor to block it out
+        let after = await MainActor.run { () -> [MLXModel] in
+            let manager = ModelManager()
             manager.applyOsaurusOrgFetch(autoFetched: [stale])
-        }
-        await MainActor.run {
             manager.applyOsaurusOrgFetch(autoFetched: [kept])
+            return manager.suggestedModels
         }
-
-        let after = await MainActor.run { manager.suggestedModels }
         #expect(after.contains { $0.id == kept.id })
         #expect(!after.contains { $0.id == stale.id })
     }

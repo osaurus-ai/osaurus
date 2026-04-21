@@ -139,32 +139,11 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         window.close()
     }
 
-    /// Check if window close should be allowed, showing background task dialog if needed
-    /// - Returns: true if close should proceed, false if cancelled
+    /// Check if window close should be allowed. Chat sessions can always
+    /// be safely closed; users keep work running by leaving the window open.
     private func shouldAllowClose(id: UUID) -> Bool {
-        guard let windowState = windowStates[id] else { return true }
-
-        // If this window is already detached to background, allow close without prompts.
-        // This prevents duplicate confirmations when we detach and then programmatically close.
-        if BackgroundTaskManager.shared.isBackgroundTask(id) {
-            return true
-        }
-
-        // Check if there's a running work task
-        let isAgentExecuting =
-            windowState.workSession?.isExecuting == true
-            || windowState.workSession?.hasPendingClarification == true
-
-        guard isAgentExecuting else {
-            // No running task, allow close
-            return true
-        }
-
-        // Present in-app themed confirmation via SwiftUI overlay (ChatView observes this)
-        if windowState.workCloseConfirmation == nil {
-            windowState.workCloseConfirmation = WorkCloseConfirmation()
-        }
-        return false
+        _ = id
+        return true
     }
 
     /// Show/focus a window by ID
@@ -316,49 +295,6 @@ public final class ChatWindowManager: NSObject, ObservableObject {
     }
 
     // MARK: - Background Task Window Support
-
-    /// Create a window for viewing a background task
-    /// - Parameters:
-    ///   - backgroundId: The background task ID (original window ID)
-    ///   - session: The work session from the background task
-    ///   - windowState: The window state from the background task
-    /// - Returns: The window ID (same as backgroundId)
-    @discardableResult
-    func createWindowForBackgroundTask(
-        backgroundId: UUID,
-        session: WorkSession,
-        windowState: ChatWindowState
-    ) -> UUID {
-        // Reuse the original window ID - windowState.windowId already matches
-        let windowId = backgroundId
-
-        let info = ChatWindowInfo(
-            id: windowId,
-            agentId: windowState.agentId,
-            sessionId: nil,
-            createdAt: Date()
-        )
-
-        windows[windowId] = info
-
-        // Create the actual NSWindow reusing the existing window state
-        // After restoration, this is a regular window - if user closes while
-        // task is running, it will be re-detached through normal flow
-        let window = createNSWindowForBackgroundTask(
-            windowId: windowId,
-            windowState: windowState
-        )
-
-        nsWindows[windowId] = window
-        windowStates[windowId] = windowState
-
-        // Show the window
-        showWindow(id: windowId)
-
-        print("[ChatWindowManager] Created window \(windowId) for background task \(backgroundId)")
-
-        return windowId
-    }
 
     /// Lazily create a window from an `ExecutionContext`, reusing its sessions.
     /// Called when the user taps "View" on a dispatch toast.
@@ -634,7 +570,6 @@ private final class ChatPanel: NSPanel {
 @MainActor
 private final class ChatToolbarDelegate: NSObject, NSToolbarDelegate {
     private static let sidebarItem = NSToolbarItem.Identifier("ChatToolbar.sidebar")
-    private static let modeToggleItem = NSToolbarItem.Identifier("ChatToolbar.modeToggle")
     private static let actionItem = NSToolbarItem.Identifier("ChatToolbar.action")
     private static let pinItem = NSToolbarItem.Identifier("ChatToolbar.pin")
 
@@ -648,15 +583,20 @@ private final class ChatToolbarDelegate: NSObject, NSToolbarDelegate {
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        // Chat/Work toggle removed: the agentic loop (todo / complete /
+        // clarify) now lives inside Chat itself, so a separate Work tab
+        // is redundant. The toggle case below still resolves so any
+        // stale toolbar identifiers in user defaults render as no-ops
+        // instead of crashing.
         [
-            Self.sidebarItem, .flexibleSpace, Self.modeToggleItem, .flexibleSpace, Self.actionItem,
+            Self.sidebarItem, .flexibleSpace, .flexibleSpace, Self.actionItem,
             Self.pinItem,
         ]
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [
-            Self.sidebarItem, .flexibleSpace, Self.modeToggleItem, .flexibleSpace, Self.actionItem,
+            Self.sidebarItem, .flexibleSpace, .flexibleSpace, Self.actionItem,
             Self.pinItem,
         ]
     }
@@ -674,13 +614,6 @@ private final class ChatToolbarDelegate: NSObject, NSToolbarDelegate {
                 identifier: itemIdentifier,
                 rootView:
                     ChatToolbarSidebarView(windowState: windowState)
-            )
-
-        case Self.modeToggleItem:
-            return makeHostingItem(
-                identifier: itemIdentifier,
-                rootView:
-                    ChatToolbarModeToggleView(windowState: windowState, session: session)
             )
 
         case Self.actionItem:
@@ -734,37 +667,14 @@ private struct ChatToolbarSidebarView: View {
     }
 }
 
-/// Mode toggle (Chat/Work).
-private struct ChatToolbarModeToggleView: View {
-    @ObservedObject var windowState: ChatWindowState
-    @ObservedObject var session: ChatSession
-
-    private var isWorkMode: Bool { windowState.mode == .work }
-
-    var body: some View {
-        ModeToggleButton(
-            currentMode: isWorkMode ? .work : .chat,
-            isDisabled: !isWorkMode && !session.hasAnyModel,
-            action: { tappedMode in
-                let current: ModeToggleButton.Mode = isWorkMode ? .work : .chat
-                guard tappedMode != current else { return }
-                windowState.switchMode(to: tappedMode == .work ? .work : .chat)
-            }
-        )
-        .environment(\.theme, windowState.theme)
-    }
-}
-
-/// Contextual action button: settings (empty state / work) or new-chat plus.
+/// Contextual action button: settings (empty state) or new-chat plus.
 private struct ChatToolbarActionView: View {
     @ObservedObject var windowState: ChatWindowState
     @ObservedObject var session: ChatSession
 
-    private var isWorkMode: Bool { windowState.mode == .work }
-
     var body: some View {
         Group {
-            if isWorkMode || session.turns.isEmpty {
+            if session.turns.isEmpty {
                 SettingsButton(action: {
                     AppDelegate.shared?.showManagementWindow(initialTab: nil)
                 })

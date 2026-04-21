@@ -511,13 +511,14 @@ public final class WatcherManager {
                 let prompt = self.buildDispatchPrompt(for: watcher, iteration: iteration)
 
                 let request = DispatchRequest(
-                    mode: .work,
                     prompt: prompt,
                     agentId: watcher.agentId,
                     title: watcher.name,
                     parameters: watcher.parameters,
                     folderPath: watcher.watchPath,
-                    folderBookmark: watcher.watchBookmark
+                    folderBookmark: watcher.watchBookmark,
+                    source: .watcher,
+                    externalSessionKey: watcher.id.uuidString
                 )
 
                 guard let handle = await TaskDispatcher.shared.dispatch(request) else {
@@ -596,7 +597,7 @@ public final class WatcherManager {
     // MARK: - Prompt Builder
 
     /// Build the dispatch prompt. The AI gets the full directory tree via
-    /// WorkFolderContext when the folder is set, so we only need to provide
+    /// FolderContext when the folder is set, so we only need to provide
     /// the user's instructions and the idempotency footer.
     private func buildDispatchPrompt(for watcher: Watcher, iteration: Int = 1) -> String {
         var prompt = watcher.instructions

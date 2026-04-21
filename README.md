@@ -68,9 +68,9 @@ osaurus status   # Check status
 
 Agents are the core of Osaurus. Each one gets its own prompts, memory, and visual theme -- a research assistant, a coding partner, a file organizer, whatever you need. Tools and skills are automatically selected via RAG search based on the task at hand -- no manual configuration needed. Everything else in the harness exists to make agents smarter, faster, and more capable over time.
 
-### Work Mode
+### Agent Loop
 
-Give an agent an objective. It breaks the work into trackable issues, executes step by step -- parallel tasks, file operations, background processing. Describe what you want done, not how to do it.
+Every chat is an agent loop. Pick a working folder and the agent gets file, search, and git tools. Toggle the sandbox and it gets shell access in an isolated Linux VM. The model writes a markdown todo list, executes against it, and closes out with a verified summary -- all in the same chat window. See the [Agent Loop Guide](docs/AGENT_LOOP.md).
 
 ### Sandbox
 
@@ -195,9 +195,9 @@ ln -sf "/Applications/Osaurus.app/Contents/MacOS/osaurus" "$(brew --prefix)/bin/
 ```
 ┌─────────────────────────────────────────────────────┐
 │                   The Harness                       │
-├──────────┬──────────┬───────────┬───────────────────┤
-│ Agents   │ Memory   │ Work Mode │ Automation        │
-├──────────┴──────────┴───────────┴───────────────────┤
+├──────────┬──────────┬────────────┬──────────────────┤
+│ Agents   │ Memory   │ Agent Loop │ Automation       │
+├──────────┴──────────┴────────────┴──────────────────┤
 │              MCP Server + Client                    │
 ├──────────┬──────────┬───────────┬───────────────────┤
 │ MLX      │ OpenAI   │ Anthropic │ Ollama / Others   │
@@ -250,7 +250,7 @@ osaurus/
 │   │   ├── Storage/              # SQLite databases
 │   │   ├── Identity/             # Cryptographic identity and access keys
 │   │   ├── Tools/                # MCP tools, plugin ABI, tool registry
-│   │   ├── Work/                 # Work mode execution context and file ops
+│   │   ├── Folder/               # Working-folder context, file ops, batch tool
 │   │   ├── Utils/                # Cross-cutting utilities
 │   │   └── Tests/                # Unit and integration tests
 │   ├── OsaurusCLI/               # CLI (osaurus command)

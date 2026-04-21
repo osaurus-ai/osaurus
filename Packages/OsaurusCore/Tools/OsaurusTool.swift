@@ -41,6 +41,207 @@ extension OsaurusTool {
     func coerceStringArray(_ value: Any?) -> [String]? { ArgumentCoercion.stringArray(value) }
     func coerceInt(_ value: Any?) -> Int? { ArgumentCoercion.int(value) }
     func coerceBool(_ value: Any?) -> Bool? { ArgumentCoercion.bool(value) }
+
+    // MARK: - Argument Requirement Helpers
+    //
+    // Each `require…` returns either the parsed value or a ready-to-return
+    // envelope JSON. Callers unwrap with
+    // `guard case .value(let x) = req else { return req.failureEnvelope ?? "" }`.
+    // Replaces the opaque `guard let … else { return jsonResult(["error":
+    // "Invalid arguments"]) }` pattern; every failure now points at the
+    // specific field that was missing or malformed.
+
+    /// Parse the JSON arguments string into a dictionary or build an
+    /// `invalid_args` failure if it's malformed.
+    func requireArgumentsDictionary(
+        _ json: String,
+        tool: String? = nil
+    ) -> ArgumentRequirement<[String: Any]> {
+        if let dict = parseArguments(json) { return .value(dict) }
+        return .failure(
+            ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message:
+                    "Arguments could not be parsed as JSON. Pass an object literal, "
+                    + "e.g. `{\"path\": \"foo.txt\"}`.",
+                tool: tool
+            )
+        )
+    }
+
+    /// Require a string argument under `key`. `expected` is short prose
+    /// shown to the model so it can self-correct on the next attempt.
+    func requireString(
+        _ args: [String: Any],
+        _ key: String,
+        expected: String,
+        tool: String? = nil,
+        allowEmpty: Bool = false
+    ) -> ArgumentRequirement<String> {
+        guard let raw = args[key] else {
+            return .failure(missingArg(key, expected: expected, tool: tool))
+        }
+        guard let s = raw as? String else {
+            return .failure(
+                wrongType(key, expected: expected, gotType: "a JSON string", raw: raw, tool: tool)
+            )
+        }
+        if !allowEmpty, s.isEmpty {
+            return .failure(emptyArg(key, expected: expected, tool: tool))
+        }
+        return .value(s)
+    }
+
+    /// Require an integer argument under `key`. Accepts native int,
+    /// `NSNumber`, or string-encoded integer (matches `coerceInt`).
+    func requireInt(
+        _ args: [String: Any],
+        _ key: String,
+        expected: String,
+        tool: String? = nil
+    ) -> ArgumentRequirement<Int> {
+        guard let raw = args[key] else {
+            return .failure(missingArg(key, expected: expected, tool: tool))
+        }
+        guard let n = ArgumentCoercion.int(raw) else {
+            return .failure(
+                wrongType(key, expected: expected, gotType: "an integer", raw: raw, tool: tool)
+            )
+        }
+        return .value(n)
+    }
+
+    /// Require a `[String]` argument under `key`. Accepts a real array,
+    /// JSON-encoded string array, or a single string (matches
+    /// `coerceStringArray`).
+    func requireStringArray(
+        _ args: [String: Any],
+        _ key: String,
+        expected: String,
+        tool: String? = nil,
+        allowEmpty: Bool = false
+    ) -> ArgumentRequirement<[String]> {
+        guard let raw = args[key] else {
+            return .failure(missingArg(key, expected: expected, tool: tool))
+        }
+        guard let arr = ArgumentCoercion.stringArray(raw) else {
+            return .failure(
+                wrongType(
+                    key,
+                    expected: expected,
+                    gotType: "an array of strings",
+                    raw: raw,
+                    tool: tool
+                )
+            )
+        }
+        if !allowEmpty, arr.isEmpty {
+            return .failure(emptyArg(key, expected: expected, tool: tool))
+        }
+        return .value(arr)
+    }
+
+    /// Optional string fetch — returns nil if missing or null, or a
+    /// failure if present but the wrong type.
+    func optionalString(
+        _ args: [String: Any],
+        _ key: String,
+        expected: String,
+        tool: String? = nil
+    ) -> ArgumentRequirement<String?> {
+        guard let raw = args[key], !(raw is NSNull) else { return .value(nil) }
+        guard let s = raw as? String else {
+            return .failure(
+                wrongType(
+                    key,
+                    expected: expected,
+                    gotType: "a JSON string",
+                    raw: raw,
+                    tool: tool
+                )
+            )
+        }
+        return .value(s)
+    }
+
+    // MARK: - Failure helpers (private)
+
+    private func missingArg(_ key: String, expected: String, tool: String?) -> String {
+        ToolEnvelope.failure(
+            kind: .invalidArgs,
+            message: "Missing required argument `\(key)` (\(expected)).",
+            field: key,
+            expected: expected,
+            tool: tool
+        )
+    }
+
+    private func emptyArg(_ key: String, expected: String, tool: String?) -> String {
+        ToolEnvelope.failure(
+            kind: .invalidArgs,
+            message: "Argument `\(key)` must not be empty (\(expected)).",
+            field: key,
+            expected: expected,
+            tool: tool
+        )
+    }
+
+    private func wrongType(
+        _ key: String,
+        expected: String,
+        gotType: String,
+        raw: Any,
+        tool: String?
+    ) -> String {
+        ToolEnvelope.failure(
+            kind: .invalidArgs,
+            message:
+                "Argument `\(key)` must be \(gotType) (\(expected)). "
+                + "Got \(jsonTypeName(raw)).",
+            field: key,
+            expected: expected,
+            tool: tool
+        )
+    }
+
+    /// Human-readable label for `Any` so failure messages describe what
+    /// the model actually sent (e.g. "an array", "an integer").
+    private func jsonTypeName(_ value: Any) -> String {
+        switch value {
+        case is String: return "a string"
+        case is Bool: return "a boolean"
+        case is Int, is Double, is NSNumber: return "a number"
+        case is [Any]: return "an array"
+        case is [String: Any]: return "an object"
+        case is NSNull: return "null"
+        default: return "\(type(of: value))"
+        }
+    }
+}
+
+// MARK: - Argument Requirement
+
+/// Result of a `require…` check on a tool body. Either the parsed value
+/// or a ready-to-return JSON failure envelope. Used linearly via
+/// `guard case .value(let x) = req else { return req.failureEnvelope ?? "" }`.
+/// (Lives at module scope because Swift doesn't allow type nesting in
+/// protocol extensions.)
+enum ArgumentRequirement<T> {
+    case value(T)
+    case failure(String)
+
+    /// The parsed value if requirement passed, nil otherwise.
+    var value: T? {
+        if case .value(let v) = self { return v }
+        return nil
+    }
+
+    /// The ready-to-return failure envelope JSON if requirement failed.
+    /// Always non-nil after a `guard case .value(...) else { ... }`.
+    var failureEnvelope: String? {
+        if case .failure(let env) = self { return env }
+        return nil
+    }
 }
 
 // MARK: - Argument Coercion

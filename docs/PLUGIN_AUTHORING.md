@@ -514,7 +514,7 @@ private struct WeatherTool {
 
 ### Folder Context
 
-When a user has a working directory selected in Work Mode, Osaurus automatically injects the folder context into tool payloads. This allows plugins to resolve relative paths provided by the LLM.
+When a user has a working folder selected in chat, Osaurus automatically injects the folder context into tool payloads. This allows plugins to resolve relative paths provided by the LLM.
 
 **Automatic Injection:**
 
@@ -1126,7 +1126,7 @@ const char* invoke(osr_plugin_ctx_t ctx, const char* type,
 - Multiple plugins can register as artifact handlers. Each receives the notification independently.
 - The plugin's `invoke` return value is not used by the host for artifact notifications — it is fire-and-forget.
 - Only plugins with ABI version 2 or higher are eligible for artifact handling.
-- Artifacts produced during plugin-initiated inference (`complete` / `complete_stream` with `share_artifact` in the agentic loop) are fully processed and trigger artifact handler notifications, just like artifacts from Chat and Work modes.
+- Artifacts produced during plugin-initiated inference (`complete` / `complete_stream` with `share_artifact` in the agentic loop) are fully processed and trigger artifact handler notifications, just like artifacts produced from a chat session.
 
 ---
 
@@ -1243,20 +1243,45 @@ const char* result = host->dispatch(request);
 
 **Request fields:**
 
-| Field            | Type   | Required | Description                                               |
-| ---------------- | ------ | -------- | --------------------------------------------------------- |
-| `prompt`         | string | Yes      | The task prompt for the agent                             |
-| `mode`           | string | No       | `"work"` (default) or `"chat"`                            |
-| `title`          | string | No       | Display title for the task                                |
-| `agent_address`  | string | No       | Crypto address of the target agent                        |
-| `agent_id`       | string | No       | UUID of the target agent (alternative to `agent_address`) |
-| `folder_bookmark`| string | No       | Base64-encoded security-scoped bookmark for folder access |
+| Field                  | Type   | Required | Description                                                                |
+| ---------------------- | ------ | -------- | -------------------------------------------------------------------------- |
+| `prompt`               | string | Yes      | The task prompt for the agent                                              |
+| `title`                | string | No       | Display title for the task                                                 |
+| `agent_address`        | string | No       | Crypto address of the target agent                                         |
+| `agent_id`             | string | No       | UUID of the target agent (alternative to `agent_address`)                  |
+| `folder_bookmark`      | string | No       | Base64-encoded security-scoped bookmark for folder access                  |
+| `external_session_key` | string | No       | Stable conversation grouping key — see [Conversation Grouping](#conversation-grouping) below |
 
 If neither `agent_address` nor `agent_id` is provided, the task is dispatched to the default agent.
 
 **Agent addressing:** Prefer `agent_address` from the route request's `osaurus.agent_address` field — it is always present in route handler requests and ensures the task runs under the correct agent with its configured model and settings. Both `agent_address` and `agent_id` are accepted and resolved automatically.
 
 **Rate limiting:** Dispatch is limited to 10 requests per minute per plugin. Exceeding this returns an error with `"error": "rate_limit_exceeded"`.
+
+#### Conversation Grouping
+
+By default each `dispatch()` call creates a brand-new chat session row in the sidebar. Plugins that bridge multi-message conversations from an external system (Telegram chat, Slack thread, support inbox, …) can opt in to **find-or-create** behavior by passing a stable `external_session_key`:
+
+```c
+const char* request = "{"
+    "\"prompt\": \"What's the weather today?\","
+    "\"agent_address\": \"0x1a2b...\","
+    "\"external_session_key\": \"telegram:chat-12345\""
+"}";
+const char* result = host->dispatch(request);
+// result: {"id":"<uuid>","status":"running"}
+```
+
+When `external_session_key` is provided:
+
+1. Osaurus looks up an existing session matching `(plugin_id, external_session_key, agent_id)`.
+2. If found and not currently running, it **reattaches** to that session — turns are preserved and the new prompt becomes the next user turn.
+3. If not found (or the existing session is already actively streaming for another in-flight dispatch), a new session is created and tagged with the same key for future calls.
+4. The returned `id` is the **resolved task / session id** — it equals the original session's id on reattach, so polling `task_status` and the sidebar deep-link both stay stable across the conversation.
+
+Sessions persisted via this path are tagged `source = plugin` with the originating `plugin_id` and `external_session_key`, and are filterable from the chat sidebar source rail.
+
+**Without** `external_session_key`, every dispatch creates a fresh row — useful for one-shot tasks (e.g. cron-style triggers).
 
 #### Polling Task Status
 
@@ -1271,7 +1296,6 @@ const char* status = host->task_status("<task_id>");
 | -------------- | ------ | ------------------------------------------------------------- |
 | `id`           | string | Task UUID                                                     |
 | `title`        | string | Task title                                                    |
-| `mode`         | string | `"work"` or `"chat"`                                          |
 | `status`       | string | `"running"`, `"completed"`, `"failed"`, `"cancelled"`, `"awaiting_clarification"` |
 | `progress`     | number | 0.0 – 1.0 progress estimate                                  |
 | `current_step` | string | Description of current activity (if running)                  |
@@ -1286,15 +1310,13 @@ host->dispatch_cancel("<task_id>");
 
 Cancels a running or awaiting-clarification task. No return value.
 
-#### Submitting Clarification
-
-When a task enters the `"awaiting_clarification"` state, the plugin can respond:
+#### Submitting Clarification (Deprecated)
 
 ```c
 host->dispatch_clarify("<task_id>", "Use the staging environment");
 ```
 
-This resumes the task with the provided response. Clarification is only available in `"work"` mode.
+> **Deprecated no-op.** The C ABI slot is preserved so old plugins keep loading, but the call does nothing today. Clarification questions are now surfaced inline in the chat session via the `clarify` agent intercept rather than as a separate task state. Plugins that need to reply to a clarification should observe the streamed agent output and dispatch a fresh task with the answer baked into the new prompt.
 
 #### Interrupting a Task (Soft Stop)
 
@@ -1306,19 +1328,17 @@ host->dispatch_interrupt("<task_id>", NULL);
 host->dispatch_interrupt("<task_id>", "Focus on the login page instead");
 ```
 
-Unlike `dispatch_cancel` (hard stop), `dispatch_interrupt` lets the agent finish its current step. When a message is provided, the agent resumes with that message injected into the conversation. The task emits `COMPLETED` (not `CANCELLED`) when it finishes. Work mode only; chat mode falls back to `stop()`.
+Unlike `dispatch_cancel` (hard stop), `dispatch_interrupt` lets the agent finish its current step. When a message is provided, the agent resumes with that message injected into the conversation. The task emits `COMPLETED` (not `CANCELLED`) when it finishes.
 
-#### Adding Issues to a Running Task
+#### Adding Issues to a Running Task (Deprecated)
 
 ```c
-const char* result = host->dispatch_add_issue(
-    "<task_id>",
-    "{\"title\": \"Fix the navbar\", \"description\": \"The navbar overflows on mobile\"}"
-);
-// Returns: {"status": "queued", "title": "Fix the navbar"}
+const char* result = host->dispatch_add_issue("<task_id>", "{...}");
+// Always returns: {"error": "not_supported",
+//                  "message": "dispatch_add_issue is no longer supported. Call dispatch() to start a fresh task."}
 ```
 
-Adds a new issue to a running work-mode task. The issue is queued and executed after the current issue completes. Returns an error if the task is not found, not active, or not in work mode.
+> **Deprecated no-op.** Issues are no longer a first-class concept; the unified chat agent loop handles multi-step work in a single session. The C ABI slot is retained for backward compatibility but always returns a `not_supported` error envelope. Call `dispatch()` to start a fresh task instead.
 
 #### Listing Active Tasks
 
@@ -1403,7 +1423,7 @@ All payloads are JSON strings. Examples:
 
 **Started:**
 ```json
-{"status": "running", "mode": "work", "title": "Commit Summary"}
+{"status": "running", "title": "Commit Summary"}
 ```
 
 **Activity:**
@@ -1464,7 +1484,7 @@ The `output` field contains the full accumulated agent output text. This makes t
 {"text": "Here are the best restaurants in Irvine:\n\n1. ...", "title": "Restaurant search"}
 ```
 
-Output events stream the agent's accumulated response text during work-mode execution. Throttled to one per second per task. Use this to show progressive response updates (e.g. draft messages in a chat integration).
+Output events stream the agent's accumulated response text during the agent loop. Throttled to one per second per task. Use this to show progressive response updates (e.g. draft messages in a chat integration).
 
 **Draft:**
 ```json
@@ -1619,7 +1639,7 @@ const char* response = host->complete_stream(request, on_chunk, ctx);
 
 The agentic loop runs for at most `max_iterations` iterations (capped at 30). Each iteration is one LLM call that may or may not produce a tool call. If the model produces a text response without requesting a tool, the loop ends.
 
-**Sandbox execution:** When `"tools": true` is set and the resolved agent has autonomous execution enabled, the agentic loop includes full sandbox capabilities. The model can execute commands, read/write files, install packages, and run scripts inside the sandboxed Linux environment — matching the behavior of Chat and Work modes.
+**Sandbox execution:** When `"tools": true` is set and the resolved agent has autonomous execution enabled, the agentic loop includes full sandbox capabilities. The model can execute commands, read/write files, install packages, and run scripts inside the sandboxed Linux environment — matching the behavior of an interactive chat session with the sandbox toggle on.
 
 **Artifact handling:** When the model calls `share_artifact` during the agentic loop, the artifact is fully processed — files are copied from the sandbox to `~/.osaurus/artifacts/`, the tool result is enriched with `host_path` and `file_size`, and all plugins with `artifact_handler: true` are notified. This means plugins can both produce and consume artifacts through the inference API.
 
@@ -1913,12 +1933,14 @@ Dispatch a new task to an agent. The `{identifier}` can be a UUID or an `agent_a
 curl -X POST https://127.0.0.1:1337/v1/agents/0x1a2b3c.../dispatch \
   -H "Authorization: Bearer osk-v1-..." \
   -H "Content-Type: application/json" \
-  -d '{"prompt": "Summarize recent commits", "mode": "work"}'
+  -d '{"prompt": "Summarize recent commits"}'
 ```
 
-**Request body:** Same fields as the C `dispatch()` function (`prompt`, `mode`, `title`, `folder_bookmark`). The `agent_id`/`agent_address` is inferred from the URL path.
+**Request body:** Same fields as the C `dispatch()` function — `prompt`, `title`, `folder_bookmark`, and `external_session_key` (or its alias `session_id`). The `agent_id` / `agent_address` is inferred from the URL path.
 
-**Response:** `{"id": "<uuid>", "status": "running"}`
+**Response:** `{"id": "<resolved-task-id>", "status": "running", "poll_url": "/v1/tasks/<resolved-task-id>"}`
+
+The session created by this endpoint is persisted with `source = http`. Pass `external_session_key` (or `session_id`) to opt into [Conversation Grouping](#conversation-grouping) — repeated calls with the same key for the same agent reattach to the same session row instead of creating new ones, and the response `id` reflects the reused session.
 
 ### GET /v1/tasks/{task_id}
 

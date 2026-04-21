@@ -312,7 +312,7 @@ A passing run produces ~1–2k log lines instead of the historical ~30k, and ind
 
 Test wall-time is now bounded by the build-from-scratch cost of the full `OsaurusCore` package. The biggest remaining lever is splitting `OsaurusCore` into focused SPM targets (`OsaurusFoundation`, `OsaurusInference`, `OsaurusVoice`, `OsaurusUpdater`, `OsaurusSandbox`, `OsaurusUI`) so a Foundation-only PR doesn't rebuild MLX / FluidAudio / Sparkle / VecturaKit. File-coupling counts that justify the split:
 
-- MLX/MLXLLM/MLXVLM/MLXLMCommon/Tokenizers: ~10 files, all in `Services/ModelRuntime*`, `Managers/Model/ModelManager.swift`, `Models/Configuration/VLMDetection.swift`, `Utils/StreamingDeltaProcessor.swift`, `Views/Chat/ChatView.swift`, `Views/Work/WorkSession.swift`.
+- MLX/MLXLLM/MLXVLM/MLXLMCommon/Tokenizers: ~10 files, all in `Services/ModelRuntime*`, `Managers/Model/ModelManager.swift`, `Models/Configuration/VLMDetection.swift`, `Utils/StreamingDeltaProcessor.swift`, `Views/Chat/ChatView.swift`.
 - `FluidAudio`: 2 files (`Managers/SpeechService.swift`, `Managers/Model/SpeechModelManager.swift`).
 - `Sparkle`: 1 file (`Services/UpdaterService.swift`).
 - `AAInfographics`: 1 file (`Views/Chat/NativeChartView.swift`).
@@ -326,7 +326,7 @@ Yet **64 of 70 test files use `@testable import OsaurusCore`**, so even tiny tes
 
 ## Related Documentation
 
-- [Inference Runtime](INFERENCE_RUNTIME.md) — Scheduler, model leases, BatchEngine, and feature flags for tuning the runtime without rebuilding
+- [Inference Runtime](INFERENCE_RUNTIME.md) — Single MLX path through vmlx-swift-lm's BatchEngine, model leases, and the one max-batch-size knob
 - [OpenAI API Guide](OpenAI_API_GUIDE.md) — API usage and examples
 - [FEATURES.md](FEATURES.md) — Feature inventory
 - [README](../README.md) — Quick start guide

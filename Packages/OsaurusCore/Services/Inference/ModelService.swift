@@ -28,9 +28,6 @@ struct GenerationParameters: Sendable {
     let staticPrefix: String?
     /// Optional TTFT trace for diagnostic timing instrumentation.
     let ttftTrace: TTFTTrace?
-    /// Scheduler priority. When nil the runtime uses `.plugin` as a safe default
-    /// (mid-range — won't starve maintenance, won't preempt typing).
-    let priority: InferencePriority?
 
     init(
         temperature: Float?,
@@ -41,8 +38,7 @@ struct GenerationParameters: Sendable {
         sessionId: String? = nil,
         cacheHint: String? = nil,
         staticPrefix: String? = nil,
-        ttftTrace: TTFTTrace? = nil,
-        priority: InferencePriority? = nil
+        ttftTrace: TTFTTrace? = nil
     ) {
         self.temperature = temperature
         self.maxTokens = maxTokens
@@ -53,7 +49,6 @@ struct GenerationParameters: Sendable {
         self.cacheHint = cacheHint
         self.staticPrefix = staticPrefix
         self.ttftTrace = ttftTrace
-        self.priority = priority
     }
 }
 
@@ -72,6 +67,24 @@ struct ServiceToolInvocation: Error, Sendable {
         self.toolCallId = toolCallId
         self.geminiThoughtSignature = geminiThoughtSignature
     }
+}
+
+/// Batch of tool invocations parsed out of a single model completion.
+///
+/// Local (MLX) models can emit multiple tool-call blocks per response.
+/// vmlx-swift-lm's `BatchEngine.generate` surfaces each as its own
+/// `Generation.toolCall(ToolCall)` event; `GenerationEventMapper`
+/// translates them to `ModelRuntimeEvent.toolInvocation(...)`, and
+/// `ModelRuntime.streamWithTools` collects them into this batch error so
+/// the caller (Work loop, HTTP agent loop, plugin streaming) can execute
+/// every call in a single iteration instead of one round-trip per call.
+///
+/// `invocations` is guaranteed non-empty. Consumers should `catch let invs as
+/// ServiceToolInvocations` BEFORE `catch let inv as ServiceToolInvocation`
+/// because some provider paths still throw the single form for genuinely
+/// one-at-a-time streams (OpenAI server-side tool calls).
+struct ServiceToolInvocations: Error, Sendable {
+    let invocations: [ServiceToolInvocation]
 }
 
 /// In-band signaling for tool name and argument detection during streaming.
@@ -127,6 +140,26 @@ enum StreamingToolHint: Sendable {
     static func decodeArgs(_ delta: String) -> String? {
         guard delta.hasPrefix(argsPrefix) else { return nil }
         return String(delta.dropFirst(argsPrefix.count))
+    }
+}
+
+/// In-band signaling for streamed reasoning text. Mirrors `StreamingToolHint`
+/// so the existing `\u{FFFE}` sentinel filter in HTTP handlers and ChatView
+/// catches it the same way. Used by:
+///   - `ModelRuntime.streamWithTools` once `BatchEngine.generate` starts
+///     emitting `Generation.reasoning(String)` (forward-compat — see
+///     `GenerationEventMapper`).
+///   - `RemoteProviderService` for OpenAI-compatible providers that stream
+///     reasoning on a dedicated `reasoning_content` field (DeepSeek, Qwen,
+///     vLLM, etc.) — replaces the previous synthetic `<think>` wrapping.
+enum StreamingReasoningHint: Sendable {
+    private static let reasoningPrefix = "\u{FFFE}reasoning:"
+
+    static func encode(_ text: String) -> String { reasoningPrefix + text }
+
+    static func decode(_ delta: String) -> String? {
+        guard delta.hasPrefix(reasoningPrefix) else { return nil }
+        return String(delta.dropFirst(reasoningPrefix.count))
     }
 }
 

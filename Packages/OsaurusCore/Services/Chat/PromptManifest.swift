@@ -12,7 +12,7 @@ import Foundation
 
 // MARK: - PromptSection
 
-/// One logical block of the system prompt (e.g. base identity, work mode, sandbox, memory).
+/// One logical block of the system prompt (e.g. base identity, sandbox, memory).
 public struct PromptSection: Sendable {
 
     public let id: String
@@ -135,6 +135,23 @@ struct ComposedContext: Sendable {
     let tools: [Tool]
     let toolTokens: Int
     let preflightItems: [PreflightCapabilityItem]
+    /// The full preflight result this compose call resolved (either fresh or
+    /// echoed back from the caller's session cache). Callers that maintain a
+    /// per-session `SessionToolState` stash this on first compose so subsequent
+    /// composes can pass it back via `cachedPreflight` and skip the LLM call.
+    let preflight: PreflightResult
+    /// Per-turn memory snippet, returned separately so callers can prepend it
+    /// to the latest user message instead of mutating the system prompt. Nil
+    /// when memory is disabled or empty. Keeping memory out of the system
+    /// prefix is what makes the prompt byte-stable across turns once preflight
+    /// is cached.
+    let memorySection: String?
+    /// Snapshot of the always-loaded tool names this compose used. Callers
+    /// stash it on `SessionToolState.initialAlwaysLoadedNames` after the
+    /// first compose so subsequent composes can freeze the schema against
+    /// it via `frozenAlwaysLoadedNames` — preventing tools that register
+    /// mid-session from silently appearing in turn 2.
+    let alwaysLoadedNames: Set<String>
     /// Hash of the static prefix + tool names for KV cache lookup.
     let cacheHint: String
     /// Rendered static-only system content for prefix cache building.

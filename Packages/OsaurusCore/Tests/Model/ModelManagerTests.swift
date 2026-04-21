@@ -12,6 +12,13 @@ import Testing
 
 struct ModelManagerTests {
 
+    /// Suppress `ModelManager.init`'s background HF org fetch — its async
+    /// response can otherwise land mid-test and perturb `suggestedModels`
+    /// or trigger Combine emissions while the test is still asserting.
+    init() {
+        ModelManager.skipBackgroundOrgFetchForTests = true
+    }
+
     @Test func loadAvailableModels_initializesStates() async throws {
         // `ModelManager.init` calls `loadAvailableModels()` synchronously, which
         // populates `availableModels` + `downloadStates` before init returns. No

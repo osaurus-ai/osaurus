@@ -4,7 +4,6 @@
 //
 //  Secure overlay for collecting secret values (API keys, tokens).
 //  Uses SecureField to keep the value out of the conversation and LLM context.
-//  Shared between Chat and Work modes.
 //
 
 import SwiftUI

@@ -16,13 +16,13 @@ Canonical reference for all Osaurus features, their status, and documentation.
 | MCP Server                       | Stable    | "MCP Server"       | (in README)                   | Networking/OsaurusServer.swift, Services/MCP/MCPServerManager.swift                       |
 | Tools & Plugins                  | Stable    | "Tools & Plugins"  | PLUGIN_AUTHORING.md           | Tools/, Managers/Plugin/PluginManager.swift, Services/Plugin/PluginHostAPI.swift, Storage/PluginDatabase.swift, Models/Plugin/PluginHTTP.swift, Views/Plugin/PluginConfigView.swift |
 | Skills                           | Stable    | "Skills"           | SKILLS.md                     | Managers/SkillManager.swift, Views/Skill/SkillsView.swift, Services/Skill/SkillSearchService.swift |
-| Methods                          | Stable    | "Skills & Methods" | SKILLS.md                     | Models/Method/Method.swift, Services/Method/MethodService.swift, Services/Method/MethodSearchService.swift, Storage/MethodDatabase.swift, Tools/MethodTools.swift |
+| Methods                          | Stable    | "Skills & Methods" | SKILLS.md                     | Models/Method/Method.swift, Services/Method/MethodService.swift, Services/Method/MethodSearchService.swift, Storage/MethodDatabase.swift |
 | Context Management               | Stable    | -                  | SKILLS.md                     | Services/Context/PreflightCapabilitySearch.swift, Tools/CapabilityTools.swift, Services/Tool/ToolSearchService.swift, Services/Tool/ToolIndexService.swift |
 | Memory                           | Stable    | "Key Features"     | MEMORY.md                     | Services/Memory/MemoryService.swift, Services/Memory/MemorySearchService.swift, Services/Memory/MemoryContextAssembler.swift |
 | Agents                         | Stable    | "Agents"         | (in README)                   | Managers/AgentManager.swift, Models/Agent/Agent.swift, Views/Agent/AgentsView.swift         |
 | Schedules                        | Stable    | "Schedules"        | (in README)                   | Managers/ScheduleManager.swift, Models/Schedule/Schedule.swift, Views/Schedule/SchedulesView.swift      |
 | Watchers                         | Stable    | "Watchers"         | WATCHERS.md                   | Managers/WatcherManager.swift, Models/Watcher/Watcher.swift, Views/Watcher/WatchersView.swift         |
-| Agents                           | Stable    | "Agents"           | WORK.md                     | Work/, Services/WorkEngine.swift, Views/Work/WorkView.swift                             |
+| Agent Loop & Folder Context      | Stable    | "Agent Loop"       | AGENT_LOOP.md                 | Folder/, Tools/AgentLoopTools.swift, Tools/FolderToolManager.swift, Models/Chat/AgentTodo.swift, Models/Chat/AgentTodoStore.swift, Models/Chat/SharedArtifact.swift |
 | Developer Tools: Insights        | Stable    | "Developer Tools"  | DEVELOPER_TOOLS.md            | Views/Insights/InsightsView.swift, Managers/InsightsService.swift                              |
 | Developer Tools: Server Explorer | Stable    | "Developer Tools"  | DEVELOPER_TOOLS.md            | Views/Settings/ServerView.swift                                                                |
 | Apple Foundation Models          | macOS 26+ | "What is Osaurus?" | (in README)                   | Services/Inference/FoundationModelService.swift                                                 |
@@ -52,7 +52,6 @@ Canonical reference for all Osaurus features, their status, and documentation.
 │  Views Layer                                                             │
 │  ├── ContentView (Menu Bar)                                              │
 │  ├── ChatOverlayView (Global Hotkey Chat)                                │
-│  ├── WorkView (Work Mode)                                              │
 │  ├── ManagementView                                                      │
 │  │   ├── ModelDownloadView (Models)                                      │
 │  │   ├── RemoteProvidersView (Providers)                                 │
@@ -103,10 +102,11 @@ Canonical reference for all Osaurus features, their status, and documentation.
 │  │   ├── WatcherManager (FSEvents monitoring and convergence loop)       │
 │  │   ├── WatcherStore (Watcher persistence)                              │
 │  │   └── DirectoryFingerprint (Change detection via Merkle hashing)      │
-│  ├── Agents                                                              │
-│  │   ├── WorkEngine (Task execution coordinator)                        │
-│  │   ├── WorkExecutionEngine (Plan generation and execution)            │
-│  │   └── IssueManager (Issue lifecycle management)                       │
+│  ├── Folder Tools                                                        │
+│  │   ├── FolderContextService (Working folder + security-scoped bookmarks) │
+│  │   ├── FolderToolManager (Registers folder tools when folder selected) │
+│  │   ├── FolderToolFactory (Builds file/coding/git tools per project)    │
+│  │   └── FileOperationLog (Logs writes/exec for undo support)            │
 │  ├── Sandbox                                                             │
 │  │   ├── SandboxManager (Container lifecycle and exec)                   │
 │  │   ├── SandboxPluginManager (Per-agent plugin install/uninstall)       │
@@ -151,33 +151,26 @@ Canonical reference for all Osaurus features, their status, and documentation.
 **Components:**
 
 - `Services/Inference/MLXService.swift` — MLX model loading, warm-up orchestration
-- `Services/ModelRuntime/` — Generation engine, streaming, KV cache management, tool detection
-- `Services/ModelRuntime/KVCacheStore.swift` — Tiered KV cache (hot RAM + cold SSD) with LRU eviction
+- `Services/ModelRuntime/` — Single MLX entry point (`MLXBatchAdapter`) wrapping vmlx-swift-lm's `BatchEngine`, plus the `GenerationEventMapper` bridge to typed runtime events
 - `Services/Inference/ModelService.swift` — Model lifecycle management
 
 **Runtime behavior:**
 
 - **Window-scoped warm-up** — Models are loaded and prefix-cached when a chat window opens, not at app launch. Each window warms its own model independently, using the window's agent context (system prompt, memory, tools) for the prefix cache.
 - **Smart unloading** — When a user switches to a remote model or closes a window, a GC pass checks all open windows and unloads any local model no longer referenced. The warm-up indicator (yellow dot) signals when a model is loading.
-- **GPU memory pinning** — Model weights are pinned in GPU memory via `WiredMemoryTicket` on load to prevent paging during generation, with a budget policy that includes a workspace margin for activations.
-- **Auto-tuned generation** — Prefill step size, max KV cache size, and KV cache quantization bits are automatically selected based on system RAM and model size when not explicitly configured in Settings. User overrides always take precedence.
-- **Tiered KV cache** — Active session caches live in RAM (hot tier). When the memory budget is exceeded, least-recently-used sessions are evicted to SSD as `.safetensors` files and restored on demand. Prefix caches are content-hashed so changes to the system prompt or tools automatically invalidate them.
-- **Error recovery** — If a stale KV cache causes a shape mismatch during generation, the cache is automatically invalidated and the request is retried with a fresh prefill, avoiding a crash.
+- **Continuous batching** — `BatchEngine` shares a single forward pass across overlapping requests for the same model. The default `mlxBatchEngineMaxBatchSize` is `4`; tune with `defaults write ai.osaurus ai.osaurus.scheduler.mlxBatchEngineMaxBatchSize -int 8`.
+- **Library-managed KV cache** — vmlx-swift-lm's `CacheCoordinator` owns KV cache geometry (paged for global attention, rotating for sliding-window, SSM state for Mamba) sized per-model. Multi-turn KV reuse, mediaSalt for VLMs, and sliding-window correctness are all handled inside the engine — osaurus configures only `modelKey`, `diskCacheDir`, and a writability fallback.
 - **Model eviction policy** — Configurable in Settings > Local Inference > Model Management. "Strict (One Model)" keeps only one model loaded (default). "Flexible (Multi Model)" allows concurrent models for high-RAM systems.
 
 **Configuration:**
 
 - Model storage: `~/MLXModels` (override with `OSU_MODELS_DIR`)
 - Default port: `1337` (override with `OSU_PORT`)
-- KV cache SSD storage: `~/.osaurus/cache/kv/`
-- Settings: Top P, Max Context Length, and advanced KV cache quantization options (collapsed by default)
-- Auto-tuned defaults (when not set in Settings):
+- KV cache disk storage: `~/.osaurus/cache/kv/`
+- Settings: Top P, eviction policy, allowed origins.
+- One advanced tunable, exposed via `defaults` only: `ai.osaurus.scheduler.mlxBatchEngineMaxBatchSize` (default `4`, clamped to `[1, 32]`).
 
-| Setting | <24 GB RAM | 24–48 GB | 48–96 GB | 96 GB+ |
-| --------------- | ---------- | -------- | -------- | ------ |
-| Prefill step | 512 | 1024 | 1024 | 2048 |
-| Max KV (tokens) | 8192 | 16384 | 32768 | 65536 |
-| KV quantization | 8-bit when headroom < 16 GB, otherwise off | | | |
+See [INFERENCE_RUNTIME.md](./INFERENCE_RUNTIME.md) for the full runtime architecture.
 
 ---
 
@@ -234,6 +227,8 @@ Canonical reference for all Osaurus features, their status, and documentation.
 - `Services/MCP/MCPServerManager.swift` — MCP server lifecycle
 - `Networking/OsaurusServer.swift` — HTTP MCP endpoints
 - `Tools/ToolRegistry.swift` — Tool registration and lookup
+- `Tools/ToolEnvelope.swift` — Canonical success/failure envelope every tool returns (see [Tool Contract](TOOL_CONTRACT.md))
+- `Tools/SchemaValidator.swift` — Argument validator with `additionalProperties` enforcement
 
 **Endpoints:**
 | Endpoint | Method | Description |
@@ -498,79 +493,78 @@ Canonical reference for all Osaurus features, their status, and documentation.
 
 ---
 
-### Agents
+### Agent Loop & Folder Context
 
-**Purpose:** Execute complex, multi-step tasks autonomously with built-in issue tracking, planning, and file operations.
+**Purpose:** Drive every chat as an agent loop. The model writes a markdown todo, calls tools (file, sandbox, MCP, plugin), and ends the loop with a verified `complete` summary or pauses with `clarify`. Selecting a working folder turns on file/git tools; toggling the sandbox swaps in Linux exec.
 
 **Components:**
 
-- `Work/WorkFolderContext.swift` — Folder context models and project detection
-- `Work/WorkFolderContextService.swift` — Folder selection and security-scoped bookmarks
-- `Work/WorkFolderTools.swift` — File and shell operation tools
-- `Work/WorkFileOperation.swift` — File operation models
-- `Work/WorkFileOperationLog.swift` — Operation logging with undo support
-- `Models/Work/WorkModels.swift` — Core data models (Issue, WorkTask, LoopState, etc.)
-- `Services/WorkEngine.swift` — Main task execution coordinator
-- `Services/WorkExecutionEngine.swift` — Reasoning loop execution engine
-- `Managers/IssueManager.swift` — Issue lifecycle and dependency management
-- `Storage/WorkDatabase.swift` — SQLite storage for issues, tasks, and conversation turns
-- `Tools/WorkTools.swift` — Agent-specific tools (complete_task, create_issue, generate_artifact, etc.)
-- `Views/Work/WorkView.swift` — Main Work Mode UI
-- `Views/Work/WorkSession.swift` — Observable session state manager
+- `Tools/AgentLoopTools.swift` — The three chat-layer-intercepted loop tools (`todo`, `complete`, `clarify`); registered as global built-ins
+- `Tools/FolderToolManager.swift` — Registers folder tools when a working folder is selected; unregisters on clear. `share_artifact` is no longer registered here — it lives as a global built-in alongside the loop tools.
+- `Folder/FolderContext.swift` — Project type, file tree, manifest, git status, optional `AGENTS.md`/`CLAUDE.md`/`.cursorrules`
+- `Folder/FolderContextService.swift` — `NSOpenPanel`, security-scoped bookmark persistence, MainActor service
+- `Folder/FolderTools.swift` — File/coding/git tool implementations + `FolderToolFactory`
+- `Folder/BatchTool.swift` — Generic `batch` tool that fans out up to 30 registered ops in one call
+- `Folder/ChatExecutionContext.swift` — TaskLocal session/agent/batch IDs read by tools at execution time
+- `Folder/ExecutionMode.swift` — First-class `.hostFolder | .sandbox | .none` enum + `MemorySourceMode` partitioning
+- `Folder/FileOperation.swift`, `Folder/FileOperationLog.swift` — Per-op log used for undo
+- `Models/Chat/AgentTodo.swift`, `Models/Chat/AgentTodoStore.swift` — Markdown checklist parser + per-session store
+- `Models/Chat/SharedArtifact.swift` — Artifact model surfaced via `share_artifact`
 
 **Features:**
 
-- **Issue Tracking** — Tasks broken into issues with status, priority, type, and dependencies
-- **Parallel Tasks** — Run multiple agent tasks simultaneously for increased productivity
-- **Reasoning Loop** — AI autonomously iterates through observe-think-act-check cycles (max 30 iterations)
-- **Working Directory** — Select a folder for file operations with project type detection
-- **File Operations** — Read, write, edit, search, move, copy, delete files with undo support
-- **Follow-up Issues** — Agent creates child issues via `create_issue` tool when it discovers additional work
-- **Clarification** — Agent pauses to ask when tasks are ambiguous
-- **Background Execution** — Tasks continue running after closing the window
-- **Token Usage Tracking** — Monitor cumulative input/output tokens per task
+- **Unified loop** — One chat is one task; no separate Agent/Work tab
+- **`todo` / `complete` / `clarify`** — Three minimal-schema global built-in tools whose results the chat layer intercepts to drive the inline UI (not a pre-dispatch hook — the registry runs them like any other tool)
+- **Single mode resolver** — `ToolRegistry.resolveExecutionMode(folderContext:autonomousEnabled:)` decides sandbox > host folder > none for chat, plugin, and HTTP entry points
+- **Working folder picker** — Per-chat folder via `FolderContextService`, with security-scoped bookmark persistence
+- **Project-aware tools** — File/coding/git tools registered automatically when a folder is selected; tool kit varies by project type and git status
+- **Sandbox toggle** — Mutually exclusive with the working-folder backend; selecting a folder disables sandbox autonomous exec and vice versa
+- **`batch` tool** — Up to 30 ops per call, continues on error, denies `shell_run` / `git_commit` / nested `batch`
+- **`share_artifact`** — Only path for the user to see files the agent produced
+- **Memory partitioning** — `MemorySourceMode` (chat / chatSandbox / workHost / workSandbox) keeps tool-using turns from leaking into pure chat context
 
-**Issue Properties:**
+**Loop Tools (engine-intercepted):**
 
-| Property      | Description                                     |
-| ------------- | ----------------------------------------------- |
-| `status`      | `open`, `in_progress`, `blocked`, `closed`      |
-| `priority`    | P0 (critical), P1 (high), P2 (medium), P3 (low) |
-| `type`        | `task`, `bug`, `discovery`                      |
-| `title`       | Brief description of the work                   |
-| `description` | Detailed explanation and context                |
-| `result`      | Outcome after completion                        |
+| Tool       | Required field | Behavior                                                                                |
+| ---------- | -------------- | --------------------------------------------------------------------------------------- |
+| `todo`     | `markdown`     | Replace the per-session checklist (markdown `- [ ]` / `- [x]`). No merging.             |
+| `complete` | `summary`      | End the loop with a verified one-paragraph summary. Placeholders / short text rejected. |
+| `clarify`  | `question`     | Pause and surface a single critical question; user's next message becomes the answer.   |
 
-**Available Tools:**
+**Folder Tool Inventory:**
 
-| Tool            | Description                                    |
-| --------------- | ---------------------------------------------- |
-| `file_tree`     | List directory structure with filtering        |
-| `file_read`     | Read file contents (supports line ranges)      |
-| `file_write`    | Create or overwrite files                      |
-| `file_edit`     | Surgical text replacement within files         |
-| `file_search`   | Search for text patterns across files          |
-| `file_move`     | Move or rename files                           |
-| `file_copy`     | Duplicate files                                |
-| `file_delete`   | Remove files                                   |
-| `file_metadata` | Get file information (size, dates, etc.)       |
-| `dir_create`    | Create directories                             |
-| `shell_run`     | Execute shell commands (requires permission)   |
-| `git_status`    | Show repository status                         |
-| `git_diff`      | Display file differences                       |
-| `git_commit`    | Stage and commit changes (requires permission) |
+| Tool              | Category | Description                                                       |
+| ----------------- | -------- | ----------------------------------------------------------------- |
+| `file_tree`       | Core     | Directory structure with project-aware ignore patterns            |
+| `file_read`       | Core     | Read with line ranges or tail mode                                |
+| `file_write`      | Core     | Create or overwrite                                               |
+| `file_edit`       | Coding   | Surgical exact-string replacement                                 |
+| `file_search`     | Coding   | ripgrep-style search                                              |
+| `file_move`       | Core     | Move or rename                                                    |
+| `file_copy`       | Core     | Duplicate                                                         |
+| `file_delete`     | Core     | Remove                                                            |
+| `dir_create`      | Core     | Create directories                                                |
+| `batch`           | Core     | Run up to 30 ops in sequence; reports per-op results              |
+| `shell_run`       | Coding   | Run a shell command (requires approval). Registered when project type detected. |
+| `git_status`      | Git      | Repository status. Registered when `.git` present.                |
+| `git_diff`        | Git      | Show diffs                                                        |
+| `git_commit`      | Git      | Stage + commit (requires approval)                                |
 
-**Workflow (Reasoning Loop):**
+**Workflow:**
 
-1. User input creates a task with an initial issue
-2. Agent enters a reasoning loop (max 30 iterations per issue)
-3. Each iteration: the model observes context, decides on an action, calls a tool, and evaluates progress
-4. The model narrates its reasoning and explains actions as it works
-5. When additional work is found, the agent creates follow-up issues via `create_issue`
-6. When the task is complete, the agent calls `complete_task` with a summary and artifact
-7. Clarification pauses execution when the task is ambiguous
+1. User opens or focuses a chat; selects a working folder or sandbox via the input bar (optional).
+2. System prompt composer assembles base prompt + memory + folder context + tool guidance using the active `ExecutionMode`.
+3. Agent calls `todo` to publish the plan, then calls tools to execute.
+4. Each tool result feeds back into the next iteration (max iterations governed by `chatConfig.maxToolAttempts`).
+5. Agent calls `complete(summary)` to end the loop, or `clarify(question)` to pause for input.
 
-**Storage:** `~/.osaurus/work/work.db` (SQLite)
+**Storage:**
+
+- Folder bookmark — UserDefaults (`FolderContextBookmark`)
+- Artifacts — `~/.osaurus/artifacts/<sessionId>/`
+- Per-session todo and file-op log — in-memory keyed by chat session ID
+
+See [AGENT_LOOP.md](AGENT_LOOP.md) for the full guide.
 
 ---
 
@@ -600,7 +594,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 - `Tools/SandboxSecretTools.swift` — Secret check and set tools with direct-value and secure-prompt paths
 - `Tools/SandboxPluginRegisterTool.swift` — Hot-registers agent-created plugins with file auto-packaging
 - `Tools/ToolRegistry.swift` — Sandbox tool registration and namespace management
-- `Views/Chat/SecretPromptOverlay.swift` — Secure overlay for collecting secrets in Chat and Work modes
+- `Views/Chat/SecretPromptOverlay.swift` — Secure overlay for collecting secrets in chat
 - `Networking/HostAPIBridgeServer.swift` — HTTP server over vsock for host service access
 - `Models/SandboxPlugin.swift` — Plugin model with tool specs, MCP, daemon, events, and permissions
 - `Models/Plugin/SandboxConfiguration.swift` — Container config (CPUs, memory, network, auto-start)
@@ -631,17 +625,15 @@ Canonical reference for all Osaurus features, their status, and documentation.
 | `sandbox_delete` | Write | Delete files or directories |
 | `sandbox_exec` | Exec | Run shell command (timeout, rate limited) |
 | `sandbox_exec_background` | Exec | Start background process |
-| `sandbox_exec_kill` | Exec | Kill background process |
 | `sandbox_install` | Package | Install via apk (root) |
 | `sandbox_pip_install` | Package | Install via pip |
 | `sandbox_npm_install` | Package | Install via npm |
 | `sandbox_run_script` | Exec | Run a script file (Python, Node, Bash, etc.) |
-| `sandbox_whoami` | Info | Agent identity and environment |
-| `sandbox_processes` | Info | List agent processes |
-| `share_artifact` | Artifact | Share a file as a downloadable artifact |
 | `sandbox_secret_check` | Secret | Check whether a secret exists (never reveals value) |
 | `sandbox_secret_set` | Secret | Store a secret directly or prompt the user |
 | `sandbox_plugin_register` | Plugin | Register an agent-created plugin (requires `pluginCreate`) |
+
+`share_artifact` is a global built-in (registered in `ToolRegistry`, available in plain chat / folder / sandbox alike) so it does not appear in this sandbox-specific table.
 
 Read-only tools are always available. Write/exec/package/secret tools require `autonomous_exec.enabled` on the agent. `sandbox_plugin_register` additionally requires `pluginCreate` to be enabled.
 
@@ -687,14 +679,16 @@ Read-only tools are always available. Write/exec/package/secret tools require `a
 
 ### Chat Session Management
 
-**Purpose:** Persist and manage chat conversations with per-session configuration.
+**Purpose:** Persist, audit, and manage chat conversations regardless of how they were started — UI, plugin (Telegram/Slack/etc.), HTTP API, schedule, or file-system watcher.
 
 **Components:**
 
 - `Managers/Chat/ChatSessionsManager.swift` — Session list management
-- `Models/Chat/ChatSessionData.swift` — Session data model
-- `Models/Chat/ChatSessionStore.swift` — Session persistence
-- `Views/Chat/ChatSessionSidebar.swift` — Session history sidebar
+- `Models/Chat/ChatSessionData.swift` — Session data model (carries `source`, `sourcePluginId`, `externalSessionKey`, `dispatchTaskId`)
+- `Models/Chat/SessionSource.swift` — Origin tag enum + shared UI helpers (badge icon, "via X" label)
+- `Models/Chat/ChatSessionStore.swift` — Session persistence facade
+- `Storage/ChatHistoryDatabase.swift` — SQLite store with indices on `source` and `(source_plugin_id, external_session_key)` for fast filtering and find-or-create
+- `Views/Chat/ChatSessionSidebar.swift` — Session history sidebar with source badge + filter rail
 
 **Features:**
 
@@ -703,6 +697,9 @@ Read-only tools are always available. Write/exec/package/secret tools require `a
 - Per-session model selection
 - Context token estimation display
 - Auto-generated titles from first message
+- **Audit dimension** — every session is tagged with its origin (`chat` / `plugin` / `http` / `schedule` / `watcher`); the sidebar shows a colored badge with plugin name in the tooltip
+- **Source filter rail** — chip-style filter above the list, auto-hidden when a single source is present
+- **Conversation grouping** — plugins that pass `external_session_key` (e.g. Telegram chat id) reattach to the same session on subsequent dispatches instead of creating a new row each time; see [Plugin Authoring Guide](PLUGIN_AUTHORING.md#conversation-grouping)
 
 ---
 
@@ -797,7 +794,6 @@ Methods are YAML sequences of tool-call steps that represent learned procedures.
 - `Storage/MethodDatabase.swift` — SQLite storage (methods, events, scores)
 - `Services/Method/MethodService.swift` — CRUD orchestrator, YAML extraction, scoring
 - `Services/Method/MethodSearchService.swift` — VecturaKit hybrid search (BM25 + vector)
-- `Tools/MethodTools.swift` — Agent-facing tools (`methods_save`, `methods_report`)
 - `Utils/MethodLogger.swift` — Structured logging
 
 **Features:**
@@ -832,12 +828,7 @@ recencyWeight = 1.0 / (1.0 + daysSinceUsed / 30.0)
 
 Each time a method is used, a `MethodEvent` is recorded (`loaded`, `succeeded`, `failed`), and the score is recalculated.
 
-**Agent Tools:**
-
-| Tool              | Description                                      |
-| ----------------- | ------------------------------------------------ |
-| `methods_save`    | Save a new method from a YAML workflow           |
-| `methods_report`  | Report success or failure to update method score |
+**Agent Tools:** Methods are loaded by the agent indirectly via `capabilities_search` / `capabilities_load` (loading a method auto-loads its referenced tools and skills). The dedicated `methods_save` / `methods_report` tools were removed from the schema — recording method outcomes is now an internal observation, not an agent-facing concern.
 
 **Storage:** `~/.osaurus/methods/methods.db` (SQLite with WAL mode)
 
@@ -1136,7 +1127,7 @@ Results are cached for 10 seconds per agent.
 | [README.md](../README.md)                                      | Project overview, quick start, feature highlights |
 | [FEATURES.md](FEATURES.md)                                     | Feature inventory and architecture (this file)    |
 | [WATCHERS.md](WATCHERS.md)                                     | Watchers and folder monitoring guide              |
-| [WORK.md](WORK.md)                                         | Agents and autonomous task execution guide        |
+| [AGENT_LOOP.md](AGENT_LOOP.md)                                 | Agent loop, folder context, and `todo`/`complete`/`clarify` |
 | [REMOTE_PROVIDERS.md](REMOTE_PROVIDERS.md)                     | Remote provider setup and configuration           |
 | [REMOTE_MCP_PROVIDERS.md](REMOTE_MCP_PROVIDERS.md)             | Remote MCP provider setup                         |
 | [DEVELOPER_TOOLS.md](DEVELOPER_TOOLS.md)                       | Insights and Server Explorer guide                |

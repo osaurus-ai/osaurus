@@ -2,8 +2,9 @@
 //  BackgroundTaskModels.swift
 //  osaurus
 //
-//  Data models for background task management.
-//  Used when work tasks continue running after their window is closed.
+//  Data models for background chat task management.
+//  Used for chat sessions that continue running after their window is closed
+//  or that started without a window (HTTP / scheduler / plugin / watcher dispatch).
 //
 
 import Foundation
@@ -100,18 +101,12 @@ public struct BackgroundTaskActivityItem: Identifiable, Equatable, Sendable {
 
 // MARK: - Background Task State
 
-/// State of a task running in the background
-/// This is an observable class to allow BackgroundTaskManager to update properties
+/// State of a chat task running in the background.
+/// Observable so BackgroundTaskManager can update properties from publishers.
 @MainActor
 public final class BackgroundTaskState: ObservableObject, Identifiable {
     /// Original window ID (unique identifier for this background task)
     public let id: UUID
-
-    /// Whether this is a chat or work background task
-    public let mode: ChatMode
-
-    /// Work task ID (empty string for chat mode)
-    public var taskId: String
 
     /// Display title for the task
     public var taskTitle: String
@@ -119,42 +114,18 @@ public final class BackgroundTaskState: ObservableObject, Identifiable {
     /// Agent ID associated with this task
     public let agentId: UUID
 
-    /// The work session (retained reference, keeps task executing).
-    /// Present for work mode; nil for chat mode.
-    private(set) var session: WorkSession?
-
-    /// The chat session (retained reference for chat mode observation).
-    /// Present for chat mode; nil for work mode (use executionContext.chatSession instead).
+    /// The chat session driving this task. Retained so the session keeps
+    /// running while the user has no window open for it.
     private(set) var chatSession: ChatSession?
 
-    /// The execution context (retained for lazy window creation).
-    /// Present for dispatched tasks; nil for tasks detached from an existing window.
+    /// The execution context. Retained for lazy window creation.
     private(set) var executionContext: ExecutionContext?
-
-    /// The window state (retained for window recreation when detached from an existing window).
-    /// Present for window-detached tasks; nil for dispatched tasks.
-    private(set) var windowState: ChatWindowState?
 
     /// Current status of the background task
     @Published public var status: BackgroundTaskStatus
 
-    /// Progress of the task (0.0 to 1.0, or -1 for indeterminate)
-    @Published public var progress: Double
-
     /// Description of current step being executed
     @Published public var currentStep: String?
-
-    /// Issues for the task (work mode only)
-    @Published public var issues: [Issue] = []
-
-    /// ID of the currently active issue (work mode only)
-    @Published public var activeIssueId: String?
-
-    /// Current reasoning loop state (work mode only)
-    @Published public var loopState: LoopState?
-
-    /// Pending clarification request (when status is .awaitingClarification)
-    @Published public var pendingClarification: ClarificationRequest?
 
     /// Recent activity items used to drive the toast mini-log.
     /// Bounded to avoid unbounded growth and excessive re-renders.
@@ -169,42 +140,27 @@ public final class BackgroundTaskState: ObservableObject, Identifiable {
     /// Plugin that originated this dispatch (for on_task_event callback routing).
     public var sourcePluginId: String?
 
+    /// Origin of the dispatch — drives toast styling and the persisted
+    /// `SessionSource`. Defaults to `.plugin` for back-compat with the
+    /// pre-source-tagging callers that built `BackgroundTaskState` directly.
+    public var source: SessionSource = .plugin
+
+    /// External grouping key (e.g. Telegram chat id). Mirrors
+    /// `DispatchRequest.externalSessionKey` so the toast / notch can show
+    /// it inline and the manager can debounce duplicate dispatches.
+    public var externalSessionKey: String?
+
+    /// Whether the toast/notch UI should surface this task. Headless callers
+    /// (e.g. webhooks responding inline) set this to `false` to keep the
+    /// notch quiet while the task still lives in `backgroundTasks` for
+    /// completion signaling.
+    public var showToast: Bool = true
+
     /// Latest draft content sent by the plugin (e.g. for live-update messages).
     public var draftText: String?
 
     private let maxActivityItems: Int = 40
 
-    /// Work mode initializer
-    init(
-        id: UUID,
-        taskId: String,
-        taskTitle: String,
-        agentId: UUID,
-        session: WorkSession,
-        executionContext: ExecutionContext? = nil,
-        windowState: ChatWindowState? = nil,
-        status: BackgroundTaskStatus = .running,
-        progress: Double = 0.0,
-        currentStep: String? = nil,
-        pendingClarification: ClarificationRequest? = nil
-    ) {
-        self.id = id
-        self.mode = .work
-        self.taskId = taskId
-        self.taskTitle = taskTitle
-        self.agentId = agentId
-        self.session = session
-        self.chatSession = nil
-        self.executionContext = executionContext
-        self.windowState = windowState
-        self.status = status
-        self.progress = progress
-        self.currentStep = currentStep
-        self.pendingClarification = pendingClarification
-        self.createdAt = Date()
-    }
-
-    /// Chat mode initializer
     init(
         id: UUID,
         taskTitle: String,
@@ -212,34 +168,34 @@ public final class BackgroundTaskState: ObservableObject, Identifiable {
         chatSession: ChatSession,
         executionContext: ExecutionContext,
         status: BackgroundTaskStatus = .running,
-        currentStep: String? = nil
+        currentStep: String? = nil,
+        source: SessionSource = .plugin,
+        sourcePluginId: String? = nil,
+        externalSessionKey: String? = nil,
+        showToast: Bool = true
     ) {
         self.id = id
-        self.mode = .chat
-        self.taskId = ""
         self.taskTitle = taskTitle
         self.agentId = agentId
-        self.session = nil
         self.chatSession = chatSession
         self.executionContext = executionContext
-        self.windowState = nil
         self.status = status
-        self.progress = -1  // Indeterminate for chat
         self.currentStep = currentStep
-        self.pendingClarification = nil
         self.createdAt = Date()
+        self.source = source
+        self.sourcePluginId = sourcePluginId
+        self.externalSessionKey = externalSessionKey
+        self.showToast = showToast
     }
 
     deinit {
-        print("[BackgroundTaskState] deinit – id: \(id), mode: \(mode)")
+        print("[BackgroundTaskState] deinit – id: \(id)")
     }
 
-    /// Release retained session/window references so memory is freed immediately.
+    /// Release retained session/context references so memory is freed immediately.
     func releaseReferences() {
-        session = nil
         chatSession = nil
         executionContext = nil
-        windowState = nil
     }
 
     // MARK: - Activity Feed

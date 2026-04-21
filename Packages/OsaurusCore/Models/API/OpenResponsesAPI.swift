@@ -377,6 +377,7 @@ public enum OpenResponsesStatus: String, Codable, Sendable {
 public enum OpenResponsesOutputItem: Codable, Sendable {
     case message(OpenResponsesOutputMessage)
     case functionCall(OpenResponsesFunctionCall)
+    case reasoning(OpenResponsesReasoningItem)
 
     private enum CodingKeys: String, CodingKey {
         case type
@@ -391,6 +392,8 @@ public enum OpenResponsesOutputItem: Codable, Sendable {
             self = .message(try OpenResponsesOutputMessage(from: decoder))
         case "function_call":
             self = .functionCall(try OpenResponsesFunctionCall(from: decoder))
+        case "reasoning":
+            self = .reasoning(try OpenResponsesReasoningItem(from: decoder))
         default:
             throw DecodingError.dataCorruptedError(
                 forKey: .type,
@@ -406,7 +409,37 @@ public enum OpenResponsesOutputItem: Codable, Sendable {
             try item.encode(to: encoder)
         case .functionCall(let item):
             try item.encode(to: encoder)
+        case .reasoning(let item):
+            try item.encode(to: encoder)
         }
+    }
+}
+
+/// Reasoning output item — opens before the message item and accumulates
+/// `summary[i].text` chunks via `response.reasoning_summary_text.delta`.
+public struct OpenResponsesReasoningItem: Codable, Sendable {
+    public let type: String
+    public let id: String
+    public let status: OpenResponsesItemStatus
+    public let summary: [OpenResponsesReasoningSummaryText]
+
+    public init(id: String, status: OpenResponsesItemStatus, summary: [OpenResponsesReasoningSummaryText]) {
+        self.type = "reasoning"
+        self.id = id
+        self.status = status
+        self.summary = summary
+    }
+}
+
+/// Single piece of a reasoning summary — analogous to `OpenResponsesOutputText`
+/// but lives on the reasoning item's `summary` array.
+public struct OpenResponsesReasoningSummaryText: Codable, Sendable {
+    public let type: String
+    public let text: String
+
+    public init(text: String) {
+        self.type = "summary_text"
+        self.text = text
     }
 }
 
@@ -610,6 +643,45 @@ public struct OutputTextDoneEvent: Codable, Sendable {
         self.item_id = itemId
         self.output_index = outputIndex
         self.content_index = contentIndex
+        self.text = text
+    }
+}
+
+/// response.reasoning_summary_text.delta event — incremental reasoning text
+/// appended to the currently-open reasoning item.
+public struct ReasoningSummaryTextDeltaEvent: Codable, Sendable {
+    public let type: String
+    public let sequence_number: Int
+    public let item_id: String
+    public let output_index: Int
+    public let summary_index: Int
+    public let delta: String
+
+    public init(sequenceNumber: Int, itemId: String, outputIndex: Int, summaryIndex: Int, delta: String) {
+        self.type = "response.reasoning_summary_text.delta"
+        self.sequence_number = sequenceNumber
+        self.item_id = itemId
+        self.output_index = outputIndex
+        self.summary_index = summaryIndex
+        self.delta = delta
+    }
+}
+
+/// response.reasoning_summary_text.done event — final accumulated reasoning text.
+public struct ReasoningSummaryTextDoneEvent: Codable, Sendable {
+    public let type: String
+    public let sequence_number: Int
+    public let item_id: String
+    public let output_index: Int
+    public let summary_index: Int
+    public let text: String
+
+    public init(sequenceNumber: Int, itemId: String, outputIndex: Int, summaryIndex: Int, text: String) {
+        self.type = "response.reasoning_summary_text.done"
+        self.sequence_number = sequenceNumber
+        self.item_id = itemId
+        self.output_index = outputIndex
+        self.summary_index = summaryIndex
         self.text = text
     }
 }

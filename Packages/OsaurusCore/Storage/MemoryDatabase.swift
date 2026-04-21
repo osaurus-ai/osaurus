@@ -3,7 +3,7 @@
 //  osaurus
 //
 //  SQLite database for the 4-layer memory system.
-//  WAL mode, serial queue, versioned migrations — follows WorkDatabase patterns.
+//  WAL mode, serial queue, versioned migrations.
 //
 
 import CryptoKit

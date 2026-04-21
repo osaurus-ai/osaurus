@@ -49,6 +49,14 @@ public struct SandboxAgentCleanupResult: Sendable {
 public final class SandboxAgentProvisioner {
     public static let shared = SandboxAgentProvisioner()
 
+    /// In-flight provisioning tasks keyed by agent id (uuidString form).
+    /// Coalesces concurrent `ensureProvisioned` calls for the same agent so
+    /// the notification-driven path (`SandboxToolRegistrar.handleAgentUpdated`)
+    /// and any direct caller share one attempt instead of racing each other
+    /// through `ensureAgentUser` (which is not itself coalesced and can fail
+    /// with confusing "user already being created" symptoms when interleaved).
+    private var inFlight: [String: Task<Void, Error>] = [:]
+
     private init() {}
 
     public static func linuxName(for agentId: String) -> String {
@@ -65,12 +73,20 @@ public final class SandboxAgentProvisioner {
     }
 
     public func ensureProvisioned(agentId: String) async throws {
-        let agentName = Self.linuxName(for: agentId)
-
-        ensureHostWorkspace(for: agentName)
-        try await SandboxManager.shared.startContainer()
-        try await SandboxManager.shared.ensureAgentUser(agentName)
-        SandboxAgentMap.register(linuxName: "agent-\(agentName)", agentId: agentId)
+        if let existing = inFlight[agentId] {
+            try await existing.value
+            return
+        }
+        let task = Task<Void, Error> { [agentId] in
+            let agentName = Self.linuxName(for: agentId)
+            Self.ensureHostWorkspace(for: agentName)
+            try await SandboxManager.shared.startContainer()
+            try await SandboxManager.shared.ensureAgentUser(agentName)
+            SandboxAgentMap.register(linuxName: "agent-\(agentName)", agentId: agentId)
+        }
+        inFlight[agentId] = task
+        defer { inFlight[agentId] = nil }
+        try await task.value
     }
 
     public func unprovision(agentId: UUID) async -> SandboxAgentCleanupResult {
@@ -110,7 +126,10 @@ public final class SandboxAgentProvisioner {
         )
     }
 
-    private func ensureHostWorkspace(for agentName: String) {
+    /// Make the on-host workspace directory for an agent. Static + nonisolated
+    /// so the provisioning task can call it from the cooperative thread pool
+    /// without hopping back to MainActor for what is just a `mkdir -p`.
+    nonisolated private static func ensureHostWorkspace(for agentName: String) {
         let fm = FileManager.default
         let agentDir = OsaurusPaths.containerAgentDir(agentName)
         let pluginsDir = agentDir.appendingPathComponent("plugins", isDirectory: true)

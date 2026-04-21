@@ -719,10 +719,6 @@ struct AgentDetailView: View {
         ChatSessionsManager.shared.sessions(for: agent.id)
     }
 
-    private var workTasks: [WorkTask] {
-        (try? IssueStore.listTasks(agentId: agent.id)) ?? []
-    }
-
     private var agentColor: Color { agentColorFor(name) }
 
     private var agentPlugins: [PluginManager.LoadedPlugin] {
@@ -980,7 +976,7 @@ struct AgentDetailView: View {
                 let count = linkedSchedules.count + linkedWatchers.count
                 return count > 0 ? count : nil
             case .memory:
-                let count = chatSessions.count + workTasks.count
+                let count = chatSessions.count
                 return count > 0 ? count : nil
             }
         case .plugin:
@@ -2620,8 +2616,7 @@ struct AgentDetailView: View {
         AgentDetailSection(
             title: L("History"),
             icon: "clock.arrow.circlepath",
-            subtitle:
-                "\(chatSessions.count) chat\(chatSessions.count == 1 ? "" : "s"), \(workTasks.count) task\(workTasks.count == 1 ? "" : "s")"
+            subtitle: "\(chatSessions.count) chat\(chatSessions.count == 1 ? "" : "s")"
         ) {
             VStack(alignment: .leading, spacing: 16) {
                 VStack(alignment: .leading, spacing: 8) {
@@ -2695,63 +2690,6 @@ struct AgentDetailView: View {
                     }
                 }
 
-                Rectangle()
-                    .fill(theme.primaryBorder)
-                    .frame(height: 1)
-
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "checklist")
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundColor(theme.accentColor)
-                        Text("RECENT TASKS", bundle: .module)
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundColor(theme.secondaryText)
-                            .tracking(0.3)
-                    }
-
-                    if workTasks.isEmpty {
-                        Text("No work tasks yet", bundle: .module)
-                            .font(.system(size: 12))
-                            .foregroundColor(theme.tertiaryText)
-                            .padding(.vertical, 8)
-                    } else {
-                        ForEach(workTasks.prefix(5)) { task in
-                            HStack(spacing: 10) {
-                                Circle()
-                                    .fill(taskStatusColor(task.status))
-                                    .frame(width: 6, height: 6)
-
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(task.title)
-                                        .font(.system(size: 12, weight: .medium))
-                                        .foregroundColor(theme.primaryText)
-                                        .lineLimit(1)
-
-                                    Text(task.createdAt.formatted(date: .abbreviated, time: .shortened))
-                                        .font(.system(size: 10))
-                                        .foregroundColor(theme.tertiaryText)
-                                }
-                                Spacer()
-                                Text(task.status.rawValue.capitalized)
-                                    .font(.system(size: 10, weight: .medium))
-                                    .foregroundColor(taskStatusColor(task.status))
-                            }
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
-                            .background(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .fill(theme.inputBackground.opacity(0.5))
-                            )
-                        }
-                        if workTasks.count > 5 {
-                            Text("and \(workTasks.count - 5) more...", bundle: .module)
-                                .font(.system(size: 11))
-                                .foregroundColor(theme.tertiaryText)
-                                .padding(.leading, 4)
-                        }
-                    }
-                }
             }
         }
     }
@@ -2825,14 +2763,6 @@ struct AgentDetailView: View {
         try? MemoryDatabase.shared.deleteMemoryEntry(id: entryId)
         loadMemoryData()
         showSuccess("Memory entry deleted")
-    }
-
-    private func taskStatusColor(_ status: WorkTaskStatus) -> Color {
-        switch status {
-        case .active: return theme.accentColor
-        case .completed: return theme.successColor
-        case .cancelled: return theme.tertiaryText
-        }
     }
 
     // MARK: - Data Loading
@@ -2914,7 +2844,6 @@ struct AgentDetailView: View {
             updatedAt: Date(),
             agentIndex: current.agentIndex,
             agentAddress: current.agentAddress,
-            sandboxPlugins: current.sandboxPlugins,
             autonomousExec: current.autonomousExec,
             pluginInstructions: effectivePluginInstructions,
             toolSelectionMode: toolSelectionMode,

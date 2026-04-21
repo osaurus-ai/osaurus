@@ -10,16 +10,6 @@ import NIOCore
 import NIOHTTP1
 import NIOPosix
 
-extension SocketAddress {
-    var isLoopback: Bool {
-        switch self {
-        case .v4(let addr): return addr.host == "127.0.0.1"
-        case .v6(let addr): return addr.host == "::1"
-        default: return false
-        }
-    }
-}
-
 private final class SendableBool: @unchecked Sendable {
     private var _value: Bool
     private let _lock = NSLock()
@@ -40,14 +30,17 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     private let chatEngine: ChatEngineProtocol
     private let trustLoopback: Bool
     private let _isChannelActive = SendableBool(false)
-    private final class RequestState {
+    /// Per-request scratch state. `internal` so peer-file helpers (e.g.
+    /// `HTTPRequestParse.readRequestBody()`) can drain the buffered body
+    /// without going through a private accessor.
+    final class RequestState {
         var requestHead: HTTPRequestHead?
         var requestBodyBuffer: ByteBuffer?
         var corsHeaders: [(String, String)] = []
         var requestStartTime: Date = Date()
         var normalizedPath: String = ""
     }
-    private let stateRef: NIOLoopBound<RequestState>
+    let stateRef: NIOLoopBound<RequestState>
 
     init(
         configuration: ServerConfiguration,
@@ -212,7 +205,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     startTime: startTime
                 )
             }
-            // Handle core endpoints directly; fall back to Router only for legacy coverage
+            // Core endpoints — dispatched here directly. (`Router.swift` is a
+            // legacy non-streaming dispatcher kept around as a reference; the
+            // production HTTP path is fully owned by this handler.)
             else if head.method == .GET, path == "/" {
                 var headers = [("Content-Type", "text/plain; charset=utf-8")]
                 headers.append(contentsOf: stateRef.value.corsHeaders)
@@ -1303,9 +1298,6 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         return collapsed
     }
 
-    /// Expose CORS headers for use by async writers (must be accessed on event loop)
-    var currentCORSHeaders: [(String, String)] { stateRef.value.corsHeaders }
-
     // MARK: - Chat handlers
 
     /// Enrich a chat request with the agent's system prompt and memory context
@@ -1391,7 +1383,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let cors = stateRef.value.corsHeaders
         let loop = context.eventLoop
         let ctx = NIOLoopBound(context, eventLoop: loop)
-        let hop = makeHop(channel: context.channel, loop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
         let logSelf = self
         let logStartTime = startTime
         let logUserAgent = userAgent
@@ -1554,7 +1546,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let cors = stateRef.value.corsHeaders
         let loop = context.eventLoop
         let ctx = NIOLoopBound(context, eventLoop: loop)
-        let hop = makeHop(channel: context.channel, loop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
         let logSelf = self
         let logStartTime = startTime
         let logUserAgent = userAgent
@@ -1735,7 +1727,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let loop = context.eventLoop
         let ctx = NIOLoopBound(context, eventLoop: loop)
         let cors = stateRef.value.corsHeaders
-        let hop = makeHop(channel: context.channel, loop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
         let logSelf = self
         let logStartTime = startTime
         let logUserAgent = userAgent
@@ -1813,7 +1805,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let loop = context.eventLoop
         let ctx = NIOLoopBound(context, eventLoop: loop)
         let cors = stateRef.value.corsHeaders
-        let hop = makeHop(channel: context.channel, loop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
         let logSelf = self
         let logStartTime = startTime
         let logUserAgent = userAgent
@@ -1957,14 +1949,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let writer = SSEResponseWriter()
         let writerBound = NIOLoopBound(writer, eventLoop: loop)
         let ctx = NIOLoopBound(context, eventLoop: loop)
-        let hop = makeHop(channel: context.channel, loop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
         let logSelf = self
         let logStartTime = startTime
         let logUserAgent = userAgent
         let logRequestBody = requestBodyString
         let chatEngine = self.chatEngine
 
-        let responseId = "chatcmpl-\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(12))"
+        let responseId = Self.shortId(prefix: "chatcmpl-", length: 12)
         let created = Int(Date().timeIntervalSince1970)
 
         hop { writerBound.value.writeHeaders(ctx.value, extraHeaders: cors) }
@@ -1982,11 +1974,18 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             // Enrich with agent context (system prompt + memory)
             var messages = await Self.enrichWithAgentContext(req, agentId: agentId.uuidString).messages
 
-            // Load tools: use sandbox mode when the agent has Autonomous Execution enabled
+            // INTENTIONAL DIVERGENCE FROM CHAT: the OpenAI-compatible HTTP
+            // API is stateless (no Osaurus session id), so we cannot reuse
+            // SessionToolStateStore, run a preflight LLM, or freeze a
+            // per-session schema. Bare `alwaysLoadedSpecs(mode:)` keeps the
+            // HTTP schema predictable and avoids per-request preflight cost.
+            // See docs/AGENT_LOOP.md before "fixing" this onto resolveTools.
             let tools = await MainActor.run {
                 let autonomousEnabled = AgentManager.shared.effectiveAutonomousExec(for: agentId)?.enabled == true
-                let mode: WorkExecutionMode =
-                    autonomousEnabled ? ToolRegistry.shared.resolveWorkExecutionMode(folderContext: nil) : .none
+                let mode = ToolRegistry.shared.resolveExecutionMode(
+                    folderContext: nil,
+                    autonomousEnabled: autonomousEnabled
+                )
                 return ToolRegistry.shared.alwaysLoadedSpecs(mode: mode)
             }
 
@@ -2020,16 +2019,34 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     stop: req.stop,
                     n: nil,
                     tools: tools.isEmpty ? nil : tools,
-                    tool_choice: nil,
+                    tool_choice: tools.isEmpty ? nil : .auto,
                     session_id: req.session_id
                 )
 
                 var responseContent = ""
-                var toolInvoked: ServiceToolInvocation?
+                // Local models can emit multiple tool calls in a single
+                // completion; ServiceToolInvocations carries the full batch.
+                var pendingInvocations: [ServiceToolInvocation] = []
 
                 do {
                     let stream = try await chatEngine.streamChat(request: iterationReq)
                     for try await delta in stream {
+                        // Reasoning sentinel must be decoded BEFORE the
+                        // generic `isSentinel` filter; emit it on the
+                        // OpenAI extended `reasoning_content` channel
+                        // and do NOT mix it into `responseContent`.
+                        if let reasoning = StreamingReasoningHint.decode(delta) {
+                            hop {
+                                writerBound.value.writeReasoning(
+                                    reasoning,
+                                    model: model,
+                                    responseId: responseId,
+                                    created: created,
+                                    context: ctx.value
+                                )
+                            }
+                            continue
+                        }
                         if StreamingToolHint.isSentinel(delta) { continue }
                         responseContent += delta
                         hop {
@@ -2042,8 +2059,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                             )
                         }
                     }
+                } catch let invs as ServiceToolInvocations {
+                    pendingInvocations = invs.invocations
                 } catch let inv as ServiceToolInvocation {
-                    toolInvoked = inv
+                    pendingInvocations = [inv]
                 } catch {
                     hop {
                         writerBound.value.writeError(error.localizedDescription, context: ctx.value)
@@ -2061,86 +2080,94 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     return
                 }
 
-                guard let invocation = toolInvoked else {
+                if pendingInvocations.isEmpty {
                     // Final text response — done
                     messages.append(ChatMessage(role: "assistant", content: responseContent))
                     break
                 }
 
-                // Notify the client that a tool is being called so it can show it in the chat log
-                hop {
-                    writerBound.value.writeContent(
-                        StreamingToolHint.encode(invocation.toolName),
-                        model: model,
-                        responseId: responseId,
-                        created: created,
-                        context: ctx.value
-                    )
-                    writerBound.value.writeContent(
-                        StreamingToolHint.encodeArgs(invocation.jsonArguments),
-                        model: model,
-                        responseId: responseId,
-                        created: created,
-                        context: ctx.value
-                    )
-                }
+                // Execute every parsed tool call, streaming hint+done frames
+                // for each, then append ONE assistant message with all
+                // tool_calls and the matching tool-result messages. This is
+                // the OpenAI shape that downstream clients expect for
+                // multi-call completions.
+                var assistantToolCalls: [ToolCall] = []
+                var toolResultsByCallId: [(String, String)] = []
+                for invocation in pendingInvocations {
+                    let callId = invocation.toolCallId ?? Self.shortId(prefix: "call_")
 
-                // Execute the tool on the server and append result to messages
-                let callId =
-                    invocation.toolCallId
-                    ?? "call_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(24))"
-
-                let toolResult: String
-                do {
-                    toolResult = try await WorkExecutionContext.$currentIssueId.withValue(requestId) {
-                        try await WorkExecutionContext.$currentAgentId.withValue(agentId) {
-                            try await ToolRegistry.shared.execute(
-                                name: invocation.toolName,
-                                argumentsJSON: invocation.jsonArguments
-                            )
-                        }
+                    hop {
+                        writerBound.value.writeContent(
+                            StreamingToolHint.encode(invocation.toolName),
+                            model: model,
+                            responseId: responseId,
+                            created: created,
+                            context: ctx.value
+                        )
+                        writerBound.value.writeContent(
+                            StreamingToolHint.encodeArgs(invocation.jsonArguments),
+                            model: model,
+                            responseId: responseId,
+                            created: created,
+                            context: ctx.value
+                        )
                     }
-                } catch {
-                    toolResult = "[REJECTED] \(error.localizedDescription)"
-                }
 
-                // Notify the client the tool call is complete with its result so it can
-                // display the call card and result in the chat log
-                hop {
-                    writerBound.value.writeContent(
-                        StreamingToolHint.encodeDone(
-                            callId: callId,
-                            name: invocation.toolName,
-                            arguments: invocation.jsonArguments,
-                            result: toolResult
-                        ),
-                        model: model,
-                        responseId: responseId,
-                        created: created,
-                        context: ctx.value
+                    let toolResult: String
+                    do {
+                        toolResult = try await ChatExecutionContext.$currentSessionId.withValue(requestId) {
+                            try await ChatExecutionContext.$currentAgentId.withValue(agentId) {
+                                try await ToolRegistry.shared.execute(
+                                    name: invocation.toolName,
+                                    argumentsJSON: invocation.jsonArguments
+                                )
+                            }
+                        }
+                    } catch {
+                        toolResult = ToolEnvelope.fromError(error, tool: invocation.toolName)
+                    }
+
+                    hop {
+                        writerBound.value.writeContent(
+                            StreamingToolHint.encodeDone(
+                                callId: callId,
+                                name: invocation.toolName,
+                                arguments: invocation.jsonArguments,
+                                result: toolResult
+                            ),
+                            model: model,
+                            responseId: responseId,
+                            created: created,
+                            context: ctx.value
+                        )
+                    }
+
+                    assistantToolCalls.append(
+                        ToolCall(
+                            id: callId,
+                            type: "function",
+                            function: ToolCallFunction(
+                                name: invocation.toolName,
+                                arguments: invocation.jsonArguments
+                            )
+                        )
                     )
+                    toolResultsByCallId.append((callId, toolResult))
                 }
 
                 messages.append(
                     ChatMessage(
                         role: "assistant",
                         content: responseContent.isEmpty ? nil : responseContent,
-                        tool_calls: [
-                            ToolCall(
-                                id: callId,
-                                type: "function",
-                                function: ToolCallFunction(
-                                    name: invocation.toolName,
-                                    arguments: invocation.jsonArguments
-                                )
-                            )
-                        ],
+                        tool_calls: assistantToolCalls,
                         tool_call_id: nil
                     )
                 )
-                messages.append(
-                    ChatMessage(role: "tool", content: toolResult, tool_calls: nil, tool_call_id: callId)
-                )
+                for (callId, result) in toolResultsByCallId {
+                    messages.append(
+                        ChatMessage(role: "tool", content: result, tool_calls: nil, tool_call_id: callId)
+                    )
+                }
             }
 
             hop {
@@ -2173,7 +2200,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let loop = context.eventLoop
         let ctx = NIOLoopBound(context, eventLoop: loop)
         let cors = stateRef.value.corsHeaders
-        let hop = makeHop(channel: context.channel, loop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
         let logSelf = self
         let logStartTime = startTime
         let logUserAgent = userAgent
@@ -2243,27 +2270,50 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 return
             }
 
-            let modeStr = json["mode"] as? String ?? "work"
-            let mode: ChatMode = modeStr == "chat" ? .chat : .work
+            // Empty/whitespace prompts make `ChatSession.send` no-op, leaving
+            // the dispatched task hanging in `.running` until the watchdog.
+            guard !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                hop {
+                    var headers = [("Content-Type", "application/json; charset=utf-8")]
+                    headers.append(contentsOf: cors)
+                    self.sendResponse(
+                        context: ctx.value,
+                        version: head.version,
+                        status: .badRequest,
+                        headers: headers,
+                        body: #"{"error":"invalid_request","message":"Prompt is empty"}"#
+                    )
+                }
+                return
+            }
+
             let title = json["title"] as? String
             let requestId = UUID()
+            let externalSessionKey =
+                json["external_session_key"] as? String
+                ?? json["session_id"] as? String
 
             let request = DispatchRequest(
                 id: requestId,
-                mode: mode,
                 prompt: prompt,
                 agentId: agentId,
                 title: title,
-                showToast: true
+                showToast: true,
+                source: .http,
+                externalSessionKey: externalSessionKey
             )
 
             let handle = await TaskDispatcher.shared.dispatch(request)
             let responseBody: String
             let status: HTTPResponseStatus
 
-            if handle != nil {
-                let pollUrl = "/v1/tasks/\(requestId.uuidString)"
-                let resp: [String: Any] = ["id": requestId.uuidString, "status": "running", "poll_url": pollUrl]
+            if let handle {
+                // Use the resolved task id — when an `external_session_key`
+                // matches an existing session the dispatcher reattaches and
+                // reports the existing session's id rather than `requestId`.
+                let resolvedId = handle.id.uuidString
+                let pollUrl = "/v1/tasks/\(resolvedId)"
+                let resp: [String: Any] = ["id": resolvedId, "status": "running", "poll_url": pollUrl]
                 responseBody =
                     (try? JSONSerialization.data(withJSONObject: resp)).flatMap { String(decoding: $0, as: UTF8.self) }
                     ?? "{}"
@@ -2308,7 +2358,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let loop = context.eventLoop
         let ctx = NIOLoopBound(context, eventLoop: loop)
         let cors = stateRef.value.corsHeaders
-        let hop = makeHop(channel: context.channel, loop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
         let logSelf = self
         let logStartTime = startTime
         let logUserAgent = userAgent
@@ -2375,7 +2425,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let loop = context.eventLoop
         let ctx = NIOLoopBound(context, eventLoop: loop)
         let cors = stateRef.value.corsHeaders
-        let hop = makeHop(channel: context.channel, loop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
         let logSelf = self
         let logStartTime = startTime
         let logUserAgent = userAgent
@@ -2435,7 +2485,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let loop = context.eventLoop
         let ctx = NIOLoopBound(context, eventLoop: loop)
         let cors = stateRef.value.corsHeaders
-        let hop = makeHop(channel: context.channel, loop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
         let logSelf = self
         let logStartTime = startTime
         let logUserAgent = userAgent
@@ -2489,18 +2539,21 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 return
             }
 
-            await MainActor.run {
-                BackgroundTaskManager.shared.submitClarification(taskId, response: response)
-            }
-
-            let responseBody = #"{"status":"ok"}"#
+            // Clarifications now happen inline in the chat window via the
+            // `clarify` agent intercept — there is no out-of-band submit
+            // channel for HTTP callers. Keep the URL routable (so old
+            // callers don't 404) but return 410 Gone with a clear error.
+            _ = taskId
+            _ = response
+            let responseBody =
+                #"{"error":"not_supported","message":"clarify is no longer accepted over HTTP; the agent surfaces clarifications inline in the chat window"}"#
             hop {
                 var headers = [("Content-Type", "application/json; charset=utf-8")]
                 headers.append(contentsOf: cors)
                 self.sendResponse(
                     context: ctx.value,
                     version: head.version,
-                    status: .ok,
+                    status: .gone,
                     headers: headers,
                     body: responseBody
                 )
@@ -2511,7 +2564,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 userAgent: logUserAgent,
                 requestBody: requestBodyString,
                 responseBody: responseBody,
-                responseStatus: 200,
+                responseStatus: 410,
                 startTime: logStartTime
             )
         }
@@ -2568,7 +2621,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let cors = stateRef.value.corsHeaders
         let loop = context.eventLoop
         let ctx = NIOLoopBound(context, eventLoop: loop)
-        let hop = makeHop(channel: context.channel, loop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
         let logSelf = self
         let logStartTime = startTime
         let logUserAgent = userAgent
@@ -2686,11 +2739,22 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let wantsSSE = (req.stream ?? false) || accept.contains("text/event-stream")
 
         let created = Int(Date().timeIntervalSince1970)
-        let responseId =
-            "chatcmpl-\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(12))"
+        let responseId = Self.shortId(prefix: "chatcmpl-", length: 12)
         let model = req.model
 
         let memoryAgentId = head.headers.first(name: "X-Osaurus-Agent-Id")
+
+        // HTTP-specific persistence knobs:
+        //   X-Persist: false   → skip writing the conversation to chat history
+        //   X-Session-Id: <id> → group repeat calls under one session row
+        //                       (falls back to request.session_id when absent)
+        let persistDisabled =
+            (head.headers.first(name: "X-Persist") ?? "").lowercased() == "false"
+        let externalSessionKey: String? =
+            head.headers.first(name: "X-Session-Id") ?? req.session_id
+        let resolvedAgentUUID = memoryAgentId.flatMap { UUID(uuidString: $0) }
+        let priorMessages = req.messages
+        let persistOnSuccess = !persistDisabled
 
         if wantsSSE {
             let writer = SSEResponseWriter()
@@ -2698,7 +2762,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let loop = context.eventLoop
             let writerBound = NIOLoopBound(writer, eventLoop: loop)
             let ctx = NIOLoopBound(context, eventLoop: loop)
-            let hop = makeHop(channel: context.channel, loop: loop)
+            let hop = Self.makeHop(channel: context.channel, loop: loop)
             hop {
                 writerBound.value.writeHeaders(ctx.value, extraHeaders: cors)
             }
@@ -2733,8 +2797,22 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     }
 
                     let stream = try await chatEngine.streamChat(request: enrichedReq)
+                    var accumulatedContent = ""
                     for try await delta in stream {
+                        if let reasoning = StreamingReasoningHint.decode(delta) {
+                            hop {
+                                writerBound.value.writeReasoning(
+                                    reasoning,
+                                    model: model,
+                                    responseId: responseId,
+                                    created: created,
+                                    context: ctx.value
+                                )
+                            }
+                            continue
+                        }
                         if StreamingToolHint.isSentinel(delta) { continue }
+                        accumulatedContent += delta
                         hop {
                             writerBound.value.writeContent(
                                 delta,
@@ -2754,6 +2832,22 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         )
                         writerBound.value.writeEnd(ctx.value)
                     }
+                    if persistOnSuccess {
+                        var finalMessages = priorMessages
+                        if !accumulatedContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            finalMessages.append(
+                                ChatMessage(role: "assistant", content: accumulatedContent)
+                            )
+                        }
+                        ChatHistoryWriter.persist(
+                            source: .http,
+                            sourcePluginId: nil,
+                            agentId: resolvedAgentUUID,
+                            externalKey: externalSessionKey,
+                            finalMessages: finalMessages,
+                            model: model
+                        )
+                    }
                     logSelf.logRequest(
                         method: "POST",
                         path: "/chat/completions",
@@ -2766,47 +2860,22 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         maxTokens: logMaxTokens,
                         finishReason: .stop
                     )
-                } catch let inv as ServiceToolInvocation {
-                    // Translate tool invocation to OpenAI-style streaming tool_calls deltas
-                    // Use preserved tool call ID from stream if available
-                    let callId: String
-                    if let preservedId = inv.toolCallId, !preservedId.isEmpty {
-                        callId = preservedId
-                    } else {
-                        let raw = UUID().uuidString.replacingOccurrences(of: "-", with: "")
-                        callId = "call_" + String(raw.prefix(24))
-                    }
-                    let args = inv.jsonArguments
-                    let chunkSize = 1024
+                } catch let invs as ServiceToolInvocations {
+                    // Multi-tool MLX completion: emit one tool_call delta
+                    // per invocation, sharing one finish_reason="tool_calls".
+                    // OpenAI clients deduplicate by `index`.
                     hop {
-                        writerBound.value.writeToolCallStart(
-                            callId: callId,
-                            functionName: inv.toolName,
-                            index: 0,
-                            model: model,
-                            responseId: responseId,
-                            created: created,
-                            context: ctx.value
-                        )
-                    }
-                    var i = args.startIndex
-                    while i < args.endIndex {
-                        let next = args.index(i, offsetBy: chunkSize, limitedBy: args.endIndex) ?? args.endIndex
-                        let chunk = String(args[i ..< next])
-                        hop {
-                            writerBound.value.writeToolCallArgumentsDelta(
-                                callId: callId,
-                                index: 0,
-                                argumentsChunk: chunk,
+                        for (idx, inv) in invs.invocations.enumerated() {
+                            self.writeOpenAIToolCallSSE(
+                                inv,
+                                index: idx,
+                                writer: writerBound.value,
                                 model: model,
                                 responseId: responseId,
                                 created: created,
                                 context: ctx.value
                             )
                         }
-                        i = next
-                    }
-                    hop {
                         writerBound.value.writeFinishWithReason(
                             "tool_calls",
                             model: model,
@@ -2816,7 +2885,43 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         )
                         writerBound.value.writeEnd(ctx.value)
                     }
-                    // Log tool call
+                    let toolLogs = invs.invocations.map {
+                        ToolCallLog(name: $0.toolName, arguments: $0.jsonArguments)
+                    }
+                    logSelf.logRequest(
+                        method: "POST",
+                        path: "/chat/completions",
+                        userAgent: logUserAgent,
+                        requestBody: logRequestBody,
+                        responseStatus: 200,
+                        startTime: logStartTime,
+                        model: logModel,
+                        toolCalls: toolLogs,
+                        temperature: logTemperature,
+                        maxTokens: logMaxTokens,
+                        finishReason: .toolCalls
+                    )
+                } catch let inv as ServiceToolInvocation {
+                    // Single tool invocation — same emission as above.
+                    hop {
+                        self.writeOpenAIToolCallSSE(
+                            inv,
+                            index: 0,
+                            writer: writerBound.value,
+                            model: model,
+                            responseId: responseId,
+                            created: created,
+                            context: ctx.value
+                        )
+                        writerBound.value.writeFinishWithReason(
+                            "tool_calls",
+                            model: model,
+                            responseId: responseId,
+                            created: created,
+                            context: ctx.value
+                        )
+                        writerBound.value.writeEnd(ctx.value)
+                    }
                     let toolLog = ToolCallLog(name: inv.toolName, arguments: inv.jsonArguments)
                     logSelf.logRequest(
                         method: "POST",
@@ -2855,7 +2960,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let cors = stateRef.value.corsHeaders
             let loop = context.eventLoop
             let ctx = NIOLoopBound(context, eventLoop: loop)
-            let hop = makeHop(channel: context.channel, loop: loop)
+            let hop = Self.makeHop(channel: context.channel, loop: loop)
             // Capture for logging
             let logStartTime = startTime
             let logUserAgent = userAgent
@@ -2873,6 +2978,18 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     let sysContent = enrichedReq.messages.first(where: { $0.role == "system" })?.content ?? ""
                     let toolNames = (enrichedReq.tools ?? []).map { $0.function.name }
                     resp.prefix_hash = ModelRuntime.computePrefixHash(systemContent: sysContent, toolNames: toolNames)
+                    if persistOnSuccess, let assistantMsg = resp.choices.first?.message {
+                        var finalMessages = priorMessages
+                        finalMessages.append(assistantMsg)
+                        ChatHistoryWriter.persist(
+                            source: .http,
+                            sourcePluginId: nil,
+                            agentId: resolvedAgentUUID,
+                            externalKey: externalSessionKey,
+                            finalMessages: finalMessages,
+                            model: model
+                        )
+                    }
                     let json = try JSONEncoder().encode(resp)
                     var headers: [(String, String)] = [("Content-Type", "application/json")]
                     headers.append(contentsOf: cors)
@@ -2927,10 +3044,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 } catch {
                     // Map ChatEngine.EngineError to its intended HTTP
                     // status (e.g. 404 for unknown model) instead of
-                    // blanket-500 on every failure. The WorkView
-                    // classifier / external API consumers rely on the
-                    // status code to give users actionable feedback.
-                    // See PR #863 / issue #858.
+                    // blanket-500 on every failure. External API
+                    // consumers rely on the status code to give users
+                    // actionable feedback. See PR #863 / issue #858.
                     let status: HTTPResponseStatus
                     let body: String
                     if let engineError = error as? ChatEngine.EngineError {
@@ -3017,7 +3133,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let loop = context.eventLoop
         let writerBound = NIOLoopBound(writer, eventLoop: loop)
         let ctx = NIOLoopBound(context, eventLoop: loop)
-        let hop = makeHop(channel: context.channel, loop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
         hop {
             writerBound.value.writeHeaders(ctx.value, extraHeaders: cors)
         }
@@ -3034,6 +3150,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 let chatEngine = self.chatEngine
                 let stream = try await chatEngine.streamChat(request: req)
                 for try await delta in stream {
+                    // Ollama-style NDJSON has no `reasoning` / `thinking`
+                    // field today — `StreamingReasoningHint`, along with
+                    // `StreamingToolHint` / `StreamingStatsHint`, is
+                    // intentionally dropped here so it doesn't leak as
+                    // assistant content. Add a `thinking` field on the
+                    // NDJSON response shape (and decode reasoning here
+                    // first) when an upstream client requests it.
                     if StreamingToolHint.isSentinel(delta) { continue }
                     hop {
                         writerBound.value.writeContent(
@@ -3099,7 +3222,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let loop = context.eventLoop
         let ctx = NIOLoopBound(context, eventLoop: loop)
         let cors = stateRef.value.corsHeaders
-        let hop = makeHop(channel: context.channel, loop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
         let logStartTime = startTime
         let logUserAgent = userAgent
         let logSelf = self
@@ -3152,7 +3275,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let loop = context.eventLoop
         let ctx = NIOLoopBound(context, eventLoop: loop)
         let cors = stateRef.value.corsHeaders
-        let hop = makeHop(channel: context.channel, loop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
         let logStartTime = startTime
         let logUserAgent = userAgent
         let logSelf = self
@@ -3307,7 +3430,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let loop = context.eventLoop
         let ctx = NIOLoopBound(context, eventLoop: loop)
         let cors = stateRef.value.corsHeaders
-        let hop = makeHop(channel: context.channel, loop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
         let logStartTime = startTime
         let logUserAgent = userAgent
         let logRequestBody = requestBodyString
@@ -3453,7 +3576,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let loop = context.eventLoop
         let ctx = NIOLoopBound(context, eventLoop: loop)
         let cors = stateRef.value.corsHeaders
-        let hop = makeHop(channel: context.channel, loop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
         // Capture for logging
         let logStartTime = startTime
         let logUserAgent = userAgent
@@ -3588,7 +3711,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let loop = context.eventLoop
         let ctx = NIOLoopBound(context, eventLoop: loop)
         let cors = stateRef.value.corsHeaders
-        let hop = makeHop(channel: context.channel, loop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
         let toolName = req.name
         // Capture for logging
         let logStartTime = startTime
@@ -3766,7 +3889,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let internalReq = anthropicReq.toChatCompletionRequest()
 
         // Generate response ID
-        let messageId = "msg_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(24))"
+        let messageId = Self.shortId(prefix: "msg_")
         let model = anthropicReq.model
 
         // Determine if streaming
@@ -3815,7 +3938,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let loop = context.eventLoop
         let writerBound = NIOLoopBound(writer, eventLoop: loop)
         let ctx = NIOLoopBound(context, eventLoop: loop)
-        let hop = makeHop(channel: context.channel, loop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
 
         // Estimate input tokens (rough: 1 token per 4 chars)
         let inputTokens =
@@ -3846,6 +3969,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 let chatEngine = self.chatEngine
                 let stream = try await chatEngine.streamChat(request: internalReq)
                 for try await delta in stream {
+                    // Reasoning sentinel must be decoded BEFORE the
+                    // generic `isSentinel` filter, otherwise it gets
+                    // dropped together with tool/stats hints.
+                    if let reasoning = StreamingReasoningHint.decode(delta) {
+                        hop {
+                            writerBound.value.writeThinkingDelta(reasoning, context: ctx.value)
+                        }
+                        continue
+                    }
                     if StreamingToolHint.isSentinel(delta) { continue }
                     hop {
                         writerBound.value.writeTextDelta(delta, context: ctx.value)
@@ -3865,38 +3997,37 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     model: logModel,
                     finishReason: .stop
                 )
-            } catch let inv as ServiceToolInvocation {
-                // Handle tool invocation - emit tool_use content block
-                let toolId =
-                    inv.toolCallId ?? "toolu_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(24))"
-                let args = inv.jsonArguments
-
+            } catch let invs as ServiceToolInvocations {
+                // Multi-tool MLX completion: one `tool_use` content block
+                // per invocation, then a single `tool_use` finish.
                 hop {
-                    // Start tool_use block
-                    writerBound.value.writeToolUseBlockStart(
-                        toolId: toolId,
-                        toolName: inv.toolName,
-                        context: ctx.value
-                    )
-
-                    // Stream the JSON arguments in chunks
-                    let chunkSize = 512
-                    var i = args.startIndex
-                    while i < args.endIndex {
-                        let next = args.index(i, offsetBy: chunkSize, limitedBy: args.endIndex) ?? args.endIndex
-                        let chunk = String(args[i ..< next])
-                        writerBound.value.writeToolInputDelta(chunk, context: ctx.value)
-                        i = next
+                    for inv in invs.invocations {
+                        self.writeAnthropicToolUse(inv, writer: writerBound.value, context: ctx.value)
                     }
-
-                    // Close the tool_use block
-                    writerBound.value.writeBlockStop(context: ctx.value)
-
-                    // Finish with tool_use stop reason
                     writerBound.value.writeFinish(stopReason: "tool_use", context: ctx.value)
                     writerBound.value.writeEnd(ctx.value)
                 }
-
+                let toolLogs = invs.invocations.map {
+                    ToolCallLog(name: $0.toolName, arguments: $0.jsonArguments)
+                }
+                logSelf.logRequest(
+                    method: "POST",
+                    path: "/messages",
+                    userAgent: logUserAgent,
+                    requestBody: logRequestBody,
+                    responseStatus: 200,
+                    startTime: logStartTime,
+                    model: logModel,
+                    toolCalls: toolLogs,
+                    finishReason: .toolCalls
+                )
+            } catch let inv as ServiceToolInvocation {
+                // Single tool invocation — same emission path.
+                hop {
+                    self.writeAnthropicToolUse(inv, writer: writerBound.value, context: ctx.value)
+                    writerBound.value.writeFinish(stopReason: "tool_use", context: ctx.value)
+                    writerBound.value.writeEnd(ctx.value)
+                }
                 let toolLog = ToolCallLog(name: inv.toolName, arguments: inv.jsonArguments)
                 logSelf.logRequest(
                     method: "POST",
@@ -3943,7 +4074,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let cors = stateRef.value.corsHeaders
         let loop = context.eventLoop
         let ctx = NIOLoopBound(context, eventLoop: loop)
-        let hop = makeHop(channel: context.channel, loop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
 
         // Capture for logging
         let logStartTime = startTime
@@ -4044,51 +4175,41 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     tokensOutput: resp.usage.completion_tokens,
                     finishReason: .stop
                 )
-            } catch let inv as ServiceToolInvocation {
-                // Handle tool invocation for non-streaming
-                let toolId =
-                    inv.toolCallId ?? "toolu_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(24))"
-
-                var inputDict: [String: AnyCodableValue] = [:]
-                if let argsData = inv.jsonArguments.data(using: .utf8),
-                    let parsed = try? JSONSerialization.jsonObject(with: argsData) as? [String: Any]
-                {
-                    inputDict = parsed.mapValues { AnyCodableValue($0) }
+            } catch let invs as ServiceToolInvocations {
+                // Multi-tool MLX completion: emit one Anthropic
+                // `tool_use` content block per invocation.
+                let blocks: [AnthropicResponseContentBlock] = invs.invocations.map {
+                    Self.makeAnthropicToolUseBlock(from: $0)
                 }
-
-                let anthropicResp = AnthropicMessagesResponse(
-                    id: messageId,
+                let body = Self.anthropicNonStreamingBody(
+                    messageId: messageId,
                     model: model,
-                    content: [.toolUseBlock(id: toolId, name: inv.toolName, input: inputDict)],
-                    stopReason: "tool_use",
-                    usage: AnthropicUsage(inputTokens: 0, outputTokens: 0)
+                    blocks: blocks
                 )
-
-                let json =
-                    (try? JSONEncoder().encode(anthropicResp))
-                    .map { String(decoding: $0, as: UTF8.self) } ?? "{}"
-                var headers: [(String, String)] = [("Content-Type", "application/json")]
-                headers.append(contentsOf: cors)
-                let headersCopy = headers
-                let body = json
-
-                hop {
-                    var responseHead = HTTPResponseHead(version: head.version, status: .ok)
-                    var buffer = ctx.value.channel.allocator.buffer(capacity: body.utf8.count)
-                    buffer.writeString(body)
-                    var nioHeaders = HTTPHeaders()
-                    for (name, value) in headersCopy { nioHeaders.add(name: name, value: value) }
-                    nioHeaders.add(name: "Content-Length", value: String(buffer.readableBytes))
-                    nioHeaders.add(name: "Connection", value: "close")
-                    responseHead.headers = nioHeaders
-                    let c = ctx.value
-                    c.write(NIOAny(HTTPServerResponsePart.head(responseHead)), promise: nil)
-                    c.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
-                    c.writeAndFlush(NIOAny(HTTPServerResponsePart.end(nil as HTTPHeaders?))).whenComplete { _ in
-                        ctx.value.close(promise: nil)
-                    }
+                Self.writeJSONResponse(body: body, cors: cors, head: head, ctx: ctx, hop: hop)
+                let toolLogs = invs.invocations.map {
+                    ToolCallLog(name: $0.toolName, arguments: $0.jsonArguments)
                 }
-
+                logSelf.logRequest(
+                    method: "POST",
+                    path: "/messages",
+                    userAgent: logUserAgent,
+                    requestBody: logRequestBody,
+                    responseBody: body,
+                    responseStatus: 200,
+                    startTime: logStartTime,
+                    model: logModel,
+                    toolCalls: toolLogs,
+                    finishReason: .toolCalls
+                )
+            } catch let inv as ServiceToolInvocation {
+                // Single tool invocation — same emission with one block.
+                let body = Self.anthropicNonStreamingBody(
+                    messageId: messageId,
+                    model: model,
+                    blocks: [Self.makeAnthropicToolUseBlock(from: inv)]
+                )
+                Self.writeJSONResponse(body: body, cors: cors, head: head, ctx: ctx, hop: hop)
                 let toolLog = ToolCallLog(name: inv.toolName, arguments: inv.jsonArguments)
                 logSelf.logRequest(
                     method: "POST",
@@ -4144,13 +4265,6 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         }
     }
 
-    private func makeHop(channel: Channel, loop: EventLoop) -> (@escaping @Sendable () -> Void) -> Void {
-        { block in
-            guard channel.isActive else { return }
-            if loop.inEventLoop { block() } else { loop.execute { block() } }
-        }
-    }
-
     @inline(__always)
     private func executeOnLoop(_ loop: EventLoop, _ block: @escaping @Sendable () -> Void) {
         guard _isChannelActive.value else { return }
@@ -4177,7 +4291,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let cors = stateRef.value.corsHeaders
         let loop = context.eventLoop
         let ctx = NIOLoopBound(context, eventLoop: loop)
-        let hop = makeHop(channel: context.channel, loop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
 
         // Capture for logging
         let logStartTime = startTime
@@ -4388,7 +4502,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let internalReq = openResponsesReq.toChatCompletionRequest()
 
         // Generate response ID
-        let responseId = "resp_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(24))"
+        let responseId = Self.shortId(prefix: "resp_")
         let model = openResponsesReq.model
 
         // Determine if streaming
@@ -4434,7 +4548,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let loop = context.eventLoop
         let writerBound = NIOLoopBound(writer, eventLoop: loop)
         let ctx = NIOLoopBound(context, eventLoop: loop)
-        let hop = makeHop(channel: context.channel, loop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
 
         // Estimate input tokens (rough: 1 token per 4 chars)
         let inputTokens: Int =
@@ -4456,9 +4570,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 }
             }() + (request.instructions?.count ?? 0) / 4
 
-        let itemId = "item_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(24))"
+        let itemId = Self.shortId(prefix: "item_")
+        let reasoningItemId = Self.shortId(prefix: "rs_")
 
-        // Send headers and initial events
+        // Send headers and initial response-level events. Output items
+        // (reasoning / message) are now opened lazily inside the stream
+        // loop so a reasoning item can land BEFORE the message item, which
+        // matches OpenAI Responses semantics for reasoning models.
         hop {
             writerBound.value.writeHeaders(ctx.value, extraHeaders: cors)
             writerBound.value.writeResponseCreated(
@@ -4468,8 +4586,6 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 context: ctx.value
             )
             writerBound.value.writeResponseInProgress(context: ctx.value)
-            writerBound.value.writeMessageItemAdded(itemId: itemId, context: ctx.value)
-            writerBound.value.writeContentPartAdded(context: ctx.value)
         }
 
         // Capture for logging
@@ -4479,19 +4595,51 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logModel = model
         let logSelf = self
 
+        // Track whether the message item has been opened across the
+        // streaming and catch closures. A heap box satisfies Sendable for
+        // the concurrent closures that read/mutate the flag.
+        let messageItemOpen = AtomicBoolBox()
+
         Task(priority: .userInitiated) {
             do {
                 let chatEngine = self.chatEngine
                 let stream = try await chatEngine.streamChat(request: internalReq)
                 for try await delta in stream {
+                    // Reasoning sentinel must be decoded BEFORE the
+                    // generic `isSentinel` filter, otherwise it gets
+                    // dropped together with tool/stats hints.
+                    if let reasoning = StreamingReasoningHint.decode(delta) {
+                        hop {
+                            writerBound.value.writeReasoningDelta(
+                                reasoning,
+                                itemId: reasoningItemId,
+                                context: ctx.value
+                            )
+                        }
+                        continue
+                    }
                     if StreamingToolHint.isSentinel(delta) { continue }
                     hop {
+                        // First non-reasoning chunk: close the reasoning
+                        // item (if any) then open the message item so the
+                        // text deltas land on the message item.
+                        writerBound.value.writeReasoningItemDone(context: ctx.value)
+                        if !messageItemOpen.value {
+                            messageItemOpen.value = true
+                            writerBound.value.writeMessageItemAdded(itemId: itemId, context: ctx.value)
+                            writerBound.value.writeContentPartAdded(context: ctx.value)
+                        }
                         writerBound.value.writeTextDelta(delta, context: ctx.value)
                     }
                 }
                 hop {
-                    writerBound.value.writeTextDone(context: ctx.value)
-                    writerBound.value.writeMessageItemDone(context: ctx.value)
+                    // Close any open reasoning item that never got any
+                    // following content (rare — reasoning-only response).
+                    writerBound.value.writeReasoningItemDone(context: ctx.value)
+                    if messageItemOpen.value {
+                        writerBound.value.writeTextDone(context: ctx.value)
+                        writerBound.value.writeMessageItemDone(context: ctx.value)
+                    }
                     writerBound.value.writeResponseCompleted(context: ctx.value)
                     writerBound.value.writeEnd(ctx.value)
                 }
@@ -4505,47 +4653,45 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     model: logModel,
                     finishReason: .stop
                 )
-            } catch let inv as ServiceToolInvocation {
-                // Handle tool invocation - emit function_call item
-                let callId =
-                    inv.toolCallId ?? "call_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(24))"
-                let funcItemId = "item_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(24))"
-                let args = inv.jsonArguments
-
+            } catch let invs as ServiceToolInvocations {
+                // Multi-tool MLX completion: emit one function_call item
+                // per invocation. Use the lazy `messageItemOpen` flag so
+                // we don't close an item that was never opened.
                 hop {
-                    // Close the text content if any was written
-                    writerBound.value.writeTextDone(context: ctx.value)
-                    writerBound.value.writeMessageItemDone(context: ctx.value)
-
-                    // Start function call item
-                    writerBound.value.writeFunctionCallItemAdded(
-                        itemId: funcItemId,
-                        callId: callId,
-                        name: inv.toolName,
-                        context: ctx.value
-                    )
-
-                    // Stream the arguments in chunks
-                    let chunkSize = 512
-                    var i = args.startIndex
-                    while i < args.endIndex {
-                        let next = args.index(i, offsetBy: chunkSize, limitedBy: args.endIndex) ?? args.endIndex
-                        let chunk = String(args[i ..< next])
-                        writerBound.value.writeFunctionCallArgumentsDelta(
-                            callId: callId,
-                            delta: chunk,
-                            context: ctx.value
-                        )
-                        i = next
+                    writerBound.value.writeReasoningItemDone(context: ctx.value)
+                    if messageItemOpen.value {
+                        writerBound.value.writeTextDone(context: ctx.value)
+                        writerBound.value.writeMessageItemDone(context: ctx.value)
                     }
-
-                    // Complete the function call
-                    writerBound.value.writeFunctionCallArgumentsDone(callId: callId, context: ctx.value)
-                    writerBound.value.writeFunctionCallItemDone(
-                        callId: callId,
-                        name: inv.toolName,
-                        context: ctx.value
-                    )
+                    for inv in invs.invocations {
+                        self.writeOpenResponsesFunctionCall(inv, writer: writerBound.value, context: ctx.value)
+                    }
+                    writerBound.value.writeResponseCompleted(context: ctx.value)
+                    writerBound.value.writeEnd(ctx.value)
+                }
+                let toolLogs = invs.invocations.map {
+                    ToolCallLog(name: $0.toolName, arguments: $0.jsonArguments)
+                }
+                logSelf.logRequest(
+                    method: "POST",
+                    path: "/responses",
+                    userAgent: logUserAgent,
+                    requestBody: logRequestBody,
+                    responseStatus: 200,
+                    startTime: logStartTime,
+                    model: logModel,
+                    toolCalls: toolLogs,
+                    finishReason: .toolCalls
+                )
+            } catch let inv as ServiceToolInvocation {
+                // Single tool invocation — same flow with one item.
+                hop {
+                    writerBound.value.writeReasoningItemDone(context: ctx.value)
+                    if messageItemOpen.value {
+                        writerBound.value.writeTextDone(context: ctx.value)
+                        writerBound.value.writeMessageItemDone(context: ctx.value)
+                    }
+                    self.writeOpenResponsesFunctionCall(inv, writer: writerBound.value, context: ctx.value)
                     writerBound.value.writeResponseCompleted(context: ctx.value)
                     writerBound.value.writeEnd(ctx.value)
                 }
@@ -4582,6 +4728,174 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         }
     }
 
+    /// Build a complete (non-streaming) OpenResponses body whose `output`
+    /// is one `function_call` item per supplied invocation. Returns the
+    /// JSON body so the caller can also feed it to the request log.
+    private static func openResponsesNonStreamingBody(
+        responseId: String,
+        model: String,
+        invocations: [ServiceToolInvocation]
+    ) -> String {
+        let items: [OpenResponsesOutputItem] = invocations.map { inv in
+            let callId = inv.toolCallId ?? Self.shortId(prefix: "call_")
+            let itemId = Self.shortId(prefix: "item_")
+            return .functionCall(
+                OpenResponsesFunctionCall(
+                    id: itemId,
+                    status: .completed,
+                    callId: callId,
+                    name: inv.toolName,
+                    arguments: inv.jsonArguments
+                )
+            )
+        }
+        let resp = OpenResponsesResponse(
+            id: responseId,
+            createdAt: Int(Date().timeIntervalSince1970),
+            status: .completed,
+            model: model,
+            output: items,
+            usage: OpenResponsesUsage(inputTokens: 0, outputTokens: 0)
+        )
+        return (try? JSONEncoder().encode(resp))
+            .map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+    }
+
+    /// Build an Anthropic `tool_use` block for a single MLX-emitted
+    /// invocation. Used by the non-streaming `/messages` handler.
+    private static func makeAnthropicToolUseBlock(
+        from inv: ServiceToolInvocation
+    ) -> AnthropicResponseContentBlock {
+        let toolId = inv.toolCallId ?? Self.shortId(prefix: "toolu_")
+        var inputDict: [String: AnyCodableValue] = [:]
+        if let argsData = inv.jsonArguments.data(using: .utf8),
+            let parsed = try? JSONSerialization.jsonObject(with: argsData) as? [String: Any]
+        {
+            inputDict = parsed.mapValues { AnyCodableValue($0) }
+        }
+        return AnthropicResponseContentBlock.toolUseBlock(
+            id: toolId,
+            name: inv.toolName,
+            input: inputDict
+        )
+    }
+
+    /// Encode a non-streaming Anthropic Messages response carrying the
+    /// supplied content blocks (text/tool_use). Returns the JSON body so
+    /// the caller can also feed it to the request log.
+    private static func anthropicNonStreamingBody(
+        messageId: String,
+        model: String,
+        blocks: [AnthropicResponseContentBlock]
+    ) -> String {
+        let resp = AnthropicMessagesResponse(
+            id: messageId,
+            model: model,
+            content: blocks,
+            stopReason: "tool_use",
+            usage: AnthropicUsage(inputTokens: 0, outputTokens: 0)
+        )
+        return (try? JSONEncoder().encode(resp))
+            .map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+    }
+
+    /// Emit a complete Anthropic `tool_use` content block for a single
+    /// invocation: `content_block_start` → chunked `input_json_delta` →
+    /// `content_block_stop`. Caller is responsible for the shared
+    /// `tool_use` finish event after the last invocation.
+    @inline(__always)
+    private func writeAnthropicToolUse(
+        _ inv: ServiceToolInvocation,
+        writer: AnthropicSSEResponseWriter,
+        context: ChannelHandlerContext
+    ) {
+        let toolId = inv.toolCallId ?? Self.shortId(prefix: "toolu_")
+        writer.writeToolUseBlockStart(
+            toolId: toolId,
+            toolName: inv.toolName,
+            context: context
+        )
+        Self.forEachStringChunk(inv.jsonArguments, size: 512) { chunk in
+            writer.writeToolInputDelta(chunk, context: context)
+        }
+        writer.writeBlockStop(context: context)
+    }
+
+    /// Emit a complete OpenAI-style streaming `tool_calls` delta for a
+    /// single invocation: `tool_calls[index]` start frame followed by
+    /// chunked `arguments` delta frames. Caller is responsible for the
+    /// shared `finish_reason: "tool_calls"` after the last invocation.
+    @inline(__always)
+    private func writeOpenAIToolCallSSE(
+        _ inv: ServiceToolInvocation,
+        index: Int,
+        writer: SSEResponseWriter,
+        model: String,
+        responseId: String,
+        created: Int,
+        context: ChannelHandlerContext
+    ) {
+        let callId: String = {
+            if let preservedId = inv.toolCallId, !preservedId.isEmpty { return preservedId }
+            return Self.shortId(prefix: "call_")
+        }()
+        writer.writeToolCallStart(
+            callId: callId,
+            functionName: inv.toolName,
+            index: index,
+            model: model,
+            responseId: responseId,
+            created: created,
+            context: context
+        )
+        Self.forEachStringChunk(inv.jsonArguments, size: 1024) { chunk in
+            writer.writeToolCallArgumentsDelta(
+                callId: callId,
+                index: index,
+                argumentsChunk: chunk,
+                model: model,
+                responseId: responseId,
+                created: created,
+                context: context
+            )
+        }
+    }
+
+    /// Emit a complete OpenResponses function-call output item for a single
+    /// tool invocation: `output_item.added` → chunked
+    /// `function_call_arguments.delta` → `function_call_arguments.done` →
+    /// `output_item.done`. Caller is responsible for any preceding item
+    /// teardown (closing message / reasoning items) and for emitting
+    /// `response.completed` after the last invocation.
+    @inline(__always)
+    private func writeOpenResponsesFunctionCall(
+        _ inv: ServiceToolInvocation,
+        writer: OpenResponsesSSEWriter,
+        context: ChannelHandlerContext
+    ) {
+        let callId = inv.toolCallId ?? Self.shortId(prefix: "call_")
+        let funcItemId = Self.shortId(prefix: "item_")
+        writer.writeFunctionCallItemAdded(
+            itemId: funcItemId,
+            callId: callId,
+            name: inv.toolName,
+            context: context
+        )
+        Self.forEachStringChunk(inv.jsonArguments, size: 512) { chunk in
+            writer.writeFunctionCallArgumentsDelta(
+                callId: callId,
+                delta: chunk,
+                context: context
+            )
+        }
+        writer.writeFunctionCallArgumentsDone(callId: callId, context: context)
+        writer.writeFunctionCallItemDone(
+            callId: callId,
+            name: inv.toolName,
+            context: context
+        )
+    }
+
     private func handleOpenResponsesNonStreaming(
         internalReq: ChatCompletionRequest,
         responseId: String,
@@ -4595,7 +4909,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let cors = stateRef.value.corsHeaders
         let loop = context.eventLoop
         let ctx = NIOLoopBound(context, eventLoop: loop)
-        let hop = makeHop(channel: context.channel, loop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
 
         // Capture for logging
         let logStartTime = startTime
@@ -4648,54 +4962,35 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     tokensOutput: resp.usage.completion_tokens,
                     finishReason: .stop
                 )
-            } catch let inv as ServiceToolInvocation {
-                // Handle tool invocation for non-streaming
-                let callId =
-                    inv.toolCallId ?? "call_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(24))"
-                let itemId = "item_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(24))"
-
-                let functionCall = OpenResponsesFunctionCall(
-                    id: itemId,
-                    status: .completed,
-                    callId: callId,
-                    name: inv.toolName,
-                    arguments: inv.jsonArguments
-                )
-
-                let openResponsesResp = OpenResponsesResponse(
-                    id: responseId,
-                    createdAt: Int(Date().timeIntervalSince1970),
-                    status: .completed,
+            } catch let invs as ServiceToolInvocations {
+                let body = Self.openResponsesNonStreamingBody(
+                    responseId: responseId,
                     model: model,
-                    output: [.functionCall(functionCall)],
-                    usage: OpenResponsesUsage(inputTokens: 0, outputTokens: 0)
+                    invocations: invs.invocations
                 )
-
-                let json =
-                    (try? JSONEncoder().encode(openResponsesResp))
-                    .map { String(decoding: $0, as: UTF8.self) } ?? "{}"
-                var headers: [(String, String)] = [("Content-Type", "application/json")]
-                headers.append(contentsOf: cors)
-                let headersCopy = headers
-                let body = json
-
-                hop {
-                    var responseHead = HTTPResponseHead(version: head.version, status: .ok)
-                    var buffer = ctx.value.channel.allocator.buffer(capacity: body.utf8.count)
-                    buffer.writeString(body)
-                    var nioHeaders = HTTPHeaders()
-                    for (name, value) in headersCopy { nioHeaders.add(name: name, value: value) }
-                    nioHeaders.add(name: "Content-Length", value: String(buffer.readableBytes))
-                    nioHeaders.add(name: "Connection", value: "close")
-                    responseHead.headers = nioHeaders
-                    let c = ctx.value
-                    c.write(NIOAny(HTTPServerResponsePart.head(responseHead)), promise: nil)
-                    c.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
-                    c.writeAndFlush(NIOAny(HTTPServerResponsePart.end(nil as HTTPHeaders?))).whenComplete { _ in
-                        ctx.value.close(promise: nil)
-                    }
+                Self.writeJSONResponse(body: body, cors: cors, head: head, ctx: ctx, hop: hop)
+                let toolLogs = invs.invocations.map {
+                    ToolCallLog(name: $0.toolName, arguments: $0.jsonArguments)
                 }
-
+                logSelf.logRequest(
+                    method: "POST",
+                    path: "/responses",
+                    userAgent: logUserAgent,
+                    requestBody: logRequestBody,
+                    responseBody: body,
+                    responseStatus: 200,
+                    startTime: logStartTime,
+                    model: logModel,
+                    toolCalls: toolLogs,
+                    finishReason: .toolCalls
+                )
+            } catch let inv as ServiceToolInvocation {
+                let body = Self.openResponsesNonStreamingBody(
+                    responseId: responseId,
+                    model: model,
+                    invocations: [inv]
+                )
+                Self.writeJSONResponse(body: body, cors: cors, head: head, ctx: ctx, hop: hop)
                 let toolLog = ToolCallLog(name: inv.toolName, arguments: inv.jsonArguments)
                 logSelf.logRequest(
                     method: "POST",

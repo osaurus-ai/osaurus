@@ -13,7 +13,6 @@ struct ModelCacheInspectorView: View {
     @State private var isClearingAll = false
     @State private var isRefreshing = false
     @State private var isHoveringRefresh = false
-    @State private var schedulerSnapshot: InferenceSchedulerSnapshot?
 
     var onRefresh: (() -> Void)?
 
@@ -84,12 +83,6 @@ struct ModelCacheInspectorView: View {
                 }
             }
 
-            // Scheduler section — shows queue depth per priority and the
-            // currently-active request so we can spot starvation at a glance.
-            if let snapshot = schedulerSnapshot {
-                InferenceSchedulerSection(snapshot: snapshot)
-            }
-
             // Divider
             Rectangle()
                 .fill(
@@ -132,126 +125,15 @@ struct ModelCacheInspectorView: View {
     private func refresh() async {
         isRefreshing = true
         items = await MLXService.shared.cachedRuntimeSummaries()
-        schedulerSnapshot = await InferenceScheduler.shared.snapshot()
         isRefreshing = false
         onRefresh?()
     }
 }
 
-// MARK: - Scheduler Section
-
-private struct InferenceSchedulerSection: View {
-    @Environment(\.theme) private var theme
-    let snapshot: InferenceSchedulerSnapshot
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
-                Image(systemName: "list.bullet.below.rectangle")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
-                Text("Inference Scheduler", bundle: .module)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-                Spacer()
-                statusBadge
-            }
-
-            HStack(spacing: 12) {
-                statColumn(
-                    label: "Queue",
-                    value: "\(snapshot.totalQueued)"
-                )
-                statColumn(
-                    label: "Admitted",
-                    value: "\(snapshot.totalAdmitted)"
-                )
-                statColumn(
-                    label: "Rejected",
-                    value: "\(snapshot.totalRejected)"
-                )
-            }
-
-            if snapshot.totalQueued > 0 {
-                VStack(alignment: .leading, spacing: 3) {
-                    ForEach(InferencePriority.allCases.reversed(), id: \.rawValue) { priority in
-                        let count = snapshot.queuedByPriority[priority] ?? 0
-                        if count > 0 {
-                            HStack(spacing: 6) {
-                                Circle()
-                                    .fill(priorityColor(priority))
-                                    .frame(width: 6, height: 6)
-                                Text(priority.label)
-                                    .font(.system(size: 10, weight: .medium, design: .monospaced))
-                                    .foregroundColor(theme.secondaryText)
-                                Spacer()
-                                Text("\(count)")
-                                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                                    .foregroundColor(theme.tertiaryText)
-                            }
-                        }
-                    }
-                }
-                .padding(.top, 2)
-            }
-        }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(theme.cardBackground.opacity(0.8))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(theme.cardBorder.opacity(0.3), lineWidth: 1)
-        )
-    }
-
-    @ViewBuilder
-    private var statusBadge: some View {
-        if snapshot.active, let priority = snapshot.activePriority {
-            HStack(spacing: 4) {
-                Circle()
-                    .fill(priorityColor(priority))
-                    .frame(width: 6, height: 6)
-                Text(priority.label)
-                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                    .foregroundColor(priorityColor(priority))
-            }
-            .padding(.horizontal, 6)
-            .padding(.vertical, 3)
-            .background(Capsule().fill(priorityColor(priority).opacity(0.12)))
-            .overlay(Capsule().strokeBorder(priorityColor(priority).opacity(0.25), lineWidth: 1))
-        } else {
-            Text("idle")
-                .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                .foregroundColor(theme.tertiaryText)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 3)
-                .background(Capsule().fill(theme.tertiaryText.opacity(0.08)))
-        }
-    }
-
-    private func statColumn(label: String, value: String) -> some View {
-        VStack(alignment: .leading, spacing: 1) {
-            Text(value)
-                .font(.system(size: 13, weight: .semibold, design: .monospaced))
-                .foregroundColor(theme.primaryText)
-            Text(LocalizedStringKey(label), bundle: .module)
-                .font(.system(size: 9, weight: .medium))
-                .foregroundColor(theme.tertiaryText)
-        }
-    }
-
-    private func priorityColor(_ priority: InferencePriority) -> Color {
-        switch priority {
-        case .interactive: return theme.successColor
-        case .httpAPI: return theme.accentColor
-        case .plugin: return Color.orange
-        case .background: return Color.purple
-        case .maintenance: return theme.tertiaryText
-        }
-    }
-}
+// Note: the previous `InferenceSchedulerSection` HUD was retired together
+// with the osaurus-side priority scheduler. MLX inference is now serialized
+// inside vmlx-swift-lm's `BatchEngine`, which exposes its own queue depth
+// counters via signposts. A new HUD can be added here when needed.
 
 // MARK: - Refresh Button
 private struct RefreshButton: View {

@@ -10,6 +10,12 @@ import Testing
 
 struct ModelManagerResolveTests {
 
+    /// Suppress `ModelManager.init`'s background HF org fetch so it can't
+    /// flake the suite by mutating state mid-test.
+    init() {
+        ModelManager.skipBackgroundOrgFetchForTests = true
+    }
+
     @Test @MainActor func resolveModel_basicHeuristicsAndAllowList() async throws {
         let mgr = ModelManager()
 

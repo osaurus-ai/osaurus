@@ -42,7 +42,7 @@ final class ExternalTool: OsaurusTool, PermissionedTool, @unchecked Sendable {
     }
 
     func execute(argumentsJSON: String) async throws -> String {
-        let agentId = WorkExecutionContext.currentAgentId
+        let agentId = ChatExecutionContext.currentAgentId
         let payloadWithSecrets = injectSecrets(into: argumentsJSON, agentId: agentId)
         let payloadWithContext = injectFolderContext(into: payloadWithSecrets)
         return try await plugin.invoke(type: "tool", id: toolId, payload: payloadWithContext, agentId: agentId)
@@ -83,7 +83,7 @@ final class ExternalTool: OsaurusTool, PermissionedTool, @unchecked Sendable {
     private func injectFolderContext(into payload: String) -> String {
         // Read from the thread-safe cache to avoid hopping to MainActor,
         // which can deadlock when the main thread is busy with SwiftUI layout.
-        guard let rootPath = WorkFolderContextService.cachedRootPath else { return payload }
+        guard let rootPath = FolderContextService.cachedRootPath else { return payload }
 
         // Parse the original payload
         guard let payloadData = payload.data(using: .utf8),

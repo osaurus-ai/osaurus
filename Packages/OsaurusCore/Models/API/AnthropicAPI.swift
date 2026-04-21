@@ -503,6 +503,7 @@ struct ContentBlockStartEvent: Codable, Sendable {
     enum ContentBlockStart: Codable, Sendable {
         case text(TextBlockStart)
         case toolUse(ToolUseBlockStart)
+        case thinking(ThinkingBlockStart)
 
         struct TextBlockStart: Codable, Sendable {
             let type: String
@@ -528,8 +529,20 @@ struct ContentBlockStartEvent: Codable, Sendable {
             }
         }
 
+        /// Anthropic extended-thinking content block start. The block opens
+        /// empty and is filled by subsequent `thinking_delta` events.
+        struct ThinkingBlockStart: Codable, Sendable {
+            let type: String
+            let thinking: String
+
+            init() {
+                self.type = "thinking"
+                self.thinking = ""
+            }
+        }
+
         private enum CodingKeys: String, CodingKey {
-            case type, text, id, name, input
+            case type, text, id, name, input, thinking
         }
 
         init(from decoder: Decoder) throws {
@@ -542,6 +555,8 @@ struct ContentBlockStartEvent: Codable, Sendable {
                 let id = try container.decode(String.self, forKey: .id)
                 let name = try container.decode(String.self, forKey: .name)
                 self = .toolUse(ToolUseBlockStart(id: id, name: name))
+            case "thinking":
+                self = .thinking(ThinkingBlockStart())
             default:
                 self = .text(TextBlockStart())
             }
@@ -558,6 +573,9 @@ struct ContentBlockStartEvent: Codable, Sendable {
                 try container.encode(block.id, forKey: .id)
                 try container.encode(block.name, forKey: .name)
                 try container.encode(block.input, forKey: .input)
+            case .thinking(let block):
+                try container.encode(block.type, forKey: .type)
+                try container.encode(block.thinking, forKey: .thinking)
             }
         }
     }
@@ -573,6 +591,13 @@ struct ContentBlockStartEvent: Codable, Sendable {
         self.index = index
         self.content_block = .toolUse(ContentBlockStart.ToolUseBlockStart(id: toolId, name: toolName))
     }
+
+    /// Initializer for Anthropic extended-thinking content blocks.
+    init(thinkingBlockAt index: Int) {
+        self.type = "content_block_start"
+        self.index = index
+        self.content_block = .thinking(ContentBlockStart.ThinkingBlockStart())
+    }
 }
 
 /// content_block_delta event
@@ -584,6 +609,7 @@ struct ContentBlockDeltaEvent: Codable, Sendable {
     enum ContentBlockDelta: Codable, Sendable {
         case textDelta(TextDelta)
         case inputJsonDelta(InputJsonDelta)
+        case thinkingDelta(ThinkingDelta)
 
         struct TextDelta: Codable, Sendable {
             let type: String
@@ -605,8 +631,20 @@ struct ContentBlockDeltaEvent: Codable, Sendable {
             }
         }
 
+        /// Anthropic extended-thinking incremental delta — appended to the
+        /// currently-open `thinking` content block.
+        struct ThinkingDelta: Codable, Sendable {
+            let type: String
+            let thinking: String
+
+            init(thinking: String) {
+                self.type = "thinking_delta"
+                self.thinking = thinking
+            }
+        }
+
         private enum CodingKeys: String, CodingKey {
-            case type, text, partial_json
+            case type, text, partial_json, thinking
         }
 
         init(from decoder: Decoder) throws {
@@ -619,6 +657,9 @@ struct ContentBlockDeltaEvent: Codable, Sendable {
             case "input_json_delta":
                 let json = try container.decode(String.self, forKey: .partial_json)
                 self = .inputJsonDelta(InputJsonDelta(partialJson: json))
+            case "thinking_delta":
+                let thinking = try container.decode(String.self, forKey: .thinking)
+                self = .thinkingDelta(ThinkingDelta(thinking: thinking))
             default:
                 self = .textDelta(TextDelta(text: ""))
             }
@@ -633,6 +674,9 @@ struct ContentBlockDeltaEvent: Codable, Sendable {
             case .inputJsonDelta(let delta):
                 try container.encode(delta.type, forKey: .type)
                 try container.encode(delta.partial_json, forKey: .partial_json)
+            case .thinkingDelta(let delta):
+                try container.encode(delta.type, forKey: .type)
+                try container.encode(delta.thinking, forKey: .thinking)
             }
         }
     }
@@ -647,6 +691,14 @@ struct ContentBlockDeltaEvent: Codable, Sendable {
         self.type = "content_block_delta"
         self.index = index
         self.delta = .inputJsonDelta(ContentBlockDelta.InputJsonDelta(partialJson: partialJson))
+    }
+
+    /// Initializer for Anthropic extended-thinking deltas. Pairs with
+    /// `ContentBlockStartEvent(thinkingBlockAt:)`.
+    init(thinkingAt index: Int, text: String) {
+        self.type = "content_block_delta"
+        self.index = index
+        self.delta = .thinkingDelta(ContentBlockDelta.ThinkingDelta(thinking: text))
     }
 }
 
