@@ -51,25 +51,34 @@ public struct ContextBreakdown: Equatable, Sendable {
     }
 
     /// Build a breakdown from a `ComposedContext` with optional message token counts.
+    /// Memory lives on `composed.memorySection` (it's prepended to the user
+    /// message, not to the system prompt), so it's pulled out separately
+    /// here and surfaced as its own entry.
     static func from(
         context composed: ComposedContext,
         conversationTokens: Int = 0,
         inputTokens: Int = 0,
         outputTokens: Int = 0
     ) -> ContextBreakdown {
-        .from(
+        let memoryTokens = composed.memorySection.map { estimateTokens(for: $0) } ?? 0
+        return .from(
             manifest: composed.manifest,
             toolTokens: composed.toolTokens,
+            memoryTokens: memoryTokens,
             conversationTokens: conversationTokens,
             inputTokens: inputTokens,
             outputTokens: outputTokens
         )
     }
 
-    /// Build a breakdown from a manifest + tool tokens.
+    /// Build a breakdown from a manifest + tool tokens. `memoryTokens` is
+    /// the cost of the per-turn memory snippet that the composer prepends
+    /// to the latest user message. Surfaced as a dedicated entry so the
+    /// budget popover shows it even though it doesn't live in `manifest.sections`.
     public static func from(
         manifest: PromptManifest,
         toolTokens: Int = 0,
+        memoryTokens: Int = 0,
         conversationTokens: Int = 0,
         inputTokens: Int = 0,
         outputTokens: Int = 0
@@ -77,6 +86,9 @@ public struct ContextBreakdown: Equatable, Sendable {
         var ctx: [Entry] = manifest.sections
             .filter { $0.estimatedTokens > 0 }
             .map { Entry(id: $0.id, label: $0.label, tokens: $0.estimatedTokens, tint: tint(for: $0.id)) }
+        if memoryTokens > 0 {
+            ctx.append(Entry(id: "memory", label: "Memory", tokens: memoryTokens, tint: tint(for: "memory")))
+        }
         if toolTokens > 0 {
             ctx.append(Entry(id: "tools", label: "Tools", tokens: toolTokens, tint: .orange))
         }
@@ -89,6 +101,12 @@ public struct ContextBreakdown: Equatable, Sendable {
         if outputTokens > 0 { msgs.append(Entry(id: "output", label: "Output", tokens: outputTokens, tint: .green)) }
 
         return ContextBreakdown(context: ctx, messages: msgs)
+    }
+
+    private static func estimateTokens(for text: String) -> Int {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return 0 }
+        return max(1, trimmed.count / ContextBudgetManager.charsPerToken)
     }
 
     /// Update the token count for an entry by ID, or append it if not present.

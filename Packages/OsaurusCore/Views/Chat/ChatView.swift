@@ -66,6 +66,11 @@ final class ChatSession: ObservableObject {
     // MARK: - Memoization Cache
     private let blockMemoizer = BlockMemoizer()
     private var cachedContext: ComposedContext?
+    /// Estimated memory-section token cost for the next send. Populated by
+    /// `refreshMemoryTokens` and surfaced through `estimatedContextBreakdown`
+    /// so the Context Budget popover shows a "Memory" line even before the
+    /// first send (when `cachedContext` is still nil).
+    private var cachedMemoryTokens: Int = 0
     private let budgetTracker = ContextBudgetTracker()
 
     /// Per-session preflight + capabilities_load tool kit lives in the
@@ -433,6 +438,7 @@ final class ChatSession: ObservableObject {
         return .from(
             manifest: manifest,
             toolTokens: toolTokens,
+            memoryTokens: cachedMemoryTokens,
             conversationTokens: conversationTokens,
             inputTokens: inputTokens,
             outputTokens: outputTokens
@@ -651,8 +657,8 @@ final class ChatSession: ObservableObject {
     private func refreshMemoryTokens() async {
         let effectiveAgentId = agentId ?? Agent.defaultId
         guard !AgentManager.shared.effectiveMemoryDisabled(for: effectiveAgentId) else {
-            if cachedContext?.manifest.memoryTokens ?? 0 > 0 {
-                cachedContext = nil
+            if cachedMemoryTokens != 0 {
+                cachedMemoryTokens = 0
                 objectWillChange.send()
             }
             return
@@ -662,8 +668,8 @@ final class ChatSession: ObservableObject {
             config: MemoryConfigurationStore.load()
         )
         let newTokens = ContextBudgetManager.estimateTokens(for: context)
-        guard newTokens != cachedContext?.manifest.memoryTokens ?? 0 else { return }
-        cachedContext = nil
+        guard newTokens != cachedMemoryTokens else { return }
+        cachedMemoryTokens = newTokens
         objectWillChange.send()
     }
 
