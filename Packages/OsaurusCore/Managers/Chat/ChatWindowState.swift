@@ -11,13 +11,6 @@ import Combine
 import Foundation
 import SwiftUI
 
-// MARK: - Close Confirmation
-
-@MainActor
-struct WorkCloseConfirmation: Identifiable {
-    let id = UUID()
-}
-
 /// Per-window state container for ChatView - each window creates its own instance
 @MainActor
 final class ChatWindowState: ObservableObject {
@@ -27,18 +20,9 @@ final class ChatWindowState: ObservableObject {
     let session: ChatSession
     let foundationModelAvailable: Bool
 
-    // MARK: - Mode State
+    // MARK: - View State
 
-    @Published var mode: ChatMode = .chat
     @Published var showSidebar: Bool = false
-
-    /// When non-nil, ChatView should present a close confirmation for active work execution.
-    @Published var workCloseConfirmation: WorkCloseConfirmation?
-
-    // MARK: - Work State
-
-    @Published var workSession: WorkSession?
-    @Published private(set) var workTasks: [WorkTask] = []
 
     // MARK: - Agent State
 
@@ -123,13 +107,6 @@ final class ChatWindowState: ObservableObject {
             self?.refreshSessionsDebounced()
         }
 
-        if let workSession = context.workSession {
-            self.mode = .work
-            self.workSession = workSession
-            workSession.windowState = self
-            refreshWorkTasks()
-        }
-
         setupNotificationObservers()
         observeBonjourBrowser()
         refreshPairedRelayAgents()
@@ -146,9 +123,7 @@ final class ChatWindowState: ObservableObject {
         selectedDiscoveredAgent = nil
         selectedDiscoveredAgentProviderId = nil
         selectedRelayAgent = nil
-        workSession?.cancelExecution()
         session.stop()
-        workSession = nil
         session.onSessionChanged = nil
     }
 
@@ -179,47 +154,6 @@ final class ChatWindowState: ObservableObject {
         flushCurrentSession()
         session.reset(for: agentId)
         refreshSessions()
-    }
-
-    // MARK: - Mode Switching
-
-    func switchMode(to newMode: ChatMode) {
-        guard newMode != mode else { return }
-
-        // Save current chat if switching away from chat mode
-        if mode == .chat && !session.turns.isEmpty {
-            session.save()
-        }
-
-        mode = newMode
-
-        // Handle work tool registration
-        if newMode == .work {
-            // Register work-specific tools
-            WorkToolManager.shared.registerTools()
-
-            // Initialize work session if needed
-            if workSession == nil {
-                workSession = WorkSession(agentId: agentId, windowState: self)
-            }
-            refreshWorkTasks()
-        } else {
-            // Unregister work-specific tools when leaving work mode
-            WorkToolManager.shared.unregisterTools()
-        }
-    }
-
-    func refreshWorkTasks() {
-        guard WorkDatabase.shared.isOpen else {
-            workTasks = []
-            return
-        }
-        do {
-            workTasks = try IssueStore.listTasks(agentId: agentId)
-        } catch {
-            print("[ChatWindowState] Failed to refresh work tasks: \(error)")
-            workTasks = []
-        }
     }
 
     func loadSession(_ sessionData: ChatSessionData) {

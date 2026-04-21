@@ -134,9 +134,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             PluginRepositoryService.shared.startBackgroundRefresh()
         }
 
-        // Pre-warm caches immediately for instant first window (no async deps)
+        // Pre-warm caches immediately for instant first window (no async deps).
+        // The unified prewarm builds the picker with whatever is currently
+        // available; once remote providers finish connecting below they post
+        // .remoteProviderModelsChanged and the cache rebuilds automatically.
         _ = SpeechConfigurationStore.load()
-        ModelPickerItemCache.shared.prewarmLocalModelsOnly()
+        ModelPickerItemCache.shared.prewarm()
 
         // Auto-connect to enabled providers, then update model cache with remote models
         Task { @MainActor in
@@ -181,12 +184,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             await SkillSearchService.shared.rebuildIndex()
             await MethodSearchService.shared.rebuildIndex()
         }
-        // Start activity tracking and recover orphaned signals once DB is ready
+        // Start activity tracking, drain any pending sessions left over from
+        // the previous launch, and arm the periodic consolidator.
         Task { @MainActor in
             await embeddingInitTask.value
             if MemoryDatabase.shared.isOpen {
                 ActivityTracker.shared.start()
                 await MemoryService.shared.recoverOrphanedSignals()
+                await MemoryConsolidator.shared.start()
             }
         }
 
@@ -224,19 +229,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // Initialize WatcherManager to start file system watchers
         _ = WatcherManager.shared
 
-        // Start sandbox tool registrar so it observes container status changes
+        // Start sandbox tool registrar. Internally awaits container
+        // auto-start before the initial `registerTools` call, so the first
+        // compose for the active agent sees real sandbox tools instead of
+        // the placeholder. (Replaces a separate `Task.detached` startContainer
+        // call that used to race the registrar's first registration.)
         SandboxToolRegistrar.shared.start()
-
-        // Initialize sandbox container (if available and configured to auto-start)
-        Task.detached {
-            let availability = await SandboxManager.shared.refreshAvailability()
-            if availability.isAvailable {
-                let config = SandboxConfigurationStore.load()
-                if config.autoStart && config.setupComplete {
-                    try? await SandboxManager.shared.startContainer()
-                }
-            }
-        }
 
         // Show onboarding for first-time users
         if OnboardingService.shared.shouldShowOnboarding {
@@ -1040,24 +1038,40 @@ extension AppDelegate {
             }
 
             let themeManager = ThemeManager.shared
-            let contentView = OnboardingView(forceShowIdentity: forceShowIdentity) { [weak self] in
-                // Close the onboarding window when complete
-                Self.onboardingWindow?.close()
-                Self.onboardingWindow = nil
-                // Invalidate model cache so fresh models are discovered
-                // This ensures any models downloaded during onboarding are visible
-                ModelPickerItemCache.shared.invalidateCache()
-                // Open ChatView after onboarding completes
-                self?.showChatOverlay()
-            }
+            let contentView = OnboardingView(
+                forceShowIdentity: forceShowIdentity,
+                onPreferredHeightChange: { [weak self] newHeight in
+                    self?.resizeOnboardingWindow(toHeight: newHeight)
+                },
+                onComplete: { [weak self] in
+                    // Close the onboarding window when complete
+                    Self.onboardingWindow?.close()
+                    Self.onboardingWindow = nil
+                    // Invalidate model cache so fresh models are discovered
+                    // This ensures any models downloaded during onboarding are visible
+                    ModelPickerItemCache.shared.invalidateCache()
+                    // Open ChatView after onboarding completes
+                    self?.showChatOverlay()
+                }
+            )
             .environment(\.theme, themeManager.currentTheme)
 
-            // Use NSHostingView directly in an NSView container to avoid auto-sizing issues
-            let windowWidth: CGFloat = OnboardingLayout.windowWidth
-            let windowHeight: CGFloat = OnboardingLayout.windowHeight
+            // Use NSHostingView directly in an NSView container to avoid auto-sizing issues.
+            // Start the window at the welcome step's preferred height so the first frame
+            // doesn't visibly snap into place from a different size.
+            let windowWidth: CGFloat = OnboardingMetrics.windowWidth
+            let windowHeight: CGFloat = onboardingPreferredHeight(for: .welcome)
 
             let hostingView = NSHostingView(rootView: contentView)
             hostingView.translatesAutoresizingMaskIntoConstraints = false
+            // Disable SwiftUI-driven auto-sizing of the hosting view; AppDelegate
+            // owns the window's size via `resizeOnboardingWindow(toHeight:)`.
+            // Without this, NSHostingView (macOS 14+) reports the SwiftUI content's
+            // intrinsic size and can grow the hosting view past the container,
+            // producing a tall narrow window.
+            if #available(macOS 13.0, *) {
+                hostingView.sizingOptions = []
+            }
 
             let containerView = NSView(frame: NSRect(x: 0, y: 0, width: windowWidth, height: windowHeight))
             containerView.addSubview(hostingView)
@@ -1092,6 +1106,37 @@ extension AppDelegate {
 
             window.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
+        }
+    }
+
+    /// Resize the onboarding window to a new height (width stays fixed),
+    /// anchoring the window at its current top edge so the title bar stays put
+    /// and growth happens downward.
+    @MainActor
+    fileprivate func resizeOnboardingWindow(toHeight newHeight: CGFloat) {
+        guard let window = Self.onboardingWindow else { return }
+        let clamped = min(max(newHeight, OnboardingMetrics.minHeight), OnboardingMetrics.maxHeight)
+        let currentFrame = window.frame
+        // Skip changes smaller than a couple of points to avoid jitter from
+        // SwiftUI re-publishing the same preference during transitions.
+        guard abs(currentFrame.height - clamped) > 2 else { return }
+
+        // Anchor by top edge (NSWindow origin is bottom-left, so subtract delta from y).
+        let delta = clamped - currentFrame.height
+        let newFrame = NSRect(
+            x: currentFrame.origin.x,
+            y: currentFrame.origin.y - delta,
+            width: OnboardingMetrics.windowWidth,
+            height: clamped
+        )
+
+        // Animate the resize alongside the SwiftUI slide transition. A short
+        // ease-in-out feels in sync with the spring used for step navigation.
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.32
+            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            context.allowsImplicitAnimation = true
+            window.animator().setFrame(newFrame, display: true)
         }
     }
 }

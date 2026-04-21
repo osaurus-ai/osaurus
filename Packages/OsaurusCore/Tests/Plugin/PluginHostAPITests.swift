@@ -145,7 +145,7 @@ struct PluginHostJSONTests {
 struct DispatchRequestTests {
 
     @Test func defaultsAreCorrect() {
-        let request = DispatchRequest(mode: .work, prompt: "Do something")
+        let request = DispatchRequest(prompt: "Do something")
         #expect(request.sourcePluginId == nil)
         #expect(request.showToast == true)
         #expect(request.agentId == nil)
@@ -153,11 +153,12 @@ struct DispatchRequestTests {
         #expect(request.parameters.isEmpty)
         #expect(request.folderPath == nil)
         #expect(request.folderBookmark == nil)
+        #expect(request.source == .chat)
+        #expect(request.externalSessionKey == nil)
     }
 
     @Test func sourcePluginIdIsPreserved() {
         let request = DispatchRequest(
-            mode: .work,
             prompt: "Build feature",
             sourcePluginId: "com.test.plugin"
         )
@@ -171,7 +172,6 @@ struct DispatchRequestTests {
 
         let request = DispatchRequest(
             id: id,
-            mode: .chat,
             prompt: "Hello",
             agentId: agentId,
             title: "My Task",
@@ -179,11 +179,12 @@ struct DispatchRequestTests {
             folderPath: "/tmp/test",
             folderBookmark: bookmark,
             showToast: false,
-            sourcePluginId: "com.example.plugin"
+            sourcePluginId: "com.example.plugin",
+            source: .plugin,
+            externalSessionKey: "telegram-chat-42"
         )
 
         #expect(request.id == id)
-        #expect(request.mode == .chat)
         #expect(request.prompt == "Hello")
         #expect(request.agentId == agentId)
         #expect(request.title == "My Task")
@@ -192,6 +193,20 @@ struct DispatchRequestTests {
         #expect(request.folderBookmark == bookmark)
         #expect(request.showToast == false)
         #expect(request.sourcePluginId == "com.example.plugin")
+        #expect(request.source == .plugin)
+        #expect(request.externalSessionKey == "telegram-chat-42")
+    }
+
+    @Test func sourceDefaultsToChatWhenNotSpecified() {
+        // Back-compat: existing callers that omit `source` get `.chat` so
+        // schedules / watchers / HTTP all explicitly opt in to other sources.
+        let request = DispatchRequest(prompt: "p", sourcePluginId: "com.x")
+        #expect(request.source == .chat)
+    }
+
+    @Test func externalSessionKeyDefaultsToNil() {
+        let request = DispatchRequest(prompt: "p")
+        #expect(request.externalSessionKey == nil)
     }
 }
 
@@ -475,19 +490,20 @@ struct EventSerializationTests {
         try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any]
     }
 
-    @Test func startedEventWorkMode() {
-        let session = WorkSession(agentId: Agent.defaultId)
+    @Test
+    @MainActor
+    func startedEventCarriesTitleAndStatus() {
+        let context = ExecutionContext(agentId: Agent.defaultId, title: "Build feature")
         let state = BackgroundTaskState(
             id: UUID(),
-            taskId: "t1",
             taskTitle: "Build feature",
             agentId: Agent.defaultId,
-            session: session
+            chatSession: context.chatSession,
+            executionContext: context
         )
         let json = PluginHostContext.serializeStartedEvent(state: state)
         let dict = parse(json)
         #expect(dict?["status"] as? String == "running")
-        #expect(dict?["mode"] as? String == "work")
         let title = dict?["title"] as? String
         #expect(title == "Build feature")
     }
@@ -542,30 +558,6 @@ struct EventSerializationTests {
         #expect(step == nil)
     }
 
-    @Test func clarificationEvent() {
-        let clarification = ClarificationRequest(
-            question: "Which branch?",
-            options: ["main", "develop"]
-        )
-        let json = PluginHostContext.serializeClarificationEvent(clarification: clarification)
-        let dict = parse(json)
-        #expect(dict?["question"] as? String == "Which branch?")
-        let opts = dict?["options"] as? [String]
-        #expect(opts?.count == 2)
-    }
-
-    @Test func clarificationEventWithoutOptions() {
-        let clarification = ClarificationRequest(
-            question: "Please provide more info",
-            options: nil
-        )
-        let json = PluginHostContext.serializeClarificationEvent(clarification: clarification)
-        let dict = parse(json)
-        #expect(dict?["question"] as? String == "Please provide more info")
-        let opts = dict?["options"]
-        #expect(opts == nil)
-    }
-
     @Test func completedEventSuccess() {
         let sessionId = UUID()
         let json = PluginHostContext.serializeCompletedEvent(
@@ -610,48 +602,34 @@ struct TaskStateDictTests {
         try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any]
     }
 
-    @Test func runningTaskIncludesTitleModeAndOutput() {
-        let session = WorkSession(agentId: Agent.defaultId)
-        session.streamingContent = "Hello from agent"
+    @Test
+    @MainActor
+    func runningTaskIncludesTitleAndStep() {
+        let context = ExecutionContext(agentId: Agent.defaultId, title: "Build feature")
         let state = BackgroundTaskState(
             id: UUID(),
-            taskId: "t1",
             taskTitle: "Build feature",
             agentId: Agent.defaultId,
-            session: session,
-            progress: 0.5,
+            chatSession: context.chatSession,
+            executionContext: context,
             currentStep: "Writing code"
         )
         let dict = PluginHostContext.taskStateDict(id: state.id, state: state)
         #expect(dict["title"] as? String == "Build feature")
-        #expect(dict["mode"] as? String == "work")
         #expect(dict["status"] as? String == "running")
-        #expect(dict["progress"] as? Double == 0.5)
         #expect(dict["current_step"] as? String == "Writing code")
-        #expect(dict["output"] as? String == "Hello from agent")
     }
 
-    @Test func runningTaskOmitsEmptyOutput() {
-        let session = WorkSession(agentId: Agent.defaultId)
+    @Test
+    @MainActor
+    func taskStateDictIncludesDraft() {
+        let context = ExecutionContext(agentId: Agent.defaultId, title: "Build feature")
         let state = BackgroundTaskState(
             id: UUID(),
-            taskId: "t1",
             taskTitle: "Build feature",
             agentId: Agent.defaultId,
-            session: session
-        )
-        let dict = PluginHostContext.taskStateDict(id: state.id, state: state)
-        #expect(dict["output"] == nil)
-    }
-
-    @Test func taskStateDictIncludesDraft() {
-        let session = WorkSession(agentId: Agent.defaultId)
-        let state = BackgroundTaskState(
-            id: UUID(),
-            taskId: "t1",
-            taskTitle: "Build feature",
-            agentId: Agent.defaultId,
-            session: session
+            chatSession: context.chatSession,
+            executionContext: context
         )
         state.draftText = "{\"text\":\"working...\"}"
         let dict = PluginHostContext.taskStateDict(id: state.id, state: state)
@@ -659,19 +637,20 @@ struct TaskStateDictTests {
         #expect(draft?["text"] as? String == "working...")
     }
 
-    @Test func completedTaskIncludesTitleAndMode() {
-        let session = WorkSession(agentId: Agent.defaultId)
+    @Test
+    @MainActor
+    func completedTaskIncludesTitleAndSummary() {
+        let context = ExecutionContext(agentId: Agent.defaultId, title: "Deploy app")
         let state = BackgroundTaskState(
             id: UUID(),
-            taskId: "t1",
             taskTitle: "Deploy app",
             agentId: Agent.defaultId,
-            session: session,
+            chatSession: context.chatSession,
+            executionContext: context,
             status: .completed(success: true, summary: "All done")
         )
         let dict = PluginHostContext.taskStateDict(id: state.id, state: state)
         #expect(dict["title"] as? String == "Deploy app")
-        #expect(dict["mode"] as? String == "work")
         #expect(dict["status"] as? String == "completed")
         #expect(dict["success"] as? Bool == true)
         #expect(dict["summary"] as? String == "All done")

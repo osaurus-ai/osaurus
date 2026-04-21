@@ -194,8 +194,15 @@ final class PluginHostContext: @unchecked Sendable {
                 )
             }
 
-            let modeStr = json["mode"] as? String ?? "work"
-            let mode: ChatMode = modeStr == "chat" ? .chat : .work
+            // Empty/whitespace prompts make `ChatSession.send` no-op (no Task,
+            // no `isStreaming` flip), which would leave the dispatched task
+            // hanging in `.running` until the awaitCompletion watchdog.
+            guard !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                return (
+                    Self.jsonString(["error": "invalid_request", "message": "Prompt is empty"]),
+                    UUID?.none
+                )
+            }
 
             var requestId = UUID()
             if let idStr = json["id"] as? String, let parsed = UUID(uuidString: idStr) {
@@ -229,26 +236,27 @@ final class PluginHostContext: @unchecked Sendable {
                 folderBookmark = Data(base64Encoded: bookmarkStr)
             }
 
+            let externalSessionKey =
+                json["external_session_key"] as? String
+                ?? json["session_id"] as? String
+
             let request = DispatchRequest(
                 id: requestId,
-                mode: mode,
                 prompt: prompt,
                 agentId: resolvedAgent,
                 title: title,
                 folderBookmark: folderBookmark,
                 showToast: true,
-                sourcePluginId: pluginId
+                sourcePluginId: pluginId,
+                source: .plugin,
+                externalSessionKey: externalSessionKey
             )
 
-            await MainActor.run {
-                BackgroundTaskManager.shared.holdEventsForDispatch(taskId: requestId)
-            }
-
+            // BackgroundTaskManager.dispatchChat now self-holds plugin
+            // events between registerTask and trampoline-return, since
+            // reattach can resolve a different task id than `requestId`.
             let handle = await TaskDispatcher.shared.dispatch(request)
-            guard handle != nil else {
-                await MainActor.run {
-                    BackgroundTaskManager.shared.releaseEventsForDispatch(taskId: requestId)
-                }
+            guard let handle else {
                 return (
                     Self.jsonString([
                         "error": "task_limit_reached", "message": "Maximum concurrent background tasks reached",
@@ -256,7 +264,11 @@ final class PluginHostContext: @unchecked Sendable {
                 )
             }
 
-            return (Self.jsonString(["id": requestId.uuidString, "status": "running"]), requestId)
+            // Use the resolved task id (may differ from `requestId` if the
+            // dispatcher reattached to an existing session via the
+            // `external_session_key` find-or-create path).
+            let resolvedId = handle.id
+            return (Self.jsonString(["id": resolvedId.uuidString, "status": "running"]), resolvedId)
         }
     }
 
@@ -285,14 +297,12 @@ final class PluginHostContext: @unchecked Sendable {
         }
     }
 
+    /// No-op: clarifications are surfaced inline in the chat window via
+    /// the `clarify` agent intercept. The C ABI slot is preserved so old
+    /// plugins keep loading.
     func dispatchClarify(taskId: String, response: String) {
-        guard let uuid = UUID(uuidString: taskId) else { return }
-        Self.blockingMainActor { [pluginId] in
-            guard let state = BackgroundTaskManager.shared.taskState(for: uuid),
-                state.sourcePluginId == pluginId
-            else { return }
-            BackgroundTaskManager.shared.submitClarification(uuid, response: response)
-        }
+        _ = taskId
+        _ = response
     }
 
     func listActiveTasks() -> String {
@@ -325,33 +335,6 @@ final class PluginHostContext: @unchecked Sendable {
         }
     }
 
-    func dispatchAddIssue(taskId: String, issueJSON: String) -> String {
-        guard let uuid = UUID(uuidString: taskId) else {
-            return Self.jsonString(["error": "invalid_task_id", "message": "Invalid UUID format"])
-        }
-
-        let data = Data(issueJSON.utf8)
-        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let title = json["title"] as? String
-        else {
-            return Self.jsonString(["error": "invalid_request", "message": "Missing required field: title"])
-        }
-        let query = json["description"] as? String ?? title
-
-        return Self.blockingMainActor { [pluginId] in
-            guard let state = BackgroundTaskManager.shared.taskState(for: uuid),
-                state.sourcePluginId == pluginId,
-                state.status.isActive, state.mode == .work,
-                let session = state.session
-            else {
-                return Self.jsonString(["error": "not_found", "message": "Active work task not found"])
-            }
-
-            Task { await session.addIssueFromPlugin(query: query) }
-            return Self.jsonString(["status": "queued", "title": title])
-        }
-    }
-
     // MARK: - Inference Callbacks
 
     private static let toolExecutionTimeout: UInt64 = 120
@@ -367,7 +350,7 @@ final class PluginHostContext: @unchecked Sendable {
         let temperature: Float?
         let maxTokens: Int?
         let tools: [Tool]?
-        let executionMode: WorkExecutionMode
+        let executionMode: ExecutionMode
         var cacheHint: String?
         var staticPrefix: String?
 
@@ -427,7 +410,7 @@ final class PluginHostContext: @unchecked Sendable {
         let engine: ChatEngine
         let budgetManager: ContextBudgetManager?
         let agentId: UUID?
-        let executionMode: WorkExecutionMode
+        let executionMode: ExecutionMode
         let contextId: String
     }
 
@@ -526,7 +509,17 @@ final class PluginHostContext: @unchecked Sendable {
             await SandboxToolRegistrar.shared.registerTools(for: agentId)
         }
 
-        let execMode = await MainActor.run { ToolRegistry.shared.resolveWorkExecutionMode(folderContext: nil) }
+        // Honour the same execution-mode rules the chat UI uses so a
+        // plugin invocation against this agent sees the same tool surface
+        // (sandbox > host folder > none). Previously this path was hard-
+        // coded to `folderContext: nil`, so a host-folder agent driven via
+        // a plugin would silently lose its folder tools.
+        let execMode = await MainActor.run {
+            ToolRegistry.shared.resolveExecutionMode(
+                folderContext: FolderContextService.shared.currentContext,
+                autonomousEnabled: resolved.autonomousEnabled
+            )
+        }
         let composed = await SystemPromptComposer.composeChatContext(agentId: agentId, executionMode: execMode)
         return await MainActor.run {
             let mgr = AgentManager.shared
@@ -619,17 +612,35 @@ final class PluginHostContext: @unchecked Sendable {
 
     // MARK: Preflight Capability Search
 
-    /// Session-scoped preflight cache. Once a preflight result is computed for a session,
-    /// it is reused for all subsequent turns in that session. This keeps the tool list and
-    /// system-prompt snippet stable across turns, which is required for KV-cache reuse:
-    /// any change to the tool list causes prompt divergence before token ~1000 and forces
-    /// a full re-prefill even when the conversation content is otherwise identical.
-    private nonisolated(unsafe) static var preflightCache: [String: PreflightResult] = [:]
-    private static let preflightCacheLock = NSLock()
+    /// Session-scoped preflight cache lives in the shared
+    /// `SessionToolStateStore` so HTTP/plugin and chat windows hit the same
+    /// snapshot. Once a preflight result is computed for a session it is
+    /// reused for all subsequent turns; any change to the tool list causes
+    /// prompt divergence before token ~1000 and forces a full re-prefill,
+    /// so stability matters more than freshness here.
 
     /// Call when a session ends (e.g. chat window closes) to release the memoized result.
     static func invalidatePreflightCache(sessionId: String) {
-        _ = preflightCacheLock.withLock { preflightCache.removeValue(forKey: sessionId) }
+        Task { await SessionToolStateStore.shared.invalidate(sessionId) }
+    }
+
+    /// Persist newly loaded tool names (from `capabilities_load`) onto a
+    /// session's preflight cache entry so subsequent requests with the same
+    /// `session_id` re-include them via `additionalToolNames` instead of
+    /// losing them when preflight is reused. No-op when the session has
+    /// no entry yet (load before first compose) — the next preflight will
+    /// rediscover what the model needs.
+    private static func recordSessionLoadedTools(sessionId: String, names: [String]) {
+        guard !names.isEmpty else { return }
+        Task {
+            guard await SessionToolStateStore.shared.get(sessionId) != nil else { return }
+            await SessionToolStateStore.shared.appendLoadedTools(
+                sessionId,
+                names: names,
+                fallbackPreflight: .empty,
+                fallbackAlwaysLoadedNames: nil
+            )
+        }
     }
 
     private static func extractPreflightQuery(from messages: [ChatMessage]) -> String {
@@ -638,7 +649,7 @@ final class PluginHostContext: @unchecked Sendable {
 
     private static func applyPreflightSearch(
         to inference: EnrichedInference,
-        executionMode: WorkExecutionMode = .none,
+        executionMode: ExecutionMode = .none,
         agentId: UUID = Agent.defaultId
     ) async -> EnrichedInference {
         let toolMode = await MainActor.run {
@@ -646,34 +657,52 @@ final class PluginHostContext: @unchecked Sendable {
         }
         let isManualTools = toolMode == .manual
 
-        // Manual mode: merge user-selected tools, skip RAG entirely.
-        // Also strip any capability tools that may already be on the inference
-        // from resolveAgentContext, since manual mode disables dynamic discovery.
+        // Manual mode mirrors the pragmatic chat-side rule (always-loaded
+        // baseline + user picks), just without the LLM-driven preflight.
+        // Same shape across chat / plugin so the agent's schema doesn't
+        // change with entry point. See SystemPromptComposer.resolveTools.
         if isManualTools {
-            let (builtInTools, manualSpecs, capNames) = await MainActor.run {
-                let base = ToolRegistry.shared.alwaysLoadedSpecs(
-                    mode: executionMode,
-                    excludeCapabilityTools: true
-                )
+            let (builtInTools, manualSpecs) = await MainActor.run {
+                let base = ToolRegistry.shared.alwaysLoadedSpecs(mode: executionMode)
                 let names = AgentManager.shared.effectiveManualToolNames(for: agentId) ?? []
                 let manual = ToolRegistry.shared.specs(forTools: names)
-                return (base, manual, ToolRegistry.capabilityToolNames)
+                return (base, manual)
             }
-            let filteredExisting = (inference.tools ?? []).filter { !capNames.contains($0.function.name) }
-            let cleanInference = EnrichedInference(
-                request: inference.request,
-                tools: filteredExisting.isEmpty ? nil : filteredExisting
-            )
-            let empty = PreflightResult(toolSpecs: manualSpecs, contextSnippet: "", items: [])
-            return applyPreflightResult(empty, to: cleanInference, builtInTools: builtInTools)
+            let empty = PreflightResult(toolSpecs: manualSpecs, items: [])
+            return applyPreflightResult(empty, to: inference, builtInTools: builtInTools)
         }
 
         // Auto mode: RAG-based preflight
         if let sid = inference.request.session_id {
-            let cached = preflightCacheLock.withLock { preflightCache[sid] }
+            // Drop the cache if the (mode, toolMode) signature changed
+            // since last turn — same rule as the chat send path.
+            let liveFp = SessionToolState.fingerprint(
+                executionMode: executionMode,
+                toolMode: toolMode
+            )
+            await SessionToolStateStore.shared.invalidateIfFingerprintChanged(sid, liveFingerprint: liveFp)
+            let cached = await SessionToolStateStore.shared.get(sid)
             if let cached {
-                let builtInTools = await MainActor.run { ToolRegistry.shared.alwaysLoadedSpecs(mode: executionMode) }
-                return applyPreflightResult(cached, to: inference, builtInTools: builtInTools)
+                // Honour the session's first-turn always-loaded snapshot
+                // when present: filter the live registry result down to
+                // those names so a tool that registered late doesn't
+                // sneak into turn 2's schema.
+                let builtInTools = await MainActor.run { () -> [Tool] in
+                    let live = ToolRegistry.shared.alwaysLoadedSpecs(mode: executionMode)
+                    if let frozen = cached.initialAlwaysLoadedNames {
+                        return live.filter { frozen.contains($0.function.name) }
+                    }
+                    return live
+                }
+                let extraSpecs = await MainActor.run {
+                    ToolRegistry.shared.specs(forTools: Array(cached.loadedToolNames))
+                }
+                return applyPreflightResult(
+                    cached.initialPreflight,
+                    to: inference,
+                    builtInTools: builtInTools,
+                    additionalToolSpecs: extraSpecs
+                )
             }
         }
 
@@ -689,30 +718,43 @@ final class PluginHostContext: @unchecked Sendable {
         let preflight = await PreflightCapabilitySearch.search(query: query, mode: preflightMode, agentId: agentId)
 
         if let sid = inference.request.session_id {
-            preflightCacheLock.withLock { preflightCache[sid] = preflight }
+            // Snapshot the always-loaded names this turn so subsequent
+            // turns freeze against them. Stamp the (mode, toolMode)
+            // fingerprint so a flip on a later turn invalidates the
+            // cache (mirrors `ChatView`'s behaviour).
+            let builtInNames = Set(builtInTools.map { $0.function.name })
+            let fp = SessionToolState.fingerprint(
+                executionMode: executionMode,
+                toolMode: toolMode
+            )
+            await SessionToolStateStore.shared.setInitial(
+                sid,
+                preflight: preflight,
+                alwaysLoadedNames: builtInNames,
+                fingerprint: fp
+            )
         }
 
         return applyPreflightResult(preflight, to: inference, builtInTools: builtInTools)
     }
 
-    /// Merges a cached `PreflightResult` into an inference request without re-running the search.
+    /// Merges a cached `PreflightResult` (and any session-loaded tool specs)
+    /// into an inference request without re-running the search.
     private static func applyPreflightResult(
         _ preflight: PreflightResult,
         to inference: EnrichedInference,
-        builtInTools: [Tool]
+        builtInTools: [Tool],
+        additionalToolSpecs: [Tool] = []
     ) -> EnrichedInference {
         var seen = Set((inference.tools ?? []).map { $0.function.name })
         var tools = inference.tools ?? []
-        for spec in builtInTools + preflight.toolSpecs where !seen.contains(spec.function.name) {
+        for spec in builtInTools + preflight.toolSpecs + additionalToolSpecs
+        where !seen.contains(spec.function.name) {
             tools.append(spec)
             seen.insert(spec.function.name)
         }
 
-        var messages = inference.request.messages
-        if !preflight.contextSnippet.isEmpty {
-            SystemPromptComposer.appendSystemContent(preflight.contextSnippet, into: &messages)
-        }
-
+        let messages = inference.request.messages
         let effectiveTools = tools.isEmpty ? nil : tools
         let request = ChatCompletionRequest(
             model: inference.request.model,
@@ -781,6 +823,15 @@ final class PluginHostContext: @unchecked Sendable {
             let additions = newTools.filter { !existing.contains($0.function.name) }
             if !additions.isEmpty {
                 toolSpecs = (toolSpecs ?? []) + additions
+                // Persist additions to the per-session cache so subsequent
+                // requests with the same `session_id` continue to see these
+                // tools without the model having to re-discover them.
+                if let sid = prep.enriched.request.session_id {
+                    recordSessionLoadedTools(
+                        sessionId: sid,
+                        names: additions.map { $0.function.name }
+                    )
+                }
             }
             return (result, nil)
 
@@ -838,7 +889,7 @@ final class PluginHostContext: @unchecked Sendable {
         name: String,
         argumentsJSON: String,
         agentId: UUID? = nil,
-        executionMode: WorkExecutionMode = .none
+        executionMode: ExecutionMode = .none
     ) async -> String {
         if executionMode.usesSandboxTools, let agentId {
             await SandboxToolRegistrar.shared.registerTools(for: agentId)
@@ -847,25 +898,30 @@ final class PluginHostContext: @unchecked Sendable {
         return await withTaskGroup(of: String?.self) { group in
             group.addTask {
                 do {
-                    return try await WorkExecutionContext.$currentAgentId.withValue(agentId) {
+                    return try await ChatExecutionContext.$currentAgentId.withValue(agentId) {
                         try await ToolRegistry.shared.execute(
                             name: name,
                             argumentsJSON: argumentsJSON
                         )
                     }
                 } catch {
-                    return "[REJECTED] \(error.localizedDescription)"
+                    return ToolEnvelope.fromError(error, tool: name)
                 }
             }
             group.addTask {
                 try? await Task.sleep(nanoseconds: toolExecutionTimeout * 1_000_000_000)
                 return nil
             }
+            let timeoutEnvelope = ToolErrorEnvelope(
+                kind: .timeout,
+                reason: "Tool did not complete within \(toolExecutionTimeout)s.",
+                toolName: name
+            ).toJSONString()
             guard let first = await group.next() else {
-                return "[TIMEOUT] Tool '\(name)' did not complete within \(toolExecutionTimeout)s."
+                return timeoutEnvelope
             }
             group.cancelAll()
-            return first ?? "[TIMEOUT] Tool '\(name)' did not complete within \(toolExecutionTimeout)s."
+            return first ?? timeoutEnvelope
         }
     }
 
@@ -879,8 +935,12 @@ final class PluginHostContext: @unchecked Sendable {
         let releaseSlot: @Sendable () -> Void = { [weak self] in
             self?.exitInflightInference()
         }
+        let activityId = Self.beginPluginActivity(pluginId: pid, kind: .complete)
         return Self.blockingAsync {
-            defer { releaseSlot() }
+            defer {
+                releaseSlot()
+                Self.endPluginActivity(activityId)
+            }
             guard let (rawJSON, sanitized) = Self.parseRawRequest(requestJSON),
                 let request = try? JSONDecoder().decode(ChatCompletionRequest.self, from: sanitized)
             else {
@@ -917,34 +977,40 @@ final class PluginHostContext: @unchecked Sendable {
                         choice.finish_reason == "tool_calls",
                         iteration < prep.options.maxIterations
                     {
+                        // The non-streaming path already appends the full
+                        // assistant message (with all tool_calls) once,
+                        // then appends only the tool-result messages per call.
                         messages.append(choice.message)
                         for tc in calls {
-                            var result = await Self.executeToolCall(
-                                name: tc.function.name,
-                                argumentsJSON: tc.function.arguments,
-                                agentId: prep.agentId,
-                                executionMode: prep.executionMode
-                            )
-                            let postProcessed = await Self.postProcessToolResult(
+                            let processed = await Self.processToolCall(
                                 toolName: tc.function.name,
-                                result: result,
+                                argumentsJSON: tc.function.arguments,
+                                callId: tc.id,
+                                priorAssistantContent: "",
                                 prep: prep,
                                 toolSpecs: &toolSpecs
                             )
-                            result = postProcessed.result
-                            if let dict = postProcessed.artifactDict { sharedArtifacts.append(dict) }
-                            messages.append(
-                                ChatMessage(
-                                    role: "tool",
-                                    content: result,
-                                    tool_calls: nil,
-                                    tool_call_id: tc.id
-                                )
-                            )
-                            toolCallsExecuted.append(["name": tc.function.name, "tool_call_id": tc.id])
+                            // assistantMessage from processToolCall is unused
+                            // here because choice.message already represents
+                            // the full assistant turn for this iteration.
+                            if let dict = processed.artifactDict { sharedArtifacts.append(dict) }
+                            messages.append(processed.toolMessage)
+                            toolCallsExecuted.append(processed.toolCallExecuted)
                         }
                         continue
                     }
+
+                    // Persist the final assistant turn into the chat-history
+                    // SQLite so this conversation is browsable in the sidebar.
+                    var persistedMessages = messages
+                    persistedMessages.append(choice.message)
+                    Self.persistInference(
+                        pluginId: pid,
+                        agentId: prep.agentId,
+                        externalSessionKey: prep.enriched.request.session_id,
+                        finalMessages: persistedMessages,
+                        model: prep.enriched.request.model
+                    )
 
                     guard let encoded = try? JSONEncoder().encode(response),
                         var json = (try? JSONSerialization.jsonObject(with: encoded)) as? [String: Any]
@@ -984,8 +1050,12 @@ final class PluginHostContext: @unchecked Sendable {
         let releaseSlot: @Sendable () -> Void = { [weak self] in
             self?.exitInflightInference()
         }
+        let activityId = Self.beginPluginActivity(pluginId: pid, kind: .completeStream)
         return Self.blockingAsync {
-            defer { releaseSlot() }
+            defer {
+                releaseSlot()
+                Self.endPluginActivity(activityId)
+            }
             guard let (rawJSON, sanitized) = Self.parseRawRequest(requestJSON),
                 let request = try? JSONDecoder().decode(ChatCompletionRequest.self, from: sanitized)
             else {
@@ -1023,6 +1093,17 @@ final class PluginHostContext: @unchecked Sendable {
                     var iterContent = ""
 
                     for try await delta in stream {
+                        // Reasoning sentinel must be decoded BEFORE the
+                        // generic `isSentinel` filter, otherwise reasoning
+                        // text gets dropped together with tool/stats hints.
+                        // We forward reasoning to plugins on the OpenAI
+                        // extended `reasoning_content` field of the chunk
+                        // delta — plugins that ignore the field continue
+                        // to work unchanged.
+                        if let reasoning = StreamingReasoningHint.decode(delta) {
+                            emit(Self.chunkPayload(id: cid, delta: ["reasoning_content": reasoning]))
+                            continue
+                        }
                         if StreamingToolHint.isSentinel(delta) { continue }
                         iterContent += delta
                         lastContent += delta
@@ -1033,6 +1114,14 @@ final class PluginHostContext: @unchecked Sendable {
                         messages.append(ChatMessage(role: "assistant", content: iterContent))
                     }
                     emit(Self.chunkPayload(id: cid, delta: [:], finishReason: "stop"))
+                    Self.persistStreamingInference(
+                        pluginId: pid,
+                        agentId: prep.agentId,
+                        externalSessionKey: prep.enriched.request.session_id,
+                        priorMessages: messages,
+                        assistantContent: "",
+                        model: prep.enriched.request.model
+                    )
                     return Self.buildStreamResult(
                         id: cid,
                         model: prep.enriched.request.model,
@@ -1041,72 +1130,40 @@ final class PluginHostContext: @unchecked Sendable {
                         sharedArtifacts: sharedArtifacts
                     )
 
+                } catch let invs as ServiceToolInvocations {
+                    guard iteration < prep.options.maxIterations else {
+                        emit(Self.chunkPayload(id: cid, delta: [:], finishReason: "stop"))
+                        break
+                    }
+                    await Self.processInvocationBatch(
+                        invs.invocations,
+                        cid: cid,
+                        lastContent: &lastContent,
+                        messages: &messages,
+                        toolSpecs: &toolSpecs,
+                        toolCallsExecuted: &toolCallsExecuted,
+                        sharedArtifacts: &sharedArtifacts,
+                        prep: prep,
+                        emit: emit
+                    )
+                    continue
+
                 } catch let inv as ServiceToolInvocation {
                     guard iteration < prep.options.maxIterations else {
                         emit(Self.chunkPayload(id: cid, delta: [:], finishReason: "stop"))
                         break
                     }
-
-                    let callId =
-                        inv.toolCallId
-                        ?? "call_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(24))"
-
-                    let tcDelta: [String: Any] = [
-                        "tool_calls": [
-                            ["id": callId, "function": ["name": inv.toolName, "arguments": inv.jsonArguments]]
-                        ]
-                    ]
-                    emit(Self.chunkPayload(id: cid, delta: tcDelta, finishReason: "tool_calls"))
-
-                    var result = await Self.executeToolCall(
-                        name: inv.toolName,
-                        argumentsJSON: inv.jsonArguments,
-                        agentId: prep.agentId,
-                        executionMode: prep.executionMode
-                    )
-                    let postProcessed = await Self.postProcessToolResult(
-                        toolName: inv.toolName,
-                        result: result,
+                    await Self.processInvocationBatch(
+                        [inv],
+                        cid: cid,
+                        lastContent: &lastContent,
+                        messages: &messages,
+                        toolSpecs: &toolSpecs,
+                        toolCallsExecuted: &toolCallsExecuted,
+                        sharedArtifacts: &sharedArtifacts,
                         prep: prep,
-                        toolSpecs: &toolSpecs
+                        emit: emit
                     )
-                    result = postProcessed.result
-                    if let dict = postProcessed.artifactDict { sharedArtifacts.append(dict) }
-
-                    emit(
-                        Self.chunkPayload(
-                            id: cid,
-                            delta: [
-                                "role": "tool", "tool_call_id": callId, "content": result,
-                            ]
-                        )
-                    )
-
-                    toolCallsExecuted.append(["name": inv.toolName, "tool_call_id": callId])
-
-                    let toolCall = ToolCall(
-                        id: callId,
-                        type: "function",
-                        function: ToolCallFunction(name: inv.toolName, arguments: inv.jsonArguments),
-                        geminiThoughtSignature: inv.geminiThoughtSignature
-                    )
-                    messages.append(
-                        ChatMessage(
-                            role: "assistant",
-                            content: lastContent.isEmpty ? nil : lastContent,
-                            tool_calls: [toolCall],
-                            tool_call_id: nil
-                        )
-                    )
-                    messages.append(
-                        ChatMessage(
-                            role: "tool",
-                            content: result,
-                            tool_calls: nil,
-                            tool_call_id: callId
-                        )
-                    )
-                    lastContent = ""
                     continue
 
                 } catch {
@@ -1114,6 +1171,16 @@ final class PluginHostContext: @unchecked Sendable {
                 }
             }
 
+            // Persist whatever we have before returning, even on max-iterations
+            // exit, so the user can still see the partial conversation.
+            Self.persistStreamingInference(
+                pluginId: pid,
+                agentId: prep.agentId,
+                externalSessionKey: prep.enriched.request.session_id,
+                priorMessages: messages,
+                assistantContent: lastContent,
+                model: prep.enriched.request.model
+            )
             return Self.buildStreamResult(
                 id: cid,
                 model: prep.enriched.request.model,
@@ -1125,6 +1192,129 @@ final class PluginHostContext: @unchecked Sendable {
     }
 
     // MARK: Inference Helpers
+
+    /// Outcome of executing a single model-emitted tool call. Shared between
+    /// `complete` (non-streaming, walks each item in `choice.message.tool_calls`)
+    /// and `complete_stream` (each `ServiceToolInvocation`) so the per-call
+    /// behaviour — execute, post-process, append assistant + tool messages —
+    /// stays in sync between the two paths.
+    private struct ToolCallProcessing {
+        let result: String
+        let assistantMessage: ChatMessage
+        let toolMessage: ChatMessage
+        let toolCallExecuted: [String: String]
+        let artifactDict: [String: Any]?
+    }
+
+    /// Execute every tool in a `ServiceToolInvocations` batch and append the
+    /// assistant + tool messages in order. Mirrors the `complete()`
+    /// non-streaming path so a single completion that emits multiple
+    /// `<tool_call>` blocks runs all of them in one streaming round.
+    private static func processInvocationBatch(
+        _ invocations: [ServiceToolInvocation],
+        cid: String,
+        lastContent: inout String,
+        messages: inout [ChatMessage],
+        toolSpecs: inout [Tool]?,
+        toolCallsExecuted: inout [[String: String]],
+        sharedArtifacts: inout [[String: Any]],
+        prep: PreparedInference,
+        emit: ([String: Any]) -> Void
+    ) async {
+        for inv in invocations {
+            let callId =
+                inv.toolCallId
+                ?? "call_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(24))"
+
+            let tcDelta: [String: Any] = [
+                "tool_calls": [
+                    ["id": callId, "function": ["name": inv.toolName, "arguments": inv.jsonArguments]]
+                ]
+            ]
+            emit(Self.chunkPayload(id: cid, delta: tcDelta, finishReason: "tool_calls"))
+
+            let processed = await Self.processToolCall(
+                toolName: inv.toolName,
+                argumentsJSON: inv.jsonArguments,
+                callId: callId,
+                priorAssistantContent: lastContent,
+                prep: prep,
+                toolSpecs: &toolSpecs
+            )
+            if let dict = processed.artifactDict { sharedArtifacts.append(dict) }
+
+            emit(
+                Self.chunkPayload(
+                    id: cid,
+                    delta: [
+                        "role": "tool", "tool_call_id": callId, "content": processed.result,
+                    ]
+                )
+            )
+
+            toolCallsExecuted.append(processed.toolCallExecuted)
+            messages.append(processed.assistantMessage)
+            messages.append(processed.toolMessage)
+            // Only the FIRST invocation in the batch consumes the streamed
+            // assistant prose — subsequent calls in the same completion
+            // share the same response, so we clear lastContent after the
+            // first tool to avoid duplicating prose into every assistant
+            // tool-call message.
+            lastContent = ""
+        }
+    }
+
+    /// Execute one tool call, post-process the result, and produce the
+    /// assistant + tool ChatMessages to append to the running history.
+    /// Updates `toolSpecs` in place when post-processing surfaces newly
+    /// loaded tools (e.g. `capabilities_load`).
+    private static func processToolCall(
+        toolName: String,
+        argumentsJSON: String,
+        callId: String,
+        priorAssistantContent: String,
+        prep: PreparedInference,
+        toolSpecs: inout [Tool]?
+    ) async -> ToolCallProcessing {
+        var result = await Self.executeToolCall(
+            name: toolName,
+            argumentsJSON: argumentsJSON,
+            agentId: prep.agentId,
+            executionMode: prep.executionMode
+        )
+        let postProcessed = await Self.postProcessToolResult(
+            toolName: toolName,
+            result: result,
+            prep: prep,
+            toolSpecs: &toolSpecs
+        )
+        result = postProcessed.result
+
+        let toolCall = ToolCall(
+            id: callId,
+            type: "function",
+            function: ToolCallFunction(name: toolName, arguments: argumentsJSON)
+        )
+        let assistantMessage = ChatMessage(
+            role: "assistant",
+            content: priorAssistantContent.isEmpty ? nil : priorAssistantContent,
+            tool_calls: [toolCall],
+            tool_call_id: nil
+        )
+        let toolMessage = ChatMessage(
+            role: "tool",
+            content: result,
+            tool_calls: nil,
+            tool_call_id: callId
+        )
+        return ToolCallProcessing(
+            result: result,
+            assistantMessage: assistantMessage,
+            toolMessage: toolMessage,
+            toolCallExecuted: ["name": toolName, "tool_call_id": callId],
+            artifactDict: postProcessed.artifactDict
+        )
+    }
 
     private static func buildStreamResult(
         id: String,
@@ -1168,11 +1358,16 @@ final class PluginHostContext: @unchecked Sendable {
         guard tryEnterInflightInference() else {
             return Self.pluginBusyJSON(kind: "embed")
         }
+        let pid = self.pluginId
         let releaseSlot: @Sendable () -> Void = { [weak self] in
             self?.exitInflightInference()
         }
+        let activityId = Self.beginPluginActivity(pluginId: pid, kind: .embed)
         return Self.blockingAsync {
-            defer { releaseSlot() }
+            defer {
+                releaseSlot()
+                Self.endPluginActivity(activityId)
+            }
             let data = Data(requestJSON.utf8)
             guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
                 return Self.jsonString(["error": "invalid_request", "message": "Failed to parse embedding request"])
@@ -1550,20 +1745,21 @@ extension PluginHostContext {
         var result: [String: Any] = [
             "id": id.uuidString,
             "title": state.taskTitle,
-            "mode": state.mode == .work ? "work" : "chat",
         ]
 
         if let draft = state.draftText, let parsed = parseJSON(draft) { result["draft"] = parsed }
 
+        // Last assistant content — partial during `.running`, final on
+        // `.completed`. Surfaced for both so HTTP pollers and `task_status`
+        // callers can read the transcript without loading the session.
+        if let output = state.chatSession?.turns.last?.content, !output.isEmpty {
+            result["output"] = output
+        }
+
         switch state.status {
         case .running:
             result["status"] = "running"
-            result["progress"] = state.progress
             if let step = state.currentStep { result["current_step"] = step }
-
-            if let output = state.session?.streamingContent, !output.isEmpty {
-                result["output"] = output
-            }
 
             let activity: [[String: Any]] = state.activityFeed.suffix(20).map { item in
                 var entry: [String: Any] = [
@@ -1577,16 +1773,11 @@ extension PluginHostContext {
             if !activity.isEmpty { result["activity"] = activity }
 
         case .awaitingClarification:
+            // Reachable only via legacy state transitions; chat tasks
+            // surface clarification inline via the agent intercept and
+            // do NOT mark the task awaiting from the manager's POV.
             result["status"] = "awaiting_clarification"
-            result["progress"] = state.progress
             result["current_step"] = "Needs input"
-            if let clarification = state.pendingClarification {
-                var clarObj: [String: Any] = ["question": clarification.question]
-                if let options = clarification.options, !options.isEmpty {
-                    clarObj["options"] = options
-                }
-                result["clarification"] = clarObj
-            }
 
         case .completed(let success, let summary):
             result["status"] = success ? "completed" : "failed"
@@ -1629,7 +1820,6 @@ extension PluginHostContext {
     static func serializeStartedEvent(state: BackgroundTaskState) -> String {
         jsonString([
             "status": "running",
-            "mode": state.mode == .work ? "work" : "chat",
             "title": state.taskTitle,
         ])
     }
@@ -1655,18 +1845,6 @@ extension PluginHostContext {
     static func serializeProgressEvent(progress: Double, currentStep: String?, taskTitle: String) -> String {
         var dict: [String: Any] = ["progress": progress, "title": taskTitle]
         if let step = currentStep { dict["current_step"] = step }
-        return jsonString(dict)
-    }
-
-    @MainActor
-    static func serializeClarificationEvent(clarification: ClarificationRequest) -> String {
-        var dict: [String: Any] = ["question": clarification.question]
-        if let options = clarification.options, !options.isEmpty {
-            dict["options"] = options
-        }
-        if let context = clarification.context, !context.isEmpty {
-            dict["context"] = context
-        }
         return jsonString(dict)
     }
 
@@ -2107,19 +2285,24 @@ extension PluginHostContext {
         )
     }
 
-    static let trampolineDispatchAddIssue: osr_dispatch_add_issue_t = { taskIdPtr, issuePtr in
-        guard let taskIdPtr, let issuePtr, let ctx = activeContext() else { return nil }
+    /// Returns a `not_supported` error envelope: nested issues no longer
+    /// exist as a concept, so plugins should call `dispatch` to start a
+    /// fresh task instead. The C ABI slot is retained so old plugins
+    /// keep loading.
+    static let trampolineDispatchAddIssue: osr_dispatch_add_issue_t = { taskIdPtr, _ in
+        guard let taskIdPtr, let ctx = activeContext() else { return nil }
         let taskId = String(cString: taskIdPtr)
-        let issueJSON = String(cString: issuePtr)
-        var result = ""
-        let ms = measureMs { result = ctx.dispatchAddIssue(taskId: taskId, issueJSON: issueJSON) }
+        let result = jsonString([
+            "error": "not_supported",
+            "message":
+                "dispatch_add_issue is no longer supported. Call dispatch() to start a fresh task.",
+        ])
         logPluginCall(
             pluginId: ctx.pluginId,
             method: "POST",
             path: "/host-api/tasks/\(taskId)/issues",
-            statusCode: responseContainsError(result) ? 400 : 201,
-            durationMs: ms,
-            requestBody: issueJSON,
+            statusCode: 410,
+            durationMs: 0,
             responseBody: result
         )
         return makeCString(result)

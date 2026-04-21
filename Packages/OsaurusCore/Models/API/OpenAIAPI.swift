@@ -557,7 +557,12 @@ enum ToolChoiceOption: Codable, Sendable {
             switch str {
             case "auto": self = .auto
             case "none": self = .none
-            default: self = .auto
+            default:
+                throw DecodingError.dataCorruptedError(
+                    in: container,
+                    debugDescription:
+                        "Unsupported tool_choice string '\(str)'. Expected 'auto', 'none', or a typed function selector."
+                )
             }
             return
         }
@@ -739,11 +744,31 @@ extension ToolFunction {
 }
 
 extension Tool {
-    /// Convert to Tokenizers.ToolSpec (`[String: any Sendable]`) for MLX chat templates
+    /// Convert to Tokenizers.ToolSpec (`[String: any Sendable]`) for MLX chat templates.
+    ///
+    /// The dictionary is round-tripped through canonical JSON
+    /// (`JSONSerialization.WritingOptions.sortedKeys`) so the structure handed
+    /// to the chat template — and the resulting `<tools>` block in the
+    /// rendered prompt — is byte-stable across calls. Without this, key
+    /// iteration order from a fresh dictionary literal can shift between
+    /// requests and silently invalidate the MLX paged KV cache prefix.
     func toTokenizerToolSpec() -> [String: any Sendable] {
-        return [
+        let raw: [String: any Sendable] = [
             "type": type,
             "function": function.toFunctionSpec(),
         ]
+        return Self.canonicalize(raw) ?? raw
+    }
+
+    /// Round-trip a Sendable JSON value through `JSONSerialization` with
+    /// `.sortedKeys` to canonicalise nested key ordering. Returns `nil` on
+    /// the (extremely unlikely) serialisation failure so callers fall back
+    /// to the raw dict rather than emit nothing.
+    fileprivate static func canonicalize(_ value: [String: any Sendable]) -> [String: any Sendable]? {
+        guard JSONSerialization.isValidJSONObject(value),
+            let data = try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]),
+            let reparsed = try? JSONSerialization.jsonObject(with: data, options: []) as? [String: any Sendable]
+        else { return nil }
+        return reparsed
     }
 }

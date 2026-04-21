@@ -78,6 +78,13 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
     /// when osaurus is acting as a plain LLM backend for an external agent (e.g. Claude via API).
     public var disableTools: Bool
 
+    /// Default tool selection mode for the built-in Default agent (nil => .auto).
+    public var defaultToolSelectionMode: ToolSelectionMode?
+    /// Manually selected tool names for the built-in Default agent (used when mode is .manual).
+    public var defaultManualToolNames: [String]?
+    /// Manually selected skill names for the built-in Default agent (used when mode is .manual).
+    public var defaultManualSkillNames: [String]?
+
     // MARK: - Clipboard Settings
     /// When true, Osaurus will monitor the clipboard for new text content to offer as context.
     public var enableClipboardMonitoring: Bool
@@ -100,6 +107,9 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         defaultAutonomousExec: AutonomousExecConfig? = nil,
         preflightSearchMode: PreflightSearchMode? = nil,
         disableTools: Bool = false,
+        defaultToolSelectionMode: ToolSelectionMode? = nil,
+        defaultManualToolNames: [String]? = nil,
+        defaultManualSkillNames: [String]? = nil,
         enableClipboardMonitoring: Bool = true
     ) {
         self.hotkey = hotkey
@@ -119,6 +129,9 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         self.defaultAutonomousExec = defaultAutonomousExec
         self.preflightSearchMode = preflightSearchMode
         self.disableTools = disableTools
+        self.defaultToolSelectionMode = defaultToolSelectionMode
+        self.defaultManualToolNames = defaultManualToolNames
+        self.defaultManualSkillNames = defaultManualSkillNames
         self.enableClipboardMonitoring = enableClipboardMonitoring
     }
 
@@ -147,6 +160,18 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
             forKey: .preflightSearchMode
         )
         disableTools = try container.decodeIfPresent(Bool.self, forKey: .disableTools) ?? false
+        defaultToolSelectionMode = try container.decodeIfPresent(
+            ToolSelectionMode.self,
+            forKey: .defaultToolSelectionMode
+        )
+        defaultManualToolNames = try container.decodeIfPresent(
+            [String].self,
+            forKey: .defaultManualToolNames
+        )
+        defaultManualSkillNames = try container.decodeIfPresent(
+            [String].self,
+            forKey: .defaultManualSkillNames
+        )
         enableClipboardMonitoring = try container.decodeIfPresent(Bool.self, forKey: .enableClipboardMonitoring) ?? true
     }
 

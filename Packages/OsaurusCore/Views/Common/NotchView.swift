@@ -75,13 +75,14 @@ struct NotchShape: Shape {
 // MARK: - Expansion State
 
 private enum NotchExpansion: Equatable {
-    case hidden, compact, expanded, interactive
+    case hidden, compact, expanded
 }
 
 // MARK: - Notch View
 
 struct NotchView: View {
     @ObservedObject private var taskManager = BackgroundTaskManager.shared
+    @ObservedObject private var pluginActivity = PluginActivityManager.shared
     @ObservedObject private var windowController = NotchWindowController.shared
     @Environment(\.theme) private var theme
 
@@ -91,7 +92,6 @@ struct NotchView: View {
     @State private var isHoveringTrigger = false
     @State private var isHoveringBody = false
     @State private var activeTaskIndex: Int = 0
-    @State private var selectedOption: String?
     @State private var showCancelConfirmation = false
     @State private var contentRevealed = false
     @State private var absorbingTaskIds: Set<UUID> = []
@@ -109,6 +109,10 @@ struct NotchView: View {
 
     private var sortedTasks: [BackgroundTaskState] {
         Array(taskManager.backgroundTasks.values)
+            // Headless dispatchers (e.g. webhook responders) opt out of the
+            // notch by setting `showToast = false`. The task is still
+            // tracked for completion signaling — it just doesn't render.
+            .filter { $0.showToast }
             .sorted { a, b in
                 let ap = statusPriority(a.status), bp = statusPriority(b.status)
                 if ap != bp { return ap < bp }
@@ -131,10 +135,19 @@ struct NotchView: View {
         return sortedTasks[max(0, idx)]
     }
 
+    /// In-flight inline plugin call to surface when there's no dispatched
+    /// `BackgroundTaskState` to render. Lets the user see that, e.g., the
+    /// Telegram plugin is generating a reply via `complete_stream` even
+    /// though the call never created a task.
+    private var topPluginActivity: PluginActivityRecord? {
+        guard activeTask == nil else { return nil }
+        return pluginActivity.topActivity
+    }
+
     private var expansion: NotchExpansion {
-        guard let task = activeTask else { return .hidden }
-        if case .awaitingClarification = task.status { return .interactive }
-        return isHovering ? .expanded : .compact
+        if activeTask != nil { return isHovering ? .expanded : .compact }
+        if topPluginActivity != nil { return isHovering ? .expanded : .compact }
+        return .hidden
     }
 
     private var accentColor: Color {
@@ -153,16 +166,16 @@ struct NotchView: View {
         switch expansion {
         case .hidden: return 0
         case .compact: return metrics.notchWidth + 60
-        case .expanded, .interactive: return max(340, metrics.notchWidth + 140)
+        case .expanded: return max(340, metrics.notchWidth + 140)
         }
     }
 
-    /// Compact: flush with bezel. Expanded/interactive: content-driven via fixedSize.
+    /// Compact: flush with bezel. Expanded: content-driven via fixedSize.
     private var notchHeight: CGFloat {
         switch expansion {
         case .hidden: return 0
         case .compact: return metrics.notchHeight
-        case .expanded, .interactive: return 0
+        case .expanded: return 0
         }
     }
 
@@ -170,7 +183,7 @@ struct NotchView: View {
         switch expansion {
         case .hidden: return 4
         case .compact: return 5
-        case .expanded, .interactive: return 0  // square — looks like it slid out
+        case .expanded: return 0  // square — looks like it slid out
         }
     }
 
@@ -178,7 +191,7 @@ struct NotchView: View {
         switch expansion {
         case .hidden: return 10
         case .compact: return 12
-        case .expanded, .interactive: return 22
+        case .expanded: return 22
         }
     }
 
@@ -186,7 +199,7 @@ struct NotchView: View {
         switch expansion {
         case .hidden: return 10
         case .compact: return 14
-        case .expanded, .interactive: return 24
+        case .expanded: return 24
         }
     }
 
@@ -224,13 +237,6 @@ struct NotchView: View {
         }
         .onChange(of: isHoveringTrigger) { _, _ in handleHoverChange() }
         .onChange(of: isHoveringBody) { _, _ in handleHoverChange() }
-        .onChange(of: expansion) { _, newExpansion in
-            if newExpansion == .interactive {
-                withAnimation(.easeOut(duration: 0.2)) {
-                    contentRevealed = true
-                }
-            }
-        }
     }
 
     // MARK: - Notch Body
@@ -251,7 +257,6 @@ struct NotchView: View {
                 x: 0,
                 y: expansion == .compact ? 0 : (isHovering ? 10 : 6)
             )
-            .glow(color: accentColor, radius: expansion == .interactive ? 10 : 0, isActive: expansion == .interactive)
             .themedAlert(
                 "Cancel Background Task?",
                 isPresented: $showCancelConfirmation,
@@ -299,8 +304,6 @@ struct NotchView: View {
                     )
                     : .opacity
             )
-        case .interactive:
-            interactiveContent.transition(.opacity)
         }
     }
 
@@ -318,7 +321,7 @@ struct NotchView: View {
 
     @ViewBuilder
     private var compactLeading: some View {
-        if activeTask != nil {
+        if activeTask != nil || topPluginActivity != nil {
             AnimatedOrb(
                 color: accentColor,
                 size: .custom(orbSize),
@@ -336,7 +339,10 @@ struct NotchView: View {
         if let task = activeTask {
             switch task.status {
             case .running, .awaitingClarification:
-                NotchProgressRing(progress: task.progress, color: accentColor, size: 14, lineWidth: 1.5)
+                // Chat tasks don't expose structured progress — show
+                // indeterminate ring (passing -1 makes NotchProgressRing
+                // animate continuously).
+                NotchProgressRing(progress: -1, color: accentColor, size: 14, lineWidth: 1.5)
                     .transition(.opacity.combined(with: .scale(scale: 0.5)))
             case .completed(let success, _):
                 MorphingStatusIcon(
@@ -349,6 +355,9 @@ struct NotchView: View {
                 MorphingStatusIcon(state: .failed, accentColor: notchTertiaryText, size: 14)
                     .transition(.opacity.combined(with: .scale(scale: 0.5)))
             }
+        } else if topPluginActivity != nil {
+            NotchProgressRing(progress: -1, color: accentColor, size: 14, lineWidth: 1.5)
+                .transition(.opacity.combined(with: .scale(scale: 0.5)))
         }
     }
 
@@ -370,6 +379,8 @@ struct NotchView: View {
                     case .cancelled:
                         expandedCancelledBody(task: task)
                     }
+                } else if let activity = topPluginActivity {
+                    expandedPluginActivityBody(activity: activity)
                 }
 
                 if sortedTasks.count > 1 { taskDotIndicators }
@@ -402,15 +413,24 @@ struct NotchView: View {
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundColor(notchPrimaryText)
                         .lineLimit(1)
-                    Text(task.status.displayName)
+                    Text(headerSubtitle(for: task))
+                        .font(.system(size: 9.5, weight: .medium))
+                        .foregroundColor(notchTertiaryText)
+                        .lineLimit(1)
+                }
+            } else if let activity = topPluginActivity {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(activity.pluginDisplayName)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(notchPrimaryText)
+                        .lineLimit(1)
+                    Text("Working", bundle: .module)
                         .font(.system(size: 9.5, weight: .medium))
                         .foregroundColor(notchTertiaryText)
                 }
             }
 
             Spacer(minLength: 4)
-
-            if let task = activeTask { expandedStepInfo(task: task) }
 
             Button(action: handleDismiss) {
                 Image(systemName: "xmark")
@@ -421,21 +441,6 @@ struct NotchView: View {
                     .overlay(Circle().strokeBorder(Color.white.opacity(0.12), lineWidth: 1))
             }
             .buttonStyle(.plain)
-        }
-    }
-
-    @ViewBuilder
-    private func expandedStepInfo(task: BackgroundTaskState) -> some View {
-        if let ls = task.loopState, ls.iteration > 0 {
-            AnimatedStepCounter(current: ls.iteration, total: ls.maxIterations, color: accentColor)
-                .fixedSize()
-        } else if task.progress >= 0 {
-            Text("\(Int(task.progress * 100))%", bundle: .module)
-                .font(.system(size: 10, weight: .medium, design: .monospaced))
-                .foregroundColor(notchTertiaryText)
-                .contentTransition(.numericText())
-                .animation(swingSpring, value: task.progress)
-                .fixedSize()
         }
     }
 
@@ -450,7 +455,7 @@ struct NotchView: View {
             expandedProgress(task: task)
             if hasActivityItems { expandedActivityFeed(task: task) }
 
-            notchActionButton(task.mode == .chat ? "Open Chat" : "Open Task") {
+            notchActionButton("Open Chat") {
                 BackgroundTaskManager.shared.openTaskWindow(task.id)
             }
         }
@@ -466,9 +471,19 @@ struct NotchView: View {
 
             if hasActivityItems { expandedActivityFeed(task: task) }
 
-            notchActionButton(task.mode == .chat ? "View Chat" : "View Details") {
+            notchActionButton("View Chat") {
                 BackgroundTaskManager.shared.openTaskWindow(task.id)
             }
+        }
+    }
+
+    private func expandedPluginActivityBody(activity: PluginActivityRecord) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Inline plugin inference \u{2014} \(activity.kind.rawValue)", bundle: .module)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(notchSecondaryText)
+                .lineLimit(2)
+            IndeterminateShimmerProgress(color: accentColor, height: 3)
         }
     }
 
@@ -479,7 +494,7 @@ struct NotchView: View {
                 .foregroundColor(notchSecondaryText)
             if hasActivityItems { expandedActivityFeed(task: task) }
 
-            notchActionButton(task.mode == .chat ? "View Chat" : "View Details") {
+            notchActionButton("View Chat") {
                 BackgroundTaskManager.shared.openTaskWindow(task.id)
             }
         }
@@ -487,11 +502,9 @@ struct NotchView: View {
 
     @ViewBuilder
     private func expandedProgress(task: BackgroundTaskState) -> some View {
-        if task.progress >= 0 {
-            ShimmerProgressBar(progress: task.progress, color: accentColor, height: 3, showGlow: true)
-        } else {
-            IndeterminateShimmerProgress(color: accentColor, height: 3)
-        }
+        // Chat tasks have no structured progress signal, so always show
+        // an indeterminate shimmer while the task is running.
+        IndeterminateShimmerProgress(color: accentColor, height: 3)
     }
 
     private func expandedActivityFeed(task: BackgroundTaskState) -> some View {
@@ -508,133 +521,6 @@ struct NotchView: View {
         .overlay(
             RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
         )
-    }
-
-    // MARK: - Interactive Content (Clarification)
-
-    @ViewBuilder
-    private var interactiveContent: some View {
-        if let task = activeTask, let clarification = task.pendingClarification {
-            VStack(alignment: .leading, spacing: 0) {
-                Color.clear.frame(height: metrics.notchHeight)
-
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(spacing: 8) {
-                        PulsingStatusDot(color: theme.warningColor, isPulsing: true, size: 7)
-                        Text(task.taskTitle)
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundColor(notchPrimaryText)
-                            .lineLimit(1)
-                        Spacer(minLength: 4)
-                        Text("Needs input", bundle: .module)
-                            .font(.system(size: 9.5, weight: .semibold))
-                            .foregroundColor(theme.warningColor)
-                    }
-
-                    Text(clarification.question)
-                        .font(.system(size: 11.5, weight: .medium))
-                        .foregroundColor(notchPrimaryText)
-                        .lineLimit(3)
-                        .fixedSize(horizontal: false, vertical: true)
-
-                    if let options = clarification.options, !options.isEmpty {
-                        notchOptionsView(options: options)
-                        HStack {
-                            Spacer(); notchSubmitButton(taskId: task.id)
-                        }
-                    } else {
-                        notchRespondButton(taskId: task.id)
-                    }
-                }
-                .padding(.horizontal, 16)
-                .padding(.top, 6)
-                .padding(.bottom, 14)
-                .opacity(contentRevealed ? 1 : 0)
-                .offset(y: contentRevealed ? 0 : 8)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .onHover { hovering in
-                withAnimation(swingSpring) { isHoveringBody = hovering }
-            }
-        }
-    }
-
-    // MARK: - Clarification Controls
-
-    private func notchOptionsView(options: [String]) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            ForEach(options, id: \.self) { notchOptionButton($0) }
-        }
-    }
-
-    private func notchOptionButton(_ option: String) -> some View {
-        let isSelected = selectedOption == option
-        return Button {
-            withAnimation(theme.animationQuick()) {
-                selectedOption = isSelected ? nil : option
-            }
-        } label: {
-            HStack(spacing: 6) {
-                ZStack {
-                    Circle().strokeBorder(isSelected ? accentColor : notchTertiaryText, lineWidth: 1.5)
-                        .frame(width: 14, height: 14)
-                    if isSelected { Circle().fill(accentColor).frame(width: 7, height: 7) }
-                }
-                Text(option)
-                    .font(.system(size: 11, weight: isSelected ? .medium : .regular))
-                    .foregroundColor(isSelected ? notchPrimaryText : notchSecondaryText)
-                    .lineLimit(1)
-                Spacer()
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
-            .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(isSelected ? accentColor.opacity(0.15) : Color.white.opacity(0.06))
-            )
-        }
-        .buttonStyle(.plain)
-    }
-
-    private func notchSubmitButton(taskId: UUID) -> some View {
-        let canSubmit = selectedOption != nil
-        return Button {
-            if let option = selectedOption {
-                BackgroundTaskManager.shared.submitClarification(taskId, response: option)
-                selectedOption = nil
-            }
-        } label: {
-            HStack(spacing: 4) {
-                Text("Continue", bundle: .module).font(.system(size: 10.5, weight: .semibold))
-                Image(systemName: "arrow.right").font(.system(size: 9, weight: .semibold))
-            }
-            .foregroundColor(canSubmit ? .white : notchTertiaryText)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(canSubmit ? accentColor : Color.white.opacity(0.1))
-            )
-        }
-        .buttonStyle(.plain)
-        .disabled(!canSubmit)
-    }
-
-    private func notchRespondButton(taskId: UUID) -> some View {
-        Button {
-            BackgroundTaskManager.shared.openTaskWindow(taskId)
-        } label: {
-            HStack(spacing: 5) {
-                Image(systemName: "keyboard").font(.system(size: 10))
-                Text("Click to respond", bundle: .module).font(.system(size: 10.5, weight: .medium))
-            }
-            .foregroundColor(.white)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 7)
-            .frame(maxWidth: .infinity)
-            .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(accentColor))
-        }
-        .buttonStyle(.plain)
     }
 
     // MARK: - Multi-Task Dots
@@ -661,7 +547,7 @@ struct NotchView: View {
     private var notchBackground: some View {
         ZStack {
             Color.black
-            if expansion == .expanded || expansion == .interactive {
+            if expansion == .expanded {
                 LinearGradient(colors: [.clear, Color.white.opacity(0.04)], startPoint: .top, endPoint: .bottom)
                 LinearGradient(colors: [.clear, accentColor.opacity(0.06)], startPoint: .top, endPoint: .bottom)
             }
@@ -694,6 +580,18 @@ struct NotchView: View {
         guard let task = activeTask else { return false }
         return task.activityFeed.count > 1
             || (task.activityFeed.count == 1 && task.activityFeed.first?.kind != .info)
+    }
+
+    /// Builds the second line of the expanded header, surfacing the
+    /// dispatch origin (e.g. "Running · via Telegram") so the user can tell
+    /// at a glance which integration is driving the task.
+    private func headerSubtitle(for task: BackgroundTaskState) -> String {
+        let status = task.status.displayName
+        let pluginName = task.sourcePluginId.map(PluginDisplayNameResolver.displayName(for:))
+        guard let origin = task.source.originLabel(pluginDisplayName: pluginName) else {
+            return status
+        }
+        return "\(status) · \(origin)"
     }
 
     private func notchActionButton(_ title: String, action: @escaping () -> Void) -> some View {

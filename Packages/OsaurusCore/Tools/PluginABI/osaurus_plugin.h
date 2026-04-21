@@ -40,10 +40,12 @@ typedef const char* (*osr_dispatch_fn)(const char* request_json);
 // state. Terminal statuses: "completed", "failed", "cancelled".
 typedef const char* (*osr_task_status_fn)(const char* task_id);
 
-// Cancel a running or awaiting-clarification task.
+// Cancel a running task.
 typedef void        (*osr_dispatch_cancel_fn)(const char* task_id);
 
-// Submit a clarification response (work mode only). Resumes the task.
+// DEPRECATED — preserved for ABI compatibility. Returns immediately; the
+// agent loop now handles clarification inline via the `clarify` tool, so
+// there is no out-of-band channel for the host to inject a response.
 typedef void        (*osr_dispatch_clarify_fn)(const char* task_id,
                                                const char* response);
 
@@ -94,16 +96,15 @@ typedef const char* (*osr_list_active_tasks_fn)(void);
 typedef void        (*osr_send_draft_fn)(const char* task_id,
                                          const char* draft_json);
 
-// Soft-stop a running task. If message is non-NULL, interrupts and
-// re-enters execution with the message injected (redirect). If NULL,
-// sets interruptRequested so the agent wraps up gracefully.
-// Work mode only; chat mode falls back to stop().
+// Soft-stop a running task. The current chat session does not support
+// mid-stream redirect, so this falls back to stop() regardless of the
+// `message` argument.
 typedef void        (*osr_dispatch_interrupt_fn)(const char* task_id,
                                                  const char* message);
 
-// Add a new issue to a running work-mode task without interrupting
-// the current issue. issue_json has "title" and "description".
-// Returns JSON with the new issue id, or error.
+// DEPRECATED — preserved for ABI compatibility. Returns an error JSON;
+// the issue tracker was retired so there are no nested issues to add.
+// Use `dispatch` to start a fresh task instead.
 typedef const char* (*osr_dispatch_add_issue_fn)(const char* task_id,
                                                  const char* issue_json);
 

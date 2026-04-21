@@ -2,8 +2,11 @@
 //  ActivityTracker.swift
 //  osaurus
 //
-//  Periodic cleanup utility for the memory system.
-//  Summary generation is handled by MemoryService's per-conversation debounce.
+//  Periodic purge timer for the memory subsystem. Polls every 30s and
+//  triggers a daily call to `purgeOldEventData` (processing logs +
+//  processed pending signals). Distillation, decay, and eviction all live
+//  elsewhere — this is just the housekeeping ticker that survives across
+//  rewrites.
 //
 
 import Foundation
@@ -24,7 +27,7 @@ public final class ActivityTracker: ObservableObject {
         guard timer == nil else { return }
         timer = Timer.scheduledTimer(withTimeInterval: Self.pollInterval, repeats: true) { [weak self] _ in
             Task { @MainActor in
-                self?.periodicCleanup()
+                self?.purgeIfNeeded()
             }
         }
     }
@@ -35,22 +38,9 @@ public final class ActivityTracker: ObservableObject {
         timer = nil
     }
 
-    /// Record activity for an agent. Called on every message send.
-    public func recordActivity(agentId: String) {
-        do {
-            try MemoryDatabase.shared.updateAgentActivity(agentId: agentId)
-        } catch {
-            MemoryLogger.service.warning("Failed to record agent activity: \(error)")
-        }
-    }
-
-    private func periodicCleanup() {
+    private func purgeIfNeeded() {
         let config = MemoryConfigurationStore.load()
         guard config.enabled else { return }
-        purgeIfNeeded()
-    }
-
-    private func purgeIfNeeded() {
         let now = Date()
         guard now.timeIntervalSince(lastPurge) >= Self.purgeInterval else { return }
         lastPurge = now

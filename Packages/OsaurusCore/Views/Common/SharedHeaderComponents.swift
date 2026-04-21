@@ -2,7 +2,7 @@
 //  SharedHeaderComponents.swift
 //  osaurus
 //
-//  Shared header components used by both ChatView and WorkView.
+//  Shared header components used by chat windows.
 //  Ensures consistent styling and behavior across modes.
 //
 
@@ -36,74 +36,6 @@ struct HeaderActionButton: View {
             }
         }
         .help(Text(LocalizedStringKey(help), bundle: .module))
-    }
-}
-
-// MARK: - Mode Toggle Button
-
-/// Segmented toggle for switching between Chat and Work modes with sliding indicator.
-struct ModeToggleButton: View {
-    enum Mode { case chat, work }
-
-    let currentMode: Mode
-    var isDisabled: Bool = false
-    let action: (Mode) -> Void
-
-    @State private var isHovered = false
-    @Environment(\.theme) private var theme
-    @Namespace private var animation
-
-    var body: some View {
-        HStack(spacing: 0) {
-            segment(icon: "bubble.left.and.bubble.right", label: "Chat", mode: .chat, isSelected: currentMode == .chat)
-            segment(icon: "bolt.fill", label: "Work", mode: .work, isSelected: currentMode == .work)
-        }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 2)
-        .opacity(isDisabled ? 0.4 : 1.0)
-        .disabled(isDisabled)
-        .help(
-            Text(
-                LocalizedStringKey(
-                    isDisabled
-                        ? "Set up a model to use Work mode"
-                        : (currentMode == .chat ? "Switch to Work mode" : "Switch to Chat mode")
-                ),
-                bundle: .module
-            )
-        )
-    }
-
-    @ViewBuilder
-    private func segment(icon: String, label: String, mode: Mode, isSelected: Bool) -> some View {
-        HStack(spacing: 5) {
-            Image(systemName: icon).font(.system(size: 10, weight: .semibold))
-            Text(LocalizedStringKey(label), bundle: .module)
-                .font(.system(size: 11, weight: .semibold))
-        }
-        .fixedSize()
-        .foregroundColor(isSelected ? theme.primaryText : theme.tertiaryText)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 5)
-        .background {
-            // Dropped `.matchedGeometryEffect(id: "modeIndicator", in: animation)`
-            // because every mode-selector instance shares the same namespace + id,
-            // and SwiftUI's Debug-only single-source precondition trips when two
-            // selectors briefly consider themselves the source during a transition
-            // (EXC_BREAKPOINT on Settings open / mode switch). The remaining
-            // `.animation` directive preserves the selected fade.
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(isSelected ? theme.secondaryBackground.opacity(0.8) : Color.clear)
-                .shadow(
-                    color: isSelected ? theme.shadowColor.opacity(0.08) : .clear,
-                    radius: isSelected ? 1.5 : 0,
-                    x: 0,
-                    y: isSelected ? 0.5 : 0
-                )
-        }
-        .contentShape(Rectangle())
-        .animation(theme.springAnimation(), value: isSelected)
-        .onTapGesture { action(mode) }
     }
 }
 

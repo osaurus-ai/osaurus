@@ -76,9 +76,20 @@ public enum OsaurusPaths {
         root().appendingPathComponent("themes", isDirectory: true)
     }
 
-    /// Chat sessions directory
+    /// Chat sessions directory (legacy JSON files, archived after migration)
     public static func sessions() -> URL {
         root().appendingPathComponent("sessions", isDirectory: true)
+    }
+
+    /// Archive directory used by the chat-history SQLite migration to retain
+    /// the original per-session JSON files (never deleted).
+    public static func sessionsArchive() -> URL {
+        root().appendingPathComponent("sessions.archive", isDirectory: true)
+    }
+
+    /// Chat history database directory
+    public static func chatHistory() -> URL {
+        root().appendingPathComponent("chat-history", isDirectory: true)
     }
 
     /// Schedules directory
@@ -261,6 +272,9 @@ public enum OsaurusPaths {
     public static func mcpProviderConfigFile() -> URL { providers().appendingPathComponent("mcp.json") }
     public static func workDatabaseFile() -> URL { workData().appendingPathComponent("work.db") }
     public static func memoryDatabaseFile() -> URL { memory().appendingPathComponent("memory.sqlite") }
+    public static func chatHistoryDatabaseFile() -> URL {
+        chatHistory().appendingPathComponent("history.sqlite")
+    }
     public static func methodsDatabaseFile() -> URL { methods().appendingPathComponent("methods.sqlite") }
     public static func toolIndexDatabaseFile() -> URL { toolIndex().appendingPathComponent("tool_index.sqlite") }
     public static func memoryConfigFile() -> URL { config().appendingPathComponent("memory.json") }

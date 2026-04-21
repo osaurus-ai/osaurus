@@ -7,6 +7,9 @@
 
 import Foundation
 import MCP
+import os.log
+
+private let mcpLog = Logger(subsystem: "ai.osaurus", category: "MCP")
 
 @MainActor
 final class MCPServerManager {
@@ -36,13 +39,16 @@ final class MCPServerManager {
         // Register handlers
         await registerHandlers(on: srv)
 
-        // Start stdio transport in background
+        // Start stdio transport in background. Log any startup failure
+        // (used to be a silent fail) so MCP wiring problems don't hide.
         let transport = MCP.StdioTransport()
         stdioTask = Task.detached(priority: .userInitiated) { [weak self] in
             do {
                 try await srv.start(transport: transport)
             } catch {
-                // Silent fail in background; consider adding logging later
+                mcpLog.error(
+                    "stdio transport failed to start: \(error.localizedDescription, privacy: .public)"
+                )
                 _ = self  // keep self captured
             }
         }
@@ -73,16 +79,31 @@ final class MCPServerManager {
         }
 
         await server.withMethodHandler(MCP.CallTool.self) { params in
-            // Try to stringify arguments; default to empty JSON object
+            // Try to stringify arguments; default to empty JSON object.
+            // Encoding/parsing failures used to fall through silently — we
+            // now log them under the `MCP` subsystem so a malformed args
+            // payload from an MCP client is at least visible to operators.
             let argsData: Data? = {
                 guard let a = params.arguments else { return nil }
-                return try? JSONEncoder().encode(a)
+                do {
+                    return try JSONEncoder().encode(a)
+                } catch {
+                    mcpLog.error(
+                        "tool '\(params.name, privacy: .public)' arguments failed to encode: \(error.localizedDescription, privacy: .public)"
+                    )
+                    return nil
+                }
             }()
             let argumentsAny: Any = {
-                guard let d = argsData,
-                    let obj = try? JSONSerialization.jsonObject(with: d)
-                else { return [String: Any]() }
-                return obj
+                guard let d = argsData else { return [String: Any]() }
+                do {
+                    return try JSONSerialization.jsonObject(with: d)
+                } catch {
+                    mcpLog.error(
+                        "tool '\(params.name, privacy: .public)' arguments failed to parse as JSON object: \(error.localizedDescription, privacy: .public)"
+                    )
+                    return [String: Any]()
+                }
             }()
             let argsJSON: String = {
                 if let d = argsData {

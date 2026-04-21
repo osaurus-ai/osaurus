@@ -32,6 +32,9 @@ private enum NavigationDirection {
 public struct OnboardingView: View {
     /// Callback when onboarding is complete
     let onComplete: () -> Void
+    /// Optional callback fired when the preferred window height for the current step changes.
+    /// The host (AppDelegate) uses this to animate `NSWindow.setFrame`.
+    let onPreferredHeightChange: ((CGFloat) -> Void)?
     let forceShowIdentity: Bool
 
     @Environment(\.theme) private var theme
@@ -40,8 +43,13 @@ public struct OnboardingView: View {
     @State private var navigationDirection: NavigationDirection = .forward
     @State private var wantsWalkthrough = false
 
-    public init(forceShowIdentity: Bool = false, onComplete: @escaping () -> Void) {
+    public init(
+        forceShowIdentity: Bool = false,
+        onPreferredHeightChange: ((CGFloat) -> Void)? = nil,
+        onComplete: @escaping () -> Void
+    ) {
         self.forceShowIdentity = forceShowIdentity
+        self.onPreferredHeightChange = onPreferredHeightChange
         self.onComplete = onComplete
     }
 
@@ -67,7 +75,17 @@ public struct OnboardingView: View {
             }
             .ignoresSafeArea()
         }
-        .frame(width: OnboardingLayout.windowWidth, height: OnboardingLayout.windowHeight)
+        .frame(
+            width: OnboardingMetrics.windowWidth,
+            height: onboardingPreferredHeight(for: currentStep)
+        )
+        .preference(
+            key: OnboardingHeightPreferenceKey.self,
+            value: onboardingPreferredHeight(for: currentStep)
+        )
+        .onPreferenceChange(OnboardingHeightPreferenceKey.self) { newHeight in
+            onPreferredHeightChange?(newHeight)
+        }
     }
 
     // MARK: - Content View
@@ -308,7 +326,7 @@ private struct OnboardingCloseButton: View {
     struct OnboardingView_Previews: PreviewProvider {
         static var previews: some View {
             OnboardingView(onComplete: {})
-                .frame(width: OnboardingLayout.windowWidth, height: OnboardingLayout.windowHeight)
+                .frame(width: OnboardingMetrics.windowWidth, height: OnboardingMetrics.defaultHeight)
         }
     }
 #endif

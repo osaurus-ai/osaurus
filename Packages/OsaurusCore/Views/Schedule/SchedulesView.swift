@@ -117,7 +117,6 @@ struct SchedulesView: View {
                         name: schedule.name,
                         instructions: schedule.instructions,
                         agentId: schedule.agentId,
-                        mode: schedule.mode,
                         parameters: schedule.parameters,
                         folderPath: schedule.folderPath,
                         folderBookmark: schedule.folderBookmark,
@@ -418,11 +417,6 @@ private struct ScheduleCard: View {
     @ViewBuilder
     private var compactStats: some View {
         HStack(spacing: 0) {
-            if schedule.mode == .work {
-                statItem(icon: "bolt.fill", text: "Work")
-                statDot
-            }
-
             statItem(icon: schedule.frequency.frequencyType.icon, text: schedule.frequency.shortDescription)
 
             if let nextRun = schedule.nextRunDescription {
@@ -1509,7 +1503,6 @@ struct ScheduleEditorSheet: View {
     @State private var name = ""
     @State private var instructions = ""
     @State private var selectedAgentId: UUID?
-    @State private var selectedMode: ChatMode = .chat
     @State private var frequencyType: ScheduleFrequencyType = .daily
     @State private var isEnabled = true
     @State private var selectedFolderPath: String?
@@ -1524,7 +1517,6 @@ struct ScheduleEditorSheet: View {
     @State private var selectedDate = Date()
     @State private var cronExpression = "0 9 * * *"
     @State private var hasAppeared = false
-    @Namespace private var modeNamespace
 
     private var isEditing: Bool {
         if case .edit = mode { return true }
@@ -1558,19 +1550,12 @@ struct ScheduleEditorSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                     scheduleInfoSection
-                    modeSection
-
-                    if selectedMode == .work {
-                        folderContextSection
-                            .transition(.opacity.combined(with: .move(edge: .top)))
-                    }
-
+                    folderContextSection
                     instructionsSection
                     frequencySection
                     agentSection
                 }
                 .padding(24)
-                .animation(.spring(response: 0.35, dampingFraction: 0.85), value: selectedMode)
             }
 
             footerView
@@ -1729,79 +1714,6 @@ struct ScheduleEditorSheet: View {
                 )
             }
         }
-    }
-
-    // MARK: - Mode Section
-
-    private var modeSection: some View {
-        ScheduleEditorSection(title: "Execution Mode", icon: "bolt.circle") {
-            HStack(spacing: 6) {
-                modeOption(
-                    icon: "bubble.left.and.bubble.right",
-                    label: "Chat",
-                    description: "Conversational response",
-                    mode: .chat
-                )
-                modeOption(
-                    icon: "bolt.fill",
-                    label: "Work",
-                    description: "Autonomous task execution",
-                    mode: .work
-                )
-            }
-            .padding(4)
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(theme.tertiaryBackground.opacity(0.6))
-            )
-        }
-    }
-
-    @ViewBuilder
-    private func modeOption(
-        icon: String,
-        label: String,
-        description: String,
-        mode: ChatMode
-    ) -> some View {
-        let isSelected = selectedMode == mode
-        Button {
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                selectedMode = mode
-            }
-        } label: {
-            VStack(spacing: 3) {
-                HStack(spacing: 6) {
-                    Image(systemName: icon)
-                        .font(.system(size: 11, weight: .semibold))
-                    Text(label)
-                        .font(.system(size: 13, weight: .semibold))
-                }
-                Text(description)
-                    .font(.system(size: 10))
-            }
-            .foregroundColor(isSelected ? theme.primaryText : theme.secondaryText)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 10)
-            .background(
-                // Same Debug-precondition pattern as SidebarNavigation/AnimatedTabSelector:
-                // multiple mode buttons share `modeNamespace` + `"mode_indicator"` id,
-                // and SwiftUI enforces a single geometry source per (id, namespace).
-                // Replaced the effect with a conditional fill so selection transitions
-                // don't briefly claim two sources.
-                RoundedRectangle(cornerRadius: 7)
-                    .fill(isSelected ? theme.cardBackground : Color.clear)
-                    .shadow(
-                        color: isSelected ? theme.shadowColor.opacity(0.1) : .clear,
-                        radius: isSelected ? 3 : 0,
-                        x: 0,
-                        y: isSelected ? 1 : 0
-                    )
-                    .animation(.easeOut(duration: 0.2), value: isSelected)
-            )
-            .contentShape(RoundedRectangle(cornerRadius: 7))
-        }
-        .buttonStyle(.plain)
     }
 
     // MARK: - Folder Context Section
@@ -2442,7 +2354,6 @@ struct ScheduleEditorSheet: View {
         name = schedule.name
         instructions = schedule.instructions
         selectedAgentId = schedule.agentId
-        selectedMode = schedule.mode
         isEnabled = schedule.isEnabled
         selectedFolderPath = schedule.folderPath
         selectedFolderBookmark = schedule.folderBookmark
@@ -2507,9 +2418,8 @@ struct ScheduleEditorSheet: View {
             name: trimmedName,
             instructions: trimmedInstructions,
             agentId: selectedAgentId,
-            mode: selectedMode,
-            folderPath: selectedMode == .work ? selectedFolderPath : nil,
-            folderBookmark: selectedMode == .work ? selectedFolderBookmark : nil,
+            folderPath: selectedFolderPath,
+            folderBookmark: selectedFolderBookmark,
             frequency: buildFrequency(),
             isEnabled: isEnabled,
             lastRunAt: existingLastRunAt,

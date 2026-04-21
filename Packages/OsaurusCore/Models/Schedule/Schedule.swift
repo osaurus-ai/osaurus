@@ -319,7 +319,7 @@ public enum ScheduleFrequencyType: String, CaseIterable, Sendable {
 
 // MARK: - Schedule Model
 
-/// A scheduled task that runs AI chat or work interactions at specified intervals
+/// A scheduled task that runs an AI chat at specified intervals.
 public struct Schedule: Codable, Identifiable, Sendable, Equatable {
     /// Unique identifier for the schedule
     public let id: UUID
@@ -329,13 +329,11 @@ public struct Schedule: Codable, Identifiable, Sendable, Equatable {
     public var instructions: String
     /// The agent to use for the chat (nil = default agent)
     public var agentId: UUID?
-    /// Execution mode: chat (conversational) or work (task execution)
-    public var mode: ChatMode
     /// Extra parameters for future extensibility
     public var parameters: [String: String]
-    /// Work working directory path (for display)
+    /// Working directory path (for display)
     public var folderPath: String?
-    /// Security-scoped bookmark for the work mode working directory
+    /// Security-scoped bookmark for the working directory
     public var folderBookmark: Data?
     /// When and how often to run
     public var frequency: ScheduleFrequency
@@ -355,7 +353,6 @@ public struct Schedule: Codable, Identifiable, Sendable, Equatable {
         name: String,
         instructions: String,
         agentId: UUID? = nil,
-        mode: ChatMode = .chat,
         parameters: [String: String] = [:],
         folderPath: String? = nil,
         folderBookmark: Data? = nil,
@@ -370,7 +367,6 @@ public struct Schedule: Codable, Identifiable, Sendable, Equatable {
         self.name = name
         self.instructions = instructions
         self.agentId = agentId
-        self.mode = mode
         self.parameters = parameters
         self.folderPath = folderPath
         self.folderBookmark = folderBookmark
@@ -385,8 +381,9 @@ public struct Schedule: Codable, Identifiable, Sendable, Equatable {
     // MARK: - Backward-Compatible Decoding
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, instructions, agentId, mode, parameters
+        case id, name, instructions, agentId, parameters
         case personaId  // legacy key for migration
+        case mode  // legacy key (chat / work) — ignored on decode
         case folderPath, folderBookmark
         case frequency, isEnabled, lastRunAt, lastChatSessionId
         case createdAt, updatedAt
@@ -400,7 +397,9 @@ public struct Schedule: Codable, Identifiable, Sendable, Equatable {
         agentId =
             try container.decodeIfPresent(UUID.self, forKey: .agentId)
             ?? container.decodeIfPresent(UUID.self, forKey: .personaId)
-        mode = try container.decodeIfPresent(ChatMode.self, forKey: .mode) ?? .chat
+        // Legacy `mode` field (chat / work) is silently dropped — every
+        // scheduled run is now a chat dispatch.
+        _ = try container.decodeIfPresent(String.self, forKey: .mode)
         parameters = try container.decodeIfPresent([String: String].self, forKey: .parameters) ?? [:]
         folderPath = try container.decodeIfPresent(String.self, forKey: .folderPath)
         folderBookmark = try container.decodeIfPresent(Data.self, forKey: .folderBookmark)
@@ -418,7 +417,6 @@ public struct Schedule: Codable, Identifiable, Sendable, Equatable {
         try container.encode(name, forKey: .name)
         try container.encode(instructions, forKey: .instructions)
         try container.encodeIfPresent(agentId, forKey: .agentId)
-        try container.encode(mode, forKey: .mode)
         try container.encode(parameters, forKey: .parameters)
         try container.encodeIfPresent(folderPath, forKey: .folderPath)
         try container.encodeIfPresent(folderBookmark, forKey: .folderBookmark)

@@ -133,32 +133,6 @@ final class ChatTurn: ObservableObject, Identifiable {
         objectWillChange.send()
     }
 
-    /// Atomically move everything accumulated in `content` plus `tail` into the
-    /// thinking channel and clear content. Single `objectWillChange` notification.
-    /// Used by the retroactive-thinking path when a model emits `</think>` without
-    /// ever opening a block — all prior content is actually reasoning. Returns the
-    /// number of characters moved so callers can keep their own counters in sync.
-    @discardableResult
-    func moveContentToThinking(tail: String) -> Int {
-        let priorContent = contentChunks.joined()
-        let moved = priorContent + tail
-        guard !moved.isEmpty else { return 0 }
-
-        // Append to thinking without firing its setter's notification.
-        thinkingChunks.append(moved)
-        _thinkingLength += moved.count
-        _cachedThinking = nil
-
-        // Clear content without firing its setter's notification.
-        contentChunks = []
-        _cachedContent = ""
-        _contentLength = 0
-
-        // Single notification for the batched mutation.
-        objectWillChange.send()
-        return moved.count
-    }
-
     /// Consolidate chunks into single strings after streaming completes
     func consolidateContent() {
         if contentChunks.count > 1 {
@@ -189,8 +163,12 @@ final class ChatTurn: ObservableObject, Identifiable {
     var pendingToolArgPreview: String? = nil
     /// Total bytes of tool arguments received during streaming
     var pendingToolArgSize: Int = 0
-    /// Pending clarification request for work mode (displayed as ClarificationCardView)
-    var pendingClarification: ClarificationRequest? = nil
+    /// Number of arg fragments received during streaming. Used by the chat
+    /// view to throttle UI refresh — byte-size mod-5 was the original throttle
+    /// but it almost never lands on a multiple of 5 (especially when remote
+    /// providers ship args in a single chunk), so the UI never refreshed
+    /// mid-stream. A fragment counter makes the throttle predictable.
+    var pendingToolArgFragmentCount: Int = 0
     /// Capabilities selected by preflight search (ephemeral, not persisted)
     var preflightCapabilities: [PreflightCapabilityItem]? = nil
 
@@ -208,6 +186,7 @@ final class ChatTurn: ObservableObject, Identifiable {
     /// Appends a tool-argument fragment to the preview, keeping only the trailing window.
     func appendToolArgFragment(_ fragment: String) {
         pendingToolArgSize += fragment.utf8.count
+        pendingToolArgFragmentCount += 1
         let current = pendingToolArgPreview ?? ""
         let updated = current + fragment
         pendingToolArgPreview =
@@ -220,6 +199,7 @@ final class ChatTurn: ObservableObject, Identifiable {
     func clearPendingToolArgs() {
         pendingToolArgPreview = nil
         pendingToolArgSize = 0
+        pendingToolArgFragmentCount = 0
     }
 
     // MARK: - Initializers

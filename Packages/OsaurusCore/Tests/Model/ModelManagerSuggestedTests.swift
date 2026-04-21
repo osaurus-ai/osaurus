@@ -13,6 +13,15 @@ import Testing
 
 struct ModelManagerSuggestedTests {
 
+    /// Suppress the background OsaurusAI HF org fetch that `ModelManager.init()`
+    /// kicks off — without this knob, the async network response can land
+    /// between a test's `applyOsaurusOrgFetch(...)` call and its assertion,
+    /// replacing the injected entries with whatever HF currently lists and
+    /// flaking the suite (CI > local because CI consistently has network).
+    init() {
+        ModelManager.skipBackgroundOrgFetchForTests = true
+    }
+
     // MARK: - Curated catalog
 
     @Test func curatedSuggestedIds_includesNewMiniMaxEntries() {

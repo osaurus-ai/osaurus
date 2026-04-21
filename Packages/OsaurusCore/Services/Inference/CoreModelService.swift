@@ -52,17 +52,13 @@ public actor CoreModelService {
     ///   - temperature: Sampling temperature (default 0.3).
     ///   - maxTokens: Maximum response tokens (default 2048).
     ///   - timeout: Maximum wall-clock seconds for the call (default 60).
-    ///   - priority: Scheduler priority. Defaults to `.maintenance` because
-    ///     this service is used by preflight/memory-extraction/summarization
-    ///     work that must never starve a user's foreground typing.
     /// - Returns: The model's text response.
     public func generate(
         prompt: String,
         systemPrompt: String? = nil,
         temperature: Double = 0.3,
         maxTokens: Int = 2048,
-        timeout: TimeInterval = 60,
-        priority: InferencePriority = .maintenance
+        timeout: TimeInterval = 60
     ) async throws -> String {
         if let openUntil = circuitOpenUntil, Date() < openUntil {
             throw CoreModelError.circuitBreakerOpen
@@ -83,8 +79,7 @@ public actor CoreModelService {
             }
         let params = GenerationParameters(
             temperature: Float(temperature),
-            maxTokens: maxTokens,
-            priority: priority
+            maxTokens: maxTokens
         )
 
         var lastError: Error?

@@ -1032,17 +1032,12 @@ final class NativeMessageCellView: NSTableCellView {
         let thinkingLen: Int?
         if case .thinking(_, _, _) = block.kind { thinkingLen = text.count } else { thinkingLen = nil }
 
-        // Auto-expand while the owning turn is actively streaming — including
-        // after `</think>` closes the thinking block and the model moves on to
-        // answer content. Keeping the thinking panel visible through the whole
-        // streaming turn avoids collapse-jitter on the `<think>`→content
-        // boundary. Once the turn finishes, fall back to the user's explicit
-        // expand state (default: collapsed).
-        let turnIsStreaming = context.isStreaming && context.lastAssistantTurnId == block.turnId
-        let isExpanded =
-            turnIsStreaming
-            ? true
-            : context.expandedIds.contains(block.id)
+        // `expandedIds` is the single source of truth. New thinking blocks in
+        // a streaming turn are seeded into the set by the coordinator on
+        // insertion (see `seedExpandedIdsForNewThinkingBlocks`) so the panel
+        // starts expanded without this code path needing to force it. which
+        // means the user's collapse tap is honored even mid stream
+        let isExpanded = context.expandedIds.contains(block.id)
         tv.configure(
             thinking: text,
             thinkingLength: thinkingLen,

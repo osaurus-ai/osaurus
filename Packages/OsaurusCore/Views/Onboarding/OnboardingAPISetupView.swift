@@ -2,13 +2,65 @@
 //  OnboardingAPISetupView.swift
 //  osaurus
 //
-//  Provider selection and API key entry for onboarding.
-//  Uses the shared ProviderPreset model for provider definitions.
-//  Includes full custom provider configuration for "Other provider" option.
+//  Three-substate API provider setup:
+//      provider list  ->  API-key form (known providers)
+//                     \->  custom-provider form
 //
 
-import AppKit
 import SwiftUI
+
+// MARK: - Resolved Provider Configuration
+
+/// Concrete connection configuration derived from either a `ProviderPreset`
+/// or the custom-provider form fields.
+private struct ResolvedProviderConfig {
+    let name: String
+    let host: String
+    let port: Int?
+    let basePath: String
+    let providerType: RemoteProviderType
+    let providerProtocol: RemoteProviderProtocol
+}
+
+// MARK: - Connection Test Result
+
+private enum APITestResult: Equatable {
+    case success
+    case failure(String)
+}
+
+// MARK: - Custom Provider Form State
+
+/// Bundled custom-provider form fields. Owning them in one struct (instead of
+/// six `@State` properties on the view) makes reset and validation trivial.
+private struct CustomProviderForm {
+    var name: String = ""
+    var host: String = ""
+    var protocolKind: RemoteProviderProtocol = .https
+    var port: String = ""
+    var basePath: String = "/v1"
+
+    mutating func reset() { self = CustomProviderForm() }
+
+    /// `https://host[:port]/basePath`, used for the live endpoint preview.
+    var endpointPreview: String {
+        var url = (protocolKind == .https ? "https://" : "http://") + host
+        if !port.isEmpty { url += ":\(port)" }
+        url += basePath.isEmpty ? "/v1" : basePath
+        return url
+    }
+
+    func resolved(displayName: String) -> ResolvedProviderConfig {
+        ResolvedProviderConfig(
+            name: name.isEmpty ? displayName : name,
+            host: host,
+            port: port.isEmpty ? nil : Int(port),
+            basePath: basePath.isEmpty ? "/v1" : basePath,
+            providerType: .openaiLegacy,
+            providerProtocol: protocolKind
+        )
+    }
+}
 
 // MARK: - API Setup View
 
@@ -19,320 +71,223 @@ struct OnboardingAPISetupView: View {
     @Environment(\.theme) private var theme
     @State private var selectedProvider: ProviderPreset? = nil
     @State private var apiKey: String = ""
+    @State private var customForm = CustomProviderForm()
     @State private var isTesting = false
     @State private var isSaving = false
-    @State private var testResult: TestResult? = nil
+    @State private var testResult: APITestResult? = nil
     @State private var hasAppeared = false
 
-    // Custom provider fields
-    @State private var customName: String = ""
-    @State private var customHost: String = ""
-    @State private var customProtocol: RemoteProviderProtocol = .https
-    @State private var customPort: String = ""
-    @State private var customBasePath: String = "/v1"
-
-    /// Presets shown in onboarding (subset of all presets - excludes OpenRouter for simplicity), sorted alphabetically with Custom last.
+    /// Subset of presets shown in onboarding (excludes OpenRouter for simplicity),
+    /// alphabetical with Custom last.
     private static let onboardingPresets: [ProviderPreset] = [
         .anthropic, .google, .openai, .venice, .xai, .custom,
     ]
 
-    private enum TestResult {
-        case success
-        case error(String)
-    }
+    // MARK: Computed state
 
     private var canTest: Bool {
         guard let provider = selectedProvider else { return false }
-
         if provider == .custom {
-            return !customHost.isEmpty && !apiKey.isEmpty && apiKey.count > 5
+            return !customForm.host.isEmpty && apiKey.count > 5
         }
-        return !apiKey.isEmpty && apiKey.count > 10
+        return apiKey.count > 10
     }
 
     private var isSuccess: Bool {
-        if case .success = testResult {
-            return true
-        }
+        if case .success = testResult { return true }
         return false
     }
 
     private var buttonState: OnboardingButtonState {
-        if isTesting || isSaving {
-            return .loading
-        }
+        if isTesting || isSaving { return .loading }
         switch testResult {
-        case .success:
-            return .success
-        case .error(let message):
-            return .error(message)
-        case nil:
-            return .idle
+        case .success: return .success
+        case .failure(let message): return .error(message)
+        case nil: return .idle
         }
     }
 
-    private var buttonLoadingTitle: LocalizedStringKey {
+    private var loadingTitle: LocalizedStringKey {
         isSaving ? "Connecting..." : "Testing..."
     }
 
+    // MARK: Body
+
     var body: some View {
         ZStack {
-            if selectedProvider == nil {
-                providerSelectionView
-                    .transition(nestedTransition)
-            } else if selectedProvider == .custom {
-                customProviderEntryView
-                    .transition(nestedTransition)
-            } else {
-                apiKeyEntryView
-                    .transition(nestedTransition)
+            switch selectedProvider {
+            case nil:
+                providerSelectionView.transition(nestedTransition)
+            case .custom:
+                customProviderEntryView.transition(nestedTransition)
+            case .some:
+                apiKeyEntryView.transition(nestedTransition)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .animation(theme.springAnimation(responseMultiplier: 0.8), value: selectedProvider)
-        .onAppear {
-            DispatchQueue.main.asyncAfter(deadline: .now() + OnboardingStyle.appearDelay) {
-                withAnimation {
-                    hasAppeared = true
-                }
-            }
+        .onAppearAfter(OnboardingMetrics.appearDelay) {
+            withAnimation { hasAppeared = true }
         }
     }
 
-    /// Nested screen transition (consistent with main onboarding)
+    /// Slide-and-fade transition between the three substates.
     private var nestedTransition: AnyTransition {
         .asymmetric(
-            insertion: .opacity
-                .combined(with: .offset(x: 30))
-                .combined(with: .scale(scale: 0.98)),
-            removal: .opacity
-                .combined(with: .offset(x: -30))
-                .combined(with: .scale(scale: 0.98))
+            insertion: .opacity.combined(with: .offset(x: 30)).combined(with: .scale(scale: 0.98)),
+            removal: .opacity.combined(with: .offset(x: -30)).combined(with: .scale(scale: 0.98))
         )
     }
 
-    // MARK: - Provider Selection View
+    // MARK: - Substate: Provider Selection
 
     private var providerSelectionView: some View {
-        ScrollView(.vertical, showsIndicators: false) {
-            VStack(spacing: 0) {
-                Spacer().frame(height: OnboardingStyle.headerTopPadding)
-
-                // Back button
-                OnboardingBackButton(action: onBack)
-                    .padding(.horizontal, OnboardingStyle.backButtonHorizontalPadding)
-                    .opacity(hasAppeared ? 1 : 0)
-                    .animation(theme.springAnimation().delay(0.05), value: hasAppeared)
-
-                Spacer().frame(height: 20)
-
-                // Headline
-                Text("Connect a provider", bundle: .module)
-                    .font(theme.font(size: 26, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .opacity(hasAppeared ? 1 : 0)
-                    .offset(y: hasAppeared ? 0 : 20)
-                    .animation(theme.springAnimation().delay(0.1), value: hasAppeared)
-
-                Spacer().frame(height: 40)
-
-                // Provider cards
-                VStack(spacing: 12) {
-                    ForEach(Array(Self.onboardingPresets.enumerated()), id: \.element.id) { index, provider in
-                        OnboardingProviderCard(preset: provider) {
-                            withAnimation(theme.springAnimation(responseMultiplier: 0.8)) {
-                                selectedProvider = provider
-                            }
+        OnboardingScaffold(
+            title: "Connect a provider",
+            footer: "Your key never leaves your device.",
+            onBack: onBack,
+            content: {
+                ScrollView(.vertical, showsIndicators: false) {
+                    VStack(spacing: OnboardingMetrics.cardSpacing) {
+                        ForEach(Array(Self.onboardingPresets.enumerated()), id: \.element.id) { index, provider in
+                            providerCard(for: provider, index: index)
                         }
-                        .opacity(hasAppeared ? 1 : 0)
-                        .offset(y: hasAppeared ? 0 : 15)
-                        .animation(theme.springAnimation().delay(0.17 + Double(index) * 0.05), value: hasAppeared)
                     }
                 }
-                .padding(.horizontal, OnboardingStyle.backButtonHorizontalPadding + 5)
-
-                Spacer().frame(height: 28)
-
-                // Footer
-                Text("Your key never leaves your device.", bundle: .module)
-                    .font(theme.font(size: 13))
-                    .foregroundColor(theme.tertiaryText)
-                    .opacity(hasAppeared ? 1 : 0)
-                    .animation(theme.springAnimation().delay(0.4), value: hasAppeared)
-
-                Spacer().frame(height: OnboardingStyle.bottomButtonPadding)
             }
-        }
-        .padding(.horizontal, 20)
+        )
     }
 
-    // MARK: - API Key Entry View (for known providers)
+    private func providerCard(for preset: ProviderPreset, index: Int) -> some View {
+        OnboardingRowCard(
+            icon: .custom {
+                ProviderIcon(preset: preset, size: 18, color: theme.secondaryText)
+            },
+            title: preset == .custom ? L("Any OpenAI-compatible API") : preset.name,
+            subtitle: preset == .custom ? L("OpenRouter, MiniMax, etc.") : preset.description,
+            badges: preset.badge.map { [OnboardingRowBadge($0)] } ?? [],
+            accessory: .chevron
+        ) {
+            withAnimation(theme.springAnimation(responseMultiplier: 0.8)) {
+                selectedProvider = preset
+            }
+        }
+        .opacity(hasAppeared ? 1 : 0)
+        .offset(y: hasAppeared ? 0 : 15)
+        .animation(theme.springAnimation().delay(0.17 + Double(index) * 0.05), value: hasAppeared)
+    }
+
+    // MARK: - Substate: API Key Entry (known providers)
 
     private var apiKeyEntryView: some View {
-        ScrollView(.vertical, showsIndicators: false) {
-            VStack(spacing: 0) {
-                Spacer().frame(height: OnboardingStyle.headerTopPadding)
+        OnboardingScaffold(
+            title: "Connect \(selectedProvider?.name ?? "Provider")",
+            onBack: resetAndBack,
+            content: {
+                ScrollView(.vertical, showsIndicators: false) {
+                    VStack(spacing: 20) {
+                        apiKeyField
 
-                // Back button (custom - resets state)
-                backButton
-                    .padding(.horizontal, OnboardingStyle.backButtonHorizontalPadding)
-
-                Spacer().frame(height: 30)
-
-                // Headline
-                Text("Connect \(selectedProvider?.name ?? "Provider")", bundle: .module)
-                    .font(theme.font(size: 26, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-                    .multilineTextAlignment(.center)
-
-                Spacer().frame(height: 36)
-
-                // API Key field
-                OnboardingSecureField(placeholder: "sk-...", text: $apiKey, label: "API Key")
-                    .onChange(of: apiKey) { _, _ in
-                        testResult = nil
+                        if let provider = selectedProvider, provider != .custom {
+                            helpSection(for: provider)
+                        }
                     }
-                    .padding(.horizontal, OnboardingStyle.backButtonHorizontalPadding + 5)
-
-                Spacer().frame(height: 28)
-
-                // Help section
-                if let provider = selectedProvider, provider != .custom {
-                    helpSection(for: provider)
-                        .padding(.horizontal, OnboardingStyle.backButtonHorizontalPadding + 5)
+                    .padding(.bottom, 4)
                 }
-
-                Spacer().frame(height: 40)
-
-                // Action buttons
-                actionButtons
-                    .frame(width: 200)
-
-                Spacer().frame(height: OnboardingStyle.bottomButtonPadding)
-            }
-        }
-        .padding(.horizontal, 20)
+            },
+            cta: { actionButton }
+        )
     }
 
-    // MARK: - Custom Provider Entry View
+    // MARK: - Substate: Custom Provider Entry
 
     private var customProviderEntryView: some View {
-        ScrollView(.vertical, showsIndicators: false) {
-            VStack(spacing: 0) {
-                Spacer().frame(height: OnboardingStyle.headerTopPadding)
-
-                // Back button (custom - resets state)
-                backButton
-                    .padding(.horizontal, OnboardingStyle.backButtonHorizontalPadding)
-
-                Spacer().frame(height: 24)
-
-                // Headline
-                Text("Connect custom provider", bundle: .module)
-                    .font(theme.font(size: 26, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-                    .multilineTextAlignment(.center)
-
-                Spacer().frame(height: 28)
-
-                // Connection fields in glass card
-                OnboardingGlassCard {
-                    VStack(spacing: 16) {
-                        // Name field
-                        OnboardingTextField(
-                            label: "Name",
-                            placeholder: "e.g. My Provider",
-                            text: $customName
-                        )
-
-                        // Protocol and Host row
-                        HStack(spacing: 12) {
-                            // Protocol toggle
-                            VStack(alignment: .leading, spacing: 6) {
-                                Text("PROTOCOL", bundle: .module)
-                                    .font(theme.font(size: 10, weight: .bold))
-                                    .foregroundColor(theme.tertiaryText)
-                                    .tracking(0.5)
-
-                                OnboardingProtocolToggle(selection: $customProtocol)
-                                    .frame(height: 40)
-                            }
-                            .frame(width: 130)
-
-                            // Host field
-                            OnboardingTextField(
-                                label: "Host",
-                                placeholder: "api.example.com",
-                                text: $customHost,
-                                isMonospaced: true
-                            )
+        OnboardingScaffold(
+            title: "Connect custom provider",
+            onBack: resetAndBack,
+            content: {
+                ScrollView(.vertical, showsIndicators: false) {
+                    VStack(spacing: 14) {
+                        OnboardingGlassCard {
+                            customProviderForm.padding(16)
                         }
-
-                        // Port and Base Path row
-                        HStack(spacing: 12) {
-                            OnboardingTextField(
-                                label: "Port",
-                                placeholder: customProtocol == .https ? "443" : "80",
-                                text: $customPort,
-                                isMonospaced: true
-                            )
-                            .frame(width: 100)
-
-                            OnboardingTextField(
-                                label: "Base Path",
-                                placeholder: "/v1",
-                                text: $customBasePath,
-                                isMonospaced: true
-                            )
-                        }
-
-                        // Endpoint preview
-                        if !customHost.isEmpty {
-                            endpointPreview
-                        }
+                        apiKeyField
                     }
-                    .padding(18)
+                    .padding(.bottom, 4)
                 }
-                .padding(.horizontal, OnboardingStyle.backButtonHorizontalPadding + 5)
-
-                Spacer().frame(height: 16)
-
-                // API Key (outside card for visual separation)
-                OnboardingSecureField(placeholder: "sk-...", text: $apiKey, label: "API Key")
-                    .onChange(of: apiKey) { _, _ in
-                        testResult = nil
-                    }
-                    .padding(.horizontal, OnboardingStyle.backButtonHorizontalPadding + 5)
-
-                Spacer().frame(height: 28)
-
-                // Action buttons
-                actionButtons
-                    .frame(width: 200)
-
-                Spacer().frame(height: OnboardingStyle.bottomButtonPadding)
-            }
-        }
-        .padding(.horizontal, 20)
+            },
+            cta: { actionButton }
+        )
     }
 
-    // MARK: - Shared Components
+    private var customProviderForm: some View {
+        VStack(spacing: 14) {
+            OnboardingTextField(
+                label: "Name",
+                placeholder: "e.g. My Provider",
+                text: $customForm.name
+            )
 
-    /// Back button for API key/custom provider views - goes back to provider selection (with state reset)
-    private var backButton: some View {
-        OnboardingBackButton {
-            withAnimation(theme.springAnimation(responseMultiplier: 0.8)) {
-                selectedProvider = nil
-                apiKey = ""
-                testResult = nil
-                customName = ""
-                customHost = ""
-                customPort = ""
-                customBasePath = "/v1"
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("PROTOCOL", bundle: .module)
+                        .font(theme.font(size: 10, weight: .bold))
+                        .foregroundColor(theme.tertiaryText)
+                        .tracking(0.5)
+                    OnboardingProtocolToggle(selection: $customForm.protocolKind)
+                        .frame(height: 40)
+                }
+                .frame(width: 130)
+
+                OnboardingTextField(
+                    label: "Host",
+                    placeholder: "api.example.com",
+                    text: $customForm.host,
+                    isMonospaced: true
+                )
+            }
+
+            HStack(spacing: 12) {
+                OnboardingTextField(
+                    label: "Port",
+                    placeholder: customForm.protocolKind == .https ? "443" : "80",
+                    text: $customForm.port,
+                    isMonospaced: true
+                )
+                .frame(width: 100)
+
+                OnboardingTextField(
+                    label: "Base Path",
+                    placeholder: "/v1",
+                    text: $customForm.basePath,
+                    isMonospaced: true
+                )
+            }
+
+            if !customForm.host.isEmpty {
+                endpointPreview
             }
         }
+    }
+
+    // MARK: - Shared Subviews
+
+    private var apiKeyField: some View {
+        OnboardingSecureField(placeholder: "sk-...", text: $apiKey, label: "API Key")
+            .onChange(of: apiKey) { _, _ in testResult = nil }
+    }
+
+    private var actionButton: some View {
+        OnboardingStatefulButton(
+            state: buttonState,
+            idleTitle: "Test Connection",
+            loadingTitle: loadingTitle,
+            successTitle: "Continue",
+            errorTitle: "Try Again",
+            action: { isSuccess ? saveProviderAndContinue() : testConnection() },
+            isEnabled: canTest
+        )
+        .frame(width: OnboardingMetrics.ctaWidth)
     }
 
     private var endpointPreview: some View {
@@ -341,7 +296,7 @@ struct OnboardingAPISetupView: View {
                 .font(.system(size: 11))
                 .foregroundColor(theme.accentColor)
 
-            Text(buildEndpointPreview())
+            Text(customForm.endpointPreview)
                 .font(.system(size: 12, design: .monospaced))
                 .foregroundColor(theme.secondaryText)
         }
@@ -349,23 +304,8 @@ struct OnboardingAPISetupView: View {
         .padding(.vertical, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(theme.accentColor.opacity(0.1))
+            RoundedRectangle(cornerRadius: 8).fill(theme.accentColor.opacity(0.1))
         )
-    }
-
-    private func buildEndpointPreview() -> String {
-        var endpoint = customProtocol == .https ? "https://" : "http://"
-        endpoint += customHost
-
-        if !customPort.isEmpty {
-            endpoint += ":\(customPort)"
-        }
-
-        let path = customBasePath.isEmpty ? "/v1" : customBasePath
-        endpoint += path
-
-        return endpoint
     }
 
     private func helpSection(for preset: ProviderPreset) -> some View {
@@ -389,66 +329,49 @@ struct OnboardingAPISetupView: View {
                 .padding(.top, 4)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(18)
+            .padding(16)
         }
-    }
-
-    private var actionButtons: some View {
-        OnboardingStatefulButton(
-            state: buttonState,
-            idleTitle: "Test Connection",
-            loadingTitle: buttonLoadingTitle,
-            successTitle: "Continue",
-            errorTitle: "Try Again",
-            action: {
-                if isSuccess {
-                    saveProviderAndContinue()
-                } else {
-                    testConnection()
-                }
-            },
-            isEnabled: canTest
-        )
     }
 
     // MARK: - Actions
 
-    /// Builds provider configuration from current state
-    private func buildProviderConfig() -> (
-        name: String, host: String, port: Int?, basePath: String, providerType: RemoteProviderType,
-        providerProtocol: RemoteProviderProtocol
-    )? {
-        guard let provider = selectedProvider else { return nil }
-
-        if provider == .custom {
-            return (
-                name: customName.isEmpty ? "Custom Provider" : customName,
-                host: customHost,
-                port: customPort.isEmpty ? nil : Int(customPort),
-                basePath: customBasePath.isEmpty ? "/v1" : customBasePath,
-                providerType: .openaiLegacy,
-                providerProtocol: customProtocol
-            )
-        } else {
-            let config = provider.configuration
-            return (
-                name: config.name,
-                host: config.host,
-                port: config.port,
-                basePath: config.basePath,
-                providerType: config.providerType,
-                providerProtocol: config.providerProtocol
-            )
+    /// Returns to the provider list and clears any in-flight form / test state.
+    private func resetAndBack() {
+        withAnimation(theme.springAnimation(responseMultiplier: 0.8)) {
+            selectedProvider = nil
+            apiKey = ""
+            testResult = nil
+            customForm.reset()
         }
     }
 
+    /// Resolves the active substate into a concrete `ResolvedProviderConfig`.
+    private func resolvedConfig() -> ResolvedProviderConfig? {
+        guard let provider = selectedProvider else { return nil }
+
+        if provider == .custom {
+            return customForm.resolved(displayName: L("Custom Provider"))
+        }
+
+        let config = provider.configuration
+        return ResolvedProviderConfig(
+            name: config.name,
+            host: config.host,
+            port: config.port,
+            basePath: config.basePath,
+            providerType: config.providerType,
+            providerProtocol: config.providerProtocol
+        )
+    }
+
     private func testConnection() {
-        guard let config = buildProviderConfig() else { return }
+        guard let config = resolvedConfig() else { return }
 
         isTesting = true
         testResult = nil
 
         Task {
+            let result: APITestResult
             do {
                 _ = try await RemoteProviderManager.shared.testConnection(
                     host: config.host,
@@ -460,30 +383,29 @@ struct OnboardingAPISetupView: View {
                     apiKey: apiKey,
                     headers: [:]
                 )
-
-                await MainActor.run {
-                    withAnimation(theme.springAnimation()) {
-                        testResult = .success
-                        isTesting = false
-                    }
-                }
+                result = .success
             } catch {
-                await MainActor.run {
-                    withAnimation(theme.springAnimation()) {
-                        testResult = .error(error.localizedDescription)
-                        isTesting = false
-                    }
+                result = .failure(error.localizedDescription)
+            }
+
+            await MainActor.run {
+                withAnimation(theme.springAnimation()) {
+                    testResult = result
+                    isTesting = false
                 }
             }
         }
     }
 
     private func saveProviderAndContinue() {
-        guard let config = buildProviderConfig() else { return }
+        guard let config = resolvedConfig() else { return }
 
         isSaving = true
 
-        let remoteProvider = RemoteProvider(
+        // `addProvider` already calls `connect()` internally for enabled providers,
+        // and the app-level cache invalidation observer refreshes model options
+        // when the connection completes — no follow-up call needed here.
+        let provider = RemoteProvider(
             name: config.name,
             host: config.host,
             providerProtocol: config.providerProtocol,
@@ -496,11 +418,7 @@ struct OnboardingAPISetupView: View {
             autoConnect: true,
             timeout: 60
         )
-
-        // addProvider() already starts connect() internally for enabled providers,
-        // and the app-level cache invalidation observer ensures model options update
-        // when connection completes. No need to call connect() again.
-        RemoteProviderManager.shared.addProvider(remoteProvider, apiKey: apiKey)
+        RemoteProviderManager.shared.addProvider(provider, apiKey: apiKey)
 
         isSaving = false
         onComplete()
@@ -531,9 +449,7 @@ private struct OnboardingProtocolToggle: View {
 
     private func protocolButton(_ label: String, protocol proto: RemoteProviderProtocol) -> some View {
         Button {
-            withAnimation(theme.animationQuick()) {
-                selection = proto
-            }
+            withAnimation(theme.animationQuick()) { selection = proto }
         } label: {
             Text(label)
                 .font(theme.font(size: 11, weight: .semibold))
@@ -546,79 +462,6 @@ private struct OnboardingProtocolToggle: View {
                 )
         }
         .buttonStyle(.plain)
-    }
-}
-
-// MARK: - Onboarding Provider Card
-
-private struct OnboardingProviderCard: View {
-    let preset: ProviderPreset
-    let action: () -> Void
-
-    @Environment(\.theme) private var theme
-    @State private var isHovered = false
-
-    /// Display name override for custom preset in onboarding context
-    private var displayName: String {
-        preset == .custom ? L("Any OpenAI-compatible API") : preset.name
-    }
-
-    /// Description override for custom preset in onboarding context
-    private var displayDescription: String {
-        preset == .custom ? L("OpenRouter, MiniMax, etc.") : preset.description
-    }
-
-    var body: some View {
-        Button(action: action) {
-            OnboardingGlassCard {
-                HStack(spacing: 16) {
-                    // Icon
-                    ZStack {
-                        Circle()
-                            .fill(theme.cardBackground)
-                            .frame(width: 44, height: 44)
-
-                        ProviderIcon(
-                            preset: preset,
-                            size: 18,
-                            color: isHovered ? theme.accentColor : theme.secondaryText
-                        )
-                    }
-
-                    // Text
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack(spacing: 8) {
-                            Text(displayName)
-                                .font(theme.font(size: 15, weight: .semibold))
-                                .foregroundColor(theme.primaryText)
-
-                            if let badge = preset.badge {
-                                ProviderBadge(badge, gradient: preset.gradient, fontSize: 10)
-                            }
-                        }
-
-                        Text(displayDescription)
-                            .font(theme.font(size: 13))
-                            .foregroundColor(theme.secondaryText)
-                    }
-
-                    Spacer()
-
-                    // Arrow
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(theme.tertiaryText)
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 14)
-            }
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering in
-            withAnimation(theme.animationQuick()) {
-                isHovered = hovering
-            }
-        }
     }
 }
 
@@ -653,7 +496,7 @@ private struct HelpStep: View {
                 onComplete: {},
                 onBack: {}
             )
-            .frame(width: 580, height: 700)
+            .frame(width: OnboardingMetrics.windowWidth, height: 680)
         }
     }
 #endif

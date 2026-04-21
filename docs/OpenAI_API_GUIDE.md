@@ -540,11 +540,11 @@ curl http://127.0.0.1:1337/v1/responses \
 
 ## Memory API
 
-Osaurus provides a persistent memory system that can be used via the API. Memory learns from conversations and injects relevant context automatically into future requests.
+Osaurus provides a persistent memory system that can be used via the API. The v2 system distills sessions in the background, then injects at most one compact memory section (~800 tokens by default) into requests where the user's query actually needs it. See [docs/MEMORY.md](MEMORY.md) for the full architecture.
 
 ### Memory Context Injection — `X-Osaurus-Agent-Id` Header
 
-Add the `X-Osaurus-Agent-Id` header to any `POST /chat/completions` request and Osaurus will automatically assemble relevant memory (user profile, working memory, conversation summaries, knowledge graph) and prepend it to the system prompt.
+Add the `X-Osaurus-Agent-Id` header to any `POST /chat/completions` request. Osaurus runs a relevance gate against the latest user message, picks at most one memory section (identity, pinned facts, episodes, or transcript), and prepends it — together with always-on identity overrides — to the user message.
 
 The header value is an arbitrary string that identifies the agent or user session whose memory should be retrieved.
 
@@ -582,7 +582,7 @@ When the header is absent or empty, the request is processed normally without me
 
 ### Memory Ingestion — `POST /memory/ingest`
 
-Bulk-ingest conversation turns into the memory system for a given agent. Osaurus processes ingested turns asynchronously — extracting facts, updating the user profile, and building the knowledge graph in the background.
+Bulk-ingest conversation turns. Osaurus inserts each turn into the transcript and then flushes session distillation immediately at the end of the batch — you do not have to wait for the writer's debounce. Distillation produces an episode and (when warranted) a small set of pinned facts.
 
 ```bash
 curl http://127.0.0.1:1337/memory/ingest \
@@ -602,6 +602,8 @@ curl http://127.0.0.1:1337/memory/ingest \
 | `agent_id` | string | Identifier for the agent whose memory is being populated (required) |
 | `conversation_id` | string | Identifier for the conversation session (required) |
 | `turns` | array | Array of turn objects, each with `user` and `assistant` string fields (required) |
+| `session_date` | string | Optional ISO 8601 date for the whole batch |
+| `skip_extraction` | bool | When `true`, only insert transcript rows; skip distillation |
 
 Response:
 
@@ -611,7 +613,7 @@ Response:
 
 ### List Agents — `GET /agents`
 
-Returns all configured agents along with their memory entry counts. Use this to discover agent IDs for the `X-Osaurus-Agent-Id` header.
+Returns all configured agents along with their pinned-fact counts. Use this to discover agent IDs for the `X-Osaurus-Agent-Id` header.
 
 ```bash
 curl http://127.0.0.1:1337/agents
@@ -627,6 +629,7 @@ Example response:
       "name": "Osaurus",
       "description": "Default assistant",
       "default_model": null,
+      "supports_vision": false,
       "is_built_in": true,
       "memory_entry_count": 42,
       "created_at": "2025-01-01T00:00:00Z",
@@ -636,16 +639,18 @@ Example response:
 }
 ```
 
+`supports_vision` reflects whether the agent's effective model is a VLM, so clients can show or hide image-attach UI without round-tripping the model registry.
+
 ---
 
 ## Notes
 
 1. **Model Availability**: Only models that have been downloaded through the Osaurus UI will be available via the API.
 
-2. **Performance**: The first request to a model loads it into memory and pins its weights in GPU memory; subsequent requests skip this step. Generation settings (prefill step size, max KV cache size, KV cache quantization) are auto-tuned based on system RAM and model size when not explicitly configured in Settings. Prefix caching is available to API clients via `cache_hint` / `prefix_hash`, but prefix caches are only precomputed by the UI warm-up flow — API requests read existing prefix caches but do not create new ones. Use `session_id` for multi-turn KV cache reuse across requests.
+2. **Performance**: The first request to a model loads it; subsequent requests skip this step. Concurrent same-model requests share a single forward pass via vmlx-swift-lm's `BatchEngine` continuous batching. Prefix caching is available to API clients via `cache_hint` / `prefix_hash`, but prefix caches are only precomputed by the UI warm-up flow — API requests read existing prefix caches but do not create new ones. Use `session_id` for multi-turn KV cache reuse across requests.
 
-3. **Memory Management**: Models are loaded into memory on demand and automatically unloaded when no chat window references them. The KV cache uses a tiered system: active session caches live in RAM (hot tier) with LRU eviction to SSD as `.safetensors` files (cold tier). The hot-tier memory budget is half of the headroom after model weights, with a 512 MB floor. The MLX freed-buffer cache is auto-sized proportional to model weight size and capped by system RAM. Configure the eviction policy in Settings > Local Inference > Model Management.
+3. **Memory Management**: Models are loaded into memory on demand and automatically unloaded when no chat window references them. KV cache geometry (paged for global attention, rotating for sliding-window, SSM state for hybrid models) is owned by vmlx-swift-lm's `CacheCoordinator`, which sizes each tier per model. Configure the model eviction policy in Settings > Local Inference > Model Management.
 
-4. **GPU Acceleration**: MLX uses Apple Silicon unified memory for GPU-accelerated inference. Model weights are pinned in GPU memory via `WiredMemoryTicket` on load to prevent paging during generation.
+4. **GPU Acceleration**: MLX uses Apple Silicon unified memory for GPU-accelerated inference.
 
-5. **Context Length**: Each model has different context length limitations. The max KV cache size is configurable in Settings > Local Inference, but auto-scales by RAM tier when not set (8k tokens on <24 GB, 16k on 24–48 GB, 32k on 48–96 GB, 64k on 96 GB+). KV cache quantization (8-bit) auto-enables when headroom after model weights is under 16 GB to reduce memory pressure.
+5. **Context Length**: Each model has its own architectural context limit (the engine respects per-layer sliding windows, e.g. Gemma-4's 1024-position windows, automatically). Osaurus does not expose a user-facing global KV cache cap any more — vmlx-swift-lm picks model-aware defaults per release.

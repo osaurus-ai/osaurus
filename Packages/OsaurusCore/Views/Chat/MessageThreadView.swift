@@ -31,7 +31,7 @@ struct MessageThreadView: View {
     var onEdit: ((UUID) -> Void)? = nil
     var onDelete: ((UUID) -> Void)? = nil
 
-    // Inline editing state (optional; unused in WorkView)
+    // Inline editing state (optional)
     var editingTurnId: UUID? = nil
     var editText: Binding<String>? = nil
     var onConfirmEdit: (() -> Void)? = nil

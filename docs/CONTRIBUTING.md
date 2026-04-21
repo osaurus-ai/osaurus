@@ -43,7 +43,7 @@ The core library (`Packages/OsaurusCore/`) follows a layered architecture. Each 
 
 **Services** — Business logic. Not observable. Not UI-aware.
 
-- Swift `actor` for concurrent work (ChatEngine, MemoryService, WorkEngine)
+- Swift `actor` for concurrent work (ChatEngine, MemoryService)
 - Stateless `struct` for pure functions (Router, PromptBuilder)
 - Organized into domain subfolders: `Chat/`, `Context/`, `Inference/`, `Method/`, `ModelRuntime/`, `MCP/`, `Memory/`, `Sandbox/`, `Skill/`, `Tool/`, `Voice/`, `Provider/`, `Plugin/`, `Keychain/`
 - Rule: services do NOT conform to `ObservableObject` or `@Observable`
@@ -101,10 +101,10 @@ The core library (`Packages/OsaurusCore/`) follows a layered architecture. Each 
 
 ### Tool calling (developer notes)
 
-- OpenAI‑compatible DTOs live in `Models/OpenAIAPI.swift` (`Tool`, `ToolFunction`, `ToolCall`, `DeltaToolCall`, etc.).
-- Prompt templating is handled internally by MLX `ChatSession`. Osaurus does not assemble prompts manually.
-- We rely on MLX `ToolCallProcessor` and event streaming from `MLXLMCommon.generate` to surface tool calls; we no longer parse assistant text ourselves.
-- Streaming tool calls are emitted as OpenAI‑style deltas in `Networking/AsyncHTTPHandler.swift` directly from MLX tool call events.
+- OpenAI‑compatible DTOs live in `Models/API/OpenAIAPI.swift` (`Tool`, `ToolFunction`, `ToolCall`, `DeltaToolCall`, etc.).
+- Prompt templating is handled internally by vmlx-swift-lm. Osaurus does not assemble prompts manually.
+- Tool-call detection lives entirely in vmlx-swift-lm's `BatchEngine.generate`, which emits authoritative `Generation.toolCall(ToolCall)` events. Osaurus's `GenerationEventMapper` simply translates each one into a `ModelRuntimeEvent.toolInvocation`.
+- Streaming tool calls reach the wire as OpenAI-style deltas inside `Networking/HTTPHandler.swift` (and the equivalent Anthropic / Open Responses writers in `Models/Chat/ResponseWriters.swift`).
 
 ## Development workflow
 
