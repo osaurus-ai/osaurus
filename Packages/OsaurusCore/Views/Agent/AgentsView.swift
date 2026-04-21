@@ -2844,7 +2844,6 @@ struct AgentDetailView: View {
             updatedAt: Date(),
             agentIndex: current.agentIndex,
             agentAddress: current.agentAddress,
-            sandboxPlugins: current.sandboxPlugins,
             autonomousExec: current.autonomousExec,
             pluginInstructions: effectivePluginInstructions,
             toolSelectionMode: toolSelectionMode,

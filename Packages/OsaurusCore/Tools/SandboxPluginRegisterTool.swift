@@ -3,9 +3,10 @@
 //  osaurus
 //
 //  Builtin sandbox tool for hot-registering agent-created plugins.
-//  Reads plugin.json from the agent's plugins/ directory, validates it,
-//  saves to the library for persistence/sharing, installs dependencies,
-//  and makes tools available immediately in the active session.
+//  Reads plugin.json from the agent's plugins/ directory, packages
+//  on-disk files, and hands the payload to `SandboxPluginRegistration`
+//  which performs the shared validate -> save -> install -> hot-register
+//  pipeline used by both this tool and the host-API endpoint.
 //
 
 import Foundation
@@ -48,103 +49,129 @@ struct SandboxPluginRegisterTool: OsaurusTool, @unchecked Sendable {
             return pluginIdReq.failureEnvelope ?? ""
         }
 
-        guard await SandboxManager.shared.status().isRunning else {
-            return ToolEnvelope.failure(
-                kind: .unavailable,
-                message: "Sandbox container is not running.",
-                tool: name,
-                retryable: true
-            )
+        switch loadPlugin(pluginId: pluginId) {
+        case .envelope(let envelope):
+            return envelope
+        case .plugin(let plugin):
+            return await runRegistration(plugin: plugin)
         }
+    }
 
-        let (loaded, loadError) = loadPlugin(pluginId: pluginId)
-        guard var plugin = loaded else {
-            return ToolEnvelope.failure(
-                kind: .executionError,
-                message: loadError!,
-                tool: name,
-                retryable: false
-            )
-        }
+    // MARK: - Registration
 
-        if let error = validate(plugin) {
-            return ToolEnvelope.failure(
-                kind: .invalidArgs,
-                message: error,
-                tool: name,
-                retryable: false
-            )
-        }
-
-        SandboxPluginDefaults.applyRestrictedDefaults(&plugin)
-        if plugin.metadata == nil { plugin.metadata = [:] }
-        plugin.metadata?["created_by"] = .string("agent")
-
-        await MainActor.run { SandboxPluginLibrary.shared.save(plugin) }
-
+    private func runRegistration(plugin: SandboxPlugin) async -> String {
         do {
-            try await SandboxPluginManager.shared.install(plugin: plugin, for: agentId)
+            let outcome = try await SandboxPluginRegistration.register(
+                plugin: plugin,
+                agentId: agentId,
+                source: .agentTool
+            )
+            return ToolEnvelope.success(
+                tool: name,
+                result: [
+                    "plugin_id": outcome.plugin.id,
+                    "plugin_name": outcome.plugin.name,
+                    "tools": outcome.registeredTools.map {
+                        ["name": $0.name, "description": $0.description]
+                    },
+                ]
+            )
+        } catch let error as SandboxPluginRegistrationError {
+            return ToolEnvelope.failure(
+                kind: error.toolEnvelopeKind,
+                message: error.message,
+                tool: name,
+                retryable: error.retryable
+            )
         } catch {
             return ToolEnvelope.failure(
                 kind: .executionError,
-                message: "Plugin installation failed: \(error.localizedDescription)",
+                message: "Plugin registration failed: \(error.localizedDescription)",
                 tool: name,
                 retryable: true
             )
         }
-
-        let registeredTools = await hotRegisterTools(plugin: plugin)
-
-        queueToast(pluginId: plugin.id, pluginName: plugin.name, toolCount: registeredTools.count)
-
-        let toolList = registeredTools.map { ["name": $0.name, "description": $0.description] }
-        return ToolEnvelope.success(
-            tool: name,
-            result: [
-                "plugin_id": plugin.id,
-                "plugin_name": plugin.name,
-                "tools": toolList,
-            ]
-        )
     }
 
-    // MARK: - Private
+    // MARK: - File Loading
 
-    private func loadPlugin(pluginId: String) -> (SandboxPlugin?, String?) {
+    /// Either the parsed + packaged plugin, or a fully-formed failure
+    /// envelope ready to return straight from `execute`.
+    private enum LoadPluginResult {
+        case plugin(SandboxPlugin)
+        case envelope(String)
+    }
+
+    /// Reads `plugin.json` and packages every readable text file under
+    /// the plugin directory.
+    private func loadPlugin(pluginId: String) -> LoadPluginResult {
         let pluginDir = OsaurusPaths.containerWorkspace()
             .appendingPathComponent("agents/\(agentName)/plugins/\(pluginId)")
         let pluginFile = pluginDir.appendingPathComponent("plugin.json")
 
         guard FileManager.default.fileExists(atPath: pluginFile.path) else {
-            return (nil, "plugin.json not found at plugins/\(pluginId)/plugin.json")
+            return failure(
+                kind: .executionError,
+                message: "plugin.json not found at plugins/\(pluginId)/plugin.json"
+            )
         }
 
+        let plugin: SandboxPlugin
         do {
             let data = try Data(contentsOf: pluginFile)
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .iso8601
-            var plugin = try decoder.decode(SandboxPlugin.self, from: data)
-
-            // Package all files in the directory (excluding plugin.json) into
-            // plugin.files so the install mechanism can seed them correctly.
-            let discoveredFiles = collectFiles(in: pluginDir)
-            if !discoveredFiles.isEmpty {
-                var merged = plugin.files ?? [:]
-                for (path, content) in discoveredFiles where merged[path] == nil {
-                    merged[path] = content
-                }
-                plugin.files = merged
-            }
-
-            return (plugin, nil)
+            plugin = try decoder.decode(SandboxPlugin.self, from: data)
         } catch {
-            return (nil, "Invalid plugin.json: \(error.localizedDescription)")
+            return failure(
+                kind: .invalidArgs,
+                message: "Invalid plugin.json: \(error.localizedDescription)"
+            )
         }
+
+        // Package text files in the directory (excluding plugin.json) into
+        // plugin.files so the install mechanism can seed them correctly.
+        // Binary files are rejected up-front: `plugin.files` is `[String:
+        // String]` so they would silently disappear on a library-driven
+        // reinstall, leaving the agent with a half-broken plugin.
+        let collected = collectFiles(in: pluginDir)
+        if !collected.binary.isEmpty {
+            let list = collected.binary.sorted().joined(separator: ", ")
+            return failure(
+                kind: .invalidArgs,
+                message:
+                    "Binary files in `plugins/\(pluginId)/` cannot be packaged "
+                    + "into a sandbox plugin (`plugin.files` is text-only). "
+                    + "Either remove them, regenerate them at install time in `setup`, "
+                    + "or fetch them from a setup-allowlisted host. Offending files: \(list)."
+            )
+        }
+
+        var merged = plugin.files ?? [:]
+        // Authored entries in plugin.json win over auto-discovered files.
+        for (path, content) in collected.text where merged[path] == nil {
+            merged[path] = content
+        }
+        var packaged = plugin
+        packaged.files = merged.isEmpty ? nil : merged
+        return .plugin(packaged)
     }
 
-    /// Recursively collects all files under `directory`, returning relative paths
-    /// mapped to their UTF-8 contents. Skips `plugin.json` and binary files.
-    private func collectFiles(in directory: URL) -> [String: String] {
+    private func failure(kind: ToolEnvelope.Kind, message: String) -> LoadPluginResult {
+        .envelope(
+            ToolEnvelope.failure(
+                kind: kind,
+                message: message,
+                tool: name,
+                retryable: false
+            )
+        )
+    }
+
+    /// Recursively collects regular files under `directory`. Text files are
+    /// returned keyed by their path relative to `directory`; UTF-8 decode
+    /// failures land in `binary` so the caller can surface them.
+    private func collectFiles(in directory: URL) -> (text: [String: String], binary: [String]) {
         let fm = FileManager.default
         guard
             let enumerator = fm.enumerator(
@@ -152,85 +179,29 @@ struct SandboxPluginRegisterTool: OsaurusTool, @unchecked Sendable {
                 includingPropertiesForKeys: [.isRegularFileKey],
                 options: [.skipsHiddenFiles]
             )
-        else { return [:] }
+        else { return ([:], []) }
 
-        var result: [String: String] = [:]
+        var text: [String: String] = [:]
+        var binary: [String] = []
         let basePath = directory.standardizedFileURL.path
 
         for case let fileURL as URL in enumerator {
-            guard let values = try? fileURL.resourceValues(forKeys: [.isRegularFileKey]),
+            guard
+                let values = try? fileURL.resourceValues(forKeys: [.isRegularFileKey]),
                 values.isRegularFile == true
             else { continue }
 
-            let fullPath = fileURL.standardizedFileURL.path
-            let relativePath = String(fullPath.dropFirst(basePath.count + 1))
-
+            let relativePath = String(
+                fileURL.standardizedFileURL.path.dropFirst(basePath.count + 1)
+            )
             if relativePath == "plugin.json" { continue }
 
-            guard let content = try? String(contentsOf: fileURL, encoding: .utf8) else { continue }
-            result[relativePath] = content
-        }
-
-        return result
-    }
-
-    private func validate(_ plugin: SandboxPlugin) -> String? {
-        let pathErrors = plugin.validateFilePaths()
-        if !pathErrors.isEmpty {
-            return "Invalid file paths: \(pathErrors.joined(separator: "; "))"
-        }
-
-        if let setup = plugin.setup {
-            let violations = SandboxNetworkPolicy.validateSetupCommand(setup)
-            if !violations.isEmpty {
-                return "Setup command rejected: \(violations.joined(separator: "; "))"
+            if let content = try? String(contentsOf: fileURL, encoding: .utf8) {
+                text[relativePath] = content
+            } else {
+                binary.append(relativePath)
             }
         }
-
-        return nil
+        return (text, binary)
     }
-
-    private struct RegisteredTool {
-        let name: String
-        let description: String
-    }
-
-    private func hotRegisterTools(plugin: SandboxPlugin) async -> [RegisteredTool] {
-        let tools = await MainActor.run { () -> [RegisteredTool] in
-            ToolRegistry.shared.registerSandboxPluginTools(plugin: plugin)
-            return (plugin.tools ?? []).map {
-                RegisteredTool(name: "\(plugin.id)_\($0.id)", description: $0.description)
-            }
-        }
-
-        let specs = await MainActor.run {
-            ToolRegistry.shared.specs(forTools: tools.map(\.name))
-        }
-        for spec in specs {
-            await CapabilityLoadBuffer.shared.add(spec)
-        }
-
-        return tools
-    }
-
-    private func queueToast(pluginId: String, pluginName: String, toolCount: Int) {
-        let agentId = self.agentId
-        Task { @MainActor in
-            let actionId = "removeAgentPlugin:\(pluginId):\(agentId)"
-            ToastManager.shared.registerActionHandler(for: actionId) { _ in
-                Task { @MainActor in
-                    try? await SandboxPluginManager.shared.uninstall(pluginId: pluginId, from: agentId)
-                    SandboxPluginLibrary.shared.delete(id: pluginId)
-                }
-            }
-            ToastManager.shared.action(
-                "Agent created plugin: \(pluginName)",
-                message: "\(toolCount) tool\(toolCount == 1 ? "" : "s") registered",
-                actionTitle: "Remove",
-                actionId: actionId,
-                timeout: 0
-            )
-        }
-    }
-
 }

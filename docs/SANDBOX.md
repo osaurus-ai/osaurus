@@ -291,31 +291,50 @@ The prompt path keeps secret values out of the conversation history and LLM cont
 
 ---
 
-## Agent-Created Plugins
+## Sandbox Plugin Creator (Agent-Authored Plugins)
 
-Agents can create, package, and register new plugins at runtime via the `sandbox_plugin_register` tool. This enables agents to extend their own capabilities during a session and share plugins for future use.
+Agents can author, package, and register new sandbox plugins at runtime. The model-facing skill is named **Sandbox Plugin Creator** and is injected into the system prompt automatically when an autonomous agent has no other plugin/MCP tools available. Both the in-process `sandbox_plugin_register` tool and the host-API `POST /api/plugin/create` endpoint funnel through one shared registration pipeline (`SandboxPluginRegistration.register`) so they cannot drift.
 
 ### Requirements
 
-- `autonomous_exec.enabled` must be `true` on the agent
-- `pluginCreate` must be `true` in the agent's autonomous exec config
+- `autonomousExec.enabled` must be `true` on the agent
+- `autonomousExec.pluginCreate` must be `true` (the default in `AutonomousExecConfig`)
+- The **Sandbox Plugin Creator** skill must be enabled (it is, by default — disable it in the skill catalog to suppress the auto-injected backstop)
 
 ### Workflow
 
 1. Agent writes script files to `~/plugins/{plugin-id}/scripts/` (or any subdirectory)
 2. Agent writes a `plugin.json` manifest defining the plugin name, description, tools, and dependencies
-3. Agent calls `sandbox_plugin_register` with the `plugin_id`
-4. The tool reads `plugin.json`, **auto-packages all files** in the directory into `plugin.files`, validates the plugin, and installs it
-5. Plugin tools are hot-registered into the active session via `CapabilityLoadBuffer` — immediately usable without restart
-6. A non-blocking toast notifies the user with a "Remove" action for later review
+3. Agent calls `sandbox_plugin_register` with the `plugin_id` (or the host-CLI calls `POST /api/plugin/create`)
+4. The shared registration pipeline validates the plugin, applies restricted defaults, persists to `SandboxPluginLibrary`, runs the install, and hot-registers the tools via `CapabilityLoadBuffer`
+5. A non-blocking toast notifies the user with a **Remove** action for later review
 
 ### File Auto-Packaging
 
-When `sandbox_plugin_register` loads a plugin directory, it recursively collects all files (excluding `plugin.json` itself) and merges them into the plugin's `files` map. Files explicitly defined in `plugin.json` take precedence over auto-discovered ones. This means agents only need to write files to disk and provide a minimal `plugin.json` — no manual `files` map is needed.
+When `sandbox_plugin_register` loads a plugin directory, it recursively collects every UTF-8 readable file (excluding `plugin.json` itself) and merges them into the plugin's `files` map. Files explicitly defined in `plugin.json` take precedence over auto-discovered ones. **Binary files are rejected up-front** — `plugin.files` is text-only and silently dropped binaries would break library-driven reinstalls. Either remove them, regenerate them at install time in `setup`, or fetch them from a setup-allowlisted host.
+
+### Restricted Defaults (`SandboxPluginDefaults`)
+
+Every agent-authored plugin is rewritten to enforce safe defaults before persistence:
+
+- **`permissions.network`** is sanitised. Wildcard values (`outbound`) collapse to `none`. Comma-separated domain lists are accepted as-is when every entry parses as a valid domain; invalid lists collapse to `none`. Plan accordingly — declare exact API hostnames you need.
+- **`permissions.inference`** is forced to `false`. Agent-authored plugins cannot call inference APIs.
+- **`metadata.created_by`** is stamped to `agent`; **`metadata.created_via`** records `agent_tool` or `host_bridge`.
+
+### Validation Guarantees
+
+The shared pipeline rejects a registration up-front (no library state is written) when:
+
+- File paths fail `SandboxPathSanitizer.validatePluginFiles`
+- The `setup` command references a host outside `SandboxNetworkPolicy.setupAllowlist`
+- Any tool's `run` command references a host outside the same allowlist
+- A declared `secrets` entry has no value in `AgentSecretsKeychain` for the requesting agent
+- The agent exceeds `SandboxRateLimiter` quota for `service: "http"`
+- The sandbox container is not running (`unavailable` → HTTP 503)
 
 ### Plugin Persistence
 
-Registered plugins are saved to the `SandboxPluginLibrary` and survive app restarts. They can be managed, exported, or removed from the Sandbox → Plugins tab.
+Registered plugins are saved to the `SandboxPluginLibrary` (`~/.osaurus/sandbox-plugins/`) and survive app restarts. Per-agent install state lives under `~/.osaurus/agents/{agent-id}/sandbox-plugins/installed.json`. Manage, export, or remove plugins from the **Sandbox → Plugins** tab.
 
 ---
 

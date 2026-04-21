@@ -399,7 +399,12 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
                     "plugin", "integration", "connect", "api", "create plugin",
                     "sandbox plugin", "tool creation", "service", "tools",
                 ],
-                enabled: false,
+                // Enabled by default so the plugin-creator backstop in
+                // SystemPromptComposer fires for sandbox+autonomous agents
+                // without manual intervention. Users who don't want the
+                // injection can disable this skill from the skill catalog
+                // — `pluginCreatorSkillSection` honours the flag.
+                enabled: true,
                 instructions: sandboxPluginCreatorInstructions,
                 isBuiltIn: true,
                 createdAt: Date.distantPast,
@@ -574,11 +579,21 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
 
         Key fields:
         - `dependencies`: Alpine system packages (installed via `apk add`)
-        - `setup`: Shell command for pip/npm installs (runs as your user)
-        - `secrets`: Array of secret names the plugin needs (values come from Keychain)
-        - `permissions.network`: Comma-separated API domains the scripts need to reach
+        - `setup`: Shell command for pip/npm installs (runs as your user). Setup
+          AND every tool's `run` command are validated against the network
+          allowlist (Alpine repos, PyPI, npm, GitHub, crates.io). A `curl`
+          to any other host fails registration with a clear error.
+        - `secrets`: Array of secret names the plugin needs (values come from Keychain).
+          Registration fails up-front if a declared secret has no value yet —
+          call `sandbox_secret_set` first.
+        - `permissions.network`: Comma-separated API domains the scripts need to reach.
+          The values `outbound` and `none`, plus any list with malformed
+          domains, collapse to `none`. List the exact API hostnames you need.
+        - `permissions.inference` is forced to `false` for agent-authored plugins.
         - `tools`: Array of tool definitions with `id`, `description`, `parameters`, and `run` command
-        - Do NOT add a `files` field — scripts in the directory are collected automatically
+        - Do NOT add a `files` field — scripts in the directory are collected automatically.
+          Binary files in the directory are rejected — either remove them or
+          regenerate them in `setup`.
 
         ### 5. Write the scripts
 

@@ -362,6 +362,11 @@ enum PreflightCapabilitySearch {
         guard await CapabilitySearch.canCreatePlugins(agentId: agentId) else { return nil }
         let skill = await MainActor.run { SkillManager.shared.skill(named: "Sandbox Plugin Creator") }
         guard let skill else { return nil }
+        // Honour the user's explicit toggle in the skill catalog.
+        // Without this, disabling "Sandbox Plugin Creator" in the UI had
+        // no effect on the auto-injection path — the section still landed
+        // in every applicable system prompt.
+        guard skill.enabled else { return nil }
 
         logger.info("Plugin creator: no dynamic tools matched, injecting \(skill.name) skill")
         return """

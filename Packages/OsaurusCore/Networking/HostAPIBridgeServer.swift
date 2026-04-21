@@ -491,9 +491,6 @@ private final class HostAPIBridgeHandler: ChannelInboundHandler, RemovableChanne
         guard method == .POST, remaining.first == "create" else {
             return .error(400, "POST /api/plugin/create expected")
         }
-        guard SandboxRateLimiter.shared.checkLimit(agent: callingUser, service: "http") else {
-            return .error(429, "Rate limit exceeded")
-        }
 
         let agentUUID = resolveAgentUUID(callingUser)
         let agentId = agentUUID.uuidString
@@ -506,29 +503,46 @@ private final class HostAPIBridgeHandler: ChannelInboundHandler, RemovableChanne
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         guard let data = body.data(using: .utf8),
-            var plugin = try? decoder.decode(SandboxPlugin.self, from: data)
+            let plugin = try? decoder.decode(SandboxPlugin.self, from: data)
         else {
             return .error(400, "Invalid plugin JSON")
         }
 
-        SandboxPluginDefaults.applyRestrictedDefaults(&plugin)
-
-        let errors = plugin.validateFilePaths()
-        guard errors.isEmpty else {
-            return .error(400, "Invalid file paths: \(errors.joined(separator: "; "))")
+        // Reuse the shared registration pipeline so this endpoint matches
+        // the in-process tool: validation, library save, restricted defaults,
+        // install, hot-registration, toast, capability buffer, and rate
+        // limiting all live in one place.
+        do {
+            let outcome = try await SandboxPluginRegistration.register(
+                plugin: plugin,
+                agentId: agentId,
+                source: .hostBridge
+            )
+            return .ok(pluginCreateResponseBody(outcome: outcome))
+        } catch let error as SandboxPluginRegistrationError {
+            return .error(error.httpStatusCode, error.message)
+        } catch {
+            return .error(500, "Plugin registration failed: \(error.localizedDescription)")
         }
+    }
 
-        if let setup = plugin.setup {
-            let violations = SandboxNetworkPolicy.validateSetupCommand(setup)
-            guard violations.isEmpty else {
-                return .error(400, "Setup command rejected: \(violations.joined(separator: "; "))")
-            }
+    private func pluginCreateResponseBody(
+        outcome: SandboxPluginRegistrationOutcome
+    ) -> String {
+        let payload: [String: Any] = [
+            "status": "installed",
+            "plugin_id": outcome.plugin.id,
+            "plugin_name": outcome.plugin.name,
+            "tools": outcome.registeredTools.map {
+                ["name": $0.name, "description": $0.description]
+            },
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: payload),
+            let str = String(data: data, encoding: .utf8)
+        else {
+            return "{\"status\":\"installed\",\"plugin_id\":\(jsonEscape(outcome.plugin.id))}"
         }
-
-        Task { @MainActor [plugin] in
-            try? await SandboxPluginManager.shared.install(plugin: plugin, for: agentId)
-        }
-        return .ok("{\"status\":\"installing\",\"plugin_id\":\(jsonEscape(plugin.id))}")
+        return str
     }
 
     private func handleLog(

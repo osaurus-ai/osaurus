@@ -88,8 +88,6 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
     public var agentIndex: UInt32?
     /// Derived cryptographic address for this agent (nil = no address yet)
     public var agentAddress: String?
-    /// Sandbox plugin IDs assigned to this agent
-    public var sandboxPlugins: [String]?
     /// Controls the agent's ability to run arbitrary commands in the sandbox
     public var autonomousExec: AutonomousExecConfig?
     /// Per-agent plugin instruction overrides keyed by plugin ID
@@ -123,7 +121,6 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         updatedAt: Date = Date(),
         agentIndex: UInt32? = nil,
         agentAddress: String? = nil,
-        sandboxPlugins: [String]? = nil,
         autonomousExec: AutonomousExecConfig? = nil,
         pluginInstructions: [String: String]? = nil,
         bonjourEnabled: Bool = false,
@@ -148,7 +145,6 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         self.updatedAt = updatedAt
         self.agentIndex = agentIndex
         self.agentAddress = agentAddress
-        self.sandboxPlugins = sandboxPlugins
         self.autonomousExec = autonomousExec
         self.pluginInstructions = pluginInstructions
         self.bonjourEnabled = bonjourEnabled
@@ -231,7 +227,6 @@ extension Agent {
         updatedAt = try c.decode(Date.self, forKey: .updatedAt)
         agentIndex = try c.decodeIfPresent(UInt32.self, forKey: .agentIndex)
         agentAddress = try c.decodeIfPresent(String.self, forKey: .agentAddress)
-        sandboxPlugins = try c.decodeIfPresent([String].self, forKey: .sandboxPlugins)
         autonomousExec = try c.decodeIfPresent(AutonomousExecConfig.self, forKey: .autonomousExec)
         pluginInstructions = try c.decodeIfPresent([String: String].self, forKey: .pluginInstructions)
         bonjourEnabled = try c.decodeIfPresent(Bool.self, forKey: .bonjourEnabled) ?? false
@@ -303,7 +298,6 @@ extension Agent {
                 updatedAt: Date(),
                 agentIndex: nil,
                 agentAddress: nil,
-                sandboxPlugins: exportedAgent.sandboxPlugins,
                 autonomousExec: exportedAgent.autonomousExec,
                 toolSelectionMode: exportedAgent.toolSelectionMode,
                 manualToolNames: exportedAgent.manualToolNames,

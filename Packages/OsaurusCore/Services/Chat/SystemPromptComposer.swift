@@ -309,8 +309,15 @@ public struct SystemPromptComposer: Sendable {
         // doesn't need a plugin" case for users who already have plugin
         // tools installed — which would bias the model toward writing new
         // plugins instead of using the ones it has.
+        //
+        // We also fire during sandbox init-pending (autonomousEnabled but
+        // sandbox tools haven't registered yet). Without that, the agent
+        // had no signal that plugin creation would be available once the
+        // container finished provisioning — `pluginCreatorSkillSection`
+        // already gates on `canCreatePlugins`, so this stays correct.
+        let sandboxAvailable = executionMode.usesSandboxTools || autonomousEnabled
         if !effectiveToolsOff,
-            executionMode.usesSandboxTools,
+            sandboxAvailable,
             ToolRegistry.shared.dynamicCatalogIsEmpty(),
             !hasDynamicTools(toolMode: toolMode, preflight: preflight, agentId: agentId),
             let pluginCreator = await PreflightCapabilitySearch.pluginCreatorSkillSection(for: agentId)
