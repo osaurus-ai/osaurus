@@ -100,25 +100,34 @@ struct PluginCreatorInjectionTests {
 
         await ensurePluginCreatorSkill(enabled: true)
 
-        // The test premise is a dynamic catalog that is empty. In an app-
-        // hosted xctest, `AppDelegate.applicationDidFinishLaunching` may
-        // have already called `PluginManager.shared.loadAll()` and
-        // registered plugin tools. Temporarily disable them (under a temp
-        // config dir so the user's real enablement isn't touched), then
-        // restore synchronously before returning so later tests see their
-        // plugin tools enabled again
-        let (restore, cleanupTempDir) = await temporarilyEmptyDynamicCatalog()
+        // Hold the cross-suite lock around the whole catalog snapshot →
+        // composeChatContext → assertion → restore window. Without it,
+        // a sibling suite (e.g. `MCPHTTPHandlerTests`) can register a
+        // dynamic tool while `composeChatContext` is suspended, flipping
+        // `dynamicCatalogIsEmpty()` to false and skipping the
+        // "Plugin Creator" injection. `@Suite(.serialized)` only
+        // serializes within this suite.
+        await DynamicCatalogTestLock.shared.run {
+            // The test premise is a dynamic catalog that is empty. In an
+            // app-hosted xctest, `AppDelegate.applicationDidFinishLaunching`
+            // may have already called `PluginManager.shared.loadAll()` and
+            // registered plugin tools. Temporarily disable them (under a
+            // temp config dir so the user's real enablement isn't touched),
+            // then restore synchronously before returning so later tests
+            // see their plugin tools enabled again.
+            let (restore, cleanupTempDir) = await self.temporarilyEmptyDynamicCatalog()
 
-        let context = await SystemPromptComposer.composeChatContext(
-            agentId: agent.id,
-            executionMode: .sandbox
-        )
-        let labels = context.manifest.sections.map(\.label)
-        #expect(labels.contains("Plugin Creator"))
-        #expect(context.prompt.contains("Sandbox Plugin Creator"))
+            let context = await SystemPromptComposer.composeChatContext(
+                agentId: agent.id,
+                executionMode: .sandbox
+            )
+            let labels = context.manifest.sections.map(\.label)
+            #expect(labels.contains("Plugin Creator"))
+            #expect(context.prompt.contains("Sandbox Plugin Creator"))
 
-        await restore()
-        cleanupTempDir()
+            await restore()
+            cleanupTempDir()
+        }
     }
 
     @Test
