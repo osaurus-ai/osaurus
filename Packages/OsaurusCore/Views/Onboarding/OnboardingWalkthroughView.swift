@@ -55,7 +55,7 @@ private enum WalkthroughStepType: Int, CaseIterable {
             )
         case .memory:
             return L(
-                "Osaurus builds a layered memory from your conversations — profile, working context, summaries, and a knowledge graph. Agents recall relevant facts automatically. Your memory stays with you, not a provider."
+                "Osaurus distills each conversation into your identity, salience-scored facts, and per-session episodes. Agents pull only what your next question needs. Your memory stays with you, not a provider."
             )
         case .privacy:
             return L("Conversations stay on your Mac. Switch providers anytime — your history comes with you.")
@@ -836,7 +836,7 @@ private struct WalkthroughPersonalizationIllustration: View {
     }
 }
 
-// MARK: - Memory Illustration (Knowledge Graph)
+// MARK: - Memory Illustration
 
 private struct WalkthroughMemoryIllustration: View {
     @Environment(\.theme) private var theme

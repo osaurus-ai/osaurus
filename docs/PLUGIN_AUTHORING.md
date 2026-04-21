@@ -1564,7 +1564,7 @@ const char* response = host->complete(request);
 **Agent context resolution:** When `agent_address` is present, the following are resolved from the agent's configuration and applied to the request (unless the request provides explicit values):
 
 - **System prompt** — prepended to `messages` if no system message is present
-- **Memory context** — working memory and conversation history prepended to the system prompt
+- **Memory context** — when memory is enabled, the relevance gate picks at most one section (identity, pinned facts, episodes, or transcript) under a single token budget; the resulting block is prepended to the latest user message. See [MEMORY.md](MEMORY.md) for the full pipeline.
 - **Model** — used when `model` is `""`/`"default"`
 - **Temperature** — used when `temperature` is not set
 - **Max tokens** — used when `max_tokens` is not set

@@ -121,10 +121,13 @@ Canonical reference for all Osaurus features, their status, and documentation.
 │  │   ├── TranscriptionModeService (Global dictation into any app)        │
 │  │   └── AudioInputManager (Microphone/system audio selection)           │
 │  ├── Memory                                                              │
-│  │   ├── MemoryService (Conversation processing and extraction)          │
-│  │   ├── MemorySearchService (Hybrid BM25 + vector search)              │
-│  │   ├── MemoryContextAssembler (Context injection with budgets)        │
-│  │   └── MemoryDatabase (SQLite storage with migrations)                │
+│  │   ├── MemoryService (Buffer-and-distill pipeline)                     │
+│  │   ├── MemoryRelevanceGate (Decides whether memory is needed)          │
+│  │   ├── MemoryPlanner (Picks one section under budget)                  │
+│  │   ├── MemoryConsolidator (Background decay + merge + evict)           │
+│  │   ├── MemorySearchService (Hybrid BM25 + vector search)               │
+│  │   ├── MemoryContextAssembler (Gate + planner facade)                  │
+│  │   └── MemoryDatabase (SQLite storage with migrations)                 │
 │  └── Utilities                                                           │
 │      ├── InsightsService (Request logging)                               │
 │      ├── HuggingFaceService (Model downloads)                            │
@@ -506,7 +509,7 @@ See [INFERENCE_RUNTIME.md](./INFERENCE_RUNTIME.md) for the full runtime architec
 - `Folder/FolderTools.swift` — File/coding/git tool implementations + `FolderToolFactory`
 - `Folder/BatchTool.swift` — Generic `batch` tool that fans out up to 30 registered ops in one call
 - `Folder/ChatExecutionContext.swift` — TaskLocal session/agent/batch IDs read by tools at execution time
-- `Folder/ExecutionMode.swift` — First-class `.hostFolder | .sandbox | .none` enum + `MemorySourceMode` partitioning
+- `Folder/ExecutionMode.swift` — First-class `.hostFolder | .sandbox | .none` enum
 - `Folder/FileOperation.swift`, `Folder/FileOperationLog.swift` — Per-op log used for undo
 - `Models/Chat/AgentTodo.swift`, `Models/Chat/AgentTodoStore.swift` — Markdown checklist parser + per-session store
 - `Models/Chat/SharedArtifact.swift` — Artifact model surfaced via `share_artifact`
@@ -521,8 +524,6 @@ See [INFERENCE_RUNTIME.md](./INFERENCE_RUNTIME.md) for the full runtime architec
 - **Sandbox toggle** — Mutually exclusive with the working-folder backend; selecting a folder disables sandbox autonomous exec and vice versa
 - **`batch` tool** — Up to 30 ops per call, continues on error, denies `shell_run` / `git_commit` / nested `batch`
 - **`share_artifact`** — Only path for the user to see files the agent produced
-- **Memory partitioning** — `MemorySourceMode` (chat / chatSandbox / workHost / workSandbox) keeps tool-using turns from leaking into pure chat context
-
 **Loop Tools (engine-intercepted):**
 
 | Tool       | Required field | Behavior                                                                                |
@@ -1019,107 +1020,94 @@ All three search services use VecturaKit (hybrid BM25 + vector search):
 
 ### Memory
 
-**Purpose:** Persistent, multi-layer memory system that extracts, stores, and retrieves knowledge from conversations to provide personalized, context-aware AI interactions.
+**Purpose:** Persistent, on-device memory that distills conversations at session boundaries, scores facts by salience, and surfaces at most one compact slice per request based on what the user is actually asking. Replaces the v1 four-layer / per-turn-extraction system. See [MEMORY.md](MEMORY.md) for the full architecture.
 
 **Components:**
 
-- `Services/Memory/MemoryService.swift` — Core actor for conversation processing, extraction, and summarization
-- `Services/Memory/MemorySearchService.swift` — Hybrid search (BM25 + vector) with MMR reranking
-- `Services/Memory/MemoryContextAssembler.swift` — Assembles memory context for system prompt injection
-- `Storage/MemoryDatabase.swift` — SQLite database with WAL mode and schema migrations
-- `Models/Memory/MemoryModels.swift` — Data types for all 4 memory layers
+- `Services/Memory/MemoryService.swift` — Buffer-and-distill pipeline (`bufferTurn`, `distillSession`, `flushSession`, `syncNow`)
+- `Services/Memory/MemoryRelevanceGate.swift` — Heuristic gate that decides whether memory is needed for a query
+- `Services/Memory/MemoryPlanner.swift` — Picks one section (identity / pinned / episode / transcript) under a single token budget
+- `Services/Memory/MemoryContextAssembler.swift` — Thin facade over gate + planner + identity overrides
+- `Services/Memory/MemoryConsolidator.swift` — Background actor: salience decay, episode merge, pinned promotion, eviction, retention pruning
+- `Services/Memory/MemorySearchService.swift` — Hybrid search (BM25 + vector) with shingle-MMR; lazy reverse maps
+- `Storage/MemoryDatabase.swift` — SQLite with WAL mode; v5 schema with light carry-over from v1
+- `Models/Memory/MemoryModels.swift` — `Identity`, `PinnedFact`, `Episode`, `TranscriptTurn`, `PendingSignal`
 - `Models/Memory/MemoryConfiguration.swift` — User-configurable settings with validation
-- `Views/Memory/MemoryView.swift` — Memory management UI (profile, overrides, agents, statistics, config)
+- `Views/Memory/MemoryView.swift` — Identity, overrides, agents, statistics, "Run Consolidation Now"
 
-**4-Layer Architecture:**
+**Three Layers + Transcript:**
 
 | Layer | Type | Purpose | Retention |
 |-------|------|---------|-----------|
-| Layer 1 | User Profile | Auto-generated user summary with version tracking | Permanent |
-| Layer 2 | Working Memory | Structured entries (facts, preferences, decisions, etc.) | Per-agent limit (default 500) |
-| Layer 3 | Conversation Summaries | Compressed session recaps | Configurable (default 7 days) |
-| Layer 4 | Conversation Chunks | Raw conversation turns | Permanent |
+| Identity | Single row | Stable user facts: explicit overrides + auto-derived narrative | Permanent |
+| Pinned Facts | Per-agent pool | Salience-scored facts promoted from session distillations | Decayed + evicted by consolidator |
+| Episodes | Per-session digests | Summary, topics, entities, decisions, action items, salience | `episodeRetentionDays` (default 365) |
+| Transcript | Raw turns | Fallback retrieval only; never default-injected | `episodeRetentionDays` |
 
-**Memory Entry Types:**
+**Write Path (deferred, debounced):**
 
-| Type | Description |
-|------|-------------|
-| `fact` | Factual information about the user or their environment |
-| `preference` | User preferences and likes/dislikes |
-| `decision` | Decisions made during conversations |
-| `correction` | Corrections to previous information |
-| `commitment` | Promises or plans the user mentioned |
-| `relationship` | Relationships between people, projects, or concepts |
-| `skill` | Skills, expertise, or knowledge areas |
+1. Each turn → `bufferTurn` → single SQL insert into `pending_signals` + debounce arm
+2. Debounce expires (default 60s) or `flushSession` is called → ONE LLM call distills the whole session
+3. Distillation emits an episode + entity list + pinned candidates + identity delta in one schema-constrained JSON
+4. Pinned candidates pass a Jaccard-dedup check before being persisted
+5. Identity facts are appended to overrides only when distinct (case-insensitive)
 
-**Knowledge Graph:**
+No per-turn LLM call. No verification pipeline. Most chitchat sessions produce zero pinned facts.
 
-- Entities: person, company, place, project, tool, concept, event
-- Relationships with confidence scores and temporal validity
-- Graph traversal search by entity name or relation type
+**Read Path (gated, single-section):**
+
+1. `MemoryRelevanceGate` (heuristic) classifies the user's query: `none | identity | pinned | episode | transcript`
+   - Identity-curious phrases ("what's my name") → identity
+   - Temporal markers / prior-context pronouns ("yesterday", "remember when") → episode
+   - Entity-name hits / explicit recall verbs → pinned
+   - "Exact words", "verbatim" → transcript
+2. `MemoryPlanner` fetches the chosen section under `memoryBudgetTokens` (default 800)
+3. Identity overrides are always prepended (tiny, user-authored)
+4. Block is injected before the latest user message — keeps system prefix byte-stable for KV-cache reuse
+
+**Consolidation (background):**
+
+`MemoryConsolidator` runs every `consolidationIntervalHours` (default 24h):
+
+| Step | What it does |
+|------|--------------|
+| Decay | `salience *= 0.5 ^ (Δdays / halfLife)` for pinned facts and episodes (halfLife=30d) |
+| Merge | Collapse near-duplicate episodes (shingle-Jaccard ≥ 0.9) within the same agent |
+| Promote | Boost salience on pinned facts whose content overlaps ≥ 3 recent episodes |
+| Evict | Delete pinned facts below `salienceFloor` and idle for 30+ days |
+| Prune | Drop episodes / transcript older than `episodeRetentionDays` |
 
 **Search & Retrieval:**
 
 | Method | Backend | Fallback |
 |--------|---------|----------|
-| Hybrid search | VecturaKit (BM25 + vector embeddings) | SQLite LIKE queries |
-| MMR reranking | Jaccard similarity for diversity | N/A |
+| Hybrid search | VecturaKit (BM25 + vector) | SQLite LIKE queries |
+| MMR reranking | 4-char shingle Jaccard (cheap; replaces v1's O(K²) tokenized Jaccard) | N/A |
 
-- Default MMR lambda: 0.7 (relevance vs. diversity tradeoff)
-- Default fetch multiplier: 2.0x over-fetch before reranking
-
-**Verification Pipeline (3 layers, no LLM calls):**
-
-| Layer | Method | Threshold |
-|-------|--------|-----------|
-| Layer 1 | Jaccard word-overlap deduplication | 0.6 |
-| Layer 2 | Contradiction detection (same type + similarity) | 0.3 |
-| Layer 3 | Semantic similarity via vector search | 0.85 |
-
-**Context Assembly:**
-
-Memory is injected into system prompts in this order with per-section token budgets:
-
-| Section | Default Budget |
-|---------|---------------|
-| User Overrides | (always included) |
-| User Profile | 2,000 tokens |
-| Working Memory | 500 tokens |
-| Conversation Summaries | 1,000 tokens |
-| Key Relationships | 300 tokens |
-
-Results are cached for 10 seconds per agent.
-
-**Resilience:**
-
-- Core model guard: all LLM-dependent memory work (extraction, summarization, profile regeneration) is automatically skipped when no core model is configured, preventing error churn on fresh installs
-- Circuit breaker: opens after 5 consecutive failures, 60-second cooldown
-- Retry logic: exponential backoff (1s, 2s, 4s), max 3 retries, 60-second timeout
-- Actor-based concurrency for thread safety
-- Non-blocking: all extraction runs in the background
+Reverse maps from VecturaKit UUIDs to episode/transcript composite keys are built lazily on first miss instead of eagerly at startup, so opening a database with thousands of turns no longer paid the full scan cost.
 
 **Configuration:**
 
 | Setting | Default | Range |
 |---------|---------|-------|
-| `coreModelProvider` | `anthropic` | Any provider |
-| `coreModelName` | `claude-haiku-4-5` | Any model |
+| `enabled` | true | true/false |
 | `embeddingBackend` | `mlx` | `mlx`, `none` |
 | `embeddingModel` | `nomic-embed-text-v1.5` | Any embedding model |
+| `extractionMode` | `sessionEnd` | `sessionEnd`, `manual` |
+| `relevanceGateMode` | `heuristic` | `off`, `heuristic`, `llm` |
+| `memoryBudgetTokens` | 800 | 100 -- 4,000 |
 | `summaryDebounceSeconds` | 60 | 10 -- 3,600 |
-| `profileMaxTokens` | 2,000 | 100 -- 50,000 |
-| `profileRegenerateThreshold` | 10 | 1 -- 100 |
-| `workingMemoryBudgetTokens` | 500 | 50 -- 10,000 |
-| `summaryRetentionDays` | 7 | 1 -- 365 |
-| `summaryBudgetTokens` | 1,000 | 50 -- 10,000 |
-| `graphBudgetTokens` | 300 | 50 -- 5,000 |
-| `recallTopK` | 10 | 1 -- 100 |
-| `mmrLambda` | 0.7 | 0.0 -- 1.0 |
-| `mmrFetchMultiplier` | 2.0 | 1.0 -- 10.0 |
-| `maxEntriesPerAgent` | 500 | 0 -- 10,000 |
-| `enabled` | true | true/false |
+| `consolidationIntervalHours` | 24 | 1 -- 168 |
+| `salienceFloor` | 0.2 | 0.0 -- 1.0 |
+| `episodeRetentionDays` | 365 | 0 -- 3,650 |
 
-**Storage:** `~/.osaurus/memory/memory.sqlite` (SQLite with WAL mode)
+Eight settings total, down from v1's 18. The per-section budget knobs, MMR tuning, verification thresholds, profile regen thresholds, and `maxEntriesPerAgent` are gone.
+
+**Tool API:** `search_memory(scope, query)` with three scopes: `pinned`, `episodes`, `transcript`. Replaces v1's five-scope tool.
+
+**HTTP API:** Same `X-Osaurus-Agent-Id` header for read-side context injection. `POST /memory/ingest` writes transcripts and triggers an immediate distillation flush after the batch (no need to wait for the writer's debounce).
+
+**Storage:** `~/.osaurus/memory/memory.sqlite` (SQLite with WAL mode), `~/.osaurus/memory/vectura/` (vector index)
 
 ---
 

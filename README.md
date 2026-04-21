@@ -94,7 +94,7 @@ Each agent gets its own Linux user and home directory. The VM connects back to O
 
 ### Memory
 
-4-layer system: user profile, working memory, conversation summaries, and a knowledge graph. Extracts facts, detects contradictions, recalls relevant context -- all automatically. Agents get smarter over time, and that knowledge stays with you, not a provider.
+Three layers -- identity, pinned facts, and per-session episodes -- plus a transcript fallback. Agents distill conversations once at session end (not on every turn), score what matters by salience, and surface at most one compact slice per request based on what you're actually asking. A background consolidator decays, merges, and evicts so memory stays sharp instead of bloating. Most turns inject ~800 tokens or less; many inject zero. See the [Memory Guide](docs/MEMORY.md).
 
 ### Identity
 

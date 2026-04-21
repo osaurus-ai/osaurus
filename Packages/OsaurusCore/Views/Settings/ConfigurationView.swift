@@ -347,7 +347,7 @@ struct ConfigurationView: View {
                                                     .font(.system(size: 12))
                                             }
                                             Text(
-                                                "Inject persistent memory (profile, working memory, summaries, relationships) into the system prompt. Off by default — memory can add thousands of tokens per request. Enable for agents that need long-term context across conversations.",
+                                                "Inject persistent memory (identity, pinned facts, episodes) into the chat. A relevance gate decides whether memory is needed per-turn, with a single ~800 token budget when it is. Enable for agents that benefit from long-term context.",
                                                 bundle: .module
                                             )
                                             .font(.system(size: 11))

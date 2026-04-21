@@ -166,21 +166,6 @@ Artifacts are persisted under `~/.osaurus/artifacts/<sessionId>/` and rendered i
 
 ---
 
-## Memory Partitioning by Mode
-
-Chat memory is partitioned by execution mode so a tool-using turn cannot leak facts into a no-tool-conversation context. The partitioning lives in [`ExecutionMode.swift`](../Packages/OsaurusCore/Folder/ExecutionMode.swift):
-
-| `MemorySourceMode` | Set when                                            |
-| ------------------ | --------------------------------------------------- |
-| `chat`             | Plain chat, no tools                                |
-| `chatSandbox`      | Chat with sandbox tools active                     |
-| `workHost`         | Chat with a working folder selected (host folder tools) |
-| `workSandbox`      | Chat with sandbox + autonomous exec                |
-
-When the current request has no tools, memory entries written under `*Sandbox` / `workHost` modes are filtered out so the model isn't tempted to "remember" a tool result from a different context.
-
----
-
 ## Headless / HTTP / Plugin Use
 
 Plugins and HTTP API callers reach the same loop through [`TaskDispatcher`](../Packages/OsaurusCore/Managers/TaskDispatcher.swift) and [`BackgroundTaskManager`](../Packages/OsaurusCore/Managers/BackgroundTaskManager.swift). Each dispatched task runs as a background chat session — same engine, same loop tools, same intercepts. See the [Plugin Authoring Guide](PLUGIN_AUTHORING.md) for the dispatch JSON schema and event types.
