@@ -3,6 +3,30 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.17.2</title>
+            <pubDate>Wed, 22 Apr 2026 19:04:58 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.17.2</sparkle:version>
+            <sparkle:shortVersionString>0.17.2</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.17.2/Osaurus-0.17.2.dmg" length="34788914" type="application/octet-stream" sparkle:edSignature="pJiHYFcmNmfoDM5Blo4mpC3NOpBqiwS31bwD5dWi48qdlOgCyIGo8I9HgIRpRXN/mXdPuPvqGomgmJthnIDTCA=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- chat minimap for better navigation (#894) by @RaajeevChandran
+- added LLM cleanup pass for voice transcription (#895) by @RaajeevChandran
+- Update copyright year and owner in LICENSE file (#916) by @tpae
+
+## 🧰 Maintenance
+
+- performance improvements (#914) by @RaajeevChandran
+- reinforce plugin installation for smooth migration (#915) by @dinoki-bot
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.17.1...0.17.2
+]]></description>
+        </item>
+        <item>
             <title>0.17.1</title>
             <pubDate>Tue, 21 Apr 2026 23:16:34 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>

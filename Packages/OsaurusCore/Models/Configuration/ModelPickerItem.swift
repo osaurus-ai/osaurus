@@ -141,9 +141,82 @@ extension ModelPickerItem {
     }
 }
 
+// MARK: - Default-selection capability heuristic
+
+extension ModelPickerItem {
+    /// Heuristic used only for default-selection: is this item plausibly a
+    /// chat-capable model?
+    ///
+    /// Remote providers expose `/v1/models` as a flat list of IDs with no
+    /// capability metadata, so an embedding or reranker model is
+    /// indistinguishable by type from a chat model. When such a model happens
+    /// to be first in the list, the Chat tab previously auto-selected it and
+    /// every message failed with an opaque HTTP 500. This check lets the
+    /// default-selection step skip obvious non-chat IDs while remaining
+    /// conservative: if a chat model has an unusual name that trips the
+    /// heuristic, the array helper below falls back to the first item so the
+    /// picker is never left empty when models exist.
+    var isLikelyChatCapable: Bool {
+        switch source {
+        case .foundation, .local:
+            // Foundation is Apple's on-device chat model; `.local` items come
+            // from the curated MLX catalog, which is chat-only.
+            return true
+        case .remote:
+            return !Self.isLikelyEmbeddingOrRerankerID(id)
+        }
+    }
+
+    /// Token- and prefix-based classifier that returns `true` when the model
+    /// ID almost certainly belongs to an embedding or reranker family.
+    ///
+    /// Matching is word-boundary so "embedded" in a chat model's description
+    /// would not trigger (though only the ID is inspected). A provider prefix
+    /// like `"provider-name/model-id"` is stripped before matching.
+    static func isLikelyEmbeddingOrRerankerID(_ id: String) -> Bool {
+        // Strip any `"provider/"` prefix added by `fromRemoteModel`.
+        let tail = id.split(separator: "/").last.map(String.init) ?? id
+        let lower = tail.lowercased()
+
+        // Whole-token match on non-alphanumerics so we catch, e.g.,
+        // `text-embedding-ada-002`, `nomic-embed-text`, `bge-reranker-v2-m3`
+        // without misfiring on substrings like `embedded` or `rerankable`.
+        let tokens = lower.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init)
+        for token in tokens {
+            switch token {
+            case "embedding", "embeddings", "embed",
+                "reranker", "rerank",
+                "colbert":
+                return true
+            default:
+                break
+            }
+        }
+
+        // Family prefixes whose IDs don't always literally contain the word
+        // "embed" (e.g. `bge-small-en-v1.5`). Kept deliberately short to avoid
+        // false positives on ambiguous families like `e5-mistral-*-instruct`.
+        for prefix in ["bge-", "nomic-embed-"] where lower.hasPrefix(prefix) {
+            return true
+        }
+        return false
+    }
+}
+
 // MARK: - Grouping
 
 extension Array where Element == ModelPickerItem {
+    /// Default-selection helper used by the Chat tab.
+    ///
+    /// Returns the first item that appears chat-capable per
+    /// `isLikelyChatCapable`. Falls back to the absolute first item when no
+    /// item passes the heuristic, so the picker is never left unset while
+    /// items exist — a chat model with an unusual name still gets selected,
+    /// just not preferentially.
+    var firstChatCapable: ModelPickerItem? {
+        first(where: { $0.isLikelyChatCapable }) ?? first
+    }
+
     /// Group models by source for display in sections
     func groupedBySource() -> [(source: ModelPickerItem.Source, models: [ModelPickerItem])] {
         var groups: [ModelPickerItem.Source: [ModelPickerItem]] = [:]

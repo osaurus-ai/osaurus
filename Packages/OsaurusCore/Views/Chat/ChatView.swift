@@ -294,7 +294,7 @@ final class ChatSession: ObservableObject {
         if let model = effectiveModel, pickerItems.contains(where: { $0.id == model }) {
             selectedModel = model
         } else {
-            selectedModel = pickerItems.first?.id
+            selectedModel = pickerItems.firstChatCapable?.id
         }
         isLoadingModel = false
         Task { [weak self] in await self?.refreshMemoryTokens() }
@@ -319,7 +319,7 @@ final class ChatSession: ObservableObject {
         } else if let prev = selectedModel, newOptionIds.contains(prev) {
             newSelected = prev
         } else {
-            newSelected = newOptionIds.first
+            newSelected = newOptions.firstChatCapable?.id
         }
 
         pickerItems = newOptions
@@ -573,7 +573,7 @@ final class ChatSession: ObservableObject {
         {
             selectedModel = defaultModel
         } else {
-            selectedModel = pickerItems.first?.id
+            selectedModel = pickerItems.firstChatCapable?.id
         }
         isLoadingModel = false
 
@@ -671,7 +671,7 @@ final class ChatSession: ObservableObject {
             {
                 selectedModel = defaultModel
             } else {
-                selectedModel = pickerItems.first?.id
+                selectedModel = pickerItems.firstChatCapable?.id
             }
         }
         isLoadingModel = false
@@ -2047,7 +2047,9 @@ struct ChatView: View {
                                     },
                                     onUseFoundation: windowState.foundationModelAvailable
                                         ? {
-                                            session.selectedModel = session.pickerItems.first?.id ?? "foundation"
+                                            session.selectedModel =
+                                                session.pickerItems.firstChatCapable?.id
+                                                ?? "foundation"
                                         } : nil,
                                     onQuickAction: { prompt in
                                         session.input = prompt
@@ -2132,7 +2134,7 @@ struct ChatView: View {
                                 },
                                 onUseFoundation: windowState.foundationModelAvailable
                                     ? {
-                                        session.selectedModel = session.pickerItems.first?.id ?? "foundation"
+                                        session.selectedModel = session.pickerItems.firstChatCapable?.id ?? "foundation"
                                     } : nil,
                                 onQuickAction: { _ in },
                                 onSelectAgent: { newAgentId in
@@ -2210,7 +2212,7 @@ struct ChatView: View {
                 if case .remote(_, let id) = $0.source { return id == providerId }
                 return false
             }
-            guard let firstItem = providerItems.first else { return }
+            guard let firstItem = providerItems.firstChatCapable else { return }
             let currentIsFromProvider =
                 newItems.first(where: { $0.id == session.selectedModel }).map {
                     if case .remote(_, let id) = $0.source { return id == providerId }
@@ -2227,7 +2229,7 @@ struct ChatView: View {
             if let model = agentModel, session.pickerItems.contains(where: { $0.id == model }) {
                 session.selectedModel = model
             } else {
-                session.selectedModel = session.pickerItems.first?.id
+                session.selectedModel = session.pickerItems.firstChatCapable?.id
             }
         }
         .environment(\.theme, windowState.theme)
