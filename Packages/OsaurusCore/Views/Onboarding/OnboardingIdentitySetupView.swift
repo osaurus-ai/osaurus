@@ -30,114 +30,78 @@ struct OnboardingIdentitySetupView: View {
     @State private var hasAppeared = false
 
     var body: some View {
-        VStack(spacing: 0) {
-            // Back button
-            OnboardingBackButton(action: onBack)
-                .padding(.horizontal, OnboardingStyle.backButtonHorizontalPadding)
-                .padding(.top, 14)
-                .opacity(hasAppeared ? 1 : 0)
-                .animation(.easeOut(duration: 0.3).delay(0.1), value: hasAppeared)
-
-            Spacer().frame(height: 10)
-
+        Group {
             switch phase {
             case .prompt, .error:
-                promptContent
+                promptScaffold
             case .generating:
-                generatingContent
+                generatingScaffold
             case .recovery(let info):
-                recoveryContent(info: info)
+                recoveryScaffold(info: info)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .onAppear {
-            DispatchQueue.main.asyncAfter(deadline: .now() + OnboardingStyle.appearDelay) {
-                hasAppeared = true
-            }
-        }
+        .onAppearAfter(OnboardingMetrics.appearDelay) { hasAppeared = true }
     }
 
-    // MARK: - Prompt Content
+    // MARK: - Prompt Scaffold
 
-    private var promptContent: some View {
-        VStack(spacing: 0) {
-            Spacer()
-                .frame(minHeight: 20, maxHeight: 40)
+    private var promptScaffold: some View {
+        OnboardingScaffold(
+            title: "Create Your Identity",
+            subtitle: "Generate a cryptographic identity for you and your agents. Stored securely in iCloud Keychain.",
+            onBack: onBack,
+            content: {
+                VStack(spacing: 0) {
+                    ZStack {
+                        Circle()
+                            .fill(theme.accentColor)
+                            .blur(radius: 40)
+                            .frame(width: 80, height: 80)
+                            .opacity(hasAppeared ? 0.35 : 0)
 
-            ZStack {
-                Circle()
-                    .fill(theme.accentColor)
-                    .blur(radius: 40)
-                    .frame(width: 80, height: 80)
-                    .opacity(hasAppeared ? 0.35 : 0)
+                        Image(systemName: "person.badge.key.fill")
+                            .font(.system(size: 44, weight: .light))
+                            .foregroundStyle(theme.accentColor)
+                            .opacity(hasAppeared ? 1 : 0)
+                            .scaleEffect(hasAppeared ? 1 : 0.7)
+                            .animation(theme.springAnimation(), value: hasAppeared)
+                    }
+                    .padding(.bottom, 8)
 
-                Image(systemName: "person.badge.key.fill")
-                    .font(.system(size: 44, weight: .light))
-                    .foregroundStyle(theme.accentColor)
-                    .opacity(hasAppeared ? 1 : 0)
-                    .scaleEffect(hasAppeared ? 1 : 0.7)
-                    .animation(theme.springAnimation(), value: hasAppeared)
+                    if case .error(let message) = phase {
+                        Text(message)
+                            .font(theme.font(size: 12, weight: .medium))
+                            .foregroundColor(theme.errorColor)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 8)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(theme.errorColor.opacity(0.1))
+                            )
+                            .padding(.top, 12)
+                    }
+                }
+            },
+            cta: {
+                VStack(spacing: 14) {
+                    OnboardingPrimaryButton(title: "Generate Identity", action: generateIdentity)
+                        .frame(width: OnboardingMetrics.ctaWidth)
+                        .opacity(hasAppeared ? 1 : 0)
+                        .scaleEffect(hasAppeared ? 1 : 0.95)
+                        .animation(theme.springAnimation().delay(0.35), value: hasAppeared)
+
+                    OnboardingTextButton(title: "Skip for now", action: onSkip)
+                        .opacity(hasAppeared ? 1 : 0)
+                        .animation(.easeOut(duration: 0.3).delay(0.4), value: hasAppeared)
+                }
             }
-
-            Spacer().frame(height: 24)
-
-            Text("Create Your Identity", bundle: .module)
-                .font(theme.font(size: 24, weight: .semibold))
-                .foregroundColor(theme.primaryText)
-                .multilineTextAlignment(.center)
-                .opacity(hasAppeared ? 1 : 0)
-                .offset(y: hasAppeared ? 0 : 15)
-                .animation(.easeOut(duration: 0.5).delay(0.15), value: hasAppeared)
-
-            Spacer().frame(height: 14)
-
-            Text(
-                "Generate a cryptographic identity for you and your\nagents. Stored securely in iCloud Keychain.",
-                bundle: .module
-            )
-            .font(theme.font(size: 13))
-            .foregroundColor(theme.secondaryText)
-            .multilineTextAlignment(.center)
-            .lineSpacing(4)
-            .opacity(hasAppeared ? 1 : 0)
-            .offset(y: hasAppeared ? 0 : 10)
-            .animation(.easeOut(duration: 0.5).delay(0.25), value: hasAppeared)
-
-            if case .error(let message) = phase {
-                Text(message)
-                    .font(theme.font(size: 12, weight: .medium))
-                    .foregroundColor(theme.errorColor)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 8)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(theme.errorColor.opacity(0.1))
-                    )
-                    .padding(.top, 12)
-            }
-
-            Spacer().frame(height: 32)
-
-            OnboardingPrimaryButton(title: "Generate Identity", action: generateIdentity)
-                .frame(maxWidth: 220)
-                .opacity(hasAppeared ? 1 : 0)
-                .scaleEffect(hasAppeared ? 1 : 0.95)
-                .animation(theme.springAnimation().delay(0.35), value: hasAppeared)
-
-            Spacer().frame(height: 16)
-
-            OnboardingTextButton(title: "Skip for now", action: onSkip)
-                .opacity(hasAppeared ? 1 : 0)
-                .animation(.easeOut(duration: 0.3).delay(0.4), value: hasAppeared)
-
-            Spacer()
-        }
-        .padding(.horizontal, OnboardingStyle.backButtonHorizontalPadding + 5)
+        )
     }
 
-    // MARK: - Generating Content
+    // MARK: - Generating Scaffold
 
-    private var generatingContent: some View {
+    private var generatingScaffold: some View {
         VStack(spacing: 0) {
             Spacer()
 
@@ -154,77 +118,73 @@ struct OnboardingIdentitySetupView: View {
         }
     }
 
-    // MARK: - Recovery Content
+    // MARK: - Recovery Scaffold
 
-    private func recoveryContent(info: IdentityInfo) -> some View {
-        VStack(spacing: 0) {
-            Spacer()
-                .frame(minHeight: 10, maxHeight: 30)
-
-            HStack(spacing: 8) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(theme.warningColor)
-                Text("Save this recovery code. It won't be shown again.", bundle: .module)
-                    .font(theme.font(size: 13, weight: .semibold))
-                    .foregroundColor(theme.warningColor)
-            }
-
-            Spacer().frame(height: 16)
-
-            OnboardingGlassCard {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("RECOVERY CODE", bundle: .module)
-                        .font(.system(size: 10, weight: .bold, design: .monospaced))
-                        .foregroundColor(theme.tertiaryText)
-                        .tracking(1)
-
-                    Text(info.recovery.code)
-                        .font(.system(size: 16, weight: .semibold, design: .monospaced))
-                        .foregroundColor(theme.primaryText)
-                        .textSelection(.enabled)
-
-                    Divider()
-                        .background(theme.secondaryBorder)
-
-                    HStack(spacing: 6) {
-                        Text("Master Address", bundle: .module)
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(theme.tertiaryText)
-                        Text(info.osaurusId)
-                            .font(.system(size: 11, design: .monospaced))
-                            .foregroundColor(theme.secondaryText)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
+    private func recoveryScaffold(info: IdentityInfo) -> some View {
+        OnboardingScaffold(
+            content: {
+                VStack(spacing: 0) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(theme.warningColor)
+                        Text("Save this recovery code. It won't be shown again.", bundle: .module)
+                            .font(theme.font(size: 13, weight: .semibold))
+                            .foregroundColor(theme.warningColor)
                     }
+                    .padding(.bottom, 16)
 
-                    VStack(alignment: .leading, spacing: 3) {
-                        recoveryBullet(L("Single-use — consumed on recovery"))
-                        recoveryBullet(L("Store in a safe place"))
-                        recoveryBullet(L("Cannot be retrieved by Osaurus"))
+                    OnboardingGlassCard {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("RECOVERY CODE", bundle: .module)
+                                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                .foregroundColor(theme.tertiaryText)
+                                .tracking(1)
+
+                            Text(info.recovery.code)
+                                .font(.system(size: 16, weight: .semibold, design: .monospaced))
+                                .foregroundColor(theme.primaryText)
+                                .textSelection(.enabled)
+
+                            Divider()
+                                .background(theme.secondaryBorder)
+
+                            HStack(spacing: 6) {
+                                Text("Master Address", bundle: .module)
+                                    .font(.system(size: 11, weight: .medium))
+                                    .foregroundColor(theme.tertiaryText)
+                                Text(info.osaurusId)
+                                    .font(.system(size: 11, design: .monospaced))
+                                    .foregroundColor(theme.secondaryText)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                            }
+
+                            VStack(alignment: .leading, spacing: 3) {
+                                recoveryBullet(L("Single-use — consumed on recovery"))
+                                recoveryBullet(L("Store in a safe place"))
+                                recoveryBullet(L("Cannot be retrieved by Osaurus"))
+                            }
+                            .padding(.top, 2)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(16)
                     }
-                    .padding(.top, 2)
                 }
-                .padding(18)
-            }
-            .padding(.horizontal, OnboardingStyle.backButtonHorizontalPadding + 5)
-
-            Spacer().frame(height: 28)
-
-            HStack(spacing: 12) {
-                OnboardingSecondaryButton(title: "Copy Code") {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(info.recovery.code, forType: .string)
-                }
-                .frame(maxWidth: 140)
-
-                OnboardingPrimaryButton(title: "Continue", action: onComplete)
+            },
+            cta: {
+                HStack(spacing: 12) {
+                    OnboardingSecondaryButton(title: "Copy Code") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(info.recovery.code, forType: .string)
+                    }
                     .frame(maxWidth: 140)
-            }
-            .padding(.horizontal, OnboardingStyle.backButtonHorizontalPadding + 5)
 
-            Spacer()
-        }
+                    OnboardingPrimaryButton(title: "Continue", action: onComplete)
+                        .frame(maxWidth: 140)
+                }
+            }
+        )
     }
 
     // MARK: - Helpers
@@ -272,7 +232,7 @@ struct OnboardingIdentitySetupView: View {
                 onSkip: {},
                 onBack: {}
             )
-            .frame(width: OnboardingLayout.windowWidth, height: OnboardingLayout.windowHeight)
+            .frame(width: OnboardingMetrics.windowWidth, height: 640)
         }
     }
 #endif

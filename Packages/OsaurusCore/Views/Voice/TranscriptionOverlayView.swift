@@ -16,6 +16,9 @@ public struct TranscriptionOverlayView: View {
     /// Whether transcription is currently active
     let isActive: Bool
 
+    /// Whether the transcript is being cleaned up by the LLM
+    let isProcessing: Bool
+
     /// Callback when user presses Done
     var onDone: (() -> Void)?
 
@@ -39,11 +42,13 @@ public struct TranscriptionOverlayView: View {
     public init(
         audioLevel: Float,
         isActive: Bool,
+        isProcessing: Bool = false,
         onDone: (() -> Void)? = nil,
         onCancel: (() -> Void)? = nil
     ) {
         self.audioLevel = audioLevel
         self.isActive = isActive
+        self.isProcessing = isProcessing
         self.onDone = onDone
         self.onCancel = onCancel
     }
@@ -52,7 +57,7 @@ public struct TranscriptionOverlayView: View {
         HStack(spacing: 14) {
             // Voice status indicator
             VoiceStatusIndicator(
-                state: .listening,
+                state: isProcessing ? .processing : .listening,
                 showLabel: true,
                 compact: false
             )
@@ -63,9 +68,10 @@ public struct TranscriptionOverlayView: View {
                 level: audioLevel,
                 style: .bars,
                 barCount: 8,
-                isActive: isActive
+                isActive: isActive && !isProcessing
             )
             .frame(width: 56, height: 20)
+            .opacity(isProcessing ? 0 : 1)
 
             // Close button
             Button(action: { onDone?() }) {

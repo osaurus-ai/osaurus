@@ -23,16 +23,64 @@ struct ChatSessionSidebar: View {
     @State private var editingSessionId: UUID?
     @State private var editingTitle: String = ""
     @State private var searchQuery: String = ""
+    @State private var sourceFilter: SourceFilter = .all
     @FocusState private var isSearchFocused: Bool
+
+    // MARK: - Source Filter
+
+    /// Sidebar-local filter for `SessionSource`. Composes with the search
+    /// query and the agent filter applied by the caller.
+    enum SourceFilter: Hashable {
+        case all
+        case source(SessionSource)
+
+        var label: String {
+            switch self {
+            case .all: return "All"
+            case .source(let s): return s.shortLabel
+            }
+        }
+    }
+
+    private static let allSourceFilters: [SourceFilter] = [
+        .all,
+        .source(.chat),
+        .source(.plugin),
+        .source(.http),
+        .source(.schedule),
+        .source(.watcher),
+    ]
 
     // MARK: - Computed Properties
 
+    /// Sessions after applying both source filter and search query.
     private var filteredSessions: [ChatSessionData] {
-        guard !searchQuery.trimmingCharacters(in: .whitespaces).isEmpty else {
-            return sessions
+        let bySource: [ChatSessionData]
+        switch sourceFilter {
+        case .all:
+            bySource = sessions
+        case .source(let s):
+            bySource = sessions.filter { $0.source == s }
         }
-        return sessions.filter { session in
+        guard !searchQuery.trimmingCharacters(in: .whitespaces).isEmpty else {
+            return bySource
+        }
+        return bySource.filter { session in
             SearchService.matches(query: searchQuery, in: session.title)
+                || (session.externalSessionKey.map {
+                    SearchService.matches(query: searchQuery, in: $0)
+                } ?? false)
+        }
+    }
+
+    /// Source-filter chips shown above the list — only includes filters
+    /// that match at least one session in the current set, plus `.all`,
+    /// so the chip rail doesn't render dead options for empty buckets.
+    private var visibleSourceFilters: [SourceFilter] {
+        let presentSources = Set(sessions.map(\.source))
+        return Self.allSourceFilters.filter { filter in
+            if case .source(let s) = filter { return presentSources.contains(s) }
+            return true
         }
     }
 
@@ -48,7 +96,16 @@ struct ChatSessionSidebar: View {
                 isFocused: $isSearchFocused
             )
             .padding(.horizontal, 12)
-            .padding(.bottom, 8)
+            .padding(.bottom, 6)
+
+            // Source filter chips — only show when there's mixed content;
+            // a single-source list (typical default-agent / chat-only) hides
+            // the rail entirely to avoid visual clutter.
+            if visibleSourceFilters.count > 2 {
+                sourceFilterRail
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 6)
+            }
 
             Divider()
                 .opacity(0.3)
@@ -60,12 +117,58 @@ struct ChatSessionSidebar: View {
                 SidebarNoResultsView(searchQuery: searchQuery) {
                     withAnimation(theme.animationQuick()) {
                         searchQuery = ""
+                        sourceFilter = .all
                     }
                 }
             } else {
                 sessionList
             }
         }
+    }
+
+    // MARK: - Source Filter Rail
+
+    private var sourceFilterRail: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 4) {
+                ForEach(visibleSourceFilters, id: \.self) { filter in
+                    sourceFilterChip(filter)
+                }
+            }
+        }
+    }
+
+    private func sourceFilterChip(_ filter: SourceFilter) -> some View {
+        let isSelected = sourceFilter == filter
+        return Button {
+            withAnimation(theme.animationQuick()) {
+                sourceFilter = filter
+            }
+        } label: {
+            Text(LocalizedStringKey(filter.label), bundle: .module)
+                .font(.system(size: 10.5, weight: .medium))
+                .foregroundColor(isSelected ? theme.primaryText : theme.secondaryText.opacity(0.85))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(
+                            isSelected
+                                ? theme.accentColorLight.opacity(theme.isDark ? 0.22 : 0.16)
+                                : theme.secondaryBackground.opacity(0.5)
+                        )
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .strokeBorder(
+                            isSelected
+                                ? theme.accentColorLight.opacity(0.45)
+                                : theme.primaryBorder.opacity(0.18),
+                            lineWidth: 1
+                        )
+                )
+        }
+        .buttonStyle(.plain)
     }
 
     private func dismissEditing() {
@@ -224,14 +327,21 @@ private struct SessionRow: View {
                 }
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(session.title)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(theme.primaryText)
-                        .lineLimit(1)
+                    HStack(spacing: 5) {
+                        Text(session.title)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(theme.primaryText)
+                            .lineLimit(1)
 
-                    Text(formatRelativeDate(session.updatedAt))
+                        if session.source != .chat {
+                            sourceBadge
+                        }
+                    }
+
+                    Text(metadataLine)
                         .font(.system(size: 10))
                         .foregroundColor(theme.secondaryText.opacity(0.85))
+                        .lineLimit(1)
                 }
                 Spacer()
 
@@ -283,6 +393,69 @@ private struct SessionRow: View {
                 Button(action: onStartRename) { Text("Rename", bundle: .module) }
                 Button(role: .destructive, action: onDelete) { Text("Delete", bundle: .module) }
             }
+        }
+    }
+
+    // MARK: - Source Badge
+
+    /// Compact icon-only badge that surfaces the session's `SessionSource`
+    /// (plugin / http / schedule / watcher). Chat-source rows hide it.
+    private var sourceBadge: some View {
+        Image(systemName: session.source.iconName)
+            .font(.system(size: 8.5, weight: .semibold))
+            .foregroundColor(sourceBadgeColor)
+            .frame(width: 14, height: 14)
+            .background(
+                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    .fill(sourceBadgeColor.opacity(theme.isDark ? 0.16 : 0.12))
+            )
+            .help(sourceBadgeHelp)
+    }
+
+    /// Composes "<relative date> · via <plugin> · <key>" so the audit
+    /// dimension is glanceable without expanding the row.
+    private var metadataLine: String {
+        var parts: [String] = [formatRelativeDate(session.updatedAt)]
+        let pluginName = session.sourcePluginId.map(PluginDisplayNameResolver.displayName(for:))
+        if let origin = session.source.originLabel(pluginDisplayName: pluginName) {
+            parts.append(origin)
+        }
+        if let key = session.externalSessionKey,
+            !key.trimmingCharacters(in: .whitespaces).isEmpty
+        {
+            // Truncate noisy external keys (e.g. long Telegram chat ids)
+            // so the row doesn't overflow horizontally.
+            let trimmed = key.count > 14 ? "\(key.prefix(12))…" : key
+            parts.append("·\u{00A0}\(trimmed)")
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    private var sourceBadgeColor: Color {
+        switch session.source {
+        case .chat: return theme.secondaryText
+        case .plugin: return theme.accentColorLight
+        case .http: return theme.accentColorLight.opacity(0.85)
+        case .schedule: return theme.warningColor
+        case .watcher: return theme.successColor
+        }
+    }
+
+    private var sourceBadgeHelp: Text {
+        switch session.source {
+        case .chat:
+            return Text("Chat", bundle: .module)
+        case .plugin:
+            if let pid = session.sourcePluginId {
+                return Text(verbatim: "Plugin · \(PluginDisplayNameResolver.displayName(for: pid))")
+            }
+            return Text("Plugin", bundle: .module)
+        case .http:
+            return Text("HTTP API", bundle: .module)
+        case .schedule:
+            return Text("Schedule", bundle: .module)
+        case .watcher:
+            return Text("Watcher", bundle: .module)
         }
     }
 

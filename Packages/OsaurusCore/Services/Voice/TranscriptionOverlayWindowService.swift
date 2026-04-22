@@ -27,6 +27,9 @@ public final class TranscriptionOverlayWindowService: ObservableObject {
     /// Whether transcription is active
     @Published public var isActive: Bool = false
 
+    /// Whether transcription output is being cleaned up by the LLM
+    @Published public var isProcessing: Bool = false
+
     /// Callback when user presses Done
     public var onDone: (() -> Void)?
 
@@ -59,6 +62,7 @@ public final class TranscriptionOverlayWindowService: ObservableObject {
     public func hide() {
         panel?.orderOut(nil)
         isActive = false
+        isProcessing = false
         audioLevel = 0
 
         print("[TranscriptionOverlay] Hiding overlay")
@@ -67,6 +71,13 @@ public final class TranscriptionOverlayWindowService: ObservableObject {
     /// Update the audio level displayed in the overlay
     public func updateAudioLevel(_ level: Float) {
         audioLevel = level
+        updateView()
+    }
+
+    /// Update the processing state displayed in the overlay
+    public func updateProcessing(_ processing: Bool) {
+        guard isProcessing != processing else { return }
+        isProcessing = processing
         updateView()
     }
 
@@ -109,6 +120,7 @@ public final class TranscriptionOverlayWindowService: ObservableObject {
         TranscriptionOverlayView(
             audioLevel: audioLevel,
             isActive: isActive,
+            isProcessing: isProcessing,
             onDone: { [weak self] in
                 self?.onDone?()
             },

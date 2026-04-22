@@ -190,7 +190,7 @@ private extension ManagementView {
         case .commands:
             count = SlashCommandRegistry.shared.customCommands.count
         case .memory:
-            count = (try? MemoryDatabase.shared.activeEntryCount()) ?? 0
+            count = (try? MemoryDatabase.shared.pinnedFactStats()) ?? 0
         case .agents:
             count = agentManager.agents.filter { !$0.isBuiltIn }.count
         case .schedules:

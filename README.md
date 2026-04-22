@@ -68,9 +68,9 @@ osaurus status   # Check status
 
 Agents are the core of Osaurus. Each one gets its own prompts, memory, and visual theme -- a research assistant, a coding partner, a file organizer, whatever you need. Tools and skills are automatically selected via RAG search based on the task at hand -- no manual configuration needed. Everything else in the harness exists to make agents smarter, faster, and more capable over time.
 
-### Work Mode
+### Agent Loop
 
-Give an agent an objective. It breaks the work into trackable issues, executes step by step -- parallel tasks, file operations, background processing. Describe what you want done, not how to do it.
+Every chat is an agent loop. Pick a working folder and the agent gets file, search, and git tools. Toggle the sandbox and it gets shell access in an isolated Linux VM. The model writes a markdown todo list, executes against it, and closes out with a verified summary -- all in the same chat window. See the [Agent Loop Guide](docs/AGENT_LOOP.md).
 
 ### Sandbox
 
@@ -94,7 +94,7 @@ Each agent gets its own Linux user and home directory. The VM connects back to O
 
 ### Memory
 
-4-layer system: user profile, working memory, conversation summaries, and a knowledge graph. Extracts facts, detects contradictions, recalls relevant context -- all automatically. Agents get smarter over time, and that knowledge stays with you, not a provider.
+Three layers -- identity, pinned facts, and per-session episodes -- plus a transcript fallback. Agents distill conversations once at session end (not on every turn), score what matters by salience, and surface at most one compact slice per request based on what you're actually asking. A background consolidator decays, merges, and evicts so memory stays sharp instead of bloating. Most turns inject ~800 tokens or less; many inject zero. See the [Memory Guide](docs/MEMORY.md).
 
 ### Identity
 
@@ -110,7 +110,7 @@ The harness is model-agnostic. Swap freely -- your agents, memory, and tools sta
 
 ### Local
 
-Run Gemma 4, Qwen3.5, GPT-OSS, Llama, and more on Apple Silicon with optimized MLX inference. Osaurus maintains its own [optimized model library on Hugging Face](https://huggingface.co/OsaurusAI) with curated quantizations for the best quality-to-size ratio on Apple Silicon. Models stored at `~/MLXModels` (override with `OSU_MODELS_DIR`). Fully private, fully offline.
+Run Gemma 4, Qwen3.6, GPT-OSS, Llama, and more on Apple Silicon with optimized MLX inference. Osaurus maintains its own [optimized model library on Hugging Face](https://huggingface.co/OsaurusAI) with curated quantizations for the best quality-to-size ratio on Apple Silicon. Models stored at `~/MLXModels` (override with `OSU_MODELS_DIR`). Fully private, fully offline.
 
 ### Liquid Foundation Models
 
@@ -195,9 +195,9 @@ ln -sf "/Applications/Osaurus.app/Contents/MacOS/osaurus" "$(brew --prefix)/bin/
 ```
 ┌─────────────────────────────────────────────────────┐
 │                   The Harness                       │
-├──────────┬──────────┬───────────┬───────────────────┤
-│ Agents   │ Memory   │ Work Mode │ Automation        │
-├──────────┴──────────┴───────────┴───────────────────┤
+├──────────┬──────────┬────────────┬──────────────────┤
+│ Agents   │ Memory   │ Agent Loop │ Automation       │
+├──────────┴──────────┴────────────┴──────────────────┤
 │              MCP Server + Client                    │
 ├──────────┬──────────┬───────────┬───────────────────┤
 │ MLX      │ OpenAI   │ Anthropic │ Ollama / Others   │
@@ -250,7 +250,7 @@ osaurus/
 │   │   ├── Storage/              # SQLite databases
 │   │   ├── Identity/             # Cryptographic identity and access keys
 │   │   ├── Tools/                # MCP tools, plugin ABI, tool registry
-│   │   ├── Work/                 # Work mode execution context and file ops
+│   │   ├── Folder/               # Working-folder context, file ops, batch tool
 │   │   ├── Utils/                # Cross-cutting utilities
 │   │   └── Tests/                # Unit and integration tests
 │   ├── OsaurusCLI/               # CLI (osaurus command)

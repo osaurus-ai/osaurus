@@ -2,7 +2,7 @@
 //  SharedSidebarComponents.swift
 //  osaurus
 //
-//  Shared components for WorkTaskSidebar and ChatSessionSidebar.
+//  Shared components for chat session sidebars.
 //
 
 import SwiftUI

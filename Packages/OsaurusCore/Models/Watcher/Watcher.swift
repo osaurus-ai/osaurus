@@ -69,7 +69,7 @@ public struct Watcher: Codable, Identifiable, Sendable, Equatable {
     public var name: String
     /// Instructions to send to the AI when changes are detected
     public var instructions: String
-    /// The agent to use for work mode (nil = default agent)
+    /// The agent to dispatch to (nil = default agent)
     public var agentId: UUID?
     /// Extra parameters for future extensibility
     public var parameters: [String: String]

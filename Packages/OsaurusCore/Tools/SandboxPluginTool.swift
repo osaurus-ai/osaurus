@@ -72,7 +72,7 @@ final class SandboxPluginTool: OsaurusTool, @unchecked Sendable {
 
     private func resolveAgent() async -> (id: String, name: String) {
         let agentId: String
-        if let ctxAgent = WorkExecutionContext.currentAgentId {
+        if let ctxAgent = ChatExecutionContext.currentAgentId {
             agentId = ctxAgent.uuidString
         } else {
             agentId = await MainActor.run { AgentManager.shared.activeAgent.id.uuidString }

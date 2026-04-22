@@ -49,9 +49,6 @@ public struct VoiceInputOverlay: View {
     /// Whether AI is currently streaming a response
     var isStreaming: Bool = false
 
-    /// Whether to paste the full transcription via clipboard instead of live-typing
-    let useClipboardPaste: Bool
-
     /// How to stop voice recording (automatic silence detection or manual)
     let transcriptionStopMode: TranscriptionStopMode
 
@@ -75,7 +72,6 @@ public struct VoiceInputOverlay: View {
         silenceTimeoutProgress: Double = 0,
         isContinuousMode: Bool = false,
         isStreaming: Bool = false,
-        useClipboardPaste: Bool = true,
         transcriptionStopMode: TranscriptionStopMode = .automatic,
         onCancel: (() -> Void)? = nil,
         onSend: ((String) -> Void)? = nil,
@@ -92,7 +88,6 @@ public struct VoiceInputOverlay: View {
         self.silenceTimeoutProgress = silenceTimeoutProgress
         self.isContinuousMode = isContinuousMode
         self.isStreaming = isStreaming
-        self.useClipboardPaste = useClipboardPaste
         self.transcriptionStopMode = transcriptionStopMode
         self.onCancel = onCancel
         self.onSend = onSend
@@ -116,12 +111,15 @@ public struct VoiceInputOverlay: View {
             VStack(spacing: 12) {
                 // Header with status and controls
                 HStack(alignment: .center, spacing: 12) {
-                    // Status indicator
-                    VoiceStatusIndicator(
-                        state: voiceStatusFromState,
-                        showLabel: true,
-                        compact: false
-                    )
+                    // status indicator is hidden during .sending to avoid duplicate
+                    // "Processing" with the bottom center action area indicator.
+                    if state != .sending {
+                        VoiceStatusIndicator(
+                            state: voiceStatusFromState,
+                            showLabel: true,
+                            compact: false
+                        )
+                    }
 
                     // Waveform visualization (when recording)
                     if case .recording = state {
@@ -160,9 +158,12 @@ public struct VoiceInputOverlay: View {
                     .help(Text("Cancel voice input", bundle: .module))
                 }
 
-                // Live transcription area
-                transcriptionArea
-                    .frame(minHeight: 60)
+                // live transcription area is hidden during .sending since the
+                // bottom "Processing..." indicator is the sole state signal
+                if state != .sending {
+                    transcriptionArea
+                        .frame(minHeight: 60)
+                }
 
                 // Action area (countdown or buttons)
                 actionArea
@@ -189,7 +190,7 @@ public struct VoiceInputOverlay: View {
         case .idle: return .idle
         case .recording: return .listening
         case .paused: return .processing
-        case .sending: return .ready
+        case .sending: return .processing
         }
     }
 
@@ -199,9 +200,9 @@ public struct VoiceInputOverlay: View {
         VStack(alignment: .leading, spacing: 6) {
             // Combined transcription display
             HStack(alignment: .top, spacing: 2) {
-                // Full text with styling
-                if useClipboardPaste && state == .recording {
-                    // In clipboard mode, hide live jitter but show indicator
+                // full text with styling
+                if state == .recording {
+                    // hide live transcription jitter while recording
                     Text("Listening...", bundle: .module)
                         .font(.system(size: 15))
                         .foregroundColor(theme.tertiaryText)
@@ -303,17 +304,22 @@ public struct VoiceInputOverlay: View {
                     .opacity(fullText.isEmpty ? 0.5 : 1)
                     .disabled(fullText.isEmpty)
                 } else {
-                    if pauseDuration > 0 && silenceDuration > 0.2 {
-                        PauseDetectionRing(
-                            silenceDuration: silenceDuration,
-                            pauseThreshold: pauseDuration,
-                            audioLevel: audioLevel
-                        )
-                        .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                    // wrap only the ring in an animated container so its
+                    // appearance/disappearance transition is scoped. also prevents
+                    // implicit animation cross-talk onto the Edit/Stop buttons.
+                    ZStack {
+                        if pauseDuration > 0 && silenceDuration > 0.2 {
+                            PauseDetectionRing(
+                                silenceDuration: silenceDuration,
+                                pauseThreshold: pauseDuration,
+                                audioLevel: audioLevel
+                            )
+                            .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                        }
                     }
+                    .animation(.easeOut(duration: 0.2), value: silenceDuration > 0.2)
                 }
             }
-            .animation(.easeOut(duration: 0.2), value: silenceDuration > 0.2)
 
         case .paused(let remaining):
             // Clean countdown card - use state remaining value
@@ -325,11 +331,11 @@ public struct VoiceInputOverlay: View {
             .transition(.opacity)
 
         case .sending:
-            // Sending indicator
+            // processing indicator (LLM cleanup runs here)
             HStack(spacing: 8) {
                 ProgressView()
                     .scaleEffect(0.8)
-                Text("Sending...", bundle: .module)
+                Text("Processing...", bundle: .module)
                     .font(.system(size: 13, weight: .medium))
                     .foregroundColor(theme.secondaryText)
             }
@@ -426,10 +432,10 @@ public struct VoiceInputOverlay: View {
         if !message.isEmpty {
             onSend?(message)
         }
-        // Reset after sending
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            state = .idle
-        }
+        // FloatingInputCard.sendVoiceMessage owns the rest of the
+        // lifecycle. It runs cleanup, then resets state/dismisses the overlay.
+        // We intentionally do not auto reset here as doing so caused a visible
+        // flicker between .sending and dismissal while cleanup was in flight
     }
 }
 
@@ -473,7 +479,6 @@ private struct BlinkingCursor: ViewModifier {
                             silenceDuration: 0.8,
                             silenceTimeoutDuration: 30.0,
                             isContinuousMode: true,
-                            useClipboardPaste: true,
                             transcriptionStopMode: .automatic,
                             onCancel: { print("Cancelled") },
                             onSend: { text in print("Send: \(text)") },
@@ -504,7 +509,6 @@ private struct BlinkingCursor: ViewModifier {
                             pauseDuration: 1.5,
                             confirmationDelay: 2.0,
                             silenceDuration: 1.5,
-                            useClipboardPaste: true,
                             transcriptionStopMode: .automatic,
                             onCancel: { print("Cancelled") },
                             onSend: { text in print("Send: \(text)") },

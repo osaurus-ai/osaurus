@@ -10,7 +10,13 @@ let package = Package(
     targets: [
         .target(
             name: "OsaurusRepository",
-            path: "."
-        )
+            path: ".",
+            exclude: ["Tests"]
+        ),
+        .testTarget(
+            name: "OsaurusRepositoryTests",
+            dependencies: ["OsaurusRepository"],
+            path: "Tests/OsaurusRepositoryTests"
+        ),
     ]
 )

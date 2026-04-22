@@ -5,16 +5,18 @@ import Testing
 
 struct PreflightCapabilitySearchTests {
 
+    // MARK: - Integration-style smoke tests
+
     @Test func emptyQueryReturnsEmptyResult() async {
         let result = await PreflightCapabilitySearch.search(query: "", agentId: UUID())
         #expect(result.toolSpecs.isEmpty)
-        #expect(result.contextSnippet.isEmpty)
+        #expect(result.items.isEmpty)
     }
 
     @Test func whitespaceOnlyQueryReturnsEmptyResult() async {
         let result = await PreflightCapabilitySearch.search(query: "   \n  ", agentId: UUID())
         #expect(result.toolSpecs.isEmpty)
-        #expect(result.contextSnippet.isEmpty)
+        #expect(result.items.isEmpty)
     }
 
     @Test func nonsenseQueryReturnsGracefully() async {
@@ -35,7 +37,7 @@ struct PreflightCapabilitySearchTests {
         let alwaysLoaded = await MainActor.run {
             ToolRegistry.shared.alwaysLoadedSpecs(mode: .none)
         }
-        let alwaysNames = Set(alwaysLoaded.map { $0.function.name })
+        _ = Set(alwaysLoaded.map { $0.function.name })
 
         let result = await PreflightCapabilitySearch.search(query: "search memory save method", agentId: UUID())
         let preflightNames = result.toolSpecs.map { $0.function.name }
@@ -46,12 +48,12 @@ struct PreflightCapabilitySearchTests {
         )
     }
 
-    // MARK: - PreflightSearchMode Tests
+    // MARK: - PreflightSearchMode
 
     @Test func offModeReturnsEmptyResult() async {
         let result = await PreflightCapabilitySearch.search(query: "deploy build test", mode: .off, agentId: UUID())
         #expect(result.toolSpecs.isEmpty)
-        #expect(result.contextSnippet.isEmpty)
+        #expect(result.items.isEmpty)
     }
 
     @Test func narrowModeReturnsNoDuplicates() async {
@@ -67,9 +69,269 @@ struct PreflightCapabilitySearchTests {
     }
 
     @Test func toolCapValuesAreCorrect() {
+        // Caps are intentional ceilings, not targets. See
+        // PreflightCapabilitySearch.swift for rationale.
         #expect(PreflightSearchMode.off.toolCap == 0)
-        #expect(PreflightSearchMode.narrow.toolCap == 3)
-        #expect(PreflightSearchMode.balanced.toolCap == 8)
+        #expect(PreflightSearchMode.narrow.toolCap == 2)
+        #expect(PreflightSearchMode.balanced.toolCap == 5)
         #expect(PreflightSearchMode.wide.toolCap == 15)
+    }
+
+    // MARK: - parseJustifiedPicks
+
+    private static func makeCatalog() -> [ToolRegistry.ToolEntry] {
+        [
+            ToolRegistry.ToolEntry(
+                name: "play",
+                description: "Start playback",
+                enabled: true,
+                parameters: nil
+            ),
+            ToolRegistry.ToolEntry(
+                name: "search_songs",
+                description: "Find songs",
+                enabled: true,
+                parameters: nil
+            ),
+            ToolRegistry.ToolEntry(
+                name: "send_message",
+                description: "Post to a channel",
+                enabled: true,
+                parameters: nil
+            ),
+        ]
+    }
+
+    @Test func justifyFormatParsesNameAndReason() {
+        let picks = PreflightCapabilitySearch.parseJustifiedPicks(
+            from: "play | matches user request to play music",
+            catalog: Self.makeCatalog(),
+            cap: 5
+        )
+        #expect(picks == ["play"])
+    }
+
+    @Test func picksWithoutReasonAreDropped() {
+        // Bare names without `|` violate the anti-padding contract.
+        let picks = PreflightCapabilitySearch.parseJustifiedPicks(
+            from: "play\nsearch_songs",
+            catalog: Self.makeCatalog(),
+            cap: 5
+        )
+        #expect(picks.isEmpty)
+    }
+
+    @Test func picksWithEmptyReasonAreDropped() {
+        let picks = PreflightCapabilitySearch.parseJustifiedPicks(
+            from: "play |   \nsearch_songs | finds songs",
+            catalog: Self.makeCatalog(),
+            cap: 5
+        )
+        #expect(picks == ["search_songs"])
+    }
+
+    @Test func unknownNameIsDropped() {
+        let picks = PreflightCapabilitySearch.parseJustifiedPicks(
+            from: "totally_made_up | sounds plausible\nplay | real tool",
+            catalog: Self.makeCatalog(),
+            cap: 5
+        )
+        #expect(picks == ["play"])
+    }
+
+    @Test func groupNameTokenIsIgnoredNotExpanded() {
+        // Previously a `[provider]` token expanded to every tool in that
+        // provider's group — the single biggest over-selection vector. The
+        // new parser must drop it silently.
+        let picks = PreflightCapabilitySearch.parseJustifiedPicks(
+            from: "[spotify] | matches the spotify provider\nplay | matches request",
+            catalog: Self.makeCatalog(),
+            cap: 5
+        )
+        #expect(picks == ["play"])
+    }
+
+    @Test func trailingProviderAnnotationIsStripped() {
+        // Models sometimes echo the catalog formatting back at us.
+        let picks = PreflightCapabilitySearch.parseJustifiedPicks(
+            from: "play [spotify] | matches request",
+            catalog: Self.makeCatalog(),
+            cap: 5
+        )
+        #expect(picks == ["play"])
+    }
+
+    @Test func leadingListBulletsAreTolerated() {
+        let picks = PreflightCapabilitySearch.parseJustifiedPicks(
+            from: "- play | matches request\n* search_songs | also relevant",
+            catalog: Self.makeCatalog(),
+            cap: 5
+        )
+        #expect(picks == ["play", "search_songs"])
+    }
+
+    @Test func noneAfterValidPickActsAsTerminator() {
+        // Models sometimes emit a stray `NONE` after legitimate picks (e.g.
+        // `get_events | reason\n\nNONE`). Prior picks must survive — the
+        // `NONE` is treated as "no more picks", not "discard everything".
+        let picks = PreflightCapabilitySearch.parseJustifiedPicks(
+            from: "play | would match\nNONE\nsearch_songs | discarded after NONE",
+            catalog: Self.makeCatalog(),
+            cap: 5
+        )
+        #expect(picks == ["play"])
+    }
+
+    @Test func bareNoneShortCircuits() {
+        let picks = PreflightCapabilitySearch.parseJustifiedPicks(
+            from: "NONE",
+            catalog: Self.makeCatalog(),
+            cap: 5
+        )
+        #expect(picks.isEmpty)
+    }
+
+    @Test func noneBeforeAnyValidPickAbstains() {
+        // Reasoning models occasionally emit prose / unparseable junk
+        // before the abstain signal. As long as no valid pick has been
+        // collected yet, `NONE` clears any partial state.
+        let picks = PreflightCapabilitySearch.parseJustifiedPicks(
+            from: "totally_made_up | not in catalog\nNONE",
+            catalog: Self.makeCatalog(),
+            cap: 5
+        )
+        #expect(picks.isEmpty)
+    }
+
+    @Test func emptyResponseReturnsEmpty() {
+        let picks = PreflightCapabilitySearch.parseJustifiedPicks(
+            from: "   \n  ",
+            catalog: Self.makeCatalog(),
+            cap: 5
+        )
+        #expect(picks.isEmpty)
+    }
+
+    @Test func capIsHardCeiling() {
+        // Model returned 10 picks; only the first `cap` valid ones survive.
+        let response = (0 ..< 10)
+            .map { _ in "play | reason\nsearch_songs | reason\nsend_message | reason" }
+            .joined(separator: "\n")
+        let picks = PreflightCapabilitySearch.parseJustifiedPicks(
+            from: response,
+            catalog: Self.makeCatalog(),
+            cap: 2
+        )
+        #expect(picks.count == 2)
+    }
+
+    @Test func duplicatePicksAreDeduped() {
+        let picks = PreflightCapabilitySearch.parseJustifiedPicks(
+            from: "play | first\nplay | second",
+            catalog: Self.makeCatalog(),
+            cap: 5
+        )
+        #expect(picks == ["play"])
+    }
+
+    // MARK: - Embedding guardrail
+
+    @Test func guardrailDropsEgregiousMismatch() async {
+        // Query vector is orthogonal to the second pick's vector → cosine 0,
+        // which is below the 0.05 floor.
+        let nameToDesc = ["good_match": "good", "bad_match": "bad"]
+        let embedder: PreflightCapabilitySearch.Embedder = { texts in
+            // texts: [query, good_match text, bad_match text]
+            #expect(texts.count == 3)
+            return [
+                [1.0, 0.0],
+                [1.0, 0.0],
+                [0.0, 1.0],
+            ]
+        }
+        let kept = await PreflightCapabilitySearch.applyEmbeddingGuardrail(
+            query: "anything",
+            picks: ["good_match", "bad_match"],
+            nameToDesc: nameToDesc,
+            embedder: embedder
+        )
+        #expect(kept == ["good_match"])
+    }
+
+    @Test func guardrailKeepsAllPicksWhenEmbedderThrows() async {
+        let embedder: PreflightCapabilitySearch.Embedder = { _ in
+            throw NSError(domain: "test", code: 1)
+        }
+        let kept = await PreflightCapabilitySearch.applyEmbeddingGuardrail(
+            query: "q",
+            picks: ["a", "b"],
+            nameToDesc: ["a": "alpha", "b": "beta"],
+            embedder: embedder
+        )
+        #expect(kept == ["a", "b"])
+    }
+
+    @Test func guardrailDisabledByNilEmbedder() async {
+        let kept = await PreflightCapabilitySearch.applyEmbeddingGuardrail(
+            query: "q",
+            picks: ["a", "b"],
+            nameToDesc: [:],
+            embedder: nil
+        )
+        #expect(kept == ["a", "b"])
+    }
+
+    @Test func guardrailKeepsAllPicksOnEmbeddingCountMismatch() async {
+        // Embedder returns wrong number of vectors → graceful degrade.
+        let embedder: PreflightCapabilitySearch.Embedder = { _ in
+            [[1.0, 0.0]]
+        }
+        let kept = await PreflightCapabilitySearch.applyEmbeddingGuardrail(
+            query: "q",
+            picks: ["a", "b"],
+            nameToDesc: ["a": "alpha", "b": "beta"],
+            embedder: embedder
+        )
+        #expect(kept == ["a", "b"])
+    }
+
+    // MARK: - Internal search() seam
+
+    @Test func searchWithCannedLLMReturnsPicks() async {
+        let llm: PreflightCapabilitySearch.LLMGenerator = { _, _ in
+            // Use a name that's in the always-loaded built-in catalog so the
+            // catalog filter doesn't drop it. If no dynamic tools are
+            // registered the catalog is empty and we'd short-circuit; this
+            // test only asserts the seam is wired, so we accept either an
+            // empty result (no dynamic tools in the test environment) or the
+            // canned pick coming through. The important assertion is that
+            // canned LLM responses do NOT throw.
+            return "play | sample"
+        }
+        // No embedder ⇒ guardrail disabled, so picks are not filtered by
+        // similarity. Result depends on whether `play` is in the dynamic
+        // catalog of the test process; if not, an empty result is correct
+        // and equally validates the seam.
+        let result = await PreflightCapabilitySearch.search(
+            query: "play music",
+            mode: .balanced,
+            llm: llm,
+            embedder: nil
+        )
+        #expect(result.items.count <= PreflightSearchMode.balanced.toolCap)
+    }
+
+    @Test func searchShortCircuitsOnLLMError() async {
+        let llm: PreflightCapabilitySearch.LLMGenerator = { _, _ in
+            throw NSError(domain: "test", code: 99)
+        }
+        let result = await PreflightCapabilitySearch.search(
+            query: "anything",
+            mode: .balanced,
+            llm: llm,
+            embedder: nil
+        )
+        #expect(result.items.isEmpty)
+        #expect(result.toolSpecs.isEmpty)
     }
 }

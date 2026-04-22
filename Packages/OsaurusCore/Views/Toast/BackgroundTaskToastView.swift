@@ -3,7 +3,7 @@
 //  osaurus
 //
 //  Toast view for background tasks with support for running,
-//  clarification, and completed states. Supports both chat and work modes.
+//  running and completed states for backgrounded chat tasks.
 //
 
 import SwiftUI
@@ -20,7 +20,6 @@ struct BackgroundTaskToastView: View {
 
     @State private var isHovering = false
     @State private var showCancelConfirmation = false
-    @State private var selectedOption: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -64,9 +63,10 @@ struct BackgroundTaskToastView: View {
                     .foregroundColor(theme.primaryText)
                     .lineLimit(1)
 
-                Text(taskState.status.displayName)
+                Text(headerSubtitle)
                     .font(.system(size: 10, weight: .medium))
                     .foregroundColor(theme.tertiaryText)
+                    .lineLimit(1)
             }
 
             Spacer(minLength: 4)
@@ -104,10 +104,12 @@ struct BackgroundTaskToastView: View {
     @ViewBuilder
     private var contentSection: some View {
         switch taskState.status {
-        case .running:
+        case .running, .awaitingClarification:
+            // Chat tasks never enter `awaitingClarification` from the manager —
+            // chat clarifications surface inline via the `clarify` agent
+            // intercept rendered in the chat window. Treat the case as a
+            // running task here for back-compat with any legacy state.
             runningContent
-        case .awaitingClarification:
-            clarificationContent
         case .completed(_, let summary):
             completedContent(summary: summary)
         case .cancelled:
@@ -117,31 +119,8 @@ struct BackgroundTaskToastView: View {
 
     // MARK: - Running State
 
-    @ViewBuilder
+    /// Indeterminate progress + activity feed for an in-flight chat task.
     private var runningContent: some View {
-        switch taskState.mode {
-        case .work:
-            agentRunningContent
-        case .chat:
-            chatRunningContent
-        }
-    }
-
-    /// Work running: rich content with step counter, progress, and activity feed
-    private var agentRunningContent: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            runningHeaderRow
-            runningProgressRow
-            activityFeedView
-        }
-        .padding(.horizontal, 14)
-        .padding(.bottom, 12)
-        .contentShape(Rectangle())
-        .onTapGesture { onOpen() }
-    }
-
-    /// Chat running: simpler content with indeterminate progress and tool call activity
-    private var chatRunningContent: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(taskState.currentStep ?? "Running...")
                 .font(.system(size: 11.5, weight: .medium))
@@ -158,42 +137,6 @@ struct BackgroundTaskToastView: View {
         .padding(.bottom, 12)
         .contentShape(Rectangle())
         .onTapGesture { onOpen() }
-    }
-
-    private var runningHeaderRow: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text(taskState.currentStep ?? "Working…")
-                .font(.system(size: 11.5, weight: .medium))
-                .foregroundColor(theme.secondaryText)
-                .lineLimit(2)
-
-            Spacer(minLength: 8)
-
-            if let ls = taskState.loopState, ls.iteration > 0 {
-                AnimatedStepCounter(
-                    current: ls.iteration,
-                    total: ls.maxIterations,
-                    color: accentColor
-                )
-                .fixedSize()
-            } else if taskState.progress >= 0 {
-                Text("\(Int(taskState.progress * 100))%", bundle: .module)
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
-                    .foregroundColor(theme.tertiaryText)
-                    .contentTransition(.numericText())
-                    .animation(theme.springAnimation(responseMultiplier: 0.8), value: taskState.progress)
-                    .fixedSize()
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var runningProgressRow: some View {
-        if taskState.progress >= 0 {
-            ShimmerProgressBar(progress: taskState.progress, color: accentColor, height: 3.5, showGlow: true)
-        } else {
-            IndeterminateShimmerProgress(color: accentColor, height: 3.5)
-        }
     }
 
     // MARK: - Activity Feed
@@ -289,138 +232,6 @@ struct BackgroundTaskToastView: View {
         }
     }
 
-    // MARK: - Clarification State
-
-    @ViewBuilder
-    private var clarificationContent: some View {
-        if let clarification = taskState.pendingClarification {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 8) {
-                    Circle()
-                        .fill(theme.warningColor.opacity(0.9))
-                        .frame(width: 7, height: 7)
-                    Text("Needs input", bundle: .module)
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(theme.tertiaryText)
-                }
-
-                activityFeedView
-
-                Text(clarification.question)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.primaryText)
-                    .lineLimit(3)
-
-                if let options = clarification.options, !options.isEmpty {
-                    optionsView(options: options)
-                    HStack {
-                        Spacer()
-                        submitButton
-                    }
-                } else {
-                    respondButton
-                }
-            }
-            .padding(.horizontal, 14)
-            .padding(.bottom, 12)
-        }
-    }
-
-    private func optionsView(options: [String]) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            ForEach(options, id: \.self) { option in
-                optionButton(option)
-            }
-        }
-    }
-
-    private func optionButton(_ option: String) -> some View {
-        let isSelected = selectedOption == option
-
-        return Button {
-            withAnimation(theme.animationQuick()) {
-                selectedOption = isSelected ? nil : option
-            }
-        } label: {
-            HStack(spacing: 8) {
-                ZStack {
-                    Circle()
-                        .strokeBorder(isSelected ? accentColor : theme.tertiaryText.opacity(0.4), lineWidth: 1.5)
-                        .frame(width: 16, height: 16)
-
-                    if isSelected {
-                        Circle().fill(accentColor).frame(width: 8, height: 8)
-                    }
-                }
-
-                Text(option)
-                    .font(.system(size: 11, weight: isSelected ? .medium : .regular))
-                    .foregroundColor(isSelected ? theme.primaryText : theme.secondaryText)
-                    .lineLimit(3)
-                    .multilineTextAlignment(.leading)
-
-                Spacer()
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(isSelected ? accentColor.opacity(0.1) : theme.tertiaryBackground.opacity(0.3))
-            )
-        }
-        .buttonStyle(.plain)
-    }
-
-    private var submitButton: some View {
-        let canSubmit = selectedOption != nil
-
-        return Button {
-            if let option = selectedOption {
-                BackgroundTaskManager.shared.submitClarification(taskState.id, response: option)
-                selectedOption = nil
-            }
-        } label: {
-            HStack(spacing: 4) {
-                Text("Continue", bundle: .module)
-                    .font(.system(size: 11, weight: .semibold))
-                Image(systemName: "arrow.right")
-                    .font(.system(size: 10, weight: .semibold))
-            }
-            .foregroundColor(canSubmit ? .white : theme.tertiaryText)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(canSubmit ? accentColor : theme.tertiaryBackground)
-            )
-        }
-        .buttonStyle(.plain)
-        .disabled(!canSubmit)
-    }
-
-    private var respondButton: some View {
-        Button {
-            onOpen()
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "keyboard").font(.system(size: 11))
-                Text("Click to respond", bundle: .module).font(.system(size: 11, weight: .medium))
-            }
-            .foregroundColor(theme.isDark ? theme.primaryBackground : .white)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .frame(maxWidth: .infinity)
-            .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(accentColor))
-            .overlay(
-                RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(
-                    accentColor.opacity(0.25),
-                    lineWidth: 1
-                )
-            )
-        }
-        .buttonStyle(.plain)
-    }
-
     // MARK: - Completed State
 
     private func completedContent(summary: String) -> some View {
@@ -435,7 +246,7 @@ struct BackgroundTaskToastView: View {
             }
 
             ToastActionButton(
-                title: taskState.mode == .chat ? "View Chat" : "View Details",
+                title: "View Chat",
                 accentColor: accentColor
             ) {
                 onOpen()
@@ -500,6 +311,18 @@ struct BackgroundTaskToastView: View {
         case .completed(let success, _): return success ? theme.successColor : theme.errorColor
         case .cancelled: return theme.tertiaryText
         }
+    }
+
+    /// Status line under the task title. For non-`chat` sources we append
+    /// the origin (e.g. "Running · via Telegram") so the user can tell at a
+    /// glance which integration spawned the task.
+    private var headerSubtitle: String {
+        let status = taskState.status.displayName
+        let pluginName = taskState.sourcePluginId.map(PluginDisplayNameResolver.displayName(for:))
+        guard let origin = taskState.source.originLabel(pluginDisplayName: pluginName) else {
+            return status
+        }
+        return "\(status) · \(origin)"
     }
 }
 

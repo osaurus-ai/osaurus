@@ -42,16 +42,44 @@
         private var linuxContainer: LinuxContainer?
         private var _removedByUser = false
 
+        /// Coalesces concurrent `startContainer()` calls. Without this,
+        /// AppDelegate's auto-start, `SandboxToolRegistrar.start`,
+        /// `SandboxAgentProvisioner.ensureProvisioned`, and the Sandbox
+        /// settings panel's "Start" button can all fire near-simultaneously
+        /// at launch and queue several full provision attempts (each one
+        /// thrashing vmnet / the bridge socket). With coalescing, the first
+        /// caller drives a single attempt and every other caller awaits the
+        /// same task.
+        private var inFlightStartTask: Task<Void, Error>?
+
         // MARK: - Observable State (MainActor bridge)
 
         @MainActor
         public final class State: ObservableObject {
             public static let shared = State()
-            @Published public var availability: SandboxAvailability = .unavailable(reason: "Not checked yet")
+            // Seed `availability` synchronously from the OS version so the
+            // sandbox UI chip is visible from the very first frame on
+            // macOS 26+. `refreshAvailability()` later re-asserts the same
+            // value (or downgrades on older OSes); SwiftUI's @Published
+            // diff makes the re-assignment a no-op when nothing changed.
+            @Published public var availability: SandboxAvailability = State.initialAvailability
             @Published public var status: ContainerStatus = .notProvisioned
             @Published public var provisioningPhase: String?
             @Published public var provisioningProgress: Double?
             @Published public var isProvisioning: Bool = false
+            /// Mirror of `SandboxToolRegistrar.unavailabilityReason(for:)`
+            /// for the currently active agent. Lets SwiftUI views (e.g. the
+            /// sandbox chip) observe failures without coupling to the
+            /// registrar singleton's internal `[UUID: …]` map. `nil` means
+            /// "no failure recorded for the active agent".
+            @Published public var activeAgentUnavailability: SandboxToolRegistrar.UnavailabilityReason?
+
+            private static var initialAvailability: SandboxAvailability {
+                let osVersion = ProcessInfo.processInfo.operatingSystemVersion.majorVersion
+                return osVersion >= 26
+                    ? .available
+                    : .unavailable(reason: "Requires macOS 26 or later")
+            }
         }
 
         // MARK: - Availability
@@ -98,9 +126,12 @@
             if linuxContainer != nil {
                 _status = .running
             } else if FileManager.default.fileExists(atPath: staleContainerDir.path) {
-                // Auto-clean stale container state from a previous session
-                NSLog("[SandboxManager] Cleaning up stale container state from previous session")
-                try? FileManager.default.removeItem(at: staleContainerDir)
+                // Auto-clean stale container state from a previous session.
+                // forciblyRemove walks the tree so a stuck FUSE mount or
+                // locked socket file from a crashed run can't keep the
+                // directory around to confuse `manager.create` later.
+                debugLog("[Sandbox] Cleaning up stale container state from previous session")
+                try? Self.forciblyRemove(at: staleContainerDir)
                 _status = .stopped
             } else if hasRequiredAssets {
                 _status = .stopped
@@ -129,10 +160,13 @@
                 await setProvisioningPhase(isRestart ? "Preparing sandbox..." : "Pulling Alpine image...")
                 try ensureHostDirectories()
 
-                // Clean up stale container state from a previous crash
+                // Clean up stale container state from a previous crash.
+                // Use `try` (not `try?`) so a real cleanup failure surfaces
+                // here as a clear error instead of bubbling up later as the
+                // misleading "file already exists" from `manager.create`.
                 if FileManager.default.fileExists(atPath: staleContainerDir.path) {
-                    NSLog("[SandboxManager] Cleaning up stale container state")
-                    try? FileManager.default.removeItem(at: staleContainerDir)
+                    debugLog("[Sandbox] Cleaning up stale container state")
+                    try Self.forciblyRemove(at: staleContainerDir)
                 }
 
                 if #available(macOS 26, *) {
@@ -172,12 +206,19 @@
                         cfg.mounts.append(.share(source: workspace, destination: "/workspace"))
                     }
 
+                    // Assign to self IMMEDIATELY so cleanupAfterFailure() can
+                    // see and tear down the SDK objects if container.create()
+                    // or container.start() throws below. Previously these
+                    // fields were only set after a successful start, so a
+                    // partial-provision failure left the container registered
+                    // inside the SDK and on disk — the source of subsequent
+                    // "file already exists" errors on the next attempt.
+                    self.containerManager = manager
+                    self.linuxContainer = container
+
                     await setProvisioningPhase("Starting container...")
                     try await container.create()
                     try await container.start()
-
-                    self.containerManager = manager
-                    self.linuxContainer = container
                 }
 
                 await setProvisioningPhase(isRestart ? "Finishing up..." : "Configuring sandbox...")
@@ -193,7 +234,7 @@
                     SandboxConfigurationStore.save(savedConfig)
                 }
             } catch {
-                NSLog("[SandboxManager] Provision failed: \(error)")
+                debugLog("[Sandbox] Provision failed: \(error)")
                 await setProvisioningPhase(nil)
                 await cleanupAfterFailure()
                 throw error
@@ -203,19 +244,34 @@
         // MARK: - Start / Stop
 
         public func startContainer() async throws {
+            // Reuse an in-flight attempt instead of queuing another one.
+            // Multiple call sites (AppDelegate auto-start, SandboxView,
+            // SandboxToolRegistrar, SandboxAgentProvisioner) can race here
+            // at launch. The actor singleton lives forever, so a strong
+            // capture in the spawned task is fine.
+            if let existing = inFlightStartTask {
+                try await existing.value
+                return
+            }
+            let task = Task<Void, Error> { try await self._performStartContainer() }
+            inFlightStartTask = task
+            defer { inFlightStartTask = nil }
+            try await task.value
+        }
+
+        private func _performStartContainer() async throws {
             guard _availability?.isAvailable == true else {
                 throw SandboxError.unavailable
             }
             guard !_removedByUser else { return }
 
-            let current = refreshStatus()
-            switch current {
+            switch refreshStatus() {
             case .running, .starting:
                 return
             case .error:
-                try? FileManager.default.removeItem(at: staleContainerDir)
-                linuxContainer = nil
-                containerManager = nil
+                // Recover from a prior failed attempt by tearing down any
+                // SDK / on-disk state before re-provisioning.
+                await cleanupAfterFailure()
                 fallthrough
             case .stopped, .notProvisioned:
                 _status = .starting
@@ -246,10 +302,22 @@
 
         public func removeContainer() async throws {
             try await stopContainer()
-            let containerDir = OsaurusPaths.container()
-            try? FileManager.default.removeItem(at: containerDir.appendingPathComponent("containers"))
+
+            // Collect cleanup failures so the user-initiated full-remove
+            // surfaces partial failures (orphan mounts, locked files, etc.)
+            // instead of silently leaving state behind and reporting success.
+            // Kernel / initfs removal is best-effort — they redownload on
+            // next provision, so a leftover doesn't block startup.
+            var warnings: [String] = []
+            let containersRoot = OsaurusPaths.container().appendingPathComponent("containers")
+            do {
+                try Self.forciblyRemove(at: containersRoot)
+            } catch {
+                warnings.append("containers/: \(error.localizedDescription)")
+            }
             try? FileManager.default.removeItem(at: OsaurusPaths.containerKernelFile())
             try? FileManager.default.removeItem(at: OsaurusPaths.containerInitFSFile())
+
             _status = .notProvisioned
             _removedByUser = true
             syncStatus()
@@ -258,6 +326,10 @@
             var config = SandboxConfigurationStore.load()
             config.setupComplete = false
             SandboxConfigurationStore.save(config)
+
+            if !warnings.isEmpty {
+                throw SandboxError.removeFailed(warnings.joined(separator: "; "))
+            }
         }
 
         public func resetContainer() async throws {
@@ -619,7 +691,7 @@
             try? FileManager.default.removeItem(at: kernelPath)
             try FileManager.default.copyItem(at: resolvedKernel, to: kernelPath)
 
-            NSLog("[SandboxManager] Kernel installed at \(kernelPath.path)")
+            debugLog("[Sandbox] Kernel installed at \(kernelPath.path)")
             return Kernel(path: kernelPath, platform: .linuxArm)
         }
 
@@ -640,7 +712,7 @@
             for urlString in urls {
                 guard let url = URL(string: urlString) else { continue }
                 do {
-                    NSLog("[SandboxManager] Downloading from \(urlString)...")
+                    debugLog("[Sandbox] Downloading from \(urlString)...")
                     let (tempURL, response) = try await session.download(from: url)
                     guard let httpResponse = response as? HTTPURLResponse,
                         (200 ... 299).contains(httpResponse.statusCode)
@@ -653,11 +725,11 @@
 
                     try? FileManager.default.removeItem(at: destination)
                     try FileManager.default.moveItem(at: tempURL, to: destination)
-                    NSLog("[SandboxManager] Downloaded to \(destination.path)")
+                    debugLog("[Sandbox] Downloaded to \(destination.path)")
                     return
                 } catch {
                     lastError = error
-                    NSLog("[SandboxManager] Download failed from \(urlString): \(error)")
+                    debugLog("[Sandbox] Download failed from \(urlString): \(error)")
                 }
             }
 
@@ -773,8 +845,40 @@
             if var mgr = containerManager { try? mgr.delete(Self.containerID) }
             linuxContainer = nil
             containerManager = nil
-            try? FileManager.default.removeItem(at: staleContainerDir)
+            try? Self.forciblyRemove(at: staleContainerDir)
             await HostAPIBridgeServer.shared.stop()
+        }
+
+        /// Robust container-state cleanup. A plain `removeItem` can fail and
+        /// leave the directory behind when the previous run left files in
+        /// use (FUSE / 9p mounts, locked sockets, POSIX ACLs). When that
+        /// happens, `manager.create()` later fails with the misleading
+        /// "file already exists" error. This walks the tree first so each
+        /// child is removed individually before retrying the parent, and
+        /// surfaces the underlying error if anything is still stuck.
+        nonisolated static func forciblyRemove(at url: URL) throws {
+            let fm = FileManager.default
+            guard fm.fileExists(atPath: url.path) else { return }
+
+            do {
+                try fm.removeItem(at: url)
+                return
+            } catch {
+                // Walk + best-effort delete each child, then retry the parent.
+                if let enumerator = fm.enumerator(at: url, includingPropertiesForKeys: nil, options: []) {
+                    for case let child as URL in enumerator {
+                        try? fm.removeItem(at: child)
+                    }
+                }
+                do {
+                    try fm.removeItem(at: url)
+                } catch {
+                    NSLog(
+                        "[SandboxManager] Failed to clean stale container state at \(url.path): \(error.localizedDescription). Run `rm -rf \(url.path)` manually if startup keeps failing."
+                    )
+                    throw error
+                }
+            }
         }
 
         private func ensureHostDirectories() throws {
@@ -806,7 +910,7 @@
                     timeout: 5
                 )
                 if result?.stdout.contains("ok") == true { return }
-                NSLog("[SandboxManager] Network not ready yet (attempt \(attempt)/5)")
+                debugLog("[Sandbox] Network not ready yet (attempt \(attempt)/5)")
                 try? await Task.sleep(nanoseconds: 1_000_000_000)
             }
         }
@@ -893,17 +997,58 @@
             }
         }
 
+        /// Centralised actionable messages for the most common sandbox start
+        /// failures. Lookups happen against (NSCocoaErrorDomain, code),
+        /// (NSPOSIXErrorDomain, code), and substrings of `String(describing:)`
+        /// for SDK-internal errors that don't bridge cleanly to NSError.
+        private static let startFailureHints:
+            (
+                cocoa: [Int: String],
+                posix: [Int32: String],
+                substrings: [(needle: String, message: String)]
+            ) = (
+                cocoa: [
+                    NSFileWriteFileExistsError:
+                        "Stale sandbox state on disk. Run `rm -rf ~/.osaurus/container/containers/osaurus-sandbox` and try again.",
+                    NSFileWriteOutOfSpaceError:
+                        "Not enough disk space to start the sandbox container.",
+                ],
+                posix: [
+                    EEXIST:
+                        "Stale sandbox state on disk. Run `rm -rf ~/.osaurus/container/containers/osaurus-sandbox` and try again.",
+                    EBUSY:
+                        "A sandbox file or mount is in use by another process. Try restarting the app.",
+                    EADDRINUSE:
+                        "Sandbox network port is already in use. Another VM may be running.",
+                    EACCES:
+                        "Sandbox start denied by macOS — check that osaurus has the required entitlements.",
+                    EPERM:
+                        "Sandbox start denied by macOS — check that osaurus has the required entitlements.",
+                ],
+                substrings: [
+                    ("GRPC", "Container failed to start (VM error). Try resetting the container."),
+                    (
+                        "vmnet",
+                        "Container networking failed. Ensure no other VMs are using conflicting network resources."
+                    ),
+                ]
+            )
+
         private static func friendlyError(from error: Error) -> Error {
-            let desc = String(describing: error)
-            if desc.contains("GRPC") {
-                return SandboxError.startFailed(
-                    "Container failed to start (VM error). Try resetting the container."
-                )
+            let nsError = error as NSError
+            if nsError.domain == NSCocoaErrorDomain,
+                let message = startFailureHints.cocoa[nsError.code]
+            {
+                return SandboxError.startFailed(message)
             }
-            if desc.contains("vmnet") {
-                return SandboxError.startFailed(
-                    "Container networking failed. Ensure no other VMs are using conflicting network resources."
-                )
+            if nsError.domain == NSPOSIXErrorDomain,
+                let message = startFailureHints.posix[Int32(nsError.code)]
+            {
+                return SandboxError.startFailed(message)
+            }
+            let desc = String(describing: error)
+            if let hit = startFailureHints.substrings.first(where: { desc.contains($0.needle) }) {
+                return SandboxError.startFailed(hit.message)
             }
             return error
         }

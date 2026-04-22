@@ -698,8 +698,8 @@ struct AgentDetailView: View {
     @State private var selectedModel: String?
     @State private var showCreateSchedule = false
     @State private var showCreateWatcher = false
-    @State private var memoryEntries: [MemoryEntry] = []
-    @State private var conversationSummaries: [ConversationSummary] = []
+    @State private var pinnedFacts: [PinnedFact] = []
+    @State private var episodes: [Episode] = []
     @State private var showAllSummaries = false
     @State private var isInitialLoadComplete = false
 
@@ -717,10 +717,6 @@ struct AgentDetailView: View {
 
     private var chatSessions: [ChatSessionData] {
         ChatSessionsManager.shared.sessions(for: agent.id)
-    }
-
-    private var workTasks: [WorkTask] {
-        (try? IssueStore.listTasks(agentId: agent.id)) ?? []
     }
 
     private var agentColor: Color { agentColorFor(name) }
@@ -980,7 +976,7 @@ struct AgentDetailView: View {
                 let count = linkedSchedules.count + linkedWatchers.count
                 return count > 0 ? count : nil
             case .memory:
-                let count = chatSessions.count + workTasks.count
+                let count = chatSessions.count
                 return count > 0 ? count : nil
             }
         case .plugin:
@@ -1090,8 +1086,8 @@ struct AgentDetailView: View {
     private var memoryTabContent: some View {
         tabHelperText(DetailTab.memory.helperText)
         historySection
-        workingMemorySection
-        conversationSummariesSection
+        pinnedFactsSection
+        episodesSection
     }
 
     // MARK: - Configure Tab Sections
@@ -2620,8 +2616,7 @@ struct AgentDetailView: View {
         AgentDetailSection(
             title: L("History"),
             icon: "clock.arrow.circlepath",
-            subtitle:
-                "\(chatSessions.count) chat\(chatSessions.count == 1 ? "" : "s"), \(workTasks.count) task\(workTasks.count == 1 ? "" : "s")"
+            subtitle: "\(chatSessions.count) chat\(chatSessions.count == 1 ? "" : "s")"
         ) {
             VStack(alignment: .leading, spacing: 16) {
                 VStack(alignment: .leading, spacing: 8) {
@@ -2695,121 +2690,64 @@ struct AgentDetailView: View {
                     }
                 }
 
-                Rectangle()
-                    .fill(theme.primaryBorder)
-                    .frame(height: 1)
-
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "checklist")
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundColor(theme.accentColor)
-                        Text("RECENT TASKS", bundle: .module)
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundColor(theme.secondaryText)
-                            .tracking(0.3)
-                    }
-
-                    if workTasks.isEmpty {
-                        Text("No work tasks yet", bundle: .module)
-                            .font(.system(size: 12))
-                            .foregroundColor(theme.tertiaryText)
-                            .padding(.vertical, 8)
-                    } else {
-                        ForEach(workTasks.prefix(5)) { task in
-                            HStack(spacing: 10) {
-                                Circle()
-                                    .fill(taskStatusColor(task.status))
-                                    .frame(width: 6, height: 6)
-
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(task.title)
-                                        .font(.system(size: 12, weight: .medium))
-                                        .foregroundColor(theme.primaryText)
-                                        .lineLimit(1)
-
-                                    Text(task.createdAt.formatted(date: .abbreviated, time: .shortened))
-                                        .font(.system(size: 10))
-                                        .foregroundColor(theme.tertiaryText)
-                                }
-                                Spacer()
-                                Text(task.status.rawValue.capitalized)
-                                    .font(.system(size: 10, weight: .medium))
-                                    .foregroundColor(taskStatusColor(task.status))
-                            }
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
-                            .background(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .fill(theme.inputBackground.opacity(0.5))
-                            )
-                        }
-                        if workTasks.count > 5 {
-                            Text("and \(workTasks.count - 5) more...", bundle: .module)
-                                .font(.system(size: 11))
-                                .foregroundColor(theme.tertiaryText)
-                                .padding(.leading, 4)
-                        }
-                    }
-                }
             }
         }
     }
 
-    private var workingMemorySection: some View {
+    private var pinnedFactsSection: some View {
         AgentDetailSection(
-            title: L("Working Memory"),
-            icon: "brain.head.profile",
-            subtitle: memoryEntries.isEmpty ? "None" : "\(memoryEntries.count)"
+            title: L("Pinned Facts"),
+            icon: "pin.fill",
+            subtitle: pinnedFacts.isEmpty ? "None" : "\(pinnedFacts.count)"
         ) {
-            if memoryEntries.isEmpty {
+            if pinnedFacts.isEmpty {
                 Text(
-                    "No working memory entries yet. Memories are automatically extracted from conversations.",
+                    "No pinned facts yet. Facts are promoted from session distillations once they accumulate enough salience.",
                     bundle: .module
                 )
                 .font(.system(size: 12))
                 .foregroundColor(theme.tertiaryText)
                 .padding(.vertical, 8)
             } else {
-                AgentEntriesPanel(
-                    entries: memoryEntries,
-                    onDelete: { entryId in
-                        deleteMemoryEntry(entryId)
+                PinnedFactsPanel(
+                    facts: pinnedFacts,
+                    onDelete: { factId in
+                        deletePinnedFact(factId)
                     }
                 )
             }
         }
     }
 
-    private var conversationSummariesSection: some View {
+    private var episodesSection: some View {
         AgentDetailSection(
-            title: L("Summaries"),
+            title: L("Episodes"),
             icon: "doc.text",
-            subtitle: conversationSummaries.isEmpty ? "None" : "\(conversationSummaries.count)"
+            subtitle: episodes.isEmpty ? "None" : "\(episodes.count)"
         ) {
-            if conversationSummaries.isEmpty {
-                Text("No conversation summaries yet.", bundle: .module)
+            if episodes.isEmpty {
+                Text("No episodes yet.", bundle: .module)
                     .font(.system(size: 12))
                     .foregroundColor(theme.tertiaryText)
                     .padding(.vertical, 8)
             } else {
                 VStack(alignment: .leading, spacing: 0) {
-                    let displayed = showAllSummaries ? conversationSummaries : Array(conversationSummaries.prefix(10))
+                    let displayed = showAllSummaries ? episodes : Array(episodes.prefix(10))
 
-                    ForEach(Array(displayed.enumerated()), id: \.element.id) { index, summary in
+                    ForEach(Array(displayed.enumerated()), id: \.element.id) { index, episode in
                         if index > 0 {
                             Divider().opacity(0.5)
                         }
-                        MemorySummaryRow(summary: summary)
+                        EpisodeRow(episode: episode)
                     }
 
-                    if conversationSummaries.count > 10 {
+                    if episodes.count > 10 {
                         Button {
                             withAnimation(.easeInOut(duration: 0.2)) {
                                 showAllSummaries.toggle()
                             }
                         } label: {
-                            Text(showAllSummaries ? "Show Less" : "View All \(conversationSummaries.count) Summaries")
+                            Text(showAllSummaries ? "Show Less" : "View All \(episodes.count) Episodes")
                                 .font(.system(size: 11, weight: .medium))
                                 .foregroundColor(theme.accentColor)
                         }
@@ -2821,18 +2759,10 @@ struct AgentDetailView: View {
         }
     }
 
-    private func deleteMemoryEntry(_ entryId: String) {
-        try? MemoryDatabase.shared.deleteMemoryEntry(id: entryId)
+    private func deletePinnedFact(_ factId: String) {
+        try? MemoryDatabase.shared.deletePinnedFact(id: factId)
         loadMemoryData()
-        showSuccess("Memory entry deleted")
-    }
-
-    private func taskStatusColor(_ status: WorkTaskStatus) -> Color {
-        switch status {
-        case .active: return theme.accentColor
-        case .completed: return theme.successColor
-        case .cancelled: return theme.tertiaryText
-        }
+        showSuccess("Pinned fact deleted")
     }
 
     // MARK: - Data Loading
@@ -2866,8 +2796,8 @@ struct AgentDetailView: View {
     private func loadMemoryData() {
         let db = MemoryDatabase.shared
         if !db.isOpen { try? db.open() }
-        memoryEntries = (try? db.loadActiveEntries(agentId: agent.id.uuidString)) ?? []
-        conversationSummaries = (try? db.loadSummaries(agentId: agent.id.uuidString)) ?? []
+        pinnedFacts = (try? db.loadPinnedFacts(agentId: agent.id.uuidString, limit: 200)) ?? []
+        episodes = (try? db.loadEpisodes(agentId: agent.id.uuidString, limit: 100)) ?? []
     }
 
     // MARK: - Save
@@ -2914,7 +2844,6 @@ struct AgentDetailView: View {
             updatedAt: Date(),
             agentIndex: current.agentIndex,
             agentAddress: current.agentAddress,
-            sandboxPlugins: current.sandboxPlugins,
             autonomousExec: current.autonomousExec,
             pluginInstructions: effectivePluginInstructions,
             toolSelectionMode: toolSelectionMode,

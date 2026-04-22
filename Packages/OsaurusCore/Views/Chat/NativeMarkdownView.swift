@@ -114,6 +114,7 @@ final class NativeMarkdownView: NSView {
         cacheKey: String?,
         isStreaming: Bool
     ) {
+        ChatPerfTrace.shared.count("markdown.configure.called")
         let themeFingerprint = makeThemeFingerprint(theme)
         let textChanged = text != lastText
         let widthChanged = abs(width - lastWidth) > 0.5
@@ -123,7 +124,11 @@ final class NativeMarkdownView: NSView {
         // must re-run layout when streaming ends even if text matches the last delta — otherwise
         // configure() returns early, measuredHeight/onHeightChanged never fire, height cache is
         // empty, and the table falls back to NativeCellHeightEstimator (too small).
-        guard textChanged || widthChanged || themeChanged || streamingChanged else { return }
+        guard textChanged || widthChanged || themeChanged || streamingChanged else {
+            ChatPerfTrace.shared.count("markdown.configure.noOp")
+            return
+        }
+        ChatPerfTrace.shared.count("markdown.configure.applied")
 
         lastWidth = width
         lastThemeFingerprint = themeFingerprint
@@ -175,7 +180,8 @@ final class NativeMarkdownView: NSView {
         if textChanged || widthChanged || themeChanged {
             coordinator.cacheKey = cacheKey
             let stv = SelectableTextView(blocks: blocks, baseWidth: width, theme: theme)
-            if !widthChanged && !lastBlocks.isEmpty {
+            let incrementalPath = !widthChanged && !lastBlocks.isEmpty
+            if incrementalPath {
                 stv.updateTextStorageIncrementally(
                     textView: tv,
                     oldBlocks: lastBlocks,
@@ -186,7 +192,11 @@ final class NativeMarkdownView: NSView {
                 tv.textStorage?.setAttributedString(stv.buildAttributedString(coordinator: coordinator))
             }
             lastBlocks = blocks
-            tv.needsDisplay = true
+            // incremental path sets a bounded tail rect internally. only the
+            // full rebuild path needs to mark the whole view dirty
+            if !incrementalPath {
+                tv.needsDisplay = true
+            }
         }
 
         // nested NativeMarkdownView (text segment inside mixed content) must update heightConstraint
@@ -332,7 +342,8 @@ final class NativeMarkdownView: NSView {
         if textChanged || widthChanged {
             coordinator.cacheKey = cacheKey
             let stv = SelectableTextView(blocks: blocks, baseWidth: width, theme: theme)
-            if !widthChanged && !lastBlocks.isEmpty {
+            let incrementalPath = !widthChanged && !lastBlocks.isEmpty
+            if incrementalPath {
                 stv.updateTextStorageIncrementally(
                     textView: tv,
                     oldBlocks: lastBlocks,
@@ -343,7 +354,9 @@ final class NativeMarkdownView: NSView {
                 tv.textStorage?.setAttributedString(stv.buildAttributedString(coordinator: coordinator))
             }
             lastBlocks = blocks
-            tv.needsDisplay = true
+            if !incrementalPath {
+                tv.needsDisplay = true
+            }
         }
 
         // must update heightConstraint — init leaves 100pt; otherwise user bubbles stay artificially tall

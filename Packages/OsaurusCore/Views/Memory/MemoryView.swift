@@ -2,15 +2,11 @@
 //  MemoryView.swift
 //  osaurus
 //
-//  Memory management UI: user profile, overrides, agents,
-//  statistics, core model configuration, and danger zone.
+//  v2 memory management UI: identity, pinned facts, episodes,
+//  consolidation, statistics, and danger zone.
 //
 
 import SwiftUI
-
-private func pluralized(_ count: Int, _ singular: String, _ plural: String? = nil) -> String {
-    count == 1 ? "1 \(singular)" : "\(count) \(plural ?? "\(singular)s")"
-}
 
 struct MemoryView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
@@ -35,13 +31,12 @@ struct MemoryView: View {
     // MARK: Data State
 
     @State private var config = MemoryConfiguration.default
-    @State private var profile: UserProfile?
-    @State private var userEdits: [UserEdit] = []
+    @State private var identity: Identity?
     @State private var processingStats = ProcessingStats()
     @State private var dbSizeBytes: Int64 = 0
     @State private var agentMemoryCounts: [(agent: Agent, count: Int)] = []
-    @State private var defaultAgentEntries: [MemoryEntry] = []
-    @State private var defaultAgentSummaries: [ConversationSummary] = []
+    @State private var defaultAgentPinned: [PinnedFact] = []
+    @State private var defaultAgentEpisodes: [Episode] = []
 
     // MARK: UI State
 
@@ -50,7 +45,8 @@ struct MemoryView: View {
     @State private var isLoading = true
     @State private var isRefreshing = false
     @State private var isSyncing = false
-    @State private var showProfileEditor = false
+    @State private var isConsolidating = false
+    @State private var showIdentityEditor = false
     @State private var showAddOverride = false
     @State private var contextPreviewItem: ContextPreviewItem?
     @State private var showClearConfirmation = false
@@ -118,7 +114,7 @@ struct MemoryView: View {
                                     disabledBanner
                                 }
 
-                                profileSection
+                                identitySection
                                 overridesSection
                                 agentsSection
                                 statsSection
@@ -149,12 +145,12 @@ struct MemoryView: View {
                 hasAppeared = true
             }
         }
-        .sheet(isPresented: $showProfileEditor) {
-            ProfileEditSheet(
-                profile: profile,
+        .sheet(isPresented: $showIdentityEditor) {
+            IdentityEditSheet(
+                identity: identity,
                 onSave: { newContent in
-                    saveProfileEdit(newContent)
-                    showToast("Profile saved")
+                    saveIdentityEdit(newContent)
+                    showToast("Identity saved")
                 }
             )
             .frame(minWidth: 500, minHeight: 400)
@@ -176,7 +172,7 @@ struct MemoryView: View {
             "Clear All Memory",
             isPresented: $showClearConfirmation,
             message:
-                "This will permanently delete your profile, all working memory entries, conversation summaries, and processing history. This cannot be undone.",
+                "This will permanently delete your identity, all pinned facts, episodes, and conversation history. This cannot be undone.",
             primaryButton: .destructive("Clear Everything") {
                 clearAllMemory()
             },
@@ -189,7 +185,7 @@ struct MemoryView: View {
     private var headerView: some View {
         ManagerHeaderWithActions(
             title: L("Memory"),
-            subtitle: L("Manage your profile, overrides, and memory configuration")
+            subtitle: L("Manage your identity, overrides, and memory configuration")
         ) {
             HeaderIconButton("arrow.clockwise", isLoading: isRefreshing, help: "Refresh") {
                 refreshData()
@@ -238,11 +234,11 @@ struct MemoryView: View {
         )
     }
 
-    // MARK: - User Profile Section
+    // MARK: - Identity Section
 
-    private var profileSection: some View {
-        MemorySection(title: "User Profile", icon: "person.text.rectangle") {
-            SectionActionButton(isSyncing ? "Syncing..." : "Sync", icon: "arrow.triangle.2.circlepath") {
+    private var identitySection: some View {
+        MemorySectionCard(title: "Identity", icon: "person.text.rectangle") {
+            MemorySectionActionButton(isSyncing ? "Syncing..." : "Sync", icon: "arrow.triangle.2.circlepath") {
                 guard !isSyncing else { return }
                 isSyncing = true
                 Task.detached {
@@ -256,13 +252,13 @@ struct MemoryView: View {
             }
             .disabled(isSyncing || !config.enabled)
 
-            SectionActionButton("Edit", icon: "pencil") {
-                showProfileEditor = true
+            MemorySectionActionButton("Edit", icon: "pencil") {
+                showIdentityEditor = true
             }
         } content: {
-            if let profile {
+            if let identity, !identity.content.isEmpty {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text(profile.content)
+                    Text(identity.content)
                         .font(.system(size: 13))
                         .foregroundColor(theme.secondaryText)
                         .lineLimit(6)
@@ -278,16 +274,22 @@ struct MemoryView: View {
                         )
 
                     HStack(spacing: 12) {
-                        metadataTag("v\(profile.version)")
-                        metadataTag(pluralized(profile.tokenCount, "token"))
-                        metadataTag(profile.model)
+                        if identity.version > 0 {
+                            metadataTag("v\(identity.version)")
+                        }
+                        metadataTag(pluralizedMemory(identity.tokenCount, "token"))
+                        if !identity.model.isEmpty {
+                            metadataTag(identity.model)
+                        }
 
                         Spacer()
 
-                        Text(Self.formatRelativeDate(profile.generatedAt))
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.tertiaryText)
-                            .help(profile.generatedAt)
+                        if !identity.generatedAt.isEmpty {
+                            Text(Self.formatRelativeDate(identity.generatedAt))
+                                .font(.system(size: 11))
+                                .foregroundColor(theme.tertiaryText)
+                                .help(identity.generatedAt)
+                        }
                     }
                 }
             } else {
@@ -296,7 +298,7 @@ struct MemoryView: View {
                         .font(.system(size: 13))
                         .foregroundColor(theme.tertiaryText)
                     Text(
-                        "No profile generated yet. Chat with Osaurus and the memory system will build your profile automatically.",
+                        "No identity yet. Chat with Osaurus and the memory system will build your identity from session distillations.",
                         bundle: .module
                     )
                     .font(.system(size: 13))
@@ -319,30 +321,38 @@ struct MemoryView: View {
     // MARK: - Overrides Section
 
     private var overridesSection: some View {
-        MemorySection(title: "Your Overrides", icon: "pin.fill", count: userEdits.isEmpty ? nil : userEdits.count) {
-            SectionActionButton("Add", icon: "plus") {
+        let overrides = identity?.overrides ?? []
+        return MemorySectionCard(
+            title: "Your Overrides",
+            icon: "pin.fill",
+            count: overrides.isEmpty ? nil : overrides.count
+        ) {
+            MemorySectionActionButton("Add", icon: "plus") {
                 showAddOverride = true
             }
         } content: {
-            if userEdits.isEmpty {
+            if overrides.isEmpty {
                 HStack(spacing: 10) {
                     Image(systemName: "info.circle")
                         .font(.system(size: 13))
                         .foregroundColor(theme.tertiaryText)
-                    Text("No overrides set. Add explicit facts that should always be in your profile.", bundle: .module)
-                        .font(.system(size: 13))
-                        .foregroundColor(theme.tertiaryText)
+                    Text(
+                        "No overrides set. Add explicit facts that should always be in your identity.",
+                        bundle: .module
+                    )
+                    .font(.system(size: 13))
+                    .foregroundColor(theme.tertiaryText)
                 }
             } else {
                 VStack(spacing: 0) {
-                    ForEach(Array(userEdits.enumerated()), id: \.element.id) { index, edit in
+                    ForEach(Array(overrides.enumerated()), id: \.offset) { index, content in
                         if index > 0 {
                             Divider().opacity(0.5)
                         }
-                        OverrideRow(
-                            edit: edit,
+                        MemoryOverrideRow(
+                            content: content,
                             onDelete: {
-                                removeOverride(id: edit.id)
+                                removeOverride(index: index)
                                 showToast("Override removed")
                             }
                         )
@@ -356,7 +366,6 @@ struct MemoryView: View {
 
     private var defaultAgentMemoryGroup: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Header
             HStack(spacing: 10) {
                 Circle()
                     .fill(theme.accentColor)
@@ -375,9 +384,9 @@ struct MemoryView: View {
 
                 Spacer()
 
-                let totalCount = defaultAgentEntries.count + defaultAgentSummaries.count
+                let totalCount = defaultAgentPinned.count + defaultAgentEpisodes.count
                 if totalCount > 0 {
-                    Text(pluralized(totalCount, "memory", "memories"))
+                    Text(pluralizedMemory(totalCount, "memory", "memories"))
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundColor(theme.secondaryText)
                         .padding(.horizontal, 7)
@@ -417,20 +426,19 @@ struct MemoryView: View {
             .padding(.vertical, 10)
             .padding(.horizontal, 4)
 
-            if !defaultAgentEntries.isEmpty || !defaultAgentSummaries.isEmpty {
+            if !defaultAgentPinned.isEmpty || !defaultAgentEpisodes.isEmpty {
                 VStack(alignment: .leading, spacing: 12) {
-                    // Working Memory
-                    if !defaultAgentEntries.isEmpty {
+                    if !defaultAgentPinned.isEmpty {
                         VStack(alignment: .leading, spacing: 8) {
                             HStack(spacing: 6) {
-                                Image(systemName: "brain.head.profile")
+                                Image(systemName: "pin.fill")
                                     .font(.system(size: 10, weight: .medium))
                                     .foregroundColor(theme.tertiaryText)
-                                Text("WORKING MEMORY", bundle: .module)
+                                Text("PINNED FACTS", bundle: .module)
                                     .font(.system(size: 10, weight: .bold))
                                     .foregroundColor(theme.tertiaryText)
                                     .tracking(0.3)
-                                Text("\(defaultAgentEntries.count)", bundle: .module)
+                                Text("\(defaultAgentPinned.count)", bundle: .module)
                                     .font(.system(size: 10, weight: .semibold))
                                     .foregroundColor(theme.tertiaryText)
                                     .padding(.horizontal, 5)
@@ -438,29 +446,28 @@ struct MemoryView: View {
                                     .background(Capsule().fill(theme.tertiaryBackground))
                             }
 
-                            AgentEntriesPanel(
-                                entries: defaultAgentEntries,
-                                onDelete: { entryId in
-                                    try? MemoryDatabase.shared.deleteMemoryEntry(id: entryId)
-                                    defaultAgentEntries.removeAll { $0.id == entryId }
+                            PinnedFactsPanel(
+                                facts: defaultAgentPinned,
+                                onDelete: { factId in
+                                    try? MemoryDatabase.shared.deletePinnedFact(id: factId)
+                                    defaultAgentPinned.removeAll { $0.id == factId }
                                 }
                             )
                             .frame(maxHeight: 400)
                         }
                     }
 
-                    // Conversation History
-                    if !defaultAgentSummaries.isEmpty {
+                    if !defaultAgentEpisodes.isEmpty {
                         VStack(alignment: .leading, spacing: 8) {
                             HStack(spacing: 6) {
                                 Image(systemName: "doc.text")
                                     .font(.system(size: 10, weight: .medium))
                                     .foregroundColor(theme.tertiaryText)
-                                Text("CONVERSATION HISTORY", bundle: .module)
+                                Text("EPISODES", bundle: .module)
                                     .font(.system(size: 10, weight: .bold))
                                     .foregroundColor(theme.tertiaryText)
                                     .tracking(0.3)
-                                Text("\(defaultAgentSummaries.count)", bundle: .module)
+                                Text("\(defaultAgentEpisodes.count)", bundle: .module)
                                     .font(.system(size: 10, weight: .semibold))
                                     .foregroundColor(theme.tertiaryText)
                                     .padding(.horizontal, 5)
@@ -470,13 +477,13 @@ struct MemoryView: View {
 
                             ScrollView {
                                 VStack(alignment: .leading, spacing: 0) {
-                                    ForEach(Array(defaultAgentSummaries.enumerated()), id: \.element.id) {
+                                    ForEach(Array(defaultAgentEpisodes.enumerated()), id: \.element.id) {
                                         index,
-                                        summary in
+                                        episode in
                                         if index > 0 {
                                             Divider().opacity(0.5)
                                         }
-                                        MemorySummaryRow(summary: summary)
+                                        EpisodeRow(episode: episode)
                                     }
                                 }
                             }
@@ -503,7 +510,7 @@ struct MemoryView: View {
     // MARK: - Agents Section
 
     private var agentsSection: some View {
-        MemorySection(title: "Agents", icon: "person.2") {
+        MemorySectionCard(title: "Agents", icon: "person.2") {
             VStack(spacing: 0) {
                 defaultAgentMemoryGroup
 
@@ -516,7 +523,7 @@ struct MemoryView: View {
                         if index > 0 {
                             Divider().opacity(0.5)
                         }
-                        AgentMemoryRow(
+                        MemoryAgentRow(
                             agent: pair.agent,
                             count: pair.count,
                             onSelect: {
@@ -549,7 +556,7 @@ struct MemoryView: View {
     // MARK: - Statistics Section
 
     private var statsSection: some View {
-        MemorySection(title: "Statistics", icon: "chart.bar") {
+        MemorySectionCard(title: "Statistics", icon: "chart.bar") {
             HStack(spacing: 0) {
                 statBlock(label: "Total Calls", value: "\(processingStats.totalCalls)")
                 Divider().frame(height: 36).opacity(0.5)
@@ -567,13 +574,13 @@ struct MemoryView: View {
     // MARK: - Configuration Section
 
     private var configurationSection: some View {
-        MemorySection(title: "Configuration", icon: "gearshape") {
+        MemorySectionCard(title: "Configuration", icon: "gearshape") {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(spacing: 12) {
                     Text("Core Model", bundle: .module)
                         .font(.system(size: 12, weight: .medium))
                         .foregroundColor(theme.secondaryText)
-                        .frame(width: 100, alignment: .leading)
+                        .frame(width: 140, alignment: .leading)
 
                     Text(appConfig.chatConfig.coreModelIdentifier ?? "None")
                         .font(.system(size: 13))
@@ -588,33 +595,101 @@ struct MemoryView: View {
 
                 Divider().opacity(0.5)
 
-                // Retention days
                 HStack(spacing: 12) {
-                    Text("Summary Retention", bundle: .module)
+                    Text("Memory Budget", bundle: .module)
                         .font(.system(size: 12, weight: .medium))
                         .foregroundColor(theme.secondaryText)
-                        .frame(width: 100, alignment: .leading)
+                        .frame(width: 140, alignment: .leading)
 
                     HStack(spacing: 8) {
-                        Stepper("", value: $config.summaryRetentionDays, in: 1 ... 365)
+                        Stepper("", value: $config.memoryBudgetTokens, in: 100 ... 4000, step: 100)
                             .labelsHidden()
-                        Text(pluralized(config.summaryRetentionDays, "day"))
+                        Text(pluralizedMemory(config.memoryBudgetTokens, "token"))
                             .font(.system(size: 13))
                             .foregroundColor(theme.primaryText)
                     }
-                    .onChange(of: config.summaryRetentionDays) { _, _ in
+                    .onChange(of: config.memoryBudgetTokens) { _, _ in
                         MemoryConfigurationStore.save(config)
                     }
                 }
 
                 Divider().opacity(0.5)
 
-                // Enable/Disable toggle
+                HStack(spacing: 12) {
+                    Text("Episode Retention", bundle: .module)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(theme.secondaryText)
+                        .frame(width: 140, alignment: .leading)
+
+                    HStack(spacing: 8) {
+                        Stepper("", value: $config.episodeRetentionDays, in: 0 ... 3650, step: 30)
+                            .labelsHidden()
+                        Text(
+                            config.episodeRetentionDays == 0
+                                ? "forever" : pluralizedMemory(config.episodeRetentionDays, "day")
+                        )
+                        .font(.system(size: 13))
+                        .foregroundColor(theme.primaryText)
+                    }
+                    .onChange(of: config.episodeRetentionDays) { _, _ in
+                        MemoryConfigurationStore.save(config)
+                    }
+                }
+
+                Divider().opacity(0.5)
+
+                HStack(spacing: 12) {
+                    Text("Consolidation", bundle: .module)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(theme.secondaryText)
+                        .frame(width: 140, alignment: .leading)
+
+                    HStack(spacing: 8) {
+                        Stepper("", value: $config.consolidationIntervalHours, in: 1 ... 168)
+                            .labelsHidden()
+                        Text("every \(pluralizedMemory(config.consolidationIntervalHours, "hour"))", bundle: .module)
+                            .font(.system(size: 13))
+                            .foregroundColor(theme.primaryText)
+                    }
+                    .onChange(of: config.consolidationIntervalHours) { _, _ in
+                        MemoryConfigurationStore.save(config)
+                    }
+
+                    Spacer()
+
+                    Button {
+                        guard !isConsolidating else { return }
+                        isConsolidating = true
+                        Task.detached {
+                            await MemoryConsolidator.shared.runOnce()
+                            await MainActor.run {
+                                isConsolidating = false
+                                loadData()
+                                showToast("Consolidation complete")
+                            }
+                        }
+                    } label: {
+                        Text(isConsolidating ? "Running..." : "Run Now", bundle: .module)
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(theme.secondaryText)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(theme.tertiaryBackground)
+                            )
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .disabled(isConsolidating || !config.enabled)
+                }
+
+                Divider().opacity(0.5)
+
                 HStack(spacing: 12) {
                     Text("Status", bundle: .module)
                         .font(.system(size: 12, weight: .medium))
                         .foregroundColor(theme.secondaryText)
-                        .frame(width: 100, alignment: .leading)
+                        .frame(width: 140, alignment: .leading)
 
                     HStack(spacing: 8) {
                         Circle()
@@ -665,7 +740,7 @@ struct MemoryView: View {
                             .font(.system(size: 13, weight: .medium))
                             .foregroundColor(theme.primaryText)
                         Text(
-                            "Permanently delete all memory data including profile, entries, and summaries.",
+                            "Permanently delete identity, pinned facts, episodes, and conversation history.",
                             bundle: .module
                         )
                         .font(.system(size: 12))
@@ -761,23 +836,15 @@ struct MemoryView: View {
                 }
             }
             var loadError: String?
-            let loadedProfile: UserProfile?
-            let loadedEdits: [UserEdit]
+            let loadedIdentity: Identity?
             let loadedStats: ProcessingStats
             let loadedSize: Int64
             do {
-                loadedProfile = try db.loadUserProfile()
+                loadedIdentity = try db.loadIdentity()
             } catch {
-                MemoryLogger.database.error("Failed to load profile: \(error)")
-                loadedProfile = nil
-                loadError = "Failed to load profile"
-            }
-            do {
-                loadedEdits = try db.loadUserEdits()
-            } catch {
-                MemoryLogger.database.error("Failed to load edits: \(error)")
-                loadedEdits = []
-                loadError = loadError ?? "Failed to load overrides"
+                MemoryLogger.database.error("Failed to load identity: \(error)")
+                loadedIdentity = nil
+                loadError = "Failed to load identity"
             }
             do {
                 loadedStats = try db.processingStats()
@@ -787,7 +854,7 @@ struct MemoryView: View {
             }
             loadedSize = db.databaseSizeBytes()
 
-            let agentEntries = (try? db.agentIdsWithEntries()) ?? []
+            let agentEntries = (try? db.agentIdsWithPinnedFacts()) ?? []
 
             let agents = await MainActor.run { agentManager.agents }
             let agentLookup = Dictionary(uniqueKeysWithValues: agents.map { ($0.id, $0) })
@@ -800,17 +867,16 @@ struct MemoryView: View {
             }
 
             let defaultId = Agent.defaultId.uuidString
-            let loadedDefaultEntries = (try? db.loadActiveEntries(agentId: defaultId)) ?? []
-            let loadedDefaultSummaries = (try? db.loadSummaries(agentId: defaultId)) ?? []
+            let loadedDefaultPinned = (try? db.loadPinnedFacts(agentId: defaultId, limit: 100)) ?? []
+            let loadedDefaultEpisodes = (try? db.loadEpisodes(agentId: defaultId, limit: 50)) ?? []
 
             await MainActor.run {
-                profile = loadedProfile
-                userEdits = loadedEdits
+                identity = loadedIdentity
                 processingStats = loadedStats
                 dbSizeBytes = loadedSize
                 agentMemoryCounts = resolvedCounts
-                defaultAgentEntries = loadedDefaultEntries
-                defaultAgentSummaries = loadedDefaultSummaries
+                defaultAgentPinned = loadedDefaultPinned
+                defaultAgentEpisodes = loadedDefaultEpisodes
                 isLoading = false
                 onComplete?()
                 if let loadError {
@@ -822,9 +888,9 @@ struct MemoryView: View {
 
     // MARK: - Actions
 
-    private func removeOverride(id: Int) {
+    private func removeOverride(index: Int) {
         do {
-            try MemoryDatabase.shared.deleteUserEdit(id: id)
+            try MemoryDatabase.shared.removeIdentityOverride(at: index)
         } catch {
             MemoryLogger.database.error("Failed to remove override: \(error)")
             showToast("Failed to remove override", isError: true)
@@ -834,14 +900,7 @@ struct MemoryView: View {
 
     private func addOverride(_ text: String) {
         do {
-            try MemoryDatabase.shared.insertUserEdit(text)
-            try MemoryDatabase.shared.insertProfileEvent(
-                ProfileEvent(
-                    agentId: "user",
-                    eventType: "user_edit",
-                    content: text
-                )
-            )
+            try MemoryDatabase.shared.appendIdentityOverride(text)
         } catch {
             MemoryLogger.database.error("Failed to add override: \(error)")
             showToast("Failed to add override", isError: true)
@@ -849,31 +908,20 @@ struct MemoryView: View {
         loadData()
     }
 
-    private func saveProfileEdit(_ content: String) {
+    private func saveIdentityEdit(_ content: String) {
         let tokenCount = max(1, content.count / MemoryConfiguration.charsPerToken)
-        var updated =
-            profile
-            ?? UserProfile(
-                content: content,
-                tokenCount: tokenCount,
-                model: "user",
-                generatedAt: Self.iso8601Formatter.string(from: Date())
-            )
+        var updated = identity ?? Identity()
         updated.content = content
         updated.tokenCount = tokenCount
+        updated.model = "user"
+        updated.generatedAt = Self.iso8601Formatter.string(from: Date())
+        if updated.version == 0 { updated.version = 1 }
 
         do {
-            try MemoryDatabase.shared.saveUserProfile(updated)
-            try MemoryDatabase.shared.insertProfileEvent(
-                ProfileEvent(
-                    agentId: "user",
-                    eventType: "user_edit",
-                    content: "Profile manually edited"
-                )
-            )
+            try MemoryDatabase.shared.saveIdentity(updated)
         } catch {
-            MemoryLogger.database.error("Failed to save profile: \(error)")
-            showToast("Failed to save profile", isError: true)
+            MemoryLogger.database.error("Failed to save identity: \(error)")
+            showToast("Failed to save identity", isError: true)
         }
         loadData()
     }
@@ -904,562 +952,5 @@ struct MemoryView: View {
                 toastMessage = nil
             }
         }
-    }
-}
-
-// MARK: - Memory Section Card
-
-private struct MemorySection<Trailing: View, Content: View>: View {
-    @Environment(\.theme) private var theme
-
-    let title: String
-    let icon: String
-    var count: Int? = nil
-    let trailing: Trailing
-    let content: Content
-
-    init(
-        title: String,
-        icon: String,
-        count: Int? = nil,
-        @ViewBuilder trailing: () -> Trailing,
-        @ViewBuilder content: () -> Content
-    ) {
-        self.title = title
-        self.icon = icon
-        self.count = count
-        self.trailing = trailing()
-        self.content = content()
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 10) {
-                Image(systemName: icon)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.accentColor)
-                    .frame(width: 20)
-
-                Text(title.uppercased())
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundColor(theme.primaryText)
-                    .tracking(0.5)
-
-                if let count {
-                    Text("\(count)", bundle: .module)
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(theme.secondaryText)
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 2)
-                        .background(
-                            Capsule().fill(theme.tertiaryBackground)
-                        )
-                }
-
-                Spacer()
-
-                trailing
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 14)
-
-            VStack(alignment: .leading, spacing: 12) {
-                content
-            }
-            .padding(.horizontal, 16)
-            .padding(.bottom, 16)
-        }
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(theme.cardBorder, lineWidth: 1)
-                )
-        )
-    }
-}
-
-extension MemorySection where Trailing == EmptyView {
-    init(
-        title: String,
-        icon: String,
-        count: Int? = nil,
-        @ViewBuilder content: () -> Content
-    ) {
-        self.title = title
-        self.icon = icon
-        self.count = count
-        self.trailing = EmptyView()
-        self.content = content()
-    }
-}
-
-// MARK: - Section Action Button
-
-private struct SectionActionButton: View {
-    @Environment(\.theme) private var theme
-
-    let title: String
-    let icon: String?
-    let action: () -> Void
-
-    @State private var isHovering = false
-
-    init(_ title: String, icon: String? = nil, action: @escaping () -> Void) {
-        self.title = title
-        self.icon = icon
-        self.action = action
-    }
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 5) {
-                if let icon {
-                    Image(systemName: icon)
-                        .font(.system(size: 10, weight: .semibold))
-                }
-                Text(LocalizedStringKey(title), bundle: .module)
-                    .font(.system(size: 11, weight: .semibold))
-            }
-            .foregroundColor(isHovering ? theme.accentColor : theme.secondaryText)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(isHovering ? theme.accentColor.opacity(0.1) : Color.clear)
-            )
-        }
-        .buttonStyle(PlainButtonStyle())
-        .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.15)) {
-                isHovering = hovering
-            }
-        }
-    }
-}
-
-// MARK: - Override Row
-
-private struct OverrideRow: View {
-    @Environment(\.theme) private var theme
-
-    let edit: UserEdit
-    let onDelete: () -> Void
-
-    @State private var isHovering = false
-
-    var body: some View {
-        HStack(spacing: 10) {
-            Circle()
-                .fill(theme.accentColor)
-                .frame(width: 6, height: 6)
-
-            Text(edit.content)
-                .font(.system(size: 13))
-                .foregroundColor(theme.secondaryText)
-                .lineLimit(2)
-
-            Spacer()
-
-            if isHovering {
-                Button {
-                    onDelete()
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 14))
-                        .foregroundColor(theme.tertiaryText)
-                }
-                .buttonStyle(PlainButtonStyle())
-                .transition(.opacity)
-            }
-        }
-        .padding(.vertical, 8)
-        .contentShape(Rectangle())
-        .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.15)) {
-                isHovering = hovering
-            }
-        }
-    }
-}
-
-// MARK: - Agent Memory Row
-
-private struct AgentMemoryRow: View {
-    @Environment(\.theme) private var theme
-
-    let agent: Agent
-    let count: Int
-    let onSelect: () -> Void
-    let onPreviewContext: () -> Void
-
-    @State private var isHovering = false
-
-    var body: some View {
-        HStack(spacing: 10) {
-            Button(action: onSelect) {
-                HStack(spacing: 10) {
-                    Circle()
-                        .fill(agentColorFor(agent.name))
-                        .frame(width: 8, height: 8)
-
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(agent.name)
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundColor(theme.primaryText)
-
-                        if !agent.description.isEmpty {
-                            Text(agent.description)
-                                .font(.system(size: 11))
-                                .foregroundColor(theme.tertiaryText)
-                                .lineLimit(1)
-                        }
-                    }
-
-                    Spacer()
-
-                    Text(pluralized(count, "memory", "memories"))
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(theme.secondaryText)
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 2)
-                        .background(
-                            Capsule().fill(theme.tertiaryBackground)
-                        )
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(PlainButtonStyle())
-
-            Button(action: onPreviewContext) {
-                Image(systemName: "eye")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(theme.tertiaryText)
-                    .frame(width: 26, height: 26)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(theme.tertiaryBackground)
-                    )
-            }
-            .buttonStyle(PlainButtonStyle())
-            .help(Text("Preview context for this agent", bundle: .module))
-
-            Button(action: onSelect) {
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(theme.tertiaryText)
-            }
-            .buttonStyle(PlainButtonStyle())
-        }
-        .padding(.vertical, 10)
-        .padding(.horizontal, 4)
-        .background(
-            RoundedRectangle(cornerRadius: 6)
-                .fill(isHovering ? theme.accentColor.opacity(0.06) : Color.clear)
-        )
-        .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.15)) {
-                isHovering = hovering
-            }
-        }
-    }
-}
-
-// MARK: - Profile Edit Sheet
-
-private struct ProfileEditSheet: View {
-    let profile: UserProfile?
-    let onSave: (String) -> Void
-
-    @ObservedObject private var themeManager = ThemeManager.shared
-    private var theme: ThemeProtocol { themeManager.currentTheme }
-
-    @Environment(\.dismiss) private var dismiss
-    @State private var editText: String = ""
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Edit User Profile", bundle: .module)
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
-                    Text("Manually edit your profile content", bundle: .module)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.tertiaryText)
-                }
-                Spacer()
-                Button {
-                    dismiss()
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(theme.secondaryText)
-                        .frame(width: 28, height: 28)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(theme.tertiaryBackground)
-                        )
-                }
-                .buttonStyle(PlainButtonStyle())
-            }
-            .padding(20)
-
-            Divider().opacity(0.5)
-
-            TextEditor(text: $editText)
-                .font(.system(size: 13))
-                .padding(12)
-                .scrollContentBackground(.hidden)
-                .background(theme.inputBackground)
-                .padding(.horizontal, 20)
-                .padding(.vertical, 12)
-
-            Divider().opacity(0.5)
-
-            HStack {
-                Text(pluralized(max(1, editText.count / MemoryConfiguration.charsPerToken), "token"))
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
-
-                Spacer()
-
-                Button {
-                    dismiss()
-                } label: {
-                    Text("Cancel", bundle: .module)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(theme.primaryText)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 8)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(theme.tertiaryBackground)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .stroke(theme.inputBorder, lineWidth: 1)
-                                )
-                        )
-                }
-                .buttonStyle(PlainButtonStyle())
-
-                Button {
-                    onSave(editText)
-                    dismiss()
-                } label: {
-                    Text("Save", bundle: .module)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 20)
-                        .padding(.vertical, 8)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(theme.accentColor)
-                        )
-                }
-                .buttonStyle(PlainButtonStyle())
-                .disabled(editText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                .opacity(editText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0.5 : 1)
-            }
-            .padding(20)
-        }
-        .background(theme.primaryBackground)
-        .environment(\.theme, themeManager.currentTheme)
-        .onAppear {
-            editText = profile?.content ?? ""
-        }
-    }
-}
-
-// MARK: - Add Override Sheet
-
-private struct AddOverrideSheet: View {
-    let onAdd: (String) -> Void
-
-    @ObservedObject private var themeManager = ThemeManager.shared
-    private var theme: ThemeProtocol { themeManager.currentTheme }
-
-    @Environment(\.dismiss) private var dismiss
-    @State private var text = ""
-    @FocusState private var isFocused: Bool
-
-    private var trimmedText: String {
-        text.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Add Override", bundle: .module)
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
-                    Text("Enter an explicit fact that should always be in your profile", bundle: .module)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.tertiaryText)
-                }
-                Spacer()
-                Button {
-                    dismiss()
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(theme.secondaryText)
-                        .frame(width: 28, height: 28)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(theme.tertiaryBackground)
-                        )
-                }
-                .buttonStyle(PlainButtonStyle())
-            }
-            .padding(20)
-
-            Divider().opacity(0.5)
-
-            TextField(text: $text, prompt: Text("e.g., My name is Terence", bundle: .module)) {
-                Text("e.g., My name is Terence", bundle: .module)
-            }
-            .textFieldStyle(.plain)
-            .font(.system(size: 13))
-            .focused($isFocused)
-            .padding(12)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(theme.inputBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(
-                                isFocused ? theme.accentColor.opacity(0.5) : theme.inputBorder,
-                                lineWidth: isFocused ? 1.5 : 1
-                            )
-                    )
-            )
-            .padding(.horizontal, 20)
-            .padding(.vertical, 16)
-
-            Divider().opacity(0.5)
-
-            HStack {
-                Spacer()
-
-                Button {
-                    dismiss()
-                } label: {
-                    Text("Cancel", bundle: .module)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(theme.primaryText)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 8)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(theme.tertiaryBackground)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .stroke(theme.inputBorder, lineWidth: 1)
-                                )
-                        )
-                }
-                .buttonStyle(PlainButtonStyle())
-
-                Button {
-                    guard !trimmedText.isEmpty else { return }
-                    onAdd(trimmedText)
-                    dismiss()
-                } label: {
-                    Text("Add", bundle: .module)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 20)
-                        .padding(.vertical, 8)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(theme.accentColor)
-                        )
-                }
-                .buttonStyle(PlainButtonStyle())
-                .disabled(trimmedText.isEmpty)
-                .opacity(trimmedText.isEmpty ? 0.5 : 1)
-            }
-            .padding(20)
-        }
-        .background(theme.primaryBackground)
-        .environment(\.theme, themeManager.currentTheme)
-        .onAppear {
-            isFocused = true
-        }
-    }
-}
-
-// MARK: - Context Preview Item
-
-private struct ContextPreviewItem: Identifiable {
-    let id = UUID()
-    let text: String
-}
-
-// MARK: - Context Preview Sheet
-
-private struct ContextPreviewSheet: View {
-    let context: String
-
-    @ObservedObject private var themeManager = ThemeManager.shared
-    private var theme: ThemeProtocol { themeManager.currentTheme }
-
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Memory Context Preview", bundle: .module)
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
-                    Text("This is injected before the system prompt on each message", bundle: .module)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.tertiaryText)
-                }
-                Spacer()
-
-                Text(
-                    "~\(pluralized(max(1, context.count / MemoryConfiguration.charsPerToken), "token"))",
-                    bundle: .module
-                )
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(theme.secondaryText)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(Capsule().fill(theme.tertiaryBackground))
-
-                Button {
-                    dismiss()
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(theme.secondaryText)
-                        .frame(width: 28, height: 28)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(theme.tertiaryBackground)
-                        )
-                }
-                .buttonStyle(PlainButtonStyle())
-            }
-            .padding(20)
-
-            Divider().opacity(0.5)
-
-            ScrollView {
-                Text(context)
-                    .font(.system(size: 12, design: .monospaced))
-                    .foregroundColor(theme.primaryText)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(16)
-            }
-        }
-        .background(theme.primaryBackground)
-        .environment(\.theme, themeManager.currentTheme)
     }
 }

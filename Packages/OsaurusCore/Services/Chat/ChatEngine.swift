@@ -29,9 +29,9 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
     /// HTTP layer can emit a proper 4xx/5xx instead of a generic 500.
     /// Before this type was specialized, `EngineError` was an empty
     /// struct `{}` and every failure (unknown model, routing collapse,
-    /// etc.) surfaced as HTTP 500 → the classifier in `WorkView` would
-    /// then label it "Server Error / service temporarily unavailable"
-    /// when the real cause was user input (issue #858).
+    /// etc.) surfaced as HTTP 500 → consumers labelled it "Server Error
+    /// / service temporarily unavailable" when the real cause was user
+    /// input (issue #858).
     struct EngineError: Error, LocalizedError {
         enum Kind {
             /// No service or remote provider could handle the requested model ID.
@@ -63,36 +63,36 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         }
     }
 
-    /// Estimate input tokens from messages (rough heuristic: ~4 chars per token)
-    private func estimateInputTokens(_ messages: [ChatMessage]) -> Int {
-        let totalChars = messages.reduce(0) { sum, msg in
-            sum + (msg.content?.count ?? 0)
-        }
-        return max(1, totalChars / 4)
+    /// Estimate input tokens from messages (rough heuristic: ~4 chars per token).
+    ///
+    /// Includes assistant `tool_calls` payloads and `tool` role bodies so
+    /// tool-heavy sessions don't under-report prompt size in metrics and
+    /// downstream budget-adjacent decisions.
+    /// Per-request dispatch context returned by `prepareDispatch`. Folds
+    /// together the resolved `ModelRoute`, the `GenerationParameters` to
+    /// pass to the route's service, and the snapshot of remote services
+    /// fetched off the main actor. Both `streamChat` and `completeChat`
+    /// share this prep step — the only divergence afterwards is whether
+    /// they wrap the output in a stream wrapper or a single response.
+    private struct Dispatch {
+        let route: ModelRoute
+        let params: GenerationParameters
+        let remoteServices: [ModelService]
     }
 
-    /// Map an `InferenceSource` to its default scheduler priority. Callers that
-    /// need a different priority (e.g. preflight wants `.maintenance` even
-    /// though it's invoked from a `.chatUI` request) can override on the
-    /// `GenerationParameters`.
-    static func schedulerPriority(for source: InferenceSource) -> InferencePriority {
-        switch source {
-        case .chatUI: return .interactive
-        case .httpAPI: return .httpAPI
-        case .plugin: return .plugin
-        }
-    }
-
-    func streamChat(request: ChatCompletionRequest) async throws -> AsyncThrowingStream<String, Error> {
-        debugLog("[ChatEngine] streamChat: start model=\(request.model)")
-        let trace = request.ttftTrace
-        trace?.mark("chatengine_start")
-        let messages = request.messages
-        debugLog("[ChatEngine] streamChat: messages count=\(messages.count), fetching remote services")
+    /// Build the shared dispatch context for `streamChat` / `completeChat`.
+    /// Threads the optional `ttftTrace` so non-streaming callers carry the
+    /// same trace as streaming ones (parity fix — `completeChat` used to
+    /// drop the trace).
+    private func prepareDispatch(
+        request: ChatCompletionRequest,
+        trace: TTFTTrace?
+    ) async -> Dispatch {
         let temperature = request.temperature
         let maxTokens = request.max_tokens ?? 16384
         let repPenalty: Float? = {
-            // Map OpenAI penalties (presence/frequency) to a simple repetition penalty if provided
+            // Map OpenAI penalties (presence/frequency) to a simple
+            // repetition penalty when supplied.
             if let fp = request.frequency_penalty, fp > 0 { return 1.0 + fp }
             if let pp = request.presence_penalty, pp > 0 { return 1.0 + pp }
             return nil
@@ -106,25 +106,128 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             sessionId: request.session_id,
             cacheHint: request.cache_hint,
             staticPrefix: request.staticPrefix,
-            ttftTrace: trace,
-            priority: Self.schedulerPriority(for: inferenceSource)
+            ttftTrace: trace
         )
 
-        // Candidate services and installed models (injected for testability)
         let services = self.services
-
-        // Fetch current remote services from MainActor at request time so routing always
-        // reflects the latest connected Bonjour/remote agents without requiring a new engine.
+        // Fetch remote services on the MainActor so routing reflects the
+        // latest connected Bonjour/remote agents per request.
         trace?.mark("fetch_remote_services")
-        let remoteServices = await MainActor.run { RemoteProviderManager.shared.connectedServices() }
+        let remoteServices = await MainActor.run {
+            RemoteProviderManager.shared.connectedServices()
+        }
         trace?.mark("route_resolve")
-        debugLog("[ChatEngine] streamChat: remoteServices=\(remoteServices.count), routing model=\(request.model)")
-
         let route = ModelServiceRouter.resolve(
             requestedModel: request.model,
             services: services,
             remoteServices: remoteServices
         )
+        return Dispatch(route: route, params: params, remoteServices: remoteServices)
+    }
+
+    private func estimateInputTokens(_ messages: [ChatMessage]) -> Int {
+        let totalChars = messages.reduce(0) { sum, msg in
+            var chars = msg.content?.count ?? 0
+            if let calls = msg.tool_calls {
+                for call in calls {
+                    chars += call.function.name.count
+                    chars += call.function.arguments.count
+                    // ~20 chars overhead per call for JSON envelope shape
+                    chars += 20
+                }
+            }
+            return sum + chars
+        }
+        return max(1, totalChars / 4)
+    }
+
+    /// Build a non-stream OpenAI-style response from one or more tool
+    /// invocations parsed out of a single completion. Local models can emit
+    /// multiple `<tool_call>` blocks per response; OpenAI clients expect a
+    /// single assistant message with all `tool_calls` attached, which is
+    /// what we produce here.
+    static func makeToolCallResponse(
+        invocations: [ServiceToolInvocation],
+        responseId: String,
+        created: Int,
+        effectiveModel: String,
+        inputTokens: Int,
+        startTime: Date,
+        inferenceSource: InferenceSource,
+        temperature: Float?,
+        maxTokens: Int
+    ) -> ChatCompletionResponse {
+        let toolCalls: [ToolCall] = invocations.map { inv in
+            let raw = UUID().uuidString.replacingOccurrences(of: "-", with: "")
+            let callId = inv.toolCallId ?? "call_" + String(raw.prefix(24))
+            return ToolCall(
+                id: callId,
+                type: "function",
+                function: ToolCallFunction(name: inv.toolName, arguments: inv.jsonArguments),
+                geminiThoughtSignature: inv.geminiThoughtSignature
+            )
+        }
+        let assistant = ChatMessage(
+            role: "assistant",
+            content: nil,
+            tool_calls: toolCalls,
+            tool_call_id: nil
+        )
+        let choice = ChatChoice(index: 0, message: assistant, finish_reason: "tool_calls")
+        let usage = Usage(prompt_tokens: inputTokens, completion_tokens: 0, total_tokens: inputTokens)
+
+        if inferenceSource == .chatUI {
+            let durationMs = Date().timeIntervalSince(startTime) * 1000
+            InsightsService.logInference(
+                source: inferenceSource,
+                model: effectiveModel,
+                inputTokens: inputTokens,
+                outputTokens: 0,
+                durationMs: durationMs,
+                temperature: temperature,
+                maxTokens: maxTokens,
+                toolCalls: invocations.map {
+                    ToolCallLog(name: $0.toolName, arguments: $0.jsonArguments)
+                },
+                finishReason: .toolCalls
+            )
+        }
+
+        return ChatCompletionResponse(
+            id: responseId,
+            created: created,
+            model: effectiveModel,
+            choices: [choice],
+            usage: usage,
+            system_fingerprint: nil
+        )
+    }
+
+    func streamChat(request: ChatCompletionRequest) async throws -> AsyncThrowingStream<String, Error> {
+        debugLog("[ChatEngine] streamChat: start model=\(request.model)")
+        let trace = request.ttftTrace
+        trace?.mark("chatengine_start")
+        let messages = request.messages
+        debugLog("[ChatEngine] streamChat: messages count=\(messages.count), fetching remote services")
+
+        // Tool diagnostics: log the final tool list (count + names + choice)
+        // immediately before dispatch so silent "model didn't see the tools"
+        // failures are easy to triage from logs.
+        let toolNames = (request.tools ?? []).map { $0.function.name }.sorted()
+        let toolChoiceDesc = request.tool_choice.map { String(describing: $0) } ?? "nil"
+        debugLog(
+            "[Tools] streamChat model=\(request.model) source=\(inferenceSource) count=\(toolNames.count) choice=\(toolChoiceDesc) names=[\(toolNames.joined(separator: ", "))]"
+        )
+        trace?.set("toolListSent", String(toolNames.count))
+
+        // Pulled out for logging convenience; the actual dispatch values
+        // (incl. these two) live on `dispatch.params`.
+        let temperature = request.temperature
+        let maxTokens = request.max_tokens ?? 16384
+
+        let dispatch = await prepareDispatch(request: request, trace: trace)
+        let params = dispatch.params
+        let route = dispatch.route
         debugLog("[ChatEngine] streamChat: route=\(route)")
 
         switch route {
@@ -248,6 +351,13 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                 )
 
                 continuation.finish()
+            } catch let invs as ServiceToolInvocations {
+                print("[Osaurus][Stream] Tool invocations (batch): count=\(invs.invocations.count)")
+                if let first = invs.invocations.first {
+                    toolInvocation = (first.toolName, first.jsonArguments)
+                }
+                finishReason = .toolCalls
+                continuation.finish(throwing: invs)
             } catch let inv as ServiceToolInvocation {
                 print("[Osaurus][Stream] Tool invocation: \(inv.toolName)")
                 toolInvocation = (inv.toolName, inv.jsonArguments)
@@ -313,33 +423,12 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         let inputTokens = estimateInputTokens(messages)
         let temperature = request.temperature
         let maxTokens = request.max_tokens ?? 16384
-        let repPenalty2: Float? = {
-            if let fp = request.frequency_penalty, fp > 0 { return 1.0 + fp }
-            if let pp = request.presence_penalty, pp > 0 { return 1.0 + pp }
-            return nil
-        }()
-        let params = GenerationParameters(
-            temperature: temperature,
-            maxTokens: maxTokens,
-            topPOverride: request.top_p,
-            repetitionPenalty: repPenalty2,
-            modelOptions: request.modelOptions ?? [:],
-            sessionId: request.session_id,
-            cacheHint: request.cache_hint,
-            staticPrefix: request.staticPrefix,
-            priority: Self.schedulerPriority(for: inferenceSource)
-        )
-
-        let services = self.services
-
-        // Fetch current remote services from MainActor at request time.
-        let remoteServices = await MainActor.run { RemoteProviderManager.shared.connectedServices() }
-
-        let route = ModelServiceRouter.resolve(
-            requestedModel: request.model,
-            services: services,
-            remoteServices: remoteServices
-        )
+        // Carry the caller's `ttftTrace` through to non-streaming requests
+        // for parity with `streamChat` — useful when an HTTP route runs the
+        // same `request.ttftTrace` across both code paths.
+        let dispatch = await prepareDispatch(request: request, trace: request.ttftTrace)
+        let params = dispatch.params
+        let route = dispatch.route
 
         let created = Int(Date().timeIntervalSince1970)
         let responseId =
@@ -399,48 +488,29 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                         usage: usage,
                         system_fingerprint: nil
                     )
-                } catch let inv as ServiceToolInvocation {
-                    // Convert tool invocation to OpenAI-style non-stream response
-                    let raw = UUID().uuidString.replacingOccurrences(of: "-", with: "")
-                    let callId = "call_" + String(raw.prefix(24))
-                    let toolCall = ToolCall(
-                        id: callId,
-                        type: "function",
-                        function: ToolCallFunction(name: inv.toolName, arguments: inv.jsonArguments),
-                        geminiThoughtSignature: inv.geminiThoughtSignature
-                    )
-                    let assistant = ChatMessage(
-                        role: "assistant",
-                        content: nil,
-                        tool_calls: [toolCall],
-                        tool_call_id: nil
-                    )
-                    let choice = ChatChoice(index: 0, message: assistant, finish_reason: "tool_calls")
-                    let usage = Usage(prompt_tokens: inputTokens, completion_tokens: 0, total_tokens: inputTokens)
-
-                    // Log the inference (only for Chat UI - HTTP requests are logged by HTTPHandler)
-                    if inferenceSource == .chatUI {
-                        let durationMs = Date().timeIntervalSince(startTime) * 1000
-                        InsightsService.logInference(
-                            source: inferenceSource,
-                            model: effectiveModel,
-                            inputTokens: inputTokens,
-                            outputTokens: 0,
-                            durationMs: durationMs,
-                            temperature: temperature,
-                            maxTokens: maxTokens,
-                            toolCalls: [ToolCallLog(name: inv.toolName, arguments: inv.jsonArguments)],
-                            finishReason: .toolCalls
-                        )
-                    }
-
-                    return ChatCompletionResponse(
-                        id: responseId,
+                } catch let invs as ServiceToolInvocations {
+                    return Self.makeToolCallResponse(
+                        invocations: invs.invocations,
+                        responseId: responseId,
                         created: created,
-                        model: effectiveModel,
-                        choices: [choice],
-                        usage: usage,
-                        system_fingerprint: nil
+                        effectiveModel: effectiveModel,
+                        inputTokens: inputTokens,
+                        startTime: startTime,
+                        inferenceSource: inferenceSource,
+                        temperature: temperature,
+                        maxTokens: maxTokens
+                    )
+                } catch let inv as ServiceToolInvocation {
+                    return Self.makeToolCallResponse(
+                        invocations: [inv],
+                        responseId: responseId,
+                        created: created,
+                        effectiveModel: effectiveModel,
+                        inputTokens: inputTokens,
+                        startTime: startTime,
+                        inferenceSource: inferenceSource,
+                        temperature: temperature,
+                        maxTokens: maxTokens
                     )
                 }
             }

@@ -47,7 +47,7 @@ The watcher starts monitoring immediately. You'll see a "Watching" badge on the 
 1. **Detection** — FSEvents monitors the watched folder for file system changes
 2. **Debouncing** — Rapid changes are coalesced into a single trigger based on the responsiveness setting
 3. **Fingerprinting** — A directory fingerprint (Merkle hash of file metadata) captures the current state
-4. **Dispatch** — An AI agent task is created with your instructions and the folder context
+4. **Dispatch** — An AI agent task is created with your instructions and the folder context. The persisted chat session is tagged `source = watcher` and keyed by the watcher's id, so all triggers from the same watcher accumulate into a single auditable session row in the chat sidebar
 5. **Convergence** — After the agent completes, the directory is re-fingerprinted; if changes occurred (e.g., the agent moved files), the loop repeats until the directory stabilizes
 
 ### Responsiveness
@@ -256,6 +256,6 @@ Each file contains the watcher configuration encoded as JSON with ISO 8601 dates
 ## Related Documentation
 
 - [Schedules](../README.md#schedules) — Time-based automation (complements Watchers)
-- [Agents Guide](WORK.md) — Autonomous task execution
+- [Agent Loop Guide](AGENT_LOOP.md) — Autonomous task execution and folder context
 - [Skills Guide](SKILLS.md) — Reusable AI capabilities
 - [Features Overview](FEATURES.md) — Complete feature inventory

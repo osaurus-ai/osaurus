@@ -1541,32 +1541,12 @@
         }
       }
     },
-    "Chat Mode — Talk back and forth, like a conversation.\nWork Mode — Give it a task and let it work in the background.": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Chat-Modus — Unterhalte dich wie in einem Gespräch.\nWork-Modus — Gib eine Aufgabe und lass sie im Hintergrund erledigen."
-          }
-        }
-      }
-    },
     "Chat UI": {
       "localizations": {
         "de": {
           "stringUnit": {
             "state": "translated",
             "value": "Chat-Oberfläche"
-          }
-        }
-      }
-    },
-    "Chat or let it run": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Chatten oder laufen lassen"
           }
         }
       }
@@ -2161,12 +2141,12 @@
         }
       }
     },
-    "Control how work folder tools execute when working with folders in Work mode.": {
+    "Control how folder tools execute when chat has access to a working folder.": {
       "localizations": {
         "de": {
           "stringUnit": {
-            "state": "translated",
-            "value": "Steuere, wie Ordner-Tools im Arbeitsmodus ausgeführt werden."
+            "state": "needs_review",
+            "value": "Steuere, wie Ordner-Tools ausgeführt werden, wenn der Chat Zugriff auf einen Arbeitsordner hat."
           }
         }
       }

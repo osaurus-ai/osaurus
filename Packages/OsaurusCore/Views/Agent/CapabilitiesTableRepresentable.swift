@@ -720,7 +720,7 @@ struct ToolRowCell: View {
         .modifier(HoverRowStyle(isHovered: isHovered, showAccent: enabled && !isAgentRestricted))
         .help(
             isAgentRestricted
-                ? "Available in Chat Mode only. Work Mode includes equivalent built-in tools."
+                ? "Restricted for this agent."
                 : ""
         )
     }

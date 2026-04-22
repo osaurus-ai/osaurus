@@ -39,6 +39,10 @@ enum ContentBlockKind: Equatable {
     case typingIndicator
     case groupSpacer
     case chart(spec: ChartSpec)
+    /// Footer row appended to every completed assistant turn.
+    /// Replaces the hover-revealed copy/regenerate buttons that used to live in the header,
+    /// so moving the mouse over the assistant transcript no longer triggers per-row reconfigures.
+    case assistantActions(turnId: UUID)
 
     /// Custom Equatable optimized for performance during streaming.
     /// Uses text length comparison as a cheap proxy for content change detection.
@@ -89,6 +93,9 @@ enum ContentBlockKind: Equatable {
         case let (.chart(lSpec), .chart(rSpec)):
             return lSpec == rSpec
 
+        case let (.assistantActions(lId), .assistantActions(rId)):
+            return lId == rId
+
         default:
             return false
         }
@@ -109,7 +116,7 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
         case let .header(role, _, _): return role
         case let .paragraph(_, _, _, role): return role
         case .toolCallGroup, .thinking, .sharedArtifact, .pendingToolCall, .preflightCapabilities,
-            .generationStats, .typingIndicator, .groupSpacer, .chart:
+            .generationStats, .typingIndicator, .groupSpacer, .chart, .assistantActions:
             return .assistant
         case .userMessage: return .user
         }
@@ -253,6 +260,15 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
         return ContentBlock(id: "spacer-\(afterTurnId.uuidString)", turnId: turnId, kind: .groupSpacer, position: .only)
     }
 
+    static func assistantActions(turnId: UUID, position: BlockPosition) -> ContentBlock {
+        ContentBlock(
+            id: "actions-\(turnId.uuidString)",
+            turnId: turnId,
+            kind: .assistantActions(turnId: turnId),
+            position: position
+        )
+    }
+
     static func chart(turnId: UUID, spec: ChartSpec, position: BlockPosition) -> ContentBlock {
         ContentBlock(
             id: "chart-\(turnId.uuidString)",
@@ -374,33 +390,58 @@ extension ContentBlock {
 
             if let toolCalls = turn.toolCalls, !toolCalls.isEmpty {
                 var regularItems: [ToolCallItem] = []
+
+                // Flush queued chip items so the next specialised block
+                // (artifact card, chart, clarify Q) lands in original
+                // call order rather than after a trailing tool group.
+                func flushRegularItems() {
+                    guard !regularItems.isEmpty else { return }
+                    turnBlocks.append(
+                        .toolCallGroup(turnId: turn.id, calls: regularItems, position: .middle)
+                    )
+                    regularItems = []
+                }
+
                 for call in toolCalls {
+                    // Agent-loop tools (`todo`, `complete`, `clarify`)
+                    // already drive first-class inline UI — the todo
+                    // checklist banner, the completion banner, and the
+                    // bottom-pinned clarify overlay. Rendering them as
+                    // generic tool chips on top of that would show the
+                    // same call twice. `clarify` is the one exception:
+                    // its overlay dismisses on submit, so without an
+                    // inline trace the answered question vanishes from
+                    // scroll-back. Emit a styled paragraph for it so
+                    // the Q&A pair stays readable; the user's answer
+                    // renders as the next user bubble below.
+                    if Self.isAgentLoopToolName(call.function.name) {
+                        if call.function.name == "clarify",
+                            let block = Self.makeClarifyQuestionBlock(turnId: turn.id, call: call)
+                        {
+                            flushRegularItems()
+                            turnBlocks.append(block)
+                        }
+                        continue
+                    }
+
                     let result = turn.toolResults[call.id]
                     if call.function.name == "share_artifact",
                         let result,
                         let artifact = Self.parseSharedArtifactFromResult(result)
                     {
-                        if !regularItems.isEmpty {
-                            turnBlocks.append(.toolCallGroup(turnId: turn.id, calls: regularItems, position: .middle))
-                            regularItems = []
-                        }
+                        flushRegularItems()
                         turnBlocks.append(.sharedArtifact(turnId: turn.id, artifact: artifact, position: .middle))
                     } else if call.function.name == "render_chart",
                         let result,
                         let spec = Self.parseChartSpecFromResult(result)
                     {
-                        if !regularItems.isEmpty {
-                            turnBlocks.append(.toolCallGroup(turnId: turn.id, calls: regularItems, position: .middle))
-                            regularItems = []
-                        }
+                        flushRegularItems()
                         turnBlocks.append(.chart(turnId: turn.id, spec: spec.normalized, position: .middle))
                     } else {
                         regularItems.append(ToolCallItem(call: call, result: result))
                     }
                 }
-                if !regularItems.isEmpty {
-                    turnBlocks.append(.toolCallGroup(turnId: turn.id, calls: regularItems, position: .middle))
-                }
+                flushRegularItems()
             }
 
             if isStreaming, let pendingName = turn.pendingToolName {
@@ -429,6 +470,14 @@ extension ContentBlock {
                 )
             }
 
+            // copy/regenerate bar pinned to the bottom of every completed assistant turn.
+            // only emitted once the turn is not streaming and has something worth acting on
+            if !isStreaming && turn.role == .assistant,
+                !turn.contentIsEmpty || !(turn.toolCalls ?? []).isEmpty
+            {
+                turnBlocks.append(.assistantActions(turnId: turn.id, position: .last))
+            }
+
             blocks.append(contentsOf: assignPositions(to: turnBlocks))
             previousRole = turn.role
             previousTurnId = turn.id
@@ -443,11 +492,21 @@ extension ContentBlock {
     }
 
     /// Parses a ChartSpec from a render_chart tool result marker.
+    /// Accepts both the legacy raw marker block and the new envelope shape
+    /// where the marker block lives inside `result.text`.
     private static func parseChartSpecFromResult(_ result: String) -> ChartSpec? {
-        guard let start = result.range(of: "---CHART_START---\n"),
-            let end = result.range(of: "\n---CHART_END---")
+        let source: String
+        if let payload = ToolEnvelope.successPayload(result) as? [String: Any],
+            let text = payload["text"] as? String
+        {
+            source = text
+        } else {
+            source = result
+        }
+        guard let start = source.range(of: "---CHART_START---\n"),
+            let end = source.range(of: "\n---CHART_END---")
         else { return nil }
-        let json = String(result[start.upperBound ..< end.lowerBound])
+        let json = String(source[start.upperBound ..< end.lowerBound])
         guard let data = json.data(using: .utf8) else { return nil }
         return try? JSONDecoder().decode(ChartSpec.self, from: data)
     }
@@ -566,6 +625,42 @@ extension ContentBlock {
                 )
             ]
             : blocks
+    }
+
+    /// Build the inline "Asked: …" paragraph block for a `clarify`
+    /// tool call. Returns nil when the arguments don't decode to a
+    /// usable question (matches what the overlay would have skipped).
+    /// Reuses the paragraph kind so the existing markdown renderer
+    /// handles it without a dedicated block type — the blockquote +
+    /// bold prefix gives the question its own visual weight inside
+    /// the assistant turn.
+    private static func makeClarifyQuestionBlock(turnId: UUID, call: ToolCall) -> ContentBlock? {
+        guard let payload = ClarifyTool.parse(argumentsJSON: call.function.arguments) else {
+            return nil
+        }
+        return ContentBlock(
+            // Key on the call id so multiple clarifies in one turn
+            // (rare, but legal) each get a distinct stable block id.
+            id: "clarifyq-\(turnId.uuidString)-\(call.id)",
+            turnId: turnId,
+            kind: .paragraph(
+                index: -1,
+                text: "> **Asked:** \(payload.question)",
+                isStreaming: false,
+                role: .assistant
+            ),
+            position: .middle
+        )
+    }
+
+    /// Tools whose results are surfaced through dedicated inline UI
+    /// (todo banner, completion banner, clarify overlay) rather than
+    /// the generic tool-call chip group. Centralized so the chip
+    /// filter and any other render-time skip stay in lockstep.
+    private static let agentLoopToolNames: Set<String> = ["todo", "complete", "clarify"]
+
+    static func isAgentLoopToolName(_ name: String) -> Bool {
+        agentLoopToolNames.contains(name)
     }
 
     private static func assignPositions(to blocks: [ContentBlock]) -> [ContentBlock] {

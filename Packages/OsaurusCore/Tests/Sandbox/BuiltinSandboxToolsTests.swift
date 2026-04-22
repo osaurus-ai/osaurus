@@ -3,6 +3,20 @@ import Testing
 
 @testable import OsaurusCore
 
+/// Extract the `result` dict from a `ToolEnvelope.success` JSON output.
+/// The sandbox tool suite asserts success-path payloads field-by-field,
+/// so flatten to the old shape locally rather than threading envelope
+/// access through every assertion.
+private func successPayload(_ raw: String) throws -> [String: Any] {
+    try #require(ToolEnvelope.successPayload(raw) as? [String: Any])
+}
+
+/// Extract the failure envelope fields for assertion on the failure path.
+private func failurePayload(_ raw: String) throws -> [String: Any] {
+    let data = try #require(raw.data(using: .utf8))
+    return try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+}
+
 @Suite(.serialized)
 struct BuiltinSandboxToolsTests {
     @Test @MainActor
@@ -19,7 +33,7 @@ struct BuiltinSandboxToolsTests {
             )
         }
 
-        let payload = try #require(try parseJSON(output))
+        let payload = try successPayload(output)
         let installed = try #require(payload["installed"] as? [String])
         #expect(installed == ["flask", "pytest"])
         #expect(payload["requested"] == nil)
@@ -51,9 +65,10 @@ struct BuiltinSandboxToolsTests {
             )
         }
 
-        let payload = try #require(try parseJSON(output))
-        #expect(payload["error"] as? String == "python3 is not installed in the sandbox image")
-        #expect(payload["installed"] == nil)
+        #expect(ToolEnvelope.isError(output))
+        let payload = try failurePayload(output)
+        #expect(payload["kind"] as? String == "unavailable")
+        #expect(payload["message"] as? String == "python3 is not installed in the sandbox image")
 
         let calls = await runner.calls
         #expect(calls.count == 1)
@@ -61,7 +76,7 @@ struct BuiltinSandboxToolsTests {
     }
 
     @Test @MainActor
-    func sandboxNpmInstall_returnsRequestedOnFailure() async throws {
+    func sandboxNpmInstall_returnsFailureEnvelopeOnBadExit() async throws {
         let runner = MockSandboxToolCommandRunner(
             rootResults: [.init(stdout: "", stderr: "", exitCode: 0)],
             agentResults: [.init(stdout: "", stderr: "npm: not found", exitCode: 127)]
@@ -74,11 +89,14 @@ struct BuiltinSandboxToolsTests {
             )
         }
 
-        let payload = try #require(try parseJSON(output))
-        #expect(payload["installed"] == nil)
-        #expect(payload["requested"] as? [String] == ["vite"])
-        #expect(payload["exit_code"] as? Int == 127)
-        #expect((payload["output"] as? String)?.contains("npm: not found") == true)
+        // install-family failures surface the combined output + exit code
+        // in the failure envelope `message` so the model can diagnose.
+        #expect(ToolEnvelope.isError(output))
+        let payload = try failurePayload(output)
+        #expect(payload["kind"] as? String == "execution_error")
+        let message = payload["message"] as? String ?? ""
+        #expect(message.contains("exit 127"))
+        #expect(message.contains("npm: not found"))
 
         let calls = await runner.calls
         #expect(calls.count == 2)
@@ -100,9 +118,14 @@ struct BuiltinSandboxToolsTests {
             )
         }
 
-        let payload = try #require(try parseJSON(output))
+        let payload = try successPayload(output)
         #expect(payload["exit_code"] as? Int == 0)
-        #expect((payload["output"] as? String)?.contains("ok") == true)
+        // run_script now emits stdout/stderr split (matching sandbox_exec)
+        // plus a `combined` field for callers that prefer the merged form.
+        #expect((payload["stdout"] as? String)?.contains("ok") == true)
+        #expect(payload["stderr"] as? String == "")
+        #expect((payload["combined"] as? String)?.contains("ok") == true)
+        #expect(payload["language"] as? String == "python")
 
         let calls = await runner.calls
         guard case .exec(let user, let command, let env) = try #require(calls.first) else {
@@ -156,7 +179,7 @@ struct BuiltinSandboxToolsTests {
             )
         }
 
-        let payload = try #require(try parseJSON(output))
+        let payload = try successPayload(output)
         #expect(payload["content"] as? String == "tail-output")
         #expect(payload["tail_lines"] as? Int == 20)
         #expect(payload["max_chars"] as? Int == 1200)
@@ -168,6 +191,75 @@ struct BuiltinSandboxToolsTests {
         }
         #expect(command.contains("tail -n 20"))
         #expect(command.contains("| head -c 1200"))
+    }
+
+    // MARK: - Screenshot bug regression
+
+    /// The original bug: `sandbox_write_file` called with only `path`
+    /// returned `{"error": "Invalid arguments"}` — the model had no way
+    /// to tell which argument was missing. Now every per-step validator
+    /// returns a structured envelope pointing at the failed field.
+    @Test @MainActor
+    func sandboxWriteFile_missingContentReportsFieldByName() async throws {
+        let runner = MockSandboxToolCommandRunner(rootResults: [], agentResults: [])
+
+        let output = try await withRegisteredSandboxTools(runner: runner) {
+            try await ToolRegistry.shared.execute(
+                name: "sandbox_write_file",
+                argumentsJSON: #"{"path":"need-moar-compute/index.html"}"#
+            )
+        }
+
+        #expect(ToolEnvelope.isError(output))
+        let payload = try failurePayload(output)
+        #expect(payload["kind"] as? String == "invalid_args")
+        // Critical: the error names the missing field so the model can
+        // retry correctly on the next turn.
+        #expect(payload["field"] as? String == "content")
+        let message = payload["message"] as? String ?? ""
+        #expect(message.contains("content"))
+    }
+
+    @Test @MainActor
+    func sandboxWriteFile_missingPathReportsFieldByName() async throws {
+        let runner = MockSandboxToolCommandRunner(rootResults: [], agentResults: [])
+
+        let output = try await withRegisteredSandboxTools(runner: runner) {
+            try await ToolRegistry.shared.execute(
+                name: "sandbox_write_file",
+                argumentsJSON: #"{"content":"hello"}"#
+            )
+        }
+
+        #expect(ToolEnvelope.isError(output))
+        let payload = try failurePayload(output)
+        #expect(payload["kind"] as? String == "invalid_args")
+        #expect(payload["field"] as? String == "path")
+    }
+
+    /// The silent-cwd-fallback bug: `sandbox_exec` with a bad `cwd` used
+    /// to run without `cd`, ending up in the wrong directory with no
+    /// signal to the model. Now it returns an `invalid_args` envelope
+    /// pointing at `cwd` with the sanitizer reason.
+    @Test @MainActor
+    func sandboxExec_badCwdReturnsInvalidArgsNotSilentFallback() async throws {
+        let runner = MockSandboxToolCommandRunner(rootResults: [], agentResults: [])
+
+        let output = try await withRegisteredSandboxTools(runner: runner) {
+            try await ToolRegistry.shared.execute(
+                name: "sandbox_exec",
+                argumentsJSON: #"{"command":"ls","cwd":"../etc"}"#
+            )
+        }
+
+        #expect(ToolEnvelope.isError(output))
+        let payload = try failurePayload(output)
+        #expect(payload["kind"] as? String == "invalid_args")
+        #expect(payload["field"] as? String == "cwd")
+
+        // The command must NOT have run (no silent fallback to agent home).
+        let calls = await runner.calls
+        #expect(calls.isEmpty, "no exec call should be made when cwd is rejected")
     }
 }
 

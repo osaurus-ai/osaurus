@@ -1401,7 +1401,7 @@ public struct ToolsCreate {
 
             ## Using Folder Context (Working Directory)
 
-            When a user has a working directory selected in Work Mode, Osaurus automatically injects the folder context into tool payloads. This allows your plugin to resolve relative file paths.
+            When a user has a working folder selected in chat, Osaurus automatically injects the folder context into tool payloads. This allows your plugin to resolve relative file paths.
 
             ### Automatic Injection
 

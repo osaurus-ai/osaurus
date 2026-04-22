@@ -89,14 +89,20 @@ final class ToolRegistry: ObservableObject {
     /// (built-in tools are always loaded regardless, but this keeps config consistent).
     private func registerBuiltInTools() {
         let builtIns: [OsaurusTool] = [
+            // Agent loop — `ChatView` intercepts execute results to drive
+            // the inline UI; the registry runs them like any other tool.
+            TodoTool(),
+            CompleteTool(),
+            ClarifyTool(),
+            // Only sanctioned path for surfacing files / inline blobs to
+            // the user (file_write / sandbox writes do not show in chat).
+            ShareArtifactTool(),
+            // Capability discovery (search -> load) for mid-session growth.
             CapabilitiesSearchTool(),
             CapabilitiesLoadTool(),
-            MethodsSaveTool(),
-            MethodsReportTool(),
-            SearchWorkingMemoryTool(),
-            SearchConversationsTool(),
-            SearchSummariesTool(),
-            SearchGraphTool(),
+            // Persistent memory recall — one tool, dispatched by `scope`.
+            SearchMemoryTool(),
+            // Inline data visualization rendered as a chart card.
             RenderChartTool(),
         ]
         var configChanged = false
@@ -115,31 +121,92 @@ final class ToolRegistry: ObservableObject {
         }
     }
 
+    /// Register a plain (non-bucketed) tool. Used by built-in registration
+    /// and folder-tool installation; sandbox / MCP / plugin paths use the
+    /// dedicated typed helpers so they can also stamp their bucket sets.
+    ///
+    /// Names are sanitised to `^[a-zA-Z0-9_-]{1,64}$`. Cross-type collisions
+    /// are warned. Overwrites strip stale bucket flags so `isSandboxTool`
+    /// / `isMCPTool` / `isPluginTool` reflect the live registration source.
     func register(_ tool: OsaurusTool) {
-        toolsByName[tool.name] = tool
+        let sanitized = Self.sanitizeToolName(tool.name)
+        if sanitized != tool.name {
+            NSLog(
+                "[ToolRegistry] Tool name '\(tool.name)' contains illegal characters; using '\(sanitized)' instead"
+            )
+        }
+        if let existing = toolsByName[sanitized] {
+            let existingType = String(describing: type(of: existing))
+            let newType = String(describing: type(of: tool))
+            if existingType != newType {
+                NSLog(
+                    "[ToolRegistry] WARNING: tool name collision on '\(sanitized)'; existing=\(existingType) new=\(newType). Previous registration will be overwritten — consider namespacing the providers."
+                )
+            }
+            sandboxToolNames.remove(sanitized)
+            builtInSandboxToolNames.remove(sanitized)
+            mcpToolNames.remove(sanitized)
+            pluginToolNames.remove(sanitized)
+        }
+        toolsByName[sanitized] = tool
+    }
+
+    /// Sanitize a candidate tool name so it satisfies `^[a-zA-Z0-9_-]{1,64}$`.
+    /// Disallowed characters become underscores; empty results fall back to
+    /// `tool_unnamed`; over-length names are truncated to 64.
+    static func sanitizeToolName(_ raw: String) -> String {
+        var out = ""
+        out.reserveCapacity(raw.count)
+        for ch in raw {
+            if ch.isASCII, ch.isLetter || ch.isNumber || ch == "_" || ch == "-" {
+                out.append(ch)
+            } else {
+                out.append("_")
+            }
+        }
+        if out.isEmpty { out = "tool_unnamed" }
+        if out.count > 64 { out = String(out.prefix(64)) }
+        return out
     }
 
     private static func estimateTokenCount(_ tool: OsaurusTool) -> Int {
         tool.asOpenAITool().function.name.count + (tool.description.count / 4)
     }
 
-    /// Get specs for specific tools by name (ignores enabled state)
+    /// Get specs for specific tools by name (ignores enabled state).
     func specs(forTools toolNames: [String]) -> [Tool] {
         return toolNames.compactMap { name in
             toolsByName[name]?.asOpenAITool()
         }
     }
 
-    /// Execute a tool by name with raw JSON arguments.
-    /// Any registered tool can execute — access control is handled upstream
-    /// by which tools are offered to the model (alwaysLoadedSpecs + capabilities_load).
+    /// Execute a tool by name with raw JSON arguments. Access control
+    /// happens upstream (alwaysLoadedSpecs + capabilities_load decides
+    /// which tools are visible to the model).
+    ///
+    /// Unknown tools return `kind: .toolNotFound` with no "did you mean"
+    /// list — listing other tool names triggers hallucinations (the model
+    /// treats the suggestion as proof a tool exists and invents siblings).
+    /// One exception: sandbox tools that race the container startup get a
+    /// `kind: .unavailable` "still initializing" notice so the model knows
+    /// to retry rather than pivot.
     func execute(name: String, argumentsJSON: String) async throws -> String {
         guard let tool = toolsByName[name] else {
-            throw NSError(
-                domain: "ToolRegistry",
-                code: 1,
-                userInfo: [NSLocalizedDescriptionKey: "Unknown tool: \(name)"]
-            )
+            if name.hasPrefix("sandbox_") {
+                return ToolErrorEnvelope(
+                    kind: .unavailable,
+                    reason:
+                        "Sandbox is still initializing — \(name) isn't registered yet. "
+                        + "Wait a moment and try again.",
+                    toolName: name,
+                    retryable: true
+                ).toJSONString()
+            }
+            return ToolErrorEnvelope(
+                kind: .toolNotFound,
+                reason: "Tool '\(name)' is not available in this session.",
+                toolName: name
+            ).toJSONString()
         }
         // Permission gating
         if let permissioned = tool as? PermissionedTool {
@@ -221,6 +288,25 @@ final class ToolRegistry: ObservableObject {
                 }
             }
         }
+        // Schema preflight: catches `additionalProperties: false` violations
+        // and obvious type mismatches before the tool body sees them. Parse
+        // failure and missing schema are tolerated — tool bodies typically
+        // have richer field-aware `require…` helpers.
+        if let schema = tool.parameters,
+            let data = argumentsJSON.data(using: .utf8),
+            let parsed = try? JSONSerialization.jsonObject(with: data)
+        {
+            let result = SchemaValidator.validate(arguments: parsed, against: schema)
+            if !result.isValid, let message = result.errorMessage {
+                return ToolEnvelope.failure(
+                    kind: .invalidArgs,
+                    message: message,
+                    field: result.field,
+                    tool: name
+                )
+            }
+        }
+
         // Run the tool body off MainActor so long-running tools (file I/O,
         // network, shell) don't contend with SwiftUI layout on the main thread.
         return try await Self.runToolBody(tool, argumentsJSON: argumentsJSON)
@@ -352,11 +438,14 @@ final class ToolRegistry: ObservableObject {
     /// Register a tool that requires the sandbox container.
     /// Non-runtime-managed tools are auto-enabled on first registration so they
     /// are immediately usable; subsequent registrations preserve the user's choice.
+    /// Strips any pre-existing MCP / plugin bucket flag — live registration wins.
     func registerSandboxTool(_ tool: OsaurusTool, runtimeManaged: Bool = false) {
         let firstTime =
             toolsByName[tool.name] == nil
             && !configuration.enabled.keys.contains(tool.name)
         toolsByName[tool.name] = tool
+        mcpToolNames.remove(tool.name)
+        pluginToolNames.remove(tool.name)
         sandboxToolNames.insert(tool.name)
         if runtimeManaged {
             builtInSandboxToolNames.insert(tool.name)
@@ -378,7 +467,7 @@ final class ToolRegistry: ObservableObject {
     }
 
     /// Register all tools from a sandbox plugin (agent-agnostic).
-    /// Agent identity is resolved at execution time via WorkExecutionContext.
+    /// Agent identity is resolved at execution time via ChatExecutionContext.
     func registerSandboxPluginTools(plugin: SandboxPlugin) {
         guard let tools = plugin.tools else { return }
         for spec in tools {
@@ -434,6 +523,9 @@ final class ToolRegistry: ObservableObject {
             toolsByName[tool.name] == nil
             && !configuration.enabled.keys.contains(tool.name)
         toolsByName[tool.name] = tool
+        sandboxToolNames.remove(tool.name)
+        builtInSandboxToolNames.remove(tool.name)
+        pluginToolNames.remove(tool.name)
         mcpToolNames.insert(tool.name)
         if firstTime {
             setEnabled(true, for: tool.name)
@@ -464,6 +556,9 @@ final class ToolRegistry: ObservableObject {
             toolsByName[tool.name] == nil
             && !configuration.enabled.keys.contains(tool.name)
         toolsByName[tool.name] = tool
+        sandboxToolNames.remove(tool.name)
+        builtInSandboxToolNames.remove(tool.name)
+        mcpToolNames.remove(tool.name)
         pluginToolNames.insert(tool.name)
         if firstTime {
             setEnabled(true, for: tool.name)
@@ -498,66 +593,98 @@ final class ToolRegistry: ObservableObject {
 
     // MARK: - Work-Conflicting Plugin Tools
 
-    /// Plugins that duplicate built-in work folder/git tools and bypass undo + sandboxing.
-    static let workConflictingPluginIds: Set<String> = [
+    /// Plugins that duplicate built-in folder/git tools and bypass undo + sandboxing.
+    static let folderConflictingPluginIds: Set<String> = [
         "osaurus.filesystem",
         "osaurus.git",
     ]
 
-    /// Registered tool names from work-conflicting plugins. Disabled in work mode.
-    var workConflictingToolNames: Set<String> {
+    /// Registered tool names from plugins that conflict with the built-in
+    /// folder tools. Excluded from the schema while the folder backend is
+    /// active so the model has a single canonical entry point.
+    var folderConflictingToolNames: Set<String> {
         Set(
             toolsByName.values
                 .compactMap { $0 as? ExternalTool }
-                .filter { Self.workConflictingPluginIds.contains($0.pluginId) }
+                .filter { Self.folderConflictingPluginIds.contains($0.pluginId) }
                 .map { $0.name }
         )
     }
 
     // MARK: - User-Facing Tool List
 
-    /// Work tool names that should be excluded from user-facing tool lists.
-    /// These tools are always included by default in work mode.
-    static var workToolNames: Set<String> {
-        Set(WorkToolManager.shared.toolNames)
-    }
-
     /// Folder tool names that should be excluded from user-facing tool lists.
     /// These tools are automatically managed based on folder selection.
     static var folderToolNames: Set<String> {
-        Set(WorkToolManager.shared.folderToolNames)
+        Set(FolderToolManager.shared.folderToolNames)
     }
 
     /// Runtime-managed tools are execution infrastructure, always loaded when registered.
     var runtimeManagedToolNames: Set<String> {
-        Self.workToolNames
-            .union(Self.folderToolNames)
-            .union(builtInSandboxToolNames)
+        Self.folderToolNames.union(builtInSandboxToolNames)
     }
 
-    private func excludedToolNames(for mode: WorkExecutionMode) -> Set<String> {
-        let conflicting = workConflictingToolNames
-        switch mode {
-        case .hostFolder:
-            return builtInSandboxToolNames.union(conflicting)
-        case .sandbox:
-            return Self.folderToolNames.union(conflicting)
-        case .none:
-            return Self.folderToolNames.union(builtInSandboxToolNames)
+    /// Read-only snapshot of the built-in sandbox tool names. Exposed so the
+    /// composer's canonical-order helper can group them at the top of the
+    /// `<tools>` block without reaching into private state.
+    var builtInSandboxToolNamesSnapshot: Set<String> {
+        builtInSandboxToolNames
+    }
+
+    /// Tools that should be hidden from the model in this execution mode.
+    ///
+    /// Three orthogonal rules, each derivable from `mode`:
+    ///   - if mode does NOT claim folder tools → exclude all folder tools
+    ///   - if mode does NOT claim sandbox tools → exclude all built-in sandbox tools
+    ///   - if mode is agentic at all (folder OR sandbox) → exclude any
+    ///     plugin/MCP tool that overlaps a folder tool name (the folder
+    ///     surface is treated as authoritative when active)
+    ///
+    /// Replaces the older per-mode switch so adding a new mode means
+    /// teaching `ExecutionMode` two booleans, not editing this function.
+    private func excludedToolNames(for mode: ExecutionMode) -> Set<String> {
+        var excluded: Set<String> = []
+        if !mode.usesHostFolderTools {
+            excluded.formUnion(Self.folderToolNames)
         }
+        if !mode.usesSandboxTools {
+            excluded.formUnion(builtInSandboxToolNames)
+        }
+        if mode.usesHostFolderTools || mode.usesSandboxTools {
+            excluded.formUnion(folderConflictingToolNames)
+        }
+        return excluded
     }
 
-    /// Resolve the active work execution mode from current context and registered runtime tools.
-    func resolveWorkExecutionMode(folderContext: WorkFolderContext?) -> WorkExecutionMode {
+    /// Resolve the active execution mode for a chat send. Single source of
+    /// truth: callers pass the user's explicit intent (autonomous toggle +
+    /// optional folder context) and we apply the priority rule once.
+    ///
+    /// Priority: sandbox > host folder > none. Sandbox wins because the
+    /// container takes longer to provision and a user who toggled it on is
+    /// signalling "use this when ready"; folder mode requires an explicit
+    /// folder selection so it only fires when sandbox is off.
+    ///
+    /// Sandbox mode is only returned when both autonomous is enabled AND
+    /// `sandbox_exec` is registered. If autonomous is on but sandbox tools
+    /// haven't registered yet (provision still in flight), we return `.none`
+    /// — the composer's "Sandbox not ready" notice + the placeholder tool
+    /// take it from there. Avoids the hidden assumption that
+    /// `autonomousEnabled` alone implied `.sandbox`.
+    func resolveExecutionMode(
+        folderContext: FolderContext?,
+        autonomousEnabled: Bool
+    ) -> ExecutionMode {
+        if autonomousEnabled, toolsByName.keys.contains("sandbox_exec") {
+            return .sandbox
+        }
         if let folderContext {
             return .hostFolder(folderContext)
         }
-
-        let hasSandboxExec = toolsByName.keys.contains("sandbox_exec")
-        return hasSandboxExec ? .sandbox : .none
+        return .none
     }
 
-    /// Runtime-managed tools for diagnostics and work-mode execution decisions.
+    /// Runtime-managed tools for diagnostics and execution-mode decisions.
     func listRuntimeManagedTools() -> [ToolEntry] {
         listTools().filter { runtimeManagedToolNames.contains($0.name) }
     }
@@ -567,6 +694,15 @@ final class ToolRegistry: ObservableObject {
     func listDynamicTools() -> [ToolEntry] {
         let alwaysLoaded = builtInToolNames.union(runtimeManagedToolNames)
         return listTools().filter { $0.enabled && !alwaysLoaded.contains($0.name) }
+    }
+
+    /// True when no dynamic (MCP / plugin / sandbox-plugin) tool is enabled
+    /// for the agent. Used by `SystemPromptComposer` to decide whether the
+    /// "Sandbox Plugin Creator" skill should be injected as a backstop —
+    /// only when the agent literally has no way to satisfy a request via
+    /// existing tools, not just when this turn's preflight didn't pick one.
+    func dynamicCatalogIsEmpty() -> Bool {
+        listDynamicTools().isEmpty
     }
 
     /// Returns the plugin or provider name that a tool belongs to, if any.
@@ -579,7 +715,7 @@ final class ToolRegistry: ObservableObject {
     }
 
     static let capabilityToolNames: Set<String> = [
-        "capabilities_search", "capabilities_load", "methods_save", "methods_report",
+        "capabilities_search", "capabilities_load",
     ]
 
     /// Always-loaded tool specs: built-in + runtime-managed tools.
@@ -590,7 +726,7 @@ final class ToolRegistry: ObservableObject {
     /// When `excludeCapabilityTools` is true (manual tool selection mode),
     /// dynamic discovery tools are stripped so the model only sees
     /// the user's explicitly chosen tools.
-    func alwaysLoadedSpecs(mode: WorkExecutionMode, excludeCapabilityTools: Bool = false) -> [Tool] {
+    func alwaysLoadedSpecs(mode: ExecutionMode, excludeCapabilityTools: Bool = false) -> [Tool] {
         let builtInNames = Set(builtInToolNames)
         let runtimeNames = runtimeManagedToolNames
         let excluded = excludedToolNames(for: mode)
@@ -601,6 +737,18 @@ final class ToolRegistry: ObservableObject {
             }
             .filter { !excluded.contains($0.name) }
             .filter { !excludeCapabilityTools || !Self.capabilityToolNames.contains($0.name) }
+            .sorted { $0.name < $1.name }
+            .map { $0.asOpenAITool() }
+    }
+
+    /// Sandbox built-in tool specs available for the given execution mode.
+    /// Used by manual tool-selection mode to keep sandbox tools discoverable
+    /// even when the user has not explicitly opted into them.
+    func sandboxBuiltInSpecs(mode: ExecutionMode) -> [Tool] {
+        let excluded = excludedToolNames(for: mode)
+        return toolsByName.values
+            .filter { builtInSandboxToolNames.contains($0.name) }
+            .filter { !excluded.contains($0.name) }
             .sorted { $0.name < $1.name }
             .map { $0.asOpenAITool() }
     }

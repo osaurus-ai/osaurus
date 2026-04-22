@@ -108,19 +108,16 @@ struct OnboardingLocalDownloadView: View {
                     .transition(nestedTransition)
             }
         }
-        .padding(.horizontal, 20)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .animation(theme.springAnimation(responseMultiplier: 0.8), value: hasStartedDownload)
         .onAppear {
-            DispatchQueue.main.asyncAfter(deadline: .now() + OnboardingStyle.appearDelay) {
-                withAnimation {
-                    hasAppeared = true
-                }
-            }
             // Pre-select the first top suggestion if available
             if selectedModel == nil, let first = topSuggestedModels.first {
                 selectedModel = first
             }
+        }
+        .onAppearAfter(OnboardingMetrics.appearDelay) {
+            withAnimation { hasAppeared = true }
         }
         .onChange(of: isCompleted) { _, completed in
             // Only auto-complete if we're in the download phase - go directly to "You're all set"
@@ -165,35 +162,19 @@ struct OnboardingLocalDownloadView: View {
     // MARK: - Selection View
 
     private var selectionView: some View {
-        VStack(spacing: 0) {
-            Spacer().frame(height: OnboardingStyle.headerTopPadding)
-
-            // Back button
-            OnboardingBackButton(action: onBack)
-                .padding(.horizontal, OnboardingStyle.backButtonHorizontalPadding)
-                .opacity(hasAppeared ? 1 : 0)
-                .animation(theme.springAnimation().delay(0.05), value: hasAppeared)
-
-            Spacer().frame(height: 20)
-
-            // Headline
-            Text("Choose a local model", bundle: .module)
-                .font(theme.font(size: 22, weight: .semibold))
-                .foregroundColor(theme.primaryText)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-                .opacity(hasAppeared ? 1 : 0)
-                .offset(y: hasAppeared ? 0 : 20)
-                .animation(theme.springAnimation().delay(0.1), value: hasAppeared)
-
-            Spacer().frame(height: 24)
-
-            // Model cards
-            ScrollView {
-                VStack(spacing: 10) {
-                    ForEach(topSuggestedModels) { model in
-                        ModelSelectionCard(
-                            model: model,
+        OnboardingScaffold(
+            title: "Choose a local model",
+            footer: "Runs entirely on your Mac. No data leaves your computer.",
+            onBack: onBack,
+            content: {
+                VStack(spacing: OnboardingMetrics.cardSpacing) {
+                    ForEach(Array(topSuggestedModels.enumerated()), id: \.element.id) { index, model in
+                        OnboardingRowCard(
+                            icon: .symbol(model.isVLM ? "eye" : "cpu"),
+                            title: model.name,
+                            subtitle: model.description,
+                            badges: badges(for: model),
+                            accessory: .radio(isSelected: selectedModel?.id == model.id),
                             isSelected: selectedModel?.id == model.id
                         ) {
                             withAnimation(theme.animationQuick()) {
@@ -203,122 +184,81 @@ struct OnboardingLocalDownloadView: View {
                         .opacity(hasAppeared ? 1 : 0)
                         .offset(y: hasAppeared ? 0 : 15)
                         .animation(
-                            theme.springAnimation().delay(
-                                0.15 + Double(topSuggestedModels.firstIndex(where: { $0.id == model.id }) ?? 0) * 0.07
-                            ),
+                            theme.springAnimation().delay(0.15 + Double(index) * 0.06),
                             value: hasAppeared
                         )
                     }
                 }
-                .padding(.horizontal, 15)
-            }
-            .frame(maxHeight: 260)
-
-            Spacer().frame(height: 16)
-
-            // Info text
-            Text("Runs entirely on your Mac. No data leaves your computer.", bundle: .module)
-                .font(theme.font(size: 14))
-                .foregroundColor(theme.secondaryText)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.horizontal, 30)
+            },
+            cta: {
+                OnboardingShimmerButton(
+                    title: selectedModel?.isDownloaded == true ? "Continue" : "Start Download",
+                    action: startDownloadOrContinue,
+                    isEnabled: selectedModel != nil
+                )
+                .frame(width: OnboardingMetrics.ctaWidth)
                 .opacity(hasAppeared ? 1 : 0)
-                .animation(theme.springAnimation().delay(0.35), value: hasAppeared)
+                .animation(theme.springAnimation().delay(0.4), value: hasAppeared)
+            }
+        )
+    }
 
-            Spacer()
+    private func badges(for model: MLXModel) -> [OnboardingRowBadge] {
+        var result: [OnboardingRowBadge] = []
+        if model.isDownloaded {
+            result.append(OnboardingRowBadge(L("Downloaded"), style: .success))
+        } else if let size = model.formattedDownloadSize {
+            result.append(OnboardingRowBadge(size))
+        }
+        result.append(OnboardingRowBadge(model.isVLM ? "VLM" : "LLM"))
+        return result
+    }
 
-            // Action button
-            OnboardingShimmerButton(
-                title: selectedModel?.isDownloaded == true ? "Continue" : "Start Download",
-                action: {
-                    if selectedModel?.isDownloaded == true {
-                        // Model already downloaded, skip to completion
-                        onComplete()
-                    } else {
-                        withAnimation(theme.springAnimation(responseMultiplier: 0.8)) {
-                            hasStartedDownload = true
-                        }
-                        startDownload()
-                    }
-                },
-                isEnabled: selectedModel != nil
-            )
-            .frame(width: 200)
-            .opacity(hasAppeared ? 1 : 0)
-            .animation(theme.springAnimation().delay(0.4), value: hasAppeared)
-
-            Spacer().frame(height: OnboardingStyle.bottomButtonPadding)
+    private func startDownloadOrContinue() {
+        if selectedModel?.isDownloaded == true {
+            onComplete()
+        } else {
+            withAnimation(theme.springAnimation(responseMultiplier: 0.8)) {
+                hasStartedDownload = true
+            }
+            startDownload()
         }
     }
 
     // MARK: - Download View
 
     private var downloadView: some View {
-        VStack(spacing: 0) {
-            Spacer().frame(height: 60)
-
-            // Headline
-            Text("Almost ready...", bundle: .module)
-                .font(theme.font(size: 24, weight: .semibold))
-                .foregroundColor(theme.primaryText)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-                .opacity(downloadViewAppeared ? 1 : 0)
-                .offset(y: downloadViewAppeared ? 0 : 20)
-                .animation(theme.springAnimation(), value: downloadViewAppeared)
-
-            Spacer().frame(height: 40)
-
-            // Progress section
-            VStack(spacing: 24) {
-                // Shimmer progress bar
-                OnboardingShimmerBar(progress: downloadProgress, color: theme.accentColor, height: 8)
-                    .padding(.horizontal, 60)
-
-                // Progress text
-                Text(progressText)
-                    .font(theme.font(size: 13))
-                    .foregroundColor(theme.tertiaryText)
-                    .animation(theme.animationQuick(), value: progressText)
-            }
-            .frame(height: 100)
-            .opacity(downloadViewAppeared ? 1 : 0)
-            .animation(theme.springAnimation().delay(0.1), value: downloadViewAppeared)
-
-            Spacer().frame(height: 36)
-
-            // Info text
-            Text(
+        OnboardingScaffold(
+            title: "Almost ready...",
+            subtitle:
                 "Once this finishes, you'll have an AI running entirely on your Mac — no account, no cloud, no data leaving your machine.",
-                bundle: .module
-            )
-            .font(theme.font(size: 13))
-            .foregroundColor(theme.secondaryText)
-            .multilineTextAlignment(.center)
-            .lineSpacing(4)
-            .fixedSize(horizontal: false, vertical: true)
-            .padding(.horizontal, 40)
-            .opacity(downloadViewAppeared ? 1 : 0)
-            .animation(theme.springAnimation().delay(0.15), value: downloadViewAppeared)
+            content: {
+                VStack(spacing: 18) {
+                    OnboardingShimmerBar(
+                        progress: downloadProgress,
+                        color: theme.accentColor,
+                        height: 8
+                    )
+                    .padding(.horizontal, 32)
 
-            Spacer()
-
-            // Action button
-            OnboardingTextButton(title: isDownloading ? "Continue" : "Download later") {
-                onSkip()
-            }
-            .opacity(downloadViewAppeared ? 1 : 0)
-            .animation(theme.springAnimation().delay(0.2), value: downloadViewAppeared)
-
-            Spacer().frame(height: OnboardingStyle.bottomButtonPadding)
-        }
-        .onAppear {
-            DispatchQueue.main.asyncAfter(deadline: .now() + OnboardingStyle.appearDelay) {
-                withAnimation(theme.springAnimation()) {
-                    downloadViewAppeared = true
+                    Text(progressText)
+                        .font(theme.font(size: 13))
+                        .foregroundColor(theme.tertiaryText)
+                        .animation(theme.animationQuick(), value: progressText)
                 }
+                .opacity(downloadViewAppeared ? 1 : 0)
+                .animation(theme.springAnimation().delay(0.1), value: downloadViewAppeared)
+            },
+            cta: {
+                OnboardingTextButton(title: isDownloading ? "Continue" : "Download later") {
+                    onSkip()
+                }
+                .opacity(downloadViewAppeared ? 1 : 0)
+                .animation(theme.springAnimation().delay(0.2), value: downloadViewAppeared)
             }
+        )
+        .onAppearAfter(OnboardingMetrics.appearDelay) {
+            withAnimation(theme.springAnimation()) { downloadViewAppeared = true }
         }
     }
 
@@ -338,132 +278,6 @@ struct OnboardingLocalDownloadView: View {
     }
 }
 
-// MARK: - Model Selection Card
-
-private struct ModelSelectionCard: View {
-    let model: MLXModel
-    let isSelected: Bool
-    let action: () -> Void
-
-    @Environment(\.theme) private var theme
-    @State private var isHovered = false
-
-    var body: some View {
-        Button(action: action) {
-            OnboardingGlassCard(isSelected: isSelected) {
-                HStack(spacing: 14) {
-                    // Icon with model type indicator
-                    ZStack {
-                        if isSelected {
-                            Circle()
-                                .fill(theme.accentColor)
-                                .blur(radius: 8)
-                                .frame(width: 36, height: 36)
-                        }
-
-                        Circle()
-                            .fill(isSelected ? theme.accentColor : theme.cardBackground)
-                            .frame(width: 44, height: 44)
-
-                        Image(systemName: model.isVLM ? "eye" : "cpu")
-                            .font(.system(size: 18, weight: .medium))
-                            .foregroundColor(isSelected ? .white : theme.secondaryText)
-                    }
-
-                    // Text content
-                    VStack(alignment: .leading, spacing: 3) {
-                        HStack(spacing: 8) {
-                            Text(model.name)
-                                .font(theme.font(size: 14, weight: .semibold))
-                                .foregroundColor(theme.primaryText)
-                                .lineLimit(1)
-
-                            // Badges
-                            HStack(spacing: 4) {
-                                if model.isDownloaded {
-                                    DownloadedBadgeView()
-                                } else if let size = model.formattedDownloadSize {
-                                    BadgeView(text: size)
-                                }
-                                BadgeView(text: model.isVLM ? "VLM" : "LLM")
-                            }
-                        }
-
-                        Text(model.description)
-                            .font(theme.font(size: 12))
-                            .foregroundColor(theme.secondaryText)
-                            .lineLimit(2)
-                            .lineSpacing(1)
-                    }
-
-                    Spacer(minLength: 8)
-
-                    // Selection indicator
-                    ZStack {
-                        Circle()
-                            .strokeBorder(
-                                isSelected ? theme.accentColor : theme.primaryBorder,
-                                lineWidth: isSelected ? 6 : 1.5
-                            )
-                            .frame(width: 20, height: 20)
-
-                        if isSelected {
-                            Circle()
-                                .fill(Color.white)
-                                .frame(width: 7, height: 7)
-                        }
-                    }
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 12)
-            }
-        }
-        .buttonStyle(.plain)
-    }
-}
-
-// MARK: - Badge View
-
-private struct BadgeView: View {
-    let text: String
-
-    @Environment(\.theme) private var theme
-
-    var body: some View {
-        Text(text)
-            .font(theme.font(size: 10, weight: .medium))
-            .foregroundColor(theme.tertiaryText)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(
-                RoundedRectangle(cornerRadius: 4, style: .continuous)
-                    .fill(theme.secondaryBackground)
-            )
-    }
-}
-
-// MARK: - Downloaded Badge View
-
-private struct DownloadedBadgeView: View {
-    @Environment(\.theme) private var theme
-
-    var body: some View {
-        HStack(spacing: 3) {
-            Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 9, weight: .medium))
-            Text("Downloaded", bundle: .module, comment: "Badge label for already-downloaded models")
-                .font(theme.font(size: 10, weight: .medium))
-        }
-        .foregroundColor(.green)
-        .padding(.horizontal, 6)
-        .padding(.vertical, 2)
-        .background(
-            RoundedRectangle(cornerRadius: 4, style: .continuous)
-                .fill(Color.green.opacity(0.15))
-        )
-    }
-}
-
 // MARK: - Preview
 
 #if DEBUG
@@ -474,7 +288,7 @@ private struct DownloadedBadgeView: View {
                 onSkip: {},
                 onBack: {}
             )
-            .frame(width: OnboardingLayout.windowWidth, height: OnboardingLayout.windowHeight)
+            .frame(width: OnboardingMetrics.windowWidth, height: 720)
         }
     }
 #endif

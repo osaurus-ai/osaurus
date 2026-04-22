@@ -20,21 +20,18 @@ struct TranscriptionModeSettingsTab: View {
     // Configuration state
     @State private var transcriptionEnabled: Bool = false
     @State private var hotkey: Hotkey?
-    @State private var useClipboardPaste: Bool = true
     @State private var hasLoadedSettings = false
 
     private func loadSettings() {
         let config = TranscriptionConfigurationStore.load()
         transcriptionEnabled = config.transcriptionModeEnabled
         hotkey = config.hotkey
-        useClipboardPaste = config.useClipboardPaste
     }
 
     private func saveSettings() {
         let config = TranscriptionConfiguration(
             transcriptionModeEnabled: transcriptionEnabled,
-            hotkey: hotkey,
-            useClipboardPaste: useClipboardPaste
+            hotkey: hotkey
         )
         TranscriptionConfigurationStore.save(config)
     }
@@ -61,11 +58,6 @@ struct TranscriptionModeSettingsTab: View {
                 // Hotkey Settings Card
                 if canEnableTranscription {
                     hotkeySettingsCard
-                }
-
-                // Transcription Delivery Card
-                if canEnableTranscription {
-                    transcriptionDeliveryCard
                 }
 
                 // Test Area Card
@@ -283,44 +275,6 @@ struct TranscriptionModeSettingsTab: View {
                         .font(.system(size: 11))
                         .foregroundColor(theme.warningColor)
                 }
-            }
-        }
-        .padding(20)
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16)
-                        .stroke(theme.cardBorder, lineWidth: 1)
-                )
-        )
-    }
-
-    // MARK: - Transcription Delivery Card
-
-    private var transcriptionDeliveryCard: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(spacing: 12) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(theme.accentColor.opacity(0.15))
-                    Image(systemName: "doc.on.clipboard.fill")
-                        .font(.system(size: 20, weight: .medium))
-                        .foregroundColor(theme.accentColor)
-                }
-                .frame(width: 48, height: 48)
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Transcription Delivery", bundle: .module)
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
-
-                    Text("How transcribed text is sent to the active field", bundle: .module)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.secondaryText)
-                }
-
-                Spacer()
             }
         }
         .padding(20)

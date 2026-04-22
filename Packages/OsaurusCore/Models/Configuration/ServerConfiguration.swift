@@ -48,13 +48,20 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
     // MARK: - Generation Settings (UI adjustable)
     /// Default top-p sampling for generation (can be overridden per request)
     public var genTopP: Float
-    /// Maximum KV cache size (tokens); nil for unlimited
+
+    /// Legacy: maximum KV cache size in tokens.
+    ///
+    /// No longer applied at runtime — vmlx-swift-lm's `CacheCoordinator` owns
+    /// KV cache sizing per model (sliding-window vs global vs SSM layers each
+    /// have their own per-layer cache geometry). Forcing a global rotating
+    /// window from osaurus historically caused broadcast crashes on
+    /// sliding-window models like Gemma-4. The field is decoded for backward
+    /// compatibility with existing config files but the Settings UI no longer
+    /// exposes it; new configs should leave it `nil`.
     public var genMaxKVSize: Int?
 
     // KV cache quantization (kvBits, kvGroupSize, quantizedKVStart, turboQuant)
     // and prefill step sizing are owned by the vmlx-swift-lm package.
-    // CacheCoordinator picks sensible defaults based on RAM and model
-    // characteristics; osaurus no longer exposes these knobs to users.
 
     /// List of allowed origins for CORS. Empty disables CORS. Use "*" to allow any origin.
     public var allowedOrigins: [String]

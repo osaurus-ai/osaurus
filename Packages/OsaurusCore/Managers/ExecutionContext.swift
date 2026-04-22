@@ -2,26 +2,23 @@
 //  ExecutionContext.swift
 //  osaurus
 //
-//  Window-free execution primitive that owns ChatSession + WorkSession.
-//  Runs tasks headlessly; windows are created lazily only when needed for UI.
+//  Window-free execution primitive that owns a ChatSession and runs it
+//  headlessly. Windows are created lazily only when needed for UI.
 //
 //  Used by:
-//  - TaskDispatcher (chat mode, managed directly)
-//  - BackgroundTaskManager (work mode, via dispatchWork)
+//  - TaskDispatcher (scheduler / HTTP / plugin / watcher dispatch)
+//  - BackgroundTaskManager.dispatchChat
 //  - Future webhook handlers (headless, no UI)
 //
 
 import Foundation
 
-/// Lightweight execution context that runs Chat or Work tasks without requiring a window.
+/// Lightweight execution context that runs a chat task without requiring a window.
 @MainActor
 public final class ExecutionContext: ObservableObject {
 
     /// Unique identifier for this execution
     public let id: UUID
-
-    /// Whether running in Chat or Work mode
-    public let mode: ChatMode
 
     /// Agent used for this execution
     public let agentId: UUID
@@ -31,70 +28,93 @@ public final class ExecutionContext: ObservableObject {
 
     let chatSession: ChatSession
     let folderBookmark: Data?
-    public private(set) var workSession: WorkSession?
 
     /// Whether execution is currently in progress
-    public var isExecuting: Bool {
-        switch mode {
-        case .chat: chatSession.isStreaming
-        case .work: workSession?.isExecuting ?? false
-        }
-    }
+    public var isExecuting: Bool { chatSession.isStreaming }
 
     // MARK: - Initialization
 
     public init(
         id: UUID = UUID(),
-        mode: ChatMode,
         agentId: UUID,
         title: String? = nil,
-        folderBookmark: Data? = nil
+        folderBookmark: Data? = nil,
+        source: SessionSource = .chat,
+        sourcePluginId: String? = nil,
+        externalSessionKey: String? = nil
     ) {
         self.id = id
-        self.mode = mode
         self.agentId = agentId
         self.title = title
         self.folderBookmark = folderBookmark
 
-        // Configure chat session (no window required)
         let session = ChatSession()
         session.agentId = agentId
+        // Align persisted session id with the dispatch task id so plugins
+        // and HTTP pollers can deep-link to the same row, and so
+        // `serializeCompletedEvent`'s `session_id` field references the
+        // actual saved session.
+        session.sessionId = id
+        session.source = source
+        session.sourcePluginId = sourcePluginId
+        session.externalSessionKey = externalSessionKey
+        session.dispatchTaskId = id
         session.applyInitialModelSelection()
         if let title { session.title = title }
         self.chatSession = session
-
-        // Create work session if needed
-        if mode == .work {
-            WorkToolManager.shared.registerTools()
-            self.workSession = WorkSession(agentId: agentId)
-        }
     }
+
+    /// Reattach to a previously-persisted session so a new dispatch appends
+    /// turns to the same conversation row instead of starting fresh. Used by
+    /// `BackgroundTaskManager.dispatchChat` when the request carries an
+    /// `external_session_key` that maps to an existing session.
+    ///
+    /// `existing.id` is reused as the dispatch task id, so callers polling
+    /// the original `task_id` continue to find a live entry. The persisted
+    /// model is re-applied in `prepare()` once picker items load.
+    public init(
+        reattaching existing: ChatSessionData,
+        folderBookmark: Data? = nil
+    ) {
+        self.id = existing.id
+        self.agentId = existing.agentId ?? Agent.defaultId
+        self.title = existing.title
+        self.folderBookmark = folderBookmark
+
+        let session = ChatSession()
+        session.agentId = existing.agentId
+        // Apply identity + history immediately so observers (e.g. the
+        // BackgroundTaskState activity feed) see the existing turns from
+        // the very first publish.
+        session.load(from: existing)
+        // `load(from:)` may have failed to restore the model if picker
+        // items aren't loaded yet; `prepare()` re-applies after refresh.
+        self.chatSession = session
+        self.pendingReattachSession = existing
+    }
+
+    /// Set when this context was built via `init(reattaching:)`. Lets
+    /// `prepare()` re-apply the persisted model once picker items load.
+    private var pendingReattachSession: ChatSessionData?
 
     // MARK: - Execution
 
     /// Load picker items. Call before `start(prompt:)`.
     public func prepare() async {
         await chatSession.refreshPickerItems()
-
-        if let work = workSession {
-            work.pickerItems = chatSession.pickerItems
-            work.selectedModel = chatSession.selectedModel
+        // For reattached sessions, re-apply the persisted model now that
+        // picker items are populated — the load() call in init may have
+        // fallen back to the agent default because the picker was empty.
+        if let pending = pendingReattachSession {
+            chatSession.load(from: pending)
+            pendingReattachSession = nil
         }
     }
 
     /// Begin execution with the given prompt.
     public func start(prompt: String) async {
-        switch mode {
-        case .chat:
-            chatSession.send(prompt)
-        case .work:
-            await activateFolderContextIfNeeded()
-            do {
-                try await workSession?.dispatch(query: prompt)
-            } catch {
-                print("[ExecutionContext] Work dispatch failed: \(error.localizedDescription)")
-            }
-        }
+        await activateFolderContextIfNeeded()
+        chatSession.send(prompt)
     }
 
     /// Resolve the stored bookmark and set the work folder context before execution.
@@ -112,14 +132,13 @@ public final class ExecutionContext: ObservableObject {
                 print("[ExecutionContext] Folder bookmark is stale, skipping")
                 return
             }
-            await WorkFolderContextService.shared.setFolder(url)
+            await FolderContextService.shared.setFolder(url)
         } catch {
             print("[ExecutionContext] Failed to resolve folder bookmark: \(error)")
         }
     }
 
     /// Poll until execution completes or the task is cancelled.
-    /// Used for chat mode only; work mode completion is observed by BackgroundTaskManager via Combine.
     public func awaitCompletion() async -> DispatchResult {
         try? await Task.sleep(nanoseconds: 100_000_000)  // 100ms startup grace
 
@@ -136,10 +155,5 @@ public final class ExecutionContext: ObservableObject {
     }
 
     /// Stop the running execution.
-    public func cancel() {
-        switch mode {
-        case .chat: chatSession.stop()
-        case .work: workSession?.cancelExecution()
-        }
-    }
+    public func cancel() { chatSession.stop() }
 }

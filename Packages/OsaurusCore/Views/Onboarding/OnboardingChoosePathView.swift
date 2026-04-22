@@ -47,176 +47,85 @@ struct OnboardingChoosePathView: View {
     @Environment(\.theme) private var theme
     @State private var selectedPath: OnboardingSetupPath? = nil
     @State private var hasAppeared = false
-    @State private var showHelpPopover = false
 
     private let foundationAvailable = FoundationModelService.isDefaultModelAvailable()
 
-    private var helpContent: String {
+    private var orderedPaths: [OnboardingSetupPath] {
         if foundationAvailable {
-            return L(
-                """
-                Apple Intelligence is built into macOS and runs privately on your device. It's ready to use immediately.
-
-                Local models run on your Mac using your hardware. They're private and free to use, but require a download.
-
-                Cloud providers like Claude and ChatGPT are more powerful but require an account and charge per use.
-
-                Not sure? Apple Intelligence is recommended for most users.
-                """
-            )
+            return [.appleFoundation, .local, .apiProvider]
         } else {
-            return L(
-                """
-                Local models run on your Mac using your hardware. They're private and free to use, but less capable than cloud models for complex tasks.
+            return [.local, .apiProvider]
+        }
+    }
 
-                Cloud providers like Claude and ChatGPT are more powerful but require an account and charge per use.
-
-                Not sure? Start local. You can add providers later.
-                """
-            )
+    private var footerCaption: LocalizedStringKey {
+        if foundationAvailable {
+            return "Apple Intelligence runs on-device · Local models stay on your Mac · Providers use the cloud"
+        } else {
+            return "Local models stay on your Mac · Providers use the cloud"
         }
     }
 
     var body: some View {
-        ScrollView(.vertical, showsIndicators: false) {
-            VStack(spacing: 0) {
-                Spacer().frame(height: OnboardingStyle.headerTopPadding + 15)
-
-                // Headline
-                Text("How do you want to power Osaurus?", bundle: .module)
-                    .font(theme.font(size: 22, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .opacity(hasAppeared ? 1 : 0)
-                    .offset(y: hasAppeared ? 0 : 20)
-                    .animation(theme.springAnimation().delay(0.1), value: hasAppeared)
-
-                Spacer().frame(height: 30)
-
-                // Option cards
-                VStack(spacing: 12) {
-                    // Apple Foundation option (shown first if available)
-                    if foundationAvailable {
-                        OnboardingOptionCard(
-                            icon: OnboardingSetupPath.appleFoundation.icon,
-                            title: OnboardingSetupPath.appleFoundation.title,
-                            description: OnboardingSetupPath.appleFoundation.description,
-                            isSelected: selectedPath == .appleFoundation
+        OnboardingScaffold(
+            title: "How do you want to power Osaurus?",
+            footer: footerCaption,
+            content: {
+                VStack(spacing: OnboardingMetrics.cardSpacing) {
+                    ForEach(Array(orderedPaths.enumerated()), id: \.element) { index, path in
+                        OnboardingRowCard(
+                            icon: .symbol(path.icon),
+                            title: path.title,
+                            subtitle: path.description,
+                            accessory: .radio(isSelected: selectedPath == path),
+                            isSelected: selectedPath == path
                         ) {
                             withAnimation(theme.animationQuick()) {
-                                selectedPath = .appleFoundation
+                                selectedPath = path
                             }
                         }
                         .opacity(hasAppeared ? 1 : 0)
-                        .offset(y: hasAppeared ? 0 : 15)
-                        .animation(theme.springAnimation().delay(0.17), value: hasAppeared)
+                        .offset(y: hasAppeared ? 0 : 12)
+                        .animation(
+                            theme.springAnimation().delay(0.12 + Double(index) * 0.06),
+                            value: hasAppeared
+                        )
                     }
-
-                    OnboardingOptionCard(
-                        icon: OnboardingSetupPath.local.icon,
-                        title: OnboardingSetupPath.local.title,
-                        description: OnboardingSetupPath.local.description,
-                        isSelected: selectedPath == .local
-                    ) {
-                        withAnimation(theme.animationQuick()) {
-                            selectedPath = .local
-                        }
-                    }
-                    .opacity(hasAppeared ? 1 : 0)
-                    .offset(y: hasAppeared ? 0 : 15)
-                    .animation(theme.springAnimation().delay(foundationAvailable ? 0.24 : 0.17), value: hasAppeared)
-
-                    OnboardingOptionCard(
-                        icon: OnboardingSetupPath.apiProvider.icon,
-                        title: OnboardingSetupPath.apiProvider.title,
-                        description: OnboardingSetupPath.apiProvider.description,
-                        isSelected: selectedPath == .apiProvider
-                    ) {
-                        withAnimation(theme.animationQuick()) {
-                            selectedPath = .apiProvider
-                        }
-                    }
-                    .opacity(hasAppeared ? 1 : 0)
-                    .offset(y: hasAppeared ? 0 : 15)
-                    .animation(theme.springAnimation().delay(foundationAvailable ? 0.31 : 0.24), value: hasAppeared)
                 }
-                .padding(.horizontal, OnboardingStyle.backButtonHorizontalPadding)
-
-                Spacer().frame(height: 18)
-
-                // Help popover button
-                Button {
-                    showHelpPopover.toggle()
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "questionmark.circle")
-                            .font(.system(size: 13))
-                        Text("What's the difference?", bundle: .module)
-                            .font(theme.font(size: 13, weight: .medium))
-                    }
-                    .foregroundColor(theme.secondaryText)
-                }
-                .buttonStyle(.plain)
-                .popover(isPresented: $showHelpPopover, arrowEdge: .bottom) {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("What's the difference?", bundle: .module)
-                            .font(theme.font(size: 14, weight: .semibold))
-                            .foregroundColor(theme.primaryText)
-
-                        Text(helpContent)
-                            .font(theme.font(size: 13))
-                            .foregroundColor(theme.secondaryText)
-                            .lineSpacing(4)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    .padding(16)
-                    .frame(width: 320)
-                    .background(theme.primaryBackground)
-                }
-                .opacity(hasAppeared ? 1 : 0)
-                .animation(theme.springAnimation().delay(foundationAvailable ? 0.38 : 0.32), value: hasAppeared)
-
-                Spacer()
-                    .frame(minHeight: 20)
-
-                // Continue button
+            },
+            cta: {
                 OnboardingPrimaryButton(
                     title: "Continue",
-                    action: {
-                        switch selectedPath {
-                        case .appleFoundation:
-                            onSelectFoundation()
-                        case .local:
-                            onSelectLocal()
-                        case .apiProvider:
-                            onSelectAPI()
-                        case .none:
-                            break
-                        }
-                    },
+                    action: continueAction,
                     isEnabled: selectedPath != nil
                 )
-                .frame(width: 180)
+                .frame(width: OnboardingMetrics.ctaWidth)
                 .opacity(hasAppeared ? 1 : 0)
                 .offset(y: hasAppeared ? 0 : 15)
-                .animation(theme.springAnimation().delay(foundationAvailable ? 0.47 : 0.4), value: hasAppeared)
-
-                Spacer().frame(height: OnboardingStyle.bottomButtonPadding)
+                .animation(theme.springAnimation().delay(foundationAvailable ? 0.45 : 0.38), value: hasAppeared)
             }
-            .padding(.horizontal, 16)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        )
         .onAppear {
             // Default select Apple Foundation if available
             if foundationAvailable {
                 selectedPath = .appleFoundation
             }
-            DispatchQueue.main.asyncAfter(deadline: .now() + OnboardingStyle.appearDelay) {
-                withAnimation {
-                    hasAppeared = true
-                }
-            }
+        }
+        .onAppearAfter(OnboardingMetrics.appearDelay) {
+            withAnimation { hasAppeared = true }
+        }
+    }
+
+    private func continueAction() {
+        switch selectedPath {
+        case .appleFoundation:
+            onSelectFoundation()
+        case .local:
+            onSelectLocal()
+        case .apiProvider:
+            onSelectAPI()
+        case .none:
+            break
         }
     }
 }
@@ -231,7 +140,7 @@ struct OnboardingChoosePathView: View {
                 onSelectAPI: {},
                 onSelectFoundation: {}
             )
-            .frame(width: OnboardingLayout.windowWidth, height: OnboardingLayout.windowHeight)
+            .frame(width: OnboardingMetrics.windowWidth, height: 620)
         }
     }
 #endif
