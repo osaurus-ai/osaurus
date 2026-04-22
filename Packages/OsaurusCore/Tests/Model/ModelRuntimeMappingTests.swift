@@ -12,10 +12,17 @@ import Testing
 struct ModelRuntimeMappingTests {
 
     // MARK: - Multi-turn tool history fidelity
+    //
+    // `mapOpenAIChatToMLX` used to serialize assistant tool_calls into the
+    // `content` string as Qwen-style `<tool_call>{...}</tool_call>` XML and
+    // prefix tool results with `[tool: <name>]`. vmlx ≥ a99efeb added
+    // structured `Chat.Message.toolCalls` / `toolCallId` fields and a
+    // `DefaultMessageGenerator` that renders them into the Jinja dict under
+    // `message.tool_calls`, so every template that reads
+    // `message.tool_calls[i]` (MiniMax, Llama 3.1/3.2, Qwen 2.5, Mistral
+    // Large, canonical OpenAI) now receives structured state instead of
+    // string-embedded XML. These tests lock in the new structured flow.
 
-    /// Assistant tool-call turns must be preserved in the MLX chat sequence,
-    /// even when the assistant produced no prose content. Tool results are
-    /// labeled with the function name so the model can correlate them.
     @Test func preservesAssistantToolCallTurns() throws {
         let toolCall = ToolCall(
             id: "call_1",
@@ -44,19 +51,25 @@ struct ModelRuntimeMappingTests {
 
         let asst = mapped[0]
         #expect(asst.role == .assistant)
-        #expect(asst.content.contains("<tool_call>"))
-        #expect(asst.content.contains("\"name\": \"get_weather\""))
-        #expect(asst.content.contains("\"city\":\"Tokyo\""))
+        // Content no longer carries the XML; structured field does.
+        #expect(asst.content == "")
+        #expect(asst.toolCalls?.count == 1)
+        #expect(asst.toolCalls?.first?.function.name == "get_weather")
+        if case .string(let city) = asst.toolCalls?.first?.function.arguments["city"] {
+            #expect(city == "Tokyo")
+        } else {
+            Issue.record("expected arguments['city'] to decode as .string(\"Tokyo\")")
+        }
 
         let tool = mapped[1]
         #expect(tool.role == .tool)
-        #expect(tool.content.contains("[tool: get_weather]"))
-        #expect(tool.content.contains("\"temp\":72"))
+        // Tool content is now raw — no `[tool: name]` prefix; correlation
+        // flows through `toolCallId` which the template binds to the
+        // originating assistant call.
+        #expect(tool.content == "{\"temp\":72}")
+        #expect(tool.toolCallId == "call_1")
     }
 
-    /// Mixed assistant turns (text content + tool_calls) must keep both —
-    /// the prose AND the tool-call serialization. Today's HTTPHandler agent
-    /// loop produces these on every iteration after a "reasoning + tool" turn.
     @Test func preservesMixedAssistantTurns() throws {
         let toolCall = ToolCall(
             id: "call_a",
@@ -74,14 +87,12 @@ struct ModelRuntimeMappingTests {
         #expect(mapped.count == 1)
         let asst = mapped[0]
         #expect(asst.role == .assistant)
-        #expect(asst.content.contains("Let me search for that."))
-        #expect(asst.content.contains("<tool_call>"))
-        #expect(asst.content.contains("\"name\": \"search\""))
+        // Prose stays as content; tool call goes to structured field.
+        #expect(asst.content == "Let me search for that.")
+        #expect(asst.toolCalls?.count == 1)
+        #expect(asst.toolCalls?.first?.function.name == "search")
     }
 
-    /// Multi-turn tool conversation: full round-trip preserves the
-    /// assistant -> tool -> assistant -> tool -> user sequence with each
-    /// tool result labelled by its originating call's function name.
     @Test func multiTurnToolHistoryRoundTrip() throws {
         let user1 = ChatMessage(role: "user", content: "what's the weather and time?")
         let weather = ToolCall(
@@ -109,14 +120,46 @@ struct ModelRuntimeMappingTests {
         #expect(mapped.count == 6)
         #expect(mapped[0].role == .user)
         #expect(mapped[1].role == .assistant)
-        #expect(mapped[1].content.contains("get_weather"))
+        #expect(mapped[1].toolCalls?.first?.function.name == "get_weather")
         #expect(mapped[2].role == .tool)
-        #expect(mapped[2].content.contains("[tool: get_weather]"))
+        #expect(mapped[2].toolCallId == "c1")
         #expect(mapped[3].role == .assistant)
-        #expect(mapped[3].content.contains("Now the time."))
-        #expect(mapped[3].content.contains("get_time"))
+        #expect(mapped[3].content == "Now the time.")
+        #expect(mapped[3].toolCalls?.first?.function.name == "get_time")
         #expect(mapped[4].role == .tool)
-        #expect(mapped[4].content.contains("[tool: get_time]"))
+        #expect(mapped[4].toolCallId == "c2")
         #expect(mapped[5].role == .user)
+    }
+
+    /// Empty assistant turn (no content AND no tool_calls) must still be
+    /// dropped so downstream templates don't see a stray empty message.
+    @Test func skipsFullyEmptyAssistantTurns() throws {
+        let empty = ChatMessage(role: "assistant", content: nil, tool_calls: nil, tool_call_id: nil)
+        let whitespace = ChatMessage(role: "assistant", content: "   \n  ", tool_calls: nil, tool_call_id: nil)
+        let valid = ChatMessage(role: "user", content: "hello")
+        let mapped = ModelRuntime.mapOpenAIChatToMLX([empty, whitespace, valid])
+        #expect(mapped.count == 1)
+        #expect(mapped[0].role == .user)
+    }
+
+    /// Malformed / non-object arguments must not crash the mapper — they
+    /// decode to an empty dict and the tool call still emits.
+    @Test func handlesMalformedArgumentsJson() throws {
+        let toolCall = ToolCall(
+            id: "c",
+            type: "function",
+            function: ToolCallFunction(name: "f", arguments: "not json")
+        )
+        let assistant = ChatMessage(
+            role: "assistant",
+            content: nil,
+            tool_calls: [toolCall],
+            tool_call_id: nil
+        )
+        let mapped = ModelRuntime.mapOpenAIChatToMLX([assistant])
+        #expect(mapped.count == 1)
+        #expect(mapped[0].toolCalls?.count == 1)
+        #expect(mapped[0].toolCalls?.first?.function.name == "f")
+        #expect(mapped[0].toolCalls?.first?.function.arguments.isEmpty == true)
     }
 }

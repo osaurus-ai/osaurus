@@ -65,39 +65,48 @@ struct FoundationMLXParityTests {
         ]
     }
 
-    /// Both backends must preserve every tool name (as a call AND a labelled result).
+    /// Both backends must preserve every tool name (as a call AND a result
+    /// correlation). Foundation embeds tool names in the prompt string; MLX
+    /// carries them as structured `Chat.Message.toolCalls[i].function.name`.
     @Test func bothBackendsPreserveToolNames() throws {
         let history = Self.sampleHistory()
         let foundationPrompt = OpenAIPromptBuilder.buildPrompt(from: history)
         let mlxMapped = ModelRuntime.mapOpenAIChatToMLX(history)
-        let mlxJoined = mlxMapped.map { "\($0.role.rawValue): \($0.content)" }.joined(separator: "\n")
+        let mlxToolCallNames = mlxMapped
+            .flatMap { $0.toolCalls ?? [] }
+            .map(\.function.name)
 
         for toolName in ["get_weather", "get_time"] {
             #expect(
                 foundationPrompt.contains(toolName),
                 "Foundation prompt must mention \(toolName)"
             )
-            #expect(mlxJoined.contains(toolName), "MLX mapping must mention \(toolName)")
+            #expect(
+                mlxToolCallNames.contains(toolName),
+                "MLX mapping must surface \(toolName) via Chat.Message.toolCalls"
+            )
         }
     }
 
-    /// Every `tool` role message must have a labelled correlation to its
-    /// originating function in BOTH backends.
+    /// Every `tool` role message must correlate back to its originating call.
+    /// Foundation embeds a `Tool(<name>) result:` label in the prompt; MLX
+    /// carries `Chat.Message.toolCallId`, which the Jinja template resolves
+    /// against the preceding assistant's `message.tool_calls[i].id`.
     @Test func toolResultsAreCorrelatedToTheirCalls() throws {
         let history = Self.sampleHistory()
         let foundationPrompt = OpenAIPromptBuilder.buildPrompt(from: history)
         let mlxMapped = ModelRuntime.mapOpenAIChatToMLX(history)
 
-        // Foundation labels tool messages with `Tool(<name>) result:`.
+        // Foundation surface: textual label in the prompt.
         #expect(foundationPrompt.contains("Tool(get_weather) result:"))
         #expect(foundationPrompt.contains("Tool(get_time) result:"))
 
-        // MLX labels tool messages with `[tool: <name>]` prefix.
+        // MLX surface: structured `toolCallId` matches each originating id.
         let toolMessages = mlxMapped.filter { $0.role == .tool }
         #expect(toolMessages.count == 2)
-        let toolContents = toolMessages.map(\.content)
-        #expect(toolContents.contains { $0.contains("[tool: get_weather]") })
-        #expect(toolContents.contains { $0.contains("[tool: get_time]") })
+        let toolIds = toolMessages.map(\.toolCallId)
+        #expect(toolIds.contains("c_weather"))
+        #expect(toolIds.contains("c_time"))
     }
 
     /// Both backends must preserve assistant prose alongside tool calls so
@@ -110,9 +119,15 @@ struct FoundationMLXParityTests {
         #expect(foundationPrompt.contains("Let me check the weather first."))
         #expect(foundationPrompt.contains("Now the time."))
 
-        let asstContents = mlxMapped.filter { $0.role == .assistant }.map(\.content)
-        #expect(asstContents.contains { $0.contains("Let me check the weather first.") && $0.contains("get_weather") })
-        #expect(asstContents.contains { $0.contains("Now the time.") && $0.contains("get_time") })
+        // MLX: prose stays in `content`; calls live in `toolCalls`.
+        let assistants = mlxMapped.filter { $0.role == .assistant }
+        #expect(assistants.count == 2)
+
+        #expect(assistants[0].content == "Let me check the weather first.")
+        #expect(assistants[0].toolCalls?.first?.function.name == "get_weather")
+
+        #expect(assistants[1].content == "Now the time.")
+        #expect(assistants[1].toolCalls?.first?.function.name == "get_time")
     }
 
     /// Round-trip count: MLX mapping must not drop any role

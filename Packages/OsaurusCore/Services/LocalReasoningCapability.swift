@@ -70,12 +70,18 @@ enum LocalReasoningCapability {
     /// Pure, testable template analysis.
     static func analyze(template: String) -> Capability {
         let lower = template.lowercased()
-        let hasOpen = lower.contains("<think>")
-        let hasClose = lower.contains("</think>")
+        // Accept both the plain `<think>` tag family (Qwen, DeepSeek, most
+        // reasoning models) and the pipe-wrapped `<|think|>` family used by
+        // Gemma-4 (see its chat_template.jinja — "{{- '<|think|>' -}}").
+        // Before, `supportsThinking` was false for Gemma-4 because the match
+        // was against `<think>` only, which meant reasoning never got
+        // correlated even with `hasEnableThinkingKwarg: true`.
+        let hasOpen = lower.contains("<think>") || lower.contains("<|think|>")
+        let hasClose = lower.contains("</think>") || lower.contains("<|/think|>")
         let hasKwarg = lower.contains("enable_thinking")
         let injects =
             template.range(
-                of: #"\{\{-?\s*['\"]<think>"#,
+                of: #"\{\{-?\s*['\"]<\|?think\|?>"#,
                 options: .regularExpression
             ) != nil
         return Capability(

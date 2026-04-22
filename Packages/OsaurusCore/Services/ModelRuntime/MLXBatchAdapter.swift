@@ -109,6 +109,12 @@ struct MLXBatchAdapter {
 
     /// Downscale CIImage attachments to a sane upper bound before tokenization.
     /// Pre-existing `URL` / `array` cases pass through untouched.
+    ///
+    /// Preserves `toolCalls` and `toolCallId` through the rebuild — dropping
+    /// them here would silently unwind the structured tool-call handoff set
+    /// up by `ModelRuntime.mapOpenAIChatToMLX`, and MiniMax (plus every other
+    /// template that reads `message.tool_calls[i]`) would fall back to the
+    /// old "no previous assistant message with a tool call" hard fail.
     private static func preprocessImages(in chat: [MLXLMCommon.Chat.Message]) -> [MLXLMCommon.Chat.Message] {
         chat.map { message in
             let processedImages = message.images.map { userInputImage -> UserInput.Image in
@@ -123,7 +129,9 @@ struct MLXBatchAdapter {
                 role: message.role,
                 content: message.content,
                 images: processedImages,
-                videos: message.videos
+                videos: message.videos,
+                toolCalls: message.toolCalls,
+                toolCallId: message.toolCallId
             )
         }
     }
@@ -229,16 +237,24 @@ struct MLXBatchAdapter {
             let chat = preprocessImages(in: buildChat())
             let toolsSpec = buildToolsSpec()
 
-            // Honor an explicit `disableThinking` toggle when present;
-            // otherwise omit the kwarg so the chat template's own default
-            // takes effect. (Forcing `enable_thinking: false` whenever
-            // tools are present has historically surprised users with
-            // thinking-capable models and can hurt tool-calling.)
-            let additionalContext: [String: any Sendable]?
+            // `enable_thinking` handling. If the user set `disableThinking`
+            // explicitly, honor it. Otherwise default to `true` — templates
+            // that don't reference `enable_thinking` silently ignore the
+            // kwarg, but templates that do reference it (Gemma-4 / Qwen-3
+            // thinking / AutoThinkingProfile targets) rely on the flag to
+            // activate reasoning. The previous behavior (send `nil` here
+            // and let the template default win) meant Gemma-4's
+            // `{%- if not enable_thinking | default(false) -%}` branch
+            // fired and suppressed CoT even when the profile said the
+            // model supports thinking — which was invisible to us when
+            // profile detection itself failed (e.g. model stored outside
+            // `~/MLXModels` so `LocalReasoningCapability.analyze` never
+            // got to read the template).
+            let additionalContext: [String: any Sendable]
             if let disableThinking = generation.modelOptions["disableThinking"]?.boolValue {
                 additionalContext = ["enable_thinking": !disableThinking]
             } else {
-                additionalContext = nil
+                additionalContext = ["enable_thinking": true]
             }
             let userInput = MLXLMCommon.UserInput(
                 chat: chat,

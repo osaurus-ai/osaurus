@@ -60,4 +60,27 @@ struct LocalReasoningCapabilityTests {
         #expect(!cap.hasEnableThinkingKwarg)
         #expect(!cap.templateInjectsThinkTag)
     }
+
+    /// Gemma-4's chat_template.jinja opens thinking with the pipe-wrapped
+    /// `<|think|>` token, not the plain `<think>` tag. Before this case was
+    /// added, `supportsThinking` returned `false` for Gemma-4 because
+    /// `contains("<think>")` didn't match, which meant reasoning never
+    /// correlated in the UI even when `hasEnableThinkingKwarg: true`.
+    @Test("Gemma-4 style: <|think|> pipe-wrapped tag recognised")
+    func gemma4Style() {
+        // Mirrors the real Gemma-4 template structure: enable_thinking kwarg,
+        // `<|think|>` injected inside the system-turn block, no `<think>`.
+        let template = """
+            {%- if (enable_thinking is defined and enable_thinking) -%}
+                {{- '<|turn>system\\n' -}}
+                {%- if enable_thinking is defined and enable_thinking -%}
+                    {{- '<|think|>' -}}
+                {%- endif -%}
+            {%- endif -%}
+            """
+        let cap = LocalReasoningCapability.analyze(template: template)
+        #expect(cap.supportsThinking)
+        #expect(cap.hasEnableThinkingKwarg)
+        #expect(cap.templateInjectsThinkTag)
+    }
 }

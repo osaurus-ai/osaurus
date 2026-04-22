@@ -716,20 +716,18 @@ actor ModelRuntime {
 
     /// Map OpenAI-format chat messages to MLX `Chat.Message`s.
     ///
-    /// `MLXLMCommon.Chat.Message` only carries `role` and `content` — it has
-    /// no structured `tool_calls` field, so we serialize assistant
-    /// `tool_calls` into `content` as Qwen-style `<tool_call>{...}</tool_call>`
-    /// blocks (the format `ToolCallProcessor` parses for most local models).
-    /// Tool-result messages are prefixed with `[tool: <name>]` so the model
-    /// can correlate each result with its originating call.
+    /// Assistant tool calls and tool-role responses flow through
+    /// `Chat.Message.toolCalls` / `toolCallId` (vmlx ≥ a99efeb). The
+    /// `DefaultMessageGenerator` emits them into the Jinja dict so every
+    /// template that reads `message.tool_calls[i]` or `message.tool_call_id`
+    /// — MiniMax, Llama 3.1/3.2, Qwen 2.5 Instruct, Mistral Large, canonical
+    /// OpenAI — receives structured tool state instead of the old
+    /// XML-in-content workaround (which raised
+    /// `TemplateException: "Message has tool role, but there was no
+    /// previous assistant message with a tool call!"` on MiniMax).
     nonisolated static func mapOpenAIChatToMLX(
         _ msgs: [ChatMessage]
     ) -> [MLXLMCommon.Chat.Message] {
-        var toolIdToName: [String: String] = [:]
-        for m in msgs where m.role == "assistant" {
-            for call in m.tool_calls ?? [] { toolIdToName[call.id] = call.function.name }
-        }
-
         var out: [MLXLMCommon.Chat.Message] = []
         out.reserveCapacity(max(6, msgs.count))
         for m in msgs {
@@ -740,17 +738,27 @@ actor ModelRuntime {
             case "user":
                 out.append(.init(role: .user, content: m.content ?? "", images: images))
             case "assistant":
-                let serialized = serializeAssistantContent(content: m.content, toolCalls: m.tool_calls)
-                // Skip wholly empty assistant messages (no content, no tool_calls)
-                guard !serialized.isEmpty else { continue }
-                out.append(.init(role: .assistant, content: serialized, images: images))
+                let content = (m.content ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                let toolCalls = toMLXToolCalls(m.tool_calls)
+                // Skip fully-empty assistant turns (no content AND no tool calls).
+                if content.isEmpty && (toolCalls?.isEmpty ?? true) { continue }
+                out.append(MLXLMCommon.Chat.Message(
+                    role: .assistant,
+                    content: content,
+                    images: images,
+                    videos: [],
+                    toolCalls: toolCalls,
+                    toolCallId: nil
+                ))
             case "tool":
-                let labeled = labelToolResult(
+                out.append(MLXLMCommon.Chat.Message(
+                    role: .tool,
                     content: m.content ?? "",
-                    toolCallId: m.tool_call_id,
-                    toolIdToName: toolIdToName
-                )
-                out.append(.init(role: .tool, content: labeled, images: images))
+                    images: images,
+                    videos: [],
+                    toolCalls: nil,
+                    toolCallId: m.tool_call_id
+                ))
             default:
                 out.append(.init(role: .user, content: m.content ?? "", images: images))
             }
@@ -758,55 +766,24 @@ actor ModelRuntime {
         return out
     }
 
-    /// Serialize an assistant turn's content + tool_calls into a single
-    /// string. Tool calls are emitted as `<tool_call>{json}</tool_call>` blocks
-    /// after any prose content, matching the format `ToolCallProcessor` uses
-    /// to parse model output for the majority of supported local models.
-    nonisolated static func serializeAssistantContent(
-        content: String?,
-        toolCalls: [ToolCall]?
-    ) -> String {
-        let trimmed = (content ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let calls = toolCalls, !calls.isEmpty else { return trimmed }
-
-        var parts: [String] = []
-        if !trimmed.isEmpty { parts.append(trimmed) }
-        for call in calls {
-            // call.function.arguments is already a JSON string; embed raw so
-            // the model sees its prior call exactly as ToolCallProcessor parses.
-            let args = call.function.arguments.isEmpty ? "{}" : call.function.arguments
-            let name = escapeForJSONString(call.function.name)
-            parts.append("<tool_call>\n{\"name\": \"\(name)\", \"arguments\": \(args)}\n</tool_call>")
+    /// Convert the OpenAI-wire `ToolCall` list (arguments: JSON string) to
+    /// the vmlx `MLXLMCommon.ToolCall` list (arguments: `[String: JSONValue]`).
+    /// Returns `nil` for a nil/empty input so callers can pass the result
+    /// straight into `Chat.Message(toolCalls:)`.
+    nonisolated private static func toMLXToolCalls(
+        _ calls: [ToolCall]?
+    ) -> [MLXLMCommon.ToolCall]? {
+        guard let calls, !calls.isEmpty else { return nil }
+        return calls.map { tc in
+            let argsData = tc.function.arguments.data(using: .utf8) ?? Data()
+            let args: [String: MLXLMCommon.JSONValue] =
+                (try? JSONDecoder().decode(
+                    [String: MLXLMCommon.JSONValue].self, from: argsData
+                )) ?? [:]
+            return MLXLMCommon.ToolCall(
+                function: .init(name: tc.function.name, arguments: args)
+            )
         }
-        return parts.joined(separator: "\n")
-    }
-
-    /// Prepend `[tool: <name>]` when we can correlate `tool_call_id` to a
-    /// function name. Models trained on multi-turn tool conversations expect
-    /// to know which call each result corresponds to.
-    nonisolated static func labelToolResult(
-        content: String,
-        toolCallId: String?,
-        toolIdToName: [String: String]
-    ) -> String {
-        guard let id = toolCallId, let name = toolIdToName[id] else { return content }
-        return "[tool: \(name)]\n\(content)"
-    }
-
-    nonisolated private static func escapeForJSONString(_ s: String) -> String {
-        var out = ""
-        out.reserveCapacity(s.count)
-        for ch in s {
-            switch ch {
-            case "\\": out += "\\\\"
-            case "\"": out += "\\\""
-            case "\n": out += "\\n"
-            case "\r": out += "\\r"
-            case "\t": out += "\\t"
-            default: out.append(ch)
-            }
-        }
-        return out
     }
 
     nonisolated private static func extractImageSources(
