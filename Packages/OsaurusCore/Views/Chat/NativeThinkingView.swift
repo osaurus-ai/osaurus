@@ -62,6 +62,13 @@ final class NativeThinkingView: NSView {
     override func layout() {
         super.layout()
         updateBorderStrokePath()
+        // unshaped shadows force an offscreen rasterization every time the layer
+        // contents change — during streaming that's every token. supply a cheap
+        // rounded-rect path so CoreAnimation composites the shadow directly
+        if let layer {
+            let path = NSBezierPath(roundedRect: bounds, xRadius: cornerRadius, yRadius: cornerRadius).cgPath
+            layer.shadowPath = path
+        }
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
@@ -134,16 +141,8 @@ final class NativeThinkingView: NSView {
         updateChevron(expanded: isExpanded, animated: isExpanded != self.isExpanded)
         self.isExpanded = isExpanded
 
-        // matches ThinkingBlockView: fill + strokeBorder + light shadow (stroke via CAShapeLayer in layout)
-        layer?.cornerRadius = cornerRadius
-        layer?.masksToBounds = false
-        layer?.backgroundColor = thinkingTint.withAlphaComponent(0.05).cgColor
-        layer?.borderWidth = 0
-        layer?.borderColor = nil
-        layer?.shadowColor = thinkingTint.withAlphaComponent(0.04).cgColor
-        layer?.shadowOffset = CGSize(width: 0, height: 1)
-        layer?.shadowRadius = 2
-        layer?.shadowOpacity = 1
+        // layer chrome (fill + shadow) is set once in buildViews(). mutating CGColor
+        // per configure() would churn the layer on every streaming token
 
         contentContainer.isHidden = !isExpanded
         separatorView.isHidden = !isExpanded
@@ -185,6 +184,18 @@ final class NativeThinkingView: NSView {
     private func buildViews() {
         wantsLayer = true
         translatesAutoresizingMaskIntoConstraints = false
+
+        // fill + shadow never change once the view exists, so bake them in here instead of
+        // reapplying inside configure() (which runs per streaming token)
+        layer?.cornerRadius = cornerRadius
+        layer?.masksToBounds = false
+        layer?.backgroundColor = thinkingTint.withAlphaComponent(0.05).cgColor
+        layer?.borderWidth = 0
+        layer?.borderColor = nil
+        layer?.shadowColor = thinkingTint.withAlphaComponent(0.04).cgColor
+        layer?.shadowOffset = CGSize(width: 0, height: 1)
+        layer?.shadowRadius = 2
+        layer?.shadowOpacity = 1
 
         // header button in back - transparent overlay covering the header row for click handling
         headerButton.translatesAutoresizingMaskIntoConstraints = false

@@ -46,6 +46,11 @@ final class ScrollAnchorManager {
     /// Saved scroll anchor (row + pixel offset).
     private var savedAnchor: Anchor?
 
+    /// One shot flag for coalesced `scrollToBottomCoalesced()`. multiple calls in
+    /// the same runloop tick collapse to a single bounds mutation which avoids
+    /// redundant clip view composites during streaming
+    private var coalescedScrollPending: Bool = false
+
     private struct Anchor {
         let row: Int
         let offsetFromRowTop: CGFloat
@@ -121,6 +126,14 @@ final class ScrollAnchorManager {
         let clipView = scrollView.contentView
         let maxY = max(0, documentView.frame.height - clipView.bounds.height)
 
+        // if already within 1pt of the target — skip. streaming height updates fire
+        // this repeatedly even when the row grew by less than a pixel, and each
+        // call would otherwise re-damage the full clip view via
+        // `reflectScrolledClipView`
+        if !animated, abs(clipView.bounds.origin.y - maxY) <= 1.0 {
+            return
+        }
+
         if animated {
             NSAnimationContext.runAnimationGroup { ctx in
                 ctx.duration = 0.2
@@ -130,6 +143,20 @@ final class ScrollAnchorManager {
             scrollView.reflectScrolledClipView(clipView)
         } else {
             setScrollOriginY(maxY)
+        }
+    }
+
+    /// Coalesced variant: multiple calls within the same runloop tick collapse
+    /// to a single trailing-edge `scrollToBottom()`. Use from per-token paths
+    /// (streaming height update + path 2 reconfigures can fire back-to-back
+    /// within a few ms of each other).
+    func scrollToBottomCoalesced() {
+        guard !coalescedScrollPending else { return }
+        coalescedScrollPending = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.coalescedScrollPending = false
+            self.scrollToBottom()
         }
     }
 

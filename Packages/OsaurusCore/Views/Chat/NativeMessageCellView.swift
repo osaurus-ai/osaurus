@@ -150,25 +150,23 @@ final class NativeHeaderView: NSView {
             v.removeFromSuperview()
         }
 
+        // Assistant actions (copy, regenerate) are rendered in a dedicated footer row
+        // under every completed assistant turn, so the header only carries actions for
+        // user messages now. This lets the table coordinator skip hover reconfigures
+        // for assistant rows entirely.
+        guard role == .user else { return }
+
         addBtn(icon: "doc.on.doc", help: L("Copy"), theme: theme, tint: nil) { [weak self] in
             guard let self else { return }
             self.onCopy?(self.turnId)
         }
-
-        if role == .assistant {
-            addBtn(icon: "arrow.counterclockwise", help: L("Regenerate"), theme: theme, tint: nil) { [weak self] in
-                guard let self else { return }
-                self.onRegenerate?(self.turnId)
-            }
-        } else {
-            addBtn(icon: "pencil", help: L("Edit"), theme: theme, tint: nil) { [weak self] in
-                guard let self else { return }
-                self.onEdit?(self.turnId)
-            }
-            addBtn(icon: "trash", help: L("Delete"), theme: theme, tint: nil) { [weak self] in
-                guard let self else { return }
-                self.onDelete?(self.turnId)
-            }
+        addBtn(icon: "pencil", help: L("Edit"), theme: theme, tint: nil) { [weak self] in
+            guard let self else { return }
+            self.onEdit?(self.turnId)
+        }
+        addBtn(icon: "trash", help: L("Delete"), theme: theme, tint: nil) { [weak self] in
+            guard let self else { return }
+            self.onDelete?(self.turnId)
         }
 
         if isEditing, let onCancelEdit {
@@ -209,9 +207,9 @@ final class NativeHeaderView: NSView {
 
 /// `NSButton`’s cell/layer often disagree with `bounds`, producing non-circular backgrounds; draw the
 /// chrome on a plain `NSView` and keep a borderless `NSButton` for hit-testing and keyboard focus.
-private final class HeaderCircleActionControl: NSView {
+final class HeaderCircleActionControl: NSView {
     private let button: NSButton
-    private let block: () -> Void
+    private var block: () -> Void
     private var fillBase: NSColor = .clear
     private var fillHover: NSColor = .clear
     private var tracking: NSTrackingArea?
@@ -288,6 +286,92 @@ private final class HeaderCircleActionControl: NSView {
     }
 
     @objc private func fire() { block() }
+
+    func setAction(_ newAction: @escaping () -> Void) {
+        block = newAction
+    }
+}
+
+// MARK: - Native Assistant Actions View
+
+/// Copy + Regenerate pinned under every completed assistant turn.
+/// Always visible (no hover), so the table coordinator can skip hover
+/// reconfigures for assistant rows entirely.
+final class NativeAssistantActionsView: NSView {
+
+    private let copyButton: HeaderCircleActionControl
+    private let regenerateButton: HeaderCircleActionControl
+
+    private var turnId: UUID = UUID()
+    private var onCopy: ((UUID) -> Void)?
+    private var onRegenerate: ((UUID) -> Void)?
+
+    override init(frame: NSRect) {
+        let copyControl = HeaderCircleActionControl(action: {})
+        let regenControl = HeaderCircleActionControl(action: {})
+        self.copyButton = copyControl
+        self.regenerateButton = regenControl
+        super.init(frame: frame)
+        translatesAutoresizingMaskIntoConstraints = false
+
+        copyButton.translatesAutoresizingMaskIntoConstraints = false
+        regenerateButton.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(copyButton)
+        addSubview(regenerateButton)
+
+        copyButton.setAction { [weak self] in
+            guard let self else { return }
+            self.onCopy?(self.turnId)
+        }
+        regenerateButton.setAction { [weak self] in
+            guard let self else { return }
+            self.onRegenerate?(self.turnId)
+        }
+
+        let size: CGFloat = 28
+        NSLayoutConstraint.activate([
+            copyButton.leadingAnchor.constraint(equalTo: leadingAnchor),
+            copyButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+            copyButton.widthAnchor.constraint(equalToConstant: size),
+            copyButton.heightAnchor.constraint(equalToConstant: size),
+
+            regenerateButton.leadingAnchor.constraint(equalTo: copyButton.trailingAnchor, constant: 4),
+            regenerateButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+            regenerateButton.widthAnchor.constraint(equalToConstant: size),
+            regenerateButton.heightAnchor.constraint(equalToConstant: size),
+            regenerateButton.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor),
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    func configure(
+        turnId: UUID,
+        theme: any ThemeProtocol,
+        onCopy: ((UUID) -> Void)?,
+        onRegenerate: ((UUID) -> Void)?
+    ) {
+        self.turnId = turnId
+        self.onCopy = onCopy
+        self.onRegenerate = onRegenerate
+
+        let pointSize = CGFloat(theme.captionSize) - 1
+        let cfg = NSImage.SymbolConfiguration(pointSize: pointSize, weight: .medium)
+        copyButton.setSymbol(
+            NSImage(systemSymbolName: "doc.on.doc", accessibilityDescription: L("Copy"))?
+                .withSymbolConfiguration(cfg),
+            toolTip: L("Copy"),
+            theme: theme,
+            iconTint: nil
+        )
+        regenerateButton.setSymbol(
+            NSImage(systemSymbolName: "arrow.counterclockwise", accessibilityDescription: L("Regenerate"))?
+                .withSymbolConfiguration(cfg),
+            toolTip: L("Regenerate"),
+            theme: theme,
+            iconTint: nil
+        )
+    }
 }
 
 // MARK: - Padded inline edit buttons
@@ -722,11 +806,16 @@ final class NativeMessageCellView: NSTableCellView {
     private var nativeChartView: NativeChartView?
     private var nativePreflightView: NativePreflightCapabilitiesView?
     private var nativeStatsView: NativeStatsView?
+    private var nativeAssistantActionsView: NativeAssistantActionsView?
 
     private var userBubbleCornerRadius: CGFloat = 0
     private var userBubbleWidthConstraint: NSLayoutConstraint?
     /// Height occupied by attachments above the bubble (docs + images + gaps), set during rebuild.
     private var userAttachmentsHeight: CGFloat = 0
+    /// Last CGColor assigned to `layer.backgroundColor` for the assistant bubble, so
+    /// per-token reconfigures can skip the CoreAnimation mutation when nothing changed.
+    private var lastBubbleBackgroundCGColor: CGColor?
+    private var lastBubbleCornerRadius: CGFloat = 0
 
     // MARK: State
 
@@ -881,6 +970,9 @@ final class NativeMessageCellView: NSTableCellView {
                 sameKind: sameKind
             )
 
+        case let .assistantActions(turnId):
+            configureAsAssistantActions(turnId: turnId, context: context, sameKind: sameKind)
+
         default:
             // last resort: no hosted fallback — render a compact unsupported-block placeholder
             configureAsUnsupported(sameKind: sameKind)
@@ -989,16 +1081,27 @@ final class NativeMessageCellView: NSTableCellView {
             isStreaming: isStreaming
         )
 
-        // Apply assistant bubble background when a custom color is set
+        // Apply assistant bubble background only when the target value actually changes —
+        // configure() runs on every streaming token, so unconditional CGColor assignment
+        // would churn the layer and force per-token compositor work.
+        let targetBg: CGColor?
+        let targetRadius: CGFloat
         if role == .assistant, let bubbleColor = context.theme.assistantBubbleColor {
-            self.wantsLayer = true
-            self.layer?.backgroundColor =
-                NSColor(bubbleColor)
+            targetBg = NSColor(bubbleColor)
                 .withAlphaComponent(context.theme.assistantBubbleOpacity).cgColor
-            self.layer?.cornerRadius = 12
+            targetRadius = 12
         } else {
-            self.layer?.backgroundColor = nil
-            self.layer?.cornerRadius = 0
+            targetBg = nil
+            targetRadius = 0
+        }
+        if targetBg != nil { self.wantsLayer = true }
+        if !cgColorsEqual(lastBubbleBackgroundCGColor, targetBg) {
+            self.layer?.backgroundColor = targetBg
+            lastBubbleBackgroundCGColor = targetBg
+        }
+        if lastBubbleCornerRadius != targetRadius {
+            self.layer?.cornerRadius = targetRadius
+            lastBubbleCornerRadius = targetRadius
         }
 
         // always report height: configure() can return early when text is unchanged (e.g. tool row
@@ -1032,11 +1135,6 @@ final class NativeMessageCellView: NSTableCellView {
         let thinkingLen: Int?
         if case .thinking(_, _, _) = block.kind { thinkingLen = text.count } else { thinkingLen = nil }
 
-        // `expandedIds` is the single source of truth. New thinking blocks in
-        // a streaming turn are seeded into the set by the coordinator on
-        // insertion (see `seedExpandedIdsForNewThinkingBlocks`) so the panel
-        // starts expanded without this code path needing to force it. which
-        // means the user's collapse tap is honored even mid stream
         let isExpanded = context.expandedIds.contains(block.id)
         tv.configure(
             thinking: text,
@@ -1462,6 +1560,35 @@ final class NativeMessageCellView: NSTableCellView {
         )
     }
 
+    // MARK: - AssistantActions
+
+    private func configureAsAssistantActions(
+        turnId: UUID,
+        context: CellRenderingContext,
+        sameKind: Bool
+    ) {
+        if !sameKind || nativeAssistantActionsView == nil {
+            removeAllContentViews()
+            let av = NativeAssistantActionsView()
+            av.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(av)
+            NSLayoutConstraint.activate([
+                av.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+                av.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -16),
+                av.topAnchor.constraint(equalTo: topAnchor, constant: 4),
+                av.heightAnchor.constraint(equalToConstant: 28),
+                av.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -8),
+            ])
+            nativeAssistantActionsView = av
+        }
+        nativeAssistantActionsView?.configure(
+            turnId: turnId,
+            theme: context.theme,
+            onCopy: context.onCopy,
+            onRegenerate: context.onRegenerate
+        )
+    }
+
     // MARK: - SharedArtifact
 
     private func configureAsArtifact(
@@ -1589,6 +1716,8 @@ final class NativeMessageCellView: NSTableCellView {
     private func removeAllContentViews() {
         self.layer?.backgroundColor = nil
         self.layer?.cornerRadius = 0
+        lastBubbleBackgroundCGColor = nil
+        lastBubbleCornerRadius = 0
         spacerView?.removeFromSuperview(); spacerView = nil
         nativeHeaderView?.removeFromSuperview(); nativeHeaderView = nil
         nativeMarkdownView?.removeFromSuperview(); nativeMarkdownView = nil
@@ -1599,6 +1728,7 @@ final class NativeMessageCellView: NSTableCellView {
         nativeArtifactView?.removeFromSuperview(); nativeArtifactView = nil
         nativePreflightView?.removeFromSuperview(); nativePreflightView = nil
         nativeStatsView?.removeFromSuperview(); nativeStatsView = nil
+        nativeAssistantActionsView?.removeFromSuperview(); nativeAssistantActionsView = nil
         userMessageContainer?.removeFromSuperview(); userMessageContainer = nil
         userTextView = nil
         userInlineEditView = nil
@@ -1771,12 +1901,22 @@ private final class UserDocumentChipView: NSView {
     }
 }
 
+/// Tri-state equality: two nils match, one nil differs, otherwise defer to CGColor.==.
+private func cgColorsEqual(_ lhs: CGColor?, _ rhs: CGColor?) -> Bool {
+    switch (lhs, rhs) {
+    case (nil, nil): return true
+    case let (l?, r?): return l == r
+    default: return false
+    }
+}
+
 // MARK: - ContentBlockKindTag
 
 /// Lightweight discriminator used to detect kind changes without comparing full associated values.
 enum ContentBlockKindTag: Equatable {
     case header, paragraph, toolCallGroup, thinking, userMessage, pendingToolCall
-    case generationStats, typingIndicator, groupSpacer, sharedArtifact, preflightCapabilities, chart, other
+    case generationStats, typingIndicator, groupSpacer, sharedArtifact, preflightCapabilities, chart
+    case assistantActions, other
 }
 
 extension ContentBlockKind {
@@ -1794,6 +1934,7 @@ extension ContentBlockKind {
         case .sharedArtifact: return .sharedArtifact
         case .preflightCapabilities: return .preflightCapabilities
         case .chart: return .chart
+        case .assistantActions: return .assistantActions
         }
     }
 }
@@ -1820,6 +1961,10 @@ enum NativeCellHeightEstimator {
 
         case .generationStats:
             return 24
+
+        case .assistantActions:
+            // 4 top gap + 28 button + 8 bottom gap
+            return 40
 
         case .typingIndicator:
             // 4 top + ~22 content + 6 bottom (tight to header / thinking row above)

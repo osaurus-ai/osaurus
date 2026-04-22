@@ -412,7 +412,7 @@ public final class ChatWindowManager: NSObject, ObservableObject {
 
         panel.isOpaque = true
         panel.backgroundColor = .windowBackgroundColor
-        panel.hasShadow = false
+        panel.hasShadow = true
         panel.animationBehavior = .none
         panel.becomesKeyOnlyIfNeeded = false
         panel.hidesOnDeactivate = false

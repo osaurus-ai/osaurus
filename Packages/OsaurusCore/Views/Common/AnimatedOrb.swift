@@ -42,8 +42,6 @@ struct AnimatedOrb: View {
 
     // MARK: - State
 
-    @State private var floatOffset: CGFloat = 0
-    @State private var glowPulse: CGFloat = 1.0
     @State private var isHovered = false
     @State private var isAppActive = true
 
@@ -69,8 +67,14 @@ struct AnimatedOrb: View {
                 .frame(width: orbSize, height: orbSize)
                 .scaleEffect(contentScale)
         }
-        .shadow(color: color.opacity(shadowOpacity), radius: shadowRadius)
-        .offset(y: showFloat ? floatOffset : 0)
+        // Dropped two per-vsync compositor costs:
+        //   1. `.shadow(color:radius:)` — SwiftUI's shadow modifier has no
+        //      `shadowPath` hook, so every re-composite rasterizes it offscreen.
+        //      The outer-glow radial gradient already provides the halo.
+        //   2. `.offset(y: floatOffset)` with a `repeatForever` animation —
+        //      kept the entire orb subtree (shader + shadow) in CoreAnimation's
+        //      active list every frame, composited at full display refresh rate
+        //      regardless of the TimelineView's 6Hz shader tick.
         .contentShape(Circle().scale(1.3))
         .onHover { hovering in
             guard isInteractive else { return }
@@ -78,33 +82,19 @@ struct AnimatedOrb: View {
                 isHovered = hovering
             }
         }
-        .onAppear(perform: startAnimations)
         .onReceive(
             NotificationCenter.default.publisher(for: NSApplication.willResignActiveNotification)
         ) { _ in
             isAppActive = false
-            withAnimation(.easeOut(duration: 0.4)) {
-                floatOffset = 0
-                glowPulse = 1.0
-            }
         }
         .onReceive(
             NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
         ) { _ in
             isAppActive = true
-            startAnimations()
         }
     }
 
     // MARK: - Computed Properties
-
-    private var shadowOpacity: Double {
-        isInteractive && isHovered ? 0.4 : 0.3
-    }
-
-    private var shadowRadius: CGFloat {
-        isInteractive && isHovered ? 10 : 8
-    }
 
     private var glowScale: CGFloat {
         isInteractive && isHovered ? 1.5 : 1.4
@@ -118,26 +108,21 @@ struct AnimatedOrb: View {
 
     @ViewBuilder
     private func outerGlow(size: CGFloat) -> some View {
-        let opacity = (isInteractive && isHovered ? 0.22 : 0.15) * glowPulse
+        let opacity = isInteractive && isHovered ? 0.22 : 0.15
         Circle()
-            .fill(color.opacity(opacity))
+            .fill(
+                RadialGradient(
+                    gradient: Gradient(colors: [
+                        color.opacity(opacity),
+                        color.opacity(opacity * 0.6),
+                        color.opacity(0),
+                    ]),
+                    center: .center,
+                    startRadius: 0,
+                    endRadius: (size * glowScale) / 2
+                )
+            )
             .frame(width: size * glowScale, height: size * glowScale)
-            .blur(radius: isInteractive && isHovered ? 14 : 12)
-    }
-
-    // MARK: - Animations
-
-    private func startAnimations() {
-        if showFloat {
-            withAnimation(.easeInOut(duration: 2.3 + Double(seedHash) * 0.4).repeatForever(autoreverses: true)) {
-                floatOffset = -3
-            }
-        }
-        if showGlow {
-            withAnimation(.easeInOut(duration: 3.5 + Double(seedHash) * 0.8).repeatForever(autoreverses: true)) {
-                glowPulse = 1.2
-            }
-        }
     }
 }
 
@@ -160,7 +145,8 @@ private struct OrbShaderContent: View {
                 // the display link when paused — .periodic fires at the given interval regardless
                 // of app state, still submitting CA draw calls that keep the compositor busy.
                 // paused: !isAppActive ensures zero CA updates when the app is not in the foreground.
-                TimelineView(.animation(minimumInterval: 1.0 / 15.0, paused: !isAppActive)) { timeline in
+                //
+                TimelineView(.animation(minimumInterval: 1.0 / 6.0, paused: !isAppActive)) { timeline in
                     let elapsed = Float(timeline.date.timeIntervalSince(startTime))
                     // when paused, timeline.date stops advancing, but on resume it jumps to wall-clock
                     // time; use frozenTime to preserve the shader's animation phase across pause/resume.

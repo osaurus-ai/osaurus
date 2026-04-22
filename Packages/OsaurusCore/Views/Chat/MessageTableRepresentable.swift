@@ -126,6 +126,7 @@ struct MessageTableRepresentable: NSViewRepresentable {
     }
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
+        ChatPerfTrace.shared.count("table.updateNSView")
         let coordinator = context.coordinator
         coordinator.scrollAnchor.onScrolledToBottom = onScrolledToBottom
         coordinator.scrollAnchor.onScrolledAwayFromBottom = onScrolledAwayFromBottom
@@ -329,6 +330,10 @@ extension MessageTableRepresentable {
 
         /// Caches measured row heights to avoid calling fittingSize on every scroll.
         private var heightCache: [String: CGFloat] = [:]
+        /// Last height we actually told AppKit about per block, so a scheduled
+        /// streaming height update can skip when the row's measured height
+        /// hasn't changed since the previous `noteHeightOfRows` call for it.
+        private var lastNotedHeight: [String: CGFloat] = [:]
 
         // MARK: Streaming Height Debounce
 
@@ -465,6 +470,12 @@ extension MessageTableRepresentable {
         /// Re-measure specific rows without animation.
         private func noteRowHeightsChanged(_ rows: IndexSet) {
             guard let tableView else { return }
+            ChatPerfTrace.shared.count("noteHeightOfRows")
+            ChatPerfTrace.shared.count("noteHeightOfRows.rows", rows.count)
+            for row in rows where row < blockIds.count {
+                let bid = blockIds[row]
+                if let h = heightCache[bid] { lastNotedHeight[bid] = h }
+            }
             NSAnimationContext.beginGrouping()
             NSAnimationContext.current.duration = 0
             tableView.noteHeightOfRows(withIndexesChanged: rows)
@@ -479,6 +490,26 @@ extension MessageTableRepresentable {
         ///   2. In-place update (reconfigure changed cells directly)
         ///   3. Full snapshot (diffable data source apply + scroll anchoring)
         func applyBlocks(
+            _ blocks: [ContentBlock],
+            groupHeaderMap: [UUID: UUID],
+            context: CellRenderingContext,
+            isStreaming: Bool,
+            lastAssistantTurnId: UUID?,
+            autoScrollEnabled: Bool
+        ) {
+            ChatPerfTrace.shared.time("applyBlocks") {
+                applyBlocksImpl(
+                    blocks,
+                    groupHeaderMap: groupHeaderMap,
+                    context: context,
+                    isStreaming: isStreaming,
+                    lastAssistantTurnId: lastAssistantTurnId,
+                    autoScrollEnabled: autoScrollEnabled
+                )
+            }
+        }
+
+        private func applyBlocksImpl(
             _ blocks: [ContentBlock],
             groupHeaderMap: [UUID: UUID],
             context: CellRenderingContext,
@@ -513,19 +544,6 @@ extension MessageTableRepresentable {
             let newLookup = Dictionary(blocks.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
             let newStreamingBlockId = Self.detectStreamingBlockId(in: blocks, isStreaming: isStreaming)
 
-            // Seed expanded state for newly-inserted thinking blocks in the
-            // actively streaming turn so the panel opens by default without
-            // hard-coding `isExpanded = true` anywhere downstream. Once the
-            // id lives in `expandedIds`, the user's collapse tap removes it
-            // and stays removed — fixing the bug where the thinking panel
-            // refused to collapse while streaming.
-            seedExpandedIdsForNewThinkingBlocks(
-                newLookup: newLookup,
-                oldLookup: blockLookup,
-                isStreaming: isStreaming,
-                streamingTurnId: lastAssistantTurnId
-            )
-
             // Detect streaming-ended transition before any state mutations.
             let streamingJustEnded = streamingBlockId != nil && newStreamingBlockId == nil
             let previousStreamingBlockId = streamingBlockId
@@ -546,6 +564,7 @@ extension MessageTableRepresentable {
 
             // --- Path 1: No-change early return ---
             if !widthChanged, newIds == blockIds, !hasContentChanges(newLookup: newLookup) {
+                ChatPerfTrace.shared.count("applyBlocks.path1.noChange")
                 let contextAffectsCells =
                     previousStreaming != context.isStreaming
                     || previousLastAssistantTurnId != context.lastAssistantTurnId
@@ -563,6 +582,7 @@ extension MessageTableRepresentable {
             // stableChangedIds is empty so cells would keep stale layout width until
             // some later content update — visible as a gap on the first resize.
             if widthChanged, newIds == blockIds, !hasContentChanges(newLookup: newLookup) {
+                ChatPerfTrace.shared.count("applyBlocks.path1b.widthOnly")
                 blockLookup = newLookup
                 streamingBlockId = newStreamingBlockId
                 reconfigureAllCellsFromLookup(newLookup)
@@ -571,6 +591,7 @@ extension MessageTableRepresentable {
 
             // --- Path 2: In-place update (IDs unchanged, content changed) ---
             if !widthChanged, newIds == blockIds {
+                ChatPerfTrace.shared.count("applyBlocks.path2.inPlace")
                 reconfigureChangedCells(newLookup: newLookup, streamId: newStreamingBlockId)
                 blockLookup = newLookup
                 streamingBlockId = newStreamingBlockId
@@ -578,6 +599,7 @@ extension MessageTableRepresentable {
             }
 
             // --- Path 3: Full snapshot ---
+            ChatPerfTrace.shared.count("applyBlocks.path3.fullSnapshot")
             applyFullSnapshot(
                 newIds: newIds,
                 newLookup: newLookup,
@@ -603,6 +625,7 @@ extension MessageTableRepresentable {
         private func reconfigureChangedCells(newLookup: [String: ContentBlock], streamId: String?) {
             guard let tableView else { return }
             var nonStreamingRows = IndexSet()
+            var reconfigured = 0
 
             for (index, id) in blockIds.enumerated() {
                 guard newLookup[id] != blockLookup[id],
@@ -613,6 +636,7 @@ extension MessageTableRepresentable {
                 // invalidate height cache for changed block
                 heightCache.removeValue(forKey: id)
                 configureCell(cell, with: block)
+                reconfigured += 1
 
                 if id == streamId {
                     scheduleStreamingHeightUpdate(row: index)
@@ -621,10 +645,12 @@ extension MessageTableRepresentable {
                 }
             }
 
+            ChatPerfTrace.shared.count("reconfigureChangedCells.rows", reconfigured)
             if !nonStreamingRows.isEmpty {
                 noteRowHeightsChanged(nonStreamingRows)
                 if scrollAnchor.isPinnedToBottom {
-                    scrollAnchor.scrollToBottom()
+                    ChatPerfTrace.shared.count("scrollToBottom.path2")
+                    scrollAnchor.scrollToBottomCoalesced()
                 }
             }
         }
@@ -768,11 +794,13 @@ extension MessageTableRepresentable {
         }
 
         private func configureCell(_ cell: NativeMessageCellView, with block: ContentBlock) {
-            let groupId = groupHeaderMap[block.turnId] ?? block.turnId
-            var context = ctx
-            context.expandedIds = expandedIds
-            context.isTurnHovered = hoveredGroupId == groupId
-            cell.configure(block: block, context: context)
+            ChatPerfTrace.shared.time("configureCell") {
+                let groupId = groupHeaderMap[block.turnId] ?? block.turnId
+                var context = ctx
+                context.expandedIds = expandedIds
+                context.isTurnHovered = hoveredGroupId == groupId
+                cell.configure(block: block, context: context)
+            }
         }
 
         // MARK: - Context-Driven Reconfiguration
@@ -807,9 +835,11 @@ extension MessageTableRepresentable {
                 affectedRows.insert(index)
             }
             guard !affectedRows.isEmpty else { return }
+            ChatPerfTrace.shared.count("reconfigureAllCells.rows", affectedRows.count)
             noteRowHeightsChanged(affectedRows)
             if scrollAnchor.isPinnedToBottom {
-                scrollAnchor.scrollToBottom()
+                ChatPerfTrace.shared.count("scrollToBottom.allCells")
+                scrollAnchor.scrollToBottomCoalesced()
             }
         }
 
@@ -819,13 +849,28 @@ extension MessageTableRepresentable {
             streamingHeightWorkItem?.cancel()
             let work = DispatchWorkItem { [weak self] in
                 guard let self, let tv = self.tableView, row < tv.numberOfRows else { return }
-                // Force the hosting view to flush its SwiftUI layout cycle so the
-                // new intrinsic content size (driven by streamingContentHeight) is
-                // committed before we ask the table to re-measure the row.
+                ChatPerfTrace.shared.count("streamingHeightUpdate.fire")
+
+                // skip when the measured height didn't actually change since the
+                // last noteHeightOfRows for this row. Happens constantly when
+                // tokens land within the current last line — height is identical
+                // yet we'd otherwise cascade-repaint every row below it and
+                // damage the full clip view via scrollToBottom
+                if row < self.blockIds.count {
+                    let bid = self.blockIds[row]
+                    if let h = self.heightCache[bid], let noted = self.lastNotedHeight[bid],
+                       abs(h - noted) < 0.5
+                    {
+                        ChatPerfTrace.shared.count("streamingHeightUpdate.skipped")
+                        return
+                    }
+                }
+
                 self.noteRowHeightsChanged(IndexSet(integer: row))
 
                 if self.scrollAnchor.isPinnedToBottom {
-                    self.scrollAnchor.scrollToBottom()
+                    ChatPerfTrace.shared.count("scrollToBottom.streaming")
+                    self.scrollAnchor.scrollToBottomCoalesced()
                 }
             }
             streamingHeightWorkItem = work
@@ -872,6 +917,7 @@ extension MessageTableRepresentable {
         // MARK: - Hover Tracking
 
         private func handleMouseMoved(with event: NSEvent) {
+            ChatPerfTrace.shared.count("hover.mouseMoved")
             guard let tableView else { return setHoveredGroup(nil) }
             let point = tableView.convert(event.locationInWindow, from: nil)
             let row = tableView.row(at: point)
@@ -881,16 +927,28 @@ extension MessageTableRepresentable {
             else {
                 return setHoveredGroup(nil)
             }
+            // Assistant turns expose their actions via a pinned footer row
+            // (see ContentBlockKind.assistantActions)
+            // hovering them must not
+            // trigger per-row reconfigures.
+            // Clearing hover also tears down any
+            // lingering user-turn hover if the cursor just moved off one
+            if block.role == .assistant {
+                return setHoveredGroup(nil)
+            }
             setHoveredGroup(groupHeaderMap[block.turnId] ?? block.turnId)
         }
 
         private func setHoveredGroup(_ newGroupId: UUID?) {
             guard hoveredGroupId != newGroupId else { return }
+            ChatPerfTrace.shared.count("hover.groupChanged")
             let oldGroupId = hoveredGroupId
             hoveredGroupId = newGroupId
 
             guard let tableView else { return }
             let range = tableView.rows(in: tableView.visibleRect)
+            var reconfiguredRows = 0
+            var fastPathRows = 0
             for row in range.location ..< (range.location + range.length) {
                 guard row < blockIds.count,
                     let block = blockLookup[blockIds[row]]
@@ -908,10 +966,14 @@ extension MessageTableRepresentable {
                 // for header rows, use the fast hover path
                 if case .header = block.kind {
                     cell.setTurnHovered(groupId == newGroupId)
+                    fastPathRows += 1
                 } else {
                     configureCell(cell, with: block)
+                    reconfiguredRows += 1
                 }
             }
+            ChatPerfTrace.shared.count("hover.fastPathRows", fastPathRows)
+            ChatPerfTrace.shared.count("hover.reconfigureRows", reconfiguredRows)
         }
 
         // MARK: - NSTableViewDelegate
@@ -928,10 +990,8 @@ extension MessageTableRepresentable {
             // return cached height if we have it
             if let cached = heightCache[block.id] { return cached }
 
-            // new thinking blocks are seeded into
-            // `expandedIds` on insertion (see `seedExpandedIdsForNewThinkingBlocks`)
-            // so the auto expand no longer needs to be forced here and the
-            // user's collapse tap is honored even mid stream
+            // `expandedIds` is the sole source of truth and the thinking blocks
+            // start collapsed by default and open only when the user taps
             let isExpanded = expandedIds.contains(block.id)
             let h = NativeCellHeightEstimator.estimatedHeight(
                 for: block,

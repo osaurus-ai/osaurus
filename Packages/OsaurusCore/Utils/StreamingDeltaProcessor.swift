@@ -66,6 +66,8 @@ final class StreamingDeltaProcessor {
     /// inline (O(1) integer comparisons), and flushes if thresholds are met.
     func receiveDelta(_ delta: String) {
         guard !delta.isEmpty else { return }
+        ChatPerfTrace.shared.count("stream.delta")
+        ChatPerfTrace.shared.count("stream.deltaBytes", delta.utf8.count)
         deltaBuffer += delta
 
         let now = Date()
@@ -172,6 +174,7 @@ final class StreamingDeltaProcessor {
     private func syncToTurn() {
         guard hasPendingContent else { return }
         syncCount += 1
+        ChatPerfTrace.shared.count("stream.syncToTurn")
         turn.notifyContentChanged()
         hasPendingContent = false
         lastSyncTime = Date()
@@ -180,12 +183,15 @@ final class StreamingDeltaProcessor {
 
     private func syncIfNeeded(now: Date) {
         let totalChars = contentLength + thinkingLength
+        // First-tier bumped 100 → 150ms: at a typical remote-provider rate (~125 B/s),
+        // the perceptual difference is invisible but it halves WindowServer load driven
+        // by streaming height updates + scroll-to-bottom re-damages per sync.
         let syncIntervalMs: Double =
             switch totalChars {
-            case 0 ..< 2_000: 100
-            case 2_000 ..< 5_000: 150
-            case 5_000 ..< 10_000: 200
-            default: 250
+            case 0 ..< 2_000: 150
+            case 2_000 ..< 5_000: 200
+            case 5_000 ..< 10_000: 250
+            default: 300
             }
 
         let timeSinceSync = now.timeIntervalSince(lastSyncTime) * 1000
