@@ -174,6 +174,17 @@ final class ScrollAnchorManager {
         }
     }
 
+    /// Force unpin from the bottom (i.e user jumped to a specific turn via
+    /// the minimap). Subsequent snapshot applies will preserve the anchor
+    /// instead of re-snapping to bottom. Fires `onScrolledAwayFromBottom`
+    /// if we were previously pinned.
+    func unpinFromBottom() {
+        guard isPinnedToBottom else { return }
+        isPinnedToBottom = false
+        let cb = onScrolledAwayFromBottom
+        DispatchQueue.main.async { cb?() }
+    }
+
     /// Re-check pinned state against the current scroll position.
     /// Call after the initial snapshot or any layout that doesn't trigger
     /// `boundsDidChangeNotification` (e.g. content growing while the

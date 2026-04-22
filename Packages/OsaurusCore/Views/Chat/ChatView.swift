@@ -1851,6 +1851,10 @@ struct ChatView: View {
     @State private var userImagePreview: NSImage?
     // Bonjour agent connection
     @State private var pendingDiscoveredAgent: DiscoveredAgent? = nil
+    // Minimap
+    @State private var activeMinimapTurnId: UUID?
+    @State private var scrollToTurnId: UUID?
+    @State private var scrollToTurnTrigger: Int = 0
     // What's New modal
     @State private var pendingWhatsNew: WhatsNewRelease? = nil
 
@@ -2377,9 +2381,11 @@ struct ChatView: View {
         // store directly, so only *its* body re-runs on per-token updates
         let displayName = windowState.cachedAgentDisplayName
         let lastAssistantTurnId = session.lastAssistantTurnIdForThread
+        let blocks = session.visibleBlocks
+        let minimapMarkers = buildMinimapMarkers(from: blocks)
 
         return ZStack {
-            VStack(spacing: 8) {
+           VStack(spacing: 8) {
                 agentInlineBlocks
                 IsolatedThreadView(
                     store: session.visibleBlocksStore,
@@ -2399,8 +2405,31 @@ struct ChatView: View {
                     editText: $editText,
                     onConfirmEdit: confirmEditAndRegenerate,
                     onCancelEdit: cancelEditing,
-                    onUserImagePreview: openUserAttachmentPreview(attachmentId:)
+                    onUserImagePreview: openUserAttachmentPreview(attachmentId:),
+                    onVisibleTopUserTurnChanged: { turnId in
+                      activeMinimapTurnId = turnId
+                    },
+                    scrollToTurnId: scrollToTurnId,
+                    scrollToTurnTrigger: scrollToTurnTrigger
                 )
+            }
+
+
+            // Minimap overlay — sits at vertical center, right edge
+            if minimapMarkers.count >= 2 {
+                HStack {
+                    Spacer()
+                    ChatMinimap(
+                        markers: minimapMarkers,
+                        activeMarkerId: activeMinimapTurnId,
+                        onSelect: { turnId in
+                            scrollToTurnId = turnId
+                            scrollToTurnTrigger &+= 1
+                        }
+                    )
+                    .padding(.trailing, 22)
+                }
+                .allowsHitTesting(true)
             }
 
             // Scroll button overlay - isolated from content
@@ -2489,6 +2518,9 @@ private struct IsolatedThreadView: View {
     let onConfirmEdit: (() -> Void)?
     let onCancelEdit: (() -> Void)?
     let onUserImagePreview: ((String) -> Void)?
+    var onVisibleTopUserTurnChanged: ((UUID?) -> Void)? = nil
+    var scrollToTurnId: UUID? = nil
+    var scrollToTurnTrigger: Int = 0
 
     var body: some View {
         let _ = ChatPerfTrace.shared.count("body.IsolatedThreadView")
@@ -2511,7 +2543,10 @@ private struct IsolatedThreadView: View {
             editText: editText,
             onConfirmEdit: onConfirmEdit,
             onCancelEdit: onCancelEdit,
-            onUserImagePreview: onUserImagePreview
+            onUserImagePreview: onUserImagePreview,
+            onVisibleTopUserTurnChanged: onVisibleTopUserTurnChanged,
+            scrollToTurnId: scrollToTurnId,
+            scrollToTurnTrigger: scrollToTurnTrigger
         )
     }
 }
@@ -2548,6 +2583,18 @@ extension ChatView {
             return URL(fileURLWithPath: art.hostPath)
         }
         return nil
+    }
+
+    /// Build minimap markers from the current block stream (one per user message)
+    private func buildMinimapMarkers(from blocks: [ContentBlock]) -> [ChatMinimap.Marker] {
+        var markers: [ChatMinimap.Marker] = []
+        markers.reserveCapacity(8)
+        for block in blocks {
+            if case let .userMessage(text, _) = block.kind {
+                markers.append(ChatMinimap.Marker(id: block.turnId, preview: text))
+            }
+        }
+        return markers
     }
 
     /// Copy a turn's thinking + content to the clipboard

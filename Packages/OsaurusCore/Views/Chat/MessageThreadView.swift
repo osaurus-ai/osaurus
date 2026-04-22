@@ -38,6 +38,11 @@ struct MessageThreadView: View {
     var onCancelEdit: (() -> Void)? = nil
     var onUserImagePreview: ((String) -> Void)? = nil
 
+    // Minimap
+    var onVisibleTopUserTurnChanged: ((UUID?) -> Void)? = nil
+    var scrollToTurnId: UUID? = nil
+    var scrollToTurnTrigger: Int = 0
+
     @Environment(\.theme) private var theme
 
     private var resolvedGroupHeaderMap: [UUID: UUID] {
@@ -87,7 +92,10 @@ struct MessageThreadView: View {
             editText: editText,
             onConfirmEdit: onConfirmEdit,
             onCancelEdit: onCancelEdit,
-            onUserImagePreview: onUserImagePreview
+            onUserImagePreview: onUserImagePreview,
+            onVisibleTopUserTurnChanged: onVisibleTopUserTurnChanged,
+            scrollToTurnId: scrollToTurnId,
+            scrollToTurnTrigger: scrollToTurnTrigger
         )
     }
 }

@@ -89,6 +89,12 @@ struct MessageTableRepresentable: NSViewRepresentable {
     let onCancelEdit: (() -> Void)?
     var onUserImagePreview: ((String) -> Void)? = nil
 
+    // Minimap support
+    var onVisibleTopUserTurnChanged: ((UUID?) -> Void)? = nil
+    /// Turn ID to scroll to. Paired with `scrollToTurnTrigger` for one-shot delivery.
+    var scrollToTurnId: UUID? = nil
+    var scrollToTurnTrigger: Int = 0
+
     // MARK: - NSViewRepresentable Lifecycle
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -114,6 +120,9 @@ struct MessageTableRepresentable: NSViewRepresentable {
         coordinator.sessionExpandedStore = expandedBlocksStore
         coordinator.lastSwiftUIWidth = max(100, width)
 
+        coordinator.onVisibleTopUserTurnChanged = onVisibleTopUserTurnChanged
+        coordinator.lastScrollToTurnTrigger = scrollToTurnTrigger
+
         coordinator.applyBlocks(
             blocks,
             groupHeaderMap: groupHeaderMap,
@@ -122,6 +131,7 @@ struct MessageTableRepresentable: NSViewRepresentable {
             lastAssistantTurnId: lastAssistantTurnId,
             autoScrollEnabled: autoScrollEnabled
         )
+        coordinator.scheduleVisibleUserTurnUpdate()
         return scrollView
     }
 
@@ -132,10 +142,20 @@ struct MessageTableRepresentable: NSViewRepresentable {
         coordinator.scrollAnchor.onScrolledAwayFromBottom = onScrolledAwayFromBottom
         coordinator.sessionExpandedStore = expandedBlocksStore
 
+        coordinator.onVisibleTopUserTurnChanged = onVisibleTopUserTurnChanged
+
         // Detect scroll-to-bottom button tap.
         if scrollToBottomTrigger != coordinator.lastScrollToBottomTrigger {
             coordinator.lastScrollToBottomTrigger = scrollToBottomTrigger
             coordinator.scrollAnchor.scrollToBottom(animated: true)
+        }
+
+        // Detect minimap scroll-to-turn request.
+        if scrollToTurnTrigger != coordinator.lastScrollToTurnTrigger {
+            coordinator.lastScrollToTurnTrigger = scrollToTurnTrigger
+            if let turnId = scrollToTurnId {
+                coordinator.scrollToTurn(turnId)
+            }
         }
 
         // Sync any external expand-state changes (e.g. session load resets the store)
@@ -153,6 +173,7 @@ struct MessageTableRepresentable: NSViewRepresentable {
             lastAssistantTurnId: lastAssistantTurnId,
             autoScrollEnabled: autoScrollEnabled
         )
+        coordinator.scheduleVisibleUserTurnUpdate()
 
         // ensure the table column fills the (now-inset) clip view width
         coordinator.tableView?.sizeLastColumnToFit()
@@ -340,6 +361,27 @@ extension MessageTableRepresentable {
         private var streamingHeightWorkItem: DispatchWorkItem?
         private let streamingHeightInterval: TimeInterval = 0.06
 
+        // MARK: Minimap Tracking
+
+        /// Callback fired when the user-message turn nearest the current
+        /// scroll anchor changes. Nil means no user message is near the
+        /// anchor (e.g. empty thread).
+        var onVisibleTopUserTurnChanged: ((UUID?) -> Void)?
+        /// Last value delivered to `onVisibleTopUserTurnChanged` — used to
+        /// avoid redundant callbacks during scroll.
+        private var lastEmittedUserTurnId: UUID?
+        /// Tracks the last observed scroll-to-turn trigger from the view.
+        var lastScrollToTurnTrigger: Int = 0
+        private var minimapUpdateWork: DispatchWorkItem?
+        private let minimapUpdateInterval: TimeInterval = 0.05
+        nonisolated(unsafe) private var minimapBoundsObserver: NSObjectProtocol?
+
+        deinit {
+            if let observer = minimapBoundsObserver {
+                NotificationCenter.default.removeObserver(observer)
+            }
+        }
+
         // MARK: - Setup
 
         func setupDataSource(for tableView: NSTableView) {
@@ -373,6 +415,20 @@ extension MessageTableRepresentable {
                 MainActor.assumeIsolated {
                     self?.handleScrollViewFrameChange()
                 }
+            }
+
+            // Separate bounds observer for the minimap: fires on every scroll
+            // and updates which user-message marker is "active". Independent
+            // from ScrollAnchorManager's observer so we can throttle without
+            // affecting pinned-state detection latency.
+            let clipView = scrollView.contentView
+            clipView.postsBoundsChangedNotifications = true
+            minimapBoundsObserver = NotificationCenter.default.addObserver(
+                forName: NSView.boundsDidChangeNotification,
+                object: clipView,
+                queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.scheduleVisibleUserTurnUpdate() }
             }
         }
 
@@ -1028,6 +1084,118 @@ extension MessageTableRepresentable {
 
         // MARK: - Helpers
 
+        // MARK: - Minimap: active-turn tracking
+
+        /// Throttled update — coalesces rapid scroll events.
+        func scheduleVisibleUserTurnUpdate() {
+            minimapUpdateWork?.cancel()
+            let work = DispatchWorkItem { [weak self] in self?.updateVisibleUserTurn() }
+            minimapUpdateWork = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + minimapUpdateInterval, execute: work)
+        }
+
+        /// Pick the user-message turn whose row is closest to (but not below)
+        /// an anchor point ~20% down the visible rect. Falls back to the
+        /// first user message below the anchor if none above.
+        private func updateVisibleUserTurn() {
+            guard let tableView, let scrollView else { return }
+            guard let callback = onVisibleTopUserTurnChanged else { return }
+
+            var newTurnId: UUID? = nil
+
+            if !blockIds.isEmpty {
+                let clip = scrollView.contentView
+                // Anchor ~20% below the top of the visible area so the active
+                // marker feels tied to "what you're reading" rather than the
+                // very top edge (which often shows previous context).
+                let anchorY = clip.bounds.origin.y + clip.bounds.height * 0.2
+                var anchorRow = tableView.row(at: NSPoint(x: 0, y: anchorY))
+                if anchorRow < 0 {
+                    // Point fell in empty area (past content end); clamp to last row.
+                    anchorRow = blockIds.count - 1
+                }
+                anchorRow = min(anchorRow, blockIds.count - 1)
+
+                // Walk backwards from the anchor to find the nearest user message.
+                var row = anchorRow
+                while row >= 0 {
+                    if let block = blockLookup[blockIds[row]], case .userMessage = block.kind {
+                        newTurnId = block.turnId
+                        break
+                    }
+                    row -= 1
+                }
+
+                // No user message at or above the anchor → look below instead.
+                if newTurnId == nil {
+                    var forward = anchorRow + 1
+                    while forward < blockIds.count {
+                        if let block = blockLookup[blockIds[forward]],
+                            case .userMessage = block.kind
+                        {
+                            newTurnId = block.turnId
+                            break
+                        }
+                        forward += 1
+                    }
+                }
+            }
+
+            guard newTurnId != lastEmittedUserTurnId else { return }
+            lastEmittedUserTurnId = newTurnId
+            callback(newTurnId)
+        }
+
+        // MARK: - Minimap: scroll to turn
+
+        /// Scroll the thread so the given user-message turn is near the top
+        /// of the visible area. Used by the minimap row-click handler.
+        ///
+        /// Two auto-scroll behaviors fight this if left alone:
+        ///   1. `wasPinnedToBottom` → `scrollToBottom()` inside
+        ///      `handlePostSnapshotScroll` snaps back to bottom on the next
+        ///      streaming delta.
+        ///   2. New turn auto scroll (different `lastAssistantTurnId`) jumps
+        ///      to the new assistant header while the model is still streaming.
+        /// we neutralize both before kicking off our animation.
+        func scrollToTurn(_ turnId: UUID) {
+            guard let tableView, let scrollView else { return }
+            
+            // Prefer the user-message block; fall back to the turn's header.
+            let userBlockId = "usermsg-\(turnId.uuidString)"
+            let headerBlockId = "header-\(turnId.uuidString)"
+            let row = blockIds.firstIndex(of: userBlockId)
+            ?? blockIds.firstIndex(of: headerBlockId)
+            guard let targetRow = row, targetRow < tableView.numberOfRows else { return }
+            
+            // drop pinned to bottom so subsequent applyBlocks restore our
+            // anchor instead of snapping back to bottom
+            scrollAnchor.unpinFromBottom()
+            
+            // mark the current assistant turn as already handled so the
+            // new turn auto-scroll path doesn't fire mid-animation
+            lastScrolledToTurnId = ctx.lastAssistantTurnId
+            
+            let rowRect = tableView.rect(ofRow: targetRow)
+            // Leave a little breathing room above the target.
+            let targetY = max(0, rowRect.origin.y - 12)
+            
+            NSAnimationContext.runAnimationGroup { ctx in
+                ctx.duration = 0.22
+                ctx.allowsImplicitAnimation = true
+                scrollView.contentView.setBoundsOrigin(
+                    NSPoint(x: scrollView.contentView.bounds.origin.x, y: targetY)
+                )
+                scrollView.reflectScrolledClipView(scrollView.contentView)
+            }
+            
+            // Schedule an active-marker refresh after the animation settles so
+            // the minimap highlights the newly visible turn.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+                self?.scheduleVisibleUserTurnUpdate()
+            }
+        }
+        
         /// Auto-expand newly inserted thinking blocks by recording their id in
         /// `expandedIds` (and the session store). A block counts as "new" if
         /// its id isn't in `oldLookup`. We only seed during the owning turn's
