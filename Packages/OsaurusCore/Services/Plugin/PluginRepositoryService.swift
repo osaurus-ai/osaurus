@@ -295,6 +295,10 @@ final class PluginRepositoryService: ObservableObject {
     /// Populates the plugins list from locally installed plugins on disk.
     /// Called eagerly before any network operation so the Installed tab is always available.
     private func loadInstalledPluginsFromDisk() {
+        // Self-heal: repoint or remove any dangling `current` symlinks left behind by a
+        // crashed install or pre-fix TOFU key rotation. Idempotent and cheap.
+        PluginInstallManager.repairDanglingCurrentSymlinks()
+
         let installedIds = InstalledPluginsStore.shared.allInstalledPluginIds()
         guard !installedIds.isEmpty else { return }
 
