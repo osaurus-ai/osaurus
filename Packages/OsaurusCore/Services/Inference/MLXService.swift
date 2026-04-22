@@ -78,7 +78,23 @@ actor MLXService: ToolCapableService {
             stopSequences: []
         )
         var out = ""
-        for try await s in stream { out += s }
+        for try await s in stream {
+            // `streamDeltas` wraps `ModelRuntime.streamWithTools`, which
+            // encodes non-token events (reasoning, stats, tool calls) as
+            // in-band `\u{FFFE}…` sentinel strings so the SSE/NDJSON writer
+            // can peel them off and route to their own response channels.
+            // For non-streaming `chat/completions` the caller wants a plain
+            // text answer; concatenating sentinels verbatim made them leak
+            // into `content` — e.g. a reasoning model's thought content
+            // arrived as
+            // `"\u{FFFE}reasoning:thought…\u{FFFE}stats:80;8.83"` embedded
+            // in the response. Skip every delta that starts with the
+            // sentinel marker; `StreamingToolHint.isSentinel` covers
+            // tool/args/done, reasoning, stats, and any future sentinel
+            // that adheres to the `\u{FFFE}` prefix contract.
+            if StreamingToolHint.isSentinel(s) { continue }
+            out += s
+        }
         return out
     }
 
