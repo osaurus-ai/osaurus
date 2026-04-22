@@ -39,7 +39,10 @@ final class ChatPerfTrace: @unchecked Sendable {
 
     /// Reset state and start a new trace window. Safe to call while a
     /// previous trace is still open — it emits the previous report first.
+    /// Debug-only: compiles away to a no-op in release builds so the lock,
+    /// timestamping, and file I/O have zero runtime cost in shipped binaries.
     func begin(_ label: String) {
+        #if DEBUG
         lock.lock()
         let hadPrevious = startedAt != nil
         lock.unlock()
@@ -52,11 +55,13 @@ final class ChatPerfTrace: @unchecked Sendable {
         self.durations.removeAll(keepingCapacity: true)
         self.peaks.removeAll(keepingCapacity: true)
         lock.unlock()
+        #endif
     }
 
     /// Flush the accumulated counters/durations to disk and clear state.
-    /// A no-op if `begin()` was never called.
+    /// A no-op if `begin()` was never called. Debug-only.
     func end() {
+        #if DEBUG
         lock.lock()
         guard let start = startedAt else { lock.unlock(); return }
         let label = self.label
@@ -78,13 +83,16 @@ final class ChatPerfTrace: @unchecked Sendable {
             durations: durations,
             peaks: peaks
         )
+        #endif
     }
 
     // MARK: - Instrumentation API
 
     /// Increment a named counter (or add `n`). Zero-alloc on the hot path
-    /// once the key exists in the dictionary.
+    /// once the key exists in the dictionary. Debug-only — release builds
+    /// get an empty body that -O optimizes to a no-op call.
     func count(_ key: String, _ n: Int = 1) {
+        #if DEBUG
         lock.lock()
         // Only record when a trace is active; avoids polluting counters
         // between streams.
@@ -92,12 +100,15 @@ final class ChatPerfTrace: @unchecked Sendable {
             counters[key, default: 0] += n
         }
         lock.unlock()
+        #endif
     }
 
     /// Time a block. Accumulates into `durations[key]` and tracks the
-    /// peak single-call duration in `peaks[key]`.
+    /// peak single-call duration in `peaks[key]`. Debug-only — release
+    /// builds skip the timestamping and just run the block.
     @discardableResult
     func time<T>(_ key: String, _ block: () -> T) -> T {
+        #if DEBUG
         let t0 = CFAbsoluteTimeGetCurrent()
         let result = block()
         let dt = CFAbsoluteTimeGetCurrent() - t0
@@ -109,6 +120,9 @@ final class ChatPerfTrace: @unchecked Sendable {
         }
         lock.unlock()
         return result
+        #else
+        return block()
+        #endif
     }
 
     // MARK: - Emit
