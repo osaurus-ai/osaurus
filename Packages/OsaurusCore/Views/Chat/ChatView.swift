@@ -1815,6 +1815,8 @@ struct ChatView: View {
     @State private var userImagePreview: NSImage?
     // Bonjour agent connection
     @State private var pendingDiscoveredAgent: DiscoveredAgent? = nil
+    // What's New modal
+    @State private var pendingWhatsNew: WhatsNewRelease? = nil
 
     /// Convenience accessor for the window's theme
     private var theme: ThemeProtocol { windowState.theme }
@@ -2155,6 +2157,8 @@ struct ChatView: View {
                 windowState?.cleanup()
                 windowState?.session.save()
             }
+
+            pendingWhatsNew = WhatsNewGate.pendingAutoShowRelease()
         }
         .onDisappear {
             cleanupKeyMonitor()
@@ -2187,6 +2191,13 @@ struct ChatView: View {
         }
         .environment(\.theme, windowState.theme)
         .tint(theme.accentColor)
+        .sheet(item: $pendingWhatsNew) { release in
+            WhatsNewModal(release: release) {
+                WhatsNewGate.markShown(version: release.version)
+                pendingWhatsNew = nil
+            }
+            .environment(\.theme, windowState.theme)
+        }
         .sheet(item: $pendingDiscoveredAgent) { agent in
             if agent.address != nil {
                 PairingSheet(agent: agent) { apiKey, isPermanent in
