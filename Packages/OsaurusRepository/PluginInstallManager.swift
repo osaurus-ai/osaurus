@@ -60,23 +60,25 @@ public final class PluginInstallManager: @unchecked Sendable {
             throw PluginInstallError.specNotFound(pluginId)
         }
 
-        // TOFU: when the author's signing key changes, remove the old version so
-        // the new artifact is verified against the updated key from the registry.
-        // This allows recovery from accidental bad-key pushes without manual uninstall.
-        if let latest = InstalledPluginsStore.shared.latestInstalledVersion(pluginId: spec.plugin_id),
-            let existing = InstalledPluginsStore.shared.receipt(pluginId: spec.plugin_id, version: latest),
-            let existingKey = existing.public_keys?["minisign"],
-            let newKey = spec.public_keys?["minisign"],
-            existingKey != newKey
-        {
+        // TOFU: when the author's signing key changes, the new artifact is verified against
+        // the updated key from the registry. We capture the prior version here so we can
+        // remove it *after* the new install + symlink swap succeed. Eagerly deleting it now
+        // would leave the user with no installed version (and a dangling `current` symlink)
+        // if any later step throws (network, checksum, signature, unzip).
+        let keyRotatedFromVersion: SemanticVersion? = {
+            guard let latest = InstalledPluginsStore.shared.latestInstalledVersion(pluginId: spec.plugin_id),
+                let existing = InstalledPluginsStore.shared.receipt(pluginId: spec.plugin_id, version: latest),
+                let existingKey = existing.public_keys?["minisign"],
+                let newKey = spec.public_keys?["minisign"],
+                existingKey != newKey
+            else { return nil }
             NSLog(
-                "[Osaurus] Signing key changed for %@ — removing old version %@ to accept new key",
+                "[Osaurus] Signing key changed for %@ — will remove old version %@ after new install succeeds",
                 spec.plugin_id,
                 latest.description
             )
-            let oldVersionDir = PluginInstallManager.toolsVersionDirectory(pluginId: spec.plugin_id, version: latest)
-            try? FileManager.default.removeItem(at: oldVersionDir)
-        }
+            return latest
+        }()
 
         let targetPlatform: Platform = .macos
         // Arm64 only per project policy
@@ -210,6 +212,18 @@ public final class PluginInstallManager: @unchecked Sendable {
 
         try Self.updateCurrentSymlink(pluginId: spec.plugin_id, version: resolution.version.version)
 
+        // Deferred TOFU cleanup: now that the new version is fully on disk and `current`
+        // points at it, it's safe to remove the prior key-rotated version.
+        if let old = keyRotatedFromVersion, old != resolution.version.version {
+            let oldDir = PluginInstallManager.toolsVersionDirectory(pluginId: spec.plugin_id, version: old)
+            try? FileManager.default.removeItem(at: oldDir)
+            NSLog(
+                "[Osaurus] Key rotated for %@ — removed prior version %@",
+                spec.plugin_id,
+                old.description
+            )
+        }
+
         return InstallResult(
             receipt: receipt,
             installDirectory: installDir,
@@ -235,6 +249,65 @@ public final class PluginInstallManager: @unchecked Sendable {
         toolsPluginDirectory(pluginId: pluginId).appendingPathComponent("current", isDirectory: false)
     }
 
+    /// Scans the tools root and repairs any dangling `current` symlink left behind by a
+    /// crashed/aborted install or a TOFU key rotation that pre-dates the atomic-swap fix.
+    ///
+    /// For each plugin directory:
+    /// - If `current` resolves to an existing target, leave it alone.
+    /// - If `current` is dangling and other valid versions exist on disk, repoint it to
+    ///   the highest installed version.
+    /// - If `current` is dangling and no valid versions exist, remove the orphan link.
+    ///
+    /// Idempotent and cheap (one `readlink` + one `stat` per plugin). Safe to call on every
+    /// app launch.
+    public static func repairDanglingCurrentSymlinks() {
+        let fm = FileManager.default
+        let root = ToolsPaths.toolsRootDirectory()
+        guard
+            let entries = try? fm.contentsOfDirectory(
+                at: root,
+                includingPropertiesForKeys: [.isDirectoryKey],
+                options: [.skipsHiddenFiles]
+            )
+        else { return }
+
+        for pluginDir in entries where pluginDir.hasDirectoryPath {
+            let pluginId = pluginDir.lastPathComponent
+            let link = currentSymlinkURL(pluginId: pluginId)
+
+            // Only act on entries that are actually symlinks. `destinationOfSymbolicLink`
+            // returns nil for missing entries and for non-symlink entries (it throws), which
+            // we catch via `try?`.
+            guard let dest = try? fm.destinationOfSymbolicLink(atPath: link.path) else { continue }
+
+            let target = pluginDir.appendingPathComponent(dest, isDirectory: true)
+            if fm.fileExists(atPath: target.path) { continue }  // healthy
+
+            if let fallback = InstalledPluginsStore.shared.installedVersions(pluginId: pluginId).first {
+                do {
+                    try updateCurrentSymlink(pluginId: pluginId, version: fallback)
+                    NSLog(
+                        "[Osaurus] Repaired dangling 'current' for %@ → %@",
+                        pluginId,
+                        fallback.description
+                    )
+                } catch {
+                    NSLog(
+                        "[Osaurus] Failed to repair dangling 'current' for %@: %@",
+                        pluginId,
+                        String(describing: error)
+                    )
+                }
+            } else {
+                try? fm.removeItem(at: link)
+                NSLog(
+                    "[Osaurus] Removed dangling 'current' for %@ (no installed versions found)",
+                    pluginId
+                )
+            }
+        }
+    }
+
     public static func updateCurrentSymlink(pluginId: String, version: SemanticVersion) throws {
         let fm = FileManager.default
         let link = currentSymlinkURL(pluginId: pluginId)
@@ -242,10 +315,19 @@ public final class PluginInstallManager: @unchecked Sendable {
         if !fm.fileExists(atPath: dir.path) {
             try fm.createDirectory(at: dir, withIntermediateDirectories: true)
         }
-        if fm.fileExists(atPath: link.path) {
-            try fm.removeItem(at: link)
+        // Remove any existing entry (regular file, live symlink, or dangling
+        // symlink). `fileExists` follows symlinks and reports a dangling link
+        // as missing, but `createSymbolicLink` would still fail with EEXIST.
+        // `try?` is intentional: nothing-to-remove is fine; if the entry truly
+        // cannot be replaced, `createSymbolicLink` will surface the error.
+        try? fm.removeItem(at: link)
+        do {
+            try fm.createSymbolicLink(atPath: link.path, withDestinationPath: version.description)
+        } catch {
+            throw PluginInstallError.layoutInvalid(
+                "Could not refresh 'current' symlink for \(pluginId) → \(version.description): \(error). Try reinstalling the plugin."
+            )
         }
-        try fm.createSymbolicLink(atPath: link.path, withDestinationPath: version.description)
     }
 
     private func ensureDirectoryExists(_ url: URL) throws {
