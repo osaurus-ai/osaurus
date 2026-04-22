@@ -330,6 +330,7 @@ struct FloatingInputCard: View {
     }
 
     var body: some View {
+        let _ = ChatPerfTrace.shared.count("body.FloatingInputCard")
         mainContent
             .onAppear {
                 let isReappear = !localText.isEmpty || voiceInputState != .idle

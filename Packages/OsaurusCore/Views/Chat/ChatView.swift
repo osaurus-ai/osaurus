@@ -11,10 +11,32 @@ import LocalAuthentication
 @preconcurrency import MLXLMCommon
 import SwiftUI
 
+/// Holds the derived, streaming-mutated `[ContentBlock]` list for the chat
+/// thread. Kept as a separate `ObservableObject` so that per-token visibleBlocks
+/// updates don't fire `ChatSession.objectWillChange` — that would force
+/// `ChatView`'s entire body (and every sibling, notably `FloatingInputCard`
+/// with its expensive glass/gradient chrome) to re-evaluate several times per
+/// second during streaming. Only the message-thread subtree observes this
+/// store, so streaming re-renders stay localized to the table.
+@MainActor
+final class VisibleBlocksStore: ObservableObject {
+    @Published var blocks: [ContentBlock] = []
+    @Published var groupHeaderMap: [UUID: UUID] = [:]
+}
+
 @MainActor
 final class ChatSession: ObservableObject {
     @Published var turns: [ChatTurn] = []
-    @Published var isStreaming: Bool = false
+    @Published var isStreaming: Bool = false {
+        didSet {
+            guard isStreaming != oldValue else { return }
+            if isStreaming {
+                ChatPerfTrace.shared.begin("stream-\(Int(Date().timeIntervalSince1970))")
+            } else {
+                ChatPerfTrace.shared.end()
+            }
+        }
+    }
     @Published var lastStreamError: String?
 
     /// Single-slot FIFO queue for in-chat prompt overlays (secrets,
@@ -322,13 +344,20 @@ final class ChatSession: ObservableObject {
         return pickerItems.first { $0.id == model }
     }
 
-    /// Flattened content blocks for NSTableView rendering.
-    /// Stored and updated explicitly (not recomputed on every body pass).
-    /// Call `rebuildVisibleBlocks()` after any turn mutation to refresh.
-    @Published private(set) var visibleBlocks: [ContentBlock] = []
+    /// Backing store for the streaming-mutated `visibleBlocks` / group-header map.
+    /// Deliberately NOT `@Published` — mutations go through the store's own
+    /// `objectWillChange`, not the session's, so ChatView's body + every sibling
+    /// view stay static during streaming. The message thread subtree observes
+    /// this store directly.
+    let visibleBlocksStore = VisibleBlocksStore()
 
-    /// Precomputed group header map. Updated alongside `visibleBlocks`.
-    @Published private(set) var visibleBlocksGroupHeaderMap: [UUID: UUID] = [:]
+    /// Flattened content blocks for NSTableView rendering.
+    /// Read-through to `visibleBlocksStore.blocks` so existing call sites
+    /// (helpers, checks that don't need to drive re-renders) keep working.
+    var visibleBlocks: [ContentBlock] { visibleBlocksStore.blocks }
+
+    /// Precomputed group header map. Read-through to the store.
+    var visibleBlocksGroupHeaderMap: [UUID: UUID] { visibleBlocksStore.groupHeaderMap }
 
     /// Whether the message thread has content (includes USE_MOCK_CHAT_DATA stress data).
     var hasVisibleThreadMessages: Bool {
@@ -349,6 +378,13 @@ final class ChatSession: ObservableObject {
     /// Rebuild `visibleBlocks` and `visibleBlocksGroupHeaderMap` from current turns.
     /// Cheap to call repeatedly — BlockMemoizer fast-paths when nothing changed.
     func rebuildVisibleBlocks() {
+        ChatPerfTrace.shared.count("rebuildVisibleBlocks")
+        ChatPerfTrace.shared.time("rebuildVisibleBlocks.total") {
+            rebuildVisibleBlocksImpl()
+        }
+    }
+
+    private func rebuildVisibleBlocksImpl() {
         let agent = AgentManager.shared.agent(for: agentId ?? Agent.defaultId)
         let displayName = agent?.isBuiltIn == true ? "Assistant" : (agent?.name ?? "Assistant")
         let streamingTurnId = isStreaming ? turns.last?.id : nil
@@ -363,8 +399,8 @@ final class ChatSession: ObservableObject {
             )
             let newHeaderMap = blockMemoizer.groupHeaderMap
             withAnimation(.none) {
-                visibleBlocks = newBlocks
-                visibleBlocksGroupHeaderMap = newHeaderMap
+                visibleBlocksStore.blocks = newBlocks
+                visibleBlocksStore.groupHeaderMap = newHeaderMap
             }
             return
         }
@@ -380,8 +416,8 @@ final class ChatSession: ObservableObject {
         // use withAnimation(.none) to suppress the warning about publishing during view updates
         // this wraps the changes in a proper SwiftUI transaction
         withAnimation(.none) {
-            visibleBlocks = newBlocks
-            visibleBlocksGroupHeaderMap = newHeaderMap
+            visibleBlocksStore.blocks = newBlocks
+            visibleBlocksStore.groupHeaderMap = newHeaderMap
         }
     }
 
@@ -526,8 +562,8 @@ final class ChatSession: ObservableObject {
         // Clear caches
         blockMemoizer.clear()
         cachedContext = nil
-        visibleBlocks = []
-        visibleBlocksGroupHeaderMap = [:]
+        visibleBlocksStore.blocks = []
+        visibleBlocksStore.groupHeaderMap = [:]
 
         // Apply model from agent or global config (don't auto-persist, it's already saved)
         isLoadingModel = true
@@ -1886,6 +1922,7 @@ struct ChatView: View {
     }
 
     var body: some View {
+        let _ = ChatPerfTrace.shared.count("body.ChatView")
         chatModeContent
             .themedAlertScope(.chat(windowState.windowId))
             .overlay(ThemedAlertHost(scope: .chat(windowState.windowId)))
@@ -2332,21 +2369,37 @@ struct ChatView: View {
 
     /// Isolated message thread view to prevent cascading re-renders
     private func messageThread(_ width: CGFloat) -> some View {
-        // read stored @Published values — no blockMemoizer call on every body pass
-        let blocks = session.visibleBlocks
-        let groupHeaderMap = session.visibleBlocksGroupHeaderMap
+        ChatPerfTrace.shared.count("body.messageThread")
+        // do not read `session.visibleBlocks` here as that would
+        // subscribe this enclosing body to per-sync changes (via ChatSession's
+        // objectWillChange, if visibleBlocks were @Published) and/or delay the
+        // reactivity needed by the table. `IsolatedThreadView` observes the
+        // store directly, so only *its* body re-runs on per-token updates
         let displayName = windowState.cachedAgentDisplayName
         let lastAssistantTurnId = session.lastAssistantTurnIdForThread
 
         return ZStack {
             VStack(spacing: 8) {
                 agentInlineBlocks
-                threadCore(
-                    blocks: blocks,
-                    groupHeaderMap: groupHeaderMap,
+                IsolatedThreadView(
+                    store: session.visibleBlocksStore,
                     width: width,
-                    displayName: displayName,
-                    lastAssistantTurnId: lastAssistantTurnId
+                    agentName: displayName,
+                    isStreaming: session.isStreaming,
+                    lastAssistantTurnId: lastAssistantTurnId,
+                    expandedBlocksStore: session.expandedBlocksStore,
+                    scrollToBottomTrigger: scrollToBottomTrigger,
+                    onScrolledToBottom: { isPinnedToBottom = true },
+                    onScrolledAwayFromBottom: { isPinnedToBottom = false },
+                    onCopy: copyTurnContent,
+                    onRegenerate: regenerateTurn,
+                    onEdit: beginEditingTurn,
+                    onDelete: deleteTurn,
+                    editingTurnId: editingTurnId,
+                    editText: $editText,
+                    onConfirmEdit: confirmEditAndRegenerate,
+                    onCancelEdit: cancelEditing,
+                    onUserImagePreview: openUserAttachmentPreview(attachmentId:)
                 )
             }
 
@@ -2377,6 +2430,13 @@ struct ChatView: View {
                     .imageFullScreenSheetPresentation()
             }
         }
+        // re-pin to bottom when any in-chat prompt overlay opens. previously
+        // wired on the MessageThreadView itself. hoisted here after the store
+        // isolation so only ChatView's @State pin toggles, not the thread's
+        // per-sync data path
+        .onReceive(NotificationCenter.default.publisher(for: .chatOverlayActivated)) { _ in
+            isPinnedToBottom = true
+        }
     }
 
     /// Inline agent-loop blocks rendered above the message thread. Each
@@ -2403,38 +2463,62 @@ struct ChatView: View {
         }
     }
 
-    private func threadCore(
-        blocks: [ContentBlock],
-        groupHeaderMap: [UUID: UUID],
-        width: CGFloat,
-        displayName: String,
-        lastAssistantTurnId: UUID?
-    ) -> some View {
+}
+
+/// Isolates the streaming-driven `visibleBlocks` observation from `ChatView`'s
+/// body. This view is the only place `VisibleBlocksStore.objectWillChange`
+/// propagates into SwiftUI; ChatView and its other children (FloatingInputCard,
+/// toolbar, sidebar) stay outside the subscription and do not re-evaluate on
+/// every streaming sync.
+private struct IsolatedThreadView: View {
+    @ObservedObject var store: VisibleBlocksStore
+    let width: CGFloat
+    let agentName: String
+    let isStreaming: Bool
+    let lastAssistantTurnId: UUID?
+    let expandedBlocksStore: ExpandedBlocksStore
+    let scrollToBottomTrigger: Int
+    let onScrolledToBottom: () -> Void
+    let onScrolledAwayFromBottom: () -> Void
+    let onCopy: (UUID) -> Void
+    let onRegenerate: ((UUID) -> Void)?
+    let onEdit: ((UUID) -> Void)?
+    let onDelete: ((UUID) -> Void)?
+    let editingTurnId: UUID?
+    let editText: Binding<String>?
+    let onConfirmEdit: (() -> Void)?
+    let onCancelEdit: (() -> Void)?
+    let onUserImagePreview: ((String) -> Void)?
+
+    var body: some View {
+        let _ = ChatPerfTrace.shared.count("body.IsolatedThreadView")
         MessageThreadView(
-            blocks: blocks,
-            groupHeaderMap: groupHeaderMap,
+            blocks: store.blocks,
+            groupHeaderMap: store.groupHeaderMap,
             width: width,
-            agentName: displayName,
-            isStreaming: session.isStreaming,
+            agentName: agentName,
+            isStreaming: isStreaming,
             lastAssistantTurnId: lastAssistantTurnId,
-            expandedBlocksStore: session.expandedBlocksStore,
+            expandedBlocksStore: expandedBlocksStore,
             scrollToBottomTrigger: scrollToBottomTrigger,
-            onScrolledToBottom: { isPinnedToBottom = true },
-            onScrolledAwayFromBottom: { isPinnedToBottom = false },
-            onCopy: copyTurnContent,
-            onRegenerate: regenerateTurn,
-            onEdit: beginEditingTurn,
-            onDelete: deleteTurn,
+            onScrolledToBottom: onScrolledToBottom,
+            onScrolledAwayFromBottom: onScrolledAwayFromBottom,
+            onCopy: onCopy,
+            onRegenerate: onRegenerate,
+            onEdit: onEdit,
+            onDelete: onDelete,
             editingTurnId: editingTurnId,
-            editText: $editText,
-            onConfirmEdit: confirmEditAndRegenerate,
-            onCancelEdit: cancelEditing,
-            onUserImagePreview: openUserAttachmentPreview(attachmentId:)
+            editText: editText,
+            onConfirmEdit: onConfirmEdit,
+            onCancelEdit: onCancelEdit,
+            onUserImagePreview: onUserImagePreview
         )
-        .onReceive(NotificationCenter.default.publisher(for: .chatOverlayActivated)) { _ in
-            isPinnedToBottom = true
-        }
     }
+}
+
+// Reopen ChatView's declaration for the remaining methods (threadCore was
+// inlined into `messageThread` via `IsolatedThreadView` above)
+extension ChatView {
 
     private func openUserAttachmentPreview(attachmentId: String) {
         if let img = ChatImageCache.shared.cachedImage(for: attachmentId) {

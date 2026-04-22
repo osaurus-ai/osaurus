@@ -39,6 +39,10 @@ enum ContentBlockKind: Equatable {
     case typingIndicator
     case groupSpacer
     case chart(spec: ChartSpec)
+    /// Footer row appended to every completed assistant turn.
+    /// Replaces the hover-revealed copy/regenerate buttons that used to live in the header,
+    /// so moving the mouse over the assistant transcript no longer triggers per-row reconfigures.
+    case assistantActions(turnId: UUID)
 
     /// Custom Equatable optimized for performance during streaming.
     /// Uses text length comparison as a cheap proxy for content change detection.
@@ -89,6 +93,9 @@ enum ContentBlockKind: Equatable {
         case let (.chart(lSpec), .chart(rSpec)):
             return lSpec == rSpec
 
+        case let (.assistantActions(lId), .assistantActions(rId)):
+            return lId == rId
+
         default:
             return false
         }
@@ -109,7 +116,7 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
         case let .header(role, _, _): return role
         case let .paragraph(_, _, _, role): return role
         case .toolCallGroup, .thinking, .sharedArtifact, .pendingToolCall, .preflightCapabilities,
-            .generationStats, .typingIndicator, .groupSpacer, .chart:
+            .generationStats, .typingIndicator, .groupSpacer, .chart, .assistantActions:
             return .assistant
         case .userMessage: return .user
         }
@@ -251,6 +258,15 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
     static func groupSpacer(afterTurnId: UUID, associatedWithTurnId: UUID? = nil) -> ContentBlock {
         let turnId = associatedWithTurnId ?? afterTurnId
         return ContentBlock(id: "spacer-\(afterTurnId.uuidString)", turnId: turnId, kind: .groupSpacer, position: .only)
+    }
+
+    static func assistantActions(turnId: UUID, position: BlockPosition) -> ContentBlock {
+        ContentBlock(
+            id: "actions-\(turnId.uuidString)",
+            turnId: turnId,
+            kind: .assistantActions(turnId: turnId),
+            position: position
+        )
     }
 
     static func chart(turnId: UUID, spec: ChartSpec, position: BlockPosition) -> ContentBlock {
@@ -452,6 +468,14 @@ extension ContentBlock {
                         position: .middle
                     )
                 )
+            }
+
+            // copy/regenerate bar pinned to the bottom of every completed assistant turn.
+            // only emitted once the turn is not streaming and has something worth acting on
+            if !isStreaming && turn.role == .assistant,
+                !turn.contentIsEmpty || !(turn.toolCalls ?? []).isEmpty
+            {
+                turnBlocks.append(.assistantActions(turnId: turn.id, position: .last))
             }
 
             blocks.append(contentsOf: assignPositions(to: turnBlocks))

@@ -141,7 +141,9 @@ struct SelectableTextView: NSViewRepresentable {
         }
 
         if blocksChanged || widthChanged || themeChanged {
-            if !widthChanged && !themeChanged && !context.coordinator.lastBlocks.isEmpty {
+            let incrementalPath =
+                !widthChanged && !themeChanged && !context.coordinator.lastBlocks.isEmpty
+            if incrementalPath {
                 updateTextStorageIncrementally(
                     textView: textView,
                     oldBlocks: context.coordinator.lastBlocks,
@@ -160,7 +162,11 @@ struct SelectableTextView: NSViewRepresentable {
             context.coordinator.lastBlocks = blocks
             context.coordinator.lastWidth = baseWidth
             context.coordinator.lastThemeFingerprint = themeFingerprint
-            textView.needsDisplay = true
+            // incremental path already invalidated a bounded tail rect. full
+            // re-assign path needs an unbounded repaint
+            if !incrementalPath {
+                textView.needsDisplay = true
+            }
         }
     }
 
@@ -202,13 +208,18 @@ struct SelectableTextView: NSViewRepresentable {
 
     // MARK: - Incremental Updates
 
+    /// Apply an incremental text-storage update and bound the dirty rect to
+    /// the changed tail so WindowServer composites only the affected region.
+    /// Returns the character offset where the change begins, so callers can
+    /// skip the unbounded `needsDisplay = true` fallback.
+    @discardableResult
     func updateTextStorageIncrementally(
         textView: SelectableNSTextView,
         oldBlocks: [SelectableTextBlock],
         newBlocks: [SelectableTextBlock],
         coordinator: Coordinator
-    ) {
-        guard let storage = textView.textStorage else { return }
+    ) -> Int {
+        guard let storage = textView.textStorage else { return 0 }
 
         // Find first differing block
         var diffIndex = 0
@@ -230,6 +241,8 @@ struct SelectableTextView: NSViewRepresentable {
             diffIndex = 0
             prefixLength = 0
         }
+
+        let damageStart = prefixLength
 
         // Delete everything after the common prefix
         let deleteRange = NSRange(location: prefixLength, length: storage.length - prefixLength)
@@ -270,6 +283,8 @@ struct SelectableTextView: NSViewRepresentable {
         }
 
         coordinator.blockLengths = newLengths
+
+        return damageStart
     }
 
     // MARK: - Package-Internal Convenience Builder

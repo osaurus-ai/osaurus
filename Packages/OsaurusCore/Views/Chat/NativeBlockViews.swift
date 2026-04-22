@@ -43,8 +43,6 @@ final class NativeTypingIndicatorView: NSView {
     override init(frame: NSRect) {
         super.init(frame: frame)
         buildViews()
-        startAnimation()
-        observeMemory()
         observeModelLoading()
     }
 
@@ -53,6 +51,20 @@ final class NativeTypingIndicatorView: NSView {
     deinit {
         bounceTimer?.invalidate()
         memoryPollTimer?.invalidate()
+    }
+
+    /// Stop animations + memory polling when the cell scrolls offscreen or gets reused —
+    /// otherwise every live typing indicator instance keeps firing CABasicAnimation ticks
+    /// into WindowServer regardless of visibility.
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window != nil {
+            startAnimation()
+            observeMemory()
+        } else {
+            bounceTimer?.invalidate(); bounceTimer = nil
+            memoryPollTimer?.invalidate(); memoryPollTimer = nil
+        }
     }
 
     func configure(theme: any ThemeProtocol) {
@@ -270,6 +282,18 @@ final class NativePendingToolCallView: NSView {
 
     deinit {
         pulseTimer?.invalidate()
+    }
+
+    /// Stop the pulse when the cell leaves the window so recycled/offscreen
+    /// instances don't keep driving CATransaction ticks.
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window != nil {
+            startPulse()
+        } else {
+            pulseTimer?.invalidate()
+            pulseTimer = nil
+        }
     }
 
     // MARK: Configure
