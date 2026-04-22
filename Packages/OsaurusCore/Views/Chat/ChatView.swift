@@ -2381,6 +2381,7 @@ struct ChatView: View {
         // store directly, so only *its* body re-runs on per-token updates
         let displayName = windowState.cachedAgentDisplayName
         let lastAssistantTurnId = session.lastAssistantTurnIdForThread
+        let blocks = session.visibleBlocks
         let minimapMarkers = buildMinimapMarkers(from: blocks)
 
         return ZStack {
@@ -2543,7 +2544,7 @@ private struct IsolatedThreadView: View {
             onConfirmEdit: onConfirmEdit,
             onCancelEdit: onCancelEdit,
             onUserImagePreview: onUserImagePreview,
-            onVisibleTopUserTurnChanged,
+            onVisibleTopUserTurnChanged: onVisibleTopUserTurnChanged,
             scrollToTurnId: scrollToTurnId,
             scrollToTurnTrigger: scrollToTurnTrigger
         )
