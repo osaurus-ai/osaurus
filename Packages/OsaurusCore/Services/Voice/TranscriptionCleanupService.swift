@@ -69,7 +69,6 @@ public final class TranscriptionCleanupService {
                 temperature: 0.1,
                 maxTokens: max(256, trimmed.count),
                 timeout: Self.cleanupTimeout,
-                priority: .interactive
             )
             return postProcess(response: response, rawText: rawText, trimmed: trimmed, start: start, source: "core")
         } catch CoreModelError.modelUnavailable(let requested) {
@@ -99,7 +98,6 @@ public final class TranscriptionCleanupService {
         let params = GenerationParameters(
             temperature: 0.1,
             maxTokens: max(256, trimmed.count),
-            priority: .interactive
         )
 
         let start = Date()
