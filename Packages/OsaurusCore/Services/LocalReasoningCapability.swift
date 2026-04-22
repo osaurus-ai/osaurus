@@ -70,14 +70,28 @@ enum LocalReasoningCapability {
     /// Pure, testable template analysis.
     static func analyze(template: String) -> Capability {
         let lower = template.lowercased()
-        // Accept both the plain `<think>` tag family (Qwen, DeepSeek, most
-        // reasoning models) and the pipe-wrapped `<|think|>` family used by
-        // Gemma-4 (see its chat_template.jinja — "{{- '<|think|>' -}}").
-        // Before, `supportsThinking` was false for Gemma-4 because the match
-        // was against `<think>` only, which meant reasoning never got
-        // correlated even with `hasEnableThinkingKwarg: true`.
+        // Detect two distinct thinking-template conventions:
+        //
+        // 1. `<think>` / `</think>` — envelope tag pair used by Qwen 3,
+        //    Qwen 3.5, DeepSeek-R1, GLM-4.x, MiniMax, Nemotron, etc.
+        //    Reasoning content is wrapped BETWEEN the tags; vmlx's
+        //    `think_xml` parser peels them off into `.reasoning` events.
+        //
+        // 2. `<|think|>` — a MODE MARKER (not an envelope) used only by
+        //    Gemma-4. Its presence in the template's `enable_thinking`
+        //    branch signals "thinking mode is active" — the model then
+        //    emits actual CoT content wrapped in
+        //    `<|channel>thought\n…<channel|>` envelopes, which vmlx's
+        //    `harmony` parser catches. `<|think|>` has no closing pipe
+        //    form; checking for it here is purely a capability flag
+        //    ("this template supports thinking") to drive the UI toggle
+        //    and `AutoThinkingProfile` matching, NOT a parser hint.
+        //
+        // Before this case existed, `supportsThinking` was `false` for
+        // Gemma-4 because `<think>` never matched and
+        // `hasEnableThinkingKwarg: true` alone didn't flip the flag.
         let hasOpen = lower.contains("<think>") || lower.contains("<|think|>")
-        let hasClose = lower.contains("</think>") || lower.contains("<|/think|>")
+        let hasClose = lower.contains("</think>")
         let hasKwarg = lower.contains("enable_thinking")
         let injects =
             template.range(
