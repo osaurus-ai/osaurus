@@ -1135,11 +1135,6 @@ final class NativeMessageCellView: NSTableCellView {
         let thinkingLen: Int?
         if case .thinking(_, _, _) = block.kind { thinkingLen = text.count } else { thinkingLen = nil }
 
-        // `expandedIds` is the single source of truth. New thinking blocks in
-        // a streaming turn are seeded into the set by the coordinator on
-        // insertion (see `seedExpandedIdsForNewThinkingBlocks`) so the panel
-        // starts expanded without this code path needing to force it. which
-        // means the user's collapse tap is honored even mid stream
         let isExpanded = context.expandedIds.contains(block.id)
         tv.configure(
             thinking: text,
