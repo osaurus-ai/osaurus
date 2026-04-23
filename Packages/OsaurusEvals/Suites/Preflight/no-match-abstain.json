@@ -1,0 +1,18 @@
+{
+  "id": "preflight.no-match.gibberish",
+  "domain": "preflight",
+  "label": "gibberish • abstain on nonsense",
+  "query": "zzz_completely_nonexistent_capability_xyz_12345 ablubblub",
+  "fixtures": {
+    "preflightMode": "balanced"
+  },
+  "expect": {
+    "tools": {
+      "mustNotInclude": [
+        "browser_navigate",
+        "sandbox_exec",
+        "render_chart"
+      ]
+    }
+  }
+}

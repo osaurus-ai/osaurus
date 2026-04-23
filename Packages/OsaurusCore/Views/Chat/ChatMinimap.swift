@@ -47,7 +47,8 @@ struct ChatMinimap: View {
 
     private var containerBackground: some View {
         let shape = RoundedRectangle(cornerRadius: isExpanded ? 10 : 8, style: .continuous)
-        return shape
+        return
+            shape
             .fill(theme.secondaryBackground.opacity(isExpanded ? 0.96 : 0.70))
             .overlay(
                 shape.strokeBorder(

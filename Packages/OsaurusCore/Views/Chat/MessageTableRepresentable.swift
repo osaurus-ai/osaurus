@@ -915,7 +915,7 @@ extension MessageTableRepresentable {
                 if row < self.blockIds.count {
                     let bid = self.blockIds[row]
                     if let h = self.heightCache[bid], let noted = self.lastNotedHeight[bid],
-                       abs(h - noted) < 0.5
+                        abs(h - noted) < 0.5
                     {
                         ChatPerfTrace.shared.count("streamingHeightUpdate.skipped")
                         return
@@ -1160,26 +1160,27 @@ extension MessageTableRepresentable {
         /// we neutralize both before kicking off our animation.
         func scrollToTurn(_ turnId: UUID) {
             guard let tableView, let scrollView else { return }
-            
+
             // Prefer the user-message block; fall back to the turn's header.
             let userBlockId = "usermsg-\(turnId.uuidString)"
             let headerBlockId = "header-\(turnId.uuidString)"
-            let row = blockIds.firstIndex(of: userBlockId)
-            ?? blockIds.firstIndex(of: headerBlockId)
+            let row =
+                blockIds.firstIndex(of: userBlockId)
+                ?? blockIds.firstIndex(of: headerBlockId)
             guard let targetRow = row, targetRow < tableView.numberOfRows else { return }
-            
+
             // drop pinned to bottom so subsequent applyBlocks restore our
             // anchor instead of snapping back to bottom
             scrollAnchor.unpinFromBottom()
-            
+
             // mark the current assistant turn as already handled so the
             // new turn auto-scroll path doesn't fire mid-animation
             lastScrolledToTurnId = ctx.lastAssistantTurnId
-            
+
             let rowRect = tableView.rect(ofRow: targetRow)
             // Leave a little breathing room above the target.
             let targetY = max(0, rowRect.origin.y - 12)
-            
+
             NSAnimationContext.runAnimationGroup { ctx in
                 ctx.duration = 0.22
                 ctx.allowsImplicitAnimation = true
@@ -1188,14 +1189,14 @@ extension MessageTableRepresentable {
                 )
                 scrollView.reflectScrolledClipView(scrollView.contentView)
             }
-            
+
             // Schedule an active-marker refresh after the animation settles so
             // the minimap highlights the newly visible turn.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
                 self?.scheduleVisibleUserTurnUpdate()
             }
         }
-        
+
         /// Auto-expand newly inserted thinking blocks by recording their id in
         /// `expandedIds` (and the session store). A block counts as "new" if
         /// its id isn't in `oldLookup`. We only seed during the owning turn's

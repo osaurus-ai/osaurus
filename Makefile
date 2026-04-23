@@ -8,7 +8,7 @@ CONFIG := Release
 PROJECT := App/osaurus.xcodeproj
 DERIVED := build/DerivedData
 
-.PHONY: help cli app install-cli serve status test ci-test clean bench-setup bench-ingest bench-ingest-chunks bench-run bench
+.PHONY: help cli app install-cli serve status test ci-test clean bench-setup bench-ingest bench-ingest-chunks bench-run bench evals evals-report
 
 help:
 	@echo "Targets:"
@@ -22,6 +22,8 @@ help:
 	@echo "  bench-ingest-chunks Fast chunk-only backfill (no LLM, ~minutes)"
 	@echo "  bench-run           Run LOCOMO benchmark only (skip ingestion)"
 	@echo "  bench               Full ingest + run LOCOMO benchmark"
+	@echo "  evals               Run OsaurusEvals preflight suite (MODEL=, FILTER=, EVALS_SUITE=)"
+	@echo "  evals-report        Same as 'evals' but also writes JSON to EVALS_OUT (build/evals.json)"
 	@echo "  test           Run OsaurusCore package tests via 'swift test'"
 	@echo "  ci-test        Reproduce the CI test-core job locally (xcodebuild + xcbeautify)"
 	@echo "  clean          Remove DerivedData build output"
@@ -128,6 +130,33 @@ bench-run:
 		--batch-size $(BENCH_BATCH)
 
 bench: bench-ingest bench-run
+
+## ── OsaurusEvals (off-CI behaviour evals) ────────────────────────
+# Override on the command line, e.g.
+#   make evals MODEL=foundation
+#   make evals MODEL=openai/gpt-4o-mini FILTER=browser
+#   make evals-report EVALS_OUT=reports/today.json
+# Default model is `auto` (whatever ChatConfigurationStore is set to);
+# see Packages/OsaurusEvals/README.md for the full --model grammar.
+
+EVALS_SUITE ?= Packages/OsaurusEvals/Suites/Preflight
+EVALS_OUT ?= build/evals.json
+
+evals:
+	@echo "Running OsaurusEvals against $(EVALS_SUITE)…"
+	swift run --package-path Packages/OsaurusEvals osaurus-evals run \
+		--suite $(EVALS_SUITE) \
+		$(if $(MODEL),--model $(MODEL),) \
+		$(if $(FILTER),--filter $(FILTER),)
+
+evals-report:
+	@mkdir -p $(dir $(EVALS_OUT))
+	swift run --package-path Packages/OsaurusEvals osaurus-evals run \
+		--suite $(EVALS_SUITE) \
+		$(if $(MODEL),--model $(MODEL),) \
+		$(if $(FILTER),--filter $(FILTER),) \
+		--out $(EVALS_OUT)
+	@echo "Wrote $(EVALS_OUT)"
 
 ## ── Housekeeping ─────────────────────────────────────────────────
 

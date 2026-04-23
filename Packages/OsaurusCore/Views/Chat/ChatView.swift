@@ -2387,7 +2387,7 @@ struct ChatView: View {
         let minimapMarkers = buildMinimapMarkers(from: blocks)
 
         return ZStack {
-           VStack(spacing: 8) {
+            VStack(spacing: 8) {
                 agentInlineBlocks
                 IsolatedThreadView(
                     store: session.visibleBlocksStore,
@@ -2409,13 +2409,12 @@ struct ChatView: View {
                     onCancelEdit: cancelEditing,
                     onUserImagePreview: openUserAttachmentPreview(attachmentId:),
                     onVisibleTopUserTurnChanged: { turnId in
-                      activeMinimapTurnId = turnId
+                        activeMinimapTurnId = turnId
                     },
                     scrollToTurnId: scrollToTurnId,
                     scrollToTurnTrigger: scrollToTurnTrigger
                 )
             }
-
 
             // Minimap overlay — sits at vertical center, right edge
             if minimapMarkers.count >= 2 {

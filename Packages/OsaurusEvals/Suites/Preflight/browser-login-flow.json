@@ -1,0 +1,22 @@
+{
+  "id": "preflight.browser.login-flow",
+  "domain": "preflight",
+  "label": "browser • login implies open_login companion",
+  "query": "can you sign me in to my github account?",
+  "fixtures": {
+    "preflightMode": "balanced",
+    "requirePlugins": ["osaurus.browser"]
+  },
+  "expect": {
+    "tools": {
+      "mustInclude": ["browser_navigate"]
+    },
+    "companions": {
+      "skills": ["osaurus-browser"],
+      "siblings": {
+        "minOverlap": 1,
+        "candidates": ["browser_open_login"]
+      }
+    }
+  }
+}

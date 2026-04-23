@@ -150,7 +150,8 @@ enum PreflightCompanions {
             return (entry, overlap)
         }
 
-        let topByScore = scored
+        let topByScore =
+            scored
             .sorted { lhs, rhs in
                 if lhs.score != rhs.score { return lhs.score > rhs.score }
                 return lhs.entry.name < rhs.entry.name
@@ -160,7 +161,8 @@ enum PreflightCompanions {
         // Re-sort the kept slice alphabetically so prompt rendering is
         // byte-stable independent of dictionary ordering inside the
         // catalog source.
-        return topByScore
+        return
+            topByScore
             .map { ToolTeaser(name: $0.entry.name, description: $0.entry.description) }
             .sorted { $0.name < $1.name }
     }

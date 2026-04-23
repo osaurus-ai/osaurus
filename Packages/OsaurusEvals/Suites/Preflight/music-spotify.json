@@ -1,0 +1,14 @@
+{
+  "id": "preflight.music.spotify-play",
+  "domain": "preflight",
+  "label": "music • spotify pick (multi-plugin smoke)",
+  "query": "play some lo-fi beats on spotify",
+  "fixtures": {
+    "preflightMode": "balanced"
+  },
+  "expect": {
+    "tools": {
+      "mustNotInclude": ["browser_navigate"]
+    }
+  }
+}

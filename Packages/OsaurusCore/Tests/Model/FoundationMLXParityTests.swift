@@ -72,7 +72,8 @@ struct FoundationMLXParityTests {
         let history = Self.sampleHistory()
         let foundationPrompt = OpenAIPromptBuilder.buildPrompt(from: history)
         let mlxMapped = ModelRuntime.mapOpenAIChatToMLX(history)
-        let mlxToolCallNames = mlxMapped
+        let mlxToolCallNames =
+            mlxMapped
             .flatMap { $0.toolCalls ?? [] }
             .map(\.function.name)
 

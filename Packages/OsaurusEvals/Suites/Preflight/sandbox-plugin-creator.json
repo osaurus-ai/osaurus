@@ -1,0 +1,17 @@
+{
+  "id": "preflight.sandbox.plugin-creator-noise-floor",
+  "domain": "preflight",
+  "label": "sandbox • picker doesn't pick non-existent plugin tools",
+  "query": "I need a tool to call the AcmeWidgets API",
+  "fixtures": {
+    "preflightMode": "balanced"
+  },
+  "expect": {
+    "tools": {
+      "mustNotInclude": [
+        "acmewidgets_api",
+        "acmewidgets_call"
+      ]
+    }
+  }
+}

@@ -17,17 +17,17 @@ public final class TranscriptionCleanupService {
     public static let shared = TranscriptionCleanupService()
 
     private static let systemPrompt = """
-    You clean up voice-to-text transcripts. Remove only non-lexical hesitation \
-    sounds: "uh", "um", "uhh", "umm", "mm", "mmm", "er", "erm", "ah", "hmm" when \
-    they appear as standalone fillers. Also remove stuttered word repetitions \
-    (e.g. "I I went" → "I went") and immediate self-corrections (e.g. "go to — \
-    I mean visit the store" → "visit the store"). Fix punctuation and \
-    capitalization. Do NOT remove real words like "like", "you know", "I mean", \
-    "so", "well", "right", "actually" — these can carry meaning and the speaker \
-    may have intended them. Preserve the speaker's wording and meaning exactly \
-    — do not paraphrase, summarize, rephrase, or add content. Return only the \
-    cleaned transcript with no preamble, quotes, or commentary.
-    """
+        You clean up voice-to-text transcripts. Remove only non-lexical hesitation \
+        sounds: "uh", "um", "uhh", "umm", "mm", "mmm", "er", "erm", "ah", "hmm" when \
+        they appear as standalone fillers. Also remove stuttered word repetitions \
+        (e.g. "I I went" → "I went") and immediate self-corrections (e.g. "go to — \
+        I mean visit the store" → "visit the store"). Fix punctuation and \
+        capitalization. Do NOT remove real words like "like", "you know", "I mean", \
+        "so", "well", "right", "actually" — these can carry meaning and the speaker \
+        may have intended them. Preserve the speaker's wording and meaning exactly \
+        — do not paraphrase, summarize, rephrase, or add content. Return only the \
+        cleaned transcript with no preamble, quotes, or commentary.
+        """
 
     private static let minWordsForCleanup = 3
     private static let minHallucinationRatio: Double = 0.3
@@ -51,12 +51,12 @@ public final class TranscriptionCleanupService {
 
         // wrap input in a delimiter so the model treats it as data not instructions
         let userPrompt = """
-        Clean up the following transcript. Return only the cleaned text.
+            Clean up the following transcript. Return only the cleaned text.
 
-        <transcript>
-        \(trimmed)
-        </transcript>
-        """
+            <transcript>
+            \(trimmed)
+            </transcript>
+            """
 
         // try the user's configured core model first.
         let coreModelId = ChatConfigurationStore.load().coreModelIdentifier ?? "<nil>"
@@ -76,7 +76,9 @@ public final class TranscriptionCleanupService {
             return await tryLocalFallback(userPrompt: userPrompt, rawText: rawText, trimmed: trimmed)
         } catch {
             let elapsed = Date().timeIntervalSince(start)
-            debugLog("[cleanup] ERROR after \(String(format: "%.2f", elapsed))s: \(error.localizedDescription) — using raw")
+            debugLog(
+                "[cleanup] ERROR after \(String(format: "%.2f", elapsed))s: \(error.localizedDescription) — using raw"
+            )
             return rawText
         }
     }
@@ -121,16 +123,21 @@ public final class TranscriptionCleanupService {
             return postProcess(response: response, rawText: rawText, trimmed: trimmed, start: start, source: "mlx")
         } catch {
             let elapsed = Date().timeIntervalSince(start)
-            debugLog("[cleanup] FALLBACK ERROR after \(String(format: "%.2f", elapsed))s: \(error.localizedDescription) — using raw")
+            debugLog(
+                "[cleanup] FALLBACK ERROR after \(String(format: "%.2f", elapsed))s: \(error.localizedDescription) — using raw"
+            )
             return rawText
         }
     }
 
     // MARK: - Shared post-processing
 
-    private func postProcess(response: String, rawText: String, trimmed: String, start: Date, source: String) -> String {
+    private func postProcess(response: String, rawText: String, trimmed: String, start: Date, source: String) -> String
+    {
         let elapsed = Date().timeIntervalSince(start)
-        debugLog("[cleanup] \(source) response in \(String(format: "%.2f", elapsed))s (\(response.count) chars): \(response)")
+        debugLog(
+            "[cleanup] \(source) response in \(String(format: "%.2f", elapsed))s (\(response.count) chars): \(response)"
+        )
 
         // strip streaming sentinel (\u{FFFE}) and anything that follows — MLX emits
         // trailing metadata like "\u{FFFE}stats:28;44.0129" after the actual text.
@@ -147,9 +154,11 @@ public final class TranscriptionCleanupService {
             return rawText
         }
         if trimmed.count > 50,
-           Double(cleaned.count) / Double(trimmed.count) < Self.minHallucinationRatio
+            Double(cleaned.count) / Double(trimmed.count) < Self.minHallucinationRatio
         {
-            debugLog("[cleanup] FALLBACK: hallucination guard (cleaned \(cleaned.count) / raw \(trimmed.count) = \(String(format: "%.2f", Double(cleaned.count) / Double(trimmed.count)))), using raw")
+            debugLog(
+                "[cleanup] FALLBACK: hallucination guard (cleaned \(cleaned.count) / raw \(trimmed.count) = \(String(format: "%.2f", Double(cleaned.count) / Double(trimmed.count)))), using raw"
+            )
             return rawText
         }
         debugLog("[cleanup] SUCCESS (\(source)): returning cleaned text")

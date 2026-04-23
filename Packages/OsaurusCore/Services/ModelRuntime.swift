@@ -742,23 +742,27 @@ actor ModelRuntime {
                 let toolCalls = toMLXToolCalls(m.tool_calls)
                 // Skip fully-empty assistant turns (no content AND no tool calls).
                 if content.isEmpty && (toolCalls?.isEmpty ?? true) { continue }
-                out.append(MLXLMCommon.Chat.Message(
-                    role: .assistant,
-                    content: content,
-                    images: images,
-                    videos: [],
-                    toolCalls: toolCalls,
-                    toolCallId: nil
-                ))
+                out.append(
+                    MLXLMCommon.Chat.Message(
+                        role: .assistant,
+                        content: content,
+                        images: images,
+                        videos: [],
+                        toolCalls: toolCalls,
+                        toolCallId: nil
+                    )
+                )
             case "tool":
-                out.append(MLXLMCommon.Chat.Message(
-                    role: .tool,
-                    content: m.content ?? "",
-                    images: images,
-                    videos: [],
-                    toolCalls: nil,
-                    toolCallId: m.tool_call_id
-                ))
+                out.append(
+                    MLXLMCommon.Chat.Message(
+                        role: .tool,
+                        content: m.content ?? "",
+                        images: images,
+                        videos: [],
+                        toolCalls: nil,
+                        toolCallId: m.tool_call_id
+                    )
+                )
             default:
                 out.append(.init(role: .user, content: m.content ?? "", images: images))
             }
@@ -778,7 +782,8 @@ actor ModelRuntime {
             let argsData = tc.function.arguments.data(using: .utf8) ?? Data()
             let args: [String: MLXLMCommon.JSONValue] =
                 (try? JSONDecoder().decode(
-                    [String: MLXLMCommon.JSONValue].self, from: argsData
+                    [String: MLXLMCommon.JSONValue].self,
+                    from: argsData
                 )) ?? [:]
             return MLXLMCommon.ToolCall(
                 function: .init(name: tc.function.name, arguments: args)

@@ -1,0 +1,27 @@
+{
+  "id": "preflight.browser.amazon-orders",
+  "domain": "preflight",
+  "label": "browser • amazon orders",
+  "query": "can you help me check my orders on amazon?",
+  "fixtures": {
+    "preflightMode": "balanced",
+    "requirePlugins": ["osaurus.browser"]
+  },
+  "expect": {
+    "tools": {
+      "mustInclude": ["browser_navigate"]
+    },
+    "companions": {
+      "skills": ["osaurus-browser"],
+      "siblings": {
+        "minOverlap": 2,
+        "candidates": [
+          "browser_open_login",
+          "browser_do",
+          "browser_console_messages",
+          "browser_screenshot"
+        ]
+      }
+    }
+  }
+}

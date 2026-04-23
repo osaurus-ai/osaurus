@@ -137,7 +137,9 @@ struct EditableTextView: NSViewRepresentable {
     }
 
     private func syncScrollerVisibility(
-        _ textView: CustomNSTextView, scrollView: NSScrollView, coord: Coordinator
+        _ textView: CustomNSTextView,
+        scrollView: NSScrollView,
+        coord: Coordinator
     ) {
         // contentHeight runs ensureLayout (expensive) — only re-check when something
         // that could change scroller state has changed.
@@ -258,7 +260,9 @@ final class CustomNSTextView: NSTextView {
     // MARK: IME composition
 
     override func setMarkedText(
-        _ string: Any, selectedRange: NSRange, replacementRange: NSRange
+        _ string: Any,
+        selectedRange: NSRange,
+        replacementRange: NSRange
     ) {
         super.setMarkedText(string, selectedRange: selectedRange, replacementRange: replacementRange)
         notifyMarkedTextChanged(hasMarkedText())

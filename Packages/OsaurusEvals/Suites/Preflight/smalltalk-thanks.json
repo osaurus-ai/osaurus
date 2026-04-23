@@ -1,0 +1,17 @@
+{
+  "id": "preflight.smalltalk.thanks",
+  "domain": "preflight",
+  "label": "smalltalk • abstain (NONE) regression",
+  "query": "thanks, that's perfect",
+  "fixtures": {
+    "preflightMode": "balanced"
+  },
+  "expect": {
+    "tools": {
+      "mustNotInclude": [
+        "browser_navigate",
+        "sandbox_exec"
+      ]
+    }
+  }
+}

@@ -1087,7 +1087,8 @@ final class NativeMessageCellView: NSTableCellView {
         let targetBg: CGColor?
         let targetRadius: CGFloat
         if role == .assistant, let bubbleColor = context.theme.assistantBubbleColor {
-            targetBg = NSColor(bubbleColor)
+            targetBg =
+                NSColor(bubbleColor)
                 .withAlphaComponent(context.theme.assistantBubbleOpacity).cgColor
             targetRadius = 12
         } else {

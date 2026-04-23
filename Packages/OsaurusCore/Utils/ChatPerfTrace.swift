@@ -43,18 +43,18 @@ final class ChatPerfTrace: @unchecked Sendable {
     /// timestamping, and file I/O have zero runtime cost in shipped binaries.
     func begin(_ label: String) {
         #if DEBUG
-        lock.lock()
-        let hadPrevious = startedAt != nil
-        lock.unlock()
-        if hadPrevious { end() }
+            lock.lock()
+            let hadPrevious = startedAt != nil
+            lock.unlock()
+            if hadPrevious { end() }
 
-        lock.lock()
-        self.label = label
-        self.startedAt = CFAbsoluteTimeGetCurrent()
-        self.counters.removeAll(keepingCapacity: true)
-        self.durations.removeAll(keepingCapacity: true)
-        self.peaks.removeAll(keepingCapacity: true)
-        lock.unlock()
+            lock.lock()
+            self.label = label
+            self.startedAt = CFAbsoluteTimeGetCurrent()
+            self.counters.removeAll(keepingCapacity: true)
+            self.durations.removeAll(keepingCapacity: true)
+            self.peaks.removeAll(keepingCapacity: true)
+            lock.unlock()
         #endif
     }
 
@@ -62,27 +62,27 @@ final class ChatPerfTrace: @unchecked Sendable {
     /// A no-op if `begin()` was never called. Debug-only.
     func end() {
         #if DEBUG
-        lock.lock()
-        guard let start = startedAt else { lock.unlock(); return }
-        let label = self.label
-        let totalSec = CFAbsoluteTimeGetCurrent() - start
-        let counters = self.counters
-        let durations = self.durations
-        let peaks = self.peaks
-        self.startedAt = nil
-        self.label = ""
-        self.counters.removeAll(keepingCapacity: true)
-        self.durations.removeAll(keepingCapacity: true)
-        self.peaks.removeAll(keepingCapacity: true)
-        lock.unlock()
+            lock.lock()
+            guard let start = startedAt else { lock.unlock(); return }
+            let label = self.label
+            let totalSec = CFAbsoluteTimeGetCurrent() - start
+            let counters = self.counters
+            let durations = self.durations
+            let peaks = self.peaks
+            self.startedAt = nil
+            self.label = ""
+            self.counters.removeAll(keepingCapacity: true)
+            self.durations.removeAll(keepingCapacity: true)
+            self.peaks.removeAll(keepingCapacity: true)
+            lock.unlock()
 
-        emit(
-            label: label,
-            totalSec: totalSec,
-            counters: counters,
-            durations: durations,
-            peaks: peaks
-        )
+            emit(
+                label: label,
+                totalSec: totalSec,
+                counters: counters,
+                durations: durations,
+                peaks: peaks
+            )
         #endif
     }
 
@@ -93,13 +93,13 @@ final class ChatPerfTrace: @unchecked Sendable {
     /// get an empty body that -O optimizes to a no-op call.
     func count(_ key: String, _ n: Int = 1) {
         #if DEBUG
-        lock.lock()
-        // Only record when a trace is active; avoids polluting counters
-        // between streams.
-        if startedAt != nil {
-            counters[key, default: 0] += n
-        }
-        lock.unlock()
+            lock.lock()
+            // Only record when a trace is active; avoids polluting counters
+            // between streams.
+            if startedAt != nil {
+                counters[key, default: 0] += n
+            }
+            lock.unlock()
         #endif
     }
 
@@ -109,19 +109,19 @@ final class ChatPerfTrace: @unchecked Sendable {
     @discardableResult
     func time<T>(_ key: String, _ block: () -> T) -> T {
         #if DEBUG
-        let t0 = CFAbsoluteTimeGetCurrent()
-        let result = block()
-        let dt = CFAbsoluteTimeGetCurrent() - t0
-        lock.lock()
-        if startedAt != nil {
-            durations[key, default: 0] += dt
-            if dt > (peaks[key] ?? 0) { peaks[key] = dt }
-            counters[key + ".n", default: 0] += 1
-        }
-        lock.unlock()
-        return result
+            let t0 = CFAbsoluteTimeGetCurrent()
+            let result = block()
+            let dt = CFAbsoluteTimeGetCurrent() - t0
+            lock.lock()
+            if startedAt != nil {
+                durations[key, default: 0] += dt
+                if dt > (peaks[key] ?? 0) { peaks[key] = dt }
+                counters[key + ".n", default: 0] += 1
+            }
+            lock.unlock()
+            return result
         #else
-        return block()
+            return block()
         #endif
     }
 
@@ -164,7 +164,10 @@ final class ChatPerfTrace: @unchecked Sendable {
                 lines.append(
                     String(
                         format: "  %@ total=%7.1f ms  peak=%6.2f ms  mean=%6.2f ms",
-                        padded, total, peak, mean
+                        padded,
+                        total,
+                        peak,
+                        mean
                     )
                 )
             }
