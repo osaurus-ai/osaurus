@@ -20,9 +20,23 @@ else
   RELEASE_FLAGS+=(--title "Osaurus ${VERSION}")
 fi
 
+RELEASE_ASSETS=(
+  "build_output/Osaurus-${VERSION}.dmg"
+  "build_output/Osaurus.dmg"
+)
+
+# Attach dSYMs if package_dsyms.sh produced them. Required for symbolicating
+# field crash reports — without the matching dSYM, the binary's UUID becomes
+# unrecoverable as soon as the build runner is recycled.
+DSYM_ZIP="build_output/Osaurus-${VERSION}-dSYMs.zip"
+if [[ -f "${DSYM_ZIP}" ]]; then
+  RELEASE_ASSETS+=("${DSYM_ZIP}")
+else
+  echo "::warning::${DSYM_ZIP} not found — release will ship without dSYMs."
+fi
+
 gh release create "${VERSION}" \
-  "build_output/Osaurus-${VERSION}.dmg" \
-  "build_output/Osaurus.dmg" \
+  "${RELEASE_ASSETS[@]}" \
   --repo "${PUBLIC_REPO}" \
   --notes-file RELEASE_NOTES.md \
   "${RELEASE_FLAGS[@]}"

@@ -67,6 +67,9 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: bash scripts/build/notarize.sh
 
+      - name: Package dSYMs
+        run: bash scripts/build/package_dsyms.sh
+
       - name: Get Release Notes from Draft
         id: changelog
         env:
@@ -104,6 +107,7 @@ jobs:
           path: |
             build_output/Osaurus-${{ env.VERSION }}.dmg
             build_output/Osaurus.dmg
+            build_output/Osaurus-${{ env.VERSION }}-dSYMs.zip
             updates/appcast.xml
           if-no-files-found: warn
 
