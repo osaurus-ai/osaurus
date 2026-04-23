@@ -68,8 +68,26 @@ struct PreflightCapabilityItem: Equatable, Sendable {
 struct PreflightResult: Sendable {
     let toolSpecs: [Tool]
     let items: [PreflightCapabilityItem]
+    /// Phase-2 "teaser" capabilities the model can pull in via
+    /// `capabilities_load`. Derived from `toolSpecs` by grouping picks back
+    /// to their plugin and surfacing the plugin's enabled sibling tools and
+    /// bundled skill. Empty when no pick belongs to a plugin or the plugin
+    /// has no other enabled tools / skill. Cached on `SessionToolState` so
+    /// the rendered "Plugin Companions" prompt section is byte-stable
+    /// across turns (KV-cache friendly).
+    let companions: [PluginCompanion]
 
     static let empty = PreflightResult(toolSpecs: [], items: [])
+
+    init(
+        toolSpecs: [Tool],
+        items: [PreflightCapabilityItem],
+        companions: [PluginCompanion] = []
+    ) {
+        self.toolSpecs = toolSpecs
+        self.items = items
+        self.companions = companions
+    }
 }
 
 /// Per-session record of the initial preflight selection plus every tool the
@@ -248,17 +266,27 @@ enum PreflightCapabilitySearch {
         )
         guard !selectedNames.isEmpty else { return .empty }
 
-        let (toolSpecs, items) = await MainActor.run {
+        let (toolSpecs, items, companions) = await MainActor.run {
             let specs = ToolRegistry.shared.specs(forTools: selectedNames)
             let items = selectedNames.compactMap { name -> PreflightCapabilityItem? in
                 guard let desc = nameToDesc[name] else { return nil }
                 return .init(type: .tool, name: name, description: desc)
             }
-            return (specs, items)
+            // Phase 2: derive plugin companions (sibling tools + plugin
+            // skill) for any pick that belongs to a plugin/provider. The
+            // model pulls these in on demand via `capabilities_load`,
+            // so they don't inflate the schema this turn.
+            let companions = PreflightCompanions.derive(
+                selectedNames: selectedNames,
+                query: query
+            )
+            return (specs, items, companions)
         }
 
-        logger.info("Pre-flight loaded \(toolSpecs.count) tools")
-        return PreflightResult(toolSpecs: toolSpecs, items: items)
+        logger.info(
+            "Pre-flight loaded \(toolSpecs.count) tools, \(companions.count) companion plugin(s)"
+        )
+        return PreflightResult(toolSpecs: toolSpecs, items: items, companions: companions)
     }
 
     /// Snapshot the dynamic-tool catalog and its `tool → group` map from the

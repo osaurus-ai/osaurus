@@ -333,5 +333,6 @@ struct PreflightCapabilitySearchTests {
         )
         #expect(result.items.isEmpty)
         #expect(result.toolSpecs.isEmpty)
+        #expect(result.companions.isEmpty)
     }
 }

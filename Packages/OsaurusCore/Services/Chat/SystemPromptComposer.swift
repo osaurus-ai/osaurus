@@ -231,6 +231,31 @@ public struct SystemPromptComposer: Sendable {
                 .subtracting([BuiltinSandboxTools.initPendingToolName])
         }
 
+        // Plugin Companions: when preflight picked a tool from a plugin,
+        // surface the plugin's *other* enabled tools and bundled skill as
+        // a compact teaser. The model uses `capabilities_load` to pull
+        // them in on demand — so the schema stays small this turn but
+        // the model knows what's reachable. Gated on auto-mode (preflight
+        // only runs in auto) and on the presence of `capabilities_load`
+        // (the section instructs the model to call it). Rendering itself
+        // skips when `companions` is empty, so this just decides whether
+        // to even ask for a section.
+        if toolMode == .auto,
+            !effectiveToolsOff,
+            !preflight.companions.isEmpty,
+            tools.contains(where: { $0.function.name == "capabilities_load" }),
+            let companionsSection = PreflightCompanions.render(preflight.companions)
+        {
+            comp.append(
+                .dynamic(
+                    id: "pluginCompanions",
+                    label: "Plugin Companions",
+                    content: companionsSection
+                )
+            )
+            trace?.set("pluginCompanions", String(preflight.companions.count))
+        }
+
         // Agent-loop guidance: short cheat-sheet for the chat-layer-
         // intercepted tools (todo / complete / clarify / share_artifact).
         // Gated on at least one of those names appearing in the resolved
