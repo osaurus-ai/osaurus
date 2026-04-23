@@ -744,6 +744,19 @@ private struct APIReferenceTabContent: View {
         "http://\(server.localNetworkAddress):\(server.port)"
     }
 
+    /// URL used for the in-panel "Test endpoint" calls. Always points at the
+    /// loopback address, even when the server is exposed to the LAN, because
+    /// the request is issued from the osaurus UI process on the same machine
+    /// and the server's auth gate trusts loopback without a Bearer token
+    /// (see `HTTPHandler`'s `isLoopback` check). Using `localNetworkAddress`
+    /// here sent self-test requests through the authenticated path, where
+    /// the UI has no access key to attach, and the panel failed with
+    /// `{"error":{"message":"Invalid access key: Unrecognized token format"}}`
+    /// once exposure was enabled (issue #596).
+    private var testURL: String {
+        "http://127.0.0.1:\(server.port)"
+    }
+
     private var filteredGroups: [(category: APIEndpoint.EndpointCategory, endpoints: [APIEndpoint])] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !query.isEmpty else { return APIEndpoint.groupedEndpoints }
@@ -999,7 +1012,7 @@ private struct APIReferenceTabContent: View {
         Task {
             let startTime = Date()
             do {
-                let url = URL(string: "\(serverURL)\(endpoint.path)")!
+                let url = URL(string: "\(testURL)\(endpoint.path)")!
                 let data: Data
                 let response: URLResponse
 
@@ -1037,7 +1050,7 @@ private struct APIReferenceTabContent: View {
         Task {
             let startTime = Date()
             do {
-                let url = URL(string: "\(serverURL)\(endpoint.path)")!
+                let url = URL(string: "\(testURL)\(endpoint.path)")!
                 var request = URLRequest(url: url)
                 request.httpMethod = "POST"
 
