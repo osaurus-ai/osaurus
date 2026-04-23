@@ -6,8 +6,8 @@
 //  and auto-sizing similar to TextEditor.
 //
 
-import SwiftUI
 import AppKit
+import SwiftUI
 
 struct EditableTextView: NSViewRepresentable {
     @Binding var text: String
@@ -25,6 +25,8 @@ struct EditableTextView: NSViewRepresentable {
     var onArrowDown: (() -> Bool)? = nil
     /// Called on Escape key. Return true to consume the event.
     var onEscape: (() -> Bool)? = nil
+
+    // MARK: - NSViewRepresentable
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -44,7 +46,6 @@ struct EditableTextView: NSViewRepresentable {
         textView.delegate = context.coordinator
         textView.maxHeight = maxHeight
 
-        // Configuration
         textView.isRichText = false
         textView.isEditable = true
         textView.isSelectable = true
@@ -52,7 +53,7 @@ struct EditableTextView: NSViewRepresentable {
         textView.drawsBackground = false
         textView.backgroundColor = .clear
 
-        // Layout - align with placeholder padding (.leading: 6, .top: 2)
+        // Align with placeholder padding (.leading: 6, .top: 2)
         textView.textContainer?.lineFragmentPadding = 0
         textView.textContainer?.widthTracksTextView = true
         textView.textContainerInset = NSSize(width: 6, height: 2)
@@ -60,45 +61,54 @@ struct EditableTextView: NSViewRepresentable {
         textView.isHorizontallyResizable = false
         textView.autoresizingMask = [.width]
 
-        // Disable automatic quotes/dashes/replacements to behave like code editor/raw input
+        // Behave like a code editor / raw input.
         textView.isAutomaticQuoteSubstitutionEnabled = false
         textView.isAutomaticDashSubstitutionEnabled = false
         textView.isAutomaticTextReplacementEnabled = false
 
         let coordinator = context.coordinator
-        textView.onMarkedTextChanged = { [weak coordinator] composing in
-            coordinator?.parent.isComposing = composing
-        }
-        textView.onFocusChanged = { [weak coordinator] focused in
-            coordinator?.parent.isFocused = focused
-        }
+        textView.onMarkedTextChanged = { [weak coordinator] in coordinator?.parent.isComposing = $0 }
+        textView.onFocusChanged = { [weak coordinator] in coordinator?.parent.isFocused = $0 }
 
         scrollView.documentView = textView
-
         return scrollView
     }
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         context.coordinator.parent = self
         guard let textView = scrollView.documentView as? CustomNSTextView else { return }
-
-        // only update max height when it changes — avoids triggering NSTextView layout
-        if textView.maxHeight != maxHeight {
-            textView.maxHeight = maxHeight
-            textView.invalidateIntrinsicContentSize()
-            scrollView.invalidateIntrinsicContentSize()
-        }
-
-        // only update text if it differs — avoids cursor-position reset on every parent re-render
-        if textView.string != text {
-            textView.string = text
-            textView.invalidateIntrinsicContentSize()
-            scrollView.invalidateIntrinsicContentSize()
-        }
-
-        // guard styling assignments — each one invalidates the NSTextView layout and calls
-        // needsDisplay even when the value hasn't changed
         let coord = context.coordinator
+
+        syncMaxHeight(textView, scrollView: scrollView)
+        syncText(textView, scrollView: scrollView)
+        syncStyling(textView, coord: coord)
+        syncFocus(textView)
+        syncScrollerVisibility(textView, scrollView: scrollView, coord: coord)
+    }
+
+    // MARK: - updateNSView helpers
+
+    private func syncMaxHeight(_ textView: CustomNSTextView, scrollView: NSScrollView) {
+        // Avoids triggering NSTextView layout when nothing changed.
+        guard textView.maxHeight != maxHeight else { return }
+        textView.maxHeight = maxHeight
+        textView.invalidateIntrinsicContentSize()
+        scrollView.invalidateIntrinsicContentSize()
+    }
+
+    private func syncText(_ textView: CustomNSTextView, scrollView: NSScrollView) {
+        // Skip if unchanged (avoids cursor-position reset on every parent re-render).
+        // Never overwrite while an IME composition is active: assigning `string`
+        // unmarks the marked text and breaks CJK input.
+        guard textView.string != text, !textView.hasMarkedText() else { return }
+        textView.string = text
+        textView.invalidateIntrinsicContentSize()
+        scrollView.invalidateIntrinsicContentSize()
+    }
+
+    private func syncStyling(_ textView: CustomNSTextView, coord: Coordinator) {
+        // Each assignment invalidates layout / triggers needsDisplay even when unchanged,
+        // so we cache the last-applied value and only write on a real diff.
         if coord.lastFontSize != fontSize {
             textView.font = .systemFont(ofSize: fontSize)
             coord.lastFontSize = fontSize
@@ -111,33 +121,42 @@ struct EditableTextView: NSViewRepresentable {
             textView.insertionPointColor = NSColor(cursorColor)
             coord.lastCursorColor = cursorColor
         }
+    }
 
-        // handle focus
-        DispatchQueue.main.async {
-            let isFirstResponder = textView.window?.firstResponder == textView
-            if isFocused && !isFirstResponder {
-                textView.window?.makeFirstResponder(textView)
-            } else if !isFocused && isFirstResponder {
-                textView.window?.makeFirstResponder(nil)
+    private func syncFocus(_ textView: CustomNSTextView) {
+        let wantsFocus = isFocused
+        DispatchQueue.main.async { [weak textView] in
+            guard let textView, let window = textView.window else { return }
+            let isFirstResponder = window.firstResponder == textView
+            if wantsFocus, !isFirstResponder {
+                window.makeFirstResponder(textView)
+            } else if !wantsFocus, isFirstResponder {
+                window.makeFirstResponder(nil)
             }
         }
-
-        // only check scroller visibility and tile when max height changes or text changes —
-        // contentHeight runs ensureLayout which is expensive; scroller state cannot change
-        // without text or maxHeight changing
-        if coord.lastScrollerMaxHeight != maxHeight || coord.lastScrollerText != text {
-            let needsScroller = textView.contentHeight > maxHeight
-            scrollView.verticalScroller?.isHidden = !needsScroller
-            scrollView.tile()
-            coord.lastScrollerMaxHeight = maxHeight
-            coord.lastScrollerText = text
-        }
     }
+
+    private func syncScrollerVisibility(
+        _ textView: CustomNSTextView, scrollView: NSScrollView, coord: Coordinator
+    ) {
+        // contentHeight runs ensureLayout (expensive) — only re-check when something
+        // that could change scroller state has changed.
+        guard coord.lastScrollerMaxHeight != maxHeight || coord.lastScrollerText != text else {
+            return
+        }
+        let needsScroller = textView.contentHeight > maxHeight
+        scrollView.verticalScroller?.isHidden = !needsScroller
+        scrollView.tile()
+        coord.lastScrollerMaxHeight = maxHeight
+        coord.lastScrollerText = text
+    }
+
+    // MARK: - Coordinator
 
     class Coordinator: NSObject, NSTextViewDelegate {
         var parent: EditableTextView
 
-        // cached appearance values — guards against needsDisplay on every parent re-render
+        // Cached appearance values — guards against needsDisplay on every parent re-render.
         var lastFontSize: CGFloat = 0
         var lastTextColor: Color = .clear
         var lastCursorColor: Color = .clear
@@ -150,19 +169,16 @@ struct EditableTextView: NSViewRepresentable {
 
         func textDidChange(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView else { return }
-            parent.text = textView.string
-            // Invalidate intrinsic size to trigger resize
-            if let customTextView = textView as? CustomNSTextView {
-                customTextView.invalidateIntrinsicContentSize()
+            // Skip while an IME composition is active; the binding is pushed once the
+            // composition commits (next textDidChange after unmarkText) or via textDidEndEditing.
+            // Propagating mid-composition would re-enter updateNSView and clobber the
+            // marked text, breaking CJK input.
+            if !textView.hasMarkedText() {
+                parent.text = textView.string
             }
-            if let scrollView = textView.enclosingScrollView {
-                scrollView.invalidateIntrinsicContentSize()
-            }
-        }
-
-        func textViewDidChangeSelection(_ notification: Notification) {
-            // selection changes (cursor moves) do not affect text content or view size —
-            // no-op here; text sync and size invalidation are both handled in textDidChange.
+            // The textView's intrinsic size is already invalidated by `didChangeText` —
+            // only the enclosing scrollView needs a nudge so SwiftUI re-measures.
+            textView.enclosingScrollView?.invalidateIntrinsicContentSize()
         }
 
         func textDidEndEditing(_ notification: Notification) {
@@ -170,100 +186,131 @@ struct EditableTextView: NSViewRepresentable {
         }
 
         func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
-            // Arrow key and Escape interception (consumed only when a handler is set and returns true)
-            if commandSelector == #selector(NSResponder.moveUp(_:)) {
-                if let handler = parent.onArrowUp, handler() { return true }
+            switch commandSelector {
+            case #selector(NSResponder.moveUp(_:)):
+                return parent.onArrowUp?() ?? false
+            case #selector(NSResponder.moveDown(_:)):
+                return parent.onArrowDown?() ?? false
+            case #selector(NSResponder.cancelOperation(_:)):
+                return parent.onEscape?() ?? false
+            case #selector(NSResponder.insertNewline(_:)):
+                return handleNewline()
+            default:
+                return false
             }
-            if commandSelector == #selector(NSResponder.moveDown(_:)) {
-                if let handler = parent.onArrowDown, handler() { return true }
-            }
-            if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
-                if let handler = parent.onEscape, handler() { return true }
-            }
+        }
 
-            if commandSelector == #selector(NSResponder.insertNewline(_:)) {
-                if let event = NSApp.currentEvent, event.modifierFlags.contains(.shift) {
-                    if let shiftCommit = parent.onShiftCommit {
-                        shiftCommit()
-                        return true
-                    }
-                    return false  // No shift handler — insert newline
-                } else {
-                    parent.onCommit?()
-                    return true
+        private func handleNewline() -> Bool {
+            let isShift = NSApp.currentEvent?.modifierFlags.contains(.shift) ?? false
+            if isShift {
+                guard let shiftCommit = parent.onShiftCommit else {
+                    return false  // No shift handler — let NSTextView insert a newline.
                 }
+                shiftCommit()
+                return true
             }
-            return false
+            parent.onCommit?()
+            return true
         }
     }
 }
 
-// Custom ScrollView that reports content size
+// MARK: - AutoSizingScrollView
+
+/// Scroll view that reports its document view's intrinsic size so SwiftUI can
+/// auto-size the input area.
 final class AutoSizingScrollView: NSScrollView {
     override var intrinsicContentSize: NSSize {
-        // Return document view's intrinsic size (already capped by maxHeight in CustomNSTextView)
-        let docSize = documentView?.intrinsicContentSize ?? NSSize(width: NSView.noIntrinsicMetric, height: 20)
-        return docSize
+        documentView?.intrinsicContentSize
+            ?? NSSize(width: NSView.noIntrinsicMetric, height: 20)
     }
 }
 
-// Custom NSTextView to handle cursor color and sizing
+// MARK: - CustomNSTextView
+
+/// NSTextView subclass that:
+/// - reports an intrinsic content size capped at `maxHeight` so the input grows
+///   with text up to a limit and then scrolls;
+/// - exposes IME composition state via `onMarkedTextChanged`;
+/// - exposes first-responder transitions via `onFocusChanged`.
 final class CustomNSTextView: NSTextView {
     var maxHeight: CGFloat = .infinity
-    /// Called when IME marked-text state changes (composing / not composing)
+
+    /// Called when IME marked-text state changes (composing / not composing).
     var onMarkedTextChanged: ((Bool) -> Void)?
+    /// Called when first-responder state changes (focused / not focused).
     var onFocusChanged: ((Bool) -> Void)?
 
+    // MARK: First-responder
+
     override func becomeFirstResponder() -> Bool {
-        let result = super.becomeFirstResponder()
-        if result {
-            onFocusChanged?(true)
-        }
-        return result
+        let became = super.becomeFirstResponder()
+        if became { onFocusChanged?(true) }
+        return became
     }
 
     override func resignFirstResponder() -> Bool {
-        let result = super.resignFirstResponder()
-        if result {
-            onFocusChanged?(false)
-        }
-        return result
+        let resigned = super.resignFirstResponder()
+        if resigned { onFocusChanged?(false) }
+        return resigned
     }
 
-    override func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
+    // MARK: IME composition
+
+    override func setMarkedText(
+        _ string: Any, selectedRange: NSRange, replacementRange: NSRange
+    ) {
         super.setMarkedText(string, selectedRange: selectedRange, replacementRange: replacementRange)
-        onMarkedTextChanged?(hasMarkedText())
+        notifyMarkedTextChanged(hasMarkedText())
     }
 
     override func unmarkText() {
         super.unmarkText()
-        onMarkedTextChanged?(false)
+        notifyMarkedTextChanged(false)
     }
 
-    /// Total height required to display the content without scrolling
+    /// Notify observers of IME composition state on the next runloop tick.
+    /// Deferring avoids SwiftUI re-entering `updateNSView` while the textView is
+    /// still inside its IME callback, which would clobber the marked text and
+    /// break CJK input.
+    private func notifyMarkedTextChanged(_ composing: Bool) {
+        DispatchQueue.main.async { [weak self] in
+            self?.onMarkedTextChanged?(composing)
+        }
+    }
+
+    // MARK: Sizing
+
+    /// Total height required to display the content without scrolling.
+    ///
+    /// Uses the layout manager's actual `usedRect.height` (which respects per-script
+    /// font substitution — e.g. CJK falls back to taller fonts than SF) and then
+    /// `ceil`s to whole pixels so the reported intrinsic size doesn't wobble by
+    /// fractional pixels between layout passes (which would cause visible "jiggle"
+    /// as the user types, especially under IME marked-text composition).
+    ///
+    /// A single-line floor based on the textView's primary font keeps the empty
+    /// state sized like one Latin line.
     var contentHeight: CGFloat {
-        guard let layoutManager = layoutManager, let textContainer = textContainer else {
+        guard let layoutManager, let textContainer else {
             return super.intrinsicContentSize.height
         }
 
         layoutManager.ensureLayout(for: textContainer)
-        let usedRect = layoutManager.usedRect(for: textContainer)
+        let usedHeight = layoutManager.usedRect(for: textContainer).height
 
-        // Use single line height as minimum
-        let lineHeight = font?.pointSize ?? 14
-        let contentHeight = max(usedRect.height, lineHeight)
+        let font = self.font ?? NSFont.systemFont(ofSize: NSFont.systemFontSize)
+        let oneLine = font.ascender - font.descender + font.leading
+        let measured = max(usedHeight, oneLine)
 
-        // Add textContainerInset (top + bottom padding)
-        return contentHeight + textContainerInset.height * 2
+        // ceil for stable whole-pixel sizing; add textContainerInset (top + bottom).
+        return ceil(measured) + textContainerInset.height * 2
     }
 
-    // Enable auto-growing height
     override var intrinsicContentSize: NSSize {
-        // Cap at maxHeight for scrolling behavior
-        let constrainedHeight = min(contentHeight, maxHeight)
-
-        // We return noIntrinsicMetric for width so it fills available width
-        return NSSize(width: NSView.noIntrinsicMetric, height: constrainedHeight)
+        // Width: noIntrinsicMetric so the textView fills available width.
+        // Height: capped at maxHeight to enable scrolling beyond the visible cap.
+        NSSize(width: NSView.noIntrinsicMetric, height: min(contentHeight, maxHeight))
     }
 
     override func didChangeText() {
