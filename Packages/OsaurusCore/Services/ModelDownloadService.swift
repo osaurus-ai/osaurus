@@ -165,6 +165,29 @@ final class ModelDownloadService: ObservableObject {
                     }
                 }
 
+                // Preflight disk-space check. Runs on the filesystem that hosts
+                // `model.localDirectory` — which may be an external drive when
+                // the user has pointed `DirectoryPickerService` at one — so we
+                // can't assume boot-volume capacity. If the query itself fails
+                // we proceed with the download; a stale estimate is worse than
+                // none, and the ordinary write-path error handling still fires.
+                let bytesToDownload = totalBytes - completedFileBytes
+                if bytesToDownload > 0,
+                    let freeBytes = Self.freeBytesOnVolume(containing: model.localDirectory),
+                    let refusal = Self.storageRefusalMessage(
+                        neededBytes: bytesToDownload,
+                        freeBytes: freeBytes
+                    )
+                {
+                    await MainActor.run {
+                        if self.downloadTokens[model.id] == token {
+                            self.downloadStates[model.id] = .failed(error: refusal)
+                            self.clearDownloadTracking(for: model.id)
+                        }
+                    }
+                    return
+                }
+
                 await MainActor.run {
                     guard self.downloadTokens[model.id] == token else { return }
                     let fraction = totalBytes > 0 ? Double(completedFileBytes) / Double(totalBytes) : 0
@@ -355,6 +378,54 @@ final class ModelDownloadService: ObservableObject {
     static func resolveURL(repoId: String, path: String) -> URL? {
         let encoded = path.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? path
         return URL(string: "https://huggingface.co/\(repoId)/resolve/main/\(encoded)")
+    }
+
+    // MARK: - Disk-space preflight
+
+    /// Safety margin on top of the raw byte count, to cover Hugging Face LFS
+    /// pointers that can under-report file size and the OS's need for a small
+    /// amount of headroom during the atomic rename at the tail of each file.
+    static let storageSafetyMarginBytes: Int64 = 256 * 1024 * 1024  // 256 MB
+
+    /// Returns a user-visible refusal message if the download should be
+    /// blocked, or `nil` if `freeBytes` is sufficient for `neededBytes`
+    /// plus the safety margin.
+    ///
+    /// Extracted so the comparison can be unit-tested without mocking the
+    /// filesystem.
+    static func storageRefusalMessage(
+        neededBytes: Int64,
+        freeBytes: Int64
+    ) -> String? {
+        // No new bytes to write (e.g. every file is already on disk from a
+        // prior successful download) — never block on volume capacity.
+        guard neededBytes > 0 else { return nil }
+        guard neededBytes + storageSafetyMarginBytes > freeBytes else { return nil }
+        let needed = ByteCountFormatter.string(fromByteCount: neededBytes, countStyle: .file)
+        let free = ByteCountFormatter.string(fromByteCount: freeBytes, countStyle: .file)
+        return
+            "Not enough disk space to finish this download: need \(needed) free, only \(free) available."
+    }
+
+    /// Returns the free-for-important-usage byte count on the volume that
+    /// hosts `url`. Falls back to the older `.systemFreeSize` query if the
+    /// modern `.volumeAvailableCapacityForImportantUsageKey` is unavailable.
+    /// Returns `nil` if both queries fail — callers should treat `nil` as
+    /// "unknown, proceed" rather than "zero, block".
+    static func freeBytesOnVolume(containing url: URL) -> Int64? {
+        let probe = url
+        let keys: Set<URLResourceKey> = [.volumeAvailableCapacityForImportantUsageKey]
+        if let values = try? probe.resourceValues(forKeys: keys),
+            let capacity = values.volumeAvailableCapacityForImportantUsage
+        {
+            return capacity
+        }
+        if let attrs = try? FileManager.default.attributesOfFileSystem(forPath: probe.path),
+            let free = (attrs[.systemFreeSize] as? NSNumber)?.int64Value
+        {
+            return free
+        }
+        return nil
     }
 
     private func updateDownloadProgress(
