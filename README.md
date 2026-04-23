@@ -31,7 +31,7 @@
   <a href="https://github.com/osaurus-ai/osaurus/releases/latest/download/Osaurus.dmg">Download for Mac</a> ·
   <a href="https://docs.osaurus.ai">Docs</a> ·
   <a href="https://huggingface.co/OsaurusAI">Models</a> ·
-  <a href="https://discord.com/invite/dinoki">Discord</a> ·
+  <a href="https://discord.com/invite/osaurus">Discord</a> ·
   <a href="https://x.com/OsaurusAI">Twitter</a> ·
   <a href="https://github.com/osaurus-ai/osaurus-tools">Plugin Registry</a>
 </p>
@@ -267,11 +267,11 @@ See [CONTRIBUTING.md](docs/CONTRIBUTING.md) for the architecture guide and layer
 
 Osaurus is actively developed and we welcome contributions: bug fixes, new plugins, documentation, UI/UX improvements, and testing.
 
-Check out [Good First Issues](https://github.com/osaurus-ai/osaurus/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22), read the [Contributing Guide](CONTRIBUTING.md), or join [Discord](https://discord.com/invite/dinoki). See [docs/FEATURES.md](docs/FEATURES.md) for the full feature inventory.
+Check out [Good First Issues](https://github.com/osaurus-ai/osaurus/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22), read the [Contributing Guide](CONTRIBUTING.md), or join [Discord](https://discord.com/invite/osaurus). See [docs/FEATURES.md](docs/FEATURES.md) for the full feature inventory.
 
 ## Community
 
-- [Discord](https://discord.com/invite/dinoki) -- chat, feedback, show-and-tell
+- [Discord](https://discord.com/invite/osaurus) -- chat, feedback, show-and-tell
 - [Twitter](https://x.com/OsaurusAI) -- updates and demos
 - [Hugging Face](https://huggingface.co/OsaurusAI) -- optimized models for Apple Silicon
 - [Community Calls](https://lu.ma/osaurus) -- bi-weekly, open to everyone

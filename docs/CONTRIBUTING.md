@@ -77,15 +77,15 @@ The core library (`Packages/OsaurusCore/`) follows a layered architecture. Each 
 
 ### Where to put new code
 
-| You're adding...            | Put it in...                                      |
-| --------------------------- | ------------------------------------------------- |
-| A new data type or DTO      | `Models/{domain}/`                                |
-| Backend logic (no UI)       | `Services/{domain}/` as an actor                  |
-| UI state that views observe | `Managers/` as `@MainActor` observable class       |
-| A new screen or panel       | `Views/{feature}/`                                |
-| A reusable UI widget        | `Views/Common/`                                   |
-| A new MCP tool              | `Tools/`                                          |
-| A new test                  | `Tests/{matching-source-directory}/`              |
+| You're adding...            | Put it in...                                 |
+| --------------------------- | -------------------------------------------- |
+| A new data type or DTO      | `Models/{domain}/`                           |
+| Backend logic (no UI)       | `Services/{domain}/` as an actor             |
+| UI state that views observe | `Managers/` as `@MainActor` observable class |
+| A new screen or panel       | `Views/{feature}/`                           |
+| A reusable UI widget        | `Views/Common/`                              |
+| A new MCP tool              | `Tools/`                                     |
+| A new test                  | `Tests/{matching-source-directory}/`         |
 
 ### Naming conventions
 
@@ -156,16 +156,16 @@ Good documentation is just as important as good code. Here's how to contribute t
 
 ### Documentation structure
 
-| Document                                                       | Purpose                                                  |
-| -------------------------------------------------------------- | -------------------------------------------------------- |
-| [README.md](../README.md)                                      | Project overview, quick start, feature highlights        |
-| [FEATURES.md](FEATURES.md)                                     | **Source of truth** — feature inventory and architecture |
-| [REMOTE_PROVIDERS.md](REMOTE_PROVIDERS.md)                     | Remote provider setup and configuration                  |
-| [REMOTE_MCP_PROVIDERS.md](REMOTE_MCP_PROVIDERS.md)             | Remote MCP provider setup                                |
-| [DEVELOPER_TOOLS.md](DEVELOPER_TOOLS.md)                       | Insights and Server Explorer guide                       |
+| Document                                                       | Purpose                                                           |
+| -------------------------------------------------------------- | ----------------------------------------------------------------- |
+| [README.md](../README.md)                                      | Project overview, quick start, feature highlights                 |
+| [FEATURES.md](FEATURES.md)                                     | **Source of truth** — feature inventory and architecture          |
+| [REMOTE_PROVIDERS.md](REMOTE_PROVIDERS.md)                     | Remote provider setup and configuration                           |
+| [REMOTE_MCP_PROVIDERS.md](REMOTE_MCP_PROVIDERS.md)             | Remote MCP provider setup                                         |
+| [DEVELOPER_TOOLS.md](DEVELOPER_TOOLS.md)                       | Insights and Server Explorer guide                                |
 | [PLUGIN_AUTHORING.md](PLUGIN_AUTHORING.md)                     | Plugin authoring: tools, routes, storage, config UI, and web apps |
-| [OpenAI_API_GUIDE.md](OpenAI_API_GUIDE.md)                     | API usage, tool calling, streaming                       |
-| [SHARED_CONFIGURATION_GUIDE.md](SHARED_CONFIGURATION_GUIDE.md) | Shared configuration for teams                           |
+| [OpenAI_API_GUIDE.md](OpenAI_API_GUIDE.md)                     | API usage, tool calling, streaming                                |
+| [SHARED_CONFIGURATION_GUIDE.md](SHARED_CONFIGURATION_GUIDE.md) | Shared configuration for teams                                    |
 
 ### When adding a new feature
 
@@ -238,7 +238,7 @@ This project follows the Contributor Covenant. By participating, you agree to up
 
 ## Join the community
 
-- **[Discord](https://discord.gg/dinoki)** — Chat with contributors and maintainers
+- **[Discord](https://discord.gg/osaurus)** — Chat with contributors and maintainers
 - **[Good First Issues](https://github.com/osaurus-ai/osaurus/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)** — Great starting points
 
 Thank you for helping make Osaurus better!

@@ -192,7 +192,7 @@ private extension osaurusApp {
             }
 
             Button {
-                openURL("https://discord.gg/dinoki")
+                openURL("https://discord.gg/osaurus")
             } label: {
                 Text(verbatim: L("Discord Community"))
             }
