@@ -332,38 +332,70 @@ final class ToolRegistry: ObservableObject {
     /// sees a structured signal instead of a hung agent loop. Internal so
     /// tests can drive it with a small `timeoutSeconds` value without
     /// waiting for the full 120s production budget.
+    ///
+    /// Each branch of the race converts thrown errors (including
+    /// `CancellationError` from the loser when we `cancelAll`) into a
+    /// structured `ToolEnvelope` *inside* its child task. That keeps
+    /// `withTaskGroup` non-throwing and prevents the cancelled sibling's
+    /// post-return throw from reaching the caller as the function's
+    /// error — historically the slow-tool case rethrew CancellationError
+    /// and stalled while the group drained.
     internal nonisolated static func runToolBody(
         _ tool: OsaurusTool,
         argumentsJSON: String,
         timeoutSeconds: TimeInterval
     ) async throws -> String {
         let toolName = tool.name
-        return try await withThrowingTaskGroup(of: String.self) { group in
+        let timeoutEnvelope = ToolEnvelope.failure(
+            kind: .timeout,
+            message:
+                "Tool '\(toolName)' exceeded the \(Int(timeoutSeconds))s execution budget.",
+            tool: toolName,
+            retryable: true
+        )
+        // Sentinel returned by the cancelled loser branch so the
+        // consumer loop knows to ignore it. Cannot collide with any
+        // legitimate envelope because real envelopes are JSON.
+        let cancelledSentinel = "__osaurus_runToolBody_cancelled__"
+
+        return await withTaskGroup(of: String.self) { group in
             group.addTask {
-                try await tool.execute(argumentsJSON: argumentsJSON)
+                do {
+                    return try await tool.execute(argumentsJSON: argumentsJSON)
+                } catch is CancellationError {
+                    return cancelledSentinel
+                } catch {
+                    return ToolEnvelope.fromError(error, tool: toolName)
+                }
             }
             group.addTask {
                 let nanos = UInt64(timeoutSeconds * 1_000_000_000)
-                try await Task.sleep(nanoseconds: nanos)
-                return ToolEnvelope.failure(
-                    kind: .timeout,
-                    message:
-                        "Tool '\(toolName)' exceeded the \(Int(timeoutSeconds))s execution budget.",
-                    tool: toolName,
-                    retryable: true
-                )
+                do {
+                    try await Task.sleep(nanoseconds: nanos)
+                } catch {
+                    // Cancelled because the body finished first — yield
+                    // the sentinel so the caller's first non-sentinel
+                    // result wins.
+                    return cancelledSentinel
+                }
+                return timeoutEnvelope
             }
-            // First result wins (either the body completed or the timeout
-            // fired). Cancel the loser so we don't leak work.
-            guard let first = try await group.next() else {
-                return ToolEnvelope.failure(
-                    kind: .executionError,
-                    message: "Tool '\(toolName)' produced no result.",
-                    tool: toolName
-                )
+
+            // The first non-sentinel result is the winner; cancel the
+            // sibling and drain it to keep the task group well-behaved.
+            for await result in group {
+                if result == cancelledSentinel { continue }
+                group.cancelAll()
+                // Drain the cancelled sibling so the closure exits
+                // promptly instead of waiting on it implicitly.
+                for await _ in group {}
+                return result
             }
-            group.cancelAll()
-            return first
+            return ToolEnvelope.failure(
+                kind: .executionError,
+                message: "Tool '\(toolName)' produced no result.",
+                tool: toolName
+            )
         }
     }
 
