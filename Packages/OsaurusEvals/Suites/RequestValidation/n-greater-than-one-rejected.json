@@ -1,0 +1,14 @@
+{
+  "id": "request_validation.n-greater-than-one-rejected",
+  "domain": "request_validation",
+  "label": "request_validation • n>1 rejected with HTTP 400 (no batched completions)",
+  "query": "",
+  "fixtures": {},
+  "expect": {
+    "requestValidation": {
+      "n": 2,
+      "expectAccept": false,
+      "expectReasonContains": "n"
+    }
+  }
+}

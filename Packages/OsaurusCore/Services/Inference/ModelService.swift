@@ -12,20 +12,33 @@ struct GenerationParameters: Sendable {
     let maxTokens: Int
     /// Optional per-request top_p override (falls back to server configuration when nil)
     let topPOverride: Float?
-    /// Optional repetition penalty (applies when supported by backend)
+    /// Optional repetition penalty (applies when supported by backend).
+    /// Mapped from OpenAI `frequency_penalty` only — `presence_penalty`
+    /// has no MLX analog. The raw OpenAI values below are kept on the
+    /// struct so remote services that natively support both can forward
+    /// them straight through.
     let repetitionPenalty: Float?
+    /// Raw OpenAI `frequency_penalty`, forwarded as-is to remote services
+    /// that support it (most OpenAI-compatible upstreams).
+    let frequencyPenalty: Float?
+    /// Raw OpenAI `presence_penalty`, forwarded as-is to remote services
+    /// that support it. Has no MLX analog so local services ignore it.
+    let presencePenalty: Float?
+    /// Deterministic sampling seed. When non-nil, services that support
+    /// it (MLX via `MLXRandom.seed`, OpenAI-compatible remotes) will
+    /// produce reproducible output for identical inputs.
+    let seed: UInt64?
+    /// Whether the response must be a JSON object (`response_format:
+    /// {type: json_object}`). Local services inject a system instruction
+    /// + post-validate; remotes forward natively when the upstream
+    /// supports it.
+    let jsonMode: Bool
     /// Model-specific options resolved from the active `ModelProfile` (e.g. aspect ratio).
     let modelOptions: [String: ModelOptionValue]
-    /// Session identifier for KV cache reuse across turns
+    /// Session identifier for chat/history grouping. Not threaded into the
+    /// MLX cache layer — vmlx's `CacheCoordinator` handles prefix reuse
+    /// autonomously via content addressing.
     let sessionId: String?
-    /// Explicit prefix cache key override (API callers can use this to share a
-    /// prefix cache across requests with varying system prompts).
-    let cacheHint: String?
-    /// Static system prompt content for prefix cache building.
-    /// When set, the prefix cache is built from this content only (excluding
-    /// dynamic sections like memory), producing a KV cache that exactly matches
-    /// the reusable portion across requests.
-    let staticPrefix: String?
     /// Optional TTFT trace for diagnostic timing instrumentation.
     let ttftTrace: TTFTTrace?
 
@@ -34,20 +47,24 @@ struct GenerationParameters: Sendable {
         maxTokens: Int,
         topPOverride: Float? = nil,
         repetitionPenalty: Float? = nil,
+        frequencyPenalty: Float? = nil,
+        presencePenalty: Float? = nil,
+        seed: UInt64? = nil,
+        jsonMode: Bool = false,
         modelOptions: [String: ModelOptionValue] = [:],
         sessionId: String? = nil,
-        cacheHint: String? = nil,
-        staticPrefix: String? = nil,
         ttftTrace: TTFTTrace? = nil
     ) {
         self.temperature = temperature
         self.maxTokens = maxTokens
         self.topPOverride = topPOverride
         self.repetitionPenalty = repetitionPenalty
+        self.frequencyPenalty = frequencyPenalty
+        self.presencePenalty = presencePenalty
+        self.seed = seed
+        self.jsonMode = jsonMode
         self.modelOptions = modelOptions
         self.sessionId = sessionId
-        self.cacheHint = cacheHint
-        self.staticPrefix = staticPrefix
         self.ttftTrace = ttftTrace
     }
 }
@@ -91,17 +108,17 @@ struct ServiceToolInvocations: Error, Sendable {
 /// The stream type is `AsyncThrowingStream<String, Error>`, so we encode the
 /// detected tool name (and argument fragments) as sentinel strings using a
 /// Unicode non-character prefix that can never appear in normal LLM output.
-enum StreamingToolHint: Sendable {
+public enum StreamingToolHint: Sendable {
     private static let sentinel: Character = "\u{FFFE}"
     private static let toolPrefix = "\u{FFFE}tool:"
     private static let argsPrefix = "\u{FFFE}args:"
     private static let donePrefix = "\u{FFFE}done:"
 
-    static func encode(_ toolName: String) -> String { toolPrefix + toolName }
-    static func encodeArgs(_ fragment: String) -> String { argsPrefix + fragment }
+    public static func encode(_ toolName: String) -> String { toolPrefix + toolName }
+    public static func encodeArgs(_ fragment: String) -> String { argsPrefix + fragment }
 
     /// Encodes a completed server-side tool call so the client can display it in the chat log.
-    static func encodeDone(callId: String, name: String, arguments: String, result: String) -> String {
+    public static func encodeDone(callId: String, name: String, arguments: String, result: String) -> String {
         struct Payload: Encodable { let id, name, arguments, result: String }
         let json =
             (try? JSONEncoder().encode(Payload(id: callId, name: name, arguments: arguments, result: result)))
@@ -110,14 +127,14 @@ enum StreamingToolHint: Sendable {
     }
 
     /// Decoded payload from a done sentinel.
-    struct ToolCallDone {
-        let callId: String
-        let name: String
-        let arguments: String
-        let result: String
+    public struct ToolCallDone: Sendable, Equatable {
+        public let callId: String
+        public let name: String
+        public let arguments: String
+        public let result: String
     }
 
-    static func decodeDone(_ delta: String) -> ToolCallDone? {
+    public static func decodeDone(_ delta: String) -> ToolCallDone? {
         guard delta.hasPrefix(donePrefix) else { return nil }
         let json = String(delta.dropFirst(donePrefix.count))
         struct Payload: Decodable { let id, name, arguments, result: String }
@@ -128,16 +145,16 @@ enum StreamingToolHint: Sendable {
     }
 
     /// O(1) check — only inspects the first character. Covers both tool and args sentinels.
-    static func isSentinel(_ delta: String) -> Bool { delta.first == sentinel }
+    public static func isSentinel(_ delta: String) -> Bool { delta.first == sentinel }
 
     /// Extracts the tool name from a sentinel delta, or nil if not a sentinel.
-    static func decode(_ delta: String) -> String? {
+    public static func decode(_ delta: String) -> String? {
         guard delta.hasPrefix(toolPrefix) else { return nil }
         return String(delta.dropFirst(toolPrefix.count))
     }
 
     /// Extracts an argument fragment from a sentinel delta, or nil if not an args sentinel.
-    static func decodeArgs(_ delta: String) -> String? {
+    public static func decodeArgs(_ delta: String) -> String? {
         guard delta.hasPrefix(argsPrefix) else { return nil }
         return String(delta.dropFirst(argsPrefix.count))
     }

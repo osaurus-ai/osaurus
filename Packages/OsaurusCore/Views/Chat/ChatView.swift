@@ -482,6 +482,11 @@ final class ChatSession: ObservableObject {
     }
 
     /// Builds the full user message text, prepending any attached document contents wrapped in XML tags.
+    ///
+    /// Filenames are reduced to their basename and both the name and the body are
+    /// XML-entity-escaped so that a hostile document cannot forge a closing
+    /// `</attached_document>` tag or inject bracketed pseudo-tool markers that
+    /// would otherwise reach the model as control text.
     static func buildUserMessageText(content: String, attachments: [Attachment]) -> String {
         let docs = attachments.filter(\.isDocument)
         guard !docs.isEmpty else { return content }
@@ -489,7 +494,9 @@ final class ChatSession: ObservableObject {
         var parts: [String] = []
         for doc in docs {
             if let name = doc.filename, let text = doc.documentContent {
-                parts.append("<attached_document name=\"\(name)\">\n\(text)\n</attached_document>")
+                let safeName = escapeAttachmentName(name)
+                let safeText = xmlEscape(text)
+                parts.append("<attached_document name=\"\(safeName)\">\n\(safeText)\n</attached_document>")
             }
         }
 
@@ -498,6 +505,20 @@ final class ChatSession: ObservableObject {
         }
 
         return parts.joined(separator: "\n\n")
+    }
+
+    private static func escapeAttachmentName(_ raw: String) -> String {
+        let basename = (raw as NSString).lastPathComponent
+        let trimmed = basename.trimmingCharacters(in: .whitespacesAndNewlines)
+        return xmlEscape(trimmed.isEmpty ? "attachment" : trimmed)
+    }
+
+    private static func xmlEscape(_ s: String) -> String {
+        s
+            .replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
     }
 
     /// Format token count for display (e.g., "1.2K", "15K")
@@ -1466,8 +1487,6 @@ final class ChatSession: ObservableObject {
                         tool_choice: toolSpecs.isEmpty ? nil : .auto,
                         session_id: sessionId?.uuidString
                     )
-                    req.cache_hint = context.cacheHint
-                    req.staticPrefix = context.staticPrefix
                     req.modelOptions = activeModelOptions.isEmpty ? nil : activeModelOptions
                     req.ttftTrace = ttftTrace
                     debugLog(

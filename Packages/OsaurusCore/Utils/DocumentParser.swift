@@ -15,6 +15,12 @@ enum DocumentParser {
 
     static let maxParsedTextLength = 500_000  // ~500KB of text
 
+    /// Hard byte cap applied before the file is read into memory. The post-read
+    /// `maxParsedTextLength` trim only bounds the *decoded* text, so a crafted
+    /// latin-1 or rich-document input could still balloon RAM during decode.
+    /// Matches the image cap in `FloatingInputCard`.
+    static let maxFileSize = 10 * 1024 * 1024
+
     enum ParseError: LocalizedError {
         case unsupportedFormat(String)
         case readFailed(String)
@@ -45,6 +51,9 @@ enum DocumentParser {
     /// PDFs with no extractable text are rendered as page images (one per page).
     static func parseAll(url: URL) throws -> [Attachment] {
         let fileSize = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
+        if fileSize > maxFileSize {
+            throw ParseError.fileTooLarge
+        }
         let ext = url.pathExtension.lowercased()
         let filename = url.lastPathComponent
 

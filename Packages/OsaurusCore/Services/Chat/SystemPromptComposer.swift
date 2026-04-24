@@ -680,7 +680,11 @@ public struct SystemPromptComposer: Sendable {
     /// Compose agent base prompt and inject into an existing message array.
     /// Memory is now prepended to the latest user message instead of the
     /// system prompt so the system message stays byte-stable across turns.
-    /// Returns `(cacheHint, staticPrefix)` for the caller to set on the request.
+    /// The returned `(cacheHint, staticPrefix)` tuple is informational —
+    /// vmlx's `CacheCoordinator` is content-addressed and discovers
+    /// reusable prefixes autonomously, so callers no longer need to
+    /// thread these into the request. Kept on the signature for
+    /// preflight-cache bookkeeping callers (e.g. `SessionToolStateStore`).
     @discardableResult
     static func injectAgentContext(
         agentId: UUID,

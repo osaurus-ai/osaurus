@@ -15,7 +15,16 @@ protocol OsaurusTool: Sendable {
     /// JSON schema for function parameters (OpenAI-compatible minimal subset)
     var parameters: JSONValue? { get }
 
-    /// Execute the tool with arguments provided as a JSON string
+    /// Execute the tool with arguments provided as a JSON string.
+    ///
+    /// **Cancellation contract:** the registry wraps every call with a
+    /// `withThrowingTaskGroup` that races the body against a wall-clock
+    /// timeout (`ToolRegistry.defaultToolTimeoutSeconds`). When the
+    /// surrounding stream is cancelled by the client, the wrapping task
+    /// is cancelled. Long-running tools (network, shell, file walk)
+    /// SHOULD periodically check `Task.isCancelled` and short-circuit
+    /// with a `ToolEnvelope.failure(kind: .executionError, …,
+    /// retryable: false)` so resources are released promptly.
     func execute(argumentsJSON: String) async throws -> String
 }
 
@@ -249,10 +258,10 @@ enum ArgumentRequirement<T> {
 /// Shared coercion helpers for tool arguments. Local/quantized models frequently
 /// serialize values with wrong JSON types (arrays as strings, numbers as strings, etc.).
 /// These helpers normalize common mistakes so tool execution succeeds.
-enum ArgumentCoercion {
+public enum ArgumentCoercion {
     /// Coerce to `[String]`: actual array, JSON-encoded string (`"[\"a\"]"`),
     /// or bare string wrapped into a single-element array.
-    static func stringArray(_ value: Any?) -> [String]? {
+    public static func stringArray(_ value: Any?) -> [String]? {
         if let arr = value as? [String] { return arr }
         if let str = value as? String {
             if let data = str.data(using: .utf8),
@@ -267,7 +276,7 @@ enum ArgumentCoercion {
     }
 
     /// Coerce to `Int`: native int, `NSNumber`, or string-encoded integer (`"30"`).
-    static func int(_ value: Any?) -> Int? {
+    public static func int(_ value: Any?) -> Int? {
         if let n = value as? Int { return n }
         if let n = (value as? NSNumber)?.intValue { return n }
         if let s = value as? String, let n = Int(s) { return n }
@@ -275,7 +284,7 @@ enum ArgumentCoercion {
     }
 
     /// Coerce to `Bool`: native bool, string variants (`"true"`, `"1"`, `"yes"`), or `NSNumber`.
-    static func bool(_ value: Any?) -> Bool? {
+    public static func bool(_ value: Any?) -> Bool? {
         if let b = value as? Bool { return b }
         if let s = value as? String {
             switch s.lowercased() {

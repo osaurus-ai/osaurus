@@ -351,24 +351,6 @@ final class PluginHostContext: @unchecked Sendable {
         let maxTokens: Int?
         let tools: [Tool]?
         let executionMode: ExecutionMode
-        var cacheHint: String?
-        var staticPrefix: String?
-
-        func prependingSystemContent(_ content: String) -> AgentContext {
-            var ctx = self
-            ctx = AgentContext(
-                agentId: agentId,
-                systemPrompt: content + "\n\n" + systemPrompt,
-                model: model,
-                temperature: temperature,
-                maxTokens: maxTokens,
-                tools: tools,
-                executionMode: executionMode,
-                cacheHint: cacheHint,
-                staticPrefix: staticPrefix
-            )
-            return ctx
-        }
 
         func withSystemPrompt(_ newPrompt: String) -> AgentContext {
             AgentContext(
@@ -378,10 +360,12 @@ final class PluginHostContext: @unchecked Sendable {
                 temperature: temperature,
                 maxTokens: maxTokens,
                 tools: tools,
-                executionMode: executionMode,
-                cacheHint: cacheHint,
-                staticPrefix: staticPrefix
+                executionMode: executionMode
             )
+        }
+
+        func prependingSystemContent(_ content: String) -> AgentContext {
+            withSystemPrompt(content + "\n\n" + systemPrompt)
         }
     }
 
@@ -530,9 +514,7 @@ final class PluginHostContext: @unchecked Sendable {
                 temperature: mgr.effectiveTemperature(for: agentId),
                 maxTokens: mgr.effectiveMaxTokens(for: agentId),
                 tools: composed.tools.isEmpty ? nil : composed.tools,
-                executionMode: execMode,
-                cacheHint: composed.cacheHint,
-                staticPrefix: composed.staticPrefix
+                executionMode: execMode
             )
         }
     }
@@ -568,7 +550,7 @@ final class PluginHostContext: @unchecked Sendable {
             effectiveTools = nil
         }
 
-        var enriched = ChatCompletionRequest(
+        let enriched = ChatCompletionRequest(
             model: model,
             messages: messages,
             temperature: request.temperature ?? ctx.temperature,
@@ -583,8 +565,6 @@ final class PluginHostContext: @unchecked Sendable {
             tool_choice: request.tool_choice,
             session_id: request.session_id
         )
-        enriched.cache_hint = ctx.cacheHint
-        enriched.staticPrefix = ctx.staticPrefix
         return EnrichedInference(request: enriched, tools: effectiveTools)
     }
 

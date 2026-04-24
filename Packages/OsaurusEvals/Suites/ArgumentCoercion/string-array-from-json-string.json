@@ -1,0 +1,14 @@
+{
+  "id": "argument_coercion.string-array-from-json-string",
+  "domain": "argument_coercion",
+  "label": "coercion • '[\"a\",\"b\"]' (a JSON-encoded string) coerces to [\"a\",\"b\"]",
+  "query": "",
+  "fixtures": {},
+  "expect": {
+    "argumentCoercion": {
+      "helper": "stringArray",
+      "value": "[\"a\",\"b\"]",
+      "expect": ["a", "b"]
+    }
+  }
+}

@@ -288,36 +288,170 @@ final class ToolRegistry: ObservableObject {
                 }
             }
         }
-        // Schema preflight: catches `additionalProperties: false` violations
-        // and obvious type mismatches before the tool body sees them. Parse
-        // failure and missing schema are tolerated — tool bodies typically
-        // have richer field-aware `require…` helpers.
-        if let schema = tool.parameters,
+        // Coerce + preflight against the tool's schema. Returns either
+        // a (possibly rewritten) `argumentsJSON` ready for dispatch, or
+        // a structured failure envelope to short-circuit with.
+        switch Self.preflight(argumentsJSON: argumentsJSON, schema: tool.parameters, toolName: name) {
+        case .rejected(let envelopeJSON):
+            return envelopeJSON
+        case .ready(let effectiveArgumentsJSON):
+            // Run the tool body off MainActor so long-running tools (file
+            // I/O, network, shell) don't contend with SwiftUI layout on the
+            // main thread. A global timeout caps every tool body so a
+            // misbehaving tool can never block the agent loop forever —
+            // tools that legitimately need longer (sandbox shell, model
+            // evaluation) still own their own tighter timeout internally.
+            return try await Self.runToolBody(
+                tool,
+                argumentsJSON: effectiveArgumentsJSON,
+                timeoutSeconds: Self.defaultToolTimeoutSeconds
+            )
+        }
+    }
+
+    /// Outcome of `preflight`: either the cleaned arguments to dispatch
+    /// with, or a ready-to-return failure envelope JSON string.
+    private enum PreflightOutcome {
+        case ready(argumentsJSON: String)
+        case rejected(envelopeJSON: String)
+    }
+
+    /// Pre-dispatch step that applies schema-aware coercion and then
+    /// validation. Coercion runs FIRST so quantized models that send
+    /// arrays / objects as JSON-encoded strings (e.g.
+    /// `"actions": "[{\"action\":\"type\"}]"` for a schema declaring
+    /// `actions: array`) get auto-unwrapped before either the validator
+    /// or the tool body sees them.
+    ///
+    /// Returns `.rejected` when the validator finds the (post-coercion)
+    /// arguments invalid; otherwise `.ready` with the JSON the tool body
+    /// should consume. Re-serialisation only happens when coercion
+    /// actually changed the shape — when the model sent native types we
+    /// preserve the original literal byte-for-byte so downstream
+    /// consumers (logging, storage) see what the client sent.
+    ///
+    /// Tools without a declared schema or with un-parseable JSON args
+    /// fall through unchanged: parsing is best-effort, and tool bodies
+    /// keep their richer `requireXxx` helpers as the second line of
+    /// defence.
+    private nonisolated static func preflight(
+        argumentsJSON: String,
+        schema: JSONValue?,
+        toolName: String
+    ) -> PreflightOutcome {
+        guard let schema,
             let data = argumentsJSON.data(using: .utf8),
             let parsed = try? JSONSerialization.jsonObject(with: data)
-        {
-            let result = SchemaValidator.validate(arguments: parsed, against: schema)
-            if !result.isValid, let message = result.errorMessage {
-                return ToolEnvelope.failure(
+        else { return .ready(argumentsJSON: argumentsJSON) }
+
+        let coerced = SchemaValidator.coerceArguments(parsed, against: schema)
+        let result = SchemaValidator.validate(arguments: coerced, against: schema)
+        if !result.isValid, let message = result.errorMessage {
+            return .rejected(
+                envelopeJSON: ToolEnvelope.failure(
                     kind: .invalidArgs,
                     message: message,
                     field: result.field,
-                    tool: name
+                    tool: toolName
                 )
-            }
+            )
         }
 
-        // Run the tool body off MainActor so long-running tools (file I/O,
-        // network, shell) don't contend with SwiftUI layout on the main thread.
-        return try await Self.runToolBody(tool, argumentsJSON: argumentsJSON)
+        // Try to detect "coercion changed the shape" via canonicalised
+        // JSON byte equality. When the bytes match, hand back the
+        // original literal; otherwise re-serialise so the tool body
+        // gets native types.
+        let opts: JSONSerialization.WritingOptions = [.sortedKeys]
+        guard let coercedData = try? JSONSerialization.data(withJSONObject: coerced, options: opts),
+            let originalData = try? JSONSerialization.data(withJSONObject: parsed, options: opts)
+        else { return .ready(argumentsJSON: argumentsJSON) }
+
+        if coercedData == originalData {
+            return .ready(argumentsJSON: argumentsJSON)
+        }
+        guard let coercedJSON = String(data: coercedData, encoding: .utf8) else {
+            return .ready(argumentsJSON: argumentsJSON)
+        }
+        return .ready(argumentsJSON: coercedJSON)
     }
 
-    /// Trampoline that executes the tool outside of MainActor isolation.
-    private nonisolated static func runToolBody(
+    /// Default per-tool wall-clock cap (seconds). Mirrors
+    /// `PluginHostAPI.toolExecutionTimeout` so the chat-side and plugin-side
+    /// loops have matching semantics. Tools that need a tighter or looser
+    /// budget (e.g. sandbox shell, MCP provider) still set their own.
+    public static let defaultToolTimeoutSeconds: TimeInterval = 120
+
+    /// Trampoline that executes the tool outside of MainActor isolation,
+    /// racing the body against a wall-clock timeout. On timeout we cancel
+    /// the body task and return a `kind: .timeout` envelope so the model
+    /// sees a structured signal instead of a hung agent loop. Internal so
+    /// tests can drive it with a small `timeoutSeconds` value without
+    /// waiting for the full 120s production budget.
+    ///
+    /// Each branch of the race converts thrown errors (including
+    /// `CancellationError` from the loser when we `cancelAll`) into a
+    /// structured `ToolEnvelope` *inside* its child task. That keeps
+    /// `withTaskGroup` non-throwing and prevents the cancelled sibling's
+    /// post-return throw from reaching the caller as the function's
+    /// error — historically the slow-tool case rethrew CancellationError
+    /// and stalled while the group drained.
+    internal nonisolated static func runToolBody(
         _ tool: OsaurusTool,
-        argumentsJSON: String
+        argumentsJSON: String,
+        timeoutSeconds: TimeInterval
     ) async throws -> String {
-        try await tool.execute(argumentsJSON: argumentsJSON)
+        let toolName = tool.name
+        let timeoutEnvelope = ToolEnvelope.failure(
+            kind: .timeout,
+            message:
+                "Tool '\(toolName)' exceeded the \(Int(timeoutSeconds))s execution budget.",
+            tool: toolName,
+            retryable: true
+        )
+        // Sentinel returned by the cancelled loser branch so the
+        // consumer loop knows to ignore it. Cannot collide with any
+        // legitimate envelope because real envelopes are JSON.
+        let cancelledSentinel = "__osaurus_runToolBody_cancelled__"
+
+        return await withTaskGroup(of: String.self) { group in
+            group.addTask {
+                do {
+                    return try await tool.execute(argumentsJSON: argumentsJSON)
+                } catch is CancellationError {
+                    return cancelledSentinel
+                } catch {
+                    return ToolEnvelope.fromError(error, tool: toolName)
+                }
+            }
+            group.addTask {
+                let nanos = UInt64(timeoutSeconds * 1_000_000_000)
+                do {
+                    try await Task.sleep(nanoseconds: nanos)
+                } catch {
+                    // Cancelled because the body finished first — yield
+                    // the sentinel so the caller's first non-sentinel
+                    // result wins.
+                    return cancelledSentinel
+                }
+                return timeoutEnvelope
+            }
+
+            // The first non-sentinel result is the winner; cancel the
+            // sibling and let `withTaskGroup` auto-drain on closure
+            // return. The drain is safe because every child branch
+            // converts its own errors into envelope strings — there
+            // are no uncaught throws to surface.
+            for await result in group {
+                if result == cancelledSentinel { continue }
+                group.cancelAll()
+                return result
+            }
+            return ToolEnvelope.failure(
+                kind: .executionError,
+                message: "Tool '\(toolName)' produced no result.",
+                tool: toolName
+            )
+        }
     }
 
     // MARK: - Listing / Enablement

@@ -229,26 +229,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     startTime: startTime
                 )
             } else if head.method == .GET, path == "/health" {
-                let obj: [String: Any] = ["status": "healthy", "timestamp": Date().ISO8601Format()]
-                let data = try? JSONSerialization.data(withJSONObject: obj)
-                var headers = [("Content-Type", "application/json; charset=utf-8")]
-                headers.append(contentsOf: stateRef.value.corsHeaders)
-                let healthBody = data.flatMap { String(decoding: $0, as: UTF8.self) } ?? "{}"
-                sendResponse(
+                handleHealthEndpoint(
+                    head: head,
                     context: context,
-                    version: head.version,
-                    status: .ok,
-                    headers: headers,
-                    body: healthBody
-                )
-                logRequest(
-                    method: method,
-                    path: path,
+                    startTime: startTime,
                     userAgent: userAgent,
-                    requestBody: nil,
-                    responseBody: healthBody,
-                    responseStatus: 200,
-                    startTime: startTime
+                    method: method,
+                    path: path
                 )
             } else if head.method == .GET, path == "/models" {
                 handleModelsEndpoint(head: head, context: context, startTime: startTime, userAgent: userAgent)
@@ -1312,15 +1299,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
         var enriched = request
         let query = request.messages.last(where: { $0.role == "user" })?.content ?? ""
-        let (hint, prefix) = await SystemPromptComposer.injectAgentContext(
+        await SystemPromptComposer.injectAgentContext(
             agentId: agentUUID,
             query: query,
             into: &enriched.messages
         )
-        if enriched.cache_hint == nil {
-            enriched.cache_hint = hint
-            enriched.staticPrefix = prefix
-        }
         return enriched
     }
 
@@ -1987,7 +1970,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             // per-session schema. Bare `alwaysLoadedSpecs(mode:)` keeps the
             // HTTP schema predictable and avoids per-request preflight cost.
             // See docs/AGENT_LOOP.md before "fixing" this onto resolveTools.
-            let tools = await MainActor.run {
+            //
+            // Tools resolution:
+            //   1. Always-loaded specs from the agent's execution mode form
+            //      the base set (sandbox, folder, etc.).
+            //   2. Client-supplied `req.tools` are appended (deduped by
+            //      function name, client wins on conflicts) so callers can
+            //      ship custom function definitions without losing the
+            //      agent surface.
+            let baseTools = await MainActor.run {
                 let autonomousEnabled = AgentManager.shared.effectiveAutonomousExec(for: agentId)?.enabled == true
                 let mode = ToolRegistry.shared.resolveExecutionMode(
                     folderContext: nil,
@@ -1995,6 +1986,19 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 )
                 return ToolRegistry.shared.alwaysLoadedSpecs(mode: mode)
             }
+            let tools: [Tool] = {
+                guard let clientTools = req.tools, !clientTools.isEmpty else { return baseTools }
+                let clientNames = Set(clientTools.map { $0.function.name })
+                let kept = baseTools.filter { !clientNames.contains($0.function.name) }
+                return kept + clientTools
+            }()
+            // Honor client `tool_choice` when supplied (`none`, `auto`, or
+            // a forced function). Default to `.auto` so existing clients
+            // that set `tools` without `tool_choice` keep working.
+            let resolvedToolChoice: ToolChoiceOption? = {
+                if tools.isEmpty { return nil }
+                return req.tool_choice ?? .auto
+            }()
 
             let maxIterations = 30
             var iteration = 0
@@ -2026,8 +2030,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     stop: req.stop,
                     n: nil,
                     tools: tools.isEmpty ? nil : tools,
-                    tool_choice: tools.isEmpty ? nil : .auto,
-                    session_id: req.session_id
+                    tool_choice: resolvedToolChoice,
+                    session_id: req.session_id,
+                    seed: req.seed,
+                    response_format: req.response_format,
+                    stream_options: req.stream_options
                 )
 
                 var responseContent = ""
@@ -2071,6 +2078,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 } catch let inv as ServiceToolInvocation {
                     pendingInvocations = [inv]
                 } catch {
+                    // SSE response head was already written as 200 — the
+                    // failure surfaces as an in-band SSE error chunk. Log
+                    // the actual on-wire status (200) so dashboards don't
+                    // mis-attribute a delivered stream as a 500.
                     hop {
                         writerBound.value.writeError(error.localizedDescription, context: ctx.value)
                         writerBound.value.writeEnd(ctx.value)
@@ -2080,7 +2091,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         path: path,
                         userAgent: logUserAgent,
                         requestBody: logRequestBody,
-                        responseStatus: 500,
+                        responseStatus: 200,
                         startTime: logStartTime,
                         errorMessage: error.localizedDescription
                     )
@@ -2093,16 +2104,22 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     break
                 }
 
-                // Execute every parsed tool call, streaming hint+done frames
-                // for each, then append ONE assistant message with all
-                // tool_calls and the matching tool-result messages. This is
-                // the OpenAI shape that downstream clients expect for
-                // multi-call completions.
+                // Execute every parsed tool call. Independent calls run
+                // in parallel via a TaskGroup so wall-clock time stays
+                // proportional to the slowest call rather than the sum.
+                // Per-call errors land as `ToolEnvelope.fromError` so a
+                // single bad call never aborts the rest of the batch.
+                let outcomes = await Self.runToolBatchInParallel(
+                    pendingInvocations,
+                    requestId: requestId,
+                    agentId: agentId
+                )
+
                 var assistantToolCalls: [ToolCall] = []
                 var toolResultsByCallId: [(String, String)] = []
-                for invocation in pendingInvocations {
-                    let callId = invocation.toolCallId ?? Self.shortId(prefix: "call_")
-
+                for outcome in outcomes {
+                    let invocation = outcome.invocation
+                    let callId = outcome.callId
                     hop {
                         writerBound.value.writeContent(
                             StreamingToolHint.encode(invocation.toolName),
@@ -2118,29 +2135,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                             created: created,
                             context: ctx.value
                         )
-                    }
-
-                    let toolResult: String
-                    do {
-                        toolResult = try await ChatExecutionContext.$currentSessionId.withValue(requestId) {
-                            try await ChatExecutionContext.$currentAgentId.withValue(agentId) {
-                                try await ToolRegistry.shared.execute(
-                                    name: invocation.toolName,
-                                    argumentsJSON: invocation.jsonArguments
-                                )
-                            }
-                        }
-                    } catch {
-                        toolResult = ToolEnvelope.fromError(error, tool: invocation.toolName)
-                    }
-
-                    hop {
                         writerBound.value.writeContent(
                             StreamingToolHint.encodeDone(
                                 callId: callId,
                                 name: invocation.toolName,
                                 arguments: invocation.jsonArguments,
-                                result: toolResult
+                                result: outcome.result
                             ),
                             model: model,
                             responseId: responseId,
@@ -2148,7 +2148,6 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                             context: ctx.value
                         )
                     }
-
                     assistantToolCalls.append(
                         ToolCall(
                             id: callId,
@@ -2159,7 +2158,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                             )
                         )
                     )
-                    toolResultsByCallId.append((callId, toolResult))
+                    toolResultsByCallId.append((callId, outcome.result))
                 }
 
                 messages.append(
@@ -2177,6 +2176,24 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 }
             }
 
+            // If we exited via the iteration cap without producing a
+            // final text turn (i.e. the last loop body still required
+            // tools), stream a synthetic notice so the client sees a
+            // reason instead of a silent stop.
+            let exitedAtCap = (iteration >= maxIterations)
+            if exitedAtCap, let last = messages.last, last.tool_calls?.isEmpty == false {
+                let notice =
+                    "Tool-loop budget of \(maxIterations) iterations exhausted without a final answer."
+                hop {
+                    writerBound.value.writeContent(
+                        notice,
+                        model: model,
+                        responseId: responseId,
+                        created: created,
+                        context: ctx.value
+                    )
+                }
+            }
             hop {
                 writerBound.value.writeFinish(model, responseId: responseId, created: created, context: ctx.value)
                 writerBound.value.writeEnd(ctx.value)
@@ -2723,12 +2740,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         }
 
         guard let req = try? JSONDecoder().decode(ChatCompletionRequest.self, from: data) else {
+            let body = Self.errorBody(.openai(type: "invalid_request_error"), message: "Invalid request format")
             sendResponse(
                 context: context,
                 version: head.version,
                 status: .badRequest,
-                headers: [("Content-Type", "text/plain; charset=utf-8")],
-                body: "Invalid request format"
+                headers: [("Content-Type", "application/json; charset=utf-8")],
+                body: body
             )
             logRequest(
                 method: "POST",
@@ -2738,6 +2756,33 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 responseStatus: 400,
                 startTime: startTime,
                 errorMessage: "Invalid request format"
+            )
+            return
+        }
+
+        // Reject unsupported sampler params explicitly with HTTP 400
+        // rather than silently ignoring — silent ignoring is the worst
+        // behavior for an OpenAI-compatible harness.
+        if let unsupported = Self.unsupportedSamplerReason(req) {
+            let body = Self.errorBody(
+                .openai(type: "invalid_request_error"),
+                message: unsupported
+            )
+            sendResponse(
+                context: context,
+                version: head.version,
+                status: .badRequest,
+                headers: [("Content-Type", "application/json; charset=utf-8")],
+                body: body
+            )
+            logRequest(
+                method: "POST",
+                path: "/chat/completions",
+                userAgent: userAgent,
+                requestBody: requestBodyString,
+                responseStatus: 400,
+                startTime: startTime,
+                errorMessage: unsupported
             )
             return
         }
@@ -2781,7 +2826,18 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let logTemperature = req.temperature ?? 0.7
             let logMaxTokens = req.max_tokens ?? 1024
             let logSelf = self
+            // SSE keepalive: emit a `: ping` comment line every 15s so
+            // intermediate proxies / load balancers do not idle out long
+            // tool-execution / reasoning pauses. Cancelled when the
+            // producer task finishes.
+            let keepaliveTask = Self.startSSEKeepalive(
+                writer: writerBound,
+                channel: context.channel,
+                loop: loop,
+                ctx: ctx
+            )
             Task(priority: .userInitiated) {
+                defer { keepaliveTask.cancel() }
                 do {
                     let chatEngine = self.chatEngine
                     let enrichedReq = await Self.enrichWithAgentContext(req, agentId: memoryAgentId)
@@ -2830,6 +2886,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                             )
                         }
                     }
+                    let includeUsage = req.stream_options?.include_usage == true
+                    let promptTokens = Self.estimatePromptTokens(enrichedReq.messages)
+                    let completionTokens = max(1, accumulatedContent.count / 4)
                     hop {
                         writerBound.value.writeFinish(
                             model,
@@ -2837,6 +2896,16 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                             created: created,
                             context: ctx.value
                         )
+                        if includeUsage {
+                            writerBound.value.writeUsageChunk(
+                                promptTokens: promptTokens,
+                                completionTokens: completionTokens,
+                                model: model,
+                                responseId: responseId,
+                                created: created,
+                                context: ctx.value
+                            )
+                        }
                         writerBound.value.writeEnd(ctx.value)
                     }
                     if persistOnSuccess {
@@ -2871,6 +2940,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     // Multi-tool MLX completion: emit one tool_call delta
                     // per invocation, sharing one finish_reason="tool_calls".
                     // OpenAI clients deduplicate by `index`.
+                    let includeUsage = req.stream_options?.include_usage == true
+                    // Use `req.messages` here (not `enrichedReq.messages`)
+                    // because the enriched value is scoped to the `do` block
+                    // and unavailable in this catch — at worst we under-
+                    // count by the agent system-prompt fragment.
+                    let promptTokens = Self.estimatePromptTokens(req.messages)
                     hop {
                         for (idx, inv) in invs.invocations.enumerated() {
                             self.writeOpenAIToolCallSSE(
@@ -2890,6 +2965,16 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                             created: created,
                             context: ctx.value
                         )
+                        if includeUsage {
+                            writerBound.value.writeUsageChunk(
+                                promptTokens: promptTokens,
+                                completionTokens: 0,
+                                model: model,
+                                responseId: responseId,
+                                created: created,
+                                context: ctx.value
+                            )
+                        }
                         writerBound.value.writeEnd(ctx.value)
                     }
                     let toolLogs = invs.invocations.map {
@@ -2910,6 +2995,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     )
                 } catch let inv as ServiceToolInvocation {
                     // Single tool invocation — same emission as above.
+                    let includeUsage = req.stream_options?.include_usage == true
+                    let promptTokens = Self.estimatePromptTokens(req.messages)
                     hop {
                         self.writeOpenAIToolCallSSE(
                             inv,
@@ -2927,6 +3014,16 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                             created: created,
                             context: ctx.value
                         )
+                        if includeUsage {
+                            writerBound.value.writeUsageChunk(
+                                promptTokens: promptTokens,
+                                completionTokens: 0,
+                                model: model,
+                                responseId: responseId,
+                                created: created,
+                                context: ctx.value
+                            )
+                        }
                         writerBound.value.writeEnd(ctx.value)
                     }
                     let toolLog = ToolCallLog(name: inv.toolName, arguments: inv.jsonArguments)
@@ -2944,6 +3041,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         finishReason: .toolCalls
                     )
                 } catch {
+                    // SSE response head was already written as 200 — the
+                    // failure surfaces as an in-band SSE error chunk. Log
+                    // the actual on-wire status (200) so dashboards don't
+                    // mis-attribute a delivered stream as a 500.
                     hop {
                         writerBound.value.writeError(error.localizedDescription, context: ctx.value)
                         writerBound.value.writeEnd(ctx.value)
@@ -2953,7 +3054,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         path: "/chat/completions",
                         userAgent: logUserAgent,
                         requestBody: logRequestBody,
-                        responseStatus: 500,
+                        responseStatus: 200,
                         startTime: logStartTime,
                         model: logModel,
                         temperature: logTemperature,
@@ -3049,21 +3150,27 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         finishReason: finishReason
                     )
                 } catch {
-                    // Map ChatEngine.EngineError to its intended HTTP
-                    // status (e.g. 404 for unknown model) instead of
-                    // blanket-500 on every failure. External API
-                    // consumers rely on the status code to give users
-                    // actionable feedback. See PR #863 / issue #858.
+                    // Map known errors to their intended HTTP status (e.g.
+                    // 404 for unknown model) instead of blanket-500. The
+                    // body is always OpenAI-shaped JSON so external clients
+                    // can parse it uniformly. See PR #863 / issue #858.
                     let status: HTTPResponseStatus
-                    let body: String
+                    let errorType: String
+                    let message: String
                     if let engineError = error as? ChatEngine.EngineError {
                         status = HTTPResponseStatus(statusCode: engineError.httpStatus)
-                        body = engineError.errorDescription ?? error.localizedDescription
+                        errorType =
+                            engineError.httpStatus == 404
+                            ? "invalid_request_error" : "service_unavailable"
+                        message = engineError.errorDescription ?? error.localizedDescription
                     } else {
                         status = .internalServerError
-                        body = "Internal error: \(error.localizedDescription)"
+                        errorType = "internal_error"
+                        message = error.localizedDescription
                     }
-                    let headers: [(String, String)] = [("Content-Type", "text/plain; charset=utf-8")]
+                    let body = Self.errorBody(.openai(type: errorType), message: message)
+                    let actualStatus = Int(status.code)
+                    let headers: [(String, String)] = [("Content-Type", "application/json; charset=utf-8")]
                     let headersCopy = headers
                     hop {
                         var responseHead = HTTPResponseHead(version: head.version, status: status)
@@ -3087,7 +3194,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         path: "/chat/completions",
                         userAgent: logUserAgent,
                         requestBody: logRequestBody,
-                        responseStatus: 500,
+                        responseStatus: actualStatus,
                         startTime: logStartTime,
                         model: logModel,
                         errorMessage: error.localizedDescription
@@ -3197,6 +3304,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     finishReason: .stop
                 )
             } catch {
+                // NDJSON response head was already 200 — surface as in-band
+                // NDJSON error chunk and log actual on-wire status.
                 hop {
                     writerBound.value.writeError(error.localizedDescription, context: ctx.value)
                     writerBound.value.writeEnd(ctx.value)
@@ -3206,7 +3315,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     path: "/chat",
                     userAgent: logUserAgent,
                     requestBody: logRequestBody,
-                    responseStatus: 500,
+                    responseStatus: 200,
                     startTime: logStartTime,
                     model: logModel,
                     temperature: logTemperature,
@@ -3215,6 +3324,196 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     errorMessage: error.localizedDescription
                 )
             }
+        }
+    }
+
+    // MARK: - SSE keepalive
+
+    /// Spawn a background task that emits a `: ping\n\n` SSE comment
+    /// every 15s, hopping back to the channel's event loop for each
+    /// write. Comment lines are ignored by SSE clients per the spec
+    /// but keep intermediate proxies from idling out long
+    /// tool-execution or reasoning pauses. Callers must `cancel()` the
+    /// returned task when their producer finishes.
+    static func startSSEKeepalive(
+        writer: NIOLoopBound<SSEResponseWriter>,
+        channel: Channel,
+        loop: EventLoop,
+        ctx: NIOLoopBound<ChannelHandlerContext>
+    ) -> Task<Void, Never> {
+        Task<Void, Never>(priority: .background) {
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 15_000_000_000)
+                if Task.isCancelled { return }
+                guard channel.isActive else { return }
+                loop.execute { writer.value.writePing(ctx.value) }
+            }
+        }
+    }
+
+    // MARK: - Tool batch execution
+
+    /// One executed tool call carrying everything the SSE writer + the
+    /// follow-up assistant/tool message construction need. Returned in
+    /// the same order as the input invocations so the SSE frame order
+    /// matches the model's own tool_call sequence.
+    struct ToolOutcome: Sendable {
+        let invocation: ServiceToolInvocation
+        let callId: String
+        let result: String
+    }
+
+    /// Run every invocation in parallel via a TaskGroup, then restore
+    /// the input order for deterministic SSE framing. Each task scopes
+    /// `ChatExecutionContext` so tools see the same session/agent ids
+    /// they would on a sequential dispatch. Per-call errors are caught
+    /// and converted to `ToolEnvelope.fromError` so a single bad call
+    /// never aborts the rest of the batch.
+    static func runToolBatchInParallel(
+        _ invocations: [ServiceToolInvocation],
+        requestId: String,
+        agentId: UUID
+    ) async -> [ToolOutcome] {
+        // Pre-allocate call ids so the parallel tasks don't race the
+        // shortId generator and reorder ids vs invocation indices.
+        let calls: [(index: Int, callId: String, invocation: ServiceToolInvocation)] =
+            invocations.enumerated().map { idx, inv in
+                (idx, inv.toolCallId ?? shortId(prefix: "call_"), inv)
+            }
+
+        let indexed: [(Int, ToolOutcome)] = await withTaskGroup(
+            of: (Int, ToolOutcome).self
+        ) { group in
+            for call in calls {
+                group.addTask {
+                    let result: String
+                    do {
+                        result = try await ChatExecutionContext.$currentSessionId.withValue(requestId) {
+                            try await ChatExecutionContext.$currentAgentId.withValue(agentId) {
+                                try await ToolRegistry.shared.execute(
+                                    name: call.invocation.toolName,
+                                    argumentsJSON: call.invocation.jsonArguments
+                                )
+                            }
+                        }
+                    } catch {
+                        result = ToolEnvelope.fromError(error, tool: call.invocation.toolName)
+                    }
+                    let outcome = ToolOutcome(
+                        invocation: call.invocation,
+                        callId: call.callId,
+                        result: result
+                    )
+                    return (call.index, outcome)
+                }
+            }
+            var collected: [(Int, ToolOutcome)] = []
+            for await item in group { collected.append(item) }
+            return collected
+        }
+
+        return indexed.sorted { $0.0 < $1.0 }.map { $0.1 }
+    }
+
+    // MARK: - Request validation
+
+    /// Convenience adapter over `RequestValidator.unsupportedSamplerReason`
+    /// that pulls the relevant fields off a `ChatCompletionRequest`. The
+    /// underlying logic lives at module scope so the eval kit can exercise
+    /// it without depending on `HTTPHandler` / `ChatCompletionRequest`.
+    nonisolated static func unsupportedSamplerReason(_ req: ChatCompletionRequest) -> String? {
+        RequestValidator.unsupportedSamplerReason(
+            n: req.n,
+            responseFormatType: req.response_format?.type
+        )
+    }
+
+    // MARK: - Token estimation
+
+    /// Cheap char-based prompt-token estimate, mirrored on
+    /// `ChatEngine.estimateInputTokens` so SSE `usage` chunks and
+    /// non-stream `usage` totals are consistent. Includes assistant
+    /// `tool_calls` payloads and `tool` role bodies.
+    nonisolated static func estimatePromptTokens(_ messages: [ChatMessage]) -> Int {
+        let totalChars = messages.reduce(0) { sum, msg in
+            var chars = msg.content?.count ?? 0
+            if let calls = msg.tool_calls {
+                for call in calls {
+                    chars += call.function.name.count
+                    chars += call.function.arguments.count
+                    chars += 20  // ~20 chars overhead per call envelope
+                }
+            }
+            return sum + chars
+        }
+        return max(1, totalChars / 4)
+    }
+
+    // MARK: - Health Endpoint
+
+    /// `/health` returns liveness plus per-model in-flight counts and the
+    /// list of currently-loaded models. External observers can use this to
+    /// detect contention without scraping logs (one model starving the
+    /// others, eviction churn under sustained load, etc.).
+    private func handleHealthEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?,
+        method: String,
+        path: String
+    ) {
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let cors = stateRef.value.corsHeaders
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        let version = head.version
+        let logSelf = self
+        let logStartTime = startTime
+        let logUserAgent = userAgent
+        let logMethod = method
+        let logPath = path
+
+        Task(priority: .userInitiated) {
+            let inflight = await ModelLease.shared.snapshot()
+            let cached = await ModelRuntime.shared.cachedModelSummaries()
+            let loaded = cached.map { $0.name }
+            let current = cached.first(where: { $0.isCurrent })?.name as Any? ?? NSNull()
+
+            var inflightObj: [String: Any] = [:]
+            for (name, count) in inflight { inflightObj[name] = count }
+
+            let obj: [String: Any] = [
+                "status": "healthy",
+                "timestamp": Date().ISO8601Format(),
+                "loaded": loaded,
+                "current_model": current,
+                "inflight": inflightObj,
+            ]
+            let data = try? JSONSerialization.data(withJSONObject: obj)
+            let body = data.flatMap { String(decoding: $0, as: UTF8.self) } ?? "{}"
+            let headers: [(String, String)] =
+                [("Content-Type", "application/json; charset=utf-8")]
+                + cors
+
+            hop {
+                logSelf.sendResponse(
+                    context: ctx.value,
+                    version: version,
+                    status: .ok,
+                    headers: headers,
+                    body: body
+                )
+            }
+            logSelf.logRequest(
+                method: logMethod,
+                path: logPath,
+                userAgent: logUserAgent,
+                requestBody: nil,
+                responseBody: body,
+                responseStatus: 200,
+                startTime: logStartTime
+            )
         }
     }
 
@@ -4048,6 +4347,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     finishReason: .toolCalls
                 )
             } catch {
+                // SSE response head was already 200 — surface as in-band
+                // SSE error chunk and log actual on-wire status.
                 hop {
                     writerBound.value.writeError(error.localizedDescription, context: ctx.value)
                     writerBound.value.writeEnd(ctx.value)
@@ -4057,7 +4358,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     path: "/messages",
                     userAgent: logUserAgent,
                     requestBody: logRequestBody,
-                    responseStatus: 500,
+                    responseStatus: 200,
                     startTime: logStartTime,
                     model: logModel,
                     finishReason: .error,
@@ -4716,6 +5017,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     finishReason: .toolCalls
                 )
             } catch {
+                // SSE response head was already 200 — surface as in-band
+                // SSE error chunk and log actual on-wire status.
                 hop {
                     writerBound.value.writeError(error.localizedDescription, context: ctx.value)
                     writerBound.value.writeEnd(ctx.value)
@@ -4725,7 +5028,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     path: "/responses",
                     userAgent: logUserAgent,
                     requestBody: logRequestBody,
-                    responseStatus: 500,
+                    responseStatus: 200,
                     startTime: logStartTime,
                     model: logModel,
                     finishReason: .error,

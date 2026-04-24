@@ -90,22 +90,28 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
     ) async -> Dispatch {
         let temperature = request.temperature
         let maxTokens = request.max_tokens ?? 16384
+        // Map only OpenAI `frequency_penalty` to repetition_penalty here.
+        // `presence_penalty` has no MLX analog — leaving the previous
+        // "either-or" mapping in place silently collapsed two distinct
+        // knobs. Both raw values are forwarded on `GenerationParameters`
+        // so remote services can pass them through natively.
         let repPenalty: Float? = {
-            // Map OpenAI penalties (presence/frequency) to a simple
-            // repetition penalty when supplied.
             if let fp = request.frequency_penalty, fp > 0 { return 1.0 + fp }
-            if let pp = request.presence_penalty, pp > 0 { return 1.0 + pp }
             return nil
         }()
+        let seedBits: UInt64? = request.seed.map { UInt64(bitPattern: Int64($0)) }
+        let isJSONObject = (request.response_format?.type == "json_object")
         let params = GenerationParameters(
             temperature: temperature,
             maxTokens: maxTokens,
             topPOverride: request.top_p,
             repetitionPenalty: repPenalty,
+            frequencyPenalty: request.frequency_penalty,
+            presencePenalty: request.presence_penalty,
+            seed: seedBits,
+            jsonMode: isJSONObject,
             modelOptions: request.modelOptions ?? [:],
             sessionId: request.session_id,
-            cacheHint: request.cache_hint,
-            staticPrefix: request.staticPrefix,
             ttftTrace: trace
         )
 

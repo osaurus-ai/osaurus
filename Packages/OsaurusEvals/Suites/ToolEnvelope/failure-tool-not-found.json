@@ -1,0 +1,21 @@
+{
+  "id": "tool_envelope.failure-tool-not-found",
+  "domain": "tool_envelope",
+  "label": "tool_envelope • failure(toolNotFound) carries the right discriminator",
+  "query": "",
+  "fixtures": {},
+  "expect": {
+    "toolEnvelope": {
+      "builder": "failure",
+      "kind": "tool_not_found",
+      "message": "Tool 'browse' is not available in this session.",
+      "tool": "browse",
+      "expectKeys": {
+        "ok": false,
+        "kind": "tool_not_found",
+        "tool": "browse",
+        "retryable": false
+      }
+    }
+  }
+}

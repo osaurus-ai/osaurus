@@ -1,0 +1,14 @@
+{
+  "id": "argument_coercion.bool-rejects-arbitrary-string",
+  "domain": "argument_coercion",
+  "label": "coercion • bool rejects strings outside the known vocabulary (returns nil)",
+  "query": "",
+  "fixtures": {},
+  "expect": {
+    "argumentCoercion": {
+      "helper": "bool",
+      "value": "maybe",
+      "expect": null
+    }
+  }
+}

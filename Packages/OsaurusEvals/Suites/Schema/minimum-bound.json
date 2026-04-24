@@ -1,0 +1,26 @@
+{
+  "id": "schema.minimum-bound-rejected",
+  "domain": "schema",
+  "label": "schema • numeric minimum constraint enforcement",
+  "query": "",
+  "fixtures": {},
+  "expect": {
+    "schema": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "count": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "required": ["count"]
+      },
+      "arguments": {
+        "count": 0
+      },
+      "expectValid": false,
+      "expectField": "count"
+    }
+  }
+}

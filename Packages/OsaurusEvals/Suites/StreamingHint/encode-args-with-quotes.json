@@ -1,0 +1,13 @@
+{
+  "id": "streaming_hint.encode-args-with-quotes",
+  "domain": "streaming_hint",
+  "label": "streaming_hint • encodeArgs round-trips JSON with quotes/newlines intact",
+  "query": "",
+  "fixtures": {},
+  "expect": {
+    "streamingHint": {
+      "op": "encodeArgs",
+      "payload": "{\"query\": \"line one\\nline two\", \"limit\": 5}"
+    }
+  }
+}

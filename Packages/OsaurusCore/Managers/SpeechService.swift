@@ -528,6 +528,18 @@ final class SendableAsrManager: @unchecked Sendable {
     init(_ manager: AsrManager) { self.manager = manager }
 }
 
+/// FluidAudio 0.14 moved the decoder state onto the caller: every
+/// `transcribe(_:decoderState:)` invocation threads a fresh or reused
+/// `TdtDecoderState` so the library doesn't have to stash per-call
+/// mutable state behind its own lock. Decoder-layer count comes off
+/// the manager itself, so the factory is a thin `async` shim.
+private enum SpeechDecoderStateFactory {
+    static func make(for manager: AsrManager) async -> TdtDecoderState {
+        let decoderLayers = await manager.decoderLayerCount
+        return TdtDecoderState.make(decoderLayers: decoderLayers)
+    }
+}
+
 // MARK: - Speech Service
 
 /// Service for audio transcription using FluidAudio
@@ -741,7 +753,10 @@ public final class SpeechService: ObservableObject {
         defer { isTranscribing = false }
 
         do {
-            let result = try await Task.detached { try await wrappedManager.manager.transcribe(audioURL) }.value
+            let result = try await Task.detached {
+                var decoderState = await SpeechDecoderStateFactory.make(for: wrappedManager.manager)
+                return try await wrappedManager.manager.transcribe(audioURL, decoderState: &decoderState)
+            }.value
 
             return TranscriptionResult(
                 text: result.text,
@@ -944,7 +959,11 @@ public final class SpeechService: ObservableObject {
 
         if finalBuffer.count > 16000, let wrappedManager = sendableAsrManager {
             do {
-                let result = try await wrappedManager.manager.transcribe(finalBuffer)
+                var decoderState = await SpeechDecoderStateFactory.make(for: wrappedManager.manager)
+                let result = try await wrappedManager.manager.transcribe(
+                    finalBuffer,
+                    decoderState: &decoderState
+                )
                 let finalText = result.text.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
                 await MainActor.run {
                     if self.confirmedTranscription.isEmpty {
@@ -1277,6 +1296,10 @@ private actor TranscriptionWorker {
     private let silenceThresholdSeconds: Double
     private let maxSegmentDurationSeconds: Double = 30.0
     private let minSamples = 16000
+    // Reused across segments in a single streaming session so the
+    // decoder's KV cache stays warm between chunks; reset when the
+    // worker is torn down.
+    private var decoderState: TdtDecoderState?
 
     init(
         asrManager: SendableAsrManager,
@@ -1463,7 +1486,14 @@ private actor TranscriptionWorker {
         guard !buffer.isEmpty else { return }
 
         do {
-            let result = try await asrManager.manager.transcribe(buffer)
+            var state: TdtDecoderState
+            if let decoderState {
+                state = decoderState
+            } else {
+                state = await SpeechDecoderStateFactory.make(for: asrManager.manager)
+            }
+            let result = try await asrManager.manager.transcribe(buffer, decoderState: &state)
+            decoderState = state
             let text = result.text.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
             if !text.isEmpty {
                 continuation?.yield(.final(text))
@@ -1475,7 +1505,11 @@ private actor TranscriptionWorker {
 
     private func updatePreview(_ buffer: [Float]) async {
         do {
-            let result = try await asrManager.manager.transcribe(buffer)
+            // Previews use a throwaway state so a bad partial chunk
+            // can't poison the next finalize — the shared `decoderState`
+            // only advances when `finalizeSegment` confirms a segment.
+            var previewState = await SpeechDecoderStateFactory.make(for: asrManager.manager)
+            let result = try await asrManager.manager.transcribe(buffer, decoderState: &previewState)
             let text = result.text.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
             continuation?.yield(.partial(text))
         } catch {

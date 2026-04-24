@@ -28,7 +28,7 @@ private let genLog = Logger(subsystem: "com.dinoki.osaurus", category: "Generati
 private let _vlmFactory = MLXVLM.VLMModelFactory.shared
 private let _llmFactory = MLXLLM.LLMModelFactory.shared
 
-actor ModelRuntime {
+public actor ModelRuntime {
     // MARK: - Types
 
     struct ModelCacheSummary: Sendable {
@@ -198,13 +198,6 @@ actor ModelRuntime {
         cachedConfig = nil
     }
 
-    /// Called when a chat window closes. With the package-level CacheCoordinator
-    /// the paged cache is content-addressed and bounded internally, so
-    /// per-session invalidation is not needed — stale blocks are LRU-evicted.
-    func invalidateSession(_ sessionId: String) {
-        // No-op: CacheCoordinator handles eviction via LRU on PagedCacheManager.
-    }
-
     // MARK: - Internals
 
     private func getConfig() async -> RuntimeConfig {
@@ -334,20 +327,32 @@ actor ModelRuntime {
     // selects model-aware cache types per layer (rotating for sliding-window
     // attention, paged for global attention, SSM state for Mamba layers),
     // sizes them based on the loaded model, and auto-flips into hybrid mode
-    // when the first SSM slot is admitted. Per OSAURUS-INTEGRATION.md,
-    // osaurus must not duplicate that work at the app layer — the only
-    // knobs we legitimately set here are:
-    //   - `modelKey`     — required for per-model isolation across loads
-    //   - `diskCacheDir` — osaurus-managed disk path (under our sandbox)
-    //   - `enableDiskCache=false` when the dir is not writable, so the
-    //     coordinator falls back to memory-only instead of crashing
+    // when the first SSM slot is admitted.
+    //
+    // Per OSAURUS-INTEGRATION.md §"Coordinator-owned KV sizing", osaurus
+    // adopts the four recommended knobs the library now ships defaults for:
+    //
+    //   - `usePagedCache: true`            — content-addressed paged blocks
+    //                                        (multi-turn cache reuse path)
+    //   - `defaultKVMode: .turboQuant(3,3)`— ~5x KV memory savings on slots
+    //                                        that submit `kvMode: .none`
+    //   - `defaultMaxKVSize: 8192`         — 8K ring window for slots that
+    //                                        submit `maxKVSize: nil`
+    //   - `longPromptMultiplier: 2.0`      — cap kicks in only past 16K
+    //                                        (8192 * 2.0) prompt tokens,
+    //                                        so short prompts keep full
+    //                                        attention.
+    //
+    // Per-request explicit values still override these. We continue to
+    // pass `modelKey` (per-model isolation) and `diskCacheDir` /
+    // `enableDiskCache` (osaurus-managed disk path, sandbox-aware).
     // Everything else (`maxCacheBlocks`, `diskCacheMaxGB`, `pagedBlockSize`,
-    // `ssmMaxEntries`) is left at the library default so vmlx can ship a
-    // single tuned answer per release.
+    // `ssmMaxEntries`) is left at the library default.
 
-    /// Builds a `CacheCoordinatorConfig` with the minimum overrides
-    /// required for osaurus's environment. See the file-level comment for
-    /// the rationale on why every other field is intentionally untouched.
+    /// Builds a `CacheCoordinatorConfig` with the overrides recommended
+    /// by vmlx-swift-lm's `OSAURUS-INTEGRATION.md` (Coordinator-owned KV
+    /// sizing) plus osaurus's per-environment disk-path config. See the
+    /// file-level comment for rationale on each knob.
     private nonisolated static func buildCacheCoordinatorConfig(
         modelName: String
     ) -> CacheCoordinatorConfig {
@@ -360,11 +365,15 @@ actor ModelRuntime {
             )
         }
 
-        var cacheConfig = CacheCoordinatorConfig()
-        cacheConfig.modelKey = modelName
-        cacheConfig.diskCacheDir = diskCacheDir
-        cacheConfig.enableDiskCache = diskDirUsable
-        return cacheConfig
+        return CacheCoordinatorConfig(
+            usePagedCache: true,
+            enableDiskCache: diskDirUsable,
+            diskCacheDir: diskCacheDir,
+            modelKey: modelName,
+            defaultKVMode: .turboQuant(keyBits: 3, valueBits: 3),
+            defaultMaxKVSize: 8192,
+            longPromptMultiplier: 2.0
+        )
     }
 
     /// Best-effort writability probe for the disk cache directory. Uses a
@@ -529,8 +538,9 @@ actor ModelRuntime {
     ) async throws -> String {
         var accumulated = ""
         var pendingTools: [ServiceToolInvocation] = []
+        let augmented = ModelRuntime.applyJSONMode(messages, jsonMode: parameters.jsonMode)
         let events = try await generateEventStream(
-            chatBuilder: { ModelRuntime.mapOpenAIChatToMLX(messages) },
+            chatBuilder: { ModelRuntime.mapOpenAIChatToMLX(augmented) },
             parameters: parameters,
             stopSequences: stopSequences,
             tools: tools,
@@ -572,8 +582,9 @@ actor ModelRuntime {
         modelId: String,
         modelName: String
     ) async throws -> AsyncThrowingStream<String, Error> {
+        let augmented = ModelRuntime.applyJSONMode(messages, jsonMode: parameters.jsonMode)
         let events = try await generateEventStream(
-            chatBuilder: { ModelRuntime.mapOpenAIChatToMLX(messages) },
+            chatBuilder: { ModelRuntime.mapOpenAIChatToMLX(augmented) },
             parameters: parameters,
             stopSequences: stopSequences,
             tools: tools,
@@ -659,7 +670,7 @@ actor ModelRuntime {
 
     /// Computes a deterministic hash from system content and tool names.
     /// Used by the HTTP API to expose a prefix_hash field in responses.
-    nonisolated static func computePrefixHash(
+    public nonisolated static func computePrefixHash(
         systemContent: String,
         toolNames: [String]
     ) -> String {
@@ -720,6 +731,40 @@ actor ModelRuntime {
         } else {
             return tools.map { $0.toTokenizerToolSpec() }
         }
+    }
+
+    /// When `jsonMode` is true, prepend (or augment) a system instruction
+    /// telling the model to respond with a single valid JSON object.
+    /// OpenAI's `response_format: {type: json_object}` semantics — local
+    /// models honor it via prompt injection (vmlx does not yet ship a
+    /// constraint-grammar sampler hook). Returns `messages` unchanged
+    /// when `jsonMode` is false so the no-op path is free.
+    nonisolated static func applyJSONMode(
+        _ messages: [ChatMessage],
+        jsonMode: Bool
+    ) -> [ChatMessage] {
+        guard jsonMode else { return messages }
+        let directive = """
+            You must respond with a single valid JSON object and nothing else. \
+            Do not include markdown code fences, prose, or explanations — output \
+            only the JSON.
+            """
+        var out = messages
+        if let firstSystemIdx = out.firstIndex(where: { $0.role == "system" }) {
+            let existing = out[firstSystemIdx].content ?? ""
+            out[firstSystemIdx] = ChatMessage(
+                role: "system",
+                content: existing.isEmpty ? directive : existing + "\n\n" + directive,
+                tool_calls: out[firstSystemIdx].tool_calls,
+                tool_call_id: out[firstSystemIdx].tool_call_id
+            )
+        } else {
+            out.insert(
+                ChatMessage(role: "system", content: directive, tool_calls: nil, tool_call_id: nil),
+                at: 0
+            )
+        }
+        return out
     }
 
     /// Map OpenAI-format chat messages to MLX `Chat.Message`s.

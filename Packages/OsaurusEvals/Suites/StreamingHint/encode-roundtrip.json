@@ -1,0 +1,13 @@
+{
+  "id": "streaming_hint.encode-roundtrip",
+  "domain": "streaming_hint",
+  "label": "streaming_hint • encode/decode round-trip on a tool name",
+  "query": "",
+  "fixtures": {},
+  "expect": {
+    "streamingHint": {
+      "op": "encode",
+      "payload": "search_memory"
+    }
+  }
+}

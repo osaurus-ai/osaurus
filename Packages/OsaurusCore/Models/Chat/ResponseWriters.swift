@@ -302,6 +302,44 @@ final class SSEResponseWriter: ResponseWriter {
             ctx.value.close(promise: nil)
         }
     }
+
+    /// Emit a single SSE comment line as a keepalive heartbeat. SSE comment
+    /// lines start with `:` and are ignored by clients per the SSE spec, but
+    /// they keep intermediate proxies / load balancers from idling out long
+    /// tool/thinking pauses. Safe to call mid-stream.
+    func writePing(_ context: ChannelHandlerContext) {
+        var buf = context.channel.allocator.buffer(capacity: 16)
+        buf.writeString(": ping\n\n")
+        context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buf))), promise: nil)
+        context.flush()
+    }
+
+    /// Emit the OpenAI `stream_options.include_usage` final chunk: an
+    /// extra SSE chunk with empty `choices` and a populated `usage`
+    /// field, sent right before `data: [DONE]`. Per OpenAI spec this
+    /// chunk is only present when the request opts in.
+    func writeUsageChunk(
+        promptTokens: Int,
+        completionTokens: Int,
+        model: String,
+        responseId: String,
+        created: Int,
+        context: ChannelHandlerContext
+    ) {
+        var chunk = ChatCompletionChunk(
+            id: responseId,
+            created: created,
+            model: model,
+            choices: [],
+            system_fingerprint: nil
+        )
+        chunk.usage = Usage(
+            prompt_tokens: promptTokens,
+            completion_tokens: completionTokens,
+            total_tokens: promptTokens + completionTokens
+        )
+        writeSSEChunk(chunk, context: context)
+    }
 }
 
 final class NDJSONResponseWriter: ResponseWriter {

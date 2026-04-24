@@ -97,4 +97,11 @@ public actor ModelLease {
     public func count(for name: String) -> Int {
         counts[name] ?? 0
     }
+
+    /// Atomic snapshot of all per-model in-flight counts. Used by `/health`
+    /// to surface contention so external observers can detect when one
+    /// model is starving the others without having to scrape logs.
+    public func snapshot() -> [String: Int] {
+        counts
+    }
 }

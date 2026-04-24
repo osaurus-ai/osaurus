@@ -351,14 +351,21 @@ struct ChatCompletionRequest: Codable, Sendable {
     let tools: [Tool]?
     /// OpenAI tool_choice ("none" | "auto" | {"type":"function","function":{"name":...}})
     let tool_choice: ToolChoiceOption?
-    /// Optional session identifier for KV cache reuse across turns
+    /// Optional session identifier for chat/history grouping. Not a KV cache key —
+    /// vmlx-swift-lm's `CacheCoordinator` is content-addressed and discovers
+    /// reusable prefixes autonomously.
     var session_id: String? = nil
-    /// Optional prefix cache hint for sharing a cached KV prefix across requests
-    var cache_hint: String? = nil
+    /// Deterministic-sampling seed (OpenAI v1.x). When set, identical
+    /// requests should yield identical completions on the same backend.
+    var seed: Int? = nil
+    /// `{"type":"json_object"}` for OpenAI JSON mode. Other shapes
+    /// (`text`, `json_schema`) are rejected at request validation.
+    var response_format: ResponseFormat? = nil
+    /// `{"include_usage": true}` instructs the SSE producer to emit a
+    /// final chunk carrying `usage` (prompt/completion/total tokens).
+    var stream_options: StreamOptions? = nil
     /// Model-specific options from the active ModelProfile (not serialized to JSON).
     var modelOptions: [String: ModelOptionValue]? = nil
-    /// Static system prompt content for prefix cache building (not serialized to JSON).
-    var staticPrefix: String? = nil
     /// Optional TTFT trace for diagnostic timing (not serialized to JSON).
     var ttftTrace: TTFTTrace? = nil
 
@@ -368,7 +375,8 @@ struct ChatCompletionRequest: Codable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case model, messages, temperature, max_tokens, max_completion_tokens, stream, top_p
         case frequency_penalty, presence_penalty, stop, n
-        case tools, tool_choice, session_id, cache_hint
+        case tools, tool_choice, session_id
+        case seed, response_format, stream_options
     }
 
     func withModel(_ newModel: String) -> ChatCompletionRequest {
@@ -386,12 +394,25 @@ struct ChatCompletionRequest: Codable, Sendable {
             tools: tools,
             tool_choice: tool_choice,
             session_id: session_id,
-            cache_hint: cache_hint
+            seed: seed,
+            response_format: response_format,
+            stream_options: stream_options
         )
         copy.modelOptions = modelOptions
-        copy.staticPrefix = staticPrefix
         return copy
     }
+}
+
+/// OpenAI `response_format`. We only act on `json_object`; other kinds
+/// (`text`, `json_schema`) flow through unchanged so the request
+/// validator can accept or reject them with a clear, specific error.
+struct ResponseFormat: Codable, Sendable, Equatable {
+    let type: String
+}
+
+/// OpenAI `stream_options` shape. Today we only honor `include_usage`.
+struct StreamOptions: Codable, Sendable, Equatable {
+    let include_usage: Bool?
 }
 
 /// Chat completion choice
@@ -418,8 +439,9 @@ struct ChatCompletionResponse: Codable, Sendable {
     let usage: Usage
     var system_fingerprint: String? = nil
     /// Content hash of the system prompt + tool names used for this request.
-    /// API callers can pass this value back as `cache_hint` to reuse the
-    /// prefix KV cache on subsequent requests.
+    /// Informational only — clients can use it to detect when the system
+    /// prefix changed across requests. KV reuse itself is handled
+    /// autonomously by vmlx's `CacheCoordinator` (content-addressed).
     var prefix_hash: String? = nil
 }
 
@@ -470,6 +492,9 @@ struct ChatCompletionChunk: Codable, Sendable {
     var system_fingerprint: String? = nil
     /// Included only in the first chunk; see `ChatCompletionResponse.prefix_hash`.
     var prefix_hash: String? = nil
+    /// Final usage chunk (OpenAI `stream_options.include_usage`). Populated
+    /// only on the dedicated penultimate SSE chunk; nil on every other.
+    var usage: Usage? = nil
 }
 
 // MARK: - Error Response

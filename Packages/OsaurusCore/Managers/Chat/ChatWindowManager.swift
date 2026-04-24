@@ -518,7 +518,6 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         let closedAgentId = windows[id]?.agentId
         Task {
             if let sid = closedSessionId {
-                await ModelRuntime.shared.invalidateSession(sid.uuidString)
                 PluginHostContext.invalidatePreflightCache(sessionId: sid.uuidString)
             }
             if let aid = closedAgentId {

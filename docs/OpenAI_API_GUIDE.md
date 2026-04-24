@@ -38,6 +38,10 @@ Example response:
 
 Generate chat completions using the specified model.
 
+> **Tool calling:** `/chat/completions` follows **strict OpenAI semantics** — when the model emits `tool_calls`, the response (or final SSE chunk) returns those calls and the **client is expected to execute them and POST the results back** in the next request. Osaurus deliberately does **not** auto-execute tools on this endpoint so it can serve as a drop-in backend for harnesses that already manage their own tool loop (Cursor, OpenWebUI, Continue, Aider, etc.).
+>
+> If you want server-side autonomous loops, use `POST /agents/{id}/run` (it executes tools, manages iteration budget, and streams hint/done frames). If you want to expose Osaurus tools to a remote model harness, use the MCP endpoints (`GET /mcp/tools`, `POST /mcp/call`).
+
 #### Non-streaming Request
 
 ```bash
@@ -240,6 +244,25 @@ Notes and limitations:
 2. Assistant must return arguments as a JSON‑escaped string. The server also tolerates a nested `parameters` object and normalizes it.
 3. The parser accepts common wrappers like code fences and an `assistant:` prefix.
 4. `tool_choice` supports `"auto"`, `"none"`, and a specific function target object.
+5. **Strict OpenAI semantics**: `/chat/completions` returns the model's `tool_calls` and stops — it does not execute them server-side. The client must run the tools and POST the results back in the next request. For autonomous server-side tool loops, use `POST /agents/{id}/run` instead.
+
+### Server-side autonomous tool loops: `POST /agents/{id}/run`
+
+When you want Osaurus to execute tools on your behalf (manage the iteration budget, stream tool-execution hints, and only return when the model is done), use the agent run endpoint. This is the path the in-app chat UI uses.
+
+- Each pending `tool_call` is executed against the registered `ToolRegistry` (sandbox, folder, MCP, plugin tools — everything the agent has access to).
+- Independent tool calls within a single model turn run **in parallel**.
+- The loop is capped at 30 iterations; if the budget is exhausted while still requesting tools, a notice is appended to the stream so the client sees a clear reason rather than a silent stop.
+- Honors client-supplied `tools` (merged with the agent's always-loaded set) and `tool_choice` (defaults to `"auto"` when tools are present).
+
+### Aggregating Osaurus tools through MCP
+
+The Model Context Protocol endpoints let any MCP-aware harness (e.g. Cursor, Claude Desktop with MCP plugins) connect and discover Osaurus tools without committing to the agent endpoint:
+
+- `GET /mcp/tools` — list registered tools as MCP `Tool` definitions
+- `POST /mcp/call` — invoke a tool by name with structured arguments
+
+Combine `/chat/completions` (your harness's own tool loop) with `/mcp/tools` + `/mcp/call` (Osaurus tool surface) to keep both sides authoritative.
 
 ### Session Reuse (KV Cache)
 
@@ -265,32 +288,17 @@ curl http://127.0.0.1:1337/v1/chat/completions \
 
 Keep `session_id` stable per conversation and per model.
 
-### Prefix Caching and `cache_hint`
+### Prefix Caching and `prefix_hash`
 
-The server maintains a content-aware **prefix cache** keyed by a hash of the system prompt and tool definitions. When consecutive requests share the same context, the KV cache from the prefix is reused, skipping redundant prefill computation.
+KV cache reuse across requests is **automatic and content-addressed** — Osaurus delegates prefix cache management to vmlx-swift-lm's `CacheCoordinator`. Two requests that share the same prefix tokens (system prompt, tools, prior turns) automatically share the cached KV blocks. There is no client-side opt-in or cache key to manage.
 
-The computed `prefix_hash` is returned in every response (both streaming chunks and non-streaming):
+For visibility, every response carries a `prefix_hash` field — a stable hash of the system prompt + tool names that produced this generation. Clients can use it to detect when the system prefix changed across requests:
 
 ```json
 { "prefix_hash": "a1b2c3d4e5f67890..." }
 ```
 
-To explicitly control prefix cache matching, pass `cache_hint` in the request body. When provided, the server uses this value as the cache key instead of computing one:
-
-```bash
-curl http://127.0.0.1:1337/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "llama-3.2-3b-instruct",
-    "cache_hint": "a1b2c3d4e5f67890",
-    "messages": [
-      {"role": "system", "content": "You are a helpful assistant."},
-      {"role": "user", "content": "Hello"}
-    ]
-  }'
-```
-
-This is useful for API clients that want to guarantee cache hits across requests with identical context.
+`prefix_hash` is informational only — passing it back to the server has no effect. Keep `session_id` stable per conversation so chat history and preflight bookkeeping group correctly; cache reuse itself does not depend on it.
 
 ### Chat Templates
 
@@ -647,7 +655,7 @@ Example response:
 
 1. **Model Availability**: Only models that have been downloaded through the Osaurus UI will be available via the API.
 
-2. **Performance**: The first request to a model loads it; subsequent requests skip this step. Concurrent same-model requests share a single forward pass via vmlx-swift-lm's `BatchEngine` continuous batching. Prefix caching is available to API clients via `cache_hint` / `prefix_hash`, but prefix caches are only precomputed by the UI warm-up flow — API requests read existing prefix caches but do not create new ones. Use `session_id` for multi-turn KV cache reuse across requests.
+2. **Performance**: The first request to a model loads it; subsequent requests skip this step. Concurrent same-model requests share a single forward pass via vmlx-swift-lm's `BatchEngine` continuous batching. Multi-turn KV cache reuse is automatic and content-addressed via vmlx's `CacheCoordinator` — repeated prefixes (system prompt, tools, prior turns) are matched without any client opt-in. The `prefix_hash` response field is informational; `session_id` groups history but is not a cache key.
 
 3. **Memory Management**: Models are loaded into memory on demand and automatically unloaded when no chat window references them. KV cache geometry (paged for global attention, rotating for sliding-window, SSM state for hybrid models) is owned by vmlx-swift-lm's `CacheCoordinator`, which sizes each tier per model. Configure the model eviction policy in Settings > Local Inference > Model Management.
 

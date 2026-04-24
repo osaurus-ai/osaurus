@@ -1,0 +1,27 @@
+{
+  "id": "schema.oneof-string-or-int",
+  "domain": "schema",
+  "label": "schema • oneOf first-match accepts either branch",
+  "query": "",
+  "fixtures": {},
+  "expect": {
+    "schema": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "oneOf": [
+              { "type": "string" },
+              { "type": "integer", "minimum": 0 }
+            ]
+          }
+        },
+        "required": ["value"]
+      },
+      "arguments": {
+        "value": "hello"
+      },
+      "expectValid": true
+    }
+  }
+}

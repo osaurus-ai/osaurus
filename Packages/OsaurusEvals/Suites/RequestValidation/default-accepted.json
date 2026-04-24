@@ -1,0 +1,12 @@
+{
+  "id": "request_validation.default-accepted",
+  "domain": "request_validation",
+  "label": "request_validation • default request (no n, no response_format) is accepted",
+  "query": "",
+  "fixtures": {},
+  "expect": {
+    "requestValidation": {
+      "expectAccept": true
+    }
+  }
+}

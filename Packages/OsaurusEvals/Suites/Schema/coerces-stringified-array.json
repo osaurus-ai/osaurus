@@ -1,0 +1,25 @@
+{
+  "id": "schema.coerces-stringified-array-to-native",
+  "domain": "schema",
+  "label": "schema • stringified array auto-unwrapped to native (browser_do regression)",
+  "query": "",
+  "fixtures": {},
+  "expect": {
+    "schema": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "actions": {
+            "type": "array",
+            "items": { "type": "object" }
+          }
+        },
+        "required": ["actions"]
+      },
+      "arguments": {
+        "actions": "[{\"action\": \"type\", \"ref\": \"E10\"}, {\"action\": \"click\", \"ref\": \"E11\"}]"
+      },
+      "expectValid": true
+    }
+  }
+}

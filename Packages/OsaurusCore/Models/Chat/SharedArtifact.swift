@@ -160,7 +160,7 @@ extension SharedArtifact {
     /// Raw parsed content extracted from the marker-delimited region.
     struct ParsedMarkers {
         var metadata: [String: Any]
-        let filename: String
+        var filename: String
         let contentLines: [String]
         let startRange: Range<String.Index>
         let endRange: Range<String.Index>
@@ -218,9 +218,25 @@ extension SharedArtifact {
         let hasContent = parsed.metadata["has_content"] as? Bool ?? false
         let path = parsed.metadata["path"] as? String
 
+        // Strip any path segments the agent may have smuggled into the filename
+        // (e.g. `../quarterly.md`) before we resolve it against the context dir.
+        let sanitizedFilename = sanitizeArtifactFilename(parsed.filename)
+        if sanitizedFilename != parsed.filename {
+            NSLog(
+                "[SharedArtifact] Sanitized artifact filename '%@' → '%@'",
+                parsed.filename,
+                sanitizedFilename
+            )
+        }
+        parsed.filename = sanitizedFilename
+        parsed.metadata["filename"] = sanitizedFilename
+
         let contextDir = OsaurusPaths.contextArtifactsDir(contextId: contextId)
         OsaurusPaths.ensureExistsSilent(contextDir)
-        let destPath = contextDir.appendingPathComponent(parsed.filename)
+        guard let destPath = resolveDestinationPath(filename: parsed.filename, contextDir: contextDir) else {
+            NSLog("[SharedArtifact] Refused destination path for filename '%@'", parsed.filename)
+            return nil
+        }
 
         let artifact: SharedArtifact
         let contentLines: [String]
@@ -386,6 +402,9 @@ extension SharedArtifact {
 
     /// Maps an agent-provided path to the host-side URL, normalizing absolute
     /// in-container paths, `./` prefixes, and falling back to a basename search.
+    /// Every returned URL is canonicalized and verified to live inside the
+    /// caller's trusted root — a crafted `../` path cannot escape the sandbox
+    /// agent dir, the container workspace, or the user-picked host folder.
     private static func resolveSourcePath(
         _ path: String,
         executionMode: ExecutionMode,
@@ -396,37 +415,95 @@ extension SharedArtifact {
             let agent = sandboxAgentName ?? "default"
             let agentDir = OsaurusPaths.containerAgentDir(agent)
             let containerHome = OsaurusPaths.inContainerAgentHome(agent)
-            let fm = FileManager.default
 
             var relativePath = path
             if relativePath.hasPrefix(containerHome + "/") {
                 relativePath = String(relativePath.dropFirst(containerHome.count + 1))
             } else if relativePath.hasPrefix("/workspace/") {
                 let stripped = String(relativePath.dropFirst("/workspace/".count))
-                let candidate = OsaurusPaths.containerWorkspace().appendingPathComponent(stripped)
-                if fm.fileExists(atPath: candidate.path) { return candidate }
+                return resolveContainedPath(stripped, within: OsaurusPaths.containerWorkspace())
             }
             if relativePath.hasPrefix("./") {
                 relativePath = String(relativePath.dropFirst(2))
             }
+            // After the container-absolute prefixes above are stripped, any
+            // remaining leading `/` means the agent handed us an unrelated
+            // absolute path — refuse rather than let basename-fallback guess.
+            guard !relativePath.hasPrefix("/") else { return nil }
 
-            let primary = agentDir.appendingPathComponent(relativePath)
-            if fm.fileExists(atPath: primary.path) { return primary }
+            if let primary = resolveContainedPath(relativePath, within: agentDir) {
+                return primary
+            }
 
-            // Basename fallback in common output subdirectories
-            let basename = (path as NSString).lastPathComponent
+            // Basename fallback in common output subdirectories, still contained.
+            guard let basename = extractPathComponent(path) else { return nil }
             for sub in ["output", "out", "build", "dist"] {
-                let attempt = agentDir.appendingPathComponent(sub).appendingPathComponent(basename)
-                if fm.fileExists(atPath: attempt.path) { return attempt }
+                if let attempt = resolveContainedPath("\(sub)/\(basename)", within: agentDir) {
+                    return attempt
+                }
             }
             return nil
 
         case .hostFolder(let ctx):
-            return ctx.rootPath.appendingPathComponent(path)
+            return resolveContainedPath(path, within: ctx.rootPath)
 
         case .none:
             return nil
         }
+    }
+
+    /// Resolves an artifact destination under `contextDir`, refusing anything
+    /// that would escape the context directory via `..`, symlinks, or an
+    /// absolute path smuggled in through the filename.
+    private static func resolveDestinationPath(filename: String, contextDir: URL) -> URL? {
+        let contextRoot = canonicalizedURL(contextDir)
+        let destination = contextRoot.appendingPathComponent(filename).standardizedFileURL
+        guard isContained(destination, in: contextRoot) else { return nil }
+        return destination
+    }
+
+    /// Resolves a caller-supplied relative or absolute path against `root`,
+    /// canonicalizes it, and returns it only if it still lives inside `root`.
+    /// Does not require the target to exist — callers do their own existence check.
+    private static func resolveContainedPath(_ rawPath: String, within root: URL) -> URL? {
+        let trimmedPath = rawPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedPath.isEmpty else { return nil }
+
+        let rootURL = canonicalizedURL(root)
+        let candidate =
+            trimmedPath.hasPrefix("/")
+            ? URL(fileURLWithPath: trimmedPath)
+            : rootURL.appendingPathComponent(trimmedPath)
+        let resolved = canonicalizedURL(candidate)
+
+        guard isContained(resolved, in: rootURL) else { return nil }
+        return resolved
+    }
+
+    private static func sanitizeArtifactFilename(_ rawFilename: String) -> String {
+        extractPathComponent(rawFilename) ?? "artifact"
+    }
+
+    /// Returns a safe single-segment basename, or nil if nothing usable remains.
+    /// Normalizes both POSIX and Windows-style separators because agents have
+    /// been observed to hand us either.
+    private static func extractPathComponent(_ rawPath: String) -> String? {
+        let normalized = rawPath.replacingOccurrences(of: "\\", with: "/")
+        let basename = (normalized as NSString).lastPathComponent
+        let sanitized = basename.unicodeScalars.filter { !CharacterSet.controlCharacters.contains($0) }
+        let cleaned = String(String.UnicodeScalarView(sanitized)).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty, cleaned != ".", cleaned != ".." else { return nil }
+        return cleaned
+    }
+
+    private static func canonicalizedURL(_ url: URL) -> URL {
+        url.resolvingSymlinksInPath().standardizedFileURL
+    }
+
+    private static func isContained(_ candidate: URL, in root: URL) -> Bool {
+        let candidatePath = candidate.path
+        let rootPath = root.path
+        return candidatePath == rootPath || candidatePath.hasPrefix(rootPath + "/")
     }
 
     private static func rebuildToolResult(
