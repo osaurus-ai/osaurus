@@ -31,6 +31,31 @@ public struct PreflightEvaluation: Sendable, Codable {
     /// Wall-clock duration of `PreflightCapabilitySearch.search`. Used
     /// for trend tracking; not part of pass/fail by default.
     public let latencyMs: Double
+    /// Raw text the LLM returned for the tool-selection prompt. `nil`
+    /// when the LLM threw or preflight short-circuited (empty query /
+    /// mode .off / empty catalog). Critical for prompt-iteration evals
+    /// — when a small model picks nothing, this is the only signal that
+    /// tells you WHY (NONE, malformed picks, prose, refusal, etc.).
+    public let rawLLMResponse: String?
+    /// The exact system prompt sent to the LLM (post-template,
+    /// post-catalog-rendering). Lets eval reports show "what the model
+    /// saw" alongside "what the model said" without re-deriving the
+    /// catalog client-side.
+    public let rawLLMSystemPrompt: String?
+    /// Picks the parser extracted, BEFORE the embedding guardrail
+    /// dropped any. `pickedToolNames` is `llmPicks` minus the picks the
+    /// guardrail rejected. Lets evals tell apart "model picked nothing"
+    /// from "model picked but guardrail rejected everything".
+    public let llmPicks: [String]
+    /// Number of dynamic plugin tools the LLM saw in its catalog.
+    /// Zero is the smoking gun for a config-dir mismatch between the
+    /// eval-CLI process and the host app — the LLM call gets skipped
+    /// entirely and `pickedToolNames` is forced empty.
+    public let catalogSize: Int
+    /// Description of the error the LLM bridge threw, if any. Lets
+    /// evals distinguish "model said NONE" from "bridge timed out /
+    /// circuit-breaker open / network failed".
+    public let llmError: String?
 
     public struct Companion: Sendable, Codable {
         public let pluginId: String
@@ -41,6 +66,15 @@ public struct PreflightEvaluation: Sendable, Codable {
         /// Already deduped against `pickedToolNames`, ordered, and
         /// capped at `PreflightCompanions.maxSiblingTools`.
         public let siblingToolNames: [String]
+
+        /// Internal-to-public converter so `PreflightEvaluator.evaluate`
+        /// can map a `PluginCompanion` straight to an eval-shaped row.
+        init(_ source: PluginCompanion) {
+            self.pluginId = source.pluginId
+            self.pluginDisplay = source.pluginDisplay
+            self.skillName = source.skill?.name
+            self.siblingToolNames = source.siblingTools.map(\.name)
+        }
     }
 }
 
@@ -69,26 +103,22 @@ public enum PreflightEvaluator {
     ) async -> PreflightEvaluation {
         let resolvedAgentId = agentId ?? AgentManager.shared.activeAgent.id
         let started = Date()
-        let result = await PreflightCapabilitySearch.search(
+        let (result, diagnostic) = await PreflightCapabilitySearch.searchWithDiagnostic(
             query: query,
             mode: mode,
             agentId: resolvedAgentId
         )
         let elapsed = Date().timeIntervalSince(started) * 1000
 
-        let companions = result.companions.map { c in
-            PreflightEvaluation.Companion(
-                pluginId: c.pluginId,
-                pluginDisplay: c.pluginDisplay,
-                skillName: c.skill?.name,
-                siblingToolNames: c.siblingTools.map(\.name)
-            )
-        }
-
         return PreflightEvaluation(
             pickedToolNames: result.toolSpecs.map { $0.function.name },
-            companions: companions,
-            latencyMs: elapsed
+            companions: result.companions.map(PreflightEvaluation.Companion.init(_:)),
+            latencyMs: elapsed,
+            rawLLMResponse: diagnostic?.rawResponse,
+            rawLLMSystemPrompt: diagnostic?.systemPrompt,
+            llmPicks: diagnostic?.llmPicks ?? [],
+            catalogSize: diagnostic?.catalogSize ?? 0,
+            llmError: diagnostic?.llmError
         )
     }
 
@@ -111,15 +141,29 @@ public enum PreflightEvaluator {
         return ids
     }
 
-    /// Scan the tools directory and load every installed plugin (native
-    /// dylib + sandbox plugin) into the in-process `PluginManager` /
-    /// `ToolRegistry` / `SkillManager`. The host app does this in
-    /// `AppDelegate.applicationDidFinishLaunching`; the eval CLI is its
-    /// own process and has to invoke it explicitly before preflight can
-    /// see plugin tools or before `installedPluginIds()` returns
-    /// anything. Idempotent — `PluginManager.loadAll` serializes
-    /// concurrent invocations and re-uses already-loaded dylibs.
+    /// Boot every subsystem the chat path's preflight depends on so an
+    /// out-of-process eval CLI gets the same view the host app does.
+    /// Mirrors the relevant slice of
+    /// `AppDelegate.applicationDidFinishLaunching`:
+    ///
+    /// 1. Scan + dlopen every installed plugin into `PluginManager` /
+    ///    `ToolRegistry` / `SkillManager` so plugin tools become
+    ///    visible to `listDynamicTools()` and `installedPluginIds()`.
+    /// 2. Open the on-disk tool index database and initialise
+    ///    `ToolSearchService` so the embedding-rerank step in
+    ///    `PreflightCapabilitySearch.rankCatalog` actually has an
+    ///    index to query (without this, rerank degrades to the full
+    ///    catalog and small models with tight context windows like
+    ///    Apple Foundation reject the request before the LLM runs).
+    /// 3. Sync the tool index from the live registry so freshly
+    ///    registered plugin tools are present in the vector store.
+    ///
+    /// Idempotent — every step serializes concurrent invocations and
+    /// re-uses already-initialised state.
     public static func loadInstalledPlugins() async {
         await PluginManager.shared.loadAll()
+        try? ToolDatabase.shared.open()
+        await ToolSearchService.shared.initialize()
+        await ToolIndexService.shared.syncFromRegistry()
     }
 }

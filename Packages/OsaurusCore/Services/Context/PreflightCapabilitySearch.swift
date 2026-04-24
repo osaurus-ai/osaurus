@@ -35,6 +35,22 @@ public enum PreflightSearchMode: String, Codable, CaseIterable, Sendable {
         }
     }
 
+    /// Number of catalog candidates pre-ranked by embedding similarity
+    /// and shown to the LLM. Smaller than the full catalog by design —
+    /// Apple Foundation Models has a 4K-token context window and a
+    /// 77-tool catalog tokenises to ~4.3K, blowing the budget before
+    /// the LLM sees the request. The LLM still does the final pick;
+    /// this just narrows its candidate pool. `0` means "show every
+    /// dynamic tool" (legacy behaviour, useful if the embedder breaks).
+    var catalogTopK: Int {
+        switch self {
+        case .off: return 0
+        case .narrow: return 6
+        case .balanced: return 12
+        case .wide: return 24
+        }
+    }
+
     public var helpText: String {
         switch self {
         case .off: return L("Disable pre-flight search. Only explicit tool calls are used.")
@@ -88,6 +104,39 @@ struct PreflightResult: Sendable {
         self.items = items
         self.companions = companions
     }
+}
+
+/// Full diagnostic capture from one preflight invocation. Surfaced only
+/// to the eval path (via `PreflightCapabilitySearch.searchWithDiagnostic`)
+/// — the production chat / HTTP path uses the bare `search(...)` which
+/// drops this so the per-session preflight cache stays small.
+///
+/// The point: when a small model (Foundation, etc.) returns no picks,
+/// engineers need to see WHY — `NONE`, malformed picks, prose, an empty
+/// catalog (config issue), etc. Every short-circuit branch populates a
+/// diagnostic so "no picks" never reads as "no information".
+struct PreflightDiagnostic: Sendable {
+    /// The exact system prompt sent to the LLM. `nil` when preflight
+    /// short-circuited before rendering it (empty query / mode .off /
+    /// empty catalog).
+    let systemPrompt: String?
+    /// Raw text the LLM returned. `nil` when the LLM threw or was
+    /// never called (short-circuit branches above).
+    let rawResponse: String?
+    /// Picks the parser extracted, BEFORE the embedding guardrail
+    /// dropped any. Lets evals tell apart "model picked nothing" from
+    /// "model picked but guardrail rejected".
+    let llmPicks: [String]
+    /// Number of dynamic tools (MCP / plugin / sandbox-plugin) the LLM
+    /// would see in the catalog. Zero means the eval-CLI process has
+    /// no enabled plugin tools — usually a config-dir mismatch with
+    /// the host app, not a preflight bug.
+    let catalogSize: Int
+    /// String description of the error the LLM bridge threw, if any.
+    /// `nil` means the LLM call succeeded (or was never made). Captured
+    /// so verbose eval output can distinguish "model returned NONE"
+    /// from "model bridge threw timeout / circuit-breaker / network".
+    let llmError: String?
 }
 
 /// Per-session record of the initial preflight selection plus every tool the
@@ -238,24 +287,107 @@ enum PreflightCapabilitySearch {
         llm: LLMGenerator,
         embedder: Embedder?
     ) async -> PreflightResult {
+        let (result, _) = await searchWithDiagnostic(
+            query: query,
+            mode: mode,
+            llm: llm,
+            embedder: embedder
+        )
+        return result
+    }
+
+    /// Diagnostic-capturing entry point. Wires the production LLM +
+    /// embedder so callers (the eval CLI, future scoreboards) get the
+    /// exact same one-shot generation contract the chat path uses.
+    /// `agentId` is reserved for future per-agent gating, mirroring
+    /// `search(query:mode:agentId:)`.
+    static func searchWithDiagnostic(
+        query: String,
+        mode: PreflightSearchMode = .balanced,
+        agentId: UUID
+    ) async -> (PreflightResult, PreflightDiagnostic?) {
+        await searchWithDiagnostic(
+            query: query,
+            mode: mode,
+            llm: defaultLLM,
+            embedder: defaultEmbedder
+        )
+    }
+
+    /// Diagnostic-capturing variant with injectable seams. Returns the
+    /// same `PreflightResult` as `search(...)` plus a
+    /// `PreflightDiagnostic?` carrying the system prompt + raw LLM
+    /// response + pre-guardrail picks + catalog stats + LLM error.
+    /// The diagnostic is `nil` only for the truly nothing-to-say
+    /// short-circuits (empty query, mode .off); the empty-catalog
+    /// branch still emits one so verbose eval output can pinpoint a
+    /// config-dir mismatch instead of a model failure.
+    ///
+    /// Only the OsaurusEvals path uses the diagnostic. The chat / HTTP
+    /// path uses the bare `search(...)` so the diagnostic doesn't ride
+    /// along on the per-session `SessionToolState.initialPreflight`
+    /// cache and inflate it.
+    static func searchWithDiagnostic(
+        query: String,
+        mode: PreflightSearchMode,
+        llm: LLMGenerator,
+        embedder: Embedder?
+    ) async -> (PreflightResult, PreflightDiagnostic?) {
+        // Truly nothing-to-say short-circuits — no diagnostic at all.
         guard mode != .off,
             !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        else { return .empty }
+        else { return (.empty, nil) }
 
         let (catalog, groups) = await MainActor.run { loadDynamicCatalog() }
-        guard !catalog.isEmpty else { return .empty }
+        // Empty-catalog short-circuit: still emit a diagnostic so verbose
+        // eval output tells the operator "the LLM was never called
+        // because there are no plugin tools enabled" instead of leaving
+        // them guessing.
+        guard !catalog.isEmpty else {
+            return (
+                .empty,
+                PreflightDiagnostic(
+                    systemPrompt: nil,
+                    rawResponse: nil,
+                    llmPicks: [],
+                    catalogSize: 0,
+                    llmError: nil
+                )
+            )
+        }
 
         InferenceProgressManager.shared.preflightWillStartAsync()
         defer { InferenceProgressManager.shared.preflightDidFinishAsync() }
 
-        let llmPicks = await selectTools(
+        // Pre-rank the catalog by embedding similarity and show the LLM
+        // only the top-K — small models (Apple Foundation, 4K window)
+        // can't take a 70+ tool dump otherwise. Full catalog still
+        // backs `validationCatalog` below so the parser accepts any
+        // valid tool name, and the post-pick embedding guardrail
+        // gates relevance regardless. `rankCatalog` falls back to the
+        // full catalog when the index is unavailable.
+        let displayCatalog = await rankCatalog(
             query: query,
             catalog: catalog,
+            topK: mode.catalogTopK
+        )
+
+        let (llmPicks, rawResponse, systemPrompt, llmError) = await selectTools(
+            query: query,
+            displayCatalog: displayCatalog,
+            validationCatalog: catalog,
             groups: groups,
             cap: mode.toolCap,
             llm: llm
         )
-        guard !llmPicks.isEmpty else { return .empty }
+        let diagnostic = PreflightDiagnostic(
+            systemPrompt: systemPrompt,
+            rawResponse: rawResponse,
+            llmPicks: llmPicks,
+            catalogSize: displayCatalog.count,
+            llmError: llmError
+        )
+        guard !llmPicks.isEmpty else { return (.empty, diagnostic) }
 
         let nameToDesc = Dictionary(uniqueKeysWithValues: catalog.map { ($0.name, $0.description) })
         let selectedNames = await applyEmbeddingGuardrail(
@@ -264,7 +396,7 @@ enum PreflightCapabilitySearch {
             nameToDesc: nameToDesc,
             embedder: embedder
         )
-        guard !selectedNames.isEmpty else { return .empty }
+        guard !selectedNames.isEmpty else { return (.empty, diagnostic) }
 
         let (toolSpecs, items, companions) = await MainActor.run {
             let specs = ToolRegistry.shared.specs(forTools: selectedNames)
@@ -286,7 +418,61 @@ enum PreflightCapabilitySearch {
         logger.info(
             "Pre-flight loaded \(toolSpecs.count) tools, \(companions.count) companion plugin(s)"
         )
-        return PreflightResult(toolSpecs: toolSpecs, items: items, companions: companions)
+        let result = PreflightResult(toolSpecs: toolSpecs, items: items, companions: companions)
+        return (result, diagnostic)
+    }
+
+    /// Pre-rank `catalog` by embedding similarity to the query and keep
+    /// the top `topK`. The LLM-visible catalog gets compressed from
+    /// "every dynamic tool" to "the K most semantically relevant",
+    /// which is the only way Apple Foundation Models (4K context) can
+    /// preflight against a real plugin install — a 77-tool dump
+    /// tokenises to ~4.3K and overflows the window before the LLM
+    /// sees the prompt.
+    ///
+    /// Implementation reuses `ToolSearchService` (already maintained
+    /// for the `capabilities_search` tool path) so we don't pay a
+    /// second embed cost per call. Threshold zero so the LLM is the
+    /// floor — embedding rank gates *order*, not *eligibility*.
+    /// Returns the full catalog when:
+    ///   - `topK` is zero or negative (legacy / disabled)
+    ///   - the catalog already fits (no point ranking N down to N)
+    ///   - the search returns nothing (index empty / embedder broken /
+    ///     query is gibberish) — the model still gets to see the full
+    ///     candidate pool rather than nothing
+    static func rankCatalog(
+        query: String,
+        catalog: [ToolRegistry.ToolEntry],
+        topK: Int
+    ) async -> [ToolRegistry.ToolEntry] {
+        guard topK > 0, catalog.count > topK else { return catalog }
+
+        let hits = await ToolSearchService.shared.search(
+            query: query,
+            topK: topK,
+            threshold: 0.0
+        )
+        guard !hits.isEmpty else { return catalog }
+
+        // Map ranked names back to the input catalog entries (preserves
+        // each entry's parameters / enabled state untouched). Keep
+        // search-score order so the LLM sees the strongest match first.
+        let byName = Dictionary(uniqueKeysWithValues: catalog.map { ($0.name, $0) })
+        var ranked: [ToolRegistry.ToolEntry] = []
+        ranked.reserveCapacity(min(topK, hits.count))
+        var seen: Set<String> = []
+        for hit in hits {
+            guard let entry = byName[hit.entry.name],
+                seen.insert(entry.name).inserted
+            else { continue }
+            ranked.append(entry)
+            if ranked.count >= topK { break }
+        }
+        // Last-resort safety net: if the index returned hits but none
+        // mapped back to the live catalog (stale index, MCP
+        // re-registration race, etc.), don't strand the LLM with an
+        // empty list — fall back to the full catalog.
+        return ranked.isEmpty ? catalog : ranked
     }
 
     /// Snapshot the dynamic-tool catalog and its `tool → group` map from the
@@ -327,45 +513,79 @@ enum PreflightCapabilitySearch {
         try await EmbeddingService.shared.embed(texts: texts)
     }
 
+    /// Returns picks + the raw LLM response + the exact system prompt sent
+    /// + a string description of any LLM error. The raw text, prompt, and
+    /// error feed `PreflightDiagnostic` for the eval path; the chat path
+    /// discards them. `rawResponse == nil` means the LLM call threw —
+    /// `error` then carries the reason.
+    ///
+    /// `displayCatalog` is what the LLM sees in the prompt (post-rerank,
+    /// usually 12 tools). `validationCatalog` is the full dynamic
+    /// registry — we parse picks against the full set so the model can
+    /// reference a tool by name even if rerank didn't surface it
+    /// (small models often know popular tool names from training and
+    /// fill in `browser_navigate` even when it wasn't in the top-K).
+    /// The post-pick embedding guardrail still gates relevance, so
+    /// false-positive picks from outside the displayed window get
+    /// dropped before reaching the agent.
     private static func selectTools(
         query: String,
-        catalog: [ToolRegistry.ToolEntry],
+        displayCatalog: [ToolRegistry.ToolEntry],
+        validationCatalog: [ToolRegistry.ToolEntry],
         groups: [String: String],
         cap: Int,
         llm: LLMGenerator
-    ) async -> [String] {
+    ) async -> (picks: [String], rawResponse: String?, systemPrompt: String, error: String?) {
+        // Prompt design — three deliberate shifts that landed when we
+        // started running the eval suite against Apple Foundation:
+        //   1. Lead with a one-sentence "what is the user trying to
+        //      do?" scaffold so small models leave pure pattern-match
+        //      mode before they pick.
+        //   2. Three positive examples covering distinct shapes
+        //      (lookup / browser / sandbox) + two NONE examples —
+        //      keeps the abstain signal without letting it dominate.
+        //   3. Dropped "Prefer NONE over guessing" — the examples
+        //      teach the abstain boundary better than a rule does.
         let systemPrompt = """
-            You are a tool selector. Pick the FEWEST tools needed to satisfy the user's request.
+            You are a tool selector for a chat agent.
 
-            Output format: one pick per line as
-                <tool_name> | <one short reason this tool matches the request>
-            If nothing in the catalog clearly matches, output exactly:
-                NONE
+            Step 1 — In one short sentence, name what the user is trying to do.
+            Step 2 — Pick the tool whose purpose serves that intent. Prefer fewer; up to \(cap).
+            Step 3 — Output one pick per line as: tool_name | one short reason
+                     The bare tool name on its own line is also accepted.
+                     Do not wrap the name in angle brackets, backticks, or quotes.
+                     If nothing in the catalog fits, output exactly: NONE
 
-            Hard rules:
-            - \(cap) is a HARD CEILING, not a target. Prefer fewer. Prefer NONE over guessing.
-            - Only pick a tool when its description (or params) clearly matches the request. Do not pad.
-            - If the message is small talk, a status check, a thank-you, or a continuation that needs no new external action, output NONE.
-            - Pick specific tools only — never the `[provider]` labels.
-            - Use exact tool names from the `tool:` lines below; nothing else.
+            Examples
+            --------
+            "what's the weather in Tokyo?"      -> get_weather | current weather for a city
+            "check my orders on amazon"         -> browser_navigate | open the orders page in a browser
+            "convert this csv to json"          -> sandbox_exec | run a script to convert formats
+            "thanks, that's perfect"            -> NONE
+            "write me a haiku about cats"       -> NONE
 
-            Example input: "what's the weather in Tokyo?"
-            Example output:
-            get_weather | fetches current weather for a city
+            Rules
+            -----
+            - Use exact tool names from the `tool:` lines below.
+            - Skip the bracketed `[provider]` labels — those are NOT tools.
+            - Pick a tool when its purpose plausibly serves the user's intent, even if the description doesn't lexically match.
 
-            Example input: "thanks, that's perfect"
-            Example output:
-            NONE
-
-            \(formatCatalog(catalog, groups: groups))
+            Catalog
+            -------
+            \(formatCatalog(displayCatalog, groups: groups))
             """
 
         do {
             let response = try await llm(query, systemPrompt)
-            return parseJustifiedPicks(from: response, catalog: catalog, cap: cap)
+            let picks = parseJustifiedPicks(
+                from: response,
+                catalog: validationCatalog,
+                cap: cap
+            )
+            return (picks, response, systemPrompt, nil)
         } catch {
             logger.info("Pre-flight tool selection skipped: \(error)")
-            return []
+            return ([], nil, systemPrompt, String(describing: error))
         }
     }
 
@@ -426,16 +646,22 @@ enum PreflightCapabilitySearch {
 
     // MARK: Response Parsing
 
-    /// Parse the model's per-line `<name> | <reason>` response into canonical
-    /// tool names. Picks without a reason are dropped — the justification
-    /// requirement is the anti-padding mechanism. A standalone `NONE` line
-    /// (case-insensitive) **abstains** when no valid pick has been collected
-    /// yet, and **terminates** parsing (preserving prior picks) otherwise —
-    /// this salvages the common failure mode where a model emits a real pick
-    /// followed by a stray `NONE`. `[provider]` group tokens are silently
-    /// ignored (the previous implementation expanded them to every tool in
-    /// the group, which was the single biggest over-selection vector).
-    /// Output is capped at `cap`.
+    /// Parse the model's response into canonical tool names. Accepts two
+    /// shapes per line: `<name> | <reason>` (preferred — easy to read in
+    /// logs) and bare `<name>` (small models routinely forget the pipe).
+    /// The anti-padding contract that justifications used to enforce is
+    /// now carried by `applyEmbeddingGuardrail`: every pick gets gated
+    /// against the query embedding, so a "padding" pick whose semantics
+    /// don't match the request gets dropped post-parse anyway.
+    ///
+    /// A standalone `NONE` line (case-insensitive) **abstains** when no
+    /// valid pick has been collected yet, and **terminates** parsing
+    /// (preserving prior picks) otherwise — this salvages the common
+    /// failure mode where a model emits a real pick followed by a stray
+    /// `NONE`. `[provider]` group tokens are silently ignored (the
+    /// previous implementation expanded them to every tool in the group,
+    /// which was the single biggest over-selection vector). Output is
+    /// capped at `cap`.
     static func parseJustifiedPicks(
         from response: String,
         catalog: [ToolRegistry.ToolEntry],
@@ -454,44 +680,79 @@ enum PreflightCapabilitySearch {
 
         for rawLine in trimmed.components(separatedBy: "\n") {
             guard selected.count < cap else { break }
-            let line =
+            // Strip bullets + line-level wrapping (`<name | reason>`)
+            // BEFORE the `|` split so Apple Foundation's most common
+            // output shape unwraps cleanly.
+            let line = stripWrapping(
                 rawLine
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-                .replacingOccurrences(of: "^[-•*]\\s*", with: "", options: .regularExpression)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .replacingOccurrences(of: "^[-•*]\\s*", with: "", options: .regularExpression)
+            )
             guard !line.isEmpty else { continue }
-            // `NONE` is the abstain signal when emitted alone (selected is
-            // still empty) and a "no more picks" terminator otherwise. The
-            // common failure mode it salvages: a valid pick followed by a
-            // stray `NONE` line. See the docstring for the full rationale.
+            // `NONE` is the abstain signal when emitted alone (selected
+            // is still empty) and a "no more picks" terminator
+            // otherwise — salvages the common `pick\nNONE` failure mode.
             if line.uppercased() == "NONE" { break }
 
-            // Required `name | reason` shape. No `|` ⇒ no justification ⇒
-            // drop. This is the anti-padding contract.
-            let parts = line.split(separator: "|", maxSplits: 1, omittingEmptySubsequences: false)
-            guard parts.count == 2 else { continue }
-            let reason = parts[1].trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !reason.isEmpty else { continue }
-
-            var name = parts[0].trimmingCharacters(in: .whitespacesAndNewlines)
-            // Reject bare `[provider]`-style group tokens outright. Must come
-            // before the trailing-bracket strip below or `[spotify]` would
-            // collapse to an empty name and silently fall through to the
-            // canonical-name check.
-            if name.hasPrefix("[") { continue }
-            // Strip a trailing `[provider]` annotation if the model echoed
-            // the catalog formatting back at us (`play [spotify]` → `play`).
-            if let bracket = name.firstIndex(of: "[") {
-                name = String(name[..<bracket]).trimmingCharacters(in: .whitespaces)
-            }
-
-            guard let canonical = validNames[name.lowercased()] else { continue }
-            if seen.insert(canonical).inserted {
-                selected.append(canonical)
-            }
+            // The pipe is just diagnostic now — the post-pick embedding
+            // guardrail enforces relevance, so bare `<name>` is fine.
+            let nameToken =
+                line
+                .split(separator: "|", maxSplits: 1, omittingEmptySubsequences: false)[0]
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let canonical = canonicalize(nameToken: nameToken, validNames: validNames),
+                seen.insert(canonical).inserted
+            else { continue }
+            selected.append(canonical)
         }
 
         logger.info("Pre-flight: LLM selected \(selected.count) tools: \(selected.joined(separator: ", "))")
         return selected
+    }
+
+    /// Resolve a parsed name token to a canonical tool name, handling
+    /// every "model echoed the catalog formatting" variant we've
+    /// observed in the wild. Returns `nil` when the token is a
+    /// `[provider]` group label (silently dropped) or doesn't resolve
+    /// to a known tool.
+    private static func canonicalize(
+        nameToken: String,
+        validNames: [String: String]
+    ) -> String? {
+        var name = nameToken
+        // `[provider]` group labels: must reject BEFORE the trailing-
+        // bracket strip below, or `[spotify]` collapses to an empty
+        // name and falls through to the lookup.
+        if name.hasPrefix("[") { return nil }
+        // Trailing `[provider]` annotation echoed from the catalog
+        // (`play [spotify]` → `play`).
+        if let bracket = name.firstIndex(of: "[") {
+            name = String(name[..<bracket]).trimmingCharacters(in: .whitespaces)
+        }
+        // Leading `tool:` prefix echoed from the catalog
+        // (`tool: play` → `play`).
+        if name.lowercased().hasPrefix("tool:") {
+            name = String(name.dropFirst("tool:".count)).trimmingCharacters(in: .whitespaces)
+        }
+        // Per-name wrapping — catches `<name>` without a reason,
+        // which the line-level strip in the caller can't see.
+        name = stripWrapping(name)
+        return validNames[name.lowercased()]
+    }
+
+    /// Strip a single layer of common wrapping characters around a tool
+    /// name token. Small models echo the prompt's placeholder syntax —
+    /// Apple Foundation almost always wraps in `<...>`, others use
+    /// backticks or quotes. One layer only; doubly-wrapped tokens
+    /// aren't a real failure mode.
+    static func stripWrapping(_ name: String) -> String {
+        let pairs: [(open: Character, close: Character)] = [
+            ("<", ">"), ("`", "`"), ("\"", "\""), ("'", "'"),
+        ]
+        for pair in pairs where name.first == pair.open && name.last == pair.close && name.count >= 2 {
+            return String(name.dropFirst().dropLast()).trimmingCharacters(in: .whitespaces)
+        }
+        return name
     }
 
     // MARK: Embedding Guardrail

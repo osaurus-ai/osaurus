@@ -645,7 +645,10 @@ private struct ThemedNSTextField: NSViewRepresentable {
         field.delegate = context.coordinator
         field.stringValue = text
         field.placeholderAttributedString = Self.attributedPlaceholder(
-            placeholder, color: placeholderColor, fontSize: fontSize)
+            placeholder,
+            color: placeholderColor,
+            fontSize: fontSize
+        )
         field.textColor = NSColor(textColor)
         field.setContentHuggingPriority(.defaultLow, for: .horizontal)
         field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -658,18 +661,24 @@ private struct ThemedNSTextField: NSViewRepresentable {
         }
         field.textColor = NSColor(textColor)
         field.placeholderAttributedString = Self.attributedPlaceholder(
-            placeholder, color: placeholderColor, fontSize: fontSize)
+            placeholder,
+            color: placeholderColor,
+            fontSize: fontSize
+        )
     }
 
     private static func attributedPlaceholder(
-        _ string: String, color: Color, fontSize: CGFloat
+        _ string: String,
+        color: Color,
+        fontSize: CGFloat
     ) -> NSAttributedString {
         NSAttributedString(
             string: string,
             attributes: [
                 .foregroundColor: NSColor(color),
                 .font: NSFont.systemFont(ofSize: fontSize),
-            ])
+            ]
+        )
     }
 
     final class Coordinator: NSObject, NSTextFieldDelegate {

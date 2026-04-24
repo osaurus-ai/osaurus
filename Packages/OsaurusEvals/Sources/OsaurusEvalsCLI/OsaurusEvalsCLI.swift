@@ -58,7 +58,7 @@ struct OsaurusEvalsCLI {
             filter: opts.filter
         )
 
-        print(report.formatHumanReadable())
+        print(report.formatHumanReadable(verbose: opts.verbose))
 
         if let outPath = opts.out {
             do {
@@ -88,12 +88,14 @@ struct OsaurusEvalsCLI {
         let model: ModelSelection
         let filter: String?
         let out: String?
+        let verbose: Bool
 
         static func parse(_ args: [String]) throws -> Options {
             var suite: URL?
             var modelRaw: String?
             var filter: String?
             var out: String?
+            var verbose = false
 
             var i = 0
             while i < args.count {
@@ -111,6 +113,9 @@ struct OsaurusEvalsCLI {
                 case "--out":
                     out = try valueForArg(args, after: i, flag: arg)
                     i += 2
+                case "--verbose", "-v":
+                    verbose = true
+                    i += 1
                 case "--help", "-h":
                     printUsage()
                     exit(0)
@@ -124,7 +129,8 @@ struct OsaurusEvalsCLI {
                 suite: suite,
                 model: ModelSelection.parse(modelRaw),
                 filter: filter,
-                out: out
+                out: out,
+                verbose: verbose
             )
         }
     }
@@ -158,6 +164,10 @@ struct OsaurusEvalsCLI {
                                   Default: auto.
                 --filter <substr> Only run cases whose id contains <substr>.
                 --out <path>      Also write a JSON report to <path>.
+                --verbose, -v     Print per-case diagnostics: the user query,
+                                  the raw LLM response (truncated), and the
+                                  pre-guardrail picks. Use when iterating on
+                                  the preflight prompt.
 
             EXAMPLES:
                 osaurus-evals run --suite Suites/Preflight --model foundation

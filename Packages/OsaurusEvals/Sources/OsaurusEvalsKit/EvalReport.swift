@@ -54,6 +54,11 @@ public struct EvalCaseReport: Sendable, Codable {
     public let id: String
     public let label: String
     public let domain: String
+    /// User-facing query that drove the case. Captured here (rather
+    /// than re-derived from the source file) so a JSON report is fully
+    /// self-describing — readers don't have to keep the suite around
+    /// to interpret a result.
+    public let query: String?
     public let outcome: EvalCaseOutcome
     public let score: EvalCaseScore?
     /// Preflight snapshot we ran the scorers against. `nil` for
@@ -70,6 +75,7 @@ public struct EvalCaseReport: Sendable, Codable {
         id: String,
         label: String,
         domain: String,
+        query: String? = nil,
         outcome: EvalCaseOutcome,
         score: EvalCaseScore?,
         observed: PreflightEvaluation?,
@@ -80,6 +86,7 @@ public struct EvalCaseReport: Sendable, Codable {
         self.id = id
         self.label = label
         self.domain = domain
+        self.query = query
         self.outcome = outcome
         self.score = score
         self.observed = observed
@@ -103,6 +110,7 @@ public struct EvalCaseReport: Sendable, Codable {
             id: id,
             label: label,
             domain: domain,
+            query: nil,
             outcome: outcome,
             score: nil,
             observed: nil,
@@ -159,7 +167,10 @@ public struct EvalReport: Sendable, Codable {
 
     /// Human-readable table — what the CLI prints to stdout. Compact
     /// enough to scan a 6-case run in a single terminal screen.
-    public func formatHumanReadable() -> String {
+    /// `verbose` adds per-case diagnostics (query + raw response +
+    /// pre-guardrail picks) — use it when iterating on the preflight
+    /// prompt or chasing a specific small-model failure.
+    public func formatHumanReadable(verbose: Bool = false) -> String {
         var lines: [String] = []
         lines.append("Eval report")
         lines.append("  model:     \(modelId)")
@@ -175,7 +186,50 @@ public struct EvalReport: Sendable, Codable {
             let latencyStr = row.latencyMs.map { String(format: "%5.0fms", $0) } ?? "      —"
             lines.append("[\(row.outcome.badge)] \(row.id)  score=\(scoreStr)  \(latencyStr)")
             for note in row.notes { lines.append("       · \(note)") }
+            if verbose { appendVerboseDiagnostics(for: row, into: &lines) }
         }
         return lines.joined(separator: "\n")
+    }
+
+    /// Add per-case diagnostic lines (query + raw LLM response + pre-
+    /// guardrail picks + companion count) to `lines`. Pulled out of
+    /// `formatHumanReadable` so the verbose-off code path stays a tight
+    /// table; call only when `verbose == true`.
+    private func appendVerboseDiagnostics(
+        for row: EvalCaseReport,
+        into lines: inout [String]
+    ) {
+        if let query = row.query {
+            lines.append("       · query: \"\(query)\"")
+        }
+        guard let observed = row.observed else { return }
+        // catalogSize == 0 is the operator-friendly tell for "the LLM
+        // was never called because no plugin tools are enabled in this
+        // process". Always show it so a confusing FAIL doesn't read
+        // like a model failure when it's a config issue.
+        lines.append("       · catalogSize: \(observed.catalogSize)")
+        if let llmError = observed.llmError {
+            lines.append("       · llmError: \(llmError)")
+        }
+        if !observed.llmPicks.isEmpty {
+            lines.append("       · llmPicks: [\(observed.llmPicks.joined(separator: ", "))]")
+        }
+        if let raw = observed.rawLLMResponse {
+            // Truncate so a chatty model doesn't blow out the terminal.
+            // 400 chars catches the common shapes (NONE, picks, prose
+            // refusal, malformed list) without scrolling.
+            let snippet = raw.count > 400 ? String(raw.prefix(400)) + "…" : raw
+            // Indent multi-line responses so they read as one block.
+            let indented =
+                snippet
+                .split(separator: "\n", omittingEmptySubsequences: false)
+                .map { "         \($0)" }
+                .joined(separator: "\n")
+            lines.append("       · raw:")
+            lines.append(indented)
+        }
+        if !observed.companions.isEmpty {
+            lines.append("       · companions: \(observed.companions.count)")
+        }
     }
 }

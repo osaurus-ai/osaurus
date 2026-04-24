@@ -1,7 +1,7 @@
 {
   "id": "preflight.browser.login-flow",
   "domain": "preflight",
-  "label": "browser • login implies open_login companion",
+  "label": "browser • login picks open_login directly",
   "query": "can you sign me in to my github account?",
   "fixtures": {
     "preflightMode": "balanced",
@@ -9,14 +9,10 @@
   },
   "expect": {
     "tools": {
-      "mustInclude": ["browser_navigate"]
+      "mustInclude": ["browser_open_login"]
     },
     "companions": {
-      "skills": ["Osaurus Browser"],
-      "siblings": {
-        "minOverlap": 1,
-        "candidates": ["browser_open_login"]
-      }
+      "skills": ["Osaurus Browser"]
     }
   }
 }

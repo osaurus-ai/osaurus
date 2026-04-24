@@ -111,23 +111,81 @@ struct PreflightCapabilitySearchTests {
         #expect(picks == ["play"])
     }
 
-    @Test func picksWithoutReasonAreDropped() {
-        // Bare names without `|` violate the anti-padding contract.
+    @Test func picksWithoutReasonAreAccepted() {
+        // Small models (Apple Foundation, etc.) routinely emit bare
+        // names without the `| reason` suffix. The anti-padding floor
+        // moved to `applyEmbeddingGuardrail` so we no longer punish
+        // the formatting drift — bare names are valid picks.
         let picks = PreflightCapabilitySearch.parseJustifiedPicks(
             from: "play\nsearch_songs",
             catalog: Self.makeCatalog(),
             cap: 5
         )
-        #expect(picks.isEmpty)
+        #expect(picks == ["play", "search_songs"])
     }
 
-    @Test func picksWithEmptyReasonAreDropped() {
+    @Test func picksWithEmptyReasonAreAccepted() {
+        // Empty reason is no different from no reason — same loose
+        // contract. Both rely on the embedding guardrail to drop
+        // semantic mismatches.
         let picks = PreflightCapabilitySearch.parseJustifiedPicks(
             from: "play |   \nsearch_songs | finds songs",
             catalog: Self.makeCatalog(),
             cap: 5
         )
-        #expect(picks == ["search_songs"])
+        #expect(picks == ["play", "search_songs"])
+    }
+
+    @Test func toolPrefixIsStripped() {
+        // Models occasionally echo the catalog format back at us as
+        // `tool: <name>`. Strip the prefix so it still resolves to a
+        // canonical tool name.
+        let picks = PreflightCapabilitySearch.parseJustifiedPicks(
+            from: "tool: play\ntool: search_songs | finds songs",
+            catalog: Self.makeCatalog(),
+            cap: 5
+        )
+        #expect(picks == ["play", "search_songs"])
+    }
+
+    @Test func wrappingCharactersAreStripped() {
+        // Apple Foundation echoes the prompt's `<tool_name>` placeholder
+        // syntax as literal output ("<browser_navigate | open the orders
+        // page>"). Other small models do the same with backticks and
+        // quotes. The parser must unwrap before the canonical-name
+        // lookup.
+        let picks = PreflightCapabilitySearch.parseJustifiedPicks(
+            from:
+                "<play | wrapped in angle brackets>\n`search_songs` | wrapped in backticks\n\"send_message\" | wrapped in quotes",
+            catalog: Self.makeCatalog(),
+            cap: 5
+        )
+        #expect(picks == ["play", "search_songs", "send_message"])
+    }
+
+    @Test func antiPaddingNowEnforcedByGuardrail() async {
+        // After Phase 1, `parseJustifiedPicks` accepts bare names. The
+        // anti-padding contract relocated to the embedding guardrail —
+        // a pick whose embedding is far from the query gets dropped
+        // post-parse. This test pins that the guardrail can still
+        // strip a parsed-but-irrelevant pick.
+        let nameToDesc = ["play": "playback", "send_message": "post to a channel"]
+        let embedder: PreflightCapabilitySearch.Embedder = { texts in
+            // Query orthogonal to send_message, aligned with play.
+            #expect(texts.count == 3)  // [query, play_text, send_message_text]
+            return [
+                [1.0, 0.0],  // query
+                [1.0, 0.0],  // play -> aligned, sim=1
+                [0.0, 1.0],  // send_message -> orthogonal, sim=0 (below 0.05 floor)
+            ]
+        }
+        let kept = await PreflightCapabilitySearch.applyEmbeddingGuardrail(
+            query: "play music",
+            picks: ["play", "send_message"],
+            nameToDesc: nameToDesc,
+            embedder: embedder
+        )
+        #expect(kept == ["play"])
     }
 
     @Test func unknownNameIsDropped() {

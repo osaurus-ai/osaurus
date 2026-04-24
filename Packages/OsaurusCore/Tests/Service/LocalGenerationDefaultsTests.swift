@@ -18,18 +18,20 @@ struct LocalGenerationDefaultsTests {
     func gemma4() {
         // Copied verbatim from
         // models--mlx-community--gemma-4-26b-a4b-it-4bit/snapshots/.../generation_config.json
-        let d = Self.defaults(fromJSON: #"""
-            {
-              "bos_token_id": 2,
-              "do_sample": true,
-              "eos_token_id": [1, 106, 50],
-              "pad_token_id": 0,
-              "temperature": 1.0,
-              "top_k": 64,
-              "top_p": 0.95,
-              "transformers_version": "5.5.0.dev0"
-            }
-            """#)
+        let d = Self.defaults(
+            fromJSON: #"""
+                {
+                  "bos_token_id": 2,
+                  "do_sample": true,
+                  "eos_token_id": [1, 106, 50],
+                  "pad_token_id": 0,
+                  "temperature": 1.0,
+                  "top_k": 64,
+                  "top_p": 0.95,
+                  "transformers_version": "5.5.0.dev0"
+                }
+                """#
+        )
         #expect(d.temperature == 1.0)
         #expect(d.topK == 64)
         #expect(d.topP == 0.95)
@@ -40,18 +42,20 @@ struct LocalGenerationDefaultsTests {
     func qwen35() {
         // Qwen 3.5 specifies LOWER temperature than the 0.7 osaurus used to
         // hardcode; this is the headline reason the feature exists.
-        let d = Self.defaults(fromJSON: #"""
-            {
-              "bos_token_id": 248044,
-              "do_sample": true,
-              "eos_token_id": [248046, 248044],
-              "pad_token_id": 248044,
-              "temperature": 0.6,
-              "top_k": 20,
-              "top_p": 0.95,
-              "transformers_version": "4.57.0.dev0"
-            }
-            """#)
+        let d = Self.defaults(
+            fromJSON: #"""
+                {
+                  "bos_token_id": 248044,
+                  "do_sample": true,
+                  "eos_token_id": [248046, 248044],
+                  "pad_token_id": 248044,
+                  "temperature": 0.6,
+                  "top_k": 20,
+                  "top_p": 0.95,
+                  "transformers_version": "4.57.0.dev0"
+                }
+                """#
+        )
         #expect(d.temperature == 0.6)
         #expect(d.topK == 20)
         #expect(d.topP == 0.95)
@@ -59,17 +63,19 @@ struct LocalGenerationDefaultsTests {
 
     @Test("MiniMax M2.7: top_k=40")
     func minimax() {
-        let d = Self.defaults(fromJSON: #"""
-            {
-              "bos_token_id": 200019,
-              "do_sample": true,
-              "eos_token_id": 200020,
-              "temperature": 1.0,
-              "top_p": 0.95,
-              "top_k": 40,
-              "transformers_version": "4.46.1"
-            }
-            """#)
+        let d = Self.defaults(
+            fromJSON: #"""
+                {
+                  "bos_token_id": 200019,
+                  "do_sample": true,
+                  "eos_token_id": 200020,
+                  "temperature": 1.0,
+                  "top_p": 0.95,
+                  "top_k": 40,
+                  "transformers_version": "4.46.1"
+                }
+                """#
+        )
         #expect(d.temperature == 1.0)
         #expect(d.topK == 40)
         #expect(d.topP == 0.95)
@@ -80,15 +86,17 @@ struct LocalGenerationDefaultsTests {
         // Real Nemotron generation_config.json ships nothing but EOS/BOS/pad.
         // We should return `.empty` sampling defaults so the caller's existing
         // fallback ladder (request → runtime → hardcoded 0.7) kicks in.
-        let d = Self.defaults(fromJSON: #"""
-            {
-              "_from_model_config": true,
-              "bos_token_id": 1,
-              "eos_token_id": [2, 11],
-              "pad_token_id": 0,
-              "transformers_version": "4.55.4"
-            }
-            """#)
+        let d = Self.defaults(
+            fromJSON: #"""
+                {
+                  "_from_model_config": true,
+                  "bos_token_id": 1,
+                  "eos_token_id": [2, 11],
+                  "pad_token_id": 0,
+                  "transformers_version": "4.55.4"
+                }
+                """#
+        )
         #expect(d.temperature == nil)
         #expect(d.topK == nil)
         #expect(d.topP == nil)
@@ -97,15 +105,17 @@ struct LocalGenerationDefaultsTests {
 
     @Test("Mistral-Small-4: sampling fields absent — defaults empty")
     func mistralNoSamplingFields() {
-        let d = Self.defaults(fromJSON: #"""
-            {
-              "bos_token_id": 1,
-              "eos_token_id": 2,
-              "max_length": 1048576,
-              "pad_token_id": 11,
-              "transformers_version": "5.3.0.dev0"
-            }
-            """#)
+        let d = Self.defaults(
+            fromJSON: #"""
+                {
+                  "bos_token_id": 1,
+                  "eos_token_id": 2,
+                  "max_length": 1048576,
+                  "pad_token_id": 11,
+                  "transformers_version": "5.3.0.dev0"
+                }
+                """#
+        )
         #expect(d == .empty)
     }
 
@@ -113,9 +123,11 @@ struct LocalGenerationDefaultsTests {
     func repetitionPenaltyFieldHonored() {
         // Uncommon but permitted — HF spec allows repetition_penalty in
         // generation_config. Make sure we don't drop it on the floor.
-        let d = Self.defaults(fromJSON: #"""
-            {"temperature": 0.8, "repetition_penalty": 1.05}
-            """#)
+        let d = Self.defaults(
+            fromJSON: #"""
+                {"temperature": 0.8, "repetition_penalty": 1.05}
+                """#
+        )
         #expect(d.temperature == 0.8)
         #expect(d.repetitionPenalty == 1.05)
     }
@@ -124,9 +136,11 @@ struct LocalGenerationDefaultsTests {
     func integerTemperatureDecodes() {
         // Some generators emit `"temperature": 1` (no decimal). Without the
         // NSNumber conversion helper, Swift's `as? Double` rejects these.
-        let d = Self.defaults(fromJSON: #"""
-            {"temperature": 1, "top_k": 40}
-            """#)
+        let d = Self.defaults(
+            fromJSON: #"""
+                {"temperature": 1, "top_k": 40}
+                """#
+        )
         #expect(d.temperature == 1.0)
         #expect(d.topK == 40)
     }
@@ -158,8 +172,8 @@ struct LocalGenerationDefaultsTests {
 
         let cfg = tmp.appendingPathComponent("generation_config.json")
         try #"""
-            {"temperature": 0.6, "top_p": 0.9, "top_k": 32}
-            """#.write(to: cfg, atomically: true, encoding: .utf8)
+        {"temperature": 0.6, "top_p": 0.9, "top_k": 32}
+        """#.write(to: cfg, atomically: true, encoding: .utf8)
 
         let d = LocalGenerationDefaults.load(fromDirectory: tmp)
         #expect(d.temperature == 0.6)
@@ -189,7 +203,11 @@ struct LocalGenerationDefaultsTests {
     @Test("Precedence: client wins over model defaults")
     func clientWinsOverModel() {
         let modelDefaults = LocalGenerationDefaults.Defaults(
-            temperature: 0.6, topP: 0.95, topK: 20, repetitionPenalty: nil)
+            temperature: 0.6,
+            topP: 0.95,
+            topK: 20,
+            repetitionPenalty: nil
+        )
         let clientTemp: Float? = 0.2
         let clientTopP: Float? = 0.5
         let serverFallbackTopP: Float = 1.0
@@ -206,7 +224,11 @@ struct LocalGenerationDefaultsTests {
     @Test("Precedence: model defaults fill omitted client fields")
     func modelDefaultsFillGaps() {
         let modelDefaults = LocalGenerationDefaults.Defaults(
-            temperature: 0.6, topP: 0.95, topK: 20, repetitionPenalty: nil)
+            temperature: 0.6,
+            topP: 0.95,
+            topK: 20,
+            repetitionPenalty: nil
+        )
         let clientTemp: Float? = nil
         let clientTopP: Float? = nil
         let serverFallbackTopP: Float = 1.0
@@ -243,7 +265,11 @@ struct LocalGenerationDefaultsTests {
         // valid non-nil value — so the model's default should NOT replace it.
         // This test documents the invariant.
         let modelDefaults = LocalGenerationDefaults.Defaults(
-            temperature: 0.6, topP: nil, topK: nil, repetitionPenalty: nil)
+            temperature: 0.6,
+            topP: nil,
+            topK: nil,
+            repetitionPenalty: nil
+        )
         let clientTemp: Float? = 0.0
 
         let temp = clientTemp ?? modelDefaults.temperature ?? 0.7
@@ -257,7 +283,8 @@ struct LocalGenerationDefaultsTests {
         // install; the load path must short-circuit to `.empty` without
         // crashing or reaching the filesystem.
         let d = LocalGenerationDefaults.defaults(
-            forModelId: "definitely-not-a-real-model-\(UUID().uuidString)")
+            forModelId: "definitely-not-a-real-model-\(UUID().uuidString)"
+        )
         #expect(d == .empty)
     }
 }

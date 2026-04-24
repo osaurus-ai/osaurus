@@ -133,6 +133,7 @@ public enum EvalRunner {
             id: testCase.id,
             label: label,
             domain: testCase.domain,
+            query: testCase.query,
             outcome: outcome,
             score: score,
             observed: observed,

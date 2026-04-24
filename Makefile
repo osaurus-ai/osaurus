@@ -8,7 +8,7 @@ CONFIG := Release
 PROJECT := App/osaurus.xcodeproj
 DERIVED := build/DerivedData
 
-.PHONY: help cli app install-cli serve status test ci-test clean bench-setup bench-ingest bench-ingest-chunks bench-run bench evals evals-report
+.PHONY: help cli app install-cli serve status test ci-test clean bench-setup bench-ingest bench-ingest-chunks bench-run bench evals evals-verbose evals-report
 
 help:
 	@echo "Targets:"
@@ -23,6 +23,7 @@ help:
 	@echo "  bench-run           Run LOCOMO benchmark only (skip ingestion)"
 	@echo "  bench               Full ingest + run LOCOMO benchmark"
 	@echo "  evals               Run OsaurusEvals preflight suite (MODEL=, FILTER=, EVALS_SUITE=)"
+	@echo "  evals-verbose       Same as 'evals' plus per-case raw LLM response (debugging prompt iter)"
 	@echo "  evals-report        Same as 'evals' but also writes JSON to EVALS_OUT (build/evals.json)"
 	@echo "  test           Run OsaurusCore package tests via 'swift test'"
 	@echo "  ci-test        Reproduce the CI test-core job locally (xcodebuild + xcbeautify)"
@@ -146,6 +147,14 @@ evals:
 	@echo "Running OsaurusEvals against $(EVALS_SUITE)…"
 	swift run --package-path Packages/OsaurusEvals osaurus-evals run \
 		--suite $(EVALS_SUITE) \
+		$(if $(MODEL),--model $(MODEL),) \
+		$(if $(FILTER),--filter $(FILTER),)
+
+evals-verbose:
+	@echo "Running OsaurusEvals (verbose) against $(EVALS_SUITE)…"
+	swift run --package-path Packages/OsaurusEvals osaurus-evals run \
+		--suite $(EVALS_SUITE) \
+		--verbose \
 		$(if $(MODEL),--model $(MODEL),) \
 		$(if $(FILTER),--filter $(FILTER),)
 
