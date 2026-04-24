@@ -12,7 +12,7 @@
       "mustInclude": ["browser_navigate"]
     },
     "companions": {
-      "skills": ["osaurus-browser"],
+      "skills": ["Osaurus Browser"],
       "siblings": {
         "minOverlap": 2,
         "candidates": [

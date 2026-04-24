@@ -27,6 +27,13 @@ public enum EvalRunner {
         model: ModelSelection,
         filter: String? = nil
     ) async -> EvalReport {
+        // The CLI is its own process — it has to scan + dlopen every
+        // installed plugin manually before preflight can see plugin
+        // tools (the host app does this in AppDelegate). Without it
+        // every `requirePlugins` case skips with "missing plugins" no
+        // matter what's actually installed on disk.
+        await PreflightEvaluator.loadInstalledPlugins()
+
         let modelLabel = ModelOverride.describe(model)
         let startedAt = isoNow()
         var rows: [EvalCaseReport] = []

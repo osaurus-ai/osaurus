@@ -99,11 +99,27 @@ public enum PreflightEvaluator {
     /// kept narrow on purpose; if future eval cases need MCP/sandbox
     /// fixture introspection too, extend this surface explicitly
     /// rather than exposing the full `PluginManager`.
+    ///
+    /// Returns an empty set if `loadInstalledPlugins()` hasn't been
+    /// called yet — `PluginManager.plugins` only lists plugins LOADED
+    /// in this process (via `dlopen`), not just installed on disk.
     public static func installedPluginIds() -> Set<String> {
         var ids: Set<String> = []
         for loaded in PluginManager.shared.plugins {
             ids.insert(loaded.plugin.id)
         }
         return ids
+    }
+
+    /// Scan the tools directory and load every installed plugin (native
+    /// dylib + sandbox plugin) into the in-process `PluginManager` /
+    /// `ToolRegistry` / `SkillManager`. The host app does this in
+    /// `AppDelegate.applicationDidFinishLaunching`; the eval CLI is its
+    /// own process and has to invoke it explicitly before preflight can
+    /// see plugin tools or before `installedPluginIds()` returns
+    /// anything. Idempotent — `PluginManager.loadAll` serializes
+    /// concurrent invocations and re-uses already-loaded dylibs.
+    public static func loadInstalledPlugins() async {
+        await PluginManager.shared.loadAll()
     }
 }

@@ -71,7 +71,7 @@ Minimal example:
       "mustInclude": ["browser_navigate"]
     },
     "companions": {
-      "skills": ["osaurus-browser"],
+      "skills": ["Osaurus Browser"],
       "siblings": {
         "minOverlap": 2,
         "candidates": ["browser_open_login", "browser_do", "browser_console_messages"]
@@ -90,7 +90,7 @@ Field reference:
 - `fixtures.preflightMode` — `off` / `narrow` / `balanced` / `wide`. Default `balanced`.
 - `fixtures.requirePlugins` — plugin ids the case needs locally. Cases with missing plugins are **skipped** (not failed) so an incomplete install doesn't mask real regressions.
 - `expect.tools.mustInclude` / `mustNotInclude` — picked-set assertions, equal-weighted. Partial credit is given.
-- `expect.companions.skills` — plugin skills that should surface in the teaser.
+- `expect.companions.skills` — plugin skills that should surface in the teaser. **Use the registered display name** (e.g. `"Osaurus Browser"`), not the slug. Plugin skills authored with the agent-skills `lowercase-hyphen` form get title-cased on registration (`osaurus-browser` → `Osaurus Browser`); the companion teaser surfaces the display name and that's what `capabilities_load` looks up.
 - `expect.companions.siblings` — at-least-N overlap matcher against a candidate list (resilient to ordering churn).
 
 A case with empty `expect: {}` is a valid smoke test — it records what preflight did without scoring anything. Useful while bootstrapping.
