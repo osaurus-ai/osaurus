@@ -309,15 +309,62 @@ final class ToolRegistry: ObservableObject {
 
         // Run the tool body off MainActor so long-running tools (file I/O,
         // network, shell) don't contend with SwiftUI layout on the main thread.
-        return try await Self.runToolBody(tool, argumentsJSON: argumentsJSON)
+        // A global timeout caps every tool body so a misbehaving tool can
+        // never block the agent loop forever — tools that legitimately need
+        // longer (sandbox shell, model evaluation) still own their own
+        // tighter timeout internally.
+        return try await Self.runToolBody(
+            tool,
+            argumentsJSON: argumentsJSON,
+            timeoutSeconds: Self.defaultToolTimeoutSeconds
+        )
     }
 
-    /// Trampoline that executes the tool outside of MainActor isolation.
-    private nonisolated static func runToolBody(
+    /// Default per-tool wall-clock cap (seconds). Mirrors
+    /// `PluginHostAPI.toolExecutionTimeout` so the chat-side and plugin-side
+    /// loops have matching semantics. Tools that need a tighter or looser
+    /// budget (e.g. sandbox shell, MCP provider) still set their own.
+    public static let defaultToolTimeoutSeconds: TimeInterval = 120
+
+    /// Trampoline that executes the tool outside of MainActor isolation,
+    /// racing the body against a wall-clock timeout. On timeout we cancel
+    /// the body task and return a `kind: .timeout` envelope so the model
+    /// sees a structured signal instead of a hung agent loop. Internal so
+    /// tests can drive it with a small `timeoutSeconds` value without
+    /// waiting for the full 120s production budget.
+    internal nonisolated static func runToolBody(
         _ tool: OsaurusTool,
-        argumentsJSON: String
+        argumentsJSON: String,
+        timeoutSeconds: TimeInterval
     ) async throws -> String {
-        try await tool.execute(argumentsJSON: argumentsJSON)
+        let toolName = tool.name
+        return try await withThrowingTaskGroup(of: String.self) { group in
+            group.addTask {
+                try await tool.execute(argumentsJSON: argumentsJSON)
+            }
+            group.addTask {
+                let nanos = UInt64(timeoutSeconds * 1_000_000_000)
+                try await Task.sleep(nanoseconds: nanos)
+                return ToolEnvelope.failure(
+                    kind: .timeout,
+                    message:
+                        "Tool '\(toolName)' exceeded the \(Int(timeoutSeconds))s execution budget.",
+                    tool: toolName,
+                    retryable: true
+                )
+            }
+            // First result wins (either the body completed or the timeout
+            // fired). Cancel the loser so we don't leak work.
+            guard let first = try await group.next() else {
+                return ToolEnvelope.failure(
+                    kind: .executionError,
+                    message: "Tool '\(toolName)' produced no result.",
+                    tool: toolName
+                )
+            }
+            group.cancelAll()
+            return first
+        }
     }
 
     // MARK: - Listing / Enablement

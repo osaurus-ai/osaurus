@@ -445,6 +445,57 @@ public actor RemoteProviderService: ToolCapableService {
     /// stream — which avoids the iterator-corruption mode where racing
     /// `iterator.next()` against a sleep would leave the underlying URLSession
     /// task in a half-cancelled state and silently truncate the stream.
+    /// Idempotent connect-phase retry. Wraps `URLSession.bytes(for:)` so
+    /// transient TCP / DNS / TLS failures and 5xx-without-body upstream
+    /// hiccups don't surface as fatal errors before the consumer has
+    /// seen any bytes. Once the response head arrives (or we've tried
+    /// `maxAttempts` times) we hand the result back to the caller and
+    /// retry never happens again — by design, mid-stream errors are not
+    /// retried because the consumer has already begun seeing tokens.
+    ///
+    /// Backoff: 200ms, 800ms (exponential, capped). Total wall time at
+    /// `maxAttempts = 3` is therefore ≤ ~1s of added latency on success.
+    static func connectWithRetry(
+        session: URLSession,
+        urlRequest: URLRequest,
+        maxAttempts: Int = 3
+    ) async throws -> (URLSession.AsyncBytes, URLResponse) {
+        var lastError: Error?
+        for attempt in 0 ..< maxAttempts {
+            if attempt > 0 {
+                let delayMs: UInt64 = attempt == 1 ? 200_000_000 : 800_000_000
+                try? await Task.sleep(nanoseconds: delayMs)
+            }
+            do {
+                return try await session.bytes(for: urlRequest)
+            } catch {
+                if Task.isCancelled { throw error }
+                lastError = error
+                // Only retry on classic transient categories. Auth /
+                // bad-request type errors are not retried.
+                guard Self.isRetryableConnectError(error) else { throw error }
+            }
+        }
+        throw lastError ?? RemoteProviderServiceError.invalidResponse
+    }
+
+    /// Heuristic: classify a URLError as a connect-phase transient. We
+    /// retry the connection on these and treat everything else as
+    /// terminal. Errors on auth / DNS-permanent / cancelled fall through
+    /// to the caller untouched.
+    private static func isRetryableConnectError(_ error: Error) -> Bool {
+        guard let urlError = error as? URLError else { return false }
+        switch urlError.code {
+        case .timedOut, .cannotFindHost, .cannotConnectToHost,
+            .networkConnectionLost, .dnsLookupFailed, .notConnectedToInternet,
+            .secureConnectionFailed, .serverCertificateUntrusted,
+            .resourceUnavailable:
+            return true
+        default:
+            return false
+        }
+    }
+
     static func makeChunkStream(
         from bytes: URLSession.AsyncBytes
     ) -> AsyncThrowingStream<Data, Error> {
@@ -1105,7 +1156,15 @@ public actor RemoteProviderService: ToolCapableService {
 
         let producerTask = Task {
             do {
-                let (bytes, response) = try await currentSession.bytes(for: urlRequest)
+                // Idempotent connect-phase retry: only retries the
+                // `bytes(for:)` call (no stream data has been delivered
+                // upstream yet, so retrying is safe). Once we start
+                // iterating bytes / dispatching SSE chunks we never
+                // retry — the consumer has already begun seeing output.
+                let (bytes, response) = try await Self.connectWithRetry(
+                    session: currentSession,
+                    urlRequest: urlRequest
+                )
 
                 guard let httpResponse = response as? HTTPURLResponse else {
                     continuation.finish(throwing: RemoteProviderServiceError.invalidResponse)
@@ -1463,8 +1522,11 @@ public actor RemoteProviderService: ToolCapableService {
             max_completion_tokens: parameters.maxTokens,
             stream: stream,
             top_p: isReasoningModel ? nil : parameters.topPOverride,
-            frequency_penalty: nil,
-            presence_penalty: nil,
+            // Forward the raw OpenAI penalties — most upstream OpenAI-
+            // compatible providers accept these natively, and stripping
+            // them silently was a previous gap that surprised clients.
+            frequency_penalty: isReasoningModel ? nil : parameters.frequencyPenalty,
+            presence_penalty: isReasoningModel ? nil : parameters.presencePenalty,
             stop: nil,
             tools: tools,
             tool_choice: toolChoice,

@@ -24,6 +24,7 @@ import CoreImage
 import Foundation
 import MLX
 @preconcurrency import MLXLMCommon
+import MLXRandom
 import MLXVLM  // MediaProcessing for image downscaling
 import os.log
 
@@ -184,6 +185,16 @@ struct MLXBatchAdapter {
             repetitionPenalty: generation.repetitionPenalty ?? modelDefaults.repetitionPenalty,
             stopSequences: stopSequences
         )
+
+        // Best-effort per-request determinism: seed the MLX global random
+        // state immediately before submission. Note: vmlx's `Sampler`
+        // constructs its own `RandomState()` from time-of-day inside the
+        // engine, so concurrent seeded requests against the same model
+        // are NOT guaranteed reproducible. Single-request seeding still
+        // benefits any MLX code path that consults `MLXRandom.globalState`.
+        if let seed = generation.seed {
+            MLXRandom.seed(seed)
+        }
 
         // `engine.generate` returns `AsyncStream<Generation>` directly with
         // reasoning + tool-call extraction handled inside vmlx. We re-wrap

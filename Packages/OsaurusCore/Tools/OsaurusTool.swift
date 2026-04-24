@@ -15,7 +15,16 @@ protocol OsaurusTool: Sendable {
     /// JSON schema for function parameters (OpenAI-compatible minimal subset)
     var parameters: JSONValue? { get }
 
-    /// Execute the tool with arguments provided as a JSON string
+    /// Execute the tool with arguments provided as a JSON string.
+    ///
+    /// **Cancellation contract:** the registry wraps every call with a
+    /// `withThrowingTaskGroup` that races the body against a wall-clock
+    /// timeout (`ToolRegistry.defaultToolTimeoutSeconds`). When the
+    /// surrounding stream is cancelled by the client, the wrapping task
+    /// is cancelled. Long-running tools (network, shell, file walk)
+    /// SHOULD periodically check `Task.isCancelled` and short-circuit
+    /// with a `ToolEnvelope.failure(kind: .executionError, …,
+    /// retryable: false)` so resources are released promptly.
     func execute(argumentsJSON: String) async throws -> String
 }
 

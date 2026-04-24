@@ -1466,8 +1466,6 @@ final class ChatSession: ObservableObject {
                         tool_choice: toolSpecs.isEmpty ? nil : .auto,
                         session_id: sessionId?.uuidString
                     )
-                    req.cache_hint = context.cacheHint
-                    req.staticPrefix = context.staticPrefix
                     req.modelOptions = activeModelOptions.isEmpty ? nil : activeModelOptions
                     req.ttftTrace = ttftTrace
                     debugLog(

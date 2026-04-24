@@ -70,10 +70,27 @@ public enum EvalRunner {
     private static func runOne(_ testCase: EvalCase, modelId: String) async -> EvalCaseReport {
         let label = testCase.label ?? testCase.id
 
-        // Today the only domain is preflight. New domains add a
-        // `case` arm here and stay separate top-level functions —
-        // mixing them into one runner gets messy fast.
-        guard testCase.domain == "preflight" else {
+        switch testCase.domain {
+        case "preflight":
+            break  // fall through to the existing preflight body below
+        case "schema":
+            return runSchemaCase(testCase, modelId: modelId)
+        case "tools", "streaming", "contract":
+            // Scaffolded domains — runner implementation lives in a
+            // follow-up so cases can be authored against the format
+            // without forcing a heavyweight ChatEngine entry point
+            // into the public OsaurusCore surface yet.
+            return .terminal(
+                id: testCase.id,
+                label: label,
+                domain: testCase.domain,
+                outcome: .skipped,
+                notes: [
+                    "domain '\(testCase.domain)' runner not yet implemented in this build."
+                ],
+                modelId: modelId
+            )
+        default:
             return .terminal(
                 id: testCase.id,
                 label: label,
@@ -141,6 +158,67 @@ public enum EvalRunner {
             modelId: modelId,
             latencyMs: observed.latencyMs
         )
+    }
+
+    // MARK: - Schema domain
+
+    /// Pure-data evaluator for the `schema` domain. Drives
+    /// `SchemaValidator.validate` against a canned schema/args pair so
+    /// SchemaValidator regressions (added rules: oneOf/anyOf, items,
+    /// pattern, min/max) get caught without needing a real LLM.
+    /// Always main-actor-safe — no engine state touched.
+    private static func runSchemaCase(_ testCase: EvalCase, modelId: String) -> EvalCaseReport {
+        let label = testCase.label ?? testCase.id
+        guard let expectation = testCase.expect.schema else {
+            return .terminal(
+                id: testCase.id,
+                label: label,
+                domain: testCase.domain,
+                outcome: .errored,
+                notes: ["schema case missing `expect.schema` block"],
+                modelId: modelId
+            )
+        }
+        let argsAny = jsonValueToAny(expectation.arguments)
+        let result = SchemaValidator.validate(
+            arguments: argsAny,
+            against: expectation.schema
+        )
+        var notes: [String] = []
+        var passed = (result.isValid == expectation.expectValid)
+        if !result.isValid, let msg = result.errorMessage {
+            notes.append("validator: \(msg)")
+        }
+        if let expectField = expectation.expectField {
+            if result.field != expectField {
+                passed = false
+                notes.append(
+                    "field mismatch: expected '\(expectField)', got '\(result.field ?? "nil")'"
+                )
+            }
+        }
+        return .terminal(
+            id: testCase.id,
+            label: label,
+            domain: testCase.domain,
+            outcome: passed ? .passed : .failed,
+            notes: notes,
+            modelId: modelId
+        )
+    }
+
+    /// Convert a `JSONValue` (decoded from the case JSON) into the
+    /// `Any` shape `SchemaValidator.validate` consumes. Mirrors the
+    /// private `JSONValue.foundationValue` extension in SchemaValidator.
+    private static func jsonValueToAny(_ value: JSONValue) -> Any {
+        switch value {
+        case .null: return NSNull()
+        case .bool(let b): return b
+        case .number(let n): return n
+        case .string(let s): return s
+        case .array(let arr): return arr.map { jsonValueToAny($0) }
+        case .object(let obj): return obj.mapValues { jsonValueToAny($0) }
+        }
     }
 
     // MARK: - Helpers

@@ -17,6 +17,7 @@
 //
 
 import Foundation
+import OsaurusCore
 
 public struct EvalCase: Sendable, Codable, Identifiable {
     /// Unique slug, e.g. `preflight.browser.amazon-orders`. Surfaced in
@@ -84,13 +85,47 @@ public struct EvalCase: Sendable, Codable, Identifiable {
     public struct Expectations: Sendable, Codable {
         public let tools: ToolExpectations?
         public let companions: CompanionExpectations?
+        /// Schema-validation expectation for `domain == "schema"` cases.
+        /// Lets us pin the SchemaValidator's behaviour against canned
+        /// schema/arg pairs — extremely useful for keeping the new
+        /// `oneOf` / `anyOf` / `pattern` / `items` / `minimum` /
+        /// `maximum` rules from regressing.
+        public let schema: SchemaExpectations?
 
         public init(
             tools: ToolExpectations? = nil,
-            companions: CompanionExpectations? = nil
+            companions: CompanionExpectations? = nil,
+            schema: SchemaExpectations? = nil
         ) {
             self.tools = tools
             self.companions = companions
+            self.schema = schema
+        }
+    }
+
+    /// Expectation for `domain == "schema"` cases. Pure data — the
+    /// runner feeds `arguments` through `SchemaValidator.validate`
+    /// against `schema` and asserts the outcome matches `expectValid`.
+    /// When `expectField` is set, the failure must additionally surface
+    /// that field name. Both `schema` and `arguments` are decoded as
+    /// `JSONValue` so the JSON literal in the case file maps 1:1 onto
+    /// what the validator sees at runtime.
+    public struct SchemaExpectations: Sendable, Codable {
+        public let schema: JSONValue
+        public let arguments: JSONValue
+        public let expectValid: Bool
+        public let expectField: String?
+
+        public init(
+            schema: JSONValue,
+            arguments: JSONValue,
+            expectValid: Bool,
+            expectField: String? = nil
+        ) {
+            self.schema = schema
+            self.arguments = arguments
+            self.expectValid = expectValid
+            self.expectField = expectField
         }
     }
 

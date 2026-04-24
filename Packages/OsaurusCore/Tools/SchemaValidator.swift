@@ -16,15 +16,15 @@
 
 import Foundation
 
-struct SchemaValidator {
-    struct ValidationResult {
-        let isValid: Bool
-        let errorMessage: String?
+public struct SchemaValidator {
+    public struct ValidationResult {
+        public let isValid: Bool
+        public let errorMessage: String?
         /// Offending property name when failure is tied to a specific arg
         /// (wrong type, missing required, unknown key under
         /// `additionalProperties: false`). Nil for structural failures.
         /// Surfaced as `field` in the `ToolEnvelope.failure(...)`.
-        let field: String?
+        public let field: String?
 
         static func ok() -> ValidationResult {
             .init(isValid: true, errorMessage: nil, field: nil)
@@ -35,12 +35,27 @@ struct SchemaValidator {
         }
     }
 
-    static func validate(arguments: Any, against schema: JSONValue) -> ValidationResult {
+    public static func validate(arguments: Any, against schema: JSONValue) -> ValidationResult {
         guard case .object(let schemaObj) = schema else {
             return .fail("Schema must be an object")
         }
-        // Non-object top-level schema: validate the raw value directly.
-        if case .string(let t)? = schemaObj["type"], t != "object" {
+        // Non-object top-level schema (or untyped combinator-only schema):
+        // validate the raw value directly. Combinator-only schemas
+        // (`{oneOf: [...]}` with no `type`) are common when a parameter
+        // accepts e.g. either a string or an integer — we must NOT
+        // require the input to be a JSON object in that case.
+        let topType: String?
+        if case .string(let t)? = schemaObj["type"] {
+            topType = t
+        } else {
+            topType = nil
+        }
+        let hasCombinator =
+            schemaObj["oneOf"] != nil || schemaObj["anyOf"] != nil
+        if let t = topType, t != "object" {
+            return validateValue(arguments, schemaObject: schemaObj, key: nil)
+        }
+        if topType == nil && hasCombinator {
             return validateValue(arguments, schemaObject: schemaObj, key: nil)
         }
         guard let dict = arguments as? [String: Any] else {
@@ -92,15 +107,33 @@ struct SchemaValidator {
 
     // MARK: - Value validation (single value against its schema)
 
-    /// Run the type and `enum` checks for one value against its schema.
-    /// Used for object properties (via `validateObject`) and for top-level
-    /// non-object schemas. Does NOT recurse into nested objects — that's
-    /// `validateObject`'s job.
+    /// Run the type, range, format, and `enum` checks for one value
+    /// against its schema. Used for object properties (via
+    /// `validateObject`) and for top-level non-object schemas. Does NOT
+    /// recurse into nested objects — that's `validateObject`'s job.
     private static func validateValue(
         _ value: Any,
         schemaObject: [String: JSONValue],
         key: String?
     ) -> ValidationResult {
+        // First-match dispatch on combinators. We match OpenAI's
+        // observed JSON-Schema usage: `oneOf` and `anyOf` are common
+        // tool-arg patterns; `allOf` is rare. We treat `oneOf` and
+        // `anyOf` interchangeably (first matching branch wins) — this
+        // is permissive but matches what GPT-4 emits in practice.
+        if case .array(let branches)? = schemaObject["oneOf"] ?? schemaObject["anyOf"] {
+            for branch in branches {
+                guard case .object(let branchObj) = branch else { continue }
+                let res = validateValue(value, schemaObject: branchObj, key: key)
+                if res.isValid { return res }
+            }
+            let label = key.map { " '\($0)'" } ?? ""
+            return .fail(
+                "Property\(label) did not match any of the allowed schema branches.",
+                field: key
+            )
+        }
+
         if case .string(let t)? = schemaObject["type"] {
             switch t {
             case "string":
@@ -115,12 +148,82 @@ struct SchemaValidator {
                 guard value is [String: Any] else { return typeMismatch("object", key: key) }
             case "array":
                 guard isArrayLike(value) else { return typeMismatch("array", key: key) }
-            // Item-level validation is intentionally not implemented.
             default:
                 break
             }
         }
+
+        // String-specific constraints: `pattern` (regex) + `minLength` /
+        // `maxLength`. Pattern compilation failures are tolerated — a
+        // bad regex in the schema shouldn't break the tool call.
+        if let s = value as? String {
+            if case .string(let pat)? = schemaObject["pattern"] {
+                if let regex = try? NSRegularExpression(pattern: pat),
+                    regex.firstMatch(
+                        in: s,
+                        range: NSRange(s.startIndex..., in: s)
+                    ) == nil
+                {
+                    let label = key.map { " '\($0)'" } ?? ""
+                    return .fail(
+                        "Property\(label) does not match required pattern `\(pat)`.",
+                        field: key
+                    )
+                }
+            }
+        }
+
+        // Numeric range constraints: `minimum` and `maximum`. Inclusive
+        // bounds (the JSON Schema default). `exclusiveMinimum` /
+        // `exclusiveMaximum` are not implemented yet — flag them
+        // silently rather than miscompare.
+        if let bound = numericValue(value) {
+            if case .number(let min)? = schemaObject["minimum"], bound < min {
+                let label = key.map { " '\($0)'" } ?? ""
+                return .fail(
+                    "Property\(label) must be >= \(min) (got \(bound)).",
+                    field: key
+                )
+            }
+            if case .number(let max)? = schemaObject["maximum"], bound > max {
+                let label = key.map { " '\($0)'" } ?? ""
+                return .fail(
+                    "Property\(label) must be <= \(max) (got \(bound)).",
+                    field: key
+                )
+            }
+        }
+
+        // Array element validation: `items` (single schema applied to
+        // every element). Tuple-form `items: [schema, schema, ...]` is
+        // not implemented — defer to the caller for that rarer shape.
+        if case .object(let itemsSchema)? = schemaObject["items"],
+            let arr = value as? [Any]
+        {
+            for (idx, element) in arr.enumerated() {
+                let elementKey = key.map { "\($0)[\(idx)]" } ?? "[\(idx)]"
+                let res = validateValue(element, schemaObject: itemsSchema, key: elementKey)
+                if !res.isValid { return res }
+                if case .string("object")? = itemsSchema["type"],
+                    case .object? = itemsSchema["properties"],
+                    let nested = element as? [String: Any]
+                {
+                    let inner = validateObject(nested, schemaObject: itemsSchema)
+                    if !inner.isValid { return inner }
+                }
+            }
+        }
+
         return enumCheck(value: value, schemaObject: schemaObject, key: key)
+    }
+
+    /// Coerce the value to a `Double` for numeric range checks. Mirrors
+    /// `isNumberLike` but returns the parsed value so we can compare.
+    /// Excludes booleans (NSNumber tag).
+    private static func numericValue(_ value: Any) -> Double? {
+        if let n = value as? NSNumber, !isObjCBool(n) { return n.doubleValue }
+        if let s = value as? String, let d = Double(s) { return d }
+        return nil
     }
 
     // MARK: - Shared helpers

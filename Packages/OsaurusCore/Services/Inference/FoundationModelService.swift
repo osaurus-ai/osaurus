@@ -11,9 +11,27 @@ import Foundation
     import FoundationModels
 #endif
 
-enum FoundationModelServiceError: Error {
+enum FoundationModelServiceError: Error, LocalizedError {
     case notAvailable
     case generationFailed
+    /// The Foundation Models system model is text-only on macOS 26.
+    /// When the request carries image parts we surface this instead of
+    /// silently degrading to text — callers can choose to retry against
+    /// an MLX VLM or a remote provider with vision support.
+    case visionUnsupported
+
+    var errorDescription: String? {
+        switch self {
+        case .notAvailable:
+            return "Foundation Models is not available on this device."
+        case .generationFailed:
+            return "Foundation Models generation failed."
+        case .visionUnsupported:
+            return
+                "Foundation Models is text-only and cannot accept image inputs. "
+                + "Use an MLX VLM (e.g. Qwen3.5-VL) or a remote provider with vision support."
+        }
+    }
 }
 
 actor FoundationModelService: ToolCapableService {
@@ -72,6 +90,9 @@ actor FoundationModelService: ToolCapableService {
         requestedModel: String?,
         stopSequences: [String]
     ) async throws -> AsyncThrowingStream<String, Error> {
+        if Self.hasImageContent(messages) {
+            throw FoundationModelServiceError.visionUnsupported
+        }
         let prompt = OpenAIPromptBuilder.buildPrompt(from: messages)
         #if canImport(FoundationModels)
             if #available(macOS 26.0, *) {
@@ -141,6 +162,9 @@ actor FoundationModelService: ToolCapableService {
         parameters: GenerationParameters,
         requestedModel: String?
     ) async throws -> String {
+        if Self.hasImageContent(messages) {
+            throw FoundationModelServiceError.visionUnsupported
+        }
         let prompt = OpenAIPromptBuilder.buildPrompt(from: messages)
         return try await Self.generateOneShot(
             prompt: prompt,
@@ -159,6 +183,9 @@ actor FoundationModelService: ToolCapableService {
         toolChoice: ToolChoiceOption?,
         requestedModel: String?
     ) async throws -> String {
+        if Self.hasImageContent(messages) {
+            throw FoundationModelServiceError.visionUnsupported
+        }
         let prompt = OpenAIPromptBuilder.buildPrompt(from: messages)
         #if canImport(FoundationModels)
             if #available(macOS 26.0, *) {
@@ -209,6 +236,9 @@ actor FoundationModelService: ToolCapableService {
         toolChoice: ToolChoiceOption?,
         requestedModel: String?
     ) async throws -> AsyncThrowingStream<String, Error> {
+        if Self.hasImageContent(messages) {
+            throw FoundationModelServiceError.visionUnsupported
+        }
         let prompt = OpenAIPromptBuilder.buildPrompt(from: messages)
         #if canImport(FoundationModels)
             if #available(macOS 26.0, *) {
@@ -286,6 +316,19 @@ actor FoundationModelService: ToolCapableService {
         #else
             throw FoundationModelServiceError.notAvailable
         #endif
+    }
+
+    // MARK: - Capability detection
+
+    /// True when any message carries image content (either an `image_url`
+    /// part or a non-empty `imageUrls` accessor). Used to fast-fail the
+    /// FoundationModels path with `visionUnsupported` instead of silently
+    /// dropping images at the prompt builder.
+    nonisolated static func hasImageContent(_ messages: [ChatMessage]) -> Bool {
+        for msg in messages {
+            if !msg.imageUrls.isEmpty { return true }
+        }
+        return false
     }
 
     // MARK: - Private helpers
