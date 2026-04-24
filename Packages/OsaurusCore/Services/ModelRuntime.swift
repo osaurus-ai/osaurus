@@ -582,6 +582,8 @@ actor ModelRuntime {
             modelName: modelName
         )
         let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
+        let modelSupportsThinking =
+            LocalReasoningCapability.capability(forModelId: modelName).supportsThinking
         let producerTask = Task {
             // Collect every tool invocation parsed from this completion. Local
             // models can emit multiple `<tool_call>` blocks per response;
@@ -600,7 +602,11 @@ actor ModelRuntime {
                         if !s.isEmpty { continuation.yield(s) }
                     case .reasoning(let s):
                         if !s.isEmpty {
-                            continuation.yield(StreamingReasoningHint.encode(s))
+                            if modelSupportsThinking {
+                                continuation.yield(StreamingReasoningHint.encode(s))
+                            } else {
+                                continuation.yield(s)
+                            }
                         }
                     case .toolInvocation(let name, let argsJSON):
                         continuation.yield(StreamingToolHint.encode(name))
