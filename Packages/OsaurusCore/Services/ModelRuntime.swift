@@ -680,6 +680,7 @@ actor ModelRuntime {
         temperature: Float,
         maxTokens: Int,
         topP: Float,
+        topK: Int = 0,
         repetitionPenalty: Float?,
         stopSequences: [String] = []
     ) -> MLXLMCommon.GenerateParameters {
@@ -687,6 +688,7 @@ actor ModelRuntime {
             maxTokens: maxTokens,
             temperature: temperature,
             topP: topP,
+            topK: topK,
             repetitionPenalty: repetitionPenalty,
             repetitionContextSize: 20,
             extraStopStrings: stopSequences

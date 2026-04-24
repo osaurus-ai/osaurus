@@ -21,7 +21,7 @@ permissions:
 env:
   # Bump to invalidate every cache entry without source surgery (e.g., after a
   # known-bad cache or an Xcode toolchain upgrade we want to flush manually).
-  CACHE_SALT: v1
+  CACHE_SALT: v2-vmlx-5b84387
   # Pin Xcode so cache keys are stable across runner image bumps. When you
   # need to upgrade, change here AND in setup-xcode below.
   XCODE_VERSION: "26.3"

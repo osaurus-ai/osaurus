@@ -952,6 +952,7 @@ extension ModelManager {
         cachedLocalModels = nil
         localModelsCacheLock.unlock()
         LocalReasoningCapability.invalidate()
+        LocalGenerationDefaults.invalidate()
     }
 
     /// Discover locally downloaded models. Cached until invalidated by model download/delete.

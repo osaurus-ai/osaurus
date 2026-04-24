@@ -168,11 +168,20 @@ struct MLXBatchAdapter {
             maxBatchSize: maxBatchSize
         )
 
+        // Honor the model's shipped sampling defaults (Hugging Face
+        // `generation_config.json`) when the OpenAI-wire request omits a
+        // field. Without this overlay osaurus served, e.g., Qwen 3.5 397B
+        // at 0.7 temperature when its recipe specifies 0.6, and Gemma-4
+        // 26B-A4B with top_k disabled when the recipe specifies top_k=64.
+        // Explicit client values still win — the `?? modelDefaults`
+        // ordering only applies when `generation.*` is nil.
+        let modelDefaults = LocalGenerationDefaults.defaults(forModelId: modelName)
         let mlxParams = ModelRuntime.makeGenerateParameters(
-            temperature: generation.temperature ?? 0.7,
+            temperature: generation.temperature ?? modelDefaults.temperature ?? 0.7,
             maxTokens: generation.maxTokens,
-            topP: generation.topPOverride ?? runtime.topP,
-            repetitionPenalty: generation.repetitionPenalty,
+            topP: generation.topPOverride ?? modelDefaults.topP ?? runtime.topP,
+            topK: modelDefaults.topK ?? 0,
+            repetitionPenalty: generation.repetitionPenalty ?? modelDefaults.repetitionPenalty,
             stopSequences: stopSequences
         )
 
