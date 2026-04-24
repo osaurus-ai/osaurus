@@ -274,6 +274,24 @@ struct ModelDownloadView: View {
                             }
                         }
                     }
+                    // The two Performance chips are mutually exclusive —
+                    // picking one clears the other so the filter stays a
+                    // single optional (matches SizeCategory / ParamCategory
+                    // conventions and keeps `isActive` trivially
+                    // `performance != nil`).
+                    FilterSection(title: "Performance") {
+                        HStack(spacing: 8) {
+                            ForEach(ModelManager.ModelFilterState.PerformanceFilter.allCases) { opt in
+                                FilterChip(
+                                    label: opt.displayName,
+                                    isSelected: filterState.performance == opt
+                                ) {
+                                    filterState.performance =
+                                        filterState.performance == opt ? nil : opt
+                                }
+                            }
+                        }
+                    }
                     FilterSection(title: "Model Family") {
                         let families = Array(Set(modelManager.availableModels.map { $0.family })).sorted()
                         if families.isEmpty {
@@ -613,7 +631,7 @@ struct ModelDownloadView: View {
 
     private var filteredModels: [MLXModel] {
         let searched = SearchService.filterModels(modelManager.availableModels, with: searchText)
-        let filtered = filterState.apply(to: searched)
+        let filtered = filterState.apply(to: searched, totalMemoryGB: systemMonitor.totalMemoryGB)
         return filtered.sorted { lhs, rhs in
             lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
         }
@@ -627,7 +645,7 @@ struct ModelDownloadView: View {
     /// 3. Within each tier: newer `releasedAt` first, then alphabetical.
     private var filteredSuggestedModels: [MLXModel] {
         let searched = SearchService.filterModels(modelManager.suggestedModels, with: searchText)
-        let filtered = filterState.apply(to: searched)
+        let filtered = filterState.apply(to: searched, totalMemoryGB: systemMonitor.totalMemoryGB)
         let curatedIds = ModelManager.curatedSuggestedIds
         return filtered.sorted { lhs, rhs in
             let lhsCurated = curatedIds.contains(lhs.id.lowercased())
@@ -677,7 +695,7 @@ struct ModelDownloadView: View {
         }
         // Apply search filter
         let searched = SearchService.filterModels(merged, with: searchText)
-        let filtered = filterState.apply(to: searched)
+        let filtered = filterState.apply(to: searched, totalMemoryGB: systemMonitor.totalMemoryGB)
 
         // Sort: active first, then by name
         return filtered.sorted { lhs, rhs in
@@ -698,7 +716,7 @@ struct ModelDownloadView: View {
     private var completedDownloadedModelsCount: Int {
         let completed = modelManager.deduplicatedModels().filter { $0.isDownloaded }
         let searched = SearchService.filterModels(Array(completed), with: searchText)
-        let filtered = filterState.apply(to: searched)
+        let filtered = filterState.apply(to: searched, totalMemoryGB: systemMonitor.totalMemoryGB)
         return filtered.count
     }
 

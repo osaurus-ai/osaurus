@@ -56,6 +56,7 @@ final class ModelManager: NSObject, ObservableObject {
         var sizeCategory: SizeCategory? = nil
         var family: String? = nil
         var paramCategory: ParamCategory? = nil
+        var performance: PerformanceFilter? = nil
 
         enum SizeCategory: String, CaseIterable, Identifiable {
             case small = "Small (<2 GB)"
@@ -98,8 +99,51 @@ final class ModelManager: NSObject, ObservableObject {
             }
         }
 
+        /// Filters the list by `MLXModel.compatibility(totalMemoryGB:)` —
+        /// the same hardware-fit assessment used for the per-row
+        /// "Runs Well / Tight Fit / Too Large" badges. Exposes the
+        /// already-computed attribute rather than introducing a new one.
+        /// When `totalMemoryGB == 0` (monitor hasn't reported yet) this
+        /// filter is treated as a no-op so the list isn't emptied during
+        /// startup — `compatibility` returns `.unknown` without the
+        /// hardware info and we let everything through until we know.
+        enum PerformanceFilter: String, CaseIterable, Identifiable {
+            /// Only include models whose `compatibility` is `.compatible`
+            /// (memory usage below the 75 % ratio threshold).
+            case runsWell = "Runs Well"
+            /// Exclude models whose `compatibility` is `.tooLarge`
+            /// (memory usage above the 95 % ratio threshold). Models with
+            /// unknown memory info pass through unchanged — we don't
+            /// punish ambiguity.
+            case hideTooLarge = "Hide Too Large"
+
+            var id: String { rawValue }
+
+            var displayName: String {
+                switch self {
+                case .runsWell: return L("Runs Well")
+                case .hideTooLarge: return L("Hide Too Large")
+                }
+            }
+
+            func matches(_ model: MLXModel, totalMemoryGB: Double) -> Bool {
+                guard totalMemoryGB > 0 else { return true }
+                let compat = model.compatibility(totalMemoryGB: totalMemoryGB)
+                switch self {
+                case .runsWell:
+                    return compat == .compatible
+                case .hideTooLarge:
+                    return compat != .tooLarge
+                }
+            }
+        }
+
         var isActive: Bool {
-            typeFilter != .all || sizeCategory != nil || family != nil || paramCategory != nil
+            typeFilter != .all
+                || sizeCategory != nil
+                || family != nil
+                || paramCategory != nil
+                || performance != nil
         }
 
         mutating func reset() {
@@ -107,9 +151,16 @@ final class ModelManager: NSObject, ObservableObject {
             sizeCategory = nil
             family = nil
             paramCategory = nil
+            performance = nil
         }
 
-        func apply(to models: [MLXModel]) -> [MLXModel] {
+        /// Apply all filters to a model list. `totalMemoryGB` is only
+        /// consulted when the Performance filter is active; pass `0` to
+        /// fall through for the other filter dimensions (a reasonable
+        /// default when the caller has no `SystemMonitorService` on hand,
+        /// e.g. during unit tests). The Performance filter itself no-ops
+        /// when `totalMemoryGB <= 0` so the list stays intact.
+        func apply(to models: [MLXModel], totalMemoryGB: Double = 0) -> [MLXModel] {
             models.filter { model in
                 switch typeFilter {
                 case .all: break
@@ -121,6 +172,9 @@ final class ModelManager: NSObject, ObservableObject {
                 }
                 if let fam = family, model.family != fam { return false }
                 if let paramCat = paramCategory, !paramCat.matches(billions: model.parameterCountBillions) {
+                    return false
+                }
+                if let perf = performance, !perf.matches(model, totalMemoryGB: totalMemoryGB) {
                     return false
                 }
                 return true
