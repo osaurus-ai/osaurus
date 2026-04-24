@@ -348,6 +348,134 @@ public struct SchemaValidator {
         default: return false
         }
     }
+
+    // MARK: - Schema-aware coercion
+    //
+    // Quantized local models routinely emit nested arrays and objects as
+    // JSON-encoded strings instead of native types — e.g. they send
+    //
+    //   {"actions": "[{\"action\": \"type\", \"ref\": \"E10\"}]"}
+    //
+    // when the schema declares `actions: array`. The validator's lenient
+    // `isArrayLike` check would let that through, but the tool body
+    // ultimately reads `args["actions"]` as a `String` and rejects with
+    // "Required: actions (array)" — confusing for a model that thinks it
+    // sent the right shape.
+    //
+    // `coerceArguments` walks the schema and, for each declared property,
+    // attempts the obvious unwrap (string → array via JSON parse, string
+    // → object via JSON parse, string → number via Double parse, etc.).
+    // It always returns a value, falling through unchanged when no
+    // coercion rule applies, so callers can run it unconditionally
+    // before validation + dispatch. Together with `validate`, this gives
+    // the tool body native types whenever the model gets close enough.
+
+    /// Coerce `arguments` toward the types declared in `schema`.
+    /// Recursive — descends into object properties and array items —
+    /// and idempotent: passing already-coerced arguments is a no-op.
+    /// Schemas without enough type information (no `type`, untyped
+    /// `oneOf` / `anyOf`) fall through unchanged.
+    public static func coerceArguments(_ arguments: Any, against schema: JSONValue) -> Any {
+        guard case .object(let schemaObj) = schema else { return arguments }
+        return coerceValue(arguments, schemaObject: schemaObj)
+    }
+
+    /// Recursive worker. `schemaObject` is the unwrapped schema dict
+    /// for the current value. We dispatch on the declared `type`:
+    ///   - `object` → recurse into each declared property
+    ///   - `array`  → recurse into items
+    ///   - `integer` / `number` / `boolean` → unwrap a string scalar
+    ///   - everything else → return the value unchanged
+    /// String inputs that look like JSON (`"[…]"` / `"{…}"`) are
+    /// upgraded to native arrays / objects when the schema asks for
+    /// the matching collection type.
+    private static func coerceValue(
+        _ value: Any,
+        schemaObject: [String: JSONValue]
+    ) -> Any {
+        let typeName: String? = {
+            if case .string(let t)? = schemaObject["type"] { return t }
+            return nil
+        }()
+
+        switch typeName {
+        case "object":
+            // Unwrap stringified object first.
+            let target = unwrapJSONString(value, expecting: .object) ?? value
+            guard let dict = target as? [String: Any] else { return target }
+            return coerceObject(dict, schemaObject: schemaObject)
+        case "array":
+            let target = unwrapJSONString(value, expecting: .array) ?? value
+            guard let arr = target as? [Any] else { return target }
+            return coerceArray(arr, schemaObject: schemaObject)
+        case "integer":
+            return coerceScalarString(value) { ArgumentCoercion.int($0) as Any? } ?? value
+        case "number":
+            if let s = value as? String, let d = Double(s) { return d }
+            return value
+        case "boolean":
+            return coerceScalarString(value) { ArgumentCoercion.bool($0) as Any? } ?? value
+        default:
+            return value
+        }
+    }
+
+    private static func coerceObject(
+        _ obj: [String: Any],
+        schemaObject: [String: JSONValue]
+    ) -> [String: Any] {
+        guard case .object(let propsDict)? = schemaObject["properties"] else { return obj }
+        var out = obj
+        for (key, value) in obj {
+            guard case .object(let propSchema)? = propsDict[key] else { continue }
+            out[key] = coerceValue(value, schemaObject: propSchema)
+        }
+        return out
+    }
+
+    private static func coerceArray(
+        _ arr: [Any],
+        schemaObject: [String: JSONValue]
+    ) -> [Any] {
+        guard case .object(let itemsSchema)? = schemaObject["items"] else { return arr }
+        return arr.map { coerceValue($0, schemaObject: itemsSchema) }
+    }
+
+    /// What we expect to find when JSON-parsing a string scalar that
+    /// the schema typed as a collection. The two cases the validator
+    /// rescues today are array-encoded-as-string and
+    /// object-encoded-as-string; everything else is intentionally left
+    /// to the unwrapped scalar coercion path.
+    private enum ExpectedJSONShape { case array, object }
+
+    /// If `value` is a `String` that JSON-decodes to the requested
+    /// shape, return the decoded native object. Otherwise nil so the
+    /// caller can fall back to whatever the input was.
+    private static func unwrapJSONString(
+        _ value: Any,
+        expecting shape: ExpectedJSONShape
+    ) -> Any? {
+        guard let s = value as? String,
+            let data = s.data(using: .utf8),
+            let parsed = try? JSONSerialization.jsonObject(with: data)
+        else { return nil }
+        switch shape {
+        case .array where parsed is [Any]: return parsed
+        case .object where parsed is [String: Any]: return parsed
+        default: return nil
+        }
+    }
+
+    /// Apply `coercer` only when `value` is a `String` AND the result
+    /// is non-nil. Otherwise return nil so the caller knows nothing
+    /// changed and can keep the original value.
+    private static func coerceScalarString(
+        _ value: Any,
+        _ coercer: (String) -> Any?
+    ) -> Any? {
+        guard let s = value as? String, let coerced = coercer(s) else { return nil }
+        return coerced
+    }
 }
 
 private extension JSONValue {

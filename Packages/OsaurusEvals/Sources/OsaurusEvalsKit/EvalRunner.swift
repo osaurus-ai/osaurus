@@ -172,11 +172,13 @@ public enum EvalRunner {
 
     // MARK: - Schema domain
 
-    /// Pure-data evaluator for the `schema` domain. Drives
-    /// `SchemaValidator.validate` against a canned schema/args pair so
-    /// SchemaValidator regressions (added rules: oneOf/anyOf, items,
-    /// pattern, min/max) get caught without needing a real LLM.
-    /// Always main-actor-safe — no engine state touched.
+    /// Pure-data evaluator for the `schema` domain. Mirrors what
+    /// `ToolRegistry.execute` does in production: coerce → validate.
+    /// Coercion is the rescue layer that unwraps stringified arrays /
+    /// objects / scalars before validation sees them, so cases that
+    /// pin its behaviour against quantized-model output (e.g. the
+    /// browser_do `actions` regression) verify the full path the
+    /// chat tool dispatch takes — not just the validator in isolation.
     private static func runSchemaCase(_ testCase: EvalCase, modelId: String) -> EvalCaseReport {
         let label = testCase.label ?? testCase.id
         guard let expectation = testCase.expect.schema else {
@@ -189,7 +191,8 @@ public enum EvalRunner {
                 modelId: modelId
             )
         }
-        let argsAny = jsonValueToAny(expectation.arguments)
+        let rawArgs = jsonValueToAny(expectation.arguments)
+        let argsAny = SchemaValidator.coerceArguments(rawArgs, against: expectation.schema)
         let result = SchemaValidator.validate(
             arguments: argsAny,
             against: expectation.schema
