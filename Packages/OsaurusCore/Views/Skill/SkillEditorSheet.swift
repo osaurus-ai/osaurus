@@ -5,6 +5,7 @@
 //  Editor sheet for creating and editing skills with markdown instructions.
 //
 
+import AppKit
 import SwiftUI
 
 // MARK: - Skill Editor Sheet
@@ -75,7 +76,7 @@ struct SkillEditorSheet: View {
             // Footer
             footerView
         }
-        .frame(width: 900, height: 700)
+        .frame(minWidth: 900, minHeight: 700)
         .background(themeManager.currentTheme.primaryBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .overlay(
@@ -346,6 +347,7 @@ struct SkillEditorSheet: View {
                     .font(.system(size: 13, design: .monospaced))
                     .foregroundColor(themeManager.currentTheme.placeholderText)
                     .padding(16)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
                     .allowsHitTesting(false)
                 }
 
@@ -361,11 +363,12 @@ struct SkillEditorSheet: View {
                             .textSelection(.enabled)
                     }
                 } else {
-                    TextEditor(text: $instructions)
-                        .font(.system(size: 13, design: .monospaced))
-                        .foregroundColor(themeManager.currentTheme.primaryText)
-                        .scrollContentBackground(.hidden)
-                        .padding(12)
+                    ThemedNSTextView(
+                        text: $instructions,
+                        textColor: themeManager.currentTheme.primaryText,
+                        fontSize: 13,
+                        textInset: 16
+                    )
                 }
             }
             .background(themeManager.currentTheme.inputBackground)
@@ -532,28 +535,19 @@ private struct SkillStyledTextField: View {
                     .frame(width: 16)
             }
 
-            ZStack(alignment: .leading) {
-                // Themed placeholder overlay
-                if text.isEmpty {
-                    Text(placeholder)
-                        .font(.system(size: 13))
-                        .foregroundColor(themeManager.currentTheme.placeholderText)
-                        .allowsHitTesting(false)
-                }
-
-                TextField(
-                    "",
-                    text: $text,
-                    onEditingChanged: { editing in
-                        withAnimation(.easeOut(duration: 0.15)) {
-                            isFocused = editing
-                        }
+            ThemedNSTextField(
+                placeholder: placeholder,
+                text: $text,
+                textColor: themeManager.currentTheme.primaryText,
+                placeholderColor: themeManager.currentTheme.placeholderText,
+                fontSize: 13,
+                onFocusChange: { editing in
+                    withAnimation(.easeOut(duration: 0.15)) {
+                        isFocused = editing
                     }
-                )
-                .textFieldStyle(.plain)
-                .font(.system(size: 13))
-                .foregroundColor(themeManager.currentTheme.primaryText)
-            }
+                }
+            )
+            .frame(height: 18)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
@@ -610,6 +604,162 @@ private struct SkillSecondaryButtonStyle: ButtonStyle {
                     )
             )
             .opacity(configuration.isPressed ? 0.8 : 1.0)
+    }
+}
+
+// MARK: - AppKit-Backed Text Field
+//
+
+/// NSTextField subclass that reports no intrinsic size that lets SwiftUI's
+/// explicit .frame() win and silences the `min <= max` fault SwiftUI raises
+/// when a representable returns a fractional intrinsic height.
+private final class NoIntrinsicSizeTextField: NSTextField {
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: NSView.noIntrinsicMetric, height: NSView.noIntrinsicMetric)
+    }
+}
+
+private struct ThemedNSTextField: NSViewRepresentable {
+    let placeholder: String
+    @Binding var text: String
+    let textColor: Color
+    let placeholderColor: Color
+    let fontSize: CGFloat
+    let onFocusChange: (Bool) -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+
+    func makeNSView(context: Context) -> NSTextField {
+        let field = NoIntrinsicSizeTextField()
+        field.isBordered = false
+        field.isBezeled = false
+        field.drawsBackground = false
+        field.focusRingType = .none
+        field.usesSingleLineMode = true
+        field.cell?.wraps = false
+        field.cell?.isScrollable = true
+        field.lineBreakMode = .byTruncatingTail
+        field.font = .systemFont(ofSize: fontSize)
+        field.delegate = context.coordinator
+        field.stringValue = text
+        field.placeholderAttributedString = Self.attributedPlaceholder(
+            placeholder, color: placeholderColor, fontSize: fontSize)
+        field.textColor = NSColor(textColor)
+        field.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        return field
+    }
+
+    func updateNSView(_ field: NSTextField, context: Context) {
+        if field.stringValue != text {
+            field.stringValue = text
+        }
+        field.textColor = NSColor(textColor)
+        field.placeholderAttributedString = Self.attributedPlaceholder(
+            placeholder, color: placeholderColor, fontSize: fontSize)
+    }
+
+    private static func attributedPlaceholder(
+        _ string: String, color: Color, fontSize: CGFloat
+    ) -> NSAttributedString {
+        NSAttributedString(
+            string: string,
+            attributes: [
+                .foregroundColor: NSColor(color),
+                .font: NSFont.systemFont(ofSize: fontSize),
+            ])
+    }
+
+    final class Coordinator: NSObject, NSTextFieldDelegate {
+        var parent: ThemedNSTextField
+
+        init(_ parent: ThemedNSTextField) {
+            self.parent = parent
+        }
+
+        func controlTextDidChange(_ obj: Notification) {
+            guard let field = obj.object as? NSTextField else { return }
+            parent.text = field.stringValue
+        }
+
+        func controlTextDidBeginEditing(_ obj: Notification) {
+            parent.onFocusChange(true)
+        }
+
+        func controlTextDidEndEditing(_ obj: Notification) {
+            parent.onFocusChange(false)
+        }
+    }
+}
+
+// MARK: - AppKit-Backed Text View
+//
+// Wraps NSTextView so we can zero out lineFragmentPadding and set
+// textContainerInset explicitly letting a sibling SwiftUI placeholder
+// with matching .padding align pixel-perfectly with the caret.
+
+private struct ThemedNSTextView: NSViewRepresentable {
+    @Binding var text: String
+    let textColor: Color
+    let fontSize: CGFloat
+    let textInset: CGFloat
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scrollView = NSTextView.scrollableTextView()
+        scrollView.drawsBackground = false
+        scrollView.hasVerticalScroller = true
+        scrollView.autohidesScrollers = true
+        scrollView.borderType = .noBorder
+
+        guard let textView = scrollView.documentView as? NSTextView else {
+            return scrollView
+        }
+
+        textView.delegate = context.coordinator
+        textView.isRichText = false
+        textView.allowsUndo = true
+        textView.drawsBackground = false
+        textView.backgroundColor = .clear
+        textView.font = .monospacedSystemFont(ofSize: fontSize, weight: .regular)
+        textView.textColor = NSColor(textColor)
+        textView.insertionPointColor = NSColor(textColor)
+        textView.isAutomaticQuoteSubstitutionEnabled = false
+        textView.isAutomaticDashSubstitutionEnabled = false
+        textView.isAutomaticTextReplacementEnabled = false
+        textView.isAutomaticSpellingCorrectionEnabled = false
+        textView.textContainerInset = NSSize(width: textInset, height: textInset)
+        textView.textContainer?.lineFragmentPadding = 0
+        textView.string = text
+        return scrollView
+    }
+
+    func updateNSView(_ scrollView: NSScrollView, context: Context) {
+        guard let textView = scrollView.documentView as? NSTextView else { return }
+        if textView.string != text {
+            textView.string = text
+        }
+        textView.textColor = NSColor(textColor)
+        textView.insertionPointColor = NSColor(textColor)
+        textView.textContainerInset = NSSize(width: textInset, height: textInset)
+    }
+
+    final class Coordinator: NSObject, NSTextViewDelegate {
+        var parent: ThemedNSTextView
+
+        init(_ parent: ThemedNSTextView) {
+            self.parent = parent
+        }
+
+        func textDidChange(_ notification: Notification) {
+            guard let textView = notification.object as? NSTextView else { return }
+            parent.text = textView.string
+        }
     }
 }
 
