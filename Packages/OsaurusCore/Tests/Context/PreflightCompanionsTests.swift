@@ -210,6 +210,13 @@ struct PreflightCompanionsTests {
         // resulting companion has skill + empty siblings. Conversely a
         // plugin can ship many tools and no skill. Both must render
         // without crashing or producing dangling formatting.
+        //
+        // Match against the bullet-line pattern `` - `tool/`` (and
+        // `` - `skill/``) rather than the bare `tool/` / `skill/`
+        // substring — the trailing `usageNudge` legitimately mentions
+        // both as load-syntax examples (`capabilities_load({"ids":
+        // ["skill/<name>", "tool/<name>"]})`), so a substring check
+        // false-positives on every render.
         let skillOnly = PluginCompanion(
             pluginId: "x.example",
             pluginDisplay: "Example",
@@ -224,9 +231,9 @@ struct PreflightCompanionsTests {
         )
         let renderedSkill = PreflightCompanions.render([skillOnly]) ?? ""
         let renderedTool = PreflightCompanions.render([toolOnly]) ?? ""
-        #expect(renderedSkill.contains("skill/example-skill"))
-        #expect(renderedSkill.contains("tool/") == false)
-        #expect(renderedTool.contains("tool/y_alpha"))
-        #expect(renderedTool.contains("skill/") == false)
+        #expect(renderedSkill.contains("- `skill/example-skill`"))
+        #expect(renderedSkill.contains("- `tool/") == false)
+        #expect(renderedTool.contains("- `tool/y_alpha`"))
+        #expect(renderedTool.contains("- `skill/") == false)
     }
 }
