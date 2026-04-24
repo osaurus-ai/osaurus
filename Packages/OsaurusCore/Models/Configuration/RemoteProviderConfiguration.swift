@@ -28,6 +28,7 @@ public enum RemoteProviderProtocol: String, Codable, Sendable, CaseIterable {
 public enum RemoteProviderAuthType: String, Codable, Sendable, CaseIterable {
     case none = "none"
     case apiKey = "apiKey"
+    case openAICodexOAuth = "openAICodexOAuth"
 }
 
 // MARK: - Provider Type
@@ -37,6 +38,7 @@ public enum RemoteProviderType: String, Codable, Sendable, CaseIterable {
     case openaiLegacy = "openai"  // OpenAI-compatible /chat/completions (third-party servers, backward compat)
     case anthropic = "anthropic"  // Anthropic Messages API
     case openResponses = "openResponses"  // Open Responses API — used for official OpenAI and any compatible provider
+    case openAICodex = "openAICodex"  // ChatGPT/Codex OAuth backend
     case gemini = "gemini"  // Google Gemini API
     case osaurus = "osaurus"  // Native Osaurus agent — full server-side execution via /agents/{id}/run
 
@@ -45,6 +47,7 @@ public enum RemoteProviderType: String, Codable, Sendable, CaseIterable {
         case .openaiLegacy: return L("OpenAI Compatible")
         case .anthropic: return L("Anthropic")
         case .openResponses: return L("Open Responses")
+        case .openAICodex: return L("OpenAI Codex")
         case .gemini: return L("Google Gemini")
         case .osaurus: return L("Osaurus Agent")
         }
@@ -55,6 +58,7 @@ public enum RemoteProviderType: String, Codable, Sendable, CaseIterable {
         case .openaiLegacy: return "/chat/completions"
         case .anthropic: return "/messages"
         case .openResponses: return "/responses"
+        case .openAICodex: return "/codex/responses"
         case .gemini: return "/models"  // Actual URL is built dynamically: /models/{model}:generateContent
         case .osaurus: return "/run"  // Unused — full URL built by RemoteProviderService.buildURLRequest
         }
@@ -258,7 +262,7 @@ public struct RemoteProvider: Codable, Identifiable, Sendable, Equatable {
                 if headers["x-goog-api-key"] == nil {
                     headers["x-goog-api-key"] = apiKey
                 }
-            case .openaiLegacy, .openResponses, .osaurus:
+            case .openaiLegacy, .openResponses, .openAICodex, .osaurus:
                 if headers["Authorization"] == nil {
                     headers["Authorization"] = "Bearer \(apiKey)"
                 }
@@ -273,9 +277,17 @@ public struct RemoteProvider: Codable, Identifiable, Sendable, Equatable {
         RemoteProviderKeychain.hasAPIKey(for: id)
     }
 
+    public var hasOAuthTokens: Bool {
+        RemoteProviderKeychain.hasOAuthTokens(for: id)
+    }
+
     /// Get API key from Keychain
     public func getAPIKey() -> String? {
         RemoteProviderKeychain.getAPIKey(for: id)
+    }
+
+    public func getOAuthTokens() -> RemoteProviderOAuthTokens? {
+        RemoteProviderKeychain.getOAuthTokens(for: id)
     }
 }
 

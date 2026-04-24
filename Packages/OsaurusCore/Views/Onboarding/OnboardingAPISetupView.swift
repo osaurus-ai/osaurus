@@ -71,6 +71,8 @@ struct OnboardingAPISetupView: View {
     @Environment(\.theme) private var theme
     @State private var selectedProvider: ProviderPreset? = nil
     @State private var apiKey: String = ""
+    @State private var openAIAuthMode: OpenAIProviderCredentialMode = .chatGPTSubscription
+    @State private var oauthTokens: RemoteProviderOAuthTokens? = nil
     @State private var customForm = CustomProviderForm()
     @State private var isTesting = false
     @State private var isSaving = false
@@ -90,6 +92,9 @@ struct OnboardingAPISetupView: View {
         if provider == .custom {
             return !customForm.host.isEmpty && apiKey.count > 5
         }
+        if provider == .openai && openAIAuthMode == .chatGPTSubscription {
+            return true
+        }
         return apiKey.count > 10
     }
 
@@ -108,7 +113,8 @@ struct OnboardingAPISetupView: View {
     }
 
     private var loadingTitle: LocalizedStringKey {
-        isSaving ? "Connecting..." : "Testing..."
+        if isSaving { return "Connecting..." }
+        return selectedProvider == .openai && openAIAuthMode == .chatGPTSubscription ? "Signing in..." : "Testing..."
     }
 
     // MARK: Body
@@ -144,7 +150,7 @@ struct OnboardingAPISetupView: View {
     private var providerSelectionView: some View {
         OnboardingScaffold(
             title: "Connect a provider",
-            footer: "Your key never leaves your device.",
+            footer: "Secrets are stored securely in Keychain.",
             onBack: onBack,
             content: {
                 ScrollView(.vertical, showsIndicators: false) {
@@ -164,7 +170,9 @@ struct OnboardingAPISetupView: View {
                 ProviderIcon(preset: preset, size: 18, color: theme.secondaryText)
             },
             title: preset == .custom ? L("Any OpenAI-compatible API") : preset.name,
-            subtitle: preset == .custom ? L("OpenRouter, MiniMax, etc.") : preset.description,
+            subtitle: preset == .custom
+                ? L("OpenRouter, MiniMax, etc.")
+                : (preset == .openai ? L("ChatGPT/Codex or Platform API") : preset.description),
             badges: preset.badge.map { [OnboardingRowBadge($0)] } ?? [],
             accessory: .chevron
         ) {
@@ -186,9 +194,17 @@ struct OnboardingAPISetupView: View {
             content: {
                 ScrollView(.vertical, showsIndicators: false) {
                     VStack(spacing: 20) {
-                        apiKeyField
+                        if selectedProvider == .openai {
+                            openAIAuthChoiceSection
+                        }
 
-                        if let provider = selectedProvider, provider != .custom {
+                        if selectedProvider != .openai || openAIAuthMode == .platformAPIKey {
+                            apiKeyField
+                        }
+
+                        if let provider = selectedProvider, provider != .custom,
+                            provider != .openai || openAIAuthMode == .platformAPIKey
+                        {
                             helpSection(for: provider)
                         }
                     }
@@ -273,14 +289,91 @@ struct OnboardingAPISetupView: View {
     // MARK: - Shared Subviews
 
     private var apiKeyField: some View {
-        OnboardingSecureField(placeholder: "sk-...", text: $apiKey, label: "API Key")
-            .onChange(of: apiKey) { _, _ in testResult = nil }
+        OnboardingSecureField(
+            placeholder: "sk-...",
+            text: $apiKey,
+            label: selectedProvider == .openai ? "OpenAI Platform API Key" : "API Key"
+        )
+        .onChange(of: apiKey) { _, _ in testResult = nil }
+    }
+
+    private var openAIAuthChoiceSection: some View {
+        OnboardingGlassCard {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Choose your OpenAI access", bundle: .module)
+                    .font(theme.font(size: 14, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+                openAIAuthChoiceCard(
+                    mode: .chatGPTSubscription,
+                    title: OpenAIProviderCredentialMode.chatGPTSubscription.title,
+                    subtitle: OpenAIProviderCredentialMode.chatGPTSubscription.subtitle,
+                    icon: OpenAIProviderCredentialMode.chatGPTSubscription.icon
+                )
+                openAIAuthChoiceCard(
+                    mode: .platformAPIKey,
+                    title: OpenAIProviderCredentialMode.platformAPIKey.title,
+                    subtitle: OpenAIProviderCredentialMode.platformAPIKey.subtitle,
+                    icon: OpenAIProviderCredentialMode.platformAPIKey.icon
+                )
+            }
+            .padding(16)
+        }
+    }
+
+    private func openAIAuthChoiceCard(
+        mode: OpenAIProviderCredentialMode,
+        title: String,
+        subtitle: String,
+        icon: String
+    ) -> some View {
+        let selected = openAIAuthMode == mode
+        return Button {
+            withAnimation(theme.springAnimation(responseMultiplier: 0.8)) {
+                openAIAuthMode = mode
+                oauthTokens = nil
+                testResult = nil
+            }
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: icon)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(selected ? theme.accentColor : theme.secondaryText)
+                    .frame(width: 28, height: 28)
+                    .background(Circle().fill(selected ? theme.accentColor.opacity(0.12) : theme.tertiaryBackground))
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title)
+                        .font(theme.font(size: 13, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
+                    Text(subtitle)
+                        .font(theme.font(size: 12))
+                        .foregroundColor(theme.secondaryText)
+                }
+
+                Spacer()
+
+                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(selected ? theme.accentColor : theme.tertiaryText)
+            }
+            .padding(12)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(selected ? theme.accentColor.opacity(0.08) : theme.cardBackground.opacity(0.4))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(selected ? theme.accentColor.opacity(0.55) : theme.cardBorder, lineWidth: 1)
+                    )
+            )
+        }
+        .buttonStyle(.plain)
     }
 
     private var actionButton: some View {
         OnboardingStatefulButton(
             state: buttonState,
-            idleTitle: "Test Connection",
+            idleTitle: selectedProvider == .openai && openAIAuthMode == .chatGPTSubscription
+                ? "Sign in with ChatGPT" : "Test Connection",
             loadingTitle: loadingTitle,
             successTitle: "Continue",
             errorTitle: "Try Again",
@@ -340,6 +433,8 @@ struct OnboardingAPISetupView: View {
         withAnimation(theme.springAnimation(responseMultiplier: 0.8)) {
             selectedProvider = nil
             apiKey = ""
+            openAIAuthMode = .chatGPTSubscription
+            oauthTokens = nil
             testResult = nil
             customForm.reset()
         }
@@ -373,16 +468,23 @@ struct OnboardingAPISetupView: View {
         Task {
             let result: APITestResult
             do {
-                _ = try await RemoteProviderManager.shared.testConnection(
-                    host: config.host,
-                    providerProtocol: config.providerProtocol,
-                    port: config.port,
-                    basePath: config.basePath,
-                    authType: .apiKey,
-                    providerType: config.providerType,
-                    apiKey: apiKey,
-                    headers: [:]
-                )
+                if selectedProvider == .openai && openAIAuthMode == .chatGPTSubscription {
+                    let tokens = try await OpenAICodexOAuthService.signIn()
+                    await MainActor.run {
+                        oauthTokens = tokens
+                    }
+                } else {
+                    _ = try await RemoteProviderManager.shared.testConnection(
+                        host: config.host,
+                        providerProtocol: config.providerProtocol,
+                        port: config.port,
+                        basePath: config.basePath,
+                        authType: .apiKey,
+                        providerType: config.providerType,
+                        apiKey: apiKey,
+                        headers: [:]
+                    )
+                }
                 result = .success
             } catch {
                 result = .failure(error.localizedDescription)
@@ -401,6 +503,14 @@ struct OnboardingAPISetupView: View {
         guard let config = resolvedConfig() else { return }
 
         isSaving = true
+
+        if selectedProvider == .openai && openAIAuthMode == .chatGPTSubscription {
+            let provider = OpenAICodexOAuthService.makeProvider()
+            RemoteProviderManager.shared.addProvider(provider, apiKey: nil, oauthTokens: oauthTokens)
+            isSaving = false
+            onComplete()
+            return
+        }
 
         // `addProvider` already calls `connect()` internally for enabled providers,
         // and the app-level cache invalidation observer refreshes model options

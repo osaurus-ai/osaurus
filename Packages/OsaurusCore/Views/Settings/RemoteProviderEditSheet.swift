@@ -17,7 +17,7 @@ struct RemoteProviderEditSheet: View {
 
     let provider: RemoteProvider?
     var initialPreset: ProviderPreset? = nil
-    let onSave: (RemoteProvider, String?) -> Void
+    let onSave: (RemoteProvider, String?, RemoteProviderOAuthTokens?) -> Void
 
     var body: some View {
         Group {
@@ -40,10 +40,12 @@ private struct AddProviderFlow: View {
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
     let initialPreset: ProviderPreset?
-    let onSave: (RemoteProvider, String?) -> Void
+    let onSave: (RemoteProvider, String?, RemoteProviderOAuthTokens?) -> Void
 
     @State private var selectedPreset: ProviderPreset? = nil
     @State private var apiKey: String = ""
+    @State private var openAIAuthMode: OpenAIProviderCredentialMode = .chatGPTSubscription
+    @State private var oauthTokens: RemoteProviderOAuthTokens? = nil
     @State private var isTesting = false
     @State private var testResult: ProviderTestResult? = nil
     @State private var hasAppeared = false
@@ -65,6 +67,9 @@ private struct AddProviderFlow: View {
         guard let preset = selectedPreset else { return false }
         if preset == .custom {
             return !customHost.trimmingCharacters(in: .whitespaces).isEmpty
+        }
+        if preset == .openai && openAIAuthMode == .chatGPTSubscription {
+            return true
         }
         return !apiKey.isEmpty && apiKey.count > 5
     }
@@ -236,11 +241,18 @@ private struct AddProviderFlow: View {
                             .foregroundColor(theme.primaryText)
                     }
 
-                    // API Key field
-                    apiKeySection
+                    if selectedPreset == .openai {
+                        openAIAuthChoiceSection
+                    }
+
+                    if selectedPreset != .openai || openAIAuthMode == .platformAPIKey {
+                        apiKeySection
+                    }
 
                     // Help section
-                    if let preset = selectedPreset, preset.isKnown, !preset.consoleURL.isEmpty {
+                    if let preset = selectedPreset, preset.isKnown, !preset.consoleURL.isEmpty,
+                        preset != .openai || openAIAuthMode == .platformAPIKey
+                    {
                         helpSection(for: preset)
                     }
 
@@ -344,6 +356,8 @@ private struct AddProviderFlow: View {
             withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
                 selectedPreset = nil
                 apiKey = ""
+                oauthTokens = nil
+                openAIAuthMode = .chatGPTSubscription
                 testResult = nil
                 customName = ""
                 customHost = ""
@@ -370,7 +384,7 @@ private struct AddProviderFlow: View {
     private var apiKeySection: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text("API KEY", bundle: .module)
+                Text(selectedPreset == .openai ? "OPENAI PLATFORM API KEY" : "API KEY", bundle: .module)
                     .font(.system(size: 10, weight: .bold))
                     .foregroundColor(theme.tertiaryText)
                     .tracking(0.5)
@@ -387,6 +401,79 @@ private struct AddProviderFlow: View {
             ProviderSecureField(placeholder: "sk-...", text: $apiKey)
                 .onChange(of: apiKey) { _, _ in testResult = nil }
         }
+    }
+
+    private var openAIAuthChoiceSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("HOW DO YOU WANT TO CONNECT?", bundle: .module)
+                .font(.system(size: 10, weight: .bold))
+                .foregroundColor(theme.tertiaryText)
+                .tracking(0.5)
+
+            VStack(spacing: 10) {
+                openAIAuthChoiceCard(
+                    mode: .chatGPTSubscription,
+                    title: OpenAIProviderCredentialMode.chatGPTSubscription.title,
+                    subtitle: OpenAIProviderCredentialMode.chatGPTSubscription.subtitle,
+                    icon: OpenAIProviderCredentialMode.chatGPTSubscription.icon
+                )
+                openAIAuthChoiceCard(
+                    mode: .platformAPIKey,
+                    title: OpenAIProviderCredentialMode.platformAPIKey.title,
+                    subtitle: OpenAIProviderCredentialMode.platformAPIKey.subtitle,
+                    icon: OpenAIProviderCredentialMode.platformAPIKey.icon
+                )
+            }
+        }
+    }
+
+    private func openAIAuthChoiceCard(
+        mode: OpenAIProviderCredentialMode,
+        title: String,
+        subtitle: String,
+        icon: String
+    ) -> some View {
+        let selected = openAIAuthMode == mode
+        return Button {
+            withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
+                openAIAuthMode = mode
+                testResult = nil
+                oauthTokens = nil
+            }
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: icon)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(selected ? theme.accentColor : theme.secondaryText)
+                    .frame(width: 28, height: 28)
+                    .background(Circle().fill(selected ? theme.accentColor.opacity(0.12) : theme.tertiaryBackground))
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
+                    Text(subtitle)
+                        .font(.system(size: 12))
+                        .foregroundColor(theme.secondaryText)
+                }
+
+                Spacer()
+
+                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(selected ? theme.accentColor : theme.tertiaryText)
+            }
+            .padding(14)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(selected ? theme.accentColor.opacity(0.08) : theme.cardBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(selected ? theme.accentColor.opacity(0.55) : theme.cardBorder, lineWidth: 1)
+                    )
+            )
+        }
+        .buttonStyle(PlainButtonStyle())
     }
 
     private func helpSection(for preset: ProviderPreset) -> some View {
@@ -712,9 +799,12 @@ private struct AddProviderFlow: View {
     }
 
     private var actionButtonTitle: String {
-        if isTesting { return L("Testing...") }
+        if isTesting { return openAIAuthMode == .chatGPTSubscription ? L("Signing in...") : L("Testing...") }
         if testResult?.isSuccess == true { return L("Add Provider") }
         if case .failure = testResult { return L("Retry") }
+        if selectedPreset == .openai && openAIAuthMode == .chatGPTSubscription {
+            return L("Sign in with ChatGPT")
+        }
         return L("Test Connection")
     }
 
@@ -739,16 +829,25 @@ private struct AddProviderFlow: View {
 
         Task {
             do {
-                let models = try await RemoteProviderManager.shared.testConnection(
-                    host: config.host,
-                    providerProtocol: config.providerProtocol,
-                    port: config.port,
-                    basePath: config.basePath,
-                    authType: .apiKey,
-                    providerType: config.providerType,
-                    apiKey: apiKey,
-                    headers: HeaderEntry.buildHeaders(from: customHeaders)
-                )
+                let models: [String]
+                if preset == .openai && openAIAuthMode == .chatGPTSubscription {
+                    let tokens = try await OpenAICodexOAuthService.signIn()
+                    await MainActor.run {
+                        oauthTokens = tokens
+                    }
+                    models = OpenAICodexOAuthService.supportedModels
+                } else {
+                    models = try await RemoteProviderManager.shared.testConnection(
+                        host: config.host,
+                        providerProtocol: config.providerProtocol,
+                        port: config.port,
+                        basePath: config.basePath,
+                        authType: .apiKey,
+                        providerType: config.providerType,
+                        apiKey: apiKey,
+                        headers: HeaderEntry.buildHeaders(from: customHeaders)
+                    )
+                }
                 await MainActor.run {
                     withAnimation {
                         testResult = .success(models); isTesting = false
@@ -768,16 +867,19 @@ private struct AddProviderFlow: View {
         guard let preset = selectedPreset else { return }
         let config = preset.configuration
         let (regularHeaders, secretKeys) = HeaderEntry.partition(customHeaders)
+        let isCodexOAuth = preset == .openai && openAIAuthMode == .chatGPTSubscription
+        let providerConfig = isCodexOAuth ? OpenAICodexOAuthService.makeProvider() : nil
 
         let remoteProvider = RemoteProvider(
-            name: config.name,
-            host: config.host,
-            providerProtocol: config.providerProtocol,
-            port: config.port,
-            basePath: config.basePath,
+            id: providerConfig?.id ?? UUID(),
+            name: providerConfig?.name ?? config.name,
+            host: providerConfig?.host ?? config.host,
+            providerProtocol: providerConfig?.providerProtocol ?? config.providerProtocol,
+            port: providerConfig?.port ?? config.port,
+            basePath: providerConfig?.basePath ?? config.basePath,
             customHeaders: regularHeaders,
-            authType: .apiKey,
-            providerType: config.providerType,
+            authType: providerConfig?.authType ?? .apiKey,
+            providerType: providerConfig?.providerType ?? config.providerType,
             enabled: true,
             autoConnect: true,
             timeout: timeout,
@@ -785,7 +887,7 @@ private struct AddProviderFlow: View {
         )
 
         saveSecretHeaders(for: remoteProvider.id)
-        onSave(remoteProvider, apiKey.isEmpty ? nil : apiKey)
+        onSave(remoteProvider, isCodexOAuth ? nil : (apiKey.isEmpty ? nil : apiKey), isCodexOAuth ? oauthTokens : nil)
         dismiss()
     }
 
@@ -848,7 +950,7 @@ private struct AddProviderFlow: View {
 
         saveSecretHeaders(for: remoteProvider.id)
         let savedApiKey = customAuthType == .apiKey && !apiKey.isEmpty ? apiKey : nil
-        onSave(remoteProvider, savedApiKey)
+        onSave(remoteProvider, savedApiKey, nil)
         dismiss()
     }
 
@@ -868,7 +970,7 @@ private struct EditProviderFlow: View {
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
     let provider: RemoteProvider
-    let onSave: (RemoteProvider, String?) -> Void
+    let onSave: (RemoteProvider, String?, RemoteProviderOAuthTokens?) -> Void
 
     // Detect known preset
     private var matchedPreset: ProviderPreset? {
@@ -1061,9 +1163,28 @@ private struct EditProviderFlow: View {
                             .tracking(0.5)
                     }
 
-                    SegmentedToggle {
-                        SegmentedToggleButton("No Auth", isSelected: authType == .none) { authType = .none }
-                        SegmentedToggleButton("API Key", isSelected: authType == .apiKey) { authType = .apiKey }
+                    if authType == .openAICodexOAuth {
+                        HStack(spacing: 10) {
+                            Image(systemName: "person.crop.circle.badge.checkmark")
+                                .font(.system(size: 16, weight: .semibold))
+                                .foregroundColor(theme.accentColor)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("ChatGPT / Codex subscription", bundle: .module)
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundColor(theme.primaryText)
+                                Text("Signed in with ChatGPT Plus/Pro. Tokens are stored in Keychain.", bundle: .module)
+                                    .font(.system(size: 12))
+                                    .foregroundColor(theme.secondaryText)
+                            }
+                            Spacer()
+                        }
+                        .padding(12)
+                        .background(RoundedRectangle(cornerRadius: 10).fill(theme.accentColor.opacity(0.08)))
+                    } else {
+                        SegmentedToggle {
+                            SegmentedToggleButton("No Auth", isSelected: authType == .none) { authType = .none }
+                            SegmentedToggleButton("API Key", isSelected: authType == .apiKey) { authType = .apiKey }
+                        }
                     }
 
                     if authType == .apiKey {
@@ -1508,7 +1629,7 @@ private struct EditProviderFlow: View {
             RemoteProviderKeychain.saveHeaderSecret(header.value, key: header.key, for: updatedProvider.id)
         }
 
-        onSave(updatedProvider, apiKey.isEmpty ? nil : apiKey)
+        onSave(updatedProvider, apiKey.isEmpty ? nil : apiKey, nil)
         dismiss()
     }
 }
@@ -1861,6 +1982,6 @@ private struct ProviderSecureField: View {
 // MARK: - Preview
 
 #Preview {
-    RemoteProviderEditSheet(provider: nil) { _, _ in }
+    RemoteProviderEditSheet(provider: nil) { _, _, _ in }
         .environment(\.theme, DarkTheme())
 }

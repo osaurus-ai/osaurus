@@ -8,6 +8,24 @@
 import Foundation
 import Security
 
+public struct RemoteProviderOAuthTokens: Codable, Sendable, Equatable {
+    public var accessToken: String
+    public var refreshToken: String
+    public var expiresAt: Date
+    public var accountId: String
+
+    public init(accessToken: String, refreshToken: String, expiresAt: Date, accountId: String) {
+        self.accessToken = accessToken
+        self.refreshToken = refreshToken
+        self.expiresAt = expiresAt
+        self.accountId = accountId
+    }
+
+    public var isExpired: Bool {
+        expiresAt <= Date().addingTimeInterval(60)
+    }
+}
+
 /// Keychain wrapper for secure remote provider credential storage
 public enum RemoteProviderKeychain {
     private static let service = "ai.osaurus.remote"
@@ -80,6 +98,69 @@ public enum RemoteProviderKeychain {
         return getAPIKey(for: providerId) != nil
     }
 
+    // MARK: - OAuth Token Management
+
+    @discardableResult
+    public static func saveOAuthTokens(_ tokens: RemoteProviderOAuthTokens, for providerId: UUID) -> Bool {
+        let account = "\(providerId.uuidString).oauth.tokens"
+        guard let tokenData = try? JSONEncoder().encode(tokens) else { return false }
+
+        deleteOAuthTokens(for: providerId)
+
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecValueData as String: tokenData,
+            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
+        ]
+
+        let status = SecItemAdd(query as CFDictionary, nil)
+        return status == errSecSuccess
+    }
+
+    public static func getOAuthTokens(for providerId: UUID) -> RemoteProviderOAuthTokens? {
+        let account = "\(providerId.uuidString).oauth.tokens"
+
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+
+        var result: AnyObject?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+
+        guard status == errSecSuccess,
+            let data = result as? Data,
+            let tokens = try? JSONDecoder().decode(RemoteProviderOAuthTokens.self, from: data)
+        else {
+            return nil
+        }
+
+        return tokens
+    }
+
+    @discardableResult
+    public static func deleteOAuthTokens(for providerId: UUID) -> Bool {
+        let account = "\(providerId.uuidString).oauth.tokens"
+
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+        ]
+
+        let status = SecItemDelete(query as CFDictionary)
+        return status == errSecSuccess || status == errSecItemNotFound
+    }
+
+    public static func hasOAuthTokens(for providerId: UUID) -> Bool {
+        getOAuthTokens(for: providerId) != nil
+    }
+
     // MARK: - Header Secret Management
 
     /// Save a secret header value for a provider
@@ -147,6 +228,7 @@ public enum RemoteProviderKeychain {
     public static func deleteAllSecrets(for providerId: UUID) {
         // Delete API key
         deleteAPIKey(for: providerId)
+        deleteOAuthTokens(for: providerId)
 
         // Delete all header secrets by querying with prefix
         let accountPrefix = "\(providerId.uuidString)."

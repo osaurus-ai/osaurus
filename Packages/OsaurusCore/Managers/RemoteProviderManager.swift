@@ -100,7 +100,12 @@ public final class RemoteProviderManager: ObservableObject {
 
     /// Add a new provider. Pass `isEphemeral: true` for Bonjour-discovered providers so they
     /// are held only in memory and removed when the agent is deselected or goes offline.
-    public func addProvider(_ provider: RemoteProvider, apiKey: String?, isEphemeral: Bool = false) {
+    public func addProvider(
+        _ provider: RemoteProvider,
+        apiKey: String?,
+        oauthTokens: RemoteProviderOAuthTokens? = nil,
+        isEphemeral: Bool = false
+    ) {
         configuration.add(provider)
         if isEphemeral {
             ephemeralProviderIds.insert(provider.id)
@@ -111,6 +116,10 @@ public final class RemoteProviderManager: ObservableObject {
         // Save API key to Keychain if provided
         if let apiKey = apiKey, !apiKey.isEmpty {
             RemoteProviderKeychain.saveAPIKey(apiKey, for: provider.id)
+        }
+        if let oauthTokens {
+            RemoteProviderKeychain.saveOAuthTokens(oauthTokens, for: provider.id)
+            RemoteProviderKeychain.deleteAPIKey(for: provider.id)
         }
 
         // Initialize state
@@ -127,7 +136,11 @@ public final class RemoteProviderManager: ObservableObject {
     }
 
     /// Update an existing provider
-    public func updateProvider(_ provider: RemoteProvider, apiKey: String?) {
+    public func updateProvider(
+        _ provider: RemoteProvider,
+        apiKey: String?,
+        oauthTokens: RemoteProviderOAuthTokens? = nil
+    ) {
         let wasConnected = providerStates[provider.id]?.isConnected ?? false
 
         // Disconnect if connected
@@ -145,6 +158,10 @@ public final class RemoteProviderManager: ObservableObject {
             } else {
                 RemoteProviderKeychain.saveAPIKey(apiKey, for: provider.id)
             }
+        }
+        if let oauthTokens {
+            RemoteProviderKeychain.saveOAuthTokens(oauthTokens, for: provider.id)
+            RemoteProviderKeychain.deleteAPIKey(for: provider.id)
         }
 
         // Reconnect if was connected and still enabled
@@ -212,6 +229,14 @@ public final class RemoteProviderManager: ObservableObject {
         providerStates[providerId] = state
 
         do {
+            if provider.authType == .openAICodexOAuth,
+                let tokens = provider.getOAuthTokens(),
+                tokens.isExpired
+            {
+                let refreshed = try await OpenAICodexOAuthService.refresh(tokens)
+                RemoteProviderKeychain.saveOAuthTokens(refreshed, for: provider.id)
+            }
+
             // Fetch models from the provider
             let models = try await RemoteProviderService.fetchModels(from: provider)
 
@@ -372,6 +397,10 @@ public final class RemoteProviderManager: ObservableObject {
         apiKey: String?,
         headers: [String: String]
     ) async throws -> [String] {
+        if authType == .openAICodexOAuth && providerType == .openAICodex {
+            return OpenAICodexOAuthService.supportedModels
+        }
+
         // Build temporary provider for testing
         let tempProvider = RemoteProvider(
             name: "Test",
@@ -403,7 +432,7 @@ public final class RemoteProviderManager: ObservableObject {
                 if testHeaders["x-goog-api-key"] == nil {
                     testHeaders["x-goog-api-key"] = apiKey
                 }
-            case .openaiLegacy, .openResponses, .osaurus:
+            case .openaiLegacy, .openResponses, .openAICodex, .osaurus:
                 if testHeaders["Authorization"] == nil {
                     testHeaders["Authorization"] = "Bearer \(apiKey)"
                 }

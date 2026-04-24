@@ -60,6 +60,31 @@ struct RemoteChatRequestEncodingTests {
         #expect(payload["max_completion_tokens"] == nil)
     }
 
+    @Test func openResponsesRequest_defaultSingleUserMessage_usesTextShorthand() throws {
+        let request = Self.makeRequest(model: "gpt-5.2", maxTokens: 1024)
+        let responsesRequest = request.toOpenResponsesRequest()
+        let payload = try Self.encodeAsDictionary(responsesRequest)
+
+        #expect(payload["input"] as? String == "hi")
+    }
+
+    @Test func openResponsesRequest_forcedInputItems_usesList() throws {
+        let request = Self.makeRequest(model: "gpt-5.2", maxTokens: 1024)
+        let responsesRequest = request.toCodexOpenResponsesRequest()
+        let payload = try Self.encodeAsDictionary(responsesRequest)
+
+        #expect(payload["input"] is [[String: Any]])
+    }
+
+    @Test func codexRequest_removesMaxOutputTokens() throws {
+        let request = Self.makeRequest(model: "gpt-5.2", maxTokens: 1024)
+        let payload = try Self.decodeAsDictionary(request.toCodexOpenResponsesRequest().toCodexOAuthPayloadData())
+
+        #expect(payload["input"] is [[String: Any]])
+        #expect(payload["max_output_tokens"] == nil)
+        #expect(payload["store"] as? Bool == false)
+    }
+
     // MARK: - Fixtures
 
     private static func makeRequest(model: String, maxTokens: Int?) -> RemoteChatRequest {
@@ -84,6 +109,21 @@ struct RemoteChatRequestEncodingTests {
 
     private static func encodeAsDictionary(_ request: RemoteChatRequest) throws -> [String: Any] {
         let data = try JSONEncoder().encode(request)
+        guard let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw DecodeAsDictionaryError.notAnObject
+        }
+        return obj
+    }
+
+    private static func encodeAsDictionary(_ request: OpenResponsesRequest) throws -> [String: Any] {
+        let data = try JSONEncoder().encode(request)
+        guard let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw DecodeAsDictionaryError.notAnObject
+        }
+        return obj
+    }
+
+    private static func decodeAsDictionary(_ data: Data) throws -> [String: Any] {
         guard let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw DecodeAsDictionaryError.notAnObject
         }

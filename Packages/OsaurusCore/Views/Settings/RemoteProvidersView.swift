@@ -53,13 +53,13 @@ struct RemoteProvidersView: View {
             }
         }
         .sheet(item: $addSheetConfig) { config in
-            RemoteProviderEditSheet(provider: nil, initialPreset: config.preset) { provider, apiKey in
-                manager.addProvider(provider, apiKey: apiKey)
+            RemoteProviderEditSheet(provider: nil, initialPreset: config.preset) { provider, apiKey, oauthTokens in
+                manager.addProvider(provider, apiKey: apiKey, oauthTokens: oauthTokens)
             }
         }
         .sheet(item: $editingProvider) { provider in
-            RemoteProviderEditSheet(provider: provider) { updatedProvider, apiKey in
-                manager.updateProvider(updatedProvider, apiKey: apiKey)
+            RemoteProviderEditSheet(provider: provider) { updatedProvider, apiKey, oauthTokens in
+                manager.updateProvider(updatedProvider, apiKey: apiKey, oauthTokens: oauthTokens)
             }
         }
     }

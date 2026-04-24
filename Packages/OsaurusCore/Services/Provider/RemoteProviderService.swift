@@ -42,6 +42,7 @@ public actor RemoteProviderService: ToolCapableService {
     private let providerPrefix: String
     private var availableModels: [String]
     private var session: URLSession
+    private var cachedOAuthTokens: RemoteProviderOAuthTokens?
 
     public nonisolated var id: String {
         "remote-\(provider.id.uuidString)"
@@ -50,6 +51,7 @@ public actor RemoteProviderService: ToolCapableService {
     public init(provider: RemoteProvider, models: [String], resolvedHeaders: [String: String]) {
         self.provider = provider
         self.cachedHeaders = resolvedHeaders
+        self.cachedOAuthTokens = provider.getOAuthTokens()
         self.availableModels = models
         // Create a unique prefix for model names (lowercase, sanitized)
         self.providerPrefix = provider.name
@@ -173,6 +175,7 @@ public actor RemoteProviderService: ToolCapableService {
             toolChoice: nil
         )
 
+        try await refreshCodexOAuthIfNeeded()
         let (data, response) = try await session.data(for: try buildURLRequest(for: request))
 
         guard let httpResponse = response as? HTTPURLResponse else {
@@ -210,7 +213,7 @@ public actor RemoteProviderService: ToolCapableService {
             )
         }
 
-        return try _streamRemote(
+        return try await _streamRemote(
             modelName: modelName,
             messages: messages,
             parameters: parameters,
@@ -257,6 +260,7 @@ public actor RemoteProviderService: ToolCapableService {
             request.stop = stopSequences
         }
 
+        try await refreshCodexOAuthIfNeeded()
         let (data, response) = try await session.data(for: try buildURLRequest(for: request))
 
         guard let httpResponse = response as? HTTPURLResponse else {
@@ -319,7 +323,7 @@ public actor RemoteProviderService: ToolCapableService {
             )
         }
 
-        return try _streamRemote(
+        return try await _streamRemote(
             modelName: modelName,
             messages: messages,
             parameters: parameters,
@@ -735,7 +739,7 @@ public actor RemoteProviderService: ToolCapableService {
                 return try handleGeminiEvent(jsonData, state: &state, yield: yield)
             case .anthropic:
                 return try handleAnthropicEvent(jsonData, state: &state, yield: yield)
-            case .openResponses:
+            case .openResponses, .openAICodex:
                 return try handleOpenResponsesEvent(jsonData, state: &state, yield: yield)
             case .openaiLegacy, .osaurus:
                 return try handleOpenAIEvent(jsonData, state: &state, yield: yield)
@@ -1131,7 +1135,7 @@ public actor RemoteProviderService: ToolCapableService {
         stopSequences: [String],
         tools: [Tool]?,
         toolChoice: ToolChoiceOption?
-    ) throws -> AsyncThrowingStream<String, Error> {
+    ) async throws -> AsyncThrowingStream<String, Error> {
         var request = buildChatRequest(
             messages: messages,
             parameters: parameters,
@@ -1142,6 +1146,7 @@ public actor RemoteProviderService: ToolCapableService {
         )
         if !stopSequences.isEmpty { request.stop = stopSequences }
 
+        try await refreshCodexOAuthIfNeeded()
         let urlRequest = try buildURLRequest(for: request)
         let currentSession = self.session
         let providerType = self.provider.providerType
@@ -1559,6 +1564,30 @@ public actor RemoteProviderService: ToolCapableService {
         )
     }
 
+    private func refreshCodexOAuthIfNeeded() async throws {
+        guard provider.authType == .openAICodexOAuth else { return }
+        guard let tokens = cachedOAuthTokens else {
+            throw RemoteProviderServiceError.requestFailed("Missing ChatGPT/Codex sign-in tokens")
+        }
+        guard tokens.isExpired else { return }
+
+        let refreshed = try await OpenAICodexOAuthService.refresh(tokens)
+        cachedOAuthTokens = refreshed
+        RemoteProviderKeychain.saveOAuthTokens(refreshed, for: provider.id)
+    }
+
+    private func codexOAuthHeaders() throws -> [String: String] {
+        guard let tokens = cachedOAuthTokens else {
+            throw RemoteProviderServiceError.requestFailed("Missing ChatGPT/Codex sign-in tokens")
+        }
+        return [
+            "Authorization": "Bearer \(tokens.accessToken)",
+            "chatgpt-account-id": tokens.accountId,
+            "OpenAI-Beta": "responses=experimental",
+            "originator": "codex_cli_rs",
+        ]
+    }
+
     /// Non-streaming `generateContent` fallback for Gemini image models (Nano Banana).
     /// Image models don't support `streamGenerateContent`, so this wraps the
     /// single-shot response in an `AsyncThrowingStream` for the streaming callers.
@@ -1746,9 +1775,15 @@ public actor RemoteProviderService: ToolCapableService {
             urlRequest.setValue("application/json", forHTTPHeaderField: "Accept")
         }
 
-        // Headers are resolved once at service creation time (on @MainActor)
-        // to avoid Keychain access issues from the actor's background executor.
-        for (key, value) in cachedHeaders {
+        let headers: [String: String]
+        if provider.authType == .openAICodexOAuth {
+            headers = try codexOAuthHeaders()
+        } else {
+            // Headers are resolved once at service creation time (on @MainActor)
+            // to avoid Keychain access issues from the actor's background executor.
+            headers = cachedHeaders
+        }
+        for (key, value) in headers {
             urlRequest.setValue(value, forHTTPHeaderField: key)
         }
 
@@ -1764,6 +1799,8 @@ public actor RemoteProviderService: ToolCapableService {
         case .openResponses:
             let openResponsesRequest = request.toOpenResponsesRequest()
             bodyData = try encoder.encode(openResponsesRequest)
+        case .openAICodex:
+            bodyData = try request.toCodexOpenResponsesRequest().toCodexOAuthPayloadData()
         case .gemini:
             let geminiRequest = request.toGeminiRequest()
             bodyData = try encoder.encode(geminiRequest)
@@ -1808,7 +1845,7 @@ public actor RemoteProviderService: ToolCapableService {
             let toolCalls = response.choices.first?.message.tool_calls
             return (content, toolCalls)
 
-        case .openResponses:
+        case .openResponses, .openAICodex:
             let response = try JSONDecoder().decode(OpenResponsesResponse.self, from: data)
             var textContent = ""
             var toolCalls: [ToolCall] = []
@@ -2431,7 +2468,7 @@ struct RemoteChatRequest: Encodable {
     }
 
     /// Convert to Open Responses API request format
-    func toOpenResponsesRequest() -> OpenResponsesRequest {
+    func toOpenResponsesRequest(alwaysUseInputItems: Bool = false) -> OpenResponsesRequest {
         var inputItems: [OpenResponsesInputItem] = []
         var instructions: String? = nil
 
@@ -2532,7 +2569,7 @@ struct RemoteChatRequest: Encodable {
 
         // Determine input format
         let input: OpenResponsesInput
-        if inputItems.count == 1, case .message(let msg) = inputItems[0], msg.role == "user" {
+        if !alwaysUseInputItems, inputItems.count == 1, case .message(let msg) = inputItems[0], msg.role == "user" {
             // Single user message - use text shorthand
             input = .text(msg.content.plainText)
         } else {
@@ -2559,6 +2596,25 @@ struct RemoteChatRequest: Encodable {
             reasoning: reasoning
         )
     }
+
+    func toCodexOpenResponsesRequest() -> OpenResponsesRequest {
+        toOpenResponsesRequest(alwaysUseInputItems: true)
+    }
+}
+
+extension OpenResponsesRequest {
+    func toCodexOAuthPayloadData() throws -> Data {
+        let encoded = try JSONEncoder().encode(self)
+        guard var object = try JSONSerialization.jsonObject(with: encoded) as? [String: Any] else {
+            return encoded
+        }
+
+        object["store"] = false
+        object["include"] = ["reasoning.encrypted_content"]
+        object.removeValue(forKey: "max_output_tokens")
+
+        return try JSONSerialization.data(withJSONObject: object)
+    }
 }
 
 // MARK: - Static Factory for Creating Services
@@ -2566,6 +2622,13 @@ struct RemoteChatRequest: Encodable {
 extension RemoteProviderService {
     /// Fetch models from a remote provider and create a service instance
     public static func fetchModels(from provider: RemoteProvider) async throws -> [String] {
+        if provider.providerType == .openAICodex {
+            guard provider.hasOAuthTokens else {
+                throw RemoteProviderServiceError.requestFailed("Missing ChatGPT/Codex sign-in tokens")
+            }
+            return OpenAICodexOAuthService.supportedModels
+        }
+
         if provider.providerType == .anthropic {
             guard let baseURL = provider.url(for: "/models") else {
                 throw RemoteProviderServiceError.invalidURL

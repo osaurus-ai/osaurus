@@ -38,7 +38,7 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
     var description: String {
         switch self {
         case .anthropic: return "Claude models"
-        case .openai: return "ChatGPT models"
+        case .openai: return "ChatGPT/Codex or Platform API"
         case .google: return "Gemini models"
         case .xai: return "Grok models"
         case .venice: return "Privacy-first AI"
@@ -114,6 +114,13 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
     /// Help steps shown when guiding the user to create an API key
     var helpSteps: [String] {
         switch self {
+        case .openai:
+            return [
+                "Go to the OpenAI Platform API keys page",
+                "Sign in to your developer account",
+                "Create a new API key",
+                "Copy and paste it here",
+            ]
         case .venice:
             return [
                 "Go to Venice AI settings page",
@@ -239,6 +246,34 @@ struct ProviderPresetConfiguration {
     let basePath: String
     let authType: RemoteProviderAuthType
     let providerType: RemoteProviderType
+}
+
+enum OpenAIProviderCredentialMode {
+    case chatGPTSubscription
+    case platformAPIKey
+
+    var title: String {
+        switch self {
+        case .chatGPTSubscription: return "ChatGPT / Codex subscription"
+        case .platformAPIKey: return "OpenAI Platform API key"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .chatGPTSubscription:
+            return "Sign in with ChatGPT Plus/Pro and use Codex OAuth."
+        case .platformAPIKey:
+            return "Paste a key from platform.openai.com and use Platform billing."
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .chatGPTSubscription: return "person.crop.circle.badge.checkmark"
+        case .platformAPIKey: return "key.fill"
+        }
+    }
 }
 
 // MARK: - Provider Badge View
