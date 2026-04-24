@@ -1,0 +1,16 @@
+{
+  "id": "streaming_hint.encode-done-roundtrip",
+  "domain": "streaming_hint",
+  "label": "streaming_hint • encodeDone preserves all four payload fields",
+  "query": "",
+  "fixtures": {},
+  "expect": {
+    "streamingHint": {
+      "op": "encodeDone",
+      "callId": "call_abc123",
+      "name": "search_memory",
+      "arguments": "{\"query\":\"alpha\"}",
+      "result": "{\"ok\":true,\"result\":{\"hits\":2}}"
+    }
+  }
+}

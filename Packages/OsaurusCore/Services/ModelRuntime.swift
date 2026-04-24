@@ -28,7 +28,7 @@ private let genLog = Logger(subsystem: "com.dinoki.osaurus", category: "Generati
 private let _vlmFactory = MLXVLM.VLMModelFactory.shared
 private let _llmFactory = MLXLLM.LLMModelFactory.shared
 
-actor ModelRuntime {
+public actor ModelRuntime {
     // MARK: - Types
 
     struct ModelCacheSummary: Sendable {
@@ -670,7 +670,7 @@ actor ModelRuntime {
 
     /// Computes a deterministic hash from system content and tool names.
     /// Used by the HTTP API to expose a prefix_hash field in responses.
-    nonisolated static func computePrefixHash(
+    public nonisolated static func computePrefixHash(
         systemContent: String,
         toolNames: [String]
     ) -> String {

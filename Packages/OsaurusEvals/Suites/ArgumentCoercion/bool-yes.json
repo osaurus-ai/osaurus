@@ -1,0 +1,14 @@
+{
+  "id": "argument_coercion.bool-yes",
+  "domain": "argument_coercion",
+  "label": "coercion • 'YES' coerces to true (case-insensitive vocabulary)",
+  "query": "",
+  "fixtures": {},
+  "expect": {
+    "argumentCoercion": {
+      "helper": "bool",
+      "value": "YES",
+      "expect": true
+    }
+  }
+}

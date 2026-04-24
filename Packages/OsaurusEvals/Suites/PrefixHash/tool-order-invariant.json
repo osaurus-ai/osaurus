@@ -1,0 +1,18 @@
+{
+  "id": "prefix_hash.tool-order-invariant",
+  "domain": "prefix_hash",
+  "label": "prefix_hash • tool list order does not change the hash",
+  "query": "",
+  "fixtures": {},
+  "expect": {
+    "prefixHash": {
+      "systemContent": "sys",
+      "toolNames": ["alpha", "beta", "gamma"],
+      "compareTo": {
+        "systemContent": "sys",
+        "toolNames": ["gamma", "alpha", "beta"]
+      },
+      "expectEqual": true
+    }
+  }
+}

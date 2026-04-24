@@ -1,0 +1,18 @@
+{
+  "id": "prefix_hash.delimiter-collision-safe",
+  "domain": "prefix_hash",
+  "label": "prefix_hash • a tool name containing the delimiter does not collide with two tools",
+  "query": "",
+  "fixtures": {},
+  "expect": {
+    "prefixHash": {
+      "systemContent": "sys",
+      "toolNames": ["a,b"],
+      "compareTo": {
+        "systemContent": "sys",
+        "toolNames": ["a", "b"]
+      },
+      "expectEqual": false
+    }
+  }
+}

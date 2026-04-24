@@ -3417,25 +3417,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
     // MARK: - Request validation
 
-    /// Reasons we reject a `ChatCompletionRequest` outright with HTTP 400.
-    /// We only flag the cases our docs declare unsupported (`n>1`,
-    /// `response_format=json_schema`, etc.) — any field we silently
-    /// ignored historically continues to be ignored here so we don't
-    /// regress on existing clients.
+    /// Convenience adapter over `RequestValidator.unsupportedSamplerReason`
+    /// that pulls the relevant fields off a `ChatCompletionRequest`. The
+    /// underlying logic lives at module scope so the eval kit can exercise
+    /// it without depending on `HTTPHandler` / `ChatCompletionRequest`.
     nonisolated static func unsupportedSamplerReason(_ req: ChatCompletionRequest) -> String? {
-        if let n = req.n, n > 1 {
-            return "Parameter 'n' > 1 is not supported. Submit one request per completion."
-        }
-        if let rf = req.response_format {
-            switch rf.type {
-            case "json_object", "text":
-                break  // supported / no-op
-            default:
-                return
-                    "response_format type '\(rf.type)' is not supported. Use 'json_object' for JSON mode."
-            }
-        }
-        return nil
+        RequestValidator.unsupportedSamplerReason(
+            n: req.n,
+            responseFormatType: req.response_format?.type
+        )
     }
 
     // MARK: - Token estimation

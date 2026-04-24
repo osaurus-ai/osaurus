@@ -108,17 +108,17 @@ struct ServiceToolInvocations: Error, Sendable {
 /// The stream type is `AsyncThrowingStream<String, Error>`, so we encode the
 /// detected tool name (and argument fragments) as sentinel strings using a
 /// Unicode non-character prefix that can never appear in normal LLM output.
-enum StreamingToolHint: Sendable {
+public enum StreamingToolHint: Sendable {
     private static let sentinel: Character = "\u{FFFE}"
     private static let toolPrefix = "\u{FFFE}tool:"
     private static let argsPrefix = "\u{FFFE}args:"
     private static let donePrefix = "\u{FFFE}done:"
 
-    static func encode(_ toolName: String) -> String { toolPrefix + toolName }
-    static func encodeArgs(_ fragment: String) -> String { argsPrefix + fragment }
+    public static func encode(_ toolName: String) -> String { toolPrefix + toolName }
+    public static func encodeArgs(_ fragment: String) -> String { argsPrefix + fragment }
 
     /// Encodes a completed server-side tool call so the client can display it in the chat log.
-    static func encodeDone(callId: String, name: String, arguments: String, result: String) -> String {
+    public static func encodeDone(callId: String, name: String, arguments: String, result: String) -> String {
         struct Payload: Encodable { let id, name, arguments, result: String }
         let json =
             (try? JSONEncoder().encode(Payload(id: callId, name: name, arguments: arguments, result: result)))
@@ -127,14 +127,14 @@ enum StreamingToolHint: Sendable {
     }
 
     /// Decoded payload from a done sentinel.
-    struct ToolCallDone {
-        let callId: String
-        let name: String
-        let arguments: String
-        let result: String
+    public struct ToolCallDone: Sendable, Equatable {
+        public let callId: String
+        public let name: String
+        public let arguments: String
+        public let result: String
     }
 
-    static func decodeDone(_ delta: String) -> ToolCallDone? {
+    public static func decodeDone(_ delta: String) -> ToolCallDone? {
         guard delta.hasPrefix(donePrefix) else { return nil }
         let json = String(delta.dropFirst(donePrefix.count))
         struct Payload: Decodable { let id, name, arguments, result: String }
@@ -145,16 +145,16 @@ enum StreamingToolHint: Sendable {
     }
 
     /// O(1) check — only inspects the first character. Covers both tool and args sentinels.
-    static func isSentinel(_ delta: String) -> Bool { delta.first == sentinel }
+    public static func isSentinel(_ delta: String) -> Bool { delta.first == sentinel }
 
     /// Extracts the tool name from a sentinel delta, or nil if not a sentinel.
-    static func decode(_ delta: String) -> String? {
+    public static func decode(_ delta: String) -> String? {
         guard delta.hasPrefix(toolPrefix) else { return nil }
         return String(delta.dropFirst(toolPrefix.count))
     }
 
     /// Extracts an argument fragment from a sentinel delta, or nil if not an args sentinel.
-    static func decodeArgs(_ delta: String) -> String? {
+    public static func decodeArgs(_ delta: String) -> String? {
         guard delta.hasPrefix(argsPrefix) else { return nil }
         return String(delta.dropFirst(argsPrefix.count))
     }

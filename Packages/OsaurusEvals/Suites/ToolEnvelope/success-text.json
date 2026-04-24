@@ -1,0 +1,18 @@
+{
+  "id": "tool_envelope.success-text",
+  "domain": "tool_envelope",
+  "label": "tool_envelope • success(text:) carries ok=true and the tool name",
+  "query": "",
+  "fixtures": {},
+  "expect": {
+    "toolEnvelope": {
+      "builder": "successText",
+      "text": "Found 3 results.",
+      "tool": "search",
+      "expectKeys": {
+        "ok": true,
+        "tool": "search"
+      }
+    }
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "id": "request_validation.json-object-accepted",
+  "domain": "request_validation",
+  "label": "request_validation • response_format=json_object is supported",
+  "query": "",
+  "fixtures": {},
+  "expect": {
+    "requestValidation": {
+      "responseFormatType": "json_object",
+      "expectAccept": true
+    }
+  }
+}

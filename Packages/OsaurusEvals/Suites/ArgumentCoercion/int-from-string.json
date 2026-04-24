@@ -1,0 +1,14 @@
+{
+  "id": "argument_coercion.int-from-string",
+  "domain": "argument_coercion",
+  "label": "coercion • '42' (a string) coerces to integer 42",
+  "query": "",
+  "fixtures": {},
+  "expect": {
+    "argumentCoercion": {
+      "helper": "int",
+      "value": "42",
+      "expect": 42
+    }
+  }
+}

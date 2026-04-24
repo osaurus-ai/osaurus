@@ -258,10 +258,10 @@ enum ArgumentRequirement<T> {
 /// Shared coercion helpers for tool arguments. Local/quantized models frequently
 /// serialize values with wrong JSON types (arrays as strings, numbers as strings, etc.).
 /// These helpers normalize common mistakes so tool execution succeeds.
-enum ArgumentCoercion {
+public enum ArgumentCoercion {
     /// Coerce to `[String]`: actual array, JSON-encoded string (`"[\"a\"]"`),
     /// or bare string wrapped into a single-element array.
-    static func stringArray(_ value: Any?) -> [String]? {
+    public static func stringArray(_ value: Any?) -> [String]? {
         if let arr = value as? [String] { return arr }
         if let str = value as? String {
             if let data = str.data(using: .utf8),
@@ -276,7 +276,7 @@ enum ArgumentCoercion {
     }
 
     /// Coerce to `Int`: native int, `NSNumber`, or string-encoded integer (`"30"`).
-    static func int(_ value: Any?) -> Int? {
+    public static func int(_ value: Any?) -> Int? {
         if let n = value as? Int { return n }
         if let n = (value as? NSNumber)?.intValue { return n }
         if let s = value as? String, let n = Int(s) { return n }
@@ -284,7 +284,7 @@ enum ArgumentCoercion {
     }
 
     /// Coerce to `Bool`: native bool, string variants (`"true"`, `"1"`, `"yes"`), or `NSNumber`.
-    static func bool(_ value: Any?) -> Bool? {
+    public static func bool(_ value: Any?) -> Bool? {
         if let b = value as? Bool { return b }
         if let s = value as? String {
             switch s.lowercased() {

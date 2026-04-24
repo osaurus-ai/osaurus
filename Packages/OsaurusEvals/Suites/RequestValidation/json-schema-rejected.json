@@ -1,0 +1,14 @@
+{
+  "id": "request_validation.json-schema-rejected",
+  "domain": "request_validation",
+  "label": "request_validation • response_format=json_schema rejected (structured outputs not supported)",
+  "query": "",
+  "fixtures": {},
+  "expect": {
+    "requestValidation": {
+      "responseFormatType": "json_schema",
+      "expectAccept": false,
+      "expectReasonContains": "json_schema"
+    }
+  }
+}

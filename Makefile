@@ -8,7 +8,7 @@ CONFIG := Release
 PROJECT := App/osaurus.xcodeproj
 DERIVED := build/DerivedData
 
-.PHONY: help cli app install-cli serve status test ci-test clean bench-setup bench-ingest bench-ingest-chunks bench-run bench evals evals-verbose evals-report
+.PHONY: help cli app install-cli serve status test ci-test clean bench-setup bench-ingest bench-ingest-chunks bench-run bench evals evals-verbose evals-report evals-all evals-all-verbose evals-all-report
 
 help:
 	@echo "Targets:"
@@ -22,9 +22,12 @@ help:
 	@echo "  bench-ingest-chunks Fast chunk-only backfill (no LLM, ~minutes)"
 	@echo "  bench-run           Run LOCOMO benchmark only (skip ingestion)"
 	@echo "  bench               Full ingest + run LOCOMO benchmark"
-	@echo "  evals               Run OsaurusEvals preflight suite (MODEL=, FILTER=, EVALS_SUITE=)"
+	@echo "  evals               Run one OsaurusEvals suite (MODEL=, FILTER=, EVALS_SUITE=)"
 	@echo "  evals-verbose       Same as 'evals' plus per-case raw LLM response (debugging prompt iter)"
 	@echo "  evals-report        Same as 'evals' but also writes JSON to EVALS_OUT (build/evals.json)"
+	@echo "  evals-all           Run every suite under Packages/OsaurusEvals/Suites/* (MODEL=, FILTER=)"
+	@echo "  evals-all-verbose   Same as 'evals-all' plus per-case raw LLM response"
+	@echo "  evals-all-report    Same as 'evals-all' but writes per-suite JSON to EVALS_OUT_DIR (build/evals/)"
 	@echo "  test           Run OsaurusCore package tests via 'swift test'"
 	@echo "  ci-test        Reproduce the CI test-core job locally (xcodebuild + xcbeautify)"
 	@echo "  clean          Remove DerivedData build output"
@@ -140,8 +143,14 @@ bench: bench-ingest bench-run
 # Default model is `auto` (whatever ChatConfigurationStore is set to);
 # see Packages/OsaurusEvals/README.md for the full --model grammar.
 
-EVALS_SUITE ?= Packages/OsaurusEvals/Suites/Preflight
+EVALS_ROOT := Packages/OsaurusEvals/Suites
+EVALS_SUITE ?= $(EVALS_ROOT)/Preflight
 EVALS_OUT ?= build/evals.json
+EVALS_OUT_DIR ?= build/evals
+# Auto-discovered list of every subdirectory under Suites/. Adding a new
+# `Suites/MyDomain/` automatically picks it up here — no Makefile edit
+# required when a new suite lands.
+EVALS_ALL_SUITES := $(sort $(dir $(wildcard $(EVALS_ROOT)/*/)))
 
 evals:
 	@echo "Running OsaurusEvals against $(EVALS_SUITE)…"
@@ -166,6 +175,57 @@ evals-report:
 		$(if $(FILTER),--filter $(FILTER),) \
 		--out $(EVALS_OUT)
 	@echo "Wrote $(EVALS_OUT)"
+
+# Run every suite directory under $(EVALS_ROOT). The CLI exits 1 on any
+# failed/errored case, so we run each suite independently (don't `set -e`)
+# and aggregate exit codes so a single failure doesn't mask later suites.
+# Final exit is non-zero if ANY suite failed.
+evals-all:
+	@echo "Discovered suites: $(notdir $(patsubst %/,%,$(EVALS_ALL_SUITES)))"
+	@rc=0; for suite in $(EVALS_ALL_SUITES); do \
+		echo ""; \
+		echo "── $$suite ──"; \
+		swift run --package-path Packages/OsaurusEvals osaurus-evals run \
+			--suite $$suite \
+			$(if $(MODEL),--model $(MODEL),) \
+			$(if $(FILTER),--filter $(FILTER),) \
+			|| rc=$$?; \
+	done; \
+	exit $$rc
+
+evals-all-verbose:
+	@echo "Discovered suites: $(notdir $(patsubst %/,%,$(EVALS_ALL_SUITES)))"
+	@rc=0; for suite in $(EVALS_ALL_SUITES); do \
+		echo ""; \
+		echo "── $$suite ──"; \
+		swift run --package-path Packages/OsaurusEvals osaurus-evals run \
+			--suite $$suite \
+			--verbose \
+			$(if $(MODEL),--model $(MODEL),) \
+			$(if $(FILTER),--filter $(FILTER),) \
+			|| rc=$$?; \
+	done; \
+	exit $$rc
+
+# Writes one JSON report per suite under $(EVALS_OUT_DIR), named after
+# the suite directory. Useful for CI dashboards / cross-run diffing.
+evals-all-report:
+	@mkdir -p $(EVALS_OUT_DIR)
+	@rc=0; for suite in $(EVALS_ALL_SUITES); do \
+		name=$$(basename $$suite); \
+		out="$(EVALS_OUT_DIR)/$$name.json"; \
+		echo ""; \
+		echo "── $$suite → $$out ──"; \
+		swift run --package-path Packages/OsaurusEvals osaurus-evals run \
+			--suite $$suite \
+			$(if $(MODEL),--model $(MODEL),) \
+			$(if $(FILTER),--filter $(FILTER),) \
+			--out $$out \
+			|| rc=$$?; \
+	done; \
+	echo ""; \
+	echo "Wrote per-suite reports to $(EVALS_OUT_DIR)/"; \
+	exit $$rc
 
 ## ── Housekeeping ─────────────────────────────────────────────────
 

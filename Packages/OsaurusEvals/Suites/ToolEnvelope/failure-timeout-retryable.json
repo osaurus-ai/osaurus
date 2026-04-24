@@ -1,0 +1,21 @@
+{
+  "id": "tool_envelope.failure-timeout-retryable",
+  "domain": "tool_envelope",
+  "label": "tool_envelope • timeout failures default to retryable=true",
+  "query": "",
+  "fixtures": {},
+  "expect": {
+    "toolEnvelope": {
+      "builder": "failure",
+      "kind": "timeout",
+      "message": "Tool exceeded the 120s execution budget.",
+      "tool": "shell",
+      "expectKeys": {
+        "ok": false,
+        "kind": "timeout",
+        "tool": "shell",
+        "retryable": true
+      }
+    }
+  }
+}

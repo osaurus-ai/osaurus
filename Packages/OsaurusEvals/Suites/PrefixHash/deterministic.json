@@ -1,0 +1,18 @@
+{
+  "id": "prefix_hash.deterministic-stability",
+  "domain": "prefix_hash",
+  "label": "prefix_hash • same inputs produce the same hash (regression pin)",
+  "query": "",
+  "fixtures": {},
+  "expect": {
+    "prefixHash": {
+      "systemContent": "You are a helpful assistant.",
+      "toolNames": ["search", "browse"],
+      "compareTo": {
+        "systemContent": "You are a helpful assistant.",
+        "toolNames": ["search", "browse"]
+      },
+      "expectEqual": true
+    }
+  }
+}
