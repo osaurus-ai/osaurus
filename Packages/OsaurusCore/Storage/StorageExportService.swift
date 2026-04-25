@@ -156,14 +156,35 @@ public actor StorageExportService {
     public func rotateStorageKey() async throws -> SymmetricKey {
         // Block every other DB-open path while we mutate. Anything
         // that hits `StorageMigrationCoordinator.awaitReady()` (sync
-        // or async) parks until rotation finishes.
+        // or async) parks until we call `endMutating()` below.
+        //
+        // We can't use `defer { Task { @MainActor in endMutating() } }`
+        // here because `defer { Task { ... } }` would let
+        // `rotateStorageKey()` return before `endMutating()` actually
+        // runs, leaving callers parked on `awaitReady()` for an extra
+        // hop. Use a do/catch with explicit `await endMutating` on
+        // every exit instead.
         await MainActor.run { StorageMigrationCoordinator.shared.beginMutating() }
-        defer {
-            Task { @MainActor in
-                StorageMigrationCoordinator.shared.endMutating()
-            }
+
+        let result: Result<SymmetricKey, Error>
+        do {
+            let key = try await performRotation()
+            result = .success(key)
+        } catch {
+            result = .failure(error)
         }
 
+        await MainActor.run { StorageMigrationCoordinator.shared.endMutating() }
+
+        switch result {
+        case .success(let key): return key
+        case .failure(let error): throw error
+        }
+    }
+
+    /// Body of `rotateStorageKey` extracted so the gate
+    /// `begin/endMutating` lifecycle is auditably linear.
+    private func performRotation() async throws -> SymmetricKey {
         let oldKey: SymmetricKey
         do {
             oldKey = try StorageKeyManager.shared.currentKey()
@@ -203,7 +224,6 @@ public actor StorageExportService {
                 throw StorageExportError.rekeyFailed("Keychain install failed: \(error.localizedDescription)")
             }
         }
-
         return newKey
     }
 

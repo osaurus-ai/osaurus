@@ -72,6 +72,20 @@ underlying cryptographic provider. This means:
   `SQLITE_ENABLE_LOAD_EXTENSION`, `SQLITE_ENABLE_COLUMN_METADATA` — parity
   with what the system `libsqlite3` exposes.
 
+## Symbol-collision note
+
+Other SwiftPM dependencies in this workspace (notably
+`vmlx-swift-lm/Libraries/MLXLMCommon/Cache/DiskCache.swift`) do
+`import SQLite3` against the system `libsqlite3.dylib`. macOS's
+two-level namespacing keeps both copies of `sqlite3_*` symbols from
+colliding at runtime: vmlx's calls resolve to `libsqlite3.dylib`,
+ours resolve to the statically-linked SQLCipher inside OsaurusCore.
+If a future toolchain regression breaks this assumption (look for
+`duplicate symbol` link errors or vmlx caching misbehaving), the
+escape hatch is to redefine `SQLITE_API` to a per-target visibility
+attribute and rebuild — see
+<https://www.sqlite.org/c3ref/c_api_int.html>.
+
 ## License
 
 SQLCipher is BSD-licensed (no GPL clauses). See

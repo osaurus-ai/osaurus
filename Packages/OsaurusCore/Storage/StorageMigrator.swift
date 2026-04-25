@@ -35,6 +35,7 @@
 //
 
 import CryptoKit
+import Darwin
 import Foundation
 import OsaurusSQLCipher
 import os
@@ -54,6 +55,15 @@ public enum StorageMigratorError: LocalizedError {
         }
     }
 }
+
+/// Disambiguating shim for the libc `flock(int, int)` system call.
+/// Swift's `Darwin.flock` resolves preferentially to the homonymous
+/// `<sys/fcntl.h>` struct (used by `fcntl` for record locks), so a
+/// bare `Darwin.flock(fd, op)` fails to compile with "argument
+/// passed to call that takes no arguments". Calling through this
+/// `@_silgen_name`'d shim binds directly to the libc function.
+@_silgen_name("flock")
+private func lockFile(_ fd: Int32, _ operation: Int32) -> Int32
 
 public actor StorageMigrator {
     public static let shared = StorageMigrator()
@@ -100,10 +110,52 @@ public actor StorageMigrator {
 
     /// Run the migrator. Safe to call repeatedly: completed steps
     /// detect themselves and short-circuit.
+    ///
+    /// Cross-process safety: acquires an exclusive `flock(2)` on
+    /// `~/.osaurus/.storage-migration.lock` for the entire run.
+    /// A second Osaurus process launched mid-migration blocks on
+    /// the lock until the first one finishes, then re-checks
+    /// `currentVersion()` and short-circuits because the first
+    /// process already stamped it. Without this, two processes
+    /// would race on the same `*.enc.tmp` filenames.
     @discardableResult
     public func runIfNeeded(progress: ProgressHandler? = nil) async -> Result<Int, StorageMigratorError> {
         let from = currentVersion()
         guard from < Self.targetVersion else { return .success(from) }
+
+        // Acquire cross-process lock. Held until this function
+        // returns (the deferred close releases the OS-level flock
+        // too). `Darwin.flock` is shadowed by a struct of the same
+        // name in `<sys/fcntl.h>`; use the explicit C-typedef'd
+        // `Foundation.flock` re-export — same binding, unambiguous
+        // name.
+        OsaurusPaths.ensureExistsSilent(OsaurusPaths.root())
+        let lockPath = OsaurusPaths.root().appendingPathComponent(".storage-migration.lock").path
+        let lockFD = lockPath.withCString { Darwin.open($0, O_RDWR | O_CREAT, 0o600) }
+        if lockFD >= 0 {
+            // LOCK_EX blocks until granted. The OS releases the
+            // lock when the file descriptor closes (close below).
+            _ = lockFile(lockFD, LOCK_EX)
+        } else {
+            log.warning(
+                "storage migrator: could not open lock file at \(lockPath); proceeding without cross-process protection"
+            )
+        }
+        defer {
+            if lockFD >= 0 {
+                _ = lockFile(lockFD, LOCK_UN)
+                _ = Darwin.close(lockFD)
+            }
+        }
+
+        // After acquiring the lock, re-read the version stamp — a
+        // sibling process may have completed the migration while we
+        // were blocked.
+        let fromAfterLock = currentVersion()
+        guard fromAfterLock < Self.targetVersion else {
+            log.info("storage migrator: another process already migrated to v\(fromAfterLock); skipping")
+            return .success(fromAfterLock)
+        }
 
         // Step 1 — key.
         let key: SymmetricKey
@@ -116,7 +168,7 @@ public actor StorageMigrator {
 
         OsaurusPaths.ensureExistsSilent(backupDir())
         var outcome = OutcomeSummary(
-            fromVersion: from,
+            fromVersion: fromAfterLock,
             toVersion: Self.targetVersion,
             succeededTargets: [],
             failedTargets: [:],
@@ -162,7 +214,7 @@ public actor StorageMigrator {
 
         progress?(Progress(stepLabel: "Done", completed: dbs.count + 1, total: dbs.count + 1))
         log.info(
-            "storage migrator: completed (from v\(from) → v\(Self.targetVersion), \(outcome.succeededTargets.count) DBs OK, \(outcome.failedTargets.count) failed, \(outcome.jsonFilesEncrypted) JSON files)"
+            "storage migrator: completed (from v\(fromAfterLock) → v\(Self.targetVersion), \(outcome.succeededTargets.count) DBs OK, \(outcome.failedTargets.count) failed, \(outcome.jsonFilesEncrypted) JSON files)"
         )
         return .success(Self.targetVersion)
     }
