@@ -56,8 +56,15 @@ enum ChatSessionStore {
 
     /// Open the database (idempotent) and run the one-time JSON-to-SQLite
     /// import on first call. Safe to invoke from any session-touching code path.
+    ///
+    /// Gates on `StorageMigrationCoordinator.blockingAwaitReady()` so
+    /// SQLCipher never tries to open a still-plaintext file with a key
+    /// during the brief window between app launch and migration
+    /// completion. Normally a no-op fast-path because the AppDelegate
+    /// already awaited the migrator before any UI accepted clicks.
     private static func ensureOpenAndImported() {
         guard !didOpen else { return }
+        StorageMigrationCoordinator.blockingAwaitReady()
         didOpen = true
         do {
             try ChatHistoryDatabase.shared.open()

@@ -7,7 +7,7 @@
 //
 
 import Foundation
-import SQLite3
+import OsaurusSQLCipher
 
 public enum PluginDatabaseError: Error, LocalizedError {
     case failedToOpen(String)
@@ -45,38 +45,41 @@ final class PluginDatabase: @unchecked Sendable {
 
     // MARK: - Lifecycle
 
-    /// Opens an in-memory SQLite database (for tests).
+    /// Opens an in-memory SQLite database (for tests). **Plaintext** —
+    /// production plugin DBs are SQLCipher-encrypted using the
+    /// shared storage key, transparently to plugin SQL.
     func openInMemory() throws {
         try queue.sync {
             guard db == nil else { return }
-            var dbPointer: OpaquePointer?
-            let result = sqlite3_open(":memory:", &dbPointer)
-            guard result == SQLITE_OK, let connection = dbPointer else {
-                let message = String(cString: sqlite3_errmsg(dbPointer))
-                sqlite3_close(dbPointer)
-                throw PluginDatabaseError.failedToOpen(message)
-            }
-            db = connection
+            db = try EncryptedSQLiteOpener.open(
+                path: ":memory:",
+                key: nil,
+                applyPerfPragmas: false
+            )
             try configurePragmas()
         }
     }
 
     func open() throws {
+        // Plugin SQL can fire very early in launch (a plugin's
+        // `loadAll()` registration may exec startup queries before
+        // the AppDelegate's gate has fully cleared on slower
+        // machines). Sync-gate here too so SQLCipher never opens a
+        // still-plaintext file with a key. No-op fast path once the
+        // migrator's done.
+        StorageMigrationCoordinator.blockingAwaitReady()
+
         try queue.sync {
             guard db == nil else { return }
 
             OsaurusPaths.ensureExistsSilent(OsaurusPaths.pluginDataDirectory(for: pluginId))
-
             let path = OsaurusPaths.pluginDatabaseFile(for: pluginId).path
-            var dbPointer: OpaquePointer?
-            let result = sqlite3_open(path, &dbPointer)
-            guard result == SQLITE_OK, let connection = dbPointer else {
-                let message = String(cString: sqlite3_errmsg(dbPointer))
-                sqlite3_close(dbPointer)
-                throw PluginDatabaseError.failedToOpen(message)
+            let key = try StorageKeyManager.shared.currentKey()
+            do {
+                db = try EncryptedSQLiteOpener.open(path: path, key: key)
+            } catch let error as EncryptedSQLiteError {
+                throw PluginDatabaseError.failedToOpen(error.localizedDescription)
             }
-            db = connection
-
             try configurePragmas()
         }
     }

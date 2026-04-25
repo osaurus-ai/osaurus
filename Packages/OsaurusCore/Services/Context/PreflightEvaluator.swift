@@ -162,6 +162,10 @@ public enum PreflightEvaluator {
     /// re-uses already-initialised state.
     public static func loadInstalledPlugins() async {
         await PluginManager.shared.loadAll()
+        // `ToolDatabase.shared.open()` itself routes through the
+        // shared synchronous storage-migration gate (the same one
+        // every `*Database.open()` defensively hits), so we don't
+        // need an extra `await` here.
         try? ToolDatabase.shared.open()
         await ToolSearchService.shared.initialize()
         await ToolIndexService.shared.syncFromRegistry()

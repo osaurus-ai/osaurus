@@ -916,55 +916,68 @@ final class ChatSession: ObservableObject {
             let convId = sid.uuidString
             let aid = context.memoryAgentId
             let chunkIdx = turns.count
-            let db = MemoryDatabase.shared
             let userChunkIndex = chunkIdx - 1
-            do {
-                try db.insertTranscriptTurn(
-                    agentId: aid,
-                    conversationId: convId,
-                    chunkIndex: userChunkIndex,
-                    role: "user",
-                    content: context.userContent,
-                    tokenCount: max(1, context.userContent.count / 4),
-                    title: title
-                )
-            } catch {
-                MemoryLogger.database.warning("Failed to insert user transcript turn: \(error)")
-            }
-            let userTurn = TranscriptTurn(
-                conversationId: convId,
-                chunkIndex: userChunkIndex,
-                role: "user",
-                content: context.userContent,
-                tokenCount: max(1, context.userContent.count / 4),
-                agentId: aid
-            )
+            let conversationTitle = title
+            let userContent = context.userContent
+            let userTokenCount = max(1, userContent.count / 4)
+
+            // Move the SQL insert + Vectura indexing off the main
+            // actor. Previously `db.insertTranscriptTurn` was called
+            // synchronously here (against the database's serial
+            // queue), which blocked the chat view's main-thread
+            // post-stream cleanup. The companion Vectura calls were
+            // already detached.
             Task.detached {
-                await MemorySearchService.shared.indexTranscriptTurn(userTurn)
-            }
-            if let assistantContent, !assistantContent.isEmpty {
+                let db = MemoryDatabase.shared
                 do {
                     try db.insertTranscriptTurn(
                         agentId: aid,
                         conversationId: convId,
+                        chunkIndex: userChunkIndex,
+                        role: "user",
+                        content: userContent,
+                        tokenCount: userTokenCount,
+                        title: conversationTitle
+                    )
+                } catch {
+                    MemoryLogger.database.warning("Failed to insert user transcript turn: \(error)")
+                }
+                let userTurn = TranscriptTurn(
+                    conversationId: convId,
+                    chunkIndex: userChunkIndex,
+                    role: "user",
+                    content: userContent,
+                    tokenCount: userTokenCount,
+                    agentId: aid
+                )
+                await MemorySearchService.shared.indexTranscriptTurn(userTurn)
+            }
+
+            if let assistantContent, !assistantContent.isEmpty {
+                let assistantTokenCount = max(1, assistantContent.count / 4)
+                Task.detached {
+                    let db = MemoryDatabase.shared
+                    do {
+                        try db.insertTranscriptTurn(
+                            agentId: aid,
+                            conversationId: convId,
+                            chunkIndex: chunkIdx,
+                            role: "assistant",
+                            content: assistantContent,
+                            tokenCount: assistantTokenCount,
+                            title: conversationTitle
+                        )
+                    } catch {
+                        MemoryLogger.database.warning("Failed to insert assistant transcript turn: \(error)")
+                    }
+                    let assistantTurn = TranscriptTurn(
+                        conversationId: convId,
                         chunkIndex: chunkIdx,
                         role: "assistant",
                         content: assistantContent,
-                        tokenCount: max(1, assistantContent.count / 4),
-                        title: title
+                        tokenCount: assistantTokenCount,
+                        agentId: aid
                     )
-                } catch {
-                    MemoryLogger.database.warning("Failed to insert assistant transcript turn: \(error)")
-                }
-                let assistantTurn = TranscriptTurn(
-                    conversationId: convId,
-                    chunkIndex: chunkIdx,
-                    role: "assistant",
-                    content: assistantContent,
-                    tokenCount: max(1, assistantContent.count / 4),
-                    agentId: aid
-                )
-                Task.detached {
                     await MemorySearchService.shared.indexTranscriptTurn(assistantTurn)
                 }
             }
@@ -2292,6 +2305,14 @@ struct ChatView: View {
                         AppDelegate.shared?.showManagementWindow(initialTab: .server)
                     case .openSecurityDoc(let url):
                         NSWorkspace.shared.open(url)
+                    case .openStorageSettings, .exportPlaintextBackup:
+                        // Both actions land on the Storage panel.
+                        // `exportPlaintextBackup` doesn't auto-open
+                        // the file picker — the user clicks
+                        // "Export plaintext backup…" once they're
+                        // there, which is the safer flow because it
+                        // forces them to pick a destination.
+                        AppDelegate.shared?.showManagementWindow(initialTab: .storage)
                     }
                 }
             )

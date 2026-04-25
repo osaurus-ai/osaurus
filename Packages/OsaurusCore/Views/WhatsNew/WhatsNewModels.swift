@@ -18,6 +18,10 @@ public enum WhatsNewAction: Hashable, Sendable {
     case openAPIKeysSettings
     /// Open an arbitrary documentation URL in the system browser.
     case openSecurityDoc(URL)
+    /// Open Settings → Storage (encryption key + plaintext export).
+    case openStorageSettings
+    /// Trigger a one-shot plaintext export of conversation/memory data.
+    case exportPlaintextBackup
 }
 
 public struct WhatsNewPage: Identifiable, Hashable, Sendable {
@@ -67,16 +71,27 @@ public enum WhatsNewContent {
     /// release that should announce changes on first launch after update.
     public static let releases: [WhatsNewRelease] = [securityHardening_0_17_7]
 
-    /// First-launch announcement for the #950 security audit fixes.
-    /// Pages whose id ends in `:sandbox` or `:legacy-keys` are conditional
-    /// — see `WhatsNewGate.filterPages(_:hasSandbox:hasLegacyPairedKeys:)`.
+    /// First-launch announcement for the #950 security audit fixes
+    /// **plus** the at-rest encryption migration that ships alongside.
+    /// Pages whose id ends in `:sandbox` or `:legacy-keys` are
+    /// conditional — see
+    /// `WhatsNewGate.filterPages(_:hasSandbox:hasLegacyPairedKeys:)`.
     private static let securityHardening_0_17_7 = WhatsNewRelease(
         version: "0.17.7",
         pages: [
             WhatsNewPage(
                 id: "security-0.17.7:summary",
                 title: "Security update",
-                description: "Tighter sandbox isolation, agent-scoped pairings, and request size limits."
+                description:
+                    "Chats and memory are now encrypted on disk. Sandbox plugins authenticate with per-agent tokens. Pairings are agent-scoped."
+            ),
+            WhatsNewPage(
+                id: "security-0.17.7:storage",
+                title: "Encrypted at rest",
+                description:
+                    "Chat history, memory, and configuration are encrypted with a key kept in your Keychain. Export a plaintext backup any time before reinstalling macOS.",
+                actionLabel: "Backup & key options",
+                action: .openStorageSettings
             ),
             WhatsNewPage(
                 id: "security-0.17.7:sandbox",
@@ -91,11 +106,6 @@ public enum WhatsNewContent {
                 description: "New pairings are agent-scoped and expire in 90 days. Older keys are marked Legacy.",
                 actionLabel: "Review",
                 action: .openAPIKeysSettings
-            ),
-            WhatsNewPage(
-                id: "security-0.17.7:limits",
-                title: "Request limits",
-                description: "Oversized requests are rejected before auth. No action needed."
             ),
         ]
     )

@@ -35,6 +35,12 @@ enum ChatHistoryWriter {
         let conversational = finalMessages.filter { $0.role != "system" }
         guard !conversational.isEmpty else { return }
 
+        // Gate on the storage migration before opening SQLCipher.
+        // No-op fast-path once the AppDelegate has awaited it; this
+        // is here for completeness so background HTTP / plugin paths
+        // that hit `persist` very early can't race the migrator.
+        StorageMigrationCoordinator.blockingAwaitReady()
+
         let db = ChatHistoryDatabase.shared
         do {
             try db.open()

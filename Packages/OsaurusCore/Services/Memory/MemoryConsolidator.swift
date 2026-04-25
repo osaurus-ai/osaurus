@@ -102,12 +102,27 @@ public actor MemoryConsolidator {
         if config.episodeRetentionDays > 0 {
             do {
                 let prunedEp = try MemoryDatabase.shared.pruneEpisodes(olderThanDays: config.episodeRetentionDays)
-                let prunedTr = try MemoryDatabase.shared.pruneTranscript(
+
+                // Pull the keys back from the prune so we can also
+                // drop their Vectura vectors. Pre-fix, this loop was
+                // missing entirely and the per-agent vector store
+                // grew unbounded — `pruneTranscript` only deleted SQL
+                // rows; embeddings stayed indexed until the next
+                // explicit `rebuildIndex()`.
+                let prunedTranscriptKeys = try MemoryDatabase.shared.pruneTranscriptReturningKeys(
                     olderThanDays: config.episodeRetentionDays
                 )
-                if prunedEp + prunedTr > 0 {
+
+                for key in prunedTranscriptKeys {
+                    let vid = TextSimilarity.deterministicUUID(
+                        from: "transcript:\(key.conversationId):\(key.chunkIndex)"
+                    ).uuidString
+                    await MemorySearchService.shared.removeDocument(id: vid)
+                }
+
+                if prunedEp + prunedTranscriptKeys.count > 0 {
                     MemoryLogger.service.info(
-                        "Consolidator: pruned \(prunedEp) episodes + \(prunedTr) transcript turns"
+                        "Consolidator: pruned \(prunedEp) episodes + \(prunedTranscriptKeys.count) transcript turns (+ vectors)"
                     )
                 }
             } catch {

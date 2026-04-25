@@ -1042,7 +1042,23 @@ extension FloatingInputCard {
                                 }
                             }
                         )
-                    case .document:
+                    case .imageRef:
+                        // Pending attachments are pre-spillover; refs only
+                        // appear after persistence. Defensive-render an
+                        // empty thumbnail so we don't crash on a pending
+                        // queue that someone re-hydrated from disk.
+                        if let data = attachment.loadImageData() {
+                            CachedImageThumbnail(
+                                imageData: data,
+                                size: 40,
+                                onRemove: {
+                                    withAnimation(theme.springAnimation()) {
+                                        _ = pendingAttachments.remove(at: index)
+                                    }
+                                }
+                            )
+                        }
+                    case .document, .documentRef:
                         DocumentChip(attachment: attachment) {
                             withAnimation(theme.springAnimation()) {
                                 _ = pendingAttachments.remove(at: index)

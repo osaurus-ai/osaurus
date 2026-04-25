@@ -90,22 +90,6 @@ final class ChatSessionsManager: ObservableObject {
         sessions.first { $0.id == id }
     }
 
-    /// Update session with new turns and auto-generate title if needed
-    func updateSession(id: UUID, turns: [ChatTurnData], selectedModel: String?) {
-        guard var session = ChatSessionStore.load(id: id) else { return }
-
-        // Auto-generate title from first user message if still default
-        if session.title == "New Chat" && !turns.isEmpty {
-            session.title = ChatSessionData.generateTitle(from: turns)
-        }
-
-        session.turns = turns
-        session.selectedModel = selectedModel
-        session.updatedAt = Date()
-        ChatSessionStore.save(session)
-        upsertInMemory(session)
-    }
-
     // MARK: - Private
 
     /// Insert or replace a session in the in-memory array, maintaining updatedAt descending order.

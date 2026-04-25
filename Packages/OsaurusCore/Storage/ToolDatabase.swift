@@ -7,7 +7,7 @@
 //
 
 import Foundation
-import SQLite3
+import OsaurusSQLCipher
 
 // MARK: - Error
 
@@ -106,7 +106,7 @@ public final class ToolDatabase: @unchecked Sendable {
 
     private var db: OpaquePointer?
     private let queue = DispatchQueue(label: "ai.osaurus.tools.database")
-    private var cachedStatements: [String: OpaquePointer] = [:]
+    private let stmtCache = PreparedStatementCache(capacity: 24)
 
     public var isOpen: Bool {
         queue.sync { db != nil }
@@ -119,36 +119,45 @@ public final class ToolDatabase: @unchecked Sendable {
     // MARK: - Lifecycle
 
     public func open() throws {
+        // See `ChatHistoryDatabase.open()` for the gate rationale.
+        StorageMigrationCoordinator.blockingAwaitReady()
         try queue.sync {
             guard db == nil else { return }
             OsaurusPaths.ensureExistsSilent(OsaurusPaths.toolIndex())
             try openConnection()
             try runMigrations()
         }
+        OsaurusDatabaseHandle.register(maintenanceHandle)
     }
+
+    private lazy var maintenanceHandle = OsaurusDatabaseHandle(
+        name: "tool-index",
+        exec: { [weak self] sql in
+            self?.queue.sync {
+                guard self?.db != nil else { return }
+                try? self?.executeRaw(sql)
+            }
+        },
+        closer: { [weak self] in self?.close() },
+        reopener: { [weak self] in try? self?.open() }
+    )
 
     func openInMemory() throws {
         try queue.sync {
             guard db == nil else { return }
-            var dbPointer: OpaquePointer?
-            let result = sqlite3_open(":memory:", &dbPointer)
-            guard result == SQLITE_OK, let connection = dbPointer else {
-                let message = String(cString: sqlite3_errmsg(dbPointer))
-                sqlite3_close(dbPointer)
-                throw ToolDatabaseError.failedToOpen(message)
-            }
-            db = connection
-            try executeRaw("PRAGMA foreign_keys = ON")
+            db = try EncryptedSQLiteOpener.open(
+                path: ":memory:",
+                key: nil,
+                applyPerfPragmas: false
+            )
             try runMigrations()
         }
     }
 
     public func close() {
+        OsaurusDatabaseHandle.deregister(name: "tool-index")
         queue.sync {
-            for (_, stmt) in cachedStatements {
-                sqlite3_finalize(stmt)
-            }
-            cachedStatements.removeAll()
+            stmtCache.clear()
             guard let connection = db else { return }
             try? executeRaw("PRAGMA optimize")
             sqlite3_close(connection)
@@ -160,16 +169,12 @@ public final class ToolDatabase: @unchecked Sendable {
 
     private func openConnection() throws {
         let path = OsaurusPaths.toolIndexDatabaseFile().path
-        var dbPointer: OpaquePointer?
-        let result = sqlite3_open(path, &dbPointer)
-        guard result == SQLITE_OK, let connection = dbPointer else {
-            let message = String(cString: sqlite3_errmsg(dbPointer))
-            sqlite3_close(dbPointer)
-            throw ToolDatabaseError.failedToOpen(message)
+        let key = try StorageKeyManager.shared.currentKey()
+        do {
+            db = try EncryptedSQLiteOpener.open(path: path, key: key)
+        } catch let error as EncryptedSQLiteError {
+            throw ToolDatabaseError.failedToOpen(error.localizedDescription)
         }
-        db = connection
-        try executeRaw("PRAGMA journal_mode = WAL")
-        try executeRaw("PRAGMA foreign_keys = ON")
     }
 
     // MARK: - Schema & Migrations
