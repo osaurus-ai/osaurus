@@ -687,25 +687,58 @@ public final class MemoryDatabase: @unchecked Sendable {
         }
     }
 
+    /// Locking entry point. Acquires `queue.sync` and dispatches to
+    /// the unlocked core. Use this from regular call sites that
+    /// don't already hold the queue.
+    ///
+    /// MUST NOT be called from inside an `inTransaction { ... }`
+    /// closure — that closure already runs on `queue`, and a
+    /// nested `queue.sync` traps with `EXC_BREAKPOINT` (libdispatch
+    /// re-entrant-sync deadlock detector). The runtime guard below
+    /// surfaces the misuse at the *call site* instead of inside
+    /// libdispatch where the stack is harder to read. Use
+    /// `prepareAndExecute(on:_:bind:process:)` from inside a
+    /// transaction.
     func prepareAndExecute(
         _ sql: String,
         bind: (OpaquePointer) -> Void,
         process: (OpaquePointer) throws -> Void
     ) throws {
+        dispatchPrecondition(condition: .notOnQueue(queue))
         try queue.sync {
             guard let connection = db else { throw MemoryDatabaseError.notOpen }
-            var stmt: OpaquePointer?
-            let prepareResult = sqlite3_prepare_v2(connection, sql, -1, &stmt, nil)
-            guard prepareResult == SQLITE_OK, let statement = stmt else {
-                let message = String(cString: sqlite3_errmsg(connection))
-                throw MemoryDatabaseError.failedToPrepare(message)
-            }
-            defer { sqlite3_finalize(statement) }
-            bind(statement)
-            try process(statement)
+            try Self.prepareAndExecute(
+                on: connection,
+                sql,
+                bind: bind,
+                process: process
+            )
         }
     }
 
+    /// Non-locking core. Caller MUST hold `queue` (i.e. be inside an
+    /// `inTransaction { ... }` closure). Performs the
+    /// prepare/bind/process/finalize dance against an already-open
+    /// connection.
+    static func prepareAndExecute(
+        on connection: OpaquePointer,
+        _ sql: String,
+        bind: (OpaquePointer) -> Void,
+        process: (OpaquePointer) throws -> Void
+    ) throws {
+        var stmt: OpaquePointer?
+        let prepareResult = sqlite3_prepare_v2(connection, sql, -1, &stmt, nil)
+        guard prepareResult == SQLITE_OK, let statement = stmt else {
+            let message = String(cString: sqlite3_errmsg(connection))
+            throw MemoryDatabaseError.failedToPrepare(message)
+        }
+        defer { sqlite3_finalize(statement) }
+        bind(statement)
+        try process(statement)
+    }
+
+    /// Locking entry point — see `prepareAndExecute(_:bind:process:)`
+    /// for the re-entrancy contract.
     func executeUpdate(_ sql: String, bind: (OpaquePointer) -> Void) throws -> Bool {
         var success = false
         try prepareAndExecute(
@@ -716,8 +749,28 @@ public final class MemoryDatabase: @unchecked Sendable {
         return success
     }
 
+    /// Non-locking core — call from inside `inTransaction { ... }`
+    /// when you also need to issue updates against the same
+    /// connection without taking the queue lock again.
+    @discardableResult
+    static func executeUpdate(
+        on connection: OpaquePointer,
+        _ sql: String,
+        bind: (OpaquePointer) -> Void
+    ) throws -> Bool {
+        var success = false
+        try prepareAndExecute(
+            on: connection,
+            sql,
+            bind: bind,
+            process: { stmt in success = sqlite3_step(stmt) == SQLITE_DONE }
+        )
+        return success
+    }
+
     func inTransaction<T>(_ operation: (OpaquePointer) throws -> T) throws -> T {
-        try queue.sync {
+        dispatchPrecondition(condition: .notOnQueue(queue))
+        return try queue.sync {
             guard let connection = db else { throw MemoryDatabaseError.notOpen }
             try executeRaw("BEGIN TRANSACTION")
             do {
@@ -1733,9 +1786,17 @@ public final class MemoryDatabase: @unchecked Sendable {
     ) throws -> [(conversationId: String, chunkIndex: Int)] {
         guard days > 0 else { return [] }
         var keys: [(conversationId: String, chunkIndex: Int)] = []
-        try inTransaction { _ in
-            // Collect first, then delete by id list.
-            try self.prepareAndExecute(
+        // CRITICAL: use the non-locking `…(on: connection, …)` cores
+        // here. Calling the locking `prepareAndExecute` / `executeUpdate`
+        // wrappers from inside `inTransaction` re-enters the serial
+        // queue and traps with `EXC_BREAKPOINT` (libdispatch deadlock
+        // detector). The runtime guards on those wrappers now catch
+        // this misuse at the call site, but the previous version
+        // crashed in production during memory consolidation.
+        try inTransaction { connection in
+            // Collect first, then delete by date predicate.
+            try Self.prepareAndExecute(
+                on: connection,
                 """
                 SELECT id, conversation_id, chunk_index FROM transcript
                 WHERE created_at < datetime('now', '-' || ?1 || ' days')
@@ -1752,7 +1813,8 @@ public final class MemoryDatabase: @unchecked Sendable {
                     }
                 }
             )
-            _ = try self.executeUpdate(
+            try Self.executeUpdate(
+                on: connection,
                 "DELETE FROM transcript WHERE created_at < datetime('now', '-' || ?1 || ' days')"
             ) { stmt in sqlite3_bind_int(stmt, 1, Int32(days)) }
             return ()
