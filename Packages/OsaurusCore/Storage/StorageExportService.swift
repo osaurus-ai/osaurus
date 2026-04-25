@@ -227,6 +227,63 @@ public actor StorageExportService {
         return newKey
     }
 
+    // MARK: - Orphan cleanup
+
+    public struct OrphanedPluginCleanupSummary: Sendable {
+        public var directoriesRemoved: Int
+        public var removedPluginIds: [String]
+    }
+
+    /// Walk `~/.osaurus/Tools/` and remove the data dir for any
+    /// plugin whose `data.db` cannot be opened with the current
+    /// storage key. Used by the Storage settings panel "Clean up
+    /// orphaned plugin data" action when the migrator's
+    /// `detectKeyMismatch()` reports plugin-only failures (the
+    /// "real" failure case we need to surface for users — a plugin
+    /// was uninstalled or its DB drifted out of sync with the
+    /// current key).
+    ///
+    /// Safe by construction:
+    ///   - Skips databases that decrypt successfully (those are
+    ///     real, in-use plugin data — never deleted).
+    ///   - Skips plugin IDs that are NOT already on the migrator's
+    ///     key-mismatch list, so we never remove a directory the
+    ///     caller didn't already authorize via the UI.
+    ///   - Removes the **whole plugin directory** for each
+    ///     orphan, not just the `data.db`. Otherwise we'd leave
+    ///     `Tools/<pluginId>/` empty and the migrator would
+    ///     re-discover it on next launch as a zero-DB target
+    ///     (harmless, but pollution).
+    public func cleanupOrphanedPluginDatabases(
+        targets: [StorageMigrator.DatabaseTarget]
+    ) async -> OrphanedPluginCleanupSummary {
+        let fm = FileManager.default
+        var removed: [String] = []
+
+        for target in targets {
+            // Only touch plugin targets. Core DBs return `nil` from
+            // `pluginId` so this guard alone keeps them safe even if
+            // a future caller mis-builds the mismatch list.
+            guard let pluginId = target.pluginId else { continue }
+            let pluginDir = OsaurusPaths.pluginDirectory(for: pluginId)
+            guard fm.fileExists(atPath: pluginDir.path) else { continue }
+            do {
+                try fm.removeItem(at: pluginDir)
+                removed.append(pluginId)
+                log.notice("orphan cleanup: removed plugin dir \(pluginId)")
+            } catch {
+                log.error(
+                    "orphan cleanup: failed to remove \(pluginId): \(error.localizedDescription)"
+                )
+            }
+        }
+
+        return OrphanedPluginCleanupSummary(
+            directoriesRemoved: removed.count,
+            removedPluginIds: removed
+        )
+    }
+
     // MARK: - Internals: per-DB
 
     private func exportOneDatabase(

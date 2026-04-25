@@ -442,9 +442,35 @@ public actor StorageMigrator {
     // MARK: - SQLite path
 
     /// One unified target description so the migrator loop stays flat.
+    ///
+    /// Labels for the four core databases are short ("chat history",
+    /// "memory", ...). Plugin databases use the `pluginLabelPrefix`
+    /// + plugin ID format so callers (UI banner splits, cleanup
+    /// service, tests) can recover the plugin ID via `pluginId`
+    /// instead of substring-matching by hand.
     public struct DatabaseTarget: Sendable {
+        public static let pluginLabelPrefix = "plugin "
+
         public let label: String
         public let path: String
+
+        public init(label: String, path: String) {
+            self.label = label
+            self.path = path
+        }
+
+        /// Convenience constructor for plugin targets — keeps the
+        /// label format ("plugin <id>") in one place.
+        public static func plugin(id: String, path: String) -> DatabaseTarget {
+            DatabaseTarget(label: pluginLabelPrefix + id, path: path)
+        }
+
+        /// `nil` for the four core targets, the plugin ID otherwise.
+        /// Use this instead of `label.hasPrefix("plugin ")`.
+        public var pluginId: String? {
+            guard label.hasPrefix(Self.pluginLabelPrefix) else { return nil }
+            return String(label.dropFirst(Self.pluginLabelPrefix.count))
+        }
     }
 
     public static func databaseTargets() -> [DatabaseTarget] {
@@ -459,13 +485,33 @@ public actor StorageMigrator {
         let toolsDir = OsaurusPaths.tools()
         if let plugins = try? FileManager.default.contentsOfDirectory(at: toolsDir, includingPropertiesForKeys: nil) {
             for plugin in plugins {
-                let dbPath = OsaurusPaths.pluginDatabaseFile(for: plugin.lastPathComponent).path
+                let pluginId = plugin.lastPathComponent
+                // Production safety net: any `com.test.*` plugin ID
+                // can only exist on disk because a developer ran the
+                // OsaurusCore test suite without isolating
+                // `OsaurusPaths.overrideRoot` (see
+                // `DispatchRateLimitTests` for the historical
+                // offender). End users will never have one. Filtering
+                // here keeps these out of `detectKeyMismatch()` so
+                // the Storage settings panel doesn't surface a
+                // scary "key doesn't match the encrypted databases"
+                // banner full of test UUIDs.
+                if Self.isLeakedTestPluginId(pluginId) { continue }
+                let dbPath = OsaurusPaths.pluginDatabaseFile(for: pluginId).path
                 if FileManager.default.fileExists(atPath: dbPath) {
-                    targets.append(.init(label: "plugin \(plugin.lastPathComponent)", path: dbPath))
+                    targets.append(.plugin(id: pluginId, path: dbPath))
                 }
             }
         }
         return targets
+    }
+
+    /// True for plugin IDs that could only have been created by a
+    /// leaked test run (anything with a `com.test.` prefix). Surfaced
+    /// as a static helper so the cleanup command in
+    /// `StorageExportService` and the unit tests share the same rule.
+    public static func isLeakedTestPluginId(_ pluginId: String) -> Bool {
+        pluginId.hasPrefix("com.test.")
     }
 
     /// Re-encrypt one SQLite database. Idempotent: detects already-

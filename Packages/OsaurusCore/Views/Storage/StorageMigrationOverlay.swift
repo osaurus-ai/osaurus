@@ -282,7 +282,7 @@ public struct StorageMigrationOverlay: View {
                 if let lastError = coordinator.lastError {
                     Text(lastError)
                         .font(.caption)
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(theme.errorColor)
                         .multilineTextAlignment(.center)
                         .frame(maxWidth: 360)
                 }

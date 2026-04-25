@@ -659,48 +659,92 @@ struct TaskStateDictTests {
 
 // MARK: - Dispatch Rate Limiting
 
+/// `PluginHostContext.init` materializes per-plugin directories under
+/// `OsaurusPaths.tools()` (and a SQLCipher DB on first SQL call). If
+/// these tests ran against the real `~/.osaurus`, every test
+/// invocation would litter `~/.osaurus/Tools/com.test.ratelimit.<UUID>/`
+/// — those then surface in Storage Settings as "key mismatch"
+/// failures on subsequent app launches. Each test here therefore
+/// runs inside a `StoragePathsTestLock` block that pins
+/// `OsaurusPaths.overrideRoot` to a fresh tempdir and removes it
+/// on exit, so the user's home directory never sees the writes.
 struct DispatchRateLimitTests {
 
     private let testAgentId = UUID()
+
+    private static func setUpTempRoot() throws -> URL {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "osaurus-ratelimit-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        OsaurusPaths.overrideRoot = root
+        return root
+    }
+
+    private static func tearDown(_ root: URL) {
+        OsaurusPaths.overrideRoot = nil
+        try? FileManager.default.removeItem(at: root)
+    }
 
     private func makeContext() throws -> PluginHostContext {
         try PluginHostContext(pluginId: "com.test.ratelimit.\(UUID().uuidString)")
     }
 
-    @Test func allowsFirstRequest() throws {
-        let ctx = try makeContext()
-        defer { ctx.teardown() }
-        #expect(ctx.checkDispatchRateLimit(agentId: testAgentId) == true)
-    }
+    @Test func allowsFirstRequest() async throws {
+        try await StoragePathsTestLock.shared.run {
+            let root = try Self.setUpTempRoot()
+            defer { Self.tearDown(root) }
 
-    @Test func allowsUpTo10Requests() throws {
-        let ctx = try makeContext()
-        defer { ctx.teardown() }
-        for i in 0 ..< 10 {
-            #expect(ctx.checkDispatchRateLimit(agentId: testAgentId) == true, "Request \(i) should be allowed")
+            let ctx = try makeContext()
+            defer { ctx.teardown() }
+            #expect(ctx.checkDispatchRateLimit(agentId: testAgentId) == true)
         }
     }
 
-    @Test func denies11thRequest() throws {
-        let ctx = try makeContext()
-        defer { ctx.teardown() }
-        for _ in 0 ..< 10 {
-            _ = ctx.checkDispatchRateLimit(agentId: testAgentId)
+    @Test func allowsUpTo10Requests() async throws {
+        try await StoragePathsTestLock.shared.run {
+            let root = try Self.setUpTempRoot()
+            defer { Self.tearDown(root) }
+
+            let ctx = try makeContext()
+            defer { ctx.teardown() }
+            for i in 0 ..< 10 {
+                #expect(ctx.checkDispatchRateLimit(agentId: testAgentId) == true, "Request \(i) should be allowed")
+            }
         }
-        #expect(ctx.checkDispatchRateLimit(agentId: testAgentId) == false)
     }
 
-    @Test func separateContextsHaveIndependentLimits() throws {
-        let ctx1 = try makeContext()
-        defer { ctx1.teardown() }
-        let ctx2 = try makeContext()
-        defer { ctx2.teardown() }
+    @Test func denies11thRequest() async throws {
+        try await StoragePathsTestLock.shared.run {
+            let root = try Self.setUpTempRoot()
+            defer { Self.tearDown(root) }
 
-        for _ in 0 ..< 10 {
-            _ = ctx1.checkDispatchRateLimit(agentId: testAgentId)
+            let ctx = try makeContext()
+            defer { ctx.teardown() }
+            for _ in 0 ..< 10 {
+                _ = ctx.checkDispatchRateLimit(agentId: testAgentId)
+            }
+            #expect(ctx.checkDispatchRateLimit(agentId: testAgentId) == false)
         }
-        #expect(ctx1.checkDispatchRateLimit(agentId: testAgentId) == false)
-        #expect(ctx2.checkDispatchRateLimit(agentId: testAgentId) == true)
+    }
+
+    @Test func separateContextsHaveIndependentLimits() async throws {
+        try await StoragePathsTestLock.shared.run {
+            let root = try Self.setUpTempRoot()
+            defer { Self.tearDown(root) }
+
+            let ctx1 = try makeContext()
+            defer { ctx1.teardown() }
+            let ctx2 = try makeContext()
+            defer { ctx2.teardown() }
+
+            for _ in 0 ..< 10 {
+                _ = ctx1.checkDispatchRateLimit(agentId: testAgentId)
+            }
+            #expect(ctx1.checkDispatchRateLimit(agentId: testAgentId) == false)
+            #expect(ctx2.checkDispatchRateLimit(agentId: testAgentId) == true)
+        }
     }
 }
 
