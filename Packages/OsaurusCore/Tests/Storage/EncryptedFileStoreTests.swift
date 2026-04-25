@@ -13,7 +13,12 @@ import Testing
 
 @testable import OsaurusCore
 
-@Suite(.serialized)
+/// Intentionally NOT `@Suite(.serialized)`: every test allocates
+/// its own UUID-named tempfile via `tempFile` and uses the inline
+/// `makeKey()` constant — no `OsaurusPaths.overrideRoot` /
+/// `StorageKeyManager.shared` access. Letting xcodebuild parallelize
+/// these saves several seconds of wall-time on the macos-26 CI
+/// runner, which is materially slower than local Apple Silicon.
 struct EncryptedFileStoreTests {
 
     private func makeKey() -> SymmetricKey {

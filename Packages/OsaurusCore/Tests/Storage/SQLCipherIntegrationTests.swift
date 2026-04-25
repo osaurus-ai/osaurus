@@ -18,7 +18,14 @@ import Testing
 
 @testable import OsaurusCore
 
-@Suite(.serialized)
+/// Intentionally NOT `@Suite(.serialized)`: each test gets its own
+/// UUID-named tempdir via `tempDBPath` and uses an inline key, so
+/// nothing here touches `OsaurusPaths.overrideRoot`,
+/// `StorageKeyManager.shared`, or any other global state. Letting
+/// xcodebuild parallelize these matters on CI — the 5 tests each
+/// pay an SQLCipher open + sqlcipher_export, and the previous
+/// `.serialized` tag was forcing them to run sequentially for no
+/// safety reason.
 struct SQLCipherIntegrationTests {
 
     private func tempDBPath(_ name: String = "sqlcipher-test.sqlite") -> String {
