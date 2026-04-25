@@ -23,15 +23,20 @@
 //   6. Trigger an async `MemorySearchService.shared.rebuildIndex()`
 //      so the per-agent vector dirs come back populated.
 //
-//  Concurrency: synchronous from the caller's perspective, runs on
-//  whichever queue/actor invokes it. Designed to be called from the
-//  main-actor `WhatsNewGate` while a "Securing your data" overlay
-//  is shown, *before* any app code opens a database — opening
-//  SQLCipher against a still-plaintext file and then hot-swapping
-//  it underneath is a recipe for crashes. The migrator itself never
-//  uses the shared `Database.shared` singletons; it operates on
-//  raw paths so the regular code path is free to open the encrypted
-//  DBs immediately afterwards.
+//  Concurrency: this is a Swift `actor`, but the actual work is
+//  driven through `StorageMigrationCoordinator` which gates every
+//  `*Database.shared.open()` call site (sync via
+//  `blockingAwaitReady()` and async via `awaitReady()`) so the
+//  app can't race SQLCipher against a still-plaintext file. The
+//  migrator itself never uses the shared `Database.shared`
+//  singletons — it operates on raw paths so the regular code path
+//  is free to open the encrypted DBs as soon as we return.
+//
+//  Cross-process safety: `runIfNeeded` acquires an exclusive
+//  `flock(2)` on `~/.osaurus/.storage-migration.lock` for the
+//  entire run. Two Osaurus processes launched simultaneously
+//  serialize on this lock; the loser short-circuits because the
+//  winner stamped `.storage-version` before releasing.
 //
 
 import CryptoKit
@@ -87,6 +92,13 @@ public actor StorageMigrator {
 
     /// Outcome summary persisted to disk so Settings + tests can
     /// inspect the most recent migration result without re-running it.
+    ///
+    /// **Schema-evolution contract:** every field added after the
+    /// initial v1 release MUST be optional with a sensible default
+    /// in the custom decoder below, so a fresh build that ships a
+    /// new field can still parse a receipt left behind by the
+    /// previous build. Removing a field is a breaking change —
+    /// don't.
     public struct OutcomeSummary: Codable, Sendable {
         public var fromVersion: Int
         public var toVersion: Int
@@ -94,6 +106,40 @@ public actor StorageMigrator {
         public var failedTargets: [String: String]  // label → message
         public var jsonFilesEncrypted: Int
         public var ranAt: Date
+
+        public init(
+            fromVersion: Int,
+            toVersion: Int,
+            succeededTargets: [String],
+            failedTargets: [String: String],
+            jsonFilesEncrypted: Int,
+            ranAt: Date
+        ) {
+            self.fromVersion = fromVersion
+            self.toVersion = toVersion
+            self.succeededTargets = succeededTargets
+            self.failedTargets = failedTargets
+            self.jsonFilesEncrypted = jsonFilesEncrypted
+            self.ranAt = ranAt
+        }
+
+        // Custom decoder so future field additions don't break old
+        // receipts. Keep `decodeIfPresent` for new fields; the v1
+        // fields below are required because they've always shipped.
+        private enum CodingKeys: String, CodingKey {
+            case fromVersion, toVersion, succeededTargets, failedTargets
+            case jsonFilesEncrypted, ranAt
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.fromVersion = (try? c.decode(Int.self, forKey: .fromVersion)) ?? 0
+            self.toVersion = (try? c.decode(Int.self, forKey: .toVersion)) ?? 0
+            self.succeededTargets = (try? c.decode([String].self, forKey: .succeededTargets)) ?? []
+            self.failedTargets = (try? c.decode([String: String].self, forKey: .failedTargets)) ?? [:]
+            self.jsonFilesEncrypted = (try? c.decode(Int.self, forKey: .jsonFilesEncrypted)) ?? 0
+            self.ranAt = (try? c.decode(Date.self, forKey: .ranAt)) ?? Date(timeIntervalSince1970: 0)
+        }
     }
 
     public typealias ProgressHandler = @Sendable (Progress) -> Void

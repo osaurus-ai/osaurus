@@ -122,21 +122,19 @@ final class PluginDatabase: @unchecked Sendable {
 
     private func configurePragmas() throws {
         guard let connection = db else { return }
-
-        let pragmas = [
-            "PRAGMA journal_mode=WAL",
-            "PRAGMA foreign_keys=ON",
-            "PRAGMA busy_timeout=5000",
-        ]
-
-        for pragma in pragmas {
-            var errMsg: UnsafeMutablePointer<CChar>?
-            let rc = sqlite3_exec(connection, pragma, nil, nil, &errMsg)
-            if rc != SQLITE_OK {
-                let msg = errMsg.map { String(cString: $0) } ?? "unknown"
-                sqlite3_free(errMsg)
-                throw PluginDatabaseError.failedToExecute("PRAGMA failed: \(msg)")
-            }
+        // `journal_mode = WAL`, `synchronous = NORMAL`,
+        // `foreign_keys = ON`, `temp_store = MEMORY`, and the
+        // SQLCipher PRAGMAs are already applied by
+        // `EncryptedSQLiteOpener.open(...)`. Only the
+        // plugin-specific `busy_timeout` lives here so a slow
+        // plugin SQL call doesn't bail with SQLITE_BUSY when the
+        // host is doing background maintenance.
+        var errMsg: UnsafeMutablePointer<CChar>?
+        let rc = sqlite3_exec(connection, "PRAGMA busy_timeout=5000", nil, nil, &errMsg)
+        if rc != SQLITE_OK {
+            let msg = errMsg.map { String(cString: $0) } ?? "unknown"
+            sqlite3_free(errMsg)
+            throw PluginDatabaseError.failedToExecute("PRAGMA failed: \(msg)")
         }
     }
 

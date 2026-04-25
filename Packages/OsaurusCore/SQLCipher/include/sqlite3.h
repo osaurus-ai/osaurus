@@ -12880,6 +12880,29 @@ SQLITE_API int sqlite3session_config(int op, void *pArg);
 #ifndef _FTS5_H
 #define _FTS5_H
 
+/*
+ * BEGIN OSAURUS LOCAL MODIFICATION (do not remove on SQLCipher
+ * version bumps; re-apply after copying a new sqlite3.h).
+ *
+ * The FTS5 C extension API typedefs (`Fts5ExtensionApi`,
+ * `fts5_api`, …) collide with the same typedefs from Apple's
+ * system `SQLite3` module when both modules end up imported in
+ * the same Swift compilation unit. Other workspace deps (notably
+ * `vmlx-swift-lm/Libraries/MLXLMCommon/Cache/DiskCache.swift`)
+ * `import SQLite3`, so the conflict is real for our build.
+ *
+ * Osaurus only uses FTS5 from SQL (`CREATE VIRTUAL TABLE … USING
+ * fts5(…)`, `MATCH ?`), never via the `Fts5*` C extension API,
+ * so we can safely hide these declarations from the public
+ * header without losing functionality. The C compilation of the
+ * amalgamation continues to see the unmodified copy because
+ * `sqlite3.c` inlines its own sqlite3.h text — see
+ * `Packages/OsaurusCore/SQLCipher/sqlcipher_amalgamation.c`.
+ *
+ * To re-enable: drop `OSAURUS_OMIT_FTS5_HEADERS` from
+ * `Packages/OsaurusCore/Package.swift` cSettings.
+ */
+#ifndef OSAURUS_OMIT_FTS5_HEADERS
 
 #ifdef __cplusplus
 extern "C" {
@@ -13479,6 +13502,8 @@ struct fts5_api {
 #ifdef __cplusplus
 }  /* end of the 'extern "C"' block */
 #endif
+
+#endif /* OSAURUS_OMIT_FTS5_HEADERS — END OSAURUS LOCAL MODIFICATION */
 
 #endif /* _FTS5_H */
 

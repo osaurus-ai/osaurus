@@ -51,6 +51,39 @@ cp sqlite3ext.h  <osaurus>/Packages/OsaurusCore/SQLCipher/include/sqlite3ext.h
 Bump the version table above and the SQLCipher pin in the audit notes
 when you do.
 
+### Re-applying the FTS5 header guard
+
+`include/sqlite3.h` has an OSAURUS LOCAL MODIFICATION that wraps the
+entire `_FTS5_H` block in `#ifndef OSAURUS_OMIT_FTS5_HEADERS`. Without
+that guard, the FTS5 C-extension typedefs (`Fts5ExtensionApi`,
+`fts5_api`, `Fts5Context`, `Fts5PhraseIter`,
+`fts5_extension_function`) collide at Swift Clang-importer level with
+the same typedefs from Apple's system `SQLite3` module imported by
+other workspace deps (notably `vmlx-swift-lm`'s `DiskCache`).
+
+After copying a fresh `sqlite3.h` over the top, re-apply by:
+
+1. Find the `#ifndef _FTS5_H` line. Insert this block immediately
+   after `#define _FTS5_H`:
+
+   ```c
+   #ifndef OSAURUS_OMIT_FTS5_HEADERS
+   ```
+
+2. Find the matching `#endif /* _FTS5_H */` line near the end. Insert
+   immediately before it:
+
+   ```c
+   #endif /* OSAURUS_OMIT_FTS5_HEADERS — END OSAURUS LOCAL MODIFICATION */
+   ```
+
+3. Run `swift build`. If anything red, see the explainer in
+   `sqlcipher_amalgamation.c`.
+
+The amalgamation `sqlite3.c` itself is **not** modified — it inlines
+its own copy of sqlite3.h text, so the C compilation of FTS5 keeps
+working.
+
 ## Why CommonCrypto?
 
 `SQLCIPHER_CRYPTO_CC` selects Apple's CommonCrypto library as the
