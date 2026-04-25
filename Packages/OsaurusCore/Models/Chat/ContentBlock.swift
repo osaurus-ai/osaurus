@@ -295,8 +295,11 @@ extension ContentBlock {
 
         let filteredTurns = turns.filter { $0.role != .tool }
 
-        for turn in filteredTurns {
+        for (index, turn) in filteredTurns.enumerated() {
             let isStreaming = turn.id == streamingTurnId
+            let nextRole: MessageRole? = index + 1 < filteredTurns.count
+                ? filteredTurns[index + 1].role : nil
+            let isLastInGroup = nextRole != turn.role
             // User messages always start a new group (each is distinct input).
             // Assistant messages group consecutive turns (continuing responses).
             let isFirstInGroup = turn.role != previousRole || turn.role == .user
@@ -470,9 +473,10 @@ extension ContentBlock {
                 )
             }
 
-            // copy/regenerate bar pinned to the bottom of every completed assistant turn.
-            // only emitted once the turn is not streaming and has something worth acting on
-            if !isStreaming && turn.role == .assistant,
+            // copy/regenerate bar pinned to the bottom of the final completed assistant
+            // turn in a consecutive assistant group — intermediate tool-calling turns in
+            // an agent loop don't get their own footer.
+            if !isStreaming && turn.role == .assistant && isLastInGroup,
                 !turn.contentIsEmpty || !(turn.toolCalls ?? []).isEmpty
             {
                 turnBlocks.append(.assistantActions(turnId: turn.id, position: .last))
