@@ -8,18 +8,44 @@
 import Foundation
 import OsaurusRepository
 
+/// Optional call-to-action a `WhatsNewPage` can carry. The host UI handles
+/// each case as a deep link (open Settings on a specific tab, open a URL,
+/// etc.) so the view stays purely declarative.
+public enum WhatsNewAction: Hashable, Sendable {
+    /// Open Settings → Sandbox.
+    case openSandboxSettings
+    /// Open Settings → Server (where API keys are listed).
+    case openAPIKeysSettings
+    /// Open an arbitrary documentation URL in the system browser.
+    case openSecurityDoc(URL)
+}
+
 public struct WhatsNewPage: Identifiable, Hashable, Sendable {
     public let id: String
     public let title: String
     public let description: String
     /// If nil, the page shows a sparkling stars background instead of an image.
     public let imageURL: URL?
+    /// When set, the modal renders a prominent button labelled `actionLabel`
+    /// in the footer that invokes `action`. Use sparingly — most pages should
+    /// be informational only.
+    public let actionLabel: String?
+    public let action: WhatsNewAction?
 
-    public init(id: String, title: String, description: String, imageURL: URL? = nil) {
+    public init(
+        id: String,
+        title: String,
+        description: String,
+        imageURL: URL? = nil,
+        actionLabel: String? = nil,
+        action: WhatsNewAction? = nil
+    ) {
         self.id = id
         self.title = title
         self.description = description
         self.imageURL = imageURL
+        self.actionLabel = actionLabel
+        self.action = action
     }
 }
 
@@ -39,7 +65,40 @@ public enum WhatsNewContent {
     /// Release notes keyed by app version. Add a `WhatsNewRelease` entry
     /// here whose `version` matches `CFBundleShortVersionString` for each
     /// release that should announce changes on first launch after update.
-    public static let releases: [WhatsNewRelease] = []
+    public static let releases: [WhatsNewRelease] = [securityHardening_0_17_7]
+
+    /// First-launch announcement for the #950 security audit fixes.
+    /// Pages whose id ends in `:sandbox` or `:legacy-keys` are conditional
+    /// — see `WhatsNewGate.filterPages(_:hasSandbox:hasLegacyPairedKeys:)`.
+    private static let securityHardening_0_17_7 = WhatsNewRelease(
+        version: "0.17.7",
+        pages: [
+            WhatsNewPage(
+                id: "security-0.17.7:summary",
+                title: "Security update",
+                description: "Tighter sandbox isolation, agent-scoped pairings, and request size limits."
+            ),
+            WhatsNewPage(
+                id: "security-0.17.7:sandbox",
+                title: "Sandbox isolation",
+                description: "Plugins now authenticate with per-agent tokens instead of self-reported headers.",
+                actionLabel: "Open sandbox",
+                action: .openSandboxSettings
+            ),
+            WhatsNewPage(
+                id: "security-0.17.7:legacy-keys",
+                title: "Paired devices",
+                description: "New pairings are agent-scoped and expire in 90 days. Older keys are marked Legacy.",
+                actionLabel: "Review",
+                action: .openAPIKeysSettings
+            ),
+            WhatsNewPage(
+                id: "security-0.17.7:limits",
+                title: "Request limits",
+                description: "Oversized requests are rejected before auth. No action needed."
+            ),
+        ]
+    )
 
     /// Returns the release notes for `version`, if any.
     public static func release(for version: String) -> WhatsNewRelease? {

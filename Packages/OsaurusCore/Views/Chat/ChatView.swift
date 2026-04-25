@@ -2220,7 +2220,27 @@ struct ChatView: View {
                 windowState?.session.save()
             }
 
-            pendingWhatsNew = WhatsNewGate.pendingAutoShowRelease()
+            // Compute the conditional flags so we don't surface the
+            // "restart sandbox" / "review paired devices" pages to users
+            // who would have nothing to do on them.
+            let hasSandbox: Bool = {
+                #if os(macOS)
+                    if #available(macOS 26, *) {
+                        return SandboxConfigurationStore.load().setupComplete
+                    }
+                #endif
+                return false
+            }()
+            let knownAgentAddrs = Set(
+                AgentManager.shared.agents.compactMap { $0.agentAddress }
+            )
+            let hasLegacyPairedKeys = !APIKeyManager.shared
+                .legacyMasterScopedKeys(knownAgentAddresses: knownAgentAddrs)
+                .isEmpty
+            pendingWhatsNew = WhatsNewGate.pendingAutoShowRelease(
+                hasSandbox: hasSandbox,
+                hasLegacyPairedKeys: hasLegacyPairedKeys
+            )
         }
         .onDisappear {
             cleanupKeyMonitor()
@@ -2254,10 +2274,27 @@ struct ChatView: View {
         .environment(\.theme, windowState.theme)
         .tint(theme.accentColor)
         .sheet(item: $pendingWhatsNew) { release in
-            WhatsNewModal(release: release) {
-                WhatsNewGate.markShown(version: release.version)
-                pendingWhatsNew = nil
-            }
+            WhatsNewModal(
+                release: release,
+                onClose: {
+                    WhatsNewGate.markShown(version: release.version)
+                    pendingWhatsNew = nil
+                },
+                onAction: { action in
+                    // Mark the release seen first so the user can't loop
+                    // back into it if they reopen the chat window quickly.
+                    WhatsNewGate.markShown(version: release.version)
+                    pendingWhatsNew = nil
+                    switch action {
+                    case .openSandboxSettings:
+                        AppDelegate.shared?.showManagementWindow(initialTab: .sandbox)
+                    case .openAPIKeysSettings:
+                        AppDelegate.shared?.showManagementWindow(initialTab: .server)
+                    case .openSecurityDoc(let url):
+                        NSWorkspace.shared.open(url)
+                    }
+                }
+            )
             .environment(\.theme, windowState.theme)
         }
         .sheet(item: $pendingDiscoveredAgent) { agent in

@@ -297,7 +297,8 @@ extension ContentBlock {
 
         for (index, turn) in filteredTurns.enumerated() {
             let isStreaming = turn.id == streamingTurnId
-            let nextRole: MessageRole? = index + 1 < filteredTurns.count
+            let nextRole: MessageRole? =
+                index + 1 < filteredTurns.count
                 ? filteredTurns[index + 1].role : nil
             let isLastInGroup = nextRole != turn.role
             // User messages always start a new group (each is distinct input).

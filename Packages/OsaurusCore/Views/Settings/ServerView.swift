@@ -210,6 +210,11 @@ private struct AccessKeysSection: View {
     @EnvironmentObject var server: ServerController
 
     @State private var accessKeys: [AccessKeyInfo] = []
+    /// Ids of access keys that look like pre-#950 pair-issued credentials —
+    /// master-scoped + never-expiring + labelled by the old pair flow.
+    /// These grant access to every agent and never expire; we surface a
+    /// "Legacy" pill so users can choose to revoke and re-pair.
+    @State private var legacyKeyIds: Set<UUID> = []
     @State private var showingKeyGenerator = false
     @State private var newKeyLabel = ""
     @State private var newKeyExpiration: AccessKeyExpiration = .days90
@@ -392,6 +397,7 @@ private struct AccessKeysSection: View {
 
     private func accessKeyRow(_ key: AccessKeyInfo) -> some View {
         let inactive = !key.isActive
+        let isLegacy = legacyKeyIds.contains(key.id)
         return HStack(spacing: 12) {
             Image(systemName: "key.fill")
                 .font(.system(size: 11))
@@ -416,7 +422,9 @@ private struct AccessKeysSection: View {
                         keyBadge("Temporary", color: theme.warningColor)
                     }
 
-                    if key.aud == key.iss {
+                    if isLegacy {
+                        keyBadge("Legacy", color: theme.warningColor)
+                    } else if key.aud == key.iss {
                         keyBadge("All Agents", color: theme.accentColor)
                     }
                 }
@@ -439,6 +447,17 @@ private struct AccessKeysSection: View {
                         .font(.system(size: 10))
                         .foregroundColor(key.isExpired ? theme.warningColor : theme.tertiaryText)
                     }
+                }
+
+                if isLegacy {
+                    Text(
+                        "Pre-upgrade pairing — grants access to all agents and never expires. Revoke and re-pair to scope it to a single agent.",
+                        bundle: .module
+                    )
+                    .font(.system(size: 10))
+                    .foregroundColor(theme.warningColor)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 2)
                 }
             }
 
@@ -482,6 +501,17 @@ private struct AccessKeysSection: View {
 
     private func reloadAccessKeys() {
         accessKeys = APIKeyManager.shared.listKeys().sorted { $0.createdAt > $1.createdAt }
+        let knownAgentAddrs = Set(
+            AgentManager.shared.agents.compactMap { $0.agentAddress }
+        )
+        // Restrict to pair-issued keys (the old pair flow's label was
+        // "Paired – <host>") so a deliberately-generated all-agents key is
+        // not mislabelled. Combined with master-scoped + never-expiring,
+        // this is the exact pre-#950 pair-issued shape.
+        let legacy = APIKeyManager.shared
+            .legacyMasterScopedKeys(knownAgentAddresses: knownAgentAddrs)
+            .filter { $0.label.hasPrefix("Paired") }
+        legacyKeyIds = Set(legacy.map(\.id))
     }
 
     private func generateAccessKey() {

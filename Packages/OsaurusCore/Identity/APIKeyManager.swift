@@ -154,6 +154,36 @@ public final class APIKeyManager: @unchecked Sendable {
         queue.sync { keys }
     }
 
+    /// Returns active access keys that look like pre-upgrade pairings:
+    /// master-scoped (audience is *not* one of the supplied agent addresses)
+    /// and never-expiring. Such keys grant access to every agent and only
+    /// stop working when explicitly revoked.
+    ///
+    /// Pass the user's known agent addresses in `knownAgentAddresses` so
+    /// agent-scoped keys are recognised even if the master address itself is
+    /// not at hand (computing it requires biometric auth — we deliberately
+    /// avoid prompting just to flag legacy keys for the migration UI).
+    public func legacyMasterScopedKeys(
+        knownAgentAddresses: Set<String>
+    ) -> [AccessKeyInfo] {
+        let lowerAgents = Set(knownAgentAddresses.map { $0.lowercased() })
+        return queue.sync {
+            keys.filter { Self.isLegacyMasterScopedKey($0, knownAgentAddressesLower: lowerAgents) }
+        }
+    }
+
+    /// Pure predicate behind `legacyMasterScopedKeys` so tests can verify
+    /// the classification logic without touching Keychain. `knownAgentAddressesLower`
+    /// must already be lower-cased — the surrounding helper does this once.
+    public static func isLegacyMasterScopedKey(
+        _ info: AccessKeyInfo,
+        knownAgentAddressesLower: Set<String>
+    ) -> Bool {
+        info.isActive
+            && info.expiration == .never
+            && !knownAgentAddressesLower.contains(info.aud.lowercased())
+    }
+
     // MARK: - Delete All
 
     public func deleteAll() {

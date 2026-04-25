@@ -12,12 +12,21 @@ public struct WhatsNewModal: View {
 
     let release: WhatsNewRelease
     let onClose: () -> Void
+    /// Invoked when a page's CTA button is tapped. Closing the modal is up
+    /// to the caller — most actions navigate elsewhere (Settings, browser),
+    /// so the host typically calls `onClose` after handling the deep link.
+    let onAction: ((WhatsNewAction) -> Void)?
 
     @State private var currentIndex: Int = 0
 
-    public init(release: WhatsNewRelease, onClose: @escaping () -> Void) {
+    public init(
+        release: WhatsNewRelease,
+        onClose: @escaping () -> Void,
+        onAction: ((WhatsNewAction) -> Void)? = nil
+    ) {
         self.release = release
         self.onClose = onClose
+        self.onAction = onAction
     }
 
     public var body: some View {
@@ -115,6 +124,26 @@ public struct WhatsNewModal: View {
         HStack {
             arrowButton(systemName: "chevron.left", action: goBack, disabled: currentIndex == 0)
             Spacer()
+            // Optional per-page CTA between the chevrons.
+            if let label = release.pages[currentIndex].actionLabel,
+                let action = release.pages[currentIndex].action
+            {
+                Button {
+                    onAction?(action)
+                } label: {
+                    Text(label)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Color.white)
+                        .padding(.horizontal, 14)
+                        .frame(height: 30)
+                        .background(
+                            Capsule().fill(theme.accentColor)
+                        )
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 8)
+                Spacer()
+            }
             arrowButton(
                 systemName: isLastPage ? "checkmark" : "chevron.right",
                 action: goNext,

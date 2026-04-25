@@ -39,6 +39,17 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         var corsHeaders: [(String, String)] = []
         var requestStartTime: Date = Date()
         var normalizedPath: String = ""
+        /// Cached body-size cap for the current request (route-aware).
+        /// `Int.max` means "no in-handler cap"; tests that want disable can
+        /// also rely on this. Set at `.head`.
+        var bodyByteLimit: Int = Int.max
+        /// Running total of accumulated body bytes. Used by the streaming
+        /// guard so a chunked client cannot bypass the Content-Length check.
+        var bodyBytesSeen: Int = 0
+        /// Set when the request has already been rejected with 413 so any
+        /// subsequent `.body` / `.end` parts are dropped without further
+        /// allocation or routing.
+        var rejectedTooLarge: Bool = false
     }
     let stateRef: NIOLoopBound<RequestState>
 
@@ -73,23 +84,52 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         case .head(let head):
             stateRef.value.requestHead = head
             stateRef.value.requestStartTime = Date()
-            // Compute CORS headers for this request
+            stateRef.value.bodyBytesSeen = 0
+            stateRef.value.rejectedTooLarge = false
             stateRef.value.corsHeaders = computeCORSHeaders(for: head, isPreflight: false)
-            // Pre-size body buffer if Content-Length is available
-            if let lengthStr = head.headers.first(name: "Content-Length"), let length = Int(lengthStr),
-                length > 0
+            stateRef.value.bodyByteLimit = bodyByteLimit(for: head)
+
+            // Reject before allocating the body buffer so a client lying
+            // about Content-Length can't force a huge allocation up front.
+            if let lengthStr = head.headers.first(name: "Content-Length"),
+                let length = Int(lengthStr)
             {
+                if length > stateRef.value.bodyByteLimit {
+                    rejectPayloadTooLarge(
+                        context: context,
+                        head: head,
+                        declaredLength: length,
+                        limit: stateRef.value.bodyByteLimit
+                    )
+                    return
+                }
                 stateRef.value.requestBodyBuffer = context.channel.allocator.buffer(capacity: length)
             } else {
                 stateRef.value.requestBodyBuffer = context.channel.allocator.buffer(capacity: 0)
             }
 
         case .body(var buffer):
-            // Collect body data directly into a ByteBuffer
+            if stateRef.value.rejectedTooLarge { return }
+
             if stateRef.value.requestBodyBuffer == nil {
                 stateRef.value.requestBodyBuffer = context.channel.allocator.buffer(
                     capacity: buffer.readableBytes
                 )
+            }
+            // Streaming guard catches chunked clients and any client whose
+            // body grows past the cap mid-stream. Counter is bumped before
+            // append so an oversize chunk never lands in our buffer.
+            stateRef.value.bodyBytesSeen += buffer.readableBytes
+            if stateRef.value.bodyBytesSeen > stateRef.value.bodyByteLimit,
+                let head = stateRef.value.requestHead
+            {
+                rejectPayloadTooLarge(
+                    context: context,
+                    head: head,
+                    declaredLength: stateRef.value.bodyBytesSeen,
+                    limit: stateRef.value.bodyByteLimit
+                )
+                return
             }
             if var existing = stateRef.value.requestBodyBuffer {
                 existing.writeBuffer(&buffer)
@@ -97,6 +137,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             }
 
         case .end:
+            if stateRef.value.rejectedTooLarge {
+                stateRef.value.requestHead = nil
+                stateRef.value.requestBodyBuffer = nil
+                return
+            }
             guard let head = stateRef.value.requestHead else {
                 sendBadRequest(context: context)
                 return
@@ -1180,6 +1225,54 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         )
     }
 
+    /// Decide the body-byte cap for the request based on its route. Most
+    /// endpoints get the generic configuration limit; `/pair` is tighter
+    /// because it is unauthenticated and only ever carries a small JSON
+    /// envelope.
+    private func bodyByteLimit(for head: HTTPRequestHead) -> Int {
+        let path = normalize(extractPath(from: head.uri))
+        if path == "/pair" {
+            return configuration.maxPairingBodyBytes
+        }
+        return configuration.maxRequestBodyBytes
+    }
+
+    /// Reply 413 Payload Too Large, log the rejection so it shows up in the
+    /// request log, mark the request as rejected so subsequent body parts
+    /// are dropped, and close the connection. We do this *before* the auth
+    /// gate so an unauthenticated client cannot OOM the server.
+    private func rejectPayloadTooLarge(
+        context: ChannelHandlerContext,
+        head: HTTPRequestHead,
+        declaredLength: Int,
+        limit: Int
+    ) {
+        stateRef.value.rejectedTooLarge = true
+        stateRef.value.requestBodyBuffer = nil
+
+        let path = normalize(extractPath(from: head.uri))
+        let body =
+            #"{"error":{"message":"Request body too large (\#(declaredLength) > \#(limit) bytes)","type":"payload_too_large"}}"#
+        var headers = [("Content-Type", "application/json; charset=utf-8")]
+        headers.append(contentsOf: stateRef.value.corsHeaders)
+        sendResponse(
+            context: context,
+            version: head.version,
+            status: .payloadTooLarge,
+            headers: headers,
+            body: body
+        )
+        logRequest(
+            method: head.method.rawValue,
+            path: path,
+            userAgent: head.headers.first(name: "User-Agent"),
+            requestBody: nil,
+            responseBody: body,
+            responseStatus: 413,
+            startTime: stateRef.value.requestStartTime
+        )
+    }
+
     private func sendResponse(
         context: ChannelHandlerContext,
         version: HTTPVersion,
@@ -1641,16 +1734,48 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
             let isPermanent = approval.isPermanent
 
-            // 4. Generate a master-scoped osk-v1 API key (agentIndex: nil) so its
-            //    aud == masterAddress, which always passes the server validator's
-            //    audience check regardless of which agent the connector targets.
-            //    This triggers biometric auth to access the Master Key.
+            // 4. Generate an *agent-scoped* osk-v1 API key. The token's `aud`
+            //    is the agent's address, so it cannot be presented to other
+            //    agents — pre-fix this minted a master-scoped, never-expiring
+            //    key after agent-specific approval, a hidden privilege upgrade.
+            //
+            //    Default to a 90-day expiry; only mint with `.never` when the
+            //    user explicitly opts in via the approval dialog's "Make this
+            //    access permanent" toggle.
+            //
+            //    Generating the key triggers biometric auth to derive the
+            //    agent key from the Master Key.
             let label = "Paired – \(pairingHost)"
+            guard let agentIndex = agent.agentIndex else {
+                hop {
+                    var headers = [("Content-Type", "application/json; charset=utf-8")]
+                    headers.append(contentsOf: cors)
+                    let body = #"{"error":"Agent is missing a derived key index"}"#
+                    self.sendResponse(
+                        context: ctx.value,
+                        version: head.version,
+                        status: .internalServerError,
+                        headers: headers,
+                        body: body
+                    )
+                    logSelf.logRequest(
+                        method: "POST",
+                        path: "/pair",
+                        userAgent: logUserAgent,
+                        requestBody: logRequestBody,
+                        responseBody: body,
+                        responseStatus: 500,
+                        startTime: logStartTime
+                    )
+                }
+                return
+            }
+            let expiration: AccessKeyExpiration = isPermanent ? .never : .days90
             guard
                 let (fullKey, keyInfo) = try? APIKeyManager.shared.generate(
                     label: label,
-                    expiration: .never,
-                    agentIndex: nil
+                    expiration: expiration,
+                    agentIndex: agentIndex
                 )
             else {
                 hop {
@@ -1687,6 +1812,18 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let json =
                 (try? JSONEncoder().encode(response)).map { String(decoding: $0, as: UTF8.self) }
                 ?? #"{"error":"Encoding failed"}"#
+            // Never log the freshly minted key. The wire response still
+            // contains it; the request log gets a redacted copy with the
+            // same shape so operators can see "this pairing happened" without
+            // recovering the credential from the ring buffer.
+            let redactedResponse = PairResponse(
+                agentAddress: agentAddress,
+                apiKey: "<redacted>",
+                isPermanent: isPermanent
+            )
+            let redactedJson =
+                (try? JSONEncoder().encode(redactedResponse)).map { String(decoding: $0, as: UTF8.self) }
+                ?? #"{"agentAddress":"<redacted>","apiKey":"<redacted>"}"#
 
             hop {
                 var headers = [("Content-Type", "application/json; charset=utf-8")]
@@ -1697,7 +1834,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     path: "/pair",
                     userAgent: logUserAgent,
                     requestBody: logRequestBody,
-                    responseBody: json,
+                    responseBody: redactedJson,
                     responseStatus: 200,
                     startTime: logStartTime
                 )

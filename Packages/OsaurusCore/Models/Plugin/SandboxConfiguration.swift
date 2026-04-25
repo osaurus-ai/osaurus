@@ -18,13 +18,21 @@ public struct SandboxConfiguration: Codable, Sendable, Equatable {
     public var autoStart: Bool
     /// True once the user has completed initial sandbox setup at least once.
     public var setupComplete: Bool
+    /// `CFBundleShortVersionString` of the binary that last successfully
+    /// provisioned this container. Used by the migration banner to tell the
+    /// user when a security update needs them to restart the sandbox so the
+    /// new shim and per-agent token files can be written into the guest.
+    /// `nil` for installs that pre-date this field; treated as "needs
+    /// restart" by `needsBridgeMigrationRestart`.
+    public var lastProvisionedAppVersion: String?
 
     public static let `default` = SandboxConfiguration(
         cpus: 2,
         memoryGB: 2,
         network: "outbound",
         autoStart: true,
-        setupComplete: false
+        setupComplete: false,
+        lastProvisionedAppVersion: nil
     )
 
     public init(
@@ -32,13 +40,15 @@ public struct SandboxConfiguration: Codable, Sendable, Equatable {
         memoryGB: Int = 2,
         network: String = "outbound",
         autoStart: Bool = true,
-        setupComplete: Bool = false
+        setupComplete: Bool = false,
+        lastProvisionedAppVersion: String? = nil
     ) {
         self.cpus = cpus
         self.memoryGB = memoryGB
         self.network = network
         self.autoStart = autoStart
         self.setupComplete = setupComplete
+        self.lastProvisionedAppVersion = lastProvisionedAppVersion
     }
 
     public init(from decoder: Decoder) throws {
@@ -48,6 +58,8 @@ public struct SandboxConfiguration: Codable, Sendable, Equatable {
         network = try container.decode(String.self, forKey: .network)
         autoStart = try container.decode(Bool.self, forKey: .autoStart)
         setupComplete = try container.decodeIfPresent(Bool.self, forKey: .setupComplete) ?? true
+        lastProvisionedAppVersion =
+            try container.decodeIfPresent(String.self, forKey: .lastProvisionedAppVersion)
     }
 }
 

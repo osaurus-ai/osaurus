@@ -161,7 +161,7 @@ struct ModelFilterPerformanceTests {
         // so we only exercise the Performance dimension here and confirm
         // a missing-param model drops out when paramCategory is set.
         let models = [
-            Self.model("small", gbOnDisk: 2.0),
+            Self.model("small", gbOnDisk: 2.0)
         ]
         var state = ModelManager.ModelFilterState()
         state.performance = .runsWell

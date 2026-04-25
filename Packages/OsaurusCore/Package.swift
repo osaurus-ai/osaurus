@@ -14,10 +14,21 @@ let package = Package(
         .package(url: "https://github.com/orlandos-nl/IkigaJSON", from: "2.3.2"),
         .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.7.0"),
         .package(url: "https://github.com/osaurus-ai/mlx-swift", branch: "osaurus-0.31.3"),
-        .package(url: "https://github.com/osaurus-ai/vmlx-swift-lm", branch: "main"),
+        // Pinned by commit (was `branch: "main"`) so the runtime can't change
+        // under us between identical osaurus source revisions. Bump
+        // intentionally when validating a new upstream commit.
+        .package(
+            url: "https://github.com/osaurus-ai/vmlx-swift-lm",
+            revision: "5833aac4d91fcdce03770f573c97c6ec48045ac4"
+        ),
         .package(url: "https://github.com/huggingface/swift-transformers", from: "1.1.6"),
         .package(url: "https://github.com/FluidInference/FluidAudio.git", from: "0.14.0"),
-        .package(url: "https://github.com/rryam/VecturaKit", branch: "main"),
+        // Pinned by commit (was `branch: "main"`) — same reasoning as
+        // vmlx-swift-lm above.
+        .package(
+            url: "https://github.com/rryam/VecturaKit",
+            revision: "a1b93774d16d8a6e7fc39b7cda9449b719f07f48"
+        ),
         .package(url: "https://github.com/21-DOT-DEV/swift-secp256k1", exact: "0.21.1"),
         .package(path: "../OsaurusRepository"),
         .package(url: "https://github.com/mgriebling/SwiftMath", from: "1.7.3"),

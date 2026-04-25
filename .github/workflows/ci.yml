@@ -28,7 +28,9 @@ env:
 
 jobs:
   test-core:
-    runs-on: macos-latest
+    # Pinned (was `macos-latest`) so a runner image bump can't quietly
+    # change the build environment under us.
+    runs-on: macos-26
     # 30 min, not 15. Two-bucket budget:
     #   ~13–14 min — full cold build (mlx-swift `Cmlx` C++ + OsaurusCore +
     #                 OsaurusCoreTests Swift) when both SPM and DerivedData
@@ -264,7 +266,8 @@ jobs:
           key: ${{ steps.dd-cache.outputs.cache-primary-key }}
 
   test-cli:
-    runs-on: macos-latest
+    # Pinned (was `macos-latest`).
+    runs-on: macos-26
     timeout-minutes: 10
     steps:
       - name: Checkout code
@@ -290,7 +293,8 @@ jobs:
         run: echo "::notice title=test-cli duration::$SECONDS seconds"
 
   swiftlint:
-    runs-on: macos-latest
+    # Pinned (was `macos-latest`).
+    runs-on: macos-26
     timeout-minutes: 10
     steps:
       - name: Checkout code
