@@ -170,9 +170,11 @@ public enum MCPProviderConfigurationStore {
                 print("[Osaurus] Failed to load MCPProviderConfiguration: \(error)")
             }
         }
-        let defaults = MCPProviderConfiguration()
-        save(defaults)
-        return defaults
+        // CRITICAL: see RemoteProviderConfigurationStore.load — never
+        // auto-save an empty default. Doing so used to race the
+        // v1→v2 storage migrator and silently destroyed the user's
+        // real provider list when the .osec twin was discarded.
+        return MCPProviderConfiguration()
     }
 
     public static func save(_ configuration: MCPProviderConfiguration) {

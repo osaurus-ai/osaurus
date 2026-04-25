@@ -376,11 +376,16 @@ public enum RemoteProviderConfigurationStore {
     public static func load() -> RemoteProviderConfiguration {
         let url = configurationFileURL()
 
+        // CRITICAL: do NOT auto-save an empty default when the file
+        // is missing. The 2026-04 storage-migration race showed this
+        // pattern silently destroys provider data: the migrator's
+        // v1→v2 recovery would later see an empty plaintext file
+        // already on disk, treat it as authoritative, and discard
+        // the encrypted twin holding the real configuration. By
+        // returning defaults in-memory only, the file stays absent
+        // until something explicitly saves it (a real user edit).
         guard FileManager.default.fileExists(atPath: url.path) else {
-            // File doesn't exist yet – create an empty default.
-            let defaults = RemoteProviderConfiguration()
-            save(defaults)
-            return defaults
+            return RemoteProviderConfiguration()
         }
 
         do {

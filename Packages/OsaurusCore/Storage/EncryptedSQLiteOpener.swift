@@ -10,7 +10,9 @@
 //  Sequence (matches SQLCipher's required order — cipher_* PRAGMAs
 //  must run BEFORE the first non-PRAGMA read):
 //    1. sqlite3_open(path)
-//    2. sqlite3_key_v2(db, nil, key, len)
+//    2. sqlite3_key_v2(db, nil, "x'<64-hex>'", 67)   (raw-key form;
+//       see `rawKeyBlob` doc — anything else triggers PBKDF2 and
+//       silently mismatches the migrator)
 //    3. PRAGMA cipher_memory_security = OFF   (perf, OS already protects)
 //    4. PRAGMA cipher_page_size = 4096
 //    5. PRAGMA kdf_iter = 256000              (SQLCipher 4 default)
@@ -89,10 +91,9 @@ public enum EncryptedSQLiteOpener {
     /// Re-key an already-open SQLCipher database. Used by `rotate()`
     /// in `StorageKeyManager` and by tests. Wrong source key throws.
     public static func rekey(connection: OpaquePointer, newKey: SymmetricKey) throws {
-        let bytes = newKey.withUnsafeBytes { Data($0) }
-        let result: Int32 = bytes.withUnsafeBytes { (raw: UnsafeRawBufferPointer) -> Int32 in
-            guard let base = raw.baseAddress else { return SQLITE_NOMEM }
-            return sqlite3_rekey_v2(connection, nil, base, Int32(raw.count))
+        let blob = rawKeyBlob(newKey)
+        let result = blob.withCString { ptr in
+            sqlite3_rekey_v2(connection, nil, ptr, Int32(blob.utf8.count))
         }
         guard result == SQLITE_OK else {
             throw EncryptedSQLiteError.keyVerificationFailed(String(cString: sqlite3_errmsg(connection)))
@@ -101,11 +102,34 @@ public enum EncryptedSQLiteOpener {
 
     // MARK: - Internals
 
+    /// CRITICAL: SQLCipher's `sqlite3_key_v2` API accepts EITHER a
+    /// passphrase OR a raw key blob. The discriminator is the
+    /// **byte content** of the key argument:
+    ///
+    ///   - 32 raw bytes from `SecRandomCopyBytes` → SQLCipher treats
+    ///     them as a passphrase and runs PBKDF2(key, salt, kdf_iter).
+    ///   - The literal ASCII string `x'<64-hex>'` (67 bytes) →
+    ///     SQLCipher interprets it as a raw 256-bit key, NO PBKDF2.
+    ///
+    /// The migrator (`StorageMigrator.migrateOneDatabase`) writes
+    /// every encrypted database with the raw-key form via
+    /// `ATTACH DATABASE … KEY "x'<hex>'"`, so every open MUST also
+    /// use the raw-key form or HMAC verification fails on page 1.
+    /// Using `sqlite3_key_v2` with the raw 32 bytes is the
+    /// pre-fix bug that produced
+    ///     ERROR CORE sqlcipher_page_cipher: hmac check failed for pgno=1
+    /// even though the Keychain bytes hadn't changed.
+    private static func rawKeyBlob(_ key: SymmetricKey) -> String {
+        let hex = key.withUnsafeBytes { raw in
+            raw.map { String(format: "%02x", $0) }.joined()
+        }
+        return "x'\(hex)'"
+    }
+
     private static func applyKey(connection: OpaquePointer, key: SymmetricKey) throws {
-        let bytes = key.withUnsafeBytes { Data($0) }
-        let result: Int32 = bytes.withUnsafeBytes { (raw: UnsafeRawBufferPointer) -> Int32 in
-            guard let base = raw.baseAddress else { return SQLITE_NOMEM }
-            return sqlite3_key_v2(connection, nil, base, Int32(raw.count))
+        let blob = rawKeyBlob(key)
+        let result = blob.withCString { ptr in
+            sqlite3_key_v2(connection, nil, ptr, Int32(blob.utf8.count))
         }
         guard result == SQLITE_OK else {
             throw EncryptedSQLiteError.openFailed("sqlite3_key_v2 returned \(result)")

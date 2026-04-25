@@ -46,10 +46,12 @@ public final class AppConfiguration: ObservableObject {
 
     private static func loadFromDisk() -> ChatConfiguration {
         let url = configFileURL()
+        // CRITICAL: see RemoteProviderConfigurationStore.load — never
+        // auto-save an empty default on missing-file. The 2026-04
+        // storage-migration recovery race showed this pattern can
+        // permanently destroy user data.
         guard FileManager.default.fileExists(atPath: url.path) else {
-            let defaults = ChatConfiguration.default
-            saveToDisk(defaults)
-            return defaults
+            return ChatConfiguration.default
         }
         do {
             let data = try Data(contentsOf: url)

@@ -569,13 +569,28 @@ public actor StorageMigrator {
     /// consuming stores how to read `.osec`). Walks every directory
     /// under `~/.osaurus/` once, restores any `.osec` JSON twin
     /// back to plaintext at its original location, and removes the
-    /// `.osec`. Preference order:
+    /// `.osec`.
     ///
-    ///   1. Identical plaintext already at the destination →
-    ///      just remove the orphan `.osec`.
-    ///   2. Pre-encryption backup at
-    ///      `.pre-encryption-backup/json/<basename>` → copy back.
-    ///   3. AES-GCM decrypt the `.osec` in place.
+    /// CRITICAL data-safety contract (2026-04 incident, providers/
+    /// remote.json wipe): the `.osec` is the ground truth of what
+    /// the user actually had. Any plaintext file already at the
+    /// destination was almost certainly written by a consuming
+    /// store that found no `.json`, called its own `load()`, got
+    /// an empty default from `init()`, and persisted that empty
+    /// state. Trusting that plaintext over the `.osec` silently
+    /// deletes user data.
+    ///
+    /// Preference order, post-fix:
+    ///
+    ///   1. AES-GCM-decrypt the `.osec`. This is the user's data.
+    ///   2. Compare with any plaintext already at the destination.
+    ///      - Bytes identical → no-op, just remove the `.osec`.
+    ///      - Bytes differ → write decrypted content to the
+    ///        destination and stash the previous plaintext as a
+    ///        sibling `<name>.replaced-by-recovery.json` so the
+    ///        user can manually merge if anything was newer.
+    ///   3. If the `.osec` itself can't be decrypted (key drift,
+    ///      truncation), fall back to the backup directory.
     ///
     /// Returns the number of files restored. Idempotent and cheap
     /// when there's nothing to recover (single tree walk that prunes
@@ -620,36 +635,77 @@ public actor StorageMigrator {
             // .osec files in `chat-history/blobs/` are pruned above.
             guard plaintextURL.pathExtension.lowercased() == "json" else { continue }
 
-            // Case 1: plaintext already present (e.g. user manually
-            // restored, or the consuming store wrote a fresh
-            // default while we were broken). Keep what's on disk.
-            if fm.fileExists(atPath: plaintextURL.path) {
-                try? fm.removeItem(at: url)
-                continue
-            }
-
-            // Case 2: pre-encryption backup has the original.
-            if let src = backupIndex[plaintextURL.lastPathComponent],
-                let _ = try? fm.copyItem(at: src, to: plaintextURL)
-            {
-                try? fm.removeItem(at: url)
-                restored += 1
-                continue
-            }
-
-            // Case 3: decrypt in place.
-            if let data = try? EncryptedFileStore.read(url, key: key) {
-                do {
-                    try data.write(to: plaintextURL, options: [.atomic])
+            // Step 1: decrypt the .osec. This is what the user
+            // actually had before the buggy v1 migration. We do
+            // this BEFORE inspecting the on-disk plaintext so the
+            // .osec's authority is never traded away based on a
+            // file the consuming store just synthesized.
+            guard let osecData = try? EncryptedFileStore.read(url, key: key) else {
+                // Decrypt failed (key drift, truncation). Try the
+                // pre-encryption backup as a last resort.
+                if !fm.fileExists(atPath: plaintextURL.path),
+                    let src = backupIndex[plaintextURL.lastPathComponent],
+                    let _ = try? fm.copyItem(at: src, to: plaintextURL)
+                {
                     try? fm.removeItem(at: url)
                     restored += 1
-                } catch {
                     log.warning(
-                        "v1→v2 recovery: failed to write \(plaintextURL.lastPathComponent): \(error.localizedDescription)"
+                        "v1→v2 recovery: decrypt failed for \(url.lastPathComponent), restored from backup"
+                    )
+                } else {
+                    log.error(
+                        "v1→v2 recovery: decrypt AND backup BOTH failed for \(url.lastPathComponent) — leaving .osec in place for forensics"
                     )
                 }
-            } else {
-                log.warning("v1→v2 recovery: no backup AND decrypt failed for \(url.lastPathComponent)")
+                continue
+            }
+
+            // Step 2: reconcile against any existing plaintext.
+            if fm.fileExists(atPath: plaintextURL.path) {
+                let existing = (try? Data(contentsOf: plaintextURL)) ?? Data()
+                if existing == osecData {
+                    // Already in sync — recovery already ran or
+                    // the user manually restored. Just clean up.
+                    try? fm.removeItem(at: url)
+                    continue
+                }
+
+                // Plaintext exists AND differs from the .osec.
+                // Almost always: consuming store wrote an empty
+                // default while we were broken. Stash the
+                // existing file before overwriting so a paranoid
+                // user can diff/merge.
+                let archive =
+                    plaintextURL
+                    .deletingLastPathComponent()
+                    .appendingPathComponent(
+                        plaintextURL.deletingPathExtension().lastPathComponent
+                            + ".replaced-by-recovery.json"
+                    )
+                try? fm.removeItem(at: archive)
+                if (try? fm.moveItem(at: plaintextURL, to: archive)) != nil {
+                    log.notice(
+                        "v1→v2 recovery: archived existing \(plaintextURL.lastPathComponent) (\(existing.count) bytes) → \(archive.lastPathComponent) before restoring \(osecData.count)-byte .osec"
+                    )
+                } else {
+                    // Couldn't archive (read-only?). Don't proceed
+                    // with the destructive write either.
+                    log.error(
+                        "v1→v2 recovery: cannot archive existing \(plaintextURL.lastPathComponent); leaving both files in place"
+                    )
+                    continue
+                }
+            }
+
+            // Step 3: write the decrypted content into place.
+            do {
+                try osecData.write(to: plaintextURL, options: [.atomic])
+                try? fm.removeItem(at: url)
+                restored += 1
+            } catch {
+                log.warning(
+                    "v1→v2 recovery: failed to write \(plaintextURL.lastPathComponent): \(error.localizedDescription)"
+                )
             }
         }
         return restored

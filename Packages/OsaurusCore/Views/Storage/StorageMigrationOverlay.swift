@@ -58,9 +58,12 @@ public final class StorageMigrationCoordinator: ObservableObject {
     /// `blockingAwaitReady` fast path. Reads happen from arbitrary
     /// threads (every `*Database.open()` hits the gate
     /// defensively); writes happen on the main actor via the
-    /// `didSet` blocks above.
-    nonisolated(unsafe) private static let isReadyAtomic = AtomicBool(false)
-    nonisolated(unsafe) private static let isMutatingAtomic = AtomicBool(false)
+    /// `didSet` blocks above. The constants need to escape the
+    /// `@MainActor` isolation of the enclosing class for the
+    /// fast-path readers — `AtomicBool` is `Sendable` so plain
+    /// `nonisolated` is sufficient (no `(unsafe)`).
+    nonisolated private static let isReadyAtomic = AtomicBool(false)
+    nonisolated private static let isMutatingAtomic = AtomicBool(false)
 
     private var panel: NSPanel?
     private var migrationTask: Task<Void, Never>?

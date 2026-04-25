@@ -21,9 +21,11 @@ enum ToolConfigurationStore {
                 print("[Osaurus] Failed to load ToolConfiguration: \(error)")
             }
         }
-        let defaults = ToolConfiguration()
-        save(defaults)
-        return defaults
+        // CRITICAL: see RemoteProviderConfigurationStore.load — never
+        // auto-save an empty default on missing-file. The 2026-04
+        // storage-migration recovery race showed this pattern can
+        // permanently destroy user data.
+        return ToolConfiguration()
     }
 
     static func save(_ configuration: ToolConfiguration) {
