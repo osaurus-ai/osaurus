@@ -134,7 +134,12 @@ final class NativeMarkdownView: NSView {
         lastThemeFingerprint = themeFingerprint
         lastIsStreaming = isStreaming
 
-        if let cached = ThreadCache.shared.markdown(for: text) {
+        // while streaming, hide raw inline delimiters that haven't received their closer
+        // yet. the cache key is the balanced text so the
+        // post-stream final render which uses the unmodified input gets a fresh parse
+        let parseInput = isStreaming ? StreamingMarkdownBalancer.balance(text) : text
+
+        if let cached = ThreadCache.shared.markdown(for: parseInput) {
             applySegments(
                 cached.segments,
                 cacheKey: cacheKey,
@@ -147,9 +152,9 @@ final class NativeMarkdownView: NSView {
             return
         }
 
-        let blocks = parseBlocks(text)
+        let blocks = parseBlocks(parseInput)
         let segs = groupBlocksIntoSegments(blocks)
-        ThreadCache.shared.setMarkdown(blocks: blocks, segments: segs, for: text)
+        ThreadCache.shared.setMarkdown(blocks: blocks, segments: segs, for: parseInput)
         applySegments(segs, cacheKey: cacheKey, textChanged: true, widthChanged: false, width: width, theme: theme)
         lastText = text
     }
