@@ -117,6 +117,15 @@ public enum EncryptedSQLiteOpener {
         // perf win and is acceptable for an OS-protected user-mode app.
         try executePragma(connection, "PRAGMA cipher_memory_security = OFF")
         try executePragma(connection, "PRAGMA cipher_page_size = 4096")
+        // SQLCipher 4 default. We can't lower it on existing DBs
+        // (the iteration count is burned into the file header and
+        // must match on open), so the launch-time PBKDF2 cost is
+        // instead capped upstream by lazy-opening per-plugin DBs
+        // — see `PluginHostAPI.ensureDatabaseOpen()`. A future v3
+        // `PRAGMA rekey` migration could drop this to ~4000 if we
+        // want broader startup speedup; our key is a 256-bit
+        // CSPRNG output so PBKDF2 stretching is overhead, not
+        // protection.
         try executePragma(connection, "PRAGMA kdf_iter = 256000")
     }
 

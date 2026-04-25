@@ -37,6 +37,9 @@ public struct StorageSettingsView: View {
             if let outcome = lastOutcome, !outcome.failedTargets.isEmpty {
                 partialFailureCard(outcome: outcome)
             }
+            if let outcome = lastOutcome, outcome.jsonFilesRecovered > 0 {
+                recoveryCard(outcome: outcome)
+            }
             if !keyMismatchTargets.isEmpty {
                 keyMismatchCard
             }
@@ -133,6 +136,32 @@ public struct StorageSettingsView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: 10).fill(Color.orange.opacity(0.08)))
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.orange.opacity(0.4)))
+    }
+
+    /// Shown after a v1→v2 launch where the migrator restored
+    /// `.osec` JSON files back to plaintext (the bug recovery path
+    /// — see `StorageMigrator.recoverEncryptedJSON`). Quiet
+    /// confirmation that the user's agents/themes/config are back.
+    private func recoveryCard(outcome: StorageMigrator.OutcomeSummary) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "arrow.clockwise.circle.fill")
+                .foregroundStyle(Color.blue)
+                .font(.title3)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Restored \(outcome.jsonFilesRecovered) configuration file(s)")
+                    .foregroundStyle(theme.primaryText)
+                    .font(.callout.weight(.medium))
+                Text(
+                    "An earlier build encrypted these by mistake. They're now back as plaintext where the app expects them."
+                )
+                .font(.caption)
+                .foregroundStyle(theme.secondaryText)
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 10).fill(Color.blue.opacity(0.06)))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.blue.opacity(0.25)))
     }
 
     /// Shown when one or more encrypted DBs exist but can't be opened

@@ -38,15 +38,29 @@ public final class StorageMigrationCoordinator: ObservableObject {
     @Published public private(set) var progress: StorageMigrator.Progress?
     @Published public private(set) var lastError: String?
 
-    /// True once `awaitReady` has resolved at least once. Cheap to
-    /// poll — synchronous gates use this as a fast-path.
-    @Published public private(set) var isReady: Bool = false
+    /// True once `awaitReady` has resolved at least once. Mirrored
+    /// to the lock-free `Self.isReadyAtomic` so the synchronous
+    /// `blockingAwaitReady()` fast path can poll without hopping
+    /// onto the main actor.
+    @Published public private(set) var isReady: Bool = false {
+        didSet { Self.isReadyAtomic.store(isReady) }
+    }
 
     /// Set by `StorageExportService.rotateStorageKey` while it is
     /// actively re-encrypting databases. While true, every gate
     /// (`awaitReady`, `blockingAwaitReady`) blocks new callers so
     /// they don't race a half-rotated key.
-    @Published public private(set) var isMutating: Bool = false
+    @Published public private(set) var isMutating: Bool = false {
+        didSet { Self.isMutatingAtomic.store(isMutating) }
+    }
+
+    /// Cross-thread mirrors of `isReady` / `isMutating` for the
+    /// `blockingAwaitReady` fast path. Reads happen from arbitrary
+    /// threads (every `*Database.open()` hits the gate
+    /// defensively); writes happen on the main actor via the
+    /// `didSet` blocks above.
+    nonisolated(unsafe) private static let isReadyAtomic = AtomicBool(false)
+    nonisolated(unsafe) private static let isMutatingAtomic = AtomicBool(false)
 
     private var panel: NSPanel?
     private var migrationTask: Task<Void, Never>?
@@ -107,25 +121,33 @@ public final class StorageMigrationCoordinator: ObservableObject {
     }
 
     /// Synchronous gate for callers that can't go async (HTTP
-    /// request handlers reaching for `ChatHistoryDatabase.shared`,
-    /// `ChatSessionStore`, etc.). Blocks the calling thread until
-    /// `awaitReady` resolves.
+    /// handlers, `*Database.open()` defensive paths, etc.). The
+    /// fast path is **completely lock-free and main-actor-free**:
+    /// we just read the atomic latches and return. This matters
+    /// because the gate is called from every `*Database.open()`,
+    /// which fires hundreds of times during launch on installs
+    /// with many plugins. The previous implementation always
+    /// scheduled a `Task @MainActor` to check `isReady`, then
+    /// blocked the calling thread on a semaphore until that task
+    /// drained — fine off-main, but a death-by-a-thousand-cuts
+    /// stall on the main actor when the post-launch
+    /// `PluginManager.loadAll()` had it tied up for several
+    /// seconds and watched as the watchdog reported the main
+    /// thread blocked.
     ///
-    /// On the main thread, spins the default run-loop mode so the
-    /// migration overlay keeps painting + the user can still move
-    /// the panel around. Off the main thread, just blocks on a
-    /// semaphore.
-    ///
-    /// Exposed as a `nonisolated` static so non-main callsites can
-    /// invoke it without first hopping onto the main actor to read
-    /// `.shared` (which would itself require an `await`).
+    /// The slow path (only hit before the migrator has finished —
+    /// realistically just the very first launch) still uses the
+    /// semaphore + runloop spin so the migration overlay can
+    /// paint and accept events while we wait.
     nonisolated public static func blockingAwaitReady() {
+        // Fast path: lock-free atomic poll, no Task scheduling.
+        if isReadyAtomic.load(), !isMutatingAtomic.load() {
+            return
+        }
+
+        // Slow path: actually drive (or wait for) the migration.
         let semaphore = DispatchSemaphore(value: 0)
         Task { @MainActor in
-            if shared.isReady {
-                semaphore.signal()
-                return
-            }
             await shared.awaitReady()
             semaphore.signal()
         }

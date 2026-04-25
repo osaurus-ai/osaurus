@@ -67,6 +67,19 @@ final class PluginDatabase: @unchecked Sendable {
         // machines). Sync-gate here too so SQLCipher never opens a
         // still-plaintext file with a key. No-op fast path once the
         // migrator's done.
+        //
+        // NOTE: unlike the four "core" databases (chat-history,
+        // memory, methods, tool-index), we do NOT register plugin
+        // DBs with `OsaurusDatabaseHandle.register(...)`. Users may
+        // have hundreds of installed plugins; running PRAGMA
+        // optimize / wal_checkpoint / VACUUM across all of them on
+        // every maintenance tick would be a startup-storm
+        // anti-pattern. Plugin DBs already run `PRAGMA optimize` in
+        // their own `close()`, which is sufficient. Key rotation
+        // still works against plugin DBs because
+        // `StorageExportService.rotateStorageKey` enumerates
+        // `StorageMigrator.databaseTargets()`, which independently
+        // walks `~/.osaurus/Tools/<plugin>/data/data.db` from disk.
         StorageMigrationCoordinator.blockingAwaitReady()
 
         try queue.sync {

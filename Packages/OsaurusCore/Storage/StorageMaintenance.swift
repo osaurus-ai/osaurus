@@ -131,7 +131,22 @@ public actor StorageMaintenance {
     private func loadState() {
         guard let data = try? Data(contentsOf: stateURL()),
             let decoded = try? JSONDecoder().decode(MaintenanceState.self, from: data)
-        else { return }
+        else {
+            // First-ever launch: stamp every "lastRun" timestamp to
+            // *now* so the initial maintenance tick (30s after
+            // launch) doesn't immediately VACUUM every database.
+            // Without this, the first install AND the first launch
+            // after the encryption migration both pay a several-
+            // minute VACUUM tax in the background that can serialise
+            // behind the user's first DB read on the main actor.
+            // After this, intervals proceed normally.
+            let now = Date()
+            state.lastOptimize = now
+            state.lastCheckpoint = now
+            state.lastVacuum = now
+            persistState()
+            return
+        }
         state = decoded
     }
 

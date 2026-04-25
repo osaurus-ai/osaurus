@@ -3,25 +3,33 @@
 //  osaurus
 //
 //  One-shot, idempotent at-rest encryption migrator. Runs on first
-//  launch of a build that ships SQLCipher + EncryptedFileStore, and
-//  on any subsequent launch where `~/.osaurus/.storage-version` is
-//  older than `Self.targetVersion`.
+//  launch of a build that ships SQLCipher, and on any subsequent
+//  launch where `~/.osaurus/.storage-version` is older than
+//  `Self.targetVersion`. See the `targetVersion` doc-comment below
+//  for the version-by-version step list.
 //
 //  Steps (in order, fail-soft per step):
 //
 //   1. Load (or create) the storage encryption key via
 //      `StorageKeyManager`.
-//   2. For each of the five plaintext SQLite databases under
-//      `~/.osaurus/`, re-encrypt via SQLCipher's
-//      `sqlcipher_export` and atomically replace.
-//   3. Re-encrypt every JSON file under the encrypt-on-disk
-//      directories (agents, themes, schedules, watchers, …).
-//   4. Bump `~/.osaurus/.storage-version` to `Self.targetVersion`.
-//   5. Move the original plaintext files into
-//      `~/.osaurus/.pre-encryption-backup/` (kept for one app
-//      version, then auto-cleaned on the launch after that).
-//   6. Trigger an async `MemorySearchService.shared.rebuildIndex()`
-//      so the per-agent vector dirs come back populated.
+//   2a. v1→v2 recovery (only when bumping a v1-stamped install):
+//       restore any leftover `.osec` JSON files back to plaintext —
+//       see `recoverEncryptedJSON(key:)` for the rationale. No-op
+//       when there's nothing to recover.
+//   2b. For each of the four core SQLite databases plus every
+//       discovered plugin DB under `~/.osaurus/`, re-encrypt via
+//       SQLCipher's `sqlcipher_export` and atomically replace
+//       (skipping any that are already SQLCipher-encrypted).
+//   3.  Bump `~/.osaurus/.storage-version` to `Self.targetVersion`
+//       and write an outcome receipt (`.storage-migration.json`)
+//       for the Storage settings panel.
+//   4.  Trigger an async `MemorySearchService.shared.rebuildIndex()`
+//       so the per-agent vector dirs come back populated.
+//
+//  Originals of every replaced SQLite database are moved into
+//  `~/.osaurus/.pre-encryption-backup/`, kept for one app version,
+//  then auto-cleaned by `cleanupBackupIfStale()` on the second
+//  launch after migration.
 //
 //  Concurrency: this is a Swift `actor`, but the actual work is
 //  driven through `StorageMigrationCoordinator` which gates every
@@ -48,14 +56,12 @@ import os
 public enum StorageMigratorError: LocalizedError {
     case keyUnavailable
     case sqlcipherExportFailed(String, String)  // (dbPath, message)
-    case fileEncryptionFailed(String)
     case versionWriteFailed(String)
 
     public var errorDescription: String? {
         switch self {
         case .keyUnavailable: return "Storage migrator could not obtain encryption key"
         case .sqlcipherExportFailed(let p, let m): return "SQLCipher export failed for \(p): \(m)"
-        case .fileEncryptionFailed(let p): return "File encryption failed for \(p)"
         case .versionWriteFailed(let m): return "Failed to write storage-version stamp: \(m)"
         }
     }
@@ -76,7 +82,20 @@ public actor StorageMigrator {
     /// Bump when adding new at-rest encryption steps. The migrator is
     /// idempotent per step so re-running an already-migrated DB is
     /// safe.
-    public static let targetVersion: Int = 1
+    ///
+    /// Version history:
+    ///  - v1: SQLCipher-encrypt the five SQLite databases. (Initial
+    ///        v1 builds also encrypted JSON files under `agents/`,
+    ///        `themes/`, `config/`, etc., but the consuming stores
+    ///        were never wired to read `.osec`, so `agents` /
+    ///        `themes` / settings disappeared from the UI and
+    ///        services that depend on them stalled the main
+    ///        thread. v2 below auto-recovers from that bug.)
+    ///  - v2: Restore any leftover `.osec` JSON files back to
+    ///        plaintext `.json` (using `.pre-encryption-backup/json/`
+    ///        when available, AES-GCM decrypt otherwise). v1 itself
+    ///        no longer encrypts JSON.
+    public static let targetVersion: Int = 2
 
     private static let versionFilename = ".storage-version"
     private static let backupDirName = ".pre-encryption-backup"
@@ -104,7 +123,10 @@ public actor StorageMigrator {
         public var toVersion: Int
         public var succeededTargets: [String]
         public var failedTargets: [String: String]  // label → message
-        public var jsonFilesEncrypted: Int
+        /// Number of `.osec` JSON files that v1→v2 recovery
+        /// restored back to plaintext. Zero on a clean install or
+        /// any launch after the user is on v2 already.
+        public var jsonFilesRecovered: Int
         public var ranAt: Date
 
         public init(
@@ -112,23 +134,28 @@ public actor StorageMigrator {
             toVersion: Int,
             succeededTargets: [String],
             failedTargets: [String: String],
-            jsonFilesEncrypted: Int,
+            jsonFilesRecovered: Int,
             ranAt: Date
         ) {
             self.fromVersion = fromVersion
             self.toVersion = toVersion
             self.succeededTargets = succeededTargets
             self.failedTargets = failedTargets
-            self.jsonFilesEncrypted = jsonFilesEncrypted
+            self.jsonFilesRecovered = jsonFilesRecovered
             self.ranAt = ranAt
         }
 
         // Custom decoder so future field additions don't break old
-        // receipts. Keep `decodeIfPresent` for new fields; the v1
-        // fields below are required because they've always shipped.
+        // receipts. Every field is decoded with a sensible default
+        // for forward + backward compatibility. The legacy
+        // `jsonFilesEncrypted` key (written by initial v1 builds
+        // before the v1→v2 recovery existed) maps onto the renamed
+        // `jsonFilesRecovered` so the Settings panel still has a
+        // number to show.
         private enum CodingKeys: String, CodingKey {
-            case fromVersion, toVersion, succeededTargets, failedTargets
-            case jsonFilesEncrypted, ranAt
+            case fromVersion, toVersion, succeededTargets, failedTargets, ranAt
+            case jsonFilesRecovered
+            case jsonFilesEncrypted  // legacy v1
         }
 
         public init(from decoder: Decoder) throws {
@@ -137,8 +164,21 @@ public actor StorageMigrator {
             self.toVersion = (try? c.decode(Int.self, forKey: .toVersion)) ?? 0
             self.succeededTargets = (try? c.decode([String].self, forKey: .succeededTargets)) ?? []
             self.failedTargets = (try? c.decode([String: String].self, forKey: .failedTargets)) ?? [:]
-            self.jsonFilesEncrypted = (try? c.decode(Int.self, forKey: .jsonFilesEncrypted)) ?? 0
+            self.jsonFilesRecovered =
+                (try? c.decode(Int.self, forKey: .jsonFilesRecovered))
+                ?? (try? c.decode(Int.self, forKey: .jsonFilesEncrypted))
+                ?? 0
             self.ranAt = (try? c.decode(Date.self, forKey: .ranAt)) ?? Date(timeIntervalSince1970: 0)
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(fromVersion, forKey: .fromVersion)
+            try c.encode(toVersion, forKey: .toVersion)
+            try c.encode(succeededTargets, forKey: .succeededTargets)
+            try c.encode(failedTargets, forKey: .failedTargets)
+            try c.encode(jsonFilesRecovered, forKey: .jsonFilesRecovered)
+            try c.encode(ranAt, forKey: .ranAt)
         }
     }
 
@@ -218,11 +258,37 @@ public actor StorageMigrator {
             toVersion: Self.targetVersion,
             succeededTargets: [],
             failedTargets: [:],
-            jsonFilesEncrypted: 0,
+            jsonFilesRecovered: 0,
             ranAt: Date()
         )
 
-        // Step 2 — SQLite re-encryption.
+        // Step 2a — v1→v2 recovery. The initial v1 build encrypted
+        // every JSON file under `agents/`, `themes/`, `config/`, …
+        // but the consuming stores (`AgentManager`, `ThemeManager`,
+        // `*ConfigurationStore`, `ScheduleStore`, `WatcherStore`,
+        // `SlashCommandStore`, `SandboxPluginLibrary`, etc.) were
+        // never wired to read `.osec`, so the user's
+        // agents/themes/config went dark and services that depend
+        // on them stalled the main thread. v2 walks the tree once
+        // and restores any leftover `.osec` JSON twins back to
+        // plaintext (preferring the pre-encryption backup, falling
+        // back to in-place AES-GCM decrypt). Cheap when there's
+        // nothing to recover.
+        //
+        // Re-enabling JSON encryption is gated on first migrating
+        // every consuming store to `EncryptedFileStore` — tracked
+        // as a follow-up. The bulk of the security win is the
+        // SQLCipher-encrypted DBs in step 2b.
+        if fromAfterLock <= 1 {
+            outcome.jsonFilesRecovered = recoverEncryptedJSON(key: key)
+            if outcome.jsonFilesRecovered > 0 {
+                log.info(
+                    "storage migrator: v1→v2 recovery — restored \(outcome.jsonFilesRecovered) JSON files"
+                )
+            }
+        }
+
+        // Step 2b — SQLite re-encryption.
         let dbs = Self.databaseTargets()
         for (idx, target) in dbs.enumerated() {
             progress?(Progress(stepLabel: "Encrypting \(target.label)", completed: idx, total: dbs.count + 1))
@@ -239,11 +305,7 @@ public actor StorageMigrator {
             }
         }
 
-        // Step 3 — JSON re-encryption.
-        progress?(Progress(stepLabel: "Encrypting configuration files", completed: dbs.count, total: dbs.count + 1))
-        outcome.jsonFilesEncrypted = encryptJSONTrees(key: key)
-
-        // Step 4 — version stamp + outcome receipt.
+        // Step 3 — version stamp + outcome receipt.
         do {
             try writeVersion(Self.targetVersion)
         } catch {
@@ -252,7 +314,7 @@ public actor StorageMigrator {
         }
         try? writeOutcomeReceipt(outcome)
 
-        // Step 5 — best-effort vector rebuild from the now-encrypted SQL.
+        // Step 4 — best-effort vector rebuild from the now-encrypted SQL.
         Task.detached { [log] in
             log.info("storage migrator: rebuilding per-agent vector indexes")
             await MemorySearchService.shared.rebuildIndex()
@@ -260,7 +322,7 @@ public actor StorageMigrator {
 
         progress?(Progress(stepLabel: "Done", completed: dbs.count + 1, total: dbs.count + 1))
         log.info(
-            "storage migrator: completed (from v\(fromAfterLock) → v\(Self.targetVersion), \(outcome.succeededTargets.count) DBs OK, \(outcome.failedTargets.count) failed, \(outcome.jsonFilesEncrypted) JSON files)"
+            "storage migrator: completed (from v\(fromAfterLock) → v\(Self.targetVersion), \(outcome.succeededTargets.count) DBs OK, \(outcome.failedTargets.count) failed, \(outcome.jsonFilesRecovered) JSON recovered)"
         )
         return .success(Self.targetVersion)
     }
@@ -500,91 +562,97 @@ public actor StorageMigrator {
         path.replacingOccurrences(of: "'", with: "''")
     }
 
-    // MARK: - JSON re-encryption
+    // MARK: - v1 → v2 JSON recovery
 
-    private func encryptJSONTrees(key: SymmetricKey) -> Int {
-        let directories: [URL] = [
-            OsaurusPaths.agents(),
-            OsaurusPaths.themes(),
-            OsaurusPaths.schedules(),
-            OsaurusPaths.watchers(),
-            OsaurusPaths.providers(),
-            OsaurusPaths.sandboxPluginLibrary(),
-            OsaurusPaths.toolSpecs(),
-            OsaurusPaths.sessionsArchive(),
-        ]
-        var total = 0
-        for dir in directories {
-            total += encryptJSONFilesInDir(dir, key: key)
-        }
-        // Top-level config dir, but skip the runtime/* subtree —
-        // other Osaurus processes need it as plaintext for service
-        // discovery.
-        total += encryptJSONFilesInDir(
-            OsaurusPaths.config(),
-            key: key,
-            recursive: true,
-            skipDir: OsaurusPaths.runtime()
-        )
-        return total
-    }
-
-    @discardableResult
-    private func encryptJSONFilesInDir(
-        _ dir: URL,
-        key: SymmetricKey,
-        recursive: Bool = false,
-        skipDir: URL? = nil
-    ) -> Int {
+    /// One-shot recovery for users who ran the buggy initial v1
+    /// migration (which encrypted JSON without teaching the
+    /// consuming stores how to read `.osec`). Walks every directory
+    /// under `~/.osaurus/` once, restores any `.osec` JSON twin
+    /// back to plaintext at its original location, and removes the
+    /// `.osec`. Preference order:
+    ///
+    ///   1. Identical plaintext already at the destination →
+    ///      just remove the orphan `.osec`.
+    ///   2. Pre-encryption backup at
+    ///      `.pre-encryption-backup/json/<basename>` → copy back.
+    ///   3. AES-GCM decrypt the `.osec` in place.
+    ///
+    /// Returns the number of files restored. Idempotent and cheap
+    /// when there's nothing to recover (single tree walk that prunes
+    /// the backup dir, container state, and the chat-history blobs).
+    private func recoverEncryptedJSON(key: SymmetricKey) -> Int {
         let fm = FileManager.default
-        guard fm.fileExists(atPath: dir.path) else { return 0 }
+        let root = OsaurusPaths.root()
+        guard let walker = fm.enumerator(at: root, includingPropertiesForKeys: nil) else { return 0 }
 
-        let enumerator: FileManager.DirectoryEnumerator?
-        if recursive {
-            enumerator = fm.enumerator(at: dir, includingPropertiesForKeys: [.isDirectoryKey])
-        } else {
-            enumerator = nil
+        // Pre-index the backup dir so we don't re-scan it for every
+        // candidate — n × m → n + m.
+        let backupRoot = backupDir().appendingPathComponent("json", isDirectory: true)
+        var backupIndex: [String: URL] = [:]
+        if let entries = try? fm.contentsOfDirectory(at: backupRoot, includingPropertiesForKeys: nil) {
+            for entry in entries where entry.pathExtension.lowercased() == "json" {
+                backupIndex[entry.lastPathComponent] = entry
+            }
         }
 
-        let candidates: [URL] = {
-            if let enumerator {
-                var found: [URL] = []
-                for case let url as URL in enumerator {
-                    if let skip = skipDir, url.path.hasPrefix(skip.path) {
-                        enumerator.skipDescendants()
-                        continue
-                    }
-                    let isDir = (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
-                    if !isDir, url.pathExtension.lowercased() == "json" {
-                        found.append(url)
-                    }
+        // Resolve through `standardizedFileURL` so paths like
+        // `/var/...` and `/private/var/...` (the macOS tmpdir
+        // symlink) compare equal. Without this the prune check
+        // silently misses container/ and blobs/ during tests and
+        // any time `OsaurusPaths.overrideRoot` resolves to a
+        // symlinked directory.
+        let prunePrefixes: [String] = [
+            backupDir().standardizedFileURL.path,
+            OsaurusPaths.container().standardizedFileURL.path,
+            OsaurusPaths.chatHistory().appendingPathComponent("blobs").standardizedFileURL.path,
+        ]
+
+        var restored = 0
+        for case let url as URL in walker {
+            let path = url.standardizedFileURL.path
+            if prunePrefixes.contains(where: { path.hasPrefix($0) }) {
+                walker.skipDescendants()
+                continue
+            }
+            guard url.pathExtension == "osec" else { continue }
+            let plaintextURL = EncryptedFileStore.plaintextURL(for: url)
+            // We only restore JSON .osec twins. Attachment blob
+            // .osec files in `chat-history/blobs/` are pruned above.
+            guard plaintextURL.pathExtension.lowercased() == "json" else { continue }
+
+            // Case 1: plaintext already present (e.g. user manually
+            // restored, or the consuming store wrote a fresh
+            // default while we were broken). Keep what's on disk.
+            if fm.fileExists(atPath: plaintextURL.path) {
+                try? fm.removeItem(at: url)
+                continue
+            }
+
+            // Case 2: pre-encryption backup has the original.
+            if let src = backupIndex[plaintextURL.lastPathComponent],
+                let _ = try? fm.copyItem(at: src, to: plaintextURL)
+            {
+                try? fm.removeItem(at: url)
+                restored += 1
+                continue
+            }
+
+            // Case 3: decrypt in place.
+            if let data = try? EncryptedFileStore.read(url, key: key) {
+                do {
+                    try data.write(to: plaintextURL, options: [.atomic])
+                    try? fm.removeItem(at: url)
+                    restored += 1
+                } catch {
+                    log.warning(
+                        "v1→v2 recovery: failed to write \(plaintextURL.lastPathComponent): \(error.localizedDescription)"
+                    )
                 }
-                return found
-            }
-            let entries = (try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? []
-            return entries.filter { $0.pathExtension.lowercased() == "json" }
-        }()
-
-        var encrypted = 0
-        for url in candidates {
-            let encryptedURL = EncryptedFileStore.encryptedURL(for: url)
-            if fm.fileExists(atPath: encryptedURL.path) { continue }
-            do {
-                let data = try Data(contentsOf: url)
-                if EncryptedFileStore.looksLikeEnvelope(data) { continue }
-                try EncryptedFileStore.write(data, to: encryptedURL, key: key)
-                let backupURL = backupDir()
-                    .appendingPathComponent("json")
-                    .appendingPathComponent(url.lastPathComponent)
-                OsaurusPaths.ensureExistsSilent(backupURL.deletingLastPathComponent())
-                try? fm.moveItem(at: url, to: backupURL)
-                log.info("storage migrator: encrypted \(url.lastPathComponent)")
-                encrypted += 1
-            } catch {
-                log.warning("storage migrator: skip \(url.lastPathComponent): \(error.localizedDescription)")
+            } else {
+                log.warning("v1→v2 recovery: no backup AND decrypt failed for \(url.lastPathComponent)")
             }
         }
-        return encrypted
+        return restored
     }
 
     // MARK: - Version stamp
