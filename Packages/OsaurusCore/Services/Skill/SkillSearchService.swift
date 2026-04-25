@@ -63,6 +63,7 @@ public actor SkillSearchService {
 
                 vectorDB = try await VecturaKit(config: config, embedder: EmbeddingService.sharedEmbedder)
                 isInitialized = true
+                await rehydrateReverseIdMap()
                 SkillSearchLogger.search.info("VecturaKit initialized successfully for skills")
                 break
             } catch {
@@ -77,6 +78,17 @@ public actor SkillSearchService {
                 }
             }
         }
+    }
+
+    /// See `ToolSearchService.rehydrateReverseIdMap` for the rationale.
+    /// Skills are loaded from `SkillManager.shared.skills` (which is
+    /// populated from disk eagerly), so this is a cheap walk.
+    private func rehydrateReverseIdMap() async {
+        let allSkills = await MainActor.run { SkillManager.shared.skills }
+        for skill in allSkills {
+            _ = deterministicUUID(for: skill.id)
+        }
+        SkillSearchLogger.search.info("Skill reverse-id map rehydrated with \(allSkills.count) entries")
     }
 
     // MARK: - Indexing

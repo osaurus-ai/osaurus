@@ -437,9 +437,17 @@ enum PreflightCapabilitySearch {
     /// Returns the full catalog when:
     ///   - `topK` is zero or negative (legacy / disabled)
     ///   - the catalog already fits (no point ranking N down to N)
-    ///   - the search returns nothing (index empty / embedder broken /
-    ///     query is gibberish) — the model still gets to see the full
-    ///     candidate pool rather than nothing
+    ///
+    /// When the index is unavailable (still warming up after launch,
+    /// embedder threw, `reverseIdMap` not yet rehydrated, etc.) we
+    /// fall back to a deterministic top-K **alphabetical slice** of
+    /// the catalog — emphatically NOT the full catalog. The previous
+    /// "fall back to full catalog" behaviour silently overflowed
+    /// Apple Foundation Models' 4K window, throwing every preflight
+    /// call until the circuit breaker opened and stuck. A truncated
+    /// alphabetical slice gives the model SOMETHING to choose from
+    /// while the index settles; semantic quality recovers as soon
+    /// as `ToolSearchService.rebuildIndex()` finishes.
     static func rankCatalog(
         query: String,
         catalog: [ToolRegistry.ToolEntry],
@@ -452,7 +460,12 @@ enum PreflightCapabilitySearch {
             topK: topK,
             threshold: 0.0
         )
-        guard !hits.isEmpty else { return catalog }
+        guard !hits.isEmpty else {
+            logger.notice(
+                "rankCatalog: tool index returned no hits (index warming or embedder unavailable) — falling back to alphabetical top \(topK) of \(catalog.count)"
+            )
+            return safeFallbackSlice(catalog: catalog, topK: topK)
+        }
 
         // Map ranked names back to the input catalog entries (preserves
         // each entry's parameters / enabled state untouched). Keep
@@ -468,11 +481,22 @@ enum PreflightCapabilitySearch {
             ranked.append(entry)
             if ranked.count >= topK { break }
         }
-        // Last-resort safety net: if the index returned hits but none
-        // mapped back to the live catalog (stale index, MCP
-        // re-registration race, etc.), don't strand the LLM with an
-        // empty list — fall back to the full catalog.
-        return ranked.isEmpty ? catalog : ranked
+        // Last-resort safety net: same reasoning as the empty-hits
+        // branch above — never return a catalog larger than `topK`,
+        // even when the index hits don't map back to live entries
+        // (stale index, MCP re-registration race, etc.).
+        return ranked.isEmpty ? safeFallbackSlice(catalog: catalog, topK: topK) : ranked
+    }
+
+    /// Deterministic top-K slice used when the embedding index can't
+    /// rank. Sorts by name to keep the slice stable across calls so
+    /// preflight isn't randomly seeing different tool subsets per
+    /// query while the index warms up.
+    private static func safeFallbackSlice(
+        catalog: [ToolRegistry.ToolEntry],
+        topK: Int
+    ) -> [ToolRegistry.ToolEntry] {
+        Array(catalog.sorted { $0.name < $1.name }.prefix(topK))
     }
 
     /// Snapshot the dynamic-tool catalog and its `tool → group` map from the
@@ -584,7 +608,12 @@ enum PreflightCapabilitySearch {
             )
             return (picks, response, systemPrompt, nil)
         } catch {
-            logger.info("Pre-flight tool selection skipped: \(error)")
+            // Log `localizedDescription` rather than the raw error
+            // so the message is human-readable in Console — the raw
+            // form ("OsaurusCore.CoreModelError.circuitBreakerOpen")
+            // hid the actual cause and made misconfigured core
+            // models look like an internal bug.
+            logger.info("Pre-flight tool selection skipped: \(error.localizedDescription)")
             return ([], nil, systemPrompt, String(describing: error))
         }
     }

@@ -48,6 +48,7 @@ public actor MethodSearchService {
 
                 vectorDB = try await VecturaKit(config: config, embedder: EmbeddingService.sharedEmbedder)
                 isInitialized = true
+                rehydrateReverseIdMap()
                 MethodLogger.search.info("VecturaKit initialized successfully for methods")
                 break
             } catch {
@@ -62,6 +63,19 @@ public actor MethodSearchService {
                 }
             }
         }
+    }
+
+    /// See `ToolSearchService.rehydrateReverseIdMap` for the rationale.
+    /// Without this, search returns empty until `rebuildIndex()`
+    /// completes, and callers like `PreflightCapabilitySearch.rankCatalog`
+    /// fall back to over-large catalogs that overflow small-context
+    /// LLMs.
+    private func rehydrateReverseIdMap() {
+        guard let methods = try? MethodDatabase.shared.loadAllMethods() else { return }
+        for method in methods {
+            _ = deterministicUUID(for: method.id)
+        }
+        MethodLogger.search.info("Method reverse-id map rehydrated with \(methods.count) entries")
     }
 
     // MARK: - Indexing
