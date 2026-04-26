@@ -11,14 +11,17 @@ import Testing
 
 @testable import OsaurusCore
 
+private struct CtxBox: @unchecked Sendable {
+    let ctx: ChannelHandlerContext
+}
+
 private extension EmbeddedChannel {
-    @preconcurrency
-    func testContext() async throws -> ChannelHandlerContext {
+    func testContext() throws -> ChannelHandlerContext {
         do {
-            return try await self.pipeline.context(handlerType: TestContextHandler.self).get()
+            return try self.pipeline.context(handlerType: TestContextHandler.self).map { CtxBox(ctx: $0) }.wait().ctx
         } catch {
-            try await self.pipeline.addHandler(TestContextHandler()).get()
-            return try await self.pipeline.context(handlerType: TestContextHandler.self).get()
+            try self.pipeline.addHandler(TestContextHandler()).wait()
+            return try self.pipeline.context(handlerType: TestContextHandler.self).map { CtxBox(ctx: $0) }.wait().ctx
         }
     }
 }
@@ -103,7 +106,7 @@ struct PrefixHashTests {
     @Test func sseWriteRoleIncludesPrefixHash() async throws {
         let channel = EmbeddedChannel()
         let writer = SSEResponseWriter()
-        let ctx = try await channel.testContext()
+        let ctx = try channel.testContext()
 
         writer.writeHeaders(ctx, extraHeaders: nil)
         writer.writeRole(
@@ -140,7 +143,7 @@ struct PrefixHashTests {
     @Test func sseWriteRoleOmitsPrefixHashWhenNil() async throws {
         let channel = EmbeddedChannel()
         let writer = SSEResponseWriter()
-        let ctx = try await channel.testContext()
+        let ctx = try channel.testContext()
 
         writer.writeHeaders(ctx, extraHeaders: nil)
         writer.writeRole(
@@ -176,7 +179,7 @@ struct PrefixHashTests {
     @Test func sseContentChunkDoesNotIncludePrefixHash() async throws {
         let channel = EmbeddedChannel()
         let writer = SSEResponseWriter()
-        let ctx = try await channel.testContext()
+        let ctx = try channel.testContext()
 
         writer.writeHeaders(ctx, extraHeaders: nil)
         writer.writeContent(

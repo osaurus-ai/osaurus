@@ -18,7 +18,7 @@ struct HTTPStreamingWriterTests {
         let writer = SSEResponseWriter()
 
         // Simulate writes
-        let ctx = try await channel.embeddedContext()
+        let ctx = try channel.embeddedContext()
         writer.writeHeaders(ctx, extraHeaders: nil)
         writer.writeRole("assistant", model: "test-model", responseId: "id", created: 0, prefixHash: nil, context: ctx)
         writer.writeContent("hi", model: "test-model", responseId: "id", created: 0, context: ctx)
@@ -63,7 +63,7 @@ struct HTTPStreamingWriterTests {
         let channel = EmbeddedChannel()
         let writer = NDJSONResponseWriter()
 
-        let ctx = try await channel.embeddedContext()
+        let ctx = try channel.embeddedContext()
         writer.writeHeaders(ctx, extraHeaders: nil)
         writer.writeContent("hello", model: "test-model", responseId: "", created: 0, context: ctx)
         writer.writeFinish("test-model", responseId: "", created: 0, context: ctx)
@@ -103,14 +103,19 @@ struct HTTPStreamingWriterTests {
 }
 
 // Minimal helper to get a ChannelHandlerContext from EmbeddedChannel
+private struct CtxBox: @unchecked Sendable {
+    let ctx: ChannelHandlerContext
+}
+
 extension EmbeddedChannel {
-    @preconcurrency
-    fileprivate func embeddedContext() async throws -> ChannelHandlerContext {
+    fileprivate func embeddedContext() throws -> ChannelHandlerContext {
         do {
-            return try await self.pipeline.context(handlerType: NIOAsyncTestingHandler.self).get()
+            return try self.pipeline.context(handlerType: NIOAsyncTestingHandler.self).map { CtxBox(ctx: $0) }.wait()
+                .ctx
         } catch {
-            try await self.pipeline.addHandler(NIOAsyncTestingHandler()).get()
-            return try await self.pipeline.context(handlerType: NIOAsyncTestingHandler.self).get()
+            try self.pipeline.addHandler(NIOAsyncTestingHandler()).wait()
+            return try self.pipeline.context(handlerType: NIOAsyncTestingHandler.self).map { CtxBox(ctx: $0) }.wait()
+                .ctx
         }
     }
 }
