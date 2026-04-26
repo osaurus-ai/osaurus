@@ -8,6 +8,12 @@
 //  middleware so new reasoning model families (JANG, MiniMax, Mistral-Small-4,
 //  etc.) are picked up automatically as long as they ship a chat template.
 //
+//  JANG bundles that omit a chat template entirely — DSV4-Flash is the
+//  canonical case, it ships `encoding/encoding_dsv4.py` instead of a Jinja
+//  template — are detected via a `jang_config.json > chat > reasoning`
+//  fallback so their `.reasoning` events don't get coerced to content by
+//  the #934 mitigation in `ModelRuntime.streamWithTools`.
+//
 
 import Foundation
 
@@ -59,12 +65,23 @@ enum LocalReasoningCapability {
     // MARK: - Detection
 
     private static func detect(modelId: String) -> Capability {
-        guard let dir = localDirectory(forModelId: modelId),
-            let template = readChatTemplate(at: dir)
-        else {
+        guard let dir = localDirectory(forModelId: modelId) else {
             return .none
         }
-        return analyze(template: template)
+        if let template = readChatTemplate(at: dir) {
+            return analyze(template: template)
+        }
+        // Fallback for JANG bundles that ship no chat template (DSV4-Flash
+        // ships `encoding/encoding_dsv4.py` instead; the JANG converter
+        // stamps `has_tokenizer_chat_template: false` plus an authoritative
+        // `chat.reasoning.supported` flag into `jang_config.json`). Without
+        // this fallback, `detect()` returned `.none` for DSV4 → `supportsThinking
+        // = false` → PR #934's `streamWithTools` coercion merged the model's
+        // `.reasoning` deltas into content, wiping out the thinking split.
+        if let cap = readJangConfigReasoning(at: dir) {
+            return cap
+        }
+        return .none
     }
 
     /// Pure, testable template analysis.
@@ -117,6 +134,64 @@ enum LocalReasoningCapability {
         let parts = found.id.split(separator: "/").map(String.init)
         let base = DirectoryPickerService.effectiveModelsDirectory()
         return parts.reduce(base) { $0.appendingPathComponent($1, isDirectory: true) }
+    }
+
+    /// Read `jang_config.json > chat > reasoning` and surface it as a
+    /// `Capability`. Returns nil when the file is missing, malformed, or
+    /// doesn't carry the `chat.reasoning` sub-object — the caller should
+    /// then return `.none`. Exposed (`static`, not `private`) so unit tests
+    /// can exercise fixtures without writing to disk.
+    ///
+    /// Schema this recognises (a subset of the DSV4-Flash converter's
+    /// output; newer JANG bundles are free to add more fields and we'll
+    /// ignore them forward-compatibly):
+    ///
+    ///     {
+    ///       "chat": {
+    ///         "reasoning": {
+    ///           "supported": true,
+    ///           "modes": ["chat", "thinking"],
+    ///           "default_mode": "chat",
+    ///           "thinking_start": "<think>",
+    ///           "thinking_end": "</think>"
+    ///         }
+    ///       }
+    ///     }
+    ///
+    /// Note: we do NOT set `hasEnableThinkingKwarg: true` here — that flag
+    /// is template-driven (does the Jinja template branch on
+    /// `enable_thinking | default(...)`). DSV4's chat-encoder module
+    /// reads a `thinking_mode` argument directly, so the kwarg flag
+    /// stays false; callers plumb thinking-on/off through
+    /// `modelOptions["disableThinking"]` as usual and vmlx's
+    /// `additionalContext` passes it to whatever renderer the model uses.
+    static func readJangConfigReasoning(at dir: URL) -> Capability? {
+        let url = dir.appendingPathComponent("jang_config.json")
+        guard FileManager.default.fileExists(atPath: url.path),
+            let data = try? Data(contentsOf: url)
+        else {
+            return nil
+        }
+        return analyzeJangConfig(data: data)
+    }
+
+    /// Pure, testable JSON parse for `jang_config.json`'s
+    /// `chat.reasoning` sub-object. Separated from `readJangConfigReasoning`
+    /// so unit tests can feed in fixtures without a filesystem.
+    static func analyzeJangConfig(data: Data) -> Capability? {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let chat = root["chat"] as? [String: Any],
+            let reasoning = chat["reasoning"] as? [String: Any],
+            let supported = reasoning["supported"] as? Bool,
+            supported
+        else {
+            return nil
+        }
+        return Capability(
+            supportsThinking: true,
+            hasEnableThinkingKwarg: false,
+            templateInjectsThinkTag: false
+        )
     }
 
     private static func readChatTemplate(at dir: URL) -> String? {

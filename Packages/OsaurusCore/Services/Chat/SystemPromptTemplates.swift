@@ -16,14 +16,29 @@ public enum SystemPromptTemplates {
     /// Default identity used when the user has not configured a base prompt.
     /// Frames the agent as tool-driven so models don't reflexively say
     /// "I cannot do that" when they actually can.
+    ///
+    /// **Tool names are deliberately NOT mentioned here.** Naming `todo` /
+    /// `complete` / `share_artifact` / `clarify` / `capabilities_search`
+    /// in the unconditional identity caused MiniMax M2.7 Small JANGTQ
+    /// (and other low-bit MoE models) to fall into a recitation loop on
+    /// any chat where those tools weren't actually in the request's
+    /// `tools[]` array — the model saw the names in the system prompt,
+    /// expected the schema to back them, found a mismatch, and degenerated
+    /// into emitting tool-spec text from its training distribution
+    /// (live-confirmed 2026-04-25).
+    ///
+    /// Each chat-layer-intercepted tool's how-to lives in the gated
+    /// `agentLoopGuidance` / `capabilityDiscoveryNudge` blocks below,
+    /// which fire ONLY when the corresponding tool is actually resolved
+    /// into the schema. Sandbox-/folder-tool hints are similarly gated
+    /// at their composer call-sites.
     public static let defaultIdentity = """
         You are an Osaurus chat agent running locally on the user's Mac.
 
-        You have a tool registry. Call tools when they raise correctness or \
-        ground a claim in real data; do not narrate intent before acting. \
-        When the task involves more than two obvious steps, write a `todo` \
-        checklist; when you finish, call `complete` with a one-paragraph \
-        summary of what you did and how you verified it.
+        Use the tools available in this conversation when they raise \
+        correctness or ground a claim in real data; do not narrate intent \
+        before acting. If no tools are listed, answer directly from your \
+        own knowledge.
         """
 
     /// Returns the effective base prompt, falling back to `defaultIdentity`
