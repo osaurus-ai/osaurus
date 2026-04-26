@@ -152,11 +152,10 @@ struct PluginCreatorInjectionTests {
     /// Force the built-in "Sandbox Plugin Creator" skill into the desired
     /// enabled state. Persists across tests; callers should restore.
     private func ensurePluginCreatorSkill(enabled: Bool) async {
-        // The skill manager loads asynchronously on first access; wait
-        // until the seeded skill is present before flipping its flag.
-        for _ in 0 ..< 20 {
-            if SkillManager.shared.skill(named: "Sandbox Plugin Creator") != nil { break }
-            try? await Task.sleep(nanoseconds: 50_000_000)
+        // The skill manager loads asynchronously on first access; ensure
+        // the seeded skill is loaded before flipping its flag.
+        if SkillManager.shared.skill(named: "Sandbox Plugin Creator") == nil {
+            await SkillManager.shared.refresh()
         }
         guard let skill = SkillManager.shared.skill(named: "Sandbox Plugin Creator") else {
             Issue.record("Sandbox Plugin Creator built-in skill missing")
