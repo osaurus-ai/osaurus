@@ -79,6 +79,13 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
 
     /// Check if a system permission is currently granted
     func isGranted(_ permission: SystemPermission) -> Bool {
+        if RuntimeEnvironment.isUnderTests {
+            // Tests should not make XPC calls to macOS daemons like contactsd
+            // as this can hang the test runner if the daemon is unavailable.
+            // By returning true, we allow tool execution paths to proceed.
+            return true
+        }
+
         switch permission {
         case .automation:
             return checkAutomationPermission()
@@ -190,6 +197,11 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
 
     /// Request a permission (triggers system dialog or opens settings)
     func requestPermission(_ permission: SystemPermission) {
+        if RuntimeEnvironment.isUnderTests {
+            // Tests should not trigger real permission dialogs
+            return
+        }
+
         switch permission {
         case .automation:
             requestAutomationPermission()
@@ -225,6 +237,11 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
     /// Permissions that require manual System Settings changes (disk, accessibility,
     /// screen recording) return `false` immediately.
     func requestPermissionAndWait(_ permission: SystemPermission) async -> Bool {
+        if RuntimeEnvironment.isUnderTests {
+            // Tests should never block waiting for real user permission dialogs
+            return true
+        }
+
         let granted: Bool
         switch permission {
         case .calendar:
