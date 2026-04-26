@@ -168,6 +168,15 @@ public final class StorageMigrationCoordinator: ObservableObject {
     /// semaphore + runloop spin so the migration overlay can
     /// paint and accept events while we wait.
     nonisolated public static func blockingAwaitReady() {
+        if RuntimeEnvironment.isUnderTests {
+            // Tests use isolated temporary databases and don't need the global
+            // UI migration gate. Tests that specifically test the migrator
+            // will call `StorageMigrator.shared.runIfNeeded()` directly.
+            // Bypassing this prevents Swift Concurrency deadlocks when tests
+            // run on the MainActor and hit the semaphore wait.
+            return
+        }
+
         // Fast path: lock-free atomic poll, no Task scheduling.
         if isReadyAtomic.load(), !isMutatingAtomic.load() {
             return
