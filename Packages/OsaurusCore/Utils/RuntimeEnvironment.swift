@@ -38,5 +38,7 @@ public enum RuntimeEnvironment {
         return ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
             || processName.hasSuffix("xctest") || processName == "swiftpm-testing-helper"
             || NSClassFromString("XCTestCase") != nil
+            || ProcessInfo.processInfo.environment["GITHUB_ACTIONS"] == "true"
+            || ProcessInfo.processInfo.environment["CI"] == "true"
     }
 }
