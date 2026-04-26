@@ -244,20 +244,23 @@ public final class StorageMigrationCoordinator: ObservableObject {
     private func showPanel() {
         guard panel == nil else { return }
         // Defense in depth for test runs that slipped past
-        // `_setReadyForTesting`. `XCTestConfigurationFilePath` is
-        // set by every Xcode/SwiftPM test process; under that
-        // environment we have no business creating an `NSPanel`
-        // (no display server on CI, and even local runs don't want
-        // a "Securing your data" window flashing during `swift
-        // test`). The atomic `isReady` mirror still gets flipped
-        // by `runMigration`, so the gate semantics stay correct.
-        if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
+        // `_setReadyForTesting`. Under XCTest we have no business
+        // creating an `NSPanel` — no display server on CI, and even
+        // local `swift test` shouldn't flash a "Securing your data"
+        // window. The atomic `isReady` mirror still gets flipped by
+        // `runMigration`, so the gate semantics stay correct. See
+        // `RuntimeEnvironment.isUnderTests`.
+        if RuntimeEnvironment.isUnderTests {
             log.info("Skipping StorageMigrationOverlay panel under XCTest")
             return
         }
         let view = StorageMigrationOverlay(coordinator: self)
         let host = NSHostingController(rootView: view)
-        host.view.frame = NSRect(x: 0, y: 0, width: 460, height: 240)
+        // Sized to fit the richer content: badged icon + title +
+        // explainer + counted progress bar. SwiftUI then drives
+        // its own intrinsic height; the panel is movable by
+        // background drag so users can park it out of the way.
+        host.view.frame = NSRect(x: 0, y: 0, width: 520, height: 320)
 
         let panel = NSPanel(
             contentRect: host.view.frame,
@@ -289,57 +292,230 @@ public struct StorageMigrationOverlay: View {
     @Environment(\.theme) private var theme
     @ObservedObject private var coordinator: StorageMigrationCoordinator
 
+    /// Drives the icon's gentle "breathing" while migration is
+    /// running. Stops once `coordinator.isReady` flips true so the
+    /// success state lands without competing animation.
+    @State private var iconPulse: Bool = false
+
+    // MARK: - Design tokens
+    //
+    // Centralised so the visual rhythm is auditable in one place
+    // and tweaks don't require a hunt through layout code.
+
+    private enum Layout {
+        static let cardCornerRadius: CGFloat = 18
+        static let errorCornerRadius: CGFloat = 8
+        static let badgeSize: CGFloat = 84
+        static let glyphSize: CGFloat = 36
+        static let maxContentWidth: CGFloat = 380
+        static let progressBarHeight: CGFloat = 6
+        static let cardPadding: CGFloat = 28
+        static let outerPadding: CGFloat = 24
+        static let stackSpacing: CGFloat = 22
+    }
+
+    private enum Motion {
+        static let pulseScaleRunning: ClosedRange<CGFloat> = 0.97 ... 1.03
+        static let completeScale: CGFloat = 1.05
+        static let pulsePeriod: Double = 2.0
+        static let completeSpring: SwiftUI.Animation = .spring(response: 0.55, dampingFraction: 0.7)
+        static let progressFill: SwiftUI.Animation = .easeInOut(duration: 0.35)
+    }
+
     public init(coordinator: StorageMigrationCoordinator = .shared) {
         self.coordinator = coordinator
     }
 
     public var body: some View {
         ZStack {
-            theme.primaryBackground.opacity(0.92).ignoresSafeArea()
+            // Backdrop: a soft tint over the system blur so the
+            // panel reads as a modal without becoming a hard slab.
+            theme.primaryBackground.opacity(0.55).ignoresSafeArea()
 
-            VStack(spacing: 18) {
-                Image(systemName: "lock.shield")
-                    .font(.system(size: 44, weight: .medium))
-                    .foregroundStyle(theme.accentColor)
-
-                Text("Securing your data")
-                    .font(.title3.weight(.semibold))
-                    .foregroundStyle(theme.primaryText)
-
-                Text(stepText)
-                    .font(.callout)
-                    .foregroundStyle(theme.secondaryText)
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: 360)
-
-                ProgressView(value: ratio)
-                    .progressViewStyle(.linear)
-                    .frame(width: 280)
-
+            VStack(spacing: Layout.stackSpacing) {
+                badgedIcon
+                titleBlock
+                progressBlock
                 if let lastError = coordinator.lastError {
-                    Text(lastError)
-                        .font(.caption)
-                        .foregroundStyle(theme.errorColor)
-                        .multilineTextAlignment(.center)
-                        .frame(maxWidth: 360)
+                    errorBlock(lastError)
                 }
             }
-            .padding(28)
-            .background(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(theme.primaryBackground)
-                    .shadow(color: .black.opacity(0.18), radius: 24, y: 12)
-            )
-            .padding(40)
+            .padding(Layout.cardPadding)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(cardBackground)
+            .padding(Layout.outerPadding)
         }
+        .onAppear { startIconPulse() }
         .transition(.opacity)
     }
 
+    // MARK: - Layout pieces
+
+    /// Circular badge with the lock-shield glyph. Uses the accent
+    /// color at low opacity for the well + full opacity for the
+    /// glyph itself, so the badge harmonises with whatever theme
+    /// is active without us having to special-case dark/light.
+    private var badgedIcon: some View {
+        Circle()
+            .fill(iconTint.opacity(0.12))
+            .overlay(
+                Circle().stroke(iconTint.opacity(0.18), lineWidth: 1)
+            )
+            .overlay(
+                Image(systemName: iconGlyph)
+                    .font(.system(size: Layout.glyphSize, weight: .semibold))
+                    .foregroundStyle(iconTint)
+                    .symbolRenderingMode(.hierarchical)
+            )
+            .frame(width: Layout.badgeSize, height: Layout.badgeSize)
+            .scaleEffect(iconScale)
+            .animation(Motion.completeSpring, value: isComplete)
+    }
+
+    private var titleBlock: some View {
+        VStack(spacing: 6) {
+            Text(isComplete ? "All set" : "Securing your data")
+                .font(.system(size: 20, weight: .semibold, design: .rounded))
+                .foregroundStyle(theme.primaryText)
+            Text(subtitleText)
+                .font(.system(size: 12))
+                .foregroundStyle(theme.secondaryText)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: Layout.maxContentWidth)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    /// Progress indicator with a step label on the left and a
+    /// `current / total` counter on the right above a linear bar.
+    /// When the migrator hasn't reported any progress yet (or
+    /// during the success hold), the counter is omitted.
+    private var progressBlock: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(stepText)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(theme.primaryText)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer(minLength: 12)
+                if let counterText {
+                    Text(counterText)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(theme.tertiaryText)
+                }
+            }
+            progressBar
+        }
+        .frame(maxWidth: Layout.maxContentWidth)
+    }
+
+    private var progressBar: some View {
+        ZStack(alignment: .leading) {
+            Capsule()
+                .fill(theme.tertiaryBackground)
+            GeometryReader { proxy in
+                Capsule()
+                    .fill(isComplete ? theme.successColor : theme.accentColor)
+                    .frame(width: max(Layout.progressBarHeight, proxy.size.width * ratio))
+            }
+        }
+        .frame(height: Layout.progressBarHeight)
+        .animation(Motion.progressFill, value: ratio)
+        .animation(Motion.progressFill, value: isComplete)
+    }
+
+    private func errorBlock(_ message: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(theme.errorColor)
+                .padding(.top, 2)
+            Text(message)
+                .font(.system(size: 11))
+                .foregroundStyle(theme.errorColor)
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .frame(maxWidth: Layout.maxContentWidth, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: Layout.errorCornerRadius, style: .continuous)
+                .fill(theme.errorColor.opacity(0.08))
+                .overlay(
+                    RoundedRectangle(cornerRadius: Layout.errorCornerRadius, style: .continuous)
+                        .stroke(theme.errorColor.opacity(0.25), lineWidth: 1)
+                )
+        )
+    }
+
+    private var cardBackground: some View {
+        RoundedRectangle(cornerRadius: Layout.cardCornerRadius, style: .continuous)
+            .fill(theme.cardBackground)
+            .overlay(
+                RoundedRectangle(cornerRadius: Layout.cardCornerRadius, style: .continuous)
+                    .stroke(theme.cardBorder.opacity(0.6), lineWidth: 1)
+            )
+            .shadow(color: .black.opacity(0.20), radius: 28, y: 14)
+    }
+
+    // MARK: - Behaviour
+
+    private func startIconPulse() {
+        // Slow enough to read as "alive" without becoming
+        // distracting. Disabled implicitly when the success state
+        // takes over `iconScale`.
+        withAnimation(.easeInOut(duration: Motion.pulsePeriod).repeatForever(autoreverses: true)) {
+            iconPulse = true
+        }
+    }
+
+    // MARK: - Derived state
+
+    private var isComplete: Bool { coordinator.isReady }
+
+    private var iconGlyph: String {
+        isComplete ? "checkmark.shield.fill" : "lock.shield.fill"
+    }
+
+    private var iconTint: Color {
+        isComplete ? theme.successColor : theme.accentColor
+    }
+
+    private var iconScale: CGFloat {
+        if isComplete { return Motion.completeScale }
+        return iconPulse ? Motion.pulseScaleRunning.upperBound : Motion.pulseScaleRunning.lowerBound
+    }
+
+    /// One-line explainer under the title — frames the migration
+    /// in plain language so users know why they're staring at a
+    /// progress bar.
+    private var subtitleText: String {
+        if let lastError = coordinator.lastError, !lastError.isEmpty {
+            return "We hit a problem and will retry next launch — your data isn't lost."
+        }
+        if isComplete {
+            return "Your data is encrypted at rest with AES-256."
+        }
+        return "First-time setup encrypts your chats, memory, and configuration with AES-256. This only happens once."
+    }
+
     private var stepText: String {
-        coordinator.progress?.stepLabel ?? "Preparing"
+        if isComplete { return "Done" }
+        return coordinator.progress?.stepLabel ?? "Preparing…"
+    }
+
+    /// `nil` when there's nothing meaningful to count (no progress
+    /// reported yet, or migration finished). Otherwise renders as
+    /// `current / total` aligned to the right of the step label.
+    private var counterText: String? {
+        guard !isComplete, let p = coordinator.progress, p.total > 0 else { return nil }
+        return "\(min(p.completed, p.total)) of \(p.total)"
     }
 
     private var ratio: Double {
+        if isComplete { return 1 }
         guard let p = coordinator.progress, p.total > 0 else { return 0 }
         return min(1, max(0, Double(p.completed) / Double(p.total)))
     }

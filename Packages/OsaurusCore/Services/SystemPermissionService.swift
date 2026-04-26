@@ -28,7 +28,16 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
         super.init()
         locationManager.delegate = self
         loadPermissionStates()
-        refreshAllPermissions()
+        // Skip the eager XPC-heavy refresh under XCTest. See the
+        // `RuntimeEnvironment.isUnderTests` doc-comment for the
+        // 2026-04 incident this guard prevents (a CI run that
+        // froze for 45 minutes when `CNContactStore.authorizationStatus`
+        // hung trying to talk to a missing `contactsd`). UI views
+        // that genuinely care call `refreshAllPermissions()` in
+        // their `.onAppear` regardless.
+        if !RuntimeEnvironment.isUnderTests {
+            refreshAllPermissions()
+        }
     }
 
     // MARK: - Persistence
