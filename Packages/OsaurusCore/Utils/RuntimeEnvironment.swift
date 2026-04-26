@@ -34,6 +34,9 @@ public enum RuntimeEnvironment {
     /// the call hung holding the main actor, and ~100 other
     /// `@MainActor` tests stalled behind it.
     public static var isUnderTests: Bool {
-        ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+        let processName = ProcessInfo.processInfo.processName
+        return ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+            || processName.hasSuffix("xctest") || processName == "swiftpm-testing-helper"
+            || NSClassFromString("XCTestCase") != nil
     }
 }

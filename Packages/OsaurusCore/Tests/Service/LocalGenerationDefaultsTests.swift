@@ -298,22 +298,26 @@ struct LocalGenerationDefaultsTests {
     func jangConfigDSV4() {
         // Trimmed to the relevant keys; real jang_config.json carries
         // quantization + source_model + crack_surgery + more.
-        let d = LocalGenerationDefaults.parseJangConfig(data: Data(#"""
-            {
-              "model_family": "deepseek_v4",
-              "chat": {
-                "encoder": "encoding_dsv4",
-                "reasoning": {"supported": true, "modes": ["chat", "thinking"]},
-                "tool_calling": {"parser": "dsml"},
-                "sampling_defaults": {
-                  "temperature": 0.6,
-                  "top_p": 0.95,
-                  "max_new_tokens": 300
+        let d = LocalGenerationDefaults.parseJangConfig(
+            data: Data(
+                #"""
+                {
+                  "model_family": "deepseek_v4",
+                  "chat": {
+                    "encoder": "encoding_dsv4",
+                    "reasoning": {"supported": true, "modes": ["chat", "thinking"]},
+                    "tool_calling": {"parser": "dsml"},
+                    "sampling_defaults": {
+                      "temperature": 0.6,
+                      "top_p": 0.95,
+                      "max_new_tokens": 300
+                    }
+                  },
+                  "quantization": {"profile": "JANGTQ4"}
                 }
-              },
-              "quantization": {"profile": "JANGTQ4"}
-            }
-            """#.utf8))
+                """#.utf8
+            )
+        )
         #expect(d.temperature == 0.6)
         #expect(d.topP == 0.95)
         // `max_new_tokens` is not a GenerationParameters field we honor at
@@ -324,18 +328,22 @@ struct LocalGenerationDefaultsTests {
 
     @Test("jang_config: all sampling fields populate when present")
     func jangConfigAllFields() {
-        let d = LocalGenerationDefaults.parseJangConfig(data: Data(#"""
-            {
-              "chat": {
-                "sampling_defaults": {
-                  "temperature": 0.8,
-                  "top_p": 0.9,
-                  "top_k": 50,
-                  "repetition_penalty": 1.05
+        let d = LocalGenerationDefaults.parseJangConfig(
+            data: Data(
+                #"""
+                {
+                  "chat": {
+                    "sampling_defaults": {
+                      "temperature": 0.8,
+                      "top_p": 0.9,
+                      "top_k": 50,
+                      "repetition_penalty": 1.05
+                    }
+                  }
                 }
-              }
-            }
-            """#.utf8))
+                """#.utf8
+            )
+        )
         #expect(d.temperature == 0.8)
         #expect(d.topP == 0.9)
         #expect(d.topK == 50)
@@ -346,13 +354,17 @@ struct LocalGenerationDefaultsTests {
     func jangConfigNoChatSubtree() {
         // Older JANG schema — only quantization + source_model + crack_surgery.
         // No chat metadata. Must return empty, not throw.
-        let d = LocalGenerationDefaults.parseJangConfig(data: Data(#"""
-            {
-              "quantization": {"profile": "JANG_2S", "actual_bits": 2.11},
-              "source_model": {"name": "Qwen3.5-122B-A10B"},
-              "format": "jang"
-            }
-            """#.utf8))
+        let d = LocalGenerationDefaults.parseJangConfig(
+            data: Data(
+                #"""
+                {
+                  "quantization": {"profile": "JANG_2S", "actual_bits": 2.11},
+                  "source_model": {"name": "Qwen3.5-122B-A10B"},
+                  "format": "jang"
+                }
+                """#.utf8
+            )
+        )
         #expect(d == .empty)
     }
 
@@ -361,9 +373,13 @@ struct LocalGenerationDefaultsTests {
         // Schema transition: a bundle might have `chat.reasoning` and
         // `chat.tool_calling` but omit `chat.sampling_defaults`. Must not
         // throw; must return empty so caller falls through to HF file.
-        let d = LocalGenerationDefaults.parseJangConfig(data: Data(#"""
-            {"chat": {"reasoning": {"supported": true}}}
-            """#.utf8))
+        let d = LocalGenerationDefaults.parseJangConfig(
+            data: Data(
+                #"""
+                {"chat": {"reasoning": {"supported": true}}}
+                """#.utf8
+            )
+        )
         #expect(d == .empty)
     }
 
@@ -381,9 +397,17 @@ struct LocalGenerationDefaultsTests {
         // temp=1.0, top_k=64 (Gemma-4 shape). Result: temp from JANG
         // (primary), top_k from HF (fallback).
         let jang = LocalGenerationDefaults.Defaults(
-            temperature: 0.6, topP: nil, topK: nil, repetitionPenalty: nil)
+            temperature: 0.6,
+            topP: nil,
+            topK: nil,
+            repetitionPenalty: nil
+        )
         let hf = LocalGenerationDefaults.Defaults(
-            temperature: 1.0, topP: 0.95, topK: 64, repetitionPenalty: nil)
+            temperature: 1.0,
+            topP: 0.95,
+            topK: 64,
+            repetitionPenalty: nil
+        )
         let merged = LocalGenerationDefaults.merge(primary: jang, fallback: hf)
         #expect(merged.temperature == 0.6)
         #expect(merged.topP == 0.95)
@@ -393,9 +417,15 @@ struct LocalGenerationDefaultsTests {
     @Test("merge: primary-only fields preserved")
     func mergePrimaryOnly() {
         let jang = LocalGenerationDefaults.Defaults(
-            temperature: 0.6, topP: 0.9, topK: 32, repetitionPenalty: 1.05)
+            temperature: 0.6,
+            topP: 0.9,
+            topK: 32,
+            repetitionPenalty: 1.05
+        )
         let merged = LocalGenerationDefaults.merge(
-            primary: jang, fallback: LocalGenerationDefaults.Defaults.empty)
+            primary: jang,
+            fallback: LocalGenerationDefaults.Defaults.empty
+        )
         #expect(merged.temperature == 0.6)
         #expect(merged.topP == 0.9)
         #expect(merged.topK == 32)
@@ -405,9 +435,15 @@ struct LocalGenerationDefaultsTests {
     @Test("merge: fallback-only fields preserved when primary empty")
     func mergeFallbackOnly() {
         let hf = LocalGenerationDefaults.Defaults(
-            temperature: 1.0, topP: 0.95, topK: 64, repetitionPenalty: nil)
+            temperature: 1.0,
+            topP: 0.95,
+            topK: 64,
+            repetitionPenalty: nil
+        )
         let merged = LocalGenerationDefaults.merge(
-            primary: LocalGenerationDefaults.Defaults.empty, fallback: hf)
+            primary: LocalGenerationDefaults.Defaults.empty,
+            fallback: hf
+        )
         #expect(merged.temperature == 1.0)
         #expect(merged.topP == 0.95)
         #expect(merged.topK == 64)
@@ -419,23 +455,31 @@ struct LocalGenerationDefaultsTests {
     func bothFilesMerge() throws {
         let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent(
-                "osaurus-gencfg-both-\(UUID().uuidString)", isDirectory: true)
+                "osaurus-gencfg-both-\(UUID().uuidString)",
+                isDirectory: true
+            )
         try FileManager.default.createDirectory(
-            at: tmp, withIntermediateDirectories: true)
+            at: tmp,
+            withIntermediateDirectories: true
+        )
         defer { try? FileManager.default.removeItem(at: tmp) }
 
         // HF file ships upstream's training defaults.
         try #"""
-            {"temperature": 1.0, "top_p": 0.95, "top_k": 64}
-            """#.write(
-                to: tmp.appendingPathComponent("generation_config.json"),
-                atomically: true, encoding: .utf8)
+        {"temperature": 1.0, "top_p": 0.95, "top_k": 64}
+        """#.write(
+            to: tmp.appendingPathComponent("generation_config.json"),
+            atomically: true,
+            encoding: .utf8
+        )
         // JANG config overrides ONLY temperature (DSV4 pattern).
         try #"""
-            {"chat": {"sampling_defaults": {"temperature": 0.6}}}
-            """#.write(
-                to: tmp.appendingPathComponent("jang_config.json"),
-                atomically: true, encoding: .utf8)
+        {"chat": {"sampling_defaults": {"temperature": 0.6}}}
+        """#.write(
+            to: tmp.appendingPathComponent("jang_config.json"),
+            atomically: true,
+            encoding: .utf8
+        )
 
         let d = LocalGenerationDefaults.load(fromDirectory: tmp)
         // JANG overrides for the field it sets…
@@ -449,16 +493,22 @@ struct LocalGenerationDefaultsTests {
     func jangOnlyLoad() throws {
         let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent(
-                "osaurus-gencfg-jang-\(UUID().uuidString)", isDirectory: true)
+                "osaurus-gencfg-jang-\(UUID().uuidString)",
+                isDirectory: true
+            )
         try FileManager.default.createDirectory(
-            at: tmp, withIntermediateDirectories: true)
+            at: tmp,
+            withIntermediateDirectories: true
+        )
         defer { try? FileManager.default.removeItem(at: tmp) }
 
         try #"""
-            {"chat": {"sampling_defaults": {"temperature": 0.6, "top_p": 0.95}}}
-            """#.write(
-                to: tmp.appendingPathComponent("jang_config.json"),
-                atomically: true, encoding: .utf8)
+        {"chat": {"sampling_defaults": {"temperature": 0.6, "top_p": 0.95}}}
+        """#.write(
+            to: tmp.appendingPathComponent("jang_config.json"),
+            atomically: true,
+            encoding: .utf8
+        )
 
         let d = LocalGenerationDefaults.load(fromDirectory: tmp)
         #expect(d.temperature == 0.6)
@@ -472,21 +522,29 @@ struct LocalGenerationDefaultsTests {
         // useful in it) and must surface HF's values.
         let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent(
-                "osaurus-gencfg-jang-noop-\(UUID().uuidString)", isDirectory: true)
+                "osaurus-gencfg-jang-noop-\(UUID().uuidString)",
+                isDirectory: true
+            )
         try FileManager.default.createDirectory(
-            at: tmp, withIntermediateDirectories: true)
+            at: tmp,
+            withIntermediateDirectories: true
+        )
         defer { try? FileManager.default.removeItem(at: tmp) }
 
         try #"""
-            {"quantization": {"profile": "JANG_2S"}, "format": "jang"}
-            """#.write(
-                to: tmp.appendingPathComponent("jang_config.json"),
-                atomically: true, encoding: .utf8)
+        {"quantization": {"profile": "JANG_2S"}, "format": "jang"}
+        """#.write(
+            to: tmp.appendingPathComponent("jang_config.json"),
+            atomically: true,
+            encoding: .utf8
+        )
         try #"""
-            {"temperature": 1.0, "top_k": 64, "top_p": 0.95}
-            """#.write(
-                to: tmp.appendingPathComponent("generation_config.json"),
-                atomically: true, encoding: .utf8)
+        {"temperature": 1.0, "top_k": 64, "top_p": 0.95}
+        """#.write(
+            to: tmp.appendingPathComponent("generation_config.json"),
+            atomically: true,
+            encoding: .utf8
+        )
 
         let d = LocalGenerationDefaults.load(fromDirectory: tmp)
         #expect(d.temperature == 1.0)

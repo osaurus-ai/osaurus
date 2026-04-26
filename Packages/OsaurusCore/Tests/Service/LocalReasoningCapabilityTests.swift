@@ -97,7 +97,8 @@ struct LocalReasoningCapabilityTests {
     /// from the bundle root.
     @Test("jang_config fallback: DSV4 reasoning.supported=true → supportsThinking")
     func jangConfigDSV4Reasoning() {
-        let data = Data(#"""
+        let data = Data(
+            #"""
             {
               "model_family": "deepseek_v4",
               "chat": {
@@ -114,7 +115,8 @@ struct LocalReasoningCapabilityTests {
                 "tool_calling": {"parser": "dsml"}
               }
             }
-            """#.utf8)
+            """#.utf8
+        )
         let cap = LocalReasoningCapability.analyzeJangConfig(data: data)
         #expect(cap?.supportsThinking == true)
         // `enable_thinking` kwarg is Jinja-template driven; DSV4's
@@ -133,29 +135,35 @@ struct LocalReasoningCapabilityTests {
         // A bundle that declares reasoning explicitly unsupported. The
         // fallback returns nil so `detect()` returns `.none` and the
         // rest of the pipeline routes `.chunk` events as content.
-        let data = Data(#"""
+        let data = Data(
+            #"""
             {"chat": {"reasoning": {"supported": false}}}
-            """#.utf8)
+            """#.utf8
+        )
         #expect(LocalReasoningCapability.analyzeJangConfig(data: data) == nil)
     }
 
     @Test("jang_config: missing chat subtree → nil")
     func jangConfigNoChatSubtree() {
         // Older JANG bundles with only quantization / source_model metadata.
-        let data = Data(#"""
+        let data = Data(
+            #"""
             {
               "quantization": {"profile": "JANG_2L"},
               "source_model": {"name": "Qwen3.5-122B-A10B"}
             }
-            """#.utf8)
+            """#.utf8
+        )
         #expect(LocalReasoningCapability.analyzeJangConfig(data: data) == nil)
     }
 
     @Test("jang_config: chat present but no reasoning sub-object → nil")
     func jangConfigChatWithoutReasoning() {
-        let data = Data(#"""
+        let data = Data(
+            #"""
             {"chat": {"tool_calling": {"parser": "dsml"}}}
-            """#.utf8)
+            """#.utf8
+        )
         #expect(LocalReasoningCapability.analyzeJangConfig(data: data) == nil)
     }
 
@@ -175,16 +183,22 @@ struct LocalReasoningCapabilityTests {
     func filesystemDSV4Shape() throws {
         let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent(
-                "osaurus-reasoning-dsv4-\(UUID().uuidString)", isDirectory: true)
+                "osaurus-reasoning-dsv4-\(UUID().uuidString)",
+                isDirectory: true
+            )
         try FileManager.default.createDirectory(
-            at: tmp, withIntermediateDirectories: true)
+            at: tmp,
+            withIntermediateDirectories: true
+        )
         defer { try? FileManager.default.removeItem(at: tmp) }
 
         try #"""
-            {"chat": {"reasoning": {"supported": true}}}
-            """#.write(
-                to: tmp.appendingPathComponent("jang_config.json"),
-                atomically: true, encoding: .utf8)
+        {"chat": {"reasoning": {"supported": true}}}
+        """#.write(
+            to: tmp.appendingPathComponent("jang_config.json"),
+            atomically: true,
+            encoding: .utf8
+        )
 
         let cap = LocalReasoningCapability.readJangConfigReasoning(at: tmp)
         #expect(cap?.supportsThinking == true)
@@ -194,9 +208,13 @@ struct LocalReasoningCapabilityTests {
     func filesystemNoJangConfig() throws {
         let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent(
-                "osaurus-reasoning-empty-\(UUID().uuidString)", isDirectory: true)
+                "osaurus-reasoning-empty-\(UUID().uuidString)",
+                isDirectory: true
+            )
         try FileManager.default.createDirectory(
-            at: tmp, withIntermediateDirectories: true)
+            at: tmp,
+            withIntermediateDirectories: true
+        )
         defer { try? FileManager.default.removeItem(at: tmp) }
 
         #expect(LocalReasoningCapability.readJangConfigReasoning(at: tmp) == nil)
