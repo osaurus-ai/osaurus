@@ -1858,7 +1858,7 @@ extension FloatingInputCard {
                             }
                         }
                     } catch {
-                        await MainActor.run {
+                        _ = await MainActor.run {
                             ToastManager.shared.error("Could not attach file", message: error.localizedDescription)
                         }
                     }
@@ -2072,7 +2072,7 @@ extension FloatingInputCard {
                     }
                 }
             } catch {
-                await MainActor.run {
+                _ = await MainActor.run {
                     ToastManager.shared.error(
                         "Could not attach \(filename)",
                         message: error.localizedDescription

@@ -1958,7 +1958,7 @@ extension PluginHostContext {
     /// actor isolation or priority, and runs the signal on a dedicated
     /// concurrent GCD queue so the wakeup path doesn't depend on the
     /// cooperative pool having a free worker.
-    static func blockingAsync<T>(_ work: @escaping @Sendable () async -> T) -> T {
+    static func blockingAsync<T: Sendable>(_ work: @escaping @Sendable () async -> T) -> T {
         assert(!Thread.isMainThread, "Host API trampoline must not be called from main thread")
         let sem = DispatchSemaphore(value: 0)
         let box = ResultBox<T>()
@@ -1975,7 +1975,7 @@ extension PluginHostContext {
 
     /// Block the current (non-main) thread while running @MainActor work.
     @discardableResult
-    static func blockingMainActor<T>(_ work: @MainActor @escaping @Sendable () -> T) -> T {
+    static func blockingMainActor<T: Sendable>(_ work: @MainActor @escaping @Sendable () -> T) -> T {
         assert(!Thread.isMainThread, "Host API trampoline must not be called from main thread")
         let sem = DispatchSemaphore(value: 0)
         let box = ResultBox<T>()

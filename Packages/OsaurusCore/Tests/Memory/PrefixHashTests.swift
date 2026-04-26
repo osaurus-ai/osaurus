@@ -12,14 +12,14 @@ import Testing
 @testable import OsaurusCore
 
 private extension EmbeddedChannel {
-    func testContext() throws -> ChannelHandlerContext {
-        return try self.pipeline.context(handlerType: TestContextHandler.self)
-            .flatMapError { _ in
-                self.pipeline.addHandler(TestContextHandler()).flatMap {
-                    self.pipeline.context(handlerType: TestContextHandler.self)
-                }
-            }
-            .wait()
+    @preconcurrency
+    func testContext() async throws -> ChannelHandlerContext {
+        do {
+            return try await self.pipeline.context(handlerType: TestContextHandler.self).get()
+        } catch {
+            try await self.pipeline.addHandler(TestContextHandler()).get()
+            return try await self.pipeline.context(handlerType: TestContextHandler.self).get()
+        }
     }
 }
 
@@ -103,7 +103,7 @@ struct PrefixHashTests {
     @Test func sseWriteRoleIncludesPrefixHash() async throws {
         let channel = EmbeddedChannel()
         let writer = SSEResponseWriter()
-        let ctx = try channel.testContext()
+        let ctx = try await channel.testContext()
 
         writer.writeHeaders(ctx, extraHeaders: nil)
         writer.writeRole(
@@ -140,7 +140,7 @@ struct PrefixHashTests {
     @Test func sseWriteRoleOmitsPrefixHashWhenNil() async throws {
         let channel = EmbeddedChannel()
         let writer = SSEResponseWriter()
-        let ctx = try channel.testContext()
+        let ctx = try await channel.testContext()
 
         writer.writeHeaders(ctx, extraHeaders: nil)
         writer.writeRole(
@@ -176,7 +176,7 @@ struct PrefixHashTests {
     @Test func sseContentChunkDoesNotIncludePrefixHash() async throws {
         let channel = EmbeddedChannel()
         let writer = SSEResponseWriter()
-        let ctx = try channel.testContext()
+        let ctx = try await channel.testContext()
 
         writer.writeHeaders(ctx, extraHeaders: nil)
         writer.writeContent(

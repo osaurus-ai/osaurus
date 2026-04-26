@@ -4,7 +4,7 @@
 //
 
 import Foundation
-import NIOCore
+@preconcurrency import NIOCore
 import NIOEmbedded
 import NIOHTTP1
 import Testing
@@ -18,7 +18,7 @@ struct HTTPStreamingWriterTests {
         let writer = SSEResponseWriter()
 
         // Simulate writes
-        let ctx = try channel.embeddedContext()
+        let ctx = try await channel.embeddedContext()
         writer.writeHeaders(ctx, extraHeaders: nil)
         writer.writeRole("assistant", model: "test-model", responseId: "id", created: 0, prefixHash: nil, context: ctx)
         writer.writeContent("hi", model: "test-model", responseId: "id", created: 0, context: ctx)
@@ -63,7 +63,7 @@ struct HTTPStreamingWriterTests {
         let channel = EmbeddedChannel()
         let writer = NDJSONResponseWriter()
 
-        let ctx = try channel.embeddedContext()
+        let ctx = try await channel.embeddedContext()
         writer.writeHeaders(ctx, extraHeaders: nil)
         writer.writeContent("hello", model: "test-model", responseId: "", created: 0, context: ctx)
         writer.writeFinish("test-model", responseId: "", created: 0, context: ctx)
@@ -105,16 +105,13 @@ struct HTTPStreamingWriterTests {
 // Minimal helper to get a ChannelHandlerContext from EmbeddedChannel
 extension EmbeddedChannel {
     @preconcurrency
-    fileprivate func embeddedContext() throws -> ChannelHandlerContext {
-        // EmbeddedChannel uses a single context for tests; the first handler context is sufficient
-        return try self.pipeline.context(handlerType: NIOAsyncTestingHandler.self)
-            .flatMapError { _ in
-                // Install a dummy handler to obtain a context
-                self.pipeline.addHandler(NIOAsyncTestingHandler()).flatMap {
-                    self.pipeline.context(handlerType: NIOAsyncTestingHandler.self)
-                }
-            }
-            .wait()
+    fileprivate func embeddedContext() async throws -> ChannelHandlerContext {
+        do {
+            return try await self.pipeline.context(handlerType: NIOAsyncTestingHandler.self).get()
+        } catch {
+            try await self.pipeline.addHandler(NIOAsyncTestingHandler()).get()
+            return try await self.pipeline.context(handlerType: NIOAsyncTestingHandler.self).get()
+        }
     }
 }
 

@@ -185,12 +185,9 @@ final class ChatSession: ObservableObject {
             object: nil,
             queue: .main
         ) { [weak self] note in
-            guard let self,
-                let sid = note.userInfo?["sessionId"] as? String,
-                sid == self.expectedTodoSessionId
-            else { return }
-            Task { @MainActor [weak self] in
-                guard let self else { return }
+            guard let sid = note.userInfo?["sessionId"] as? String else { return }
+            Task { @MainActor in
+                guard let self, sid == self.expectedTodoSessionId else { return }
                 self.currentTodo = await AgentTodoStore.shared.todo(for: sid)
             }
         }
@@ -1462,7 +1459,7 @@ final class ChatSession: ObservableObject {
                             if let tools = toolSpecs.isEmpty ? nil : toolSpecs {
                                 promptDump += "── TOOLS (\(tools.count)) ──\n"
                                 for t in tools {
-                                    promptDump += "  - \(t.function.name): \(t.function.description)\n"
+                                    promptDump += "  - \(t.function.name): \(t.function.description ?? "")\n"
                                 }
                             }
                             promptDump += "═══ END PROMPT DUMP ═══"

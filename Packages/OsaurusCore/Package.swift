@@ -19,7 +19,7 @@ let package = Package(
         // intentionally when validating a new upstream commit.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift-lm",
-            revision: "5833aac4d91fcdce03770f573c97c6ec48045ac4"
+            revision: "070dc5b8c9829dc69b6e4831dd201537200a9c36"
         ),
         .package(url: "https://github.com/huggingface/swift-transformers", from: "1.1.6"),
         .package(url: "https://github.com/FluidInference/FluidAudio.git", from: "0.14.0"),

@@ -305,7 +305,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
 
                 // Ensure app is unhidden and active
                 NSApp.unhide(nil)
-                _ = NSRunningApplication.current.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
+                if #available(macOS 14.0, *) {
+                    _ = NSRunningApplication.current.activate(options: .activateAllWindows)
+                } else {
+                    _ = NSRunningApplication.current.activate(options: [
+                        .activateAllWindows, .activateIgnoringOtherApps,
+                    ])
+                }
 
                 if ChatWindowManager.shared.windowCount > 0 {
                     ChatWindowManager.shared.focusAllWindows()

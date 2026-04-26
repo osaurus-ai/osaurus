@@ -71,8 +71,9 @@ public actor HostAPIBridgeServer {
 
 /// Wraps a non-Sendable NIO context so it can cross Task boundaries.
 /// Safety: the wrapped value is only ever accessed on its owning EventLoop.
-private struct UnsafeSendableBox<T>: @unchecked Sendable {
+private final class UnsafeSendableBox<T>: @unchecked Sendable {
     let value: T
+    init(value: T) { self.value = value }
 }
 
 private final class HostAPIBridgeHandler: ChannelInboundHandler, RemovableChannelHandler, @unchecked Sendable {
@@ -152,10 +153,11 @@ private final class HostAPIBridgeHandler: ChannelInboundHandler, RemovableChanne
                 ("Connection", "close"),
             ])
         )
+        let box = UnsafeSendableBox(value: context)
         context.write(wrapOutboundOut(.head(responseHead)), promise: nil)
         context.write(wrapOutboundOut(.body(.byteBuffer(buf))), promise: nil)
         context.writeAndFlush(wrapOutboundOut(.end(nil))).whenComplete { _ in
-            context.close(promise: nil)
+            box.value.close(promise: nil)
         }
     }
 

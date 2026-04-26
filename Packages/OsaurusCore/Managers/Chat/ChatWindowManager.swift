@@ -162,7 +162,11 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         }
 
         // Activate app and bring this specific window forward
-        _ = NSRunningApplication.current.activate(options: .activateIgnoringOtherApps)
+        if #available(macOS 14.0, *) {
+            _ = NSRunningApplication.current.activate(options: .activateAllWindows)
+        } else {
+            _ = NSRunningApplication.current.activate(options: .activateIgnoringOtherApps)
+        }
 
         // Bring the window forward and make it key
         window.makeKeyAndOrderFront(nil)

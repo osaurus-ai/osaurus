@@ -972,10 +972,6 @@ final class NativeMessageCellView: NSTableCellView {
 
         case let .assistantActions(turnId):
             configureAsAssistantActions(turnId: turnId, context: context, sameKind: sameKind)
-
-        default:
-            // last resort: no hosted fallback — render a compact unsupported-block placeholder
-            configureAsUnsupported(sameKind: sameKind)
         }
     }
 
