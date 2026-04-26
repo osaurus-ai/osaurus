@@ -31,5 +31,18 @@
 #endif
 
 #include "sqlite3.h"
+/* `sqlite3ext.h` lives in the same `include/` dir alongside us, so
+ * Clang's umbrella-header consistency check requires it to either
+ * be included from this umbrella or excluded via a module map.
+ * Pulling it in here is harmless (it's just the loadable-extension
+ * SQLite API) and silences the
+ *
+ *   warning: umbrella header for module 'OsaurusSQLCipher' does not
+ *            include header 'sqlite3ext.h'
+ *
+ * that would otherwise fire on every Swift import of this module —
+ * adding noise to PR CI annotations and pushing real warnings off
+ * the visible window. */
+#include "sqlite3ext.h"
 
 #endif

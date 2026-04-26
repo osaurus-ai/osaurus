@@ -123,6 +123,31 @@ public final class StorageMigrationCoordinator: ObservableObject {
         for cont in waiters { cont.resume() }
     }
 
+    /// **Test-only.** Force the coordinator into the post-migration
+    /// "ready" state without running the real migrator.
+    ///
+    /// Why this exists: every call to `awaitReady()` on the real
+    /// `.shared` singleton triggers `runMigration()`, which:
+    ///   - reads `~/.osaurus/.storage-version` (the *real* path, not
+    ///     a tempdir — the coordinator predates `OsaurusPaths.overrideRoot`),
+    ///   - calls `showPanel()` → `NSHostingController` + `NSPanel.makeKeyAndOrderFront`,
+    ///   - hits Keychain via `StorageKeyManager.currentKey()`,
+    ///   - walks the real filesystem under `~/.osaurus/Tools/` for
+    ///     plugin DBs.
+    ///
+    /// On a CI runner none of those steps are safe: there's no
+    /// display server for the panel, no interactive Keychain prompt
+    /// path, and the runner's home directory shouldn't be mutated
+    /// by a unit test. Tests that just want to exercise the
+    /// `isReady` / `isMutating` gating contract should call this
+    /// instead of the real `awaitReady()`.
+    public func _setReadyForTesting() {
+        migrationTask?.cancel()
+        migrationTask = nil
+        lastError = nil
+        isReady = true
+    }
+
     /// Synchronous gate for callers that can't go async (HTTP
     /// handlers, `*Database.open()` defensive paths, etc.). The
     /// fast path is **completely lock-free and main-actor-free**:
@@ -218,6 +243,18 @@ public final class StorageMigrationCoordinator: ObservableObject {
 
     private func showPanel() {
         guard panel == nil else { return }
+        // Defense in depth for test runs that slipped past
+        // `_setReadyForTesting`. `XCTestConfigurationFilePath` is
+        // set by every Xcode/SwiftPM test process; under that
+        // environment we have no business creating an `NSPanel`
+        // (no display server on CI, and even local runs don't want
+        // a "Securing your data" window flashing during `swift
+        // test`). The atomic `isReady` mirror still gets flipped
+        // by `runMigration`, so the gate semantics stay correct.
+        if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
+            log.info("Skipping StorageMigrationOverlay panel under XCTest")
+            return
+        }
         let view = StorageMigrationOverlay(coordinator: self)
         let host = NSHostingController(rootView: view)
         host.view.frame = NSRect(x: 0, y: 0, width: 460, height: 240)

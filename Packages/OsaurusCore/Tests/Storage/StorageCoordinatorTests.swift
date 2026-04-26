@@ -20,16 +20,27 @@ import Testing
 @Suite(.serialized)
 struct StorageCoordinatorTests {
 
+    /// All three tests below force the coordinator into a known
+    /// "ready" state via `_setReadyForTesting()` instead of calling
+    /// the real `awaitReady()`. The real `awaitReady()` triggers
+    /// `runMigration()`, which:
+    ///   - reads the *real* `~/.osaurus/.storage-version` (the
+    ///     coordinator predates `OsaurusPaths.overrideRoot`),
+    ///   - displays an `NSPanel` ("Securing your data" overlay),
+    ///   - hits the real Keychain,
+    ///   - walks the real `~/.osaurus/Tools/` for plugin DBs.
+    ///
+    /// On a CI runner with no display server / no interactive
+    /// Keychain prompt path that combination has historically
+    /// hung the test process for the full 45-min job timeout
+    /// (the user even saw the panel briefly appear during local
+    /// `swift test`).
+
     @Test
     @MainActor
     func awaitReady_parksWhileMutatingAndUnblocksOnEnd() async throws {
-        // Force the coordinator to a known "ready" state so we can
-        // isolate the mutation gate semantics from the migration
-        // path. Both flags are publicly observed in production.
         let coord = StorageMigrationCoordinator.shared
-        // We can't directly poke private state, so instead drive
-        // through the public surface: flip `beginMutating` and
-        // confirm `awaitReady` doesn't return until `endMutating`.
+        coord._setReadyForTesting()
 
         // Park `awaitReady` in a Task so we can observe whether it
         // returns prematurely.
@@ -54,6 +65,7 @@ struct StorageCoordinatorTests {
     @MainActor
     func endMutating_drainsAllParkedWaiters() async throws {
         let coord = StorageMigrationCoordinator.shared
+        coord._setReadyForTesting()
         coord.beginMutating()
 
         // Park multiple awaiters concurrently.
@@ -76,38 +88,19 @@ struct StorageCoordinatorTests {
     /// `isReady == true && isMutating == false` the call must
     /// return without scheduling a Task, hopping onto the main
     /// actor, or pumping the run loop. We verify by hammering the
-    /// gate from many threads with the main actor blocked on a
-    /// long-running task — pre-fix this would deadlock or trip
-    /// the watchdog; post-fix it returns instantly.
+    /// gate from many threads — pre-fix the gate scheduled a
+    /// `Task @MainActor` on every call and contended with main
+    /// for thousands of cycles; post-fix the atomic latch
+    /// short-circuits.
     @Test
     @MainActor
     func blockingAwaitReady_fastPathDoesNotTouchMainActor() async throws {
-        // Drive the coordinator into the "ready, not mutating"
-        // state without depending on the migrator (which would
-        // need real Keychain + filesystem). We can't reach the
-        // private state directly, so run a real `awaitReady`
-        // against a coordinator that thinks it has nothing to do
-        // — `StorageMigrator.needsMigration()` returns false on a
-        // freshly stamped path. We approximate by
-        // `beginMutating` + `endMutating` after `awaitReady` has
-        // resolved once, which sets `isReady=true`. (The state is
-        // shared with other tests in the suite — we restore it
-        // before returning.)
         let coord = StorageMigrationCoordinator.shared
-        await coord.awaitReady()  // resolves quickly since v2 is already stamped
-        let wasReady = coord.isReady
-        // `wasReady` may be true or false depending on test order;
-        // either way the test is meaningful: if false, we're
-        // exercising the slow path (also valid). If true, we're
-        // exercising the fast path.
-        _ = wasReady
+        coord._setReadyForTesting()
 
-        // 16 background hammerers + a deadline. Pre-fix
-        // implementation queued 16 Tasks @MainActor and made each
-        // hammerer wait on a semaphore drained by main; even a
-        // 100ms main-actor stall would push some calls past the
-        // deadline. Post-fix the calls return in nanoseconds
-        // because `isReadyAtomic` short-circuits.
+        // 16 background hammerers + a deadline. 16 × 1000 = 16k
+        // calls. Even at 10µs per atomic load on slow hardware
+        // that's 160ms total. Pre-fix this took multiple seconds.
         let start = Date()
         await withTaskGroup(of: Void.self) { group in
             for _ in 0 ..< 16 {
@@ -119,9 +112,6 @@ struct StorageCoordinatorTests {
             }
         }
         let elapsed = Date().timeIntervalSince(start)
-        // Generous bound: 16 × 1000 = 16000 calls. Even at 10µs
-        // per atomic load on slow hardware that's 160ms total.
-        // Pre-fix on the user's box this took multiple seconds.
         #expect(elapsed < 2.0, "16k blockingAwaitReady calls took \(elapsed)s — fast path regressed")
     }
 }
