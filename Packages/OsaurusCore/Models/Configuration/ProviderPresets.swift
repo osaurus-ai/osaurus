@@ -12,6 +12,7 @@ import SwiftUI
 /// Unified provider presets shared across onboarding and provider management.
 enum ProviderPreset: String, CaseIterable, Identifiable {
     case anthropic
+    case azureOpenAI
     case openai
     case google
     case xai
@@ -25,6 +26,7 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
     var name: String {
         switch self {
         case .anthropic: return "Anthropic"
+        case .azureOpenAI: return "Azure OpenAI Foundry"
         case .openai: return "OpenAI"
         case .google: return "Google"
         case .xai: return "xAI"
@@ -38,6 +40,7 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
     var description: String {
         switch self {
         case .anthropic: return "Claude models"
+        case .azureOpenAI: return "Azure deployments"
         case .openai: return "ChatGPT/Codex or Platform API"
         case .google: return "Gemini models"
         case .xai: return "Grok models"
@@ -51,6 +54,7 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
     var icon: String {
         switch self {
         case .anthropic: return "brain.head.profile"
+        case .azureOpenAI: return "cloud.fill"
         case .openai: return "sparkles"
         case .google: return "globe"
         case .xai: return "bolt.fill"
@@ -64,6 +68,7 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
     var gradient: [Color] {
         switch self {
         case .anthropic: return [Color(red: 0.85, green: 0.55, blue: 0.35), Color(red: 0.75, green: 0.4, blue: 0.25)]
+        case .azureOpenAI: return [Color(red: 0.0, green: 0.47, blue: 0.84), Color(red: 0.0, green: 0.62, blue: 0.72)]
         case .openai: return [Color(red: 0.0, green: 0.65, blue: 0.52), Color(red: 0.0, green: 0.5, blue: 0.4)]
         case .google: return [Color(red: 0.26, green: 0.52, blue: 0.96), Color(red: 0.18, green: 0.38, blue: 0.85)]
         case .xai: return [Color(red: 0.1, green: 0.1, blue: 0.1), Color(red: 0.2, green: 0.2, blue: 0.2)]
@@ -77,6 +82,7 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
     var consoleURL: String {
         switch self {
         case .anthropic: return "https://console.anthropic.com/settings/keys"
+        case .azureOpenAI: return "https://ai.azure.com"
         case .openai: return "https://platform.openai.com/api-keys"
         case .google: return "https://aistudio.google.com/apikey"
         case .xai: return "https://console.x.ai/"
@@ -89,6 +95,7 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
     /// Optional badge label (e.g. "Privacy") shown as a highlight pill on provider cards
     var badge: String? {
         switch self {
+        case .azureOpenAI: return "Azure"
         case .venice: return "Privacy"
         default: return nil
         }
@@ -97,6 +104,7 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
     /// Optional documentation URL for the provider (shown in help sections)
     var documentationURL: String? {
         switch self {
+        case .azureOpenAI: return "https://learn.microsoft.com/azure/ai-foundry/openai/"
         case .venice: return "https://docs.venice.ai"
         default: return nil
         }
@@ -114,6 +122,13 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
     /// Help steps shown when guiding the user to create an API key
     var helpSteps: [String] {
         switch self {
+        case .azureOpenAI:
+            return [
+                "Open your Azure OpenAI resource in Azure AI Foundry",
+                "Copy the resource endpoint host and an API key",
+                "Add deployment names if they do not appear automatically",
+                "Paste the key here",
+            ]
         case .openai:
             return [
                 "Go to the OpenAI Platform API keys page",
@@ -160,6 +175,16 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
                 basePath: "/v1",
                 authType: .apiKey,
                 providerType: .anthropic
+            )
+        case .azureOpenAI:
+            return ProviderPresetConfiguration(
+                name: "Azure OpenAI Foundry",
+                host: "",
+                providerProtocol: .https,
+                port: nil,
+                basePath: "/openai/v1",
+                authType: .apiKey,
+                providerType: .azureOpenAI
             )
         case .openai:
             return ProviderPresetConfiguration(
@@ -228,9 +253,14 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
 
     /// Attempts to match an existing RemoteProvider to a known preset by host.
     static func matching(provider: RemoteProvider) -> ProviderPreset? {
+        if provider.providerType == .azureOpenAI {
+            return .azureOpenAI
+        }
+
         let host = provider.host.lowercased().trimmingCharacters(in: .whitespaces)
         return knownPresets.first { preset in
-            preset.configuration.host.lowercased() == host
+            guard !preset.configuration.host.isEmpty else { return false }
+            return preset.configuration.host.lowercased() == host
         }
     }
 }

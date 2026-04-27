@@ -10,6 +10,24 @@
 import AppKit
 import SwiftUI
 
+private func parseManualModelIds(_ text: String) -> [String] {
+    var seen = Set<String>()
+    var values: [String] = []
+
+    for part in text.split(whereSeparator: { $0 == "\n" || $0 == "," }) {
+        let value = String(part).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { continue }
+
+        let key = value.lowercased()
+        guard !seen.contains(key) else { continue }
+
+        seen.insert(key)
+        values.append(value)
+    }
+
+    return values
+}
+
 // MARK: - Main View
 
 struct RemoteProviderEditSheet: View {
@@ -50,6 +68,13 @@ private struct AddProviderFlow: View {
     @State private var testResult: ProviderTestResult? = nil
     @State private var hasAppeared = false
 
+    // Known provider connection overrides for presets whose endpoint is user-specific.
+    @State private var knownHost: String = ""
+    @State private var knownProtocol: RemoteProviderProtocol = .https
+    @State private var knownPort: String = ""
+    @State private var knownBasePath: String = "/v1"
+    @State private var manualModelIdsText: String = ""
+
     // Custom provider fields
     @State private var customName: String = ""
     @State private var customHost: String = ""
@@ -68,10 +93,18 @@ private struct AddProviderFlow: View {
         if preset == .custom {
             return !customHost.trimmingCharacters(in: .whitespaces).isEmpty
         }
+        if preset == .azureOpenAI {
+            return !knownHost.trimmingCharacters(in: .whitespaces).isEmpty && !apiKey.isEmpty && apiKey.count > 5
+        }
         if preset == .openai && openAIAuthMode == .chatGPTSubscription {
             return true
         }
         return !apiKey.isEmpty && apiKey.count > 5
+    }
+
+    private var canSaveKnownProviderWithoutSuccessfulTest: Bool {
+        guard selectedPreset == .azureOpenAI else { return false }
+        return canTest && !parseManualModelIds(manualModelIdsText).isEmpty
     }
 
     var body: some View {
@@ -105,7 +138,10 @@ private struct AddProviderFlow: View {
         .scaleEffect(hasAppeared ? 1 : 0.95)
         .animation(.spring(response: 0.3, dampingFraction: 0.8), value: hasAppeared)
         .onAppear {
-            selectedPreset = initialPreset
+            if let initialPreset {
+                initializeKnownConnection(for: initialPreset)
+                selectedPreset = initialPreset
+            }
             withAnimation { hasAppeared = true }
         }
     }
@@ -191,6 +227,7 @@ private struct AddProviderFlow: View {
                     ForEach(ProviderPreset.knownPresets + [.custom]) { preset in
                         ProviderSelectionCard(preset: preset) {
                             withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                                initializeKnownConnection(for: preset)
                                 selectedPreset = preset
                             }
                         }
@@ -245,6 +282,11 @@ private struct AddProviderFlow: View {
                         openAIAuthChoiceSection
                     }
 
+                    if selectedPreset == .azureOpenAI {
+                        azureConnectionSection
+                        azureDeploymentsSection
+                    }
+
                     if selectedPreset != .openai || openAIAuthMode == .platformAPIKey {
                         apiKeySection
                     }
@@ -264,7 +306,7 @@ private struct AddProviderFlow: View {
 
             // Footer
             sheetFooter(canProceed: canTest) {
-                if testResult?.isSuccess == true {
+                if testResult?.isSuccess == true || canSaveKnownProviderWithoutSuccessfulTest {
                     saveKnownProvider()
                 } else {
                     testKnownProvider()
@@ -365,6 +407,11 @@ private struct AddProviderFlow: View {
                 customBasePath = "/v1"
                 customProtocol = .https
                 customAuthType = .none
+                knownHost = ""
+                knownProtocol = .https
+                knownPort = ""
+                knownBasePath = "/v1"
+                manualModelIdsText = ""
                 showAdvanced = false
                 timeout = 60
                 customHeaders = []
@@ -379,6 +426,119 @@ private struct AddProviderFlow: View {
             .foregroundColor(theme.secondaryText)
         }
         .buttonStyle(PlainButtonStyle())
+    }
+
+    private func initializeKnownConnection(for preset: ProviderPreset) {
+        let config = preset.configuration
+        knownHost = config.host
+        knownProtocol = config.providerProtocol
+        knownPort = config.port.map(String.init) ?? ""
+        knownBasePath = config.basePath
+        manualModelIdsText = ""
+        testResult = nil
+    }
+
+    private var azureConnectionSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 8) {
+                Image(systemName: "network")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(theme.accentColor)
+                Text("AZURE ENDPOINT", bundle: .module)
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(theme.secondaryText)
+                    .tracking(0.5)
+            }
+
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("PROTOCOL", bundle: .module)
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundColor(theme.tertiaryText)
+                        .tracking(0.5)
+
+                    SegmentedToggle {
+                        SegmentedToggleButton("HTTPS", isSelected: knownProtocol == .https) { knownProtocol = .https }
+                        SegmentedToggleButton("HTTP", isSelected: knownProtocol == .http) { knownProtocol = .http }
+                    }
+                }
+                .frame(width: 140)
+
+                ProviderTextField(
+                    label: "Host",
+                    placeholder: "resource.cognitiveservices.azure.com",
+                    text: $knownHost,
+                    isMonospaced: true
+                )
+                .onChange(of: knownHost) { _, _ in testResult = nil }
+            }
+
+            HStack(spacing: 12) {
+                ProviderTextField(
+                    label: "Port",
+                    placeholder: knownProtocol == .https ? "443" : "80",
+                    text: $knownPort,
+                    isMonospaced: true
+                )
+                .frame(width: 90)
+                .onChange(of: knownPort) { _, _ in testResult = nil }
+
+                ProviderTextField(
+                    label: "Base Path",
+                    placeholder: "/openai/v1",
+                    text: $knownBasePath,
+                    isMonospaced: true
+                )
+                .onChange(of: knownBasePath) { _, _ in testResult = nil }
+            }
+
+            if !knownHost.trimmingCharacters(in: .whitespaces).isEmpty {
+                HStack(spacing: 8) {
+                    Image(systemName: "link")
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.accentColor)
+                    Text(buildKnownEndpointPreview())
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundColor(theme.secondaryText)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(theme.accentColor.opacity(0.1))
+                )
+            }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(theme.cardBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(theme.cardBorder, lineWidth: 1)
+                )
+        )
+    }
+
+    private var azureDeploymentsSection: some View {
+        DeploymentNamesEditor(
+            text: $manualModelIdsText,
+            title: "DEPLOYMENT NAMES",
+            placeholder: "gpt-5.4\nmy-prod-chat",
+            theme: theme
+        )
+        .onChange(of: manualModelIdsText) { _, _ in testResult = nil }
+    }
+
+    private func buildKnownEndpointPreview() -> String {
+        var result = "\(knownProtocol.rawValue)://\(knownHost.trimmingCharacters(in: .whitespaces))"
+        if let port = Int(knownPort), port != knownProtocol.defaultPort {
+            result += ":\(port)"
+        }
+        let path = knownBasePath.trimmingCharacters(in: .whitespaces)
+        result += path.isEmpty ? "/openai/v1" : (path.hasPrefix("/") ? path : "/" + path)
+        return result
     }
 
     private var apiKeySection: some View {
@@ -800,7 +960,7 @@ private struct AddProviderFlow: View {
 
     private var actionButtonTitle: String {
         if isTesting { return openAIAuthMode == .chatGPTSubscription ? L("Signing in...") : L("Testing...") }
-        if testResult?.isSuccess == true { return L("Add Provider") }
+        if testResult?.isSuccess == true || canSaveKnownProviderWithoutSuccessfulTest { return L("Add Provider") }
         if case .failure = testResult { return L("Retry") }
         if selectedPreset == .openai && openAIAuthMode == .chatGPTSubscription {
             return L("Sign in with ChatGPT")
@@ -809,7 +969,7 @@ private struct AddProviderFlow: View {
     }
 
     private var actionButtonColor: Color {
-        if testResult?.isSuccess == true { return theme.successColor }
+        if testResult?.isSuccess == true || canSaveKnownProviderWithoutSuccessfulTest { return theme.successColor }
         if case .failure = testResult { return theme.errorColor }
         return theme.accentColor
     }
@@ -823,6 +983,7 @@ private struct AddProviderFlow: View {
     private func testKnownProvider() {
         guard let preset = selectedPreset else { return }
         let config = preset.configuration
+        let connection = knownProviderConnection(for: preset)
 
         isTesting = true
         testResult = nil
@@ -838,10 +999,10 @@ private struct AddProviderFlow: View {
                     models = OpenAICodexOAuthService.supportedModels
                 } else {
                     models = try await RemoteProviderManager.shared.testConnection(
-                        host: config.host,
-                        providerProtocol: config.providerProtocol,
-                        port: config.port,
-                        basePath: config.basePath,
+                        host: connection.host,
+                        providerProtocol: connection.providerProtocol,
+                        port: connection.port,
+                        basePath: connection.basePath,
                         authType: .apiKey,
                         providerType: config.providerType,
                         apiKey: apiKey,
@@ -866,6 +1027,7 @@ private struct AddProviderFlow: View {
     private func saveKnownProvider() {
         guard let preset = selectedPreset else { return }
         let config = preset.configuration
+        let connection = knownProviderConnection(for: preset)
         let (regularHeaders, secretKeys) = HeaderEntry.partition(customHeaders)
         let isCodexOAuth = preset == .openai && openAIAuthMode == .chatGPTSubscription
         let providerConfig = isCodexOAuth ? OpenAICodexOAuthService.makeProvider() : nil
@@ -873,16 +1035,17 @@ private struct AddProviderFlow: View {
         let remoteProvider = RemoteProvider(
             id: providerConfig?.id ?? UUID(),
             name: providerConfig?.name ?? config.name,
-            host: providerConfig?.host ?? config.host,
-            providerProtocol: providerConfig?.providerProtocol ?? config.providerProtocol,
-            port: providerConfig?.port ?? config.port,
-            basePath: providerConfig?.basePath ?? config.basePath,
+            host: providerConfig?.host ?? connection.host,
+            providerProtocol: providerConfig?.providerProtocol ?? connection.providerProtocol,
+            port: providerConfig?.port ?? connection.port,
+            basePath: providerConfig?.basePath ?? connection.basePath,
             customHeaders: regularHeaders,
             authType: providerConfig?.authType ?? .apiKey,
             providerType: providerConfig?.providerType ?? config.providerType,
             enabled: true,
             autoConnect: true,
             timeout: timeout,
+            manualModelIds: parseManualModelIds(manualModelIdsText),
             secretHeaderKeys: secretKeys
         )
 
@@ -959,6 +1122,25 @@ private struct AddProviderFlow: View {
             RemoteProviderKeychain.saveHeaderSecret(header.value, key: header.key, for: providerId)
         }
     }
+
+    private func knownProviderConnection(for preset: ProviderPreset) -> ProviderPresetConfiguration {
+        let config = preset.configuration
+        guard preset == .azureOpenAI else { return config }
+
+        let trimmedHost = knownHost.trimmingCharacters(in: .whitespaces)
+        let trimmedBasePath = knownBasePath.trimmingCharacters(in: .whitespaces)
+        let port: Int? = knownPort.trimmingCharacters(in: .whitespaces).isEmpty ? nil : Int(knownPort)
+
+        return ProviderPresetConfiguration(
+            name: config.name,
+            host: trimmedHost,
+            providerProtocol: knownProtocol,
+            port: port,
+            basePath: trimmedBasePath.isEmpty ? "/openai/v1" : trimmedBasePath,
+            authType: config.authType,
+            providerType: config.providerType
+        )
+    }
 }
 
 // MARK: - Edit Provider Flow (simplified)
@@ -988,6 +1170,7 @@ private struct EditProviderFlow: View {
 
     // Editable fields
     @State private var apiKey: String = ""
+    @State private var manualModelIdsText: String = ""
 
     // Advanced
     @State private var showAdvanced = false
@@ -1129,6 +1312,15 @@ private struct EditProviderFlow: View {
                 }
 
                 ProviderSecureField(placeholder: "Leave blank to keep current", text: $apiKey)
+            }
+
+            if preset == .azureOpenAI {
+                DeploymentNamesEditor(
+                    text: $manualModelIdsText,
+                    title: "DEPLOYMENT NAMES",
+                    placeholder: "gpt-5.4\nmy-prod-chat",
+                    theme: theme
+                )
             }
 
             // Help section
@@ -1546,6 +1738,9 @@ private struct EditProviderFlow: View {
     private var canSave: Bool {
         if matchedPreset != nil {
             // Known provider: always saveable (name/host come from preset or advanced)
+            if providerType == .azureOpenAI {
+                return !host.trimmingCharacters(in: .whitespaces).isEmpty
+            }
             return true
         }
         return !name.trimmingCharacters(in: .whitespaces).isEmpty
@@ -1563,6 +1758,7 @@ private struct EditProviderFlow: View {
         authType = provider.authType
         providerType = provider.providerType
         timeout = provider.timeout
+        manualModelIdsText = provider.manualModelIds.joined(separator: "\n")
         customHeaders = provider.customHeaders.map { HeaderEntry(key: $0.key, value: $0.value, isSecret: false) }
         for key in provider.secretHeaderKeys {
             customHeaders.append(HeaderEntry(key: key, value: "", isSecret: true))
@@ -1622,6 +1818,7 @@ private struct EditProviderFlow: View {
             enabled: provider.enabled,
             autoConnect: true,
             timeout: timeout,
+            manualModelIds: parseManualModelIds(manualModelIdsText),
             secretHeaderKeys: secretKeys
         )
 
@@ -1974,6 +2171,61 @@ private struct ProviderSecureField: View {
                 .overlay(
                     RoundedRectangle(cornerRadius: 10)
                         .stroke(themeManager.currentTheme.inputBorder, lineWidth: 1)
+                )
+        )
+    }
+}
+
+// MARK: - Deployment Names Editor
+
+private struct DeploymentNamesEditor: View {
+    @Binding var text: String
+    let title: String
+    let placeholder: String
+    let theme: ThemeProtocol
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(LocalizedStringKey(title), bundle: .module)
+                .font(.system(size: 10, weight: .bold))
+                .foregroundColor(theme.tertiaryText)
+                .tracking(0.5)
+
+            ZStack(alignment: .topLeading) {
+                if text.isEmpty {
+                    Text(placeholder)
+                        .font(.system(size: 13, design: .monospaced))
+                        .foregroundColor(theme.placeholderText)
+                        .padding(.horizontal, 11)
+                        .padding(.vertical, 10)
+                        .allowsHitTesting(false)
+                }
+
+                TextEditor(text: $text)
+                    .font(.system(size: 13, design: .monospaced))
+                    .foregroundColor(theme.primaryText)
+                    .scrollContentBackground(.hidden)
+                    .background(Color.clear)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 6)
+            }
+            .frame(minHeight: 82)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(theme.inputBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(theme.inputBorder, lineWidth: 1)
+                    )
+            )
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(theme.cardBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(theme.cardBorder, lineWidth: 1)
                 )
         )
     }

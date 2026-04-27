@@ -237,8 +237,18 @@ public final class RemoteProviderManager: ObservableObject {
                 RemoteProviderKeychain.saveOAuthTokens(refreshed, for: provider.id)
             }
 
-            // Fetch models from the provider
-            let models = try await RemoteProviderService.fetchModels(from: provider)
+            // Fetch models from the provider and merge any manually configured deployment IDs.
+            let discoveredModels: [String]
+            do {
+                discoveredModels = try await RemoteProviderService.fetchModels(from: provider)
+            } catch {
+                if provider.providerType == .azureOpenAI && !provider.manualModelIds.isEmpty {
+                    discoveredModels = []
+                } else {
+                    throw error
+                }
+            }
+            let models = provider.mergedModelIds(discovered: discoveredModels)
 
             // Create service instance – resolve headers eagerly on @MainActor
             // so the service actor never reads from Keychain off the main thread.
@@ -431,6 +441,10 @@ public final class RemoteProviderManager: ObservableObject {
             case .gemini:
                 if testHeaders["x-goog-api-key"] == nil {
                     testHeaders["x-goog-api-key"] = apiKey
+                }
+            case .azureOpenAI:
+                if testHeaders["api-key"] == nil {
+                    testHeaders["api-key"] = apiKey
                 }
             case .openaiLegacy, .openResponses, .openAICodex, .osaurus:
                 if testHeaders["Authorization"] == nil {

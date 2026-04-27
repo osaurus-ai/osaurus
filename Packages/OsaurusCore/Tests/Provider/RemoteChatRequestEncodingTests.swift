@@ -85,9 +85,159 @@ struct RemoteChatRequestEncodingTests {
         #expect(payload["store"] as? Bool == false)
     }
 
+    @Test func azureProvider_usesAPIKeyHeader() throws {
+        let providerId = UUID()
+        defer { RemoteProviderKeychain.deleteAPIKey(for: providerId) }
+
+        let provider = RemoteProvider(
+            id: providerId,
+            name: "Azure OpenAI Foundry",
+            host: "example-resource.cognitiveservices.azure.com",
+            basePath: "/openai/v1",
+            authType: .apiKey,
+            providerType: .azureOpenAI
+        )
+
+        #expect(RemoteProviderKeychain.saveAPIKey("azure-secret", for: providerId))
+
+        let headers = provider.resolvedHeaders()
+        #expect(headers["api-key"] == "azure-secret")
+        #expect(headers["Authorization"] == nil)
+    }
+
+    @Test func azureProvider_defaultURLUsesOpenAIPath() throws {
+        let provider = RemoteProvider(
+            name: "Azure OpenAI Foundry",
+            host: "example-resource.cognitiveservices.azure.com",
+            basePath: "/openai/v1",
+            authType: .apiKey,
+            providerType: .azureOpenAI
+        )
+
+        #expect(
+            provider.url(for: provider.providerType.chatEndpoint)?.absoluteString
+                == "https://example-resource.cognitiveservices.azure.com/openai/v1/chat/completions"
+        )
+    }
+
+    @Test func remoteProvider_mergesManualModelIdsWithDiscoveredModels() throws {
+        let provider = RemoteProvider(
+            name: "Custom",
+            host: "api.example.com",
+            providerType: .openaiLegacy,
+            manualModelIds: [" gpt-5.4 ", "", "prod-chat", "GPT-5.4"]
+        )
+
+        #expect(provider.mergedModelIds(discovered: ["gpt-4.1", "prod-chat"]) == ["gpt-4.1", "prod-chat", "gpt-5.4"])
+    }
+
+    @Test func remoteProvider_decodingDefaultsManualModelIdsToEmptyArray() throws {
+        let json = """
+            {
+              "id": "00000000-0000-0000-0000-000000000001",
+              "name": "Custom",
+              "host": "localhost",
+              "providerProtocol": "http",
+              "basePath": "/v1",
+              "customHeaders": {},
+              "authType": "none",
+              "providerType": "openai",
+              "enabled": true,
+              "autoConnect": true,
+              "timeout": 60,
+              "secretHeaderKeys": []
+            }
+            """
+
+        let provider = try JSONDecoder().decode(RemoteProvider.self, from: Data(json.utf8))
+
+        #expect(provider.manualModelIds == [])
+    }
+
+    @Test func azureProvider_disablesOpenAICompatibleReasoningObject() throws {
+        #expect(
+            RemoteProviderService.allowsChatCompletionsReasoningObject(
+                providerType: .azureOpenAI,
+                host: "example-resource.cognitiveservices.azure.com"
+            ) == false
+        )
+        #expect(
+            RemoteProviderService.allowsChatCompletionsReasoningObject(
+                providerType: .openaiLegacy,
+                host: "api.openai.com"
+            )
+                == false
+        )
+        #expect(
+            RemoteProviderService.allowsChatCompletionsReasoningObject(
+                providerType: .openaiLegacy,
+                host: "api.deepseek.com"
+            )
+                == true
+        )
+    }
+
+    @Test func azureProvider_routesReasoningRequestsThroughResponses() throws {
+        let request = Self.makeRequest(
+            model: "gpt-5.5",
+            maxTokens: 1024,
+            reasoningEffort: "medium"
+        )
+
+        #expect(
+            RemoteProviderService.effectiveRequestProviderType(
+                configuredProviderType: .azureOpenAI,
+                request: request
+            ) == .openResponses
+        )
+    }
+
+    @Test func azureProvider_routesToolRequestsThroughResponses() throws {
+        let request = Self.makeRequest(
+            model: "gpt-5.5",
+            maxTokens: 1024,
+            reasoningEffort: nil,
+            tools: [Self.weatherTool]
+        )
+
+        #expect(
+            RemoteProviderService.effectiveRequestProviderType(
+                configuredProviderType: .azureOpenAI,
+                request: request
+            ) == .openResponses
+        )
+    }
+
+    @Test func azureProvider_keepsPlainRequestsOnChatCompletions() throws {
+        let request = Self.makeRequest(model: "gpt-4.1", maxTokens: 1024)
+
+        #expect(
+            RemoteProviderService.effectiveRequestProviderType(
+                configuredProviderType: .azureOpenAI,
+                request: request
+            ) == .azureOpenAI
+        )
+    }
+
+    @Test func azureProvider_usesOnlyManualDeploymentIdsForModels() throws {
+        let provider = RemoteProvider(
+            name: "Azure OpenAI Foundry",
+            host: "example-resource.cognitiveservices.azure.com",
+            providerType: .azureOpenAI,
+            manualModelIds: [" prod-chat ", "", "gpt-5.5", "PROD-CHAT"]
+        )
+
+        #expect(provider.mergedModelIds(discovered: ["gpt-4.1", "gpt-5.5"]) == ["prod-chat", "gpt-5.5"])
+    }
+
     // MARK: - Fixtures
 
-    private static func makeRequest(model: String, maxTokens: Int?) -> RemoteChatRequest {
+    private static func makeRequest(
+        model: String,
+        maxTokens: Int?,
+        reasoningEffort: String? = nil,
+        tools: [Tool]? = nil
+    ) -> RemoteChatRequest {
         RemoteChatRequest(
             model: model,
             messages: [ChatMessage(role: "user", content: "hi")],
@@ -98,14 +248,28 @@ struct RemoteChatRequestEncodingTests {
             frequency_penalty: nil,
             presence_penalty: nil,
             stop: nil,
-            tools: nil,
+            tools: tools,
             tool_choice: nil,
-            reasoning_effort: nil,
+            reasoning_effort: reasoningEffort,
             reasoning: nil,
             modelOptions: [:],
             veniceParameters: nil
         )
     }
+
+    private static let weatherTool = Tool(
+        type: "function",
+        function: ToolFunction(
+            name: "get_weather",
+            description: "Get weather",
+            parameters: .object([
+                "type": .string("object"),
+                "properties": .object([
+                    "location": .object(["type": .string("string")])
+                ]),
+            ])
+        )
+    )
 
     private static func encodeAsDictionary(_ request: RemoteChatRequest) throws -> [String: Any] {
         let data = try JSONEncoder().encode(request)
