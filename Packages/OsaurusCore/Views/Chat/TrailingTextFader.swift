@@ -7,6 +7,7 @@
 import AppKit
 import QuartzCore
 
+@MainActor
 final class TrailingTextFader {
 
     /// Time for one chunk to ramp from alpha 0 → 1.
@@ -109,7 +110,9 @@ final class TrailingTextFader {
         // retain cycle that displayLink(target:) creates and to keep the fader
         // independent of NSView attachment state
         let t = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
-            self?.tick()
+            MainActor.assumeIsolated {
+                self?.tick()
+            }
         }
         RunLoop.main.add(t, forMode: .common)
         timer = t
@@ -194,9 +197,5 @@ final class TrailingTextFader {
         let safeLoc = min(max(loc, 0), total)
         let safeLen = min(max(len, 0), total - safeLoc)
         return NSRange(location: safeLoc, length: safeLen)
-    }
-
-    deinit {
-        timer?.invalidate()
     }
 }
