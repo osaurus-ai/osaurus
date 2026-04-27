@@ -14,10 +14,21 @@ let package = Package(
         .package(url: "https://github.com/orlandos-nl/IkigaJSON", from: "2.3.2"),
         .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.7.0"),
         .package(url: "https://github.com/osaurus-ai/mlx-swift", branch: "osaurus-0.31.3"),
-        .package(url: "https://github.com/osaurus-ai/vmlx-swift-lm", branch: "main"),
+        // Pinned by commit (was `branch: "main"`) so the runtime can't change
+        // under us between identical osaurus source revisions. Bump
+        // intentionally when validating a new upstream commit.
+        .package(
+            url: "https://github.com/osaurus-ai/vmlx-swift-lm",
+            revision: "070dc5b8c9829dc69b6e4831dd201537200a9c36"
+        ),
         .package(url: "https://github.com/huggingface/swift-transformers", from: "1.1.6"),
         .package(url: "https://github.com/FluidInference/FluidAudio.git", from: "0.14.0"),
-        .package(url: "https://github.com/rryam/VecturaKit", branch: "main"),
+        // Pinned by commit (was `branch: "main"`) — same reasoning as
+        // vmlx-swift-lm above.
+        .package(
+            url: "https://github.com/rryam/VecturaKit",
+            revision: "a1b93774d16d8a6e7fc39b7cda9449b719f07f48"
+        ),
         .package(url: "https://github.com/21-DOT-DEV/swift-secp256k1", exact: "0.21.1"),
         .package(path: "../OsaurusRepository"),
         .package(url: "https://github.com/mgriebling/SwiftMath", from: "1.7.3"),
@@ -25,9 +36,106 @@ let package = Package(
         .package(url: "https://github.com/AAChartModel/AAChartKit-Swift.git", from: "9.5.0"),
     ],
     targets: [
+        // Vendored SQLCipher 4.6.1 amalgamation (CommonCrypto
+        // provider, FTS5 enabled). See `SQLCipher/README.md` for
+        // re-build instructions and the FTS5 header-guard maintenance
+        // contract. OsaurusCore links this *instead of* Apple's
+        // system `import SQLite3` so every SQLite call goes through
+        // the SQLCipher-extended build (giving us `sqlite3_key_v2`
+        // for at-rest encryption).
+        //
+        // ⚠️  FTS5 typedef collision. `sqlite3.h` declares
+        //     `Fts5ExtensionApi`, `fts5_api`, `Fts5Context`,
+        //     `Fts5PhraseIter` and `fts5_extension_function`
+        //     UNCONDITIONALLY (they are NOT gated by
+        //     `SQLITE_ENABLE_FTS5`). When another module in the
+        //     same Swift compilation unit imports Apple's system
+        //     `SQLite3` (notably vmlx-swift-lm's `DiskCache`),
+        //     Swift's Clang importer sees two different definitions
+        //     of those typedefs and rejects the build with
+        //         'Fts5ExtensionApi' has different definitions in different modules
+        //     The fix is two-part:
+        //       1. `include/sqlite3.h` wraps the `_FTS5_H` block in
+        //          `#ifndef OSAURUS_OMIT_FTS5_HEADERS` (search for
+        //          OSAURUS LOCAL MODIFICATION inside that file).
+        //       2. The `cSettings` `.define("OSAURUS_OMIT_FTS5_HEADERS")`
+        //          below activates the wrap.
+        //     `sqlite3.c` itself inlines its own copy of the header
+        //     text, so FTS5's SQL-level functionality keeps working;
+        //     we only hide the C-extension API, which Osaurus
+        //     doesn't use.
+        //     `Tests/Storage/SQLCipherVendorGuardTests.swift` asserts
+        //     both the header guard and the cSettings flag are in
+        //     place — CI fails if a SQLCipher bump strips the guard.
+        //
+        // ⚠️  `sqlite3ext.h` struct collision. A similar issue occurs
+        //     with `struct sqlite3_api_routines` in `sqlite3ext.h`.
+        //     We wrap its contents in `#ifndef OSAURUS_OMIT_SQLITE3EXT_HEADERS`
+        //     and define it below.
+        .target(
+            name: "OsaurusSQLCipher",
+            path: "SQLCipher",
+            sources: ["sqlite3.c"],
+            publicHeadersPath: "include",
+            cSettings: [
+                .headerSearchPath("include"),
+                .define("SQLITE_HAS_CODEC"),
+                .define("SQLCIPHER_CRYPTO_CC"),
+                .define("SQLITE_TEMP_STORE", to: "2"),
+                .define("SQLITE_THREADSAFE", to: "2"),
+                .define("SQLITE_ENABLE_FTS5"),
+                .define("SQLITE_ENABLE_RTREE"),
+                .define("SQLITE_ENABLE_JSON1"),
+                .define("SQLITE_ENABLE_COLUMN_METADATA"),
+                .define("SQLITE_ENABLE_LOAD_EXTENSION"),
+                .define("SQLITE_ENABLE_DBSTAT_VTAB"),
+                .define("HAVE_USLEEP", to: "1"),
+                // Strip assert()s. Several SQLite asserts reference
+                // identifiers only declared inside debug-only build
+                // configs (e.g. `bCorrupt`, `startedWithOom`); the
+                // shipped library normally compiles with NDEBUG, so
+                // do the same here. NDEBUG must be a compile flag,
+                // not a late `#define` in source — Apple's
+                // `<assert.h>` is a precompiled Clang module whose
+                // expansion is fixed at module-compilation time.
+                .define("NDEBUG"),
+                .define("SQLITE_OMIT_DEPRECATED"),
+                .define("SQLITE_DEFAULT_MEMSTATUS", to: "0"),
+                // Hide the FTS5 C-extension typedefs from
+                // `include/sqlite3.h` so the Swift Clang importer
+                // doesn't conflict with the system SQLite3 module —
+                // see the long comment above. `sqlite3.c`'s inlined
+                // copy of sqlite3.h text is unaffected, so the C
+                // compilation of FTS5 keeps working.
+                .define("OSAURUS_OMIT_FTS5_HEADERS"),
+                // Hide the `sqlite3_api_routines` struct from
+                // `include/sqlite3ext.h` so the Swift Clang importer
+                // doesn't conflict with the system SQLite3 module.
+                // `sqlite3.c`'s inlined copy of sqlite3ext.h text is
+                // unaffected.
+                .define("OSAURUS_OMIT_SQLITE3EXT_HEADERS"),
+                // The SQLite amalgamation calls a few self-references
+                // before their forward declarations show up; modern
+                // Apple clang upgrades this from a warning to an
+                // error. Allow the implicit decls only inside this
+                // vendored target so we keep strict diagnostics on
+                // the rest of the codebase.
+                .unsafeFlags([
+                    "-Wno-shorten-64-to-32",
+                    "-Wno-ambiguous-macro",
+                    "-Wno-implicit-function-declaration",
+                    "-Wno-unused-but-set-variable",
+                    "-Wno-deprecated-non-prototype",
+                ]),
+            ],
+            linkerSettings: [
+                .linkedFramework("Security")
+            ]
+        ),
         .target(
             name: "OsaurusCore",
             dependencies: [
+                "OsaurusSQLCipher",
                 .product(name: "NIOCore", package: "swift-nio"),
                 .product(name: "NIOHTTP1", package: "swift-nio"),
                 .product(name: "NIOPosix", package: "swift-nio"),
@@ -50,13 +158,14 @@ let package = Package(
                 .product(name: "AAInfographics", package: "AAChartKit-Swift"),
             ],
             path: ".",
-            exclude: ["Tests"],
+            exclude: ["Tests", "SQLCipher"],
             resources: [.process("Resources")]
         ),
         .testTarget(
             name: "OsaurusCoreTests",
             dependencies: [
                 "OsaurusCore",
+                "OsaurusSQLCipher",
                 .product(name: "NIOEmbedded", package: "swift-nio"),
                 .product(name: "VecturaKit", package: "VecturaKit"),
             ],

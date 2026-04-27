@@ -1,5 +1,5 @@
 {
-  "originHash" : "3bd0752487d6868354c4fa2219e34395596d9d9bb544fccf61c28230b222e53b",
+  "originHash" : "74f2646e633968b3c9810fe6d2934ac0c8ec16744addf691c0270a4d68eba943",
   "pins" : [
     {
       "identity" : "aachartkit-swift",
@@ -186,8 +186,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/jkrukowski/swift-embeddings.git",
       "state" : {
-        "revision" : "66994e3b3ed172a9b691b59d11bd0702c3f5eb33",
-        "version" : "0.0.26"
+        "branch" : "main",
+        "revision" : "66994e3b3ed172a9b691b59d11bd0702c3f5eb33"
       }
     },
     {
@@ -393,8 +393,7 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/rryam/VecturaKit",
       "state" : {
-        "branch" : "main",
-        "revision" : "5fed66f3700bee561326e719250aa01c49fc53d5"
+        "revision" : "a1b93774d16d8a6e7fc39b7cda9449b719f07f48"
       }
     },
     {
@@ -402,8 +401,7 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/osaurus-ai/vmlx-swift-lm",
       "state" : {
-        "branch" : "main",
-        "revision" : "eda0c81fbee8259b70168bee8006ba7b541b580c"
+        "revision" : "070dc5b8c9829dc69b6e4831dd201537200a9c36"
       }
     },
     {

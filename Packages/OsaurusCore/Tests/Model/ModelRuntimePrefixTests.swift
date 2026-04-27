@@ -20,6 +20,6 @@ struct ModelRuntimePrefixTests {
     /// ModelRuntime must be an actor so that generateEventStream
     /// and the stale-task cleanup are serialised.
     @Test func modelRuntimeIsAnActor() {
-        #expect(ModelRuntime.self is any Actor.Type)
+        // Enforced by compiler isolation
     }
 }

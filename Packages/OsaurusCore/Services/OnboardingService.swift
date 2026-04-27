@@ -65,8 +65,6 @@ public final class OnboardingService: ObservableObject {
         let legacyRoot = supportDir.appendingPathComponent("com.dinoki.osaurus", isDirectory: true)
 
         let didDeleteAll = await Task.detached(priority: .userInitiated) { () -> Bool in
-            var success = true
-
             // helper to delete a directory with robust logging and error handling
             let deleteDir = { (url: URL, label: String) -> Bool in
                 do {

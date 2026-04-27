@@ -14,20 +14,55 @@
 
     import Containerization
     import ContainerizationExtras
+    import CryptoKit
     import Foundation
 
     public actor SandboxManager {
         public static let shared = SandboxManager()
 
         private static let containerID = "osaurus-sandbox"
-        private static let containerImage = "ghcr.io/osaurus-ai/sandbox:latest"
-        private static let kernelDownloadURLs = [
-            "https://github.com/kata-containers/kata-containers/releases/download/3.17.0/kata-static-3.17.0-arm64.tar.xz"
+
+        /// GHCR image reference, pinned by content digest so a registry
+        /// compromise (or `:latest` mutating under us) cannot silently
+        /// rewrite the trust boundary the sandbox enforces. Update this
+        /// digest when bumping the sandbox image — never roll back to a
+        /// floating tag.
+        ///
+        /// To rotate: `crane digest ghcr.io/osaurus-ai/sandbox:latest`
+        /// or `docker buildx imagetools inspect ghcr.io/osaurus-ai/sandbox:latest`
+        /// and paste the multi-arch index digest here.
+        private static let containerImage =
+            "ghcr.io/osaurus-ai/sandbox@sha256:f4216228d7f2d26b1a0e2a99501f6812f1298ee06a0477c508b3e75db74b8a2f"
+
+        /// Expected SHA-256 of the Kata kernel tarball. Verified after
+        /// download, mismatch is fail-closed (the file is deleted and
+        /// provisioning aborts). Update alongside `kernelDownloadURLs` when
+        /// bumping the Kata version.
+        private static let kernelDownloadURLs: [DownloadSource] = [
+            DownloadSource(
+                url:
+                    "https://github.com/kata-containers/kata-containers/releases/download/3.17.0/kata-static-3.17.0-arm64.tar.xz",
+                expectedSHA256: "647c7612e6edf789d5e14698c48c99d8bac15ad139ffaa1c8bb7d229f748d181"
+            )
         ]
-        private static let initfsDownloadURLs = [
+
+        /// Expected SHA-256 of the initfs blob. Verified after download.
+        /// The blob lives on R2 (mutable bucket) so digest verification is
+        /// the only thing standing between a CDN compromise and an
+        /// attacker-chosen guest filesystem. Update this constant when the
+        /// blob is intentionally rotated.
+        private static let initfsDownloadURLs: [DownloadSource] = [
             // "https://github.com/osaurus-ai/osaurus/releases/latest/download/init.ext4"
-            "https://pub-5f3c2bf70e93411790bbcd6419d2f8fa.r2.dev/init.ext4"
+            DownloadSource(
+                url: "https://pub-5f3c2bf70e93411790bbcd6419d2f8fa.r2.dev/init.ext4",
+                expectedSHA256: "fa08b6993e3682d88bfb964e02bdf4ca234df616bac047f24cec6a4548a42aea"
+            )
         ]
+
+        /// Bound the cost of hashing — well above either current artifact
+        /// (Kata tarball ~30 MB, initfs ~100 MB) but stops a runaway
+        /// download from silently growing into a multi-GB hash job.
+        private static let maxArtifactDownloadBytes: Int = 512 * 1024 * 1024
 
         /// Host-side Unix socket path for the bridge server (relayed into guest via vsock)
         private static var bridgeSocketPath: String {
@@ -35,6 +70,12 @@
         }
         /// Where the bridge socket appears inside the guest container
         private static let guestBridgeSocketPath = "/tmp/osaurus-bridge.sock"
+
+        /// In-guest directory holding per-agent bridge auth tokens.
+        /// Each file is `<linuxName>.token`, mode 0600, owned by that user.
+        /// The directory itself is mode 0711 so users can open their own
+        /// file by known name without enumerating siblings.
+        fileprivate static let bridgeTokenDir = "/run/osaurus"
 
         private var _status: ContainerStatus = .notProvisioned
         private var _availability: SandboxAvailability?
@@ -229,8 +270,21 @@
                 await setProvisioningPhase(nil)
 
                 var savedConfig = SandboxConfigurationStore.load()
+                let currentVersion = SandboxBridgeMigrationFlag.currentAppVersion
+                var configChanged = false
                 if !savedConfig.setupComplete {
                     savedConfig.setupComplete = true
+                    configChanged = true
+                }
+                // Stamp the binary version that just succeeded a provision so
+                // the Sandbox settings banner can detect when an upgraded
+                // binary still hasn't restarted the container — the
+                // post-#950 token migration is lazy on container restart.
+                if savedConfig.lastProvisionedAppVersion != currentVersion {
+                    savedConfig.lastProvisionedAppVersion = currentVersion
+                    configChanged = true
+                }
+                if configChanged {
                     SandboxConfigurationStore.save(savedConfig)
                 }
             } catch {
@@ -296,6 +350,10 @@
             linuxContainer = nil
             containerManager = nil
             await HostAPIBridgeServer.shared.stop()
+            // Drop any in-memory bridge tokens — the next container start
+            // mints fresh ones. Leaving stale tokens in memory could falsely
+            // authenticate a request to a guest that no longer exists.
+            await SandboxBridgeTokenStore.shared.revokeAll()
             _status = .stopped
             syncStatus()
         }
@@ -433,6 +491,13 @@
             let checkResult = try await exec(command: "id \(linuxUser) 2>/dev/null")
             guard checkResult.succeeded else { return false }
 
+            // Drop the per-agent bridge token before removing the user so
+            // any in-flight bridge calls from this agent fail closed.
+            await SandboxBridgeTokenStore.shared.revoke(linuxName: linuxUser)
+            _ = try? await execAsRoot(
+                command: "rm -f \(Self.bridgeTokenDir)/\(linuxUser).token"
+            )
+
             let homeDir = OsaurusPaths.inContainerAgentHome(agentName)
             let removeResult = try await execAsRoot(
                 command:
@@ -452,6 +517,54 @@
             }
 
             return true
+        }
+
+        // MARK: - Bridge Token Provisioning
+
+        /// Mint (or look up) a bridge auth token for `linuxName` and write it
+        /// to `/run/osaurus/<linuxName>.token` inside the guest with mode 0600
+        /// owned by that user. Idempotent — safe to call repeatedly. Should be
+        /// invoked after `ensureAgentUser` for the same `linuxName` so the
+        /// chown target exists.
+        ///
+        /// `agentId` ties the token to a specific Osaurus agent so the bridge
+        /// server can derive identity from the token alone, without trusting
+        /// any caller-supplied header.
+        public func provisionBridgeToken(linuxName: String, agentId: UUID) async throws {
+            // Guest must be running to host the token file.
+            guard linuxContainer != nil else { return }
+
+            let token = await SandboxBridgeTokenStore.shared.register(
+                agentId: agentId,
+                linuxName: linuxName
+            )
+            let tokenPath = "\(Self.bridgeTokenDir)/\(linuxName).token"
+
+            // `umask 0077` so the redirect creates the file mode 0600 directly
+            // — no transient world-readable window between create and chmod.
+            // `printf %s` (no trailing newline) keeps the token byte-exact for
+            // the shim's `cat` read.
+            let script = """
+                mkdir -p \(Self.bridgeTokenDir) && chmod 0711 \(Self.bridgeTokenDir) && \
+                ( umask 0077 && printf %s '\(token)' > \(tokenPath) ) && \
+                chown \(linuxName):\(linuxName) \(tokenPath)
+                """
+            let result = try await execAsRoot(command: script)
+            guard result.succeeded else {
+                throw SandboxError.provisionFailed(
+                    "Failed to write bridge token for \(linuxName): \(result.stderr)"
+                )
+            }
+        }
+
+        /// Drop in-memory and on-disk traces of the bridge token for `linuxName`.
+        public func revokeBridgeToken(linuxName: String) async {
+            await SandboxBridgeTokenStore.shared.revoke(linuxName: linuxName)
+            if linuxContainer != nil {
+                _ = try? await execAsRoot(
+                    command: "rm -f \(Self.bridgeTokenDir)/\(linuxName).token"
+                )
+            }
         }
 
         // MARK: - Container Info
@@ -697,9 +810,22 @@
 
         // MARK: - Private: Asset Download
 
-        /// Downloads a file from the first successful URL in the list to the given destination,
-        /// reporting byte-level download progress to the UI.
-        private func downloadFile(from urls: [String], to destination: URL) async throws {
+        /// One mirror plus the SHA-256 the bytes must match. Identity of the
+        /// downloaded artifact comes from the digest, not the URL — a CDN or
+        /// release-host compromise that returns the wrong bytes is rejected
+        /// before they touch the on-disk container store.
+        struct DownloadSource: Sendable {
+            let url: String
+            let expectedSHA256: String
+        }
+
+        /// Downloads a file from the first successful URL in the list to the
+        /// given destination, reporting byte-level download progress to the
+        /// UI, and verifies the SHA-256 of the bytes against the expected
+        /// digest. A digest mismatch is **fail-closed**: the file is deleted
+        /// and provisioning aborts. This is the only thing standing between
+        /// an upstream compromise and an attacker-chosen guest kernel/initfs.
+        private func downloadFile(from sources: [DownloadSource], to destination: URL) async throws {
             let delegate = DownloadProgressDelegate { progress in
                 Task { @MainActor in
                     State.shared.provisioningProgress = progress
@@ -709,33 +835,97 @@
             defer { session.finishTasksAndInvalidate() }
 
             var lastError: Error?
-            for urlString in urls {
-                guard let url = URL(string: urlString) else { continue }
+            for source in sources {
+                guard let url = URL(string: source.url) else { continue }
                 do {
-                    debugLog("[Sandbox] Downloading from \(urlString)...")
+                    debugLog("[Sandbox] Downloading from \(source.url)...")
                     let (tempURL, response) = try await session.download(from: url)
                     guard let httpResponse = response as? HTTPURLResponse,
                         (200 ... 299).contains(httpResponse.statusCode)
                     else {
                         NSLog(
-                            "[SandboxManager] HTTP \((response as? HTTPURLResponse)?.statusCode ?? 0) from \(urlString)"
+                            "[SandboxManager] HTTP \((response as? HTTPURLResponse)?.statusCode ?? 0) from \(source.url)"
                         )
+                        // Drop the temp file so we don't leak it into /tmp.
+                        try? FileManager.default.removeItem(at: tempURL)
                         continue
+                    }
+
+                    // Verify integrity *before* installing. If the digest
+                    // doesn't match, the temp file is removed and we never
+                    // touch the destination.
+                    do {
+                        try Self.verifySHA256(
+                            of: tempURL,
+                            expected: source.expectedSHA256,
+                            maxBytes: Self.maxArtifactDownloadBytes
+                        )
+                    } catch {
+                        try? FileManager.default.removeItem(at: tempURL)
+                        // Don't try other mirrors on integrity failure —
+                        // a real upstream compromise affects all of them
+                        // and silent fallback would hide it.
+                        throw error
                     }
 
                     try? FileManager.default.removeItem(at: destination)
                     try FileManager.default.moveItem(at: tempURL, to: destination)
-                    debugLog("[Sandbox] Downloaded to \(destination.path)")
+                    debugLog("[Sandbox] Downloaded + verified to \(destination.path)")
                     return
+                } catch let err as SandboxError {
+                    // Fail-closed on integrity errors.
+                    throw err
                 } catch {
                     lastError = error
-                    debugLog("[Sandbox] Download failed from \(urlString): \(error)")
+                    debugLog("[Sandbox] Download failed from \(source.url): \(error)")
                 }
             }
 
             throw SandboxError.provisionFailed(
                 "Download failed: \(lastError?.localizedDescription ?? "all URLs failed")"
             )
+        }
+
+        /// Hash the file at `url` with SHA-256 in 1 MiB chunks (so hashing
+        /// the ~100 MiB initfs doesn't peak at 100 MiB of memory) and check
+        /// it against the lower-cased hex `expected` digest. Throws
+        /// `SandboxError.integrityCheckFailed` if the file exceeds
+        /// `maxBytes` or the digest doesn't match.
+        ///
+        /// Internal so tests can drive it directly without a full container
+        /// provisioning cycle.
+        static func verifySHA256(of url: URL, expected: String, maxBytes: Int) throws {
+            let normalized = expected.lowercased()
+            // Cheap structural check: 64 lower-case hex chars.
+            guard normalized.count == 64,
+                normalized.allSatisfy({ $0.isHexDigit })
+            else {
+                throw SandboxError.integrityCheckFailed(
+                    "Expected SHA-256 is malformed (got \(expected.count) chars)"
+                )
+            }
+
+            let handle = try FileHandle(forReadingFrom: url)
+            defer { try? handle.close() }
+
+            var hasher = SHA256()
+            var totalRead = 0
+            while let chunk = try handle.read(upToCount: 1024 * 1024), !chunk.isEmpty {
+                totalRead += chunk.count
+                if totalRead > maxBytes {
+                    throw SandboxError.integrityCheckFailed(
+                        "Downloaded artifact exceeds size cap (\(totalRead) > \(maxBytes) bytes)"
+                    )
+                }
+                hasher.update(data: chunk)
+            }
+
+            let actual = hasher.finalize().map { String(format: "%02x", $0) }.joined()
+            guard actual == normalized else {
+                throw SandboxError.integrityCheckFailed(
+                    "SHA-256 mismatch: expected \(normalized), got \(actual)"
+                )
+            }
         }
 
         // MARK: - Private: Exec via VM Agent
@@ -899,6 +1089,14 @@
                 command:
                     "cp /workspace/.osaurus-host-shim /usr/local/bin/osaurus-host && chmod 555 /usr/local/bin/osaurus-host && rm /workspace/.osaurus-host-shim"
             )
+
+            // Bridge token directory: each agent user's token file lives here as
+            // mode 0600. Mode 0711 on the directory lets users stat their own
+            // file (which they know by name == their own $USER) without being
+            // able to enumerate or read sibling token files.
+            _ = try await execAsRoot(
+                command: "mkdir -p \(Self.bridgeTokenDir) && chmod 0711 \(Self.bridgeTokenDir)"
+            )
         }
 
         /// Polls until the guest can reach the Alpine CDN, so plugins that
@@ -921,15 +1119,36 @@
             #!/bin/sh
             # osaurus-host — Host API bridge shim for sandbox plugins.
             # Translates CLI commands to HTTP calls over a vsock-relayed Unix socket.
+            #
+            # Identity is bound to the calling Linux user via a per-user bridge
+            # token at /run/osaurus/$USER.token (mode 0600, owned by that user).
+            # The host bridge derives the agent identity from the token alone —
+            # caller-supplied X-Osaurus-User headers are no longer trusted.
             SOCK="/tmp/osaurus-bridge.sock"
             API="http://localhost/api"
-            USER=$(whoami)
+            USER=$(id -un)
             PLUGIN="${OSAURUS_PLUGIN:-$(basename "$(pwd)")}"
-            H="-H X-Osaurus-User:$USER -H X-Osaurus-Plugin:$PLUGIN"
+            TOKEN_FILE="/run/osaurus/$USER.token"
+            if [ ! -r "$TOKEN_FILE" ]; then
+              echo "osaurus-host: bridge token for $USER missing (host has not provisioned this agent yet)" >&2
+              exit 1
+            fi
+            TOKEN=$(cat "$TOKEN_FILE")
+            if [ -z "$TOKEN" ]; then
+              echo "osaurus-host: bridge token for $USER is empty" >&2
+              exit 1
+            fi
 
+            # Always invoke curl through this helper so the bearer token and
+            # plugin header are attached as quoted headers (no word-splitting
+            # surprises around the space in "Bearer <token>").
             _call() {
               _tmp=$(mktemp)
-              _code=$(curl -s -o "$_tmp" -w '%{http_code}' --unix-socket "$SOCK" "$@")
+              _code=$(curl -s -o "$_tmp" -w '%{http_code}' \
+                --unix-socket "$SOCK" \
+                -H "Authorization: Bearer $TOKEN" \
+                -H "X-Osaurus-Plugin: $PLUGIN" \
+                "$@")
               if [ "$_code" -ge 400 ] 2>/dev/null || [ -z "$_code" ]; then
                 _err=$(jq -r '.error // empty' < "$_tmp" 2>/dev/null)
                 rm -f "$_tmp"
@@ -943,13 +1162,13 @@
             case "$1" in
               secrets)
                 case "$2" in
-                  get) _call $H "$API/secrets/$3" | jq -r '.value // empty' ;;
+                  get) _call "$API/secrets/$3" | jq -r '.value // empty' ;;
                   *) echo "Usage: osaurus-host secrets get <name>" >&2; exit 1 ;;
                 esac ;;
               config)
                 case "$2" in
-                  get) _call $H "$API/config/$3" | jq -r '.value // empty' ;;
-                  set) _call -X POST $H "$API/config/$3" -d "{\\"value\\":\\"$4\\"}" > /dev/null ;;
+                  get) _call "$API/config/$3" | jq -r '.value // empty' ;;
+                  set) _call -X POST "$API/config/$3" -d "{\\"value\\":\\"$4\\"}" > /dev/null ;;
                   *) echo "Usage: osaurus-host config get|set <key> [value]" >&2; exit 1 ;;
                 esac ;;
               inference)
@@ -957,33 +1176,37 @@
                   chat)
                     shift 2; MSG=""
                     while [ $# -gt 0 ]; do case "$1" in -m) shift; MSG="$1" ;; esac; shift; done
-                    _call -X POST $H "$API/inference/chat" \
+                    _call -X POST "$API/inference/chat" \
                       -d "{\\"messages\\":[{\\"role\\":\\"user\\",\\"content\\":\\"$MSG\\"}]}" | jq -r '.content // empty' ;;
                   *) echo "Usage: osaurus-host inference chat -m <message>" >&2; exit 1 ;;
                 esac ;;
               agent)
                 case "$2" in
-                  dispatch) _call -X POST $H "$API/agent/dispatch" -d "{\\"agent_id\\":\\"$3\\",\\"task\\":\\"$4\\"}" ;;
+                  dispatch)
+                    # The host bridge ignores the body's agent_id and uses the
+                    # token-bound identity. We still send it for backwards
+                    # compatibility with older bridges, but it must match.
+                    _call -X POST "$API/agent/dispatch" -d "{\\"agent_id\\":\\"$3\\",\\"task\\":\\"$4\\"}" ;;
                   memory)
                     case "$3" in
-                      query) _call -X POST $H "$API/agent/memory/query" -d "{\\"query\\":\\"$4\\"}" ;;
-                      store) _call -X POST $H "$API/agent/memory/store" -d "{\\"content\\":\\"$4\\"}" ;;
+                      query) _call -X POST "$API/agent/memory/query" -d "{\\"query\\":\\"$4\\"}" ;;
+                      store) _call -X POST "$API/agent/memory/store" -d "{\\"content\\":\\"$4\\"}" ;;
                       *) echo "Usage: osaurus-host agent memory query|store <text>" >&2; exit 1 ;;
                     esac ;;
                   *) echo "Usage: osaurus-host agent dispatch|memory ..." >&2; exit 1 ;;
                 esac ;;
               events)
                 case "$2" in
-                  emit) _call -X POST $H "$API/events/emit" -d "{\\"type\\":\\"$3\\",\\"payload\\":${4:-{}}}" > /dev/null ;;
+                  emit) _call -X POST "$API/events/emit" -d "{\\"type\\":\\"$3\\",\\"payload\\":${4:-{}}}" > /dev/null ;;
                   *) echo "Usage: osaurus-host events emit <type> [payload]" >&2; exit 1 ;;
                 esac ;;
               plugin)
                 case "$2" in
-                  create) cat | _call -X POST $H "$API/plugin/create" -d @- ;;
+                  create) cat | _call -X POST "$API/plugin/create" -d @- ;;
                   *) echo "Usage: osaurus-host plugin create < plugin.json" >&2; exit 1 ;;
                 esac ;;
               log)
-                curl -sf --unix-socket "$SOCK" -X POST -H "X-Osaurus-User:$USER" "$API/log" \
+                _call -X POST "$API/log" \
                   -d "{\\"level\\":\\"$2\\",\\"message\\":\\"$3\\"}" > /dev/null ;;
               *) echo "Usage: osaurus-host <secrets|config|inference|agent|events|plugin|log> ..." >&2; exit 1 ;;
             esac
@@ -1082,6 +1305,10 @@
         case userCreationFailed(String)
         case execFailed(String)
         case timeout
+        /// A downloaded artifact failed SHA-256 verification — fail-closed.
+        /// Don't dress this up: if the kernel/initfs we just pulled doesn't
+        /// match the expected digest, refuse to boot it.
+        case integrityCheckFailed(String)
 
         public var errorDescription: String? {
             switch self {
@@ -1094,6 +1321,7 @@
             case .userCreationFailed(let msg): "User creation failed: \(msg)"
             case .execFailed(let msg): "Execution failed: \(msg)"
             case .timeout: "Command timed out"
+            case .integrityCheckFailed(let msg): "Sandbox artifact integrity check failed: \(msg)"
             }
         }
     }

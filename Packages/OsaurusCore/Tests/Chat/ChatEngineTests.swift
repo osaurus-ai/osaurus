@@ -122,7 +122,8 @@ struct ChatEngineTests {
         #expect(resp.choices.first?.finish_reason == "tool_calls")
         let toolCalls = resp.choices.first?.message.tool_calls
         #expect(toolCalls?.first?.function.name == "get_weather")
-        #expect((toolCalls?.first?.id ?? "").hasPrefix("call_"))
+        let id = toolCalls?.first?.id ?? ""
+        #expect(id.hasPrefix("call_"))
     }
 
     @Test func streamChat_throws_when_no_route() async throws {

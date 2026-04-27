@@ -71,16 +71,24 @@ public actor HostAPIBridgeServer {
 
 /// Wraps a non-Sendable NIO context so it can cross Task boundaries.
 /// Safety: the wrapped value is only ever accessed on its owning EventLoop.
-private struct UnsafeSendableBox<T>: @unchecked Sendable {
+private final class UnsafeSendableBox<T>: @unchecked Sendable {
     let value: T
+    init(value: T) { self.value = value }
 }
 
 private final class HostAPIBridgeHandler: ChannelInboundHandler, RemovableChannelHandler, @unchecked Sendable {
     typealias InboundIn = HTTPServerRequestPart
     typealias OutboundOut = HTTPServerResponsePart
 
+    /// Cap the request body to keep a misbehaving guest plugin from
+    /// exhausting host memory. 8 MiB is far above any legitimate bridge
+    /// payload (the largest is `plugin/create` which is a small JSON blob).
+    private static let maxBodyBytes = 8 * 1024 * 1024
+
     private var requestHead: HTTPRequestHead?
     private var bodyBuffer: ByteBuffer = ByteBuffer()
+    private var bodyBytesSeen = 0
+    private var rejectedTooLarge = false
 
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
         let part = unwrapInboundIn(data)
@@ -88,9 +96,34 @@ private final class HostAPIBridgeHandler: ChannelInboundHandler, RemovableChanne
         case .head(let head):
             requestHead = head
             bodyBuffer.clear()
+            bodyBytesSeen = 0
+            rejectedTooLarge = false
+
+            // Pre-auth Content-Length guard. Same rationale as the public
+            // HTTP server: refuse before allocating into the body buffer.
+            if let lengthStr = head.headers.first(name: "Content-Length"),
+                let length = Int(lengthStr),
+                length > Self.maxBodyBytes
+            {
+                rejectTooLarge(context: context, head: head, declared: length)
+                return
+            }
+
         case .body(var buf):
+            if rejectedTooLarge { return }
+            bodyBytesSeen += buf.readableBytes
+            if bodyBytesSeen > Self.maxBodyBytes, let head = requestHead {
+                rejectTooLarge(context: context, head: head, declared: bodyBytesSeen)
+                return
+            }
             bodyBuffer.writeBuffer(&buf)
+
         case .end:
+            if rejectedTooLarge {
+                requestHead = nil
+                bodyBuffer.clear()
+                return
+            }
             guard let head = requestHead else { return }
             let body =
                 bodyBuffer.readableBytes > 0
@@ -101,8 +134,39 @@ private final class HostAPIBridgeHandler: ChannelInboundHandler, RemovableChanne
         }
     }
 
+    private func rejectTooLarge(context: ChannelHandlerContext, head: HTTPRequestHead, declared: Int) {
+        rejectedTooLarge = true
+        bodyBuffer.clear()
+        let response = BridgeResponse.error(
+            413,
+            "Request body too large (\(declared) > \(Self.maxBodyBytes) bytes)"
+        )
+        let bytes = response.body.data(using: .utf8) ?? Data()
+        var buf = context.channel.allocator.buffer(capacity: bytes.count)
+        buf.writeBytes(bytes)
+        let responseHead = HTTPResponseHead(
+            version: head.version,
+            status: .payloadTooLarge,
+            headers: HTTPHeaders([
+                ("Content-Type", "application/json"),
+                ("Content-Length", String(bytes.count)),
+                ("Connection", "close"),
+            ])
+        )
+        let box = UnsafeSendableBox(value: context)
+        context.write(wrapOutboundOut(.head(responseHead)), promise: nil)
+        context.write(wrapOutboundOut(.body(.byteBuffer(buf))), promise: nil)
+        context.writeAndFlush(wrapOutboundOut(.end(nil))).whenComplete { _ in
+            box.value.close(promise: nil)
+        }
+    }
+
     private func handleRequest(context: ChannelHandlerContext, head: HTTPRequestHead, body: String) {
-        let callingUser = head.headers["X-Osaurus-User"].first ?? "unknown"
+        // Identity comes exclusively from the bearer token. The shim reads it
+        // from a per-user file inside the guest VM (mode 0600). We deliberately
+        // ignore X-Osaurus-User even if present — trusting it would let any
+        // sandboxed code claim any agent.
+        let bearerToken = Self.extractBearerToken(headers: head.headers)
         let pluginName = head.headers["X-Osaurus-Plugin"].first
         let path = head.uri.split(separator: "?").first.map(String.init) ?? head.uri
         let version = head.version
@@ -111,13 +175,22 @@ private final class HostAPIBridgeHandler: ChannelInboundHandler, RemovableChanne
         let handler = UnsafeSendableBox(value: self)
 
         Task {
-            let response = await handler.value.routeRequest(
-                method: method,
-                path: path,
-                body: body,
-                callingUser: callingUser,
-                pluginName: pluginName
-            )
+            let response: BridgeResponse
+            if let token = bearerToken,
+                let identity = await SandboxBridgeTokenStore.shared.resolve(token: token)
+            {
+                response = await handler.value.routeRequest(
+                    method: method,
+                    path: path,
+                    body: body,
+                    identity: identity,
+                    pluginName: pluginName
+                )
+            } else {
+                // Fail closed: no token, or token does not resolve to any
+                // known agent. We never fall back to a default identity.
+                response = .error(401, "Bridge token missing or unrecognised")
+            }
 
             box.value.eventLoop.execute {
                 let ctx = box.value
@@ -139,6 +212,18 @@ private final class HostAPIBridgeHandler: ChannelInboundHandler, RemovableChanne
                 ctx.writeAndFlush(handler.value.wrapOutboundOut(.end(nil)), promise: nil)
             }
         }
+    }
+
+    /// Pull the bearer credential out of an `Authorization` header. Tolerant of
+    /// case differences in the scheme (`Bearer`, `bearer`) and surrounding
+    /// whitespace; returns `nil` when no usable token is present.
+    fileprivate static func extractBearerToken(headers: HTTPHeaders) -> String? {
+        guard let raw = headers.first(name: "Authorization") else { return nil }
+        let trimmed = raw.trimmingCharacters(in: .whitespaces)
+        let prefix = "bearer "
+        guard trimmed.lowercased().hasPrefix(prefix) else { return nil }
+        let token = trimmed.dropFirst(prefix.count).trimmingCharacters(in: .whitespaces)
+        return token.isEmpty ? nil : String(token)
     }
 
     // MARK: - Routing
@@ -164,7 +249,7 @@ private final class HostAPIBridgeHandler: ChannelInboundHandler, RemovableChanne
         method: HTTPMethod,
         path: String,
         body: String,
-        callingUser: String,
+        identity: SandboxBridgeTokenStore.Identity,
         pluginName: String?
     ) async -> BridgeResponse {
         let components = path.split(separator: "/").map(String.init)
@@ -181,27 +266,28 @@ private final class HostAPIBridgeHandler: ChannelInboundHandler, RemovableChanne
             return await handleSecrets(
                 method: method,
                 remaining: remaining,
-                callingUser: callingUser,
+                identity: identity,
                 pluginName: pluginName
             )
         case "config":
+            // Config is keyed by plugin name only — no per-agent scoping
+            // today, so identity is intentionally not threaded through.
             return await handleConfig(
                 method: method,
                 remaining: remaining,
                 body: body,
-                callingUser: callingUser,
                 pluginName: pluginName
             )
         case "inference":
-            return await handleInference(method: method, remaining: remaining, body: body, callingUser: callingUser)
+            return await handleInference(method: method, remaining: remaining, body: body, identity: identity)
         case "agent":
-            return await handleAgent(method: method, remaining: remaining, body: body, callingUser: callingUser)
+            return await handleAgent(method: method, remaining: remaining, body: body, identity: identity)
         case "events":
-            return await handleEvents(method: method, remaining: remaining, body: body, callingUser: callingUser)
+            return await handleEvents(method: method, remaining: remaining, body: body, identity: identity)
         case "plugin":
-            return await handlePlugin(method: method, remaining: remaining, body: body, callingUser: callingUser)
+            return await handlePlugin(method: method, remaining: remaining, body: body, identity: identity)
         case "log":
-            return handleLog(method: method, body: body, callingUser: callingUser)
+            return handleLog(method: method, body: body, identity: identity)
         default:
             return .error(404, "Unknown service: \(service)")
         }
@@ -212,7 +298,7 @@ private final class HostAPIBridgeHandler: ChannelInboundHandler, RemovableChanne
     private func handleSecrets(
         method: HTTPMethod,
         remaining: [String],
-        callingUser: String,
+        identity: SandboxBridgeTokenStore.Identity,
         pluginName: String?
     ) async -> BridgeResponse {
         guard method == .GET, let name = remaining.first else {
@@ -222,10 +308,9 @@ private final class HostAPIBridgeHandler: ChannelInboundHandler, RemovableChanne
             return .error(400, "X-Osaurus-Plugin header required")
         }
 
-        let agentId = resolveAgentUUID(callingUser)
         let value =
-            ToolSecretsKeychain.getSecret(id: name, for: pluginName, agentId: agentId)
-            ?? AgentSecretsKeychain.getSecret(id: name, agentId: agentId)
+            ToolSecretsKeychain.getSecret(id: name, for: pluginName, agentId: identity.agentId)
+            ?? AgentSecretsKeychain.getSecret(id: name, agentId: identity.agentId)
         if let value = value {
             return .ok("{\"value\":\(jsonEscape(value))}")
         }
@@ -236,7 +321,6 @@ private final class HostAPIBridgeHandler: ChannelInboundHandler, RemovableChanne
         method: HTTPMethod,
         remaining: [String],
         body: String,
-        callingUser: String,
         pluginName: String?
     ) async -> BridgeResponse {
         guard let key = remaining.first, let pluginName = pluginName else {
@@ -279,12 +363,12 @@ private final class HostAPIBridgeHandler: ChannelInboundHandler, RemovableChanne
         method: HTTPMethod,
         remaining: [String],
         body: String,
-        callingUser: String
+        identity: SandboxBridgeTokenStore.Identity
     ) async -> BridgeResponse {
         guard method == .POST, remaining.first == "chat" else {
             return .error(400, "POST /api/inference/chat expected")
         }
-        guard SandboxRateLimiter.shared.checkLimit(agent: callingUser, service: "inference") else {
+        guard SandboxRateLimiter.shared.checkLimit(agent: identity.linuxName, service: "inference") else {
             return .error(429, "Rate limit exceeded for inference")
         }
         guard let parsed = parseJSON(body) else {
@@ -335,7 +419,7 @@ private final class HostAPIBridgeHandler: ChannelInboundHandler, RemovableChanne
         method: HTTPMethod,
         remaining: [String],
         body: String,
-        callingUser: String
+        identity: SandboxBridgeTokenStore.Identity
     ) async -> BridgeResponse {
         guard let subcommand = remaining.first else {
             return .error(400, "Subcommand required: dispatch, memory")
@@ -343,28 +427,41 @@ private final class HostAPIBridgeHandler: ChannelInboundHandler, RemovableChanne
 
         switch subcommand {
         case "dispatch":
-            return await handleAgentDispatch(body: body, callingUser: callingUser)
+            return await handleAgentDispatch(body: body, identity: identity)
         case "memory":
             return await handleAgentMemory(
                 method: method,
                 remaining: Array(remaining.dropFirst()),
                 body: body,
-                callingUser: callingUser
+                identity: identity
             )
         default:
             return .error(404, "Unknown agent subcommand: \(subcommand)")
         }
     }
 
-    private func handleAgentDispatch(body: String, callingUser: String) async -> BridgeResponse {
-        guard SandboxRateLimiter.shared.checkLimit(agent: callingUser, service: "dispatch") else {
+    private func handleAgentDispatch(
+        body: String,
+        identity: SandboxBridgeTokenStore.Identity
+    ) async -> BridgeResponse {
+        guard SandboxRateLimiter.shared.checkLimit(agent: identity.linuxName, service: "dispatch") else {
             return .error(429, "Rate limit exceeded for dispatch")
         }
         guard let parsed = parseJSON(body),
-            let agentId = parsed["agent_id"] as? String,
             let task = parsed["task"] as? String
         else {
-            return .error(400, "Body must contain agent_id and task")
+            return .error(400, "Body must contain task")
+        }
+
+        // The bridge ignores the caller's claimed `agent_id` — identity is
+        // bound to the bridge token. If a body id is supplied, it must match
+        // the resolved one; otherwise we reject so a confused client cannot
+        // silently dispatch into the wrong agent.
+        if let claimed = parsed["agent_id"] as? String,
+            !claimed.isEmpty,
+            claimed.lowercased() != identity.agentId.uuidString.lowercased()
+        {
+            return .error(403, "agent_id in body does not match token-bound identity")
         }
 
         // Empty/whitespace prompts make `ChatSession.send` no-op, leaving
@@ -375,8 +472,8 @@ private final class HostAPIBridgeHandler: ChannelInboundHandler, RemovableChanne
 
         let request = DispatchRequest(
             prompt: task,
-            agentId: UUID(uuidString: agentId),
-            sourcePluginId: "sandbox:\(callingUser)",
+            agentId: identity.agentId,
+            sourcePluginId: "sandbox:\(identity.linuxName)",
             source: .plugin,
             externalSessionKey: parsed["external_session_key"] as? String
         )
@@ -391,7 +488,7 @@ private final class HostAPIBridgeHandler: ChannelInboundHandler, RemovableChanne
         method: HTTPMethod,
         remaining: [String],
         body: String,
-        callingUser: String
+        identity: SandboxBridgeTokenStore.Identity
     ) async -> BridgeResponse {
         guard let action = remaining.first else {
             return .error(400, "Action required: query or store")
@@ -402,8 +499,12 @@ private final class HostAPIBridgeHandler: ChannelInboundHandler, RemovableChanne
             guard let parsed = parseJSON(body), let query = parsed["query"] as? String else {
                 return .error(400, "Body must contain query")
             }
+            // Confine results to the calling agent's pinned facts. Pre-fix
+            // this route returned facts from every agent that matched the
+            // query — direct cross-agent confidentiality leak.
             let results = await MemorySearchService.shared.searchPinnedFacts(
                 query: query,
+                agentId: identity.agentId.uuidString,
                 topK: 10
             )
             let entries = results.map { fact -> [String: Any] in
@@ -425,12 +526,11 @@ private final class HostAPIBridgeHandler: ChannelInboundHandler, RemovableChanne
                 return .error(400, "Body must contain content")
             }
             do {
-                let agentId = resolveAgentUUID(callingUser)
                 let fact = PinnedFact(
-                    agentId: agentId.uuidString,
+                    agentId: identity.agentId.uuidString,
                     content: content,
                     salience: 0.7,
-                    tagsCSV: "source:sandbox:\(callingUser)"
+                    tagsCSV: "source:sandbox:\(identity.linuxName)"
                 )
                 try MemoryDatabase.shared.insertPinnedFact(fact)
                 await MemorySearchService.shared.indexPinnedFact(fact)
@@ -448,12 +548,12 @@ private final class HostAPIBridgeHandler: ChannelInboundHandler, RemovableChanne
         method: HTTPMethod,
         remaining: [String],
         body: String,
-        callingUser: String
+        identity: SandboxBridgeTokenStore.Identity
     ) async -> BridgeResponse {
         guard method == .POST, remaining.first == "emit" else {
             return .error(400, "POST /api/events/emit expected")
         }
-        guard SandboxRateLimiter.shared.checkLimit(agent: callingUser, service: "http") else {
+        guard SandboxRateLimiter.shared.checkLimit(agent: identity.linuxName, service: "http") else {
             return .error(429, "Rate limit exceeded")
         }
         guard let parsed = parseJSON(body),
@@ -481,7 +581,7 @@ private final class HostAPIBridgeHandler: ChannelInboundHandler, RemovableChanne
                 name: Notification.Name("SandboxEvent.\(eventType)"),
                 object: nil,
                 userInfo: [
-                    "source": "sandbox:\(callingUser)",
+                    "source": "sandbox:\(identity.linuxName)",
                     "type": eventType,
                     "payload": payloadStr,
                 ]
@@ -494,13 +594,13 @@ private final class HostAPIBridgeHandler: ChannelInboundHandler, RemovableChanne
         method: HTTPMethod,
         remaining: [String],
         body: String,
-        callingUser: String
+        identity: SandboxBridgeTokenStore.Identity
     ) async -> BridgeResponse {
         guard method == .POST, remaining.first == "create" else {
             return .error(400, "POST /api/plugin/create expected")
         }
 
-        let agentUUID = resolveAgentUUID(callingUser)
+        let agentUUID = identity.agentId
         let agentId = agentUUID.uuidString
 
         let execConfig = await MainActor.run { AgentManager.shared.effectiveAutonomousExec(for: agentUUID) }
@@ -556,7 +656,7 @@ private final class HostAPIBridgeHandler: ChannelInboundHandler, RemovableChanne
     private func handleLog(
         method: HTTPMethod,
         body: String,
-        callingUser: String
+        identity: SandboxBridgeTokenStore.Identity
     ) -> BridgeResponse {
         guard method == .POST else {
             return .error(405, "POST expected")
@@ -568,8 +668,8 @@ private final class HostAPIBridgeHandler: ChannelInboundHandler, RemovableChanne
             return .error(400, "Body must contain level and message")
         }
 
-        NSLog("[Sandbox:\(callingUser)] [\(level)] \(message)")
-        let user = callingUser
+        NSLog("[Sandbox:\(identity.linuxName)] [\(level)] \(message)")
+        let user = identity.linuxName
         Task { @MainActor in
             SandboxLogBuffer.shared.append(level: level, message: message, source: user)
         }
@@ -577,12 +677,6 @@ private final class HostAPIBridgeHandler: ChannelInboundHandler, RemovableChanne
     }
 
     // MARK: - Helpers
-
-    /// Map a Linux username (e.g. "agent-researcher") back to an Osaurus agent UUID.
-    /// Uses the persistent mapping populated when agent users are created.
-    private func resolveAgentUUID(_ linuxUser: String) -> UUID {
-        SandboxAgentMap.resolve(linuxName: linuxUser) ?? Agent.defaultId
-    }
 
     private func parseJSON(_ string: String) -> [String: Any]? {
         guard let data = string.data(using: .utf8),

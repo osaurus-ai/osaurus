@@ -27,6 +27,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable {
     case server
     case permissions
     case identity
+    case storage
     case settings
 
     public var id: String { rawValue }
@@ -50,6 +51,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable {
         case .server: "server.rack"
         case .permissions: "lock.shield.fill"
         case .identity: "person.badge.key.fill"
+        case .storage: "externaldrive.fill.badge.checkmark"
         case .settings: "gearshape.fill"
         }
     }
@@ -73,6 +75,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable {
         case .server: L("Server")
         case .permissions: L("Permissions")
         case .identity: L("Identity")
+        case .storage: L("Storage")
         case .settings: L("Settings")
         }
     }

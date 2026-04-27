@@ -437,9 +437,17 @@ enum PreflightCapabilitySearch {
     /// Returns the full catalog when:
     ///   - `topK` is zero or negative (legacy / disabled)
     ///   - the catalog already fits (no point ranking N down to N)
-    ///   - the search returns nothing (index empty / embedder broken /
-    ///     query is gibberish) — the model still gets to see the full
-    ///     candidate pool rather than nothing
+    ///
+    /// When the index is unavailable (still warming up after launch,
+    /// embedder threw, `reverseIdMap` not yet rehydrated, etc.) we
+    /// fall back to a deterministic top-K **alphabetical slice** of
+    /// the catalog — emphatically NOT the full catalog. The previous
+    /// "fall back to full catalog" behaviour silently overflowed
+    /// Apple Foundation Models' 4K window, throwing every preflight
+    /// call until the circuit breaker opened and stuck. A truncated
+    /// alphabetical slice gives the model SOMETHING to choose from
+    /// while the index settles; semantic quality recovers as soon
+    /// as `ToolSearchService.rebuildIndex()` finishes.
     static func rankCatalog(
         query: String,
         catalog: [ToolRegistry.ToolEntry],
@@ -452,7 +460,12 @@ enum PreflightCapabilitySearch {
             topK: topK,
             threshold: 0.0
         )
-        guard !hits.isEmpty else { return catalog }
+        guard !hits.isEmpty else {
+            logger.notice(
+                "rankCatalog: tool index returned no hits (index warming or embedder unavailable) — falling back to alphabetical top \(topK) of \(catalog.count)"
+            )
+            return safeFallbackSlice(catalog: catalog, topK: topK)
+        }
 
         // Map ranked names back to the input catalog entries (preserves
         // each entry's parameters / enabled state untouched). Keep
@@ -468,11 +481,22 @@ enum PreflightCapabilitySearch {
             ranked.append(entry)
             if ranked.count >= topK { break }
         }
-        // Last-resort safety net: if the index returned hits but none
-        // mapped back to the live catalog (stale index, MCP
-        // re-registration race, etc.), don't strand the LLM with an
-        // empty list — fall back to the full catalog.
-        return ranked.isEmpty ? catalog : ranked
+        // Last-resort safety net: same reasoning as the empty-hits
+        // branch above — never return a catalog larger than `topK`,
+        // even when the index hits don't map back to live entries
+        // (stale index, MCP re-registration race, etc.).
+        return ranked.isEmpty ? safeFallbackSlice(catalog: catalog, topK: topK) : ranked
+    }
+
+    /// Deterministic top-K slice used when the embedding index can't
+    /// rank. Sorts by name to keep the slice stable across calls so
+    /// preflight isn't randomly seeing different tool subsets per
+    /// query while the index warms up.
+    private static func safeFallbackSlice(
+        catalog: [ToolRegistry.ToolEntry],
+        topK: Int
+    ) -> [ToolRegistry.ToolEntry] {
+        Array(catalog.sorted { $0.name < $1.name }.prefix(topK))
     }
 
     /// Snapshot the dynamic-tool catalog and its `tool → group` map from the
@@ -584,7 +608,12 @@ enum PreflightCapabilitySearch {
             )
             return (picks, response, systemPrompt, nil)
         } catch {
-            logger.info("Pre-flight tool selection skipped: \(error)")
+            // Log `localizedDescription` rather than the raw error
+            // so the message is human-readable in Console — the raw
+            // form ("OsaurusCore.CoreModelError.circuitBreakerOpen")
+            // hid the actual cause and made misconfigured core
+            // models look like an internal bug.
+            logger.info("Pre-flight tool selection skipped: \(error.localizedDescription)")
             return ([], nil, systemPrompt, String(describing: error))
         }
     }
@@ -819,31 +848,74 @@ enum PreflightCapabilitySearch {
         return dot / denom
     }
 
-    // MARK: Plugin Creator Skill
+}
 
-    /// Compose the Sandbox Plugin Creator skill section. Returns nil when the
-    /// agent does not have plugin creation enabled or the skill is not
-    /// installed/enabled. Invoked by `SystemPromptComposer` after tool
-    /// resolution so the section is injected uniformly across auto/manual
-    /// modes, empty queries, and `preflightSearchMode == .off`.
-    static func pluginCreatorSkillSection(for agentId: UUID) async -> String? {
-        guard await CapabilitySearch.canCreatePlugins(agentId: agentId) else { return nil }
-        let skill = await MainActor.run { SkillManager.shared.skill(named: "Sandbox Plugin Creator") }
-        // Honour the user's explicit toggle in the skill catalog. Without
-        // this, disabling "Sandbox Plugin Creator" in the UI had no effect
-        // on the auto-injection path — the section still landed in every
-        // applicable system prompt.
-        guard let skill, skill.enabled else { return nil }
+// MARK: - Plugin Creator Gate
 
-        logger.info("Plugin creator: injecting \(skill.name) skill")
-        return """
-            ## No existing tools match this request
+/// Pure decision logic + formatting for the "Sandbox Plugin Creator" backstop.
+///
+/// Extracted from `SystemPromptComposer` so the gate can be unit-tested
+/// without fighting `ToolRegistry.shared` / `SkillManager.shared` / `AgentManager.shared`.
+/// The composer snapshots all inputs at the start of a turn, then calls
+/// `shouldInject(_:)` with plain booleans — no actor hops, no globals.
+public enum PluginCreatorGate {
+    /// Every input that decides whether to inject the skill this turn.
+    ///
+    /// All values are captured upfront in the composer so subsequent
+    /// `await`s can't race the decision (prior bug: `dynamicCatalogIsEmpty`
+    /// and the skill's `enabled` flag were read much later than
+    /// `canCreatePlugins`, and cross-suite tests were flipping them
+    /// mid-compose).
+    public struct Inputs: Equatable, Sendable {
+        public var effectiveToolsOff: Bool
+        public var sandboxAvailable: Bool
+        public var canCreatePlugins: Bool
+        public var dynamicCatalogIsEmpty: Bool
+        public var hasResolvedDynamicTools: Bool
+        public var skillEnabled: Bool
 
-            You can create new tools by writing a sandbox plugin.
-            Follow the instructions below.
+        public init(
+            effectiveToolsOff: Bool,
+            sandboxAvailable: Bool,
+            canCreatePlugins: Bool,
+            dynamicCatalogIsEmpty: Bool,
+            hasResolvedDynamicTools: Bool,
+            skillEnabled: Bool
+        ) {
+            self.effectiveToolsOff = effectiveToolsOff
+            self.sandboxAvailable = sandboxAvailable
+            self.canCreatePlugins = canCreatePlugins
+            self.dynamicCatalogIsEmpty = dynamicCatalogIsEmpty
+            self.hasResolvedDynamicTools = hasResolvedDynamicTools
+            self.skillEnabled = skillEnabled
+        }
+    }
 
-            ## Skill: \(skill.name)
-            \(skill.instructions)
-            """
+    /// Pure gate. Returns true iff every condition holds:
+    /// - tools aren't globally off
+    /// - sandbox is available (either already active or autonomous-enabled)
+    /// - the agent is allowed to create plugins
+    /// - the user has no dynamic tools installed AND this turn didn't resolve any
+    /// - the user hasn't disabled the built-in skill
+    public static func shouldInject(_ inputs: Inputs) -> Bool {
+        !inputs.effectiveToolsOff
+            && inputs.sandboxAvailable
+            && inputs.canCreatePlugins
+            && inputs.dynamicCatalogIsEmpty
+            && !inputs.hasResolvedDynamicTools
+            && inputs.skillEnabled
+    }
+
+    /// Pure formatter for the injected section.
+    public static func section(skillName: String, instructions: String) -> String {
+        """
+        ## No existing tools match this request
+
+        You can create new tools by writing a sandbox plugin.
+        Follow the instructions below.
+
+        ## Skill: \(skillName)
+        \(instructions)
+        """
     }
 }

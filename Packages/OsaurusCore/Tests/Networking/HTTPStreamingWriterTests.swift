@@ -4,7 +4,7 @@
 //
 
 import Foundation
-import NIOCore
+@preconcurrency import NIOCore
 import NIOEmbedded
 import NIOHTTP1
 import Testing
@@ -103,18 +103,20 @@ struct HTTPStreamingWriterTests {
 }
 
 // Minimal helper to get a ChannelHandlerContext from EmbeddedChannel
+private struct CtxBox: @unchecked Sendable {
+    let ctx: ChannelHandlerContext
+}
+
 extension EmbeddedChannel {
-    @preconcurrency
     fileprivate func embeddedContext() throws -> ChannelHandlerContext {
-        // EmbeddedChannel uses a single context for tests; the first handler context is sufficient
-        return try self.pipeline.context(handlerType: NIOAsyncTestingHandler.self)
-            .flatMapError { _ in
-                // Install a dummy handler to obtain a context
-                self.pipeline.addHandler(NIOAsyncTestingHandler()).flatMap {
-                    self.pipeline.context(handlerType: NIOAsyncTestingHandler.self)
-                }
-            }
-            .wait()
+        do {
+            return try self.pipeline.context(handlerType: NIOAsyncTestingHandler.self).map { CtxBox(ctx: $0) }.wait()
+                .ctx
+        } catch {
+            try self.pipeline.addHandler(NIOAsyncTestingHandler()).wait()
+            return try self.pipeline.context(handlerType: NIOAsyncTestingHandler.self).map { CtxBox(ctx: $0) }.wait()
+                .ctx
+        }
     }
 }
 

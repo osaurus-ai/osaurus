@@ -766,8 +766,8 @@ struct ConfigurationView: View {
         tempPreflightSearchMode = .balanced
         tempDisableTools = true
         tempMemoryEnabled = false
-        tempCoreModelProvider = ""
-        tempCoreModelName = ""
+        tempCoreModelProvider = chatDefaults.coreModelProvider ?? ""
+        tempCoreModelName = chatDefaults.coreModelName ?? ""
         tempEnableClipboardMonitoring = chatDefaults.enableClipboardMonitoring
         tempAgentTemperature = ""
         tempAgentMaxTokens = ""

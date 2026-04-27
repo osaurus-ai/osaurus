@@ -323,25 +323,27 @@ private actor MockSandboxToolCommandRunner: SandboxToolCommandRunning {
 }
 
 @MainActor
-private func withRegisteredSandboxTools<T>(
+private func withRegisteredSandboxTools<T: Sendable>(
     runner: some SandboxToolCommandRunning,
     _ body: () async throws -> T
 ) async throws -> T {
-    let agentId = "test-agent"
-    let config = AutonomousExecConfig(enabled: true, maxCommandsPerTurn: 10, commandTimeout: 30, pluginCreate: true)
-    await SandboxToolCommandRunnerRegistry.shared.setRunner(runner)
-    ToolRegistry.shared.unregisterAllSandboxTools()
-    BuiltinSandboxTools.register(agentId: agentId, agentName: agentId, config: config)
+    try await SandboxTestLock.shared.run {
+        let agentId = "test-agent"
+        let config = AutonomousExecConfig(enabled: true, maxCommandsPerTurn: 10, commandTimeout: 30, pluginCreate: true)
+        await SandboxToolCommandRunnerRegistry.shared.setRunner(runner)
+        ToolRegistry.shared.unregisterAllSandboxTools()
+        BuiltinSandboxTools.register(agentId: agentId, agentName: agentId, config: config)
 
-    do {
-        let result = try await body()
-        ToolRegistry.shared.unregisterAllSandboxTools()
-        await SandboxToolCommandRunnerRegistry.shared.reset()
-        return result
-    } catch {
-        ToolRegistry.shared.unregisterAllSandboxTools()
-        await SandboxToolCommandRunnerRegistry.shared.reset()
-        throw error
+        do {
+            let result = try await body()
+            ToolRegistry.shared.unregisterAllSandboxTools()
+            await SandboxToolCommandRunnerRegistry.shared.reset()
+            return result
+        } catch {
+            ToolRegistry.shared.unregisterAllSandboxTools()
+            await SandboxToolCommandRunnerRegistry.shared.reset()
+            throw error
+        }
     }
 }
 

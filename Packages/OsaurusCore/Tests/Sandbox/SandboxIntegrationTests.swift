@@ -50,30 +50,37 @@ struct SandboxIntegrationTests {
     func sandboxExecTool_runsThroughRegistryForProvisionedAgent() async throws {
         guard await sandboxAvailable() else { return }
 
-        let agentId = UUID()
-        let agentName = SandboxAgentProvisioner.linuxName(for: agentId.uuidString)
-        defer {
-            ToolRegistry.shared.unregisterAllSandboxTools()
-            Task {
-                _ = await SandboxAgentProvisioner.shared.unprovision(agentId: agentId)
+        try await SandboxTestLock.shared.run {
+            let agentId = UUID()
+            let agentName = SandboxAgentProvisioner.linuxName(for: agentId.uuidString)
+            defer {
+                ToolRegistry.shared.unregisterAllSandboxTools()
+                Task {
+                    _ = await SandboxAgentProvisioner.shared.unprovision(agentId: agentId)
+                }
             }
+
+            try await SandboxAgentProvisioner.shared.ensureProvisioned(agentId: agentId)
+            BuiltinSandboxTools.register(
+                agentId: agentId.uuidString,
+                agentName: agentName,
+                config: AutonomousExecConfig(
+                    enabled: true,
+                    maxCommandsPerTurn: 10,
+                    commandTimeout: 30,
+                    pluginCreate: true
+                )
+            )
+
+            let output = try await ToolRegistry.shared.execute(
+                name: "sandbox_exec",
+                argumentsJSON: #"{"command":"echo hello-from-tool"}"#
+            )
+            let payload = try #require(try parseIntegrationJSON(output))
+
+            #expect(payload["exit_code"] as? Int == 0)
+            #expect((payload["stdout"] as? String)?.contains("hello-from-tool") == true)
         }
-
-        try await SandboxAgentProvisioner.shared.ensureProvisioned(agentId: agentId)
-        BuiltinSandboxTools.register(
-            agentId: agentId.uuidString,
-            agentName: agentName,
-            config: AutonomousExecConfig(enabled: true, maxCommandsPerTurn: 10, commandTimeout: 30, pluginCreate: true)
-        )
-
-        let output = try await ToolRegistry.shared.execute(
-            name: "sandbox_exec",
-            argumentsJSON: #"{"command":"echo hello-from-tool"}"#
-        )
-        let payload = try #require(try parseIntegrationJSON(output))
-
-        #expect(payload["exit_code"] as? Int == 0)
-        #expect((payload["stdout"] as? String)?.contains("hello-from-tool") == true)
     }
 
     @Test @MainActor
@@ -171,26 +178,28 @@ private func parseIntegrationJSON(_ string: String) throws -> [String: Any]? {
 }
 
 @MainActor
-private func withProvisionedSandboxTools<T>(
+private func withProvisionedSandboxTools<T: Sendable>(
     _ body: () async throws -> T
 ) async throws -> T {
-    let agentId = UUID()
-    let agentName = SandboxAgentProvisioner.linuxName(for: agentId.uuidString)
-    defer {
-        ToolRegistry.shared.unregisterAllSandboxTools()
-        Task {
-            _ = await SandboxAgentProvisioner.shared.unprovision(agentId: agentId)
+    try await SandboxTestLock.shared.run {
+        let agentId = UUID()
+        let agentName = SandboxAgentProvisioner.linuxName(for: agentId.uuidString)
+        defer {
+            ToolRegistry.shared.unregisterAllSandboxTools()
+            Task {
+                _ = await SandboxAgentProvisioner.shared.unprovision(agentId: agentId)
+            }
         }
+
+        try await SandboxAgentProvisioner.shared.ensureProvisioned(agentId: agentId)
+        BuiltinSandboxTools.register(
+            agentId: agentId.uuidString,
+            agentName: agentName,
+            config: AutonomousExecConfig(enabled: true, maxCommandsPerTurn: 50, commandTimeout: 120, pluginCreate: true)
+        )
+
+        return try await body()
     }
-
-    try await SandboxAgentProvisioner.shared.ensureProvisioned(agentId: agentId)
-    BuiltinSandboxTools.register(
-        agentId: agentId.uuidString,
-        agentName: agentName,
-        config: AutonomousExecConfig(enabled: true, maxCommandsPerTurn: 50, commandTimeout: 120, pluginCreate: true)
-    )
-
-    return try await body()
 }
 
 @MainActor

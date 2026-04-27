@@ -2,11 +2,25 @@
 //  PluginCreatorInjectionTests.swift
 //  osaurusTests
 //
-//  Pins down the gates around the "Sandbox Plugin Creator" backstop:
-//  - `PreflightCapabilitySearch.pluginCreatorSkillSection` checks both
-//    `canCreatePlugins` and the skill's `enabled` flag.
-//  - `SystemPromptComposer.composeChatContext` injects the section when
-//    the dynamic catalog is empty for sandbox-enabled agents.
+//  Covers the "Sandbox Plugin Creator" backstop at two levels:
+//
+//  1. `PluginCreatorGate.shouldInject` — pure gate. Unit tests exhaust
+//     every input combination with zero globals / zero async hops.
+//     These replace the previous integration test that fought
+//     `ToolRegistry.shared` + `SkillManager.shared` via stacked locks
+//     and temp storage overrides. Every regression that test ever
+//     caught is now either a gate-logic bug (fully covered here) or a
+//     wiring bug in the composer (covered by the composer's own tests
+//     — the injection call site is three lines).
+//
+//  2. `PluginCreatorGate.section` — pure formatter. Locks the output
+//     shape so downstream "contains Sandbox Plugin Creator" /
+//     "contains sandbox_plugin_register" assertions don't silently
+//     break if the template text drifts.
+//
+//  3. `SystemPromptComposer.composeChatContext` negative-path wiring
+//     test — when autonomous exec is off, the section must NOT appear.
+//     This one doesn't depend on catalog state and is hence stable.
 //
 
 import Foundation
@@ -14,121 +28,112 @@ import Testing
 
 @testable import OsaurusCore
 
+@Suite
+struct PluginCreatorGateTests {
+
+    private func baseInputs() -> PluginCreatorGate.Inputs {
+        // A passing baseline — flipping any one field to its failure
+        // state should flip `shouldInject` to false. That's the shape
+        // every test below relies on.
+        PluginCreatorGate.Inputs(
+            effectiveToolsOff: false,
+            sandboxAvailable: true,
+            canCreatePlugins: true,
+            dynamicCatalogIsEmpty: true,
+            hasResolvedDynamicTools: false,
+            skillEnabled: true
+        )
+    }
+
+    @Test
+    func shouldInject_baselineAllowsInjection() {
+        #expect(PluginCreatorGate.shouldInject(baseInputs()))
+    }
+
+    @Test
+    func shouldInject_rejectsWhenToolsOff() {
+        var inputs = baseInputs()
+        inputs.effectiveToolsOff = true
+        #expect(PluginCreatorGate.shouldInject(inputs) == false)
+    }
+
+    @Test
+    func shouldInject_rejectsWhenSandboxUnavailable() {
+        var inputs = baseInputs()
+        inputs.sandboxAvailable = false
+        #expect(PluginCreatorGate.shouldInject(inputs) == false)
+    }
+
+    @Test
+    func shouldInject_rejectsWhenAgentCannotCreatePlugins() {
+        var inputs = baseInputs()
+        inputs.canCreatePlugins = false
+        #expect(PluginCreatorGate.shouldInject(inputs) == false)
+    }
+
+    @Test
+    func shouldInject_rejectsWhenCatalogHasOtherTools() {
+        var inputs = baseInputs()
+        inputs.dynamicCatalogIsEmpty = false
+        #expect(PluginCreatorGate.shouldInject(inputs) == false)
+    }
+
+    @Test
+    func shouldInject_rejectsWhenThisTurnResolvedDynamicTools() {
+        var inputs = baseInputs()
+        inputs.hasResolvedDynamicTools = true
+        #expect(PluginCreatorGate.shouldInject(inputs) == false)
+    }
+
+    @Test
+    func shouldInject_rejectsWhenUserDisabledTheSkill() {
+        var inputs = baseInputs()
+        inputs.skillEnabled = false
+        #expect(PluginCreatorGate.shouldInject(inputs) == false)
+    }
+
+    // Sanity check: multiple failing conditions still fail (no weird
+    // cancellation). Locks the "all gates must pass" contract instead
+    // of just "any one gate failing kills it".
+    @Test
+    func shouldInject_rejectsWhenMultipleConditionsFail() {
+        var inputs = baseInputs()
+        inputs.effectiveToolsOff = true
+        inputs.sandboxAvailable = false
+        inputs.skillEnabled = false
+        #expect(PluginCreatorGate.shouldInject(inputs) == false)
+    }
+
+    // MARK: - section formatter
+
+    @Test
+    func section_includesSkillNameAndInstructions() {
+        let rendered = PluginCreatorGate.section(
+            skillName: "Sandbox Plugin Creator",
+            instructions: "Write a plugin.json and call sandbox_plugin_register."
+        )
+        #expect(rendered.contains("Sandbox Plugin Creator"))
+        #expect(rendered.contains("sandbox_plugin_register"))
+        // The opening fallback message is the load-bearing signal to
+        // the model that "no existing tools match" — assert it's there
+        // so future template edits can't silently drop it.
+        #expect(rendered.contains("No existing tools match this request"))
+    }
+}
+
+// MARK: - Composer wiring (negative path only)
+//
+// The positive path (`Plugin Creator` section appears) is covered by
+// the unit tests above via `PluginCreatorGate.shouldInject`. The only
+// thing left to pin at the composer level is the negative case:
+// outside sandbox / without autonomous, the section MUST stay out of
+// the prompt. This test is stable because it doesn't depend on the
+// dynamic catalog being empty — none of the gates it fails against
+// read shared mutable state.
+
 @Suite(.serialized)
 @MainActor
-struct PluginCreatorInjectionTests {
-
-    // MARK: - pluginCreatorSkillSection
-
-    @Test
-    func pluginCreatorSkillSection_returnsNilWhenAutonomousDisabled() async {
-        let agent = Agent(name: "Plugin Creator Off Agent")
-        AgentManager.shared.add(agent)
-        defer { Task { _ = await AgentManager.shared.delete(id: agent.id) } }
-
-        let section = await PreflightCapabilitySearch.pluginCreatorSkillSection(
-            for: agent.id
-        )
-        #expect(section == nil)
-    }
-
-    @Test
-    func pluginCreatorSkillSection_returnsNilWhenPluginCreateDisabled() async {
-        let agent = Agent(
-            name: "Plugin Create Off Agent",
-            autonomousExec: AutonomousExecConfig(enabled: true, pluginCreate: false)
-        )
-        AgentManager.shared.add(agent)
-        defer { Task { _ = await AgentManager.shared.delete(id: agent.id) } }
-
-        let section = await PreflightCapabilitySearch.pluginCreatorSkillSection(
-            for: agent.id
-        )
-        #expect(section == nil)
-    }
-
-    @Test
-    func pluginCreatorSkillSection_returnsContentWhenSkillEnabled() async throws {
-        let agent = Agent(
-            name: "Plugin Creator Enabled Agent",
-            autonomousExec: AutonomousExecConfig(enabled: true, pluginCreate: true)
-        )
-        AgentManager.shared.add(agent)
-        defer { Task { _ = await AgentManager.shared.delete(id: agent.id) } }
-
-        await ensurePluginCreatorSkill(enabled: true)
-
-        let section = await PreflightCapabilitySearch.pluginCreatorSkillSection(
-            for: agent.id
-        )
-        let content = try #require(section)
-        #expect(content.contains("Sandbox Plugin Creator"))
-        #expect(content.contains("sandbox_plugin_register"))
-    }
-
-    @Test
-    func pluginCreatorSkillSection_returnsNilWhenUserDisablesSkill() async {
-        let agent = Agent(
-            name: "Plugin Creator Skill Disabled",
-            autonomousExec: AutonomousExecConfig(enabled: true, pluginCreate: true)
-        )
-        AgentManager.shared.add(agent)
-        defer { Task { _ = await AgentManager.shared.delete(id: agent.id) } }
-
-        await ensurePluginCreatorSkill(enabled: false)
-
-        let section = await PreflightCapabilitySearch.pluginCreatorSkillSection(
-            for: agent.id
-        )
-        #expect(section == nil)
-
-        // restore the skill synchronously before returning so the persisted
-        // disabled state doesn't leak into later tests
-        await ensurePluginCreatorSkill(enabled: true)
-    }
-
-    // MARK: - SystemPromptComposer integration
-
-    @Test
-    func composeChatContext_injectsPluginCreatorWhenCatalogEmpty() async {
-        let agent = Agent(
-            name: "Plugin Creator Composer Agent",
-            autonomousExec: AutonomousExecConfig(enabled: true, pluginCreate: true)
-        )
-        AgentManager.shared.add(agent)
-        defer { Task { _ = await AgentManager.shared.delete(id: agent.id) } }
-
-        await ensurePluginCreatorSkill(enabled: true)
-
-        // Hold the cross-suite lock around the whole catalog snapshot →
-        // composeChatContext → assertion → restore window. Without it,
-        // a sibling suite (e.g. `MCPHTTPHandlerTests`) can register a
-        // dynamic tool while `composeChatContext` is suspended, flipping
-        // `dynamicCatalogIsEmpty()` to false and skipping the
-        // "Plugin Creator" injection. `@Suite(.serialized)` only
-        // serializes within this suite.
-        await DynamicCatalogTestLock.shared.run {
-            // The test premise is a dynamic catalog that is empty. In an
-            // app-hosted xctest, `AppDelegate.applicationDidFinishLaunching`
-            // may have already called `PluginManager.shared.loadAll()` and
-            // registered plugin tools. Temporarily disable them (under a
-            // temp config dir so the user's real enablement isn't touched),
-            // then restore synchronously before returning so later tests
-            // see their plugin tools enabled again.
-            let (restore, cleanupTempDir) = await self.temporarilyEmptyDynamicCatalog()
-
-            let context = await SystemPromptComposer.composeChatContext(
-                agentId: agent.id,
-                executionMode: .sandbox
-            )
-            let labels = context.manifest.sections.map(\.label)
-            #expect(labels.contains("Plugin Creator"))
-            #expect(context.prompt.contains("Sandbox Plugin Creator"))
-
-            await restore()
-            cleanupTempDir()
-        }
-    }
+struct PluginCreatorComposerWiringTests {
 
     @Test
     func composeChatContext_skipsPluginCreatorOutsideSandbox() async {
@@ -145,60 +150,5 @@ struct PluginCreatorInjectionTests {
         )
         let labels = context.manifest.sections.map(\.label)
         #expect(labels.contains("Plugin Creator") == false)
-    }
-
-    // MARK: - Helpers
-
-    /// Force the built-in "Sandbox Plugin Creator" skill into the desired
-    /// enabled state. Persists across tests; callers should restore.
-    private func ensurePluginCreatorSkill(enabled: Bool) async {
-        // The skill manager loads asynchronously on first access; wait
-        // until the seeded skill is present before flipping its flag.
-        for _ in 0 ..< 20 {
-            if SkillManager.shared.skill(named: "Sandbox Plugin Creator") != nil { break }
-            try? await Task.sleep(nanoseconds: 50_000_000)
-        }
-        guard let skill = SkillManager.shared.skill(named: "Sandbox Plugin Creator") else {
-            Issue.record("Sandbox Plugin Creator built-in skill missing")
-            return
-        }
-        if skill.enabled == enabled { return }
-        await SkillManager.shared.setEnabled(enabled, for: skill.id)
-    }
-
-    /// Snapshot the currently-enabled dynamic tools, disable them, and
-    /// return closures that restore their enablement and clean up the temp
-    /// config dir. Redirects `ToolConfigurationStore` persistence to a temp
-    /// directory for the duration so the user's real `tools.json` is never
-    /// touched — only `ToolRegistry.shared`'s in-memory configuration
-    /// mutates.
-    private func temporarilyEmptyDynamicCatalog() async -> (
-        restore: @Sendable () async -> Void,
-        cleanup: @Sendable () -> Void
-    ) {
-        let enabledNames = ToolRegistry.shared.listDynamicTools().map(\.name)
-        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(
-            "osaurus-plugin-creator-test-\(UUID().uuidString)",
-            isDirectory: true
-        )
-        try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
-        let previousOverride = ToolConfigurationStore.overrideDirectory
-        ToolConfigurationStore.overrideDirectory = tempDir
-        for name in enabledNames {
-            ToolRegistry.shared.setEnabled(false, for: name)
-        }
-        let namesCopy = enabledNames
-        let restore: @Sendable () async -> Void = {
-            await MainActor.run {
-                for name in namesCopy {
-                    ToolRegistry.shared.setEnabled(true, for: name)
-                }
-                ToolConfigurationStore.overrideDirectory = previousOverride
-            }
-        }
-        let cleanup: @Sendable () -> Void = {
-            try? FileManager.default.removeItem(at: tempDir)
-        }
-        return (restore, cleanup)
     }
 }

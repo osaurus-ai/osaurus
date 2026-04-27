@@ -10,7 +10,7 @@ The mental model is simple: a smart secretary that knows what you've discussed a
 
 1. Open the Management window (`⌘ Shift M`) → **Memory**
 2. Memory is **enabled by default** — toggle it off in the Memory settings if you prefer stateless conversations
-3. Choose a **core model** for distillation in Settings → General (default: `anthropic/claude-haiku-4-5`)
+3. The **core model** for distillation defaults to `foundation` (Apple's on-device Language Model on macOS 26+) — change it in Settings → General if you'd rather use a remote model like `anthropic/claude-haiku-4-5`
 4. Start chatting — sessions are distilled in the background once they end
 
 No manual tagging, saving, or annotation is required.

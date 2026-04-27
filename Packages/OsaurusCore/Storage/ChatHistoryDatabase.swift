@@ -8,11 +8,16 @@
 //
 //  Mirrors the MemoryDatabase / PluginDatabase pattern: WAL pragma,
 //  serial dispatch queue, versioned migrations via PRAGMA user_version,
-//  prepared-statement cache.
+//  and a real prepared-statement LRU cache (`PreparedStatementCache`).
+//
+//  All on-disk storage is encrypted via the vendored SQLCipher target
+//  (`OsaurusSQLCipher`). The data-encryption key comes from
+//  `StorageKeyManager`. In-memory test DBs are opened plaintext.
 //
 
+import CryptoKit
 import Foundation
-import SQLite3
+import OsaurusSQLCipher
 
 public enum ChatHistoryDatabaseError: Error, LocalizedError {
     case failedToOpen(String)
@@ -35,11 +40,11 @@ public enum ChatHistoryDatabaseError: Error, LocalizedError {
 public final class ChatHistoryDatabase: @unchecked Sendable {
     public static let shared = ChatHistoryDatabase()
 
-    private static let schemaVersion = 1
+    private static let schemaVersion = 2
 
     private var db: OpaquePointer?
     private let queue = DispatchQueue(label: "ai.osaurus.chatHistory.database")
-    private var cachedStatements: [String: OpaquePointer] = [:]
+    private let stmtCache = PreparedStatementCache(capacity: 64)
 
     init() {}
 
@@ -48,37 +53,52 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
     // MARK: - Lifecycle
 
     public func open() throws {
+        // Defensive gate: production flow already awaits the
+        // migrator in `AppDelegate.applicationDidFinishLaunching`,
+        // but tests + future headless entry points may call
+        // `open()` directly. Sync gate is a no-op once the
+        // migrator's done.
+        StorageMigrationCoordinator.blockingAwaitReady()
         try queue.sync {
             guard db == nil else { return }
             OsaurusPaths.ensureExistsSilent(OsaurusPaths.chatHistory())
             try openConnection()
             try runMigrations()
         }
+        OsaurusDatabaseHandle.register(maintenanceHandle)
     }
 
-    /// Open an in-memory database for testing.
+    private lazy var maintenanceHandle = OsaurusDatabaseHandle(
+        name: "chat-history",
+        exec: { [weak self] sql in
+            self?.queue.sync {
+                guard self?.db != nil else { return }
+                try? self?.executeRaw(sql)
+            }
+        },
+        closer: { [weak self] in self?.close() },
+        reopener: { [weak self] in try? self?.open() }
+    )
+
+    /// Open an in-memory database for testing. **Plaintext** — no
+    /// encryption is applied; tests can still verify SQLCipher
+    /// integration via `SQLCipherIntegrationTests`.
     func openInMemory() throws {
         try queue.sync {
             guard db == nil else { return }
-            var dbPointer: OpaquePointer?
-            let result = sqlite3_open(":memory:", &dbPointer)
-            guard result == SQLITE_OK, let connection = dbPointer else {
-                let msg = String(cString: sqlite3_errmsg(dbPointer))
-                sqlite3_close(dbPointer)
-                throw ChatHistoryDatabaseError.failedToOpen(msg)
-            }
-            db = connection
-            try executeRaw("PRAGMA foreign_keys = ON")
+            db = try EncryptedSQLiteOpener.open(
+                path: ":memory:",
+                key: nil,
+                applyPerfPragmas: false
+            )
             try runMigrations()
         }
     }
 
     public func close() {
+        OsaurusDatabaseHandle.deregister(name: "chat-history")
         queue.sync {
-            for (_, stmt) in cachedStatements {
-                sqlite3_finalize(stmt)
-            }
-            cachedStatements.removeAll()
+            stmtCache.clear()
             guard let connection = db else { return }
             try? executeRaw("PRAGMA optimize")
             sqlite3_close(connection)
@@ -92,21 +112,18 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
 
     private func openConnection() throws {
         let path = OsaurusPaths.chatHistoryDatabaseFile().path
-        var dbPointer: OpaquePointer?
-        let result = sqlite3_open(path, &dbPointer)
-        guard result == SQLITE_OK, let connection = dbPointer else {
-            let msg = String(cString: sqlite3_errmsg(dbPointer))
-            sqlite3_close(dbPointer)
-            throw ChatHistoryDatabaseError.failedToOpen(msg)
+        let key = try StorageKeyManager.shared.currentKey()
+        do {
+            db = try EncryptedSQLiteOpener.open(path: path, key: key)
+        } catch let error as EncryptedSQLiteError {
+            throw ChatHistoryDatabaseError.failedToOpen(error.localizedDescription)
         }
-        db = connection
-        try executeRaw("PRAGMA journal_mode = WAL")
-        try executeRaw("PRAGMA foreign_keys = ON")
     }
 
     private func runMigrations() throws {
         let current = try getSchemaVersion()
         if current < 1 { try migrateToV1() }
+        if current < 2 { try migrateToV2() }
     }
 
     private func getSchemaVersion() throws -> Int {
@@ -169,21 +186,57 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         try setSchemaVersion(1)
     }
 
+    /// v2: add `content_hash` so `upsertTurnsIncrementally` can skip
+    /// rewrites when a turn's persisted shape hasn't changed (massive
+    /// win for the post-stream `save()` path that previously ran
+    /// `DELETE all + INSERT all`).
+    private func migrateToV2() throws {
+        try executeRaw("ALTER TABLE turns ADD COLUMN content_hash TEXT NOT NULL DEFAULT ''")
+        try setSchemaVersion(2)
+    }
+
     // MARK: - Public API: sessions
 
-    /// Insert or replace the entire session row (and all of its turns) atomically.
+    /// Insert or replace the session row and incrementally upsert its
+    /// turns. Compared to the pre-encryption implementation that did
+    /// `DELETE all + INSERT all` on every save, this:
+    ///
+    /// - spills any large attachment payloads to the encrypted blob
+    ///   store before writing rows;
+    /// - reads the existing `(id, content_hash)` set inside the same
+    ///   transaction;
+    /// - issues `INSERT OR REPLACE` only for new / changed turns;
+    /// - issues `DELETE` only for turns that disappeared;
+    /// - leaves untouched turns alone (no row churn, no WAL pages).
     public func saveSession(_ session: ChatSessionData) throws {
+        let preparedSession = sessionWithSpilledAttachments(session)
+
         try inTransaction { _ in
-            try self.upsertSessionRow(session)
-            try self.replaceTurns(sessionId: session.id, turns: session.turns)
+            try self.upsertSessionRow(preparedSession)
+            try self.upsertTurnsIncrementally(
+                sessionId: preparedSession.id,
+                turns: preparedSession.turns
+            )
             try self.transactionalStep(
                 "UPDATE sessions SET turn_count = ?1, updated_at = ?2 WHERE id = ?3"
             ) { stmt in
-                sqlite3_bind_int(stmt, 1, Int32(session.turns.count))
-                sqlite3_bind_double(stmt, 2, session.updatedAt.timeIntervalSince1970)
-                Self.bindText(stmt, index: 3, value: session.id.uuidString)
+                sqlite3_bind_int(stmt, 1, Int32(preparedSession.turns.count))
+                sqlite3_bind_double(stmt, 2, preparedSession.updatedAt.timeIntervalSince1970)
+                Self.bindText(stmt, index: 3, value: preparedSession.id.uuidString)
             }
         }
+    }
+
+    /// Returns a copy of `session` with every turn's attachment array
+    /// passed through `AttachmentBlobStore.spillIfNeeded`.
+    private func sessionWithSpilledAttachments(_ session: ChatSessionData) -> ChatSessionData {
+        var copy = session
+        copy.turns = session.turns.map { turn in
+            var t = turn
+            t.attachments = AttachmentBlobStore.spillIfNeeded(turn.attachments)
+            return t
+        }
+        return copy
     }
 
     /// Append a single turn to an existing session and bump turn_count.
@@ -214,25 +267,40 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         }
     }
 
-    /// Load a session by id, including its turns in seq order. Returns nil if not found.
+    /// Load a session by id, including its turns in seq order. Returns
+    /// nil if not found. Both the session row and its turns are
+    /// fetched inside one `queue.sync` block so the main actor only
+    /// pays a single round-trip across the serial queue.
     public func loadSession(id: UUID) -> ChatSessionData? {
-        var row: ChatSessionData?
+        var session: ChatSessionData?
         do {
-            try prepareAndExecute(
-                Self.selectSessionSQL,
-                bind: { stmt in Self.bindText(stmt, index: 1, value: id.uuidString) },
-                process: { stmt in
-                    if sqlite3_step(stmt) == SQLITE_ROW {
-                        row = Self.readSession(stmt, turns: [])
+            try queue.sync {
+                guard let connection = self.db else { throw ChatHistoryDatabaseError.notOpen }
+
+                // 1. session row
+                let sessionStmt = try self.stmtCache.statement(for: Self.selectSessionSQL, on: connection)
+                Self.bindText(sessionStmt, index: 1, value: id.uuidString)
+                if sqlite3_step(sessionStmt) == SQLITE_ROW {
+                    session = Self.readSession(sessionStmt, turns: [])
+                } else {
+                    return
+                }
+
+                // 2. turns for that session, in seq order
+                let turnsStmt = try self.stmtCache.statement(for: Self.selectTurnsSQL, on: connection)
+                Self.bindText(turnsStmt, index: 1, value: id.uuidString)
+                var turns: [ChatTurnData] = []
+                while sqlite3_step(turnsStmt) == SQLITE_ROW {
+                    if let turn = Self.readTurn(turnsStmt) {
+                        turns.append(turn)
                     }
                 }
-            )
+                session?.turns = turns
+            }
         } catch {
             print("[ChatHistoryDatabase] loadSession(\(id)) failed: \(error)")
             return nil
         }
-        guard var session = row else { return nil }
-        session.turns = (try? loadTurns(sessionId: id)) ?? []
         return session
     }
 
@@ -338,9 +406,64 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
     }
 
     public func deleteSession(id: UUID) throws {
+        // GC: collect blob refs from this session's turns *before*
+        // deleting the rows, then drop any blob no other session
+        // references. Conservative: only deletes when zero remaining
+        // turns reference the hash.
+        var ownedRefs: Set<String> = []
+        try prepareAndExecute(
+            "SELECT attachments FROM turns WHERE session_id = ?1",
+            bind: { stmt in Self.bindText(stmt, index: 1, value: id.uuidString) },
+            process: { stmt in
+                while sqlite3_step(stmt) == SQLITE_ROW {
+                    guard let cText = sqlite3_column_text(stmt, 0) else { continue }
+                    let json = String(cString: cText)
+                    let parsed: [Attachment]? = Self.decodeJSON(json)
+                    for a in parsed ?? [] {
+                        switch a.kind {
+                        case .imageRef(let h, _), .documentRef(_, let h, _):
+                            ownedRefs.insert(h)
+                        default: continue
+                        }
+                    }
+                }
+            }
+        )
+
         _ = try executeUpdate("DELETE FROM sessions WHERE id = ?1") { stmt in
             Self.bindText(stmt, index: 1, value: id.uuidString)
         }
+
+        // Best-effort GC. We re-check each hash against the surviving
+        // rows; anything still referenced stays.
+        for hash in ownedRefs {
+            if !isBlobReferenced(hash) {
+                AttachmentBlobStore.delete(hash)
+            }
+        }
+    }
+
+    /// Returns true when at least one turn (in any session) still
+    /// carries a JSON attachment ref to `hash`. Uses a `LIKE` probe
+    /// because attachments live as JSON inside the TEXT column. The
+    /// hash is hex-32 so collisions in `LIKE` are not a concern.
+    private func isBlobReferenced(_ hash: String) -> Bool {
+        var found = false
+        do {
+            try prepareAndExecute(
+                "SELECT 1 FROM turns WHERE attachments LIKE ?1 LIMIT 1",
+                bind: { stmt in
+                    let pattern = "%\"hash\":\"\(hash)\"%"
+                    Self.bindText(stmt, index: 1, value: pattern)
+                },
+                process: { stmt in
+                    if sqlite3_step(stmt) == SQLITE_ROW { found = true }
+                }
+            )
+        } catch {
+            return true  // be conservative: never delete on error
+        }
+        return found
     }
 
     // MARK: - Internals: rows + turns
@@ -360,15 +483,116 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         }
     }
 
-    private func replaceTurns(sessionId: UUID, turns: [ChatTurnData]) throws {
-        try transactionalStep("DELETE FROM turns WHERE session_id = ?1") { stmt in
-            Self.bindText(stmt, index: 1, value: sessionId.uuidString)
-        }
-        for (idx, turn) in turns.enumerated() {
-            try transactionalStep(Self.insertTurnSQL) { stmt in
-                Self.bindTurn(stmt, sessionId: sessionId, seq: idx, turn: turn)
+    /// Diff-based turn upsert. Reads the existing
+    /// `(turn_id, content_hash, seq)` set for the session, then
+    /// issues only the row-level mutations that actually changed:
+    ///
+    /// - new turn id          → INSERT OR REPLACE
+    /// - existing id, changed → INSERT OR REPLACE (with new seq)
+    /// - existing id, same    → no write (just verify seq matches)
+    /// - id no longer present → DELETE
+    ///
+    /// `content_hash` is computed over the canonical wire form of the
+    /// turn so attachment spillover and tool-result mutations both
+    /// invalidate it correctly.
+    fileprivate func upsertTurnsIncrementally(sessionId: UUID, turns: [ChatTurnData]) throws {
+        // Existing rows for this session.
+        var existing: [String: (hash: String, seq: Int)] = [:]
+        try transactionalQuery(
+            "SELECT id, content_hash, seq FROM turns WHERE session_id = ?1",
+            bind: { stmt in Self.bindText(stmt, index: 1, value: sessionId.uuidString) },
+            process: { stmt in
+                while sqlite3_step(stmt) == SQLITE_ROW {
+                    let id = String(cString: sqlite3_column_text(stmt, 0))
+                    let hash =
+                        sqlite3_column_text(stmt, 1).map { String(cString: $0) } ?? ""
+                    let seq = Int(sqlite3_column_int(stmt, 2))
+                    existing[id] = (hash, seq)
+                }
+            }
+        )
+
+        let seenIds = Set(turns.map { $0.id.uuidString })
+
+        // Delete removed turns FIRST so their (session_id, seq) slots
+        // are free before we insert the new ordering. Otherwise a
+        // re-save that shrinks or reshuffles the conversation hits
+        // the UNIQUE(session_id, seq) constraint when the new turn
+        // tries to reuse a still-occupied seq.
+        let removedIds = Set(existing.keys).subtracting(seenIds)
+        for id in removedIds {
+            try transactionalStep("DELETE FROM turns WHERE id = ?1 AND session_id = ?2") { stmt in
+                Self.bindText(stmt, index: 1, value: id)
+                Self.bindText(stmt, index: 2, value: sessionId.uuidString)
             }
         }
+
+        // Pre-pass: any kept turn whose new seq differs from its
+        // current seq gets parked at a temporary negative seq. This
+        // dodges the (session_id, seq) UNIQUE constraint when two
+        // kept turns swap positions (final seq of A == old seq of B).
+        // Negative seqs are never produced by the normal write path.
+        var parked: [String: Int] = [:]  // id → original seq
+        for (idx, turn) in turns.enumerated() {
+            let id = turn.id.uuidString
+            if let prior = existing[id], prior.seq != idx {
+                let parkSeq = -((parked.count) + 1)
+                try transactionalStep(
+                    "UPDATE turns SET seq = ?1 WHERE id = ?2 AND session_id = ?3"
+                ) { stmt in
+                    sqlite3_bind_int(stmt, 1, Int32(parkSeq))
+                    Self.bindText(stmt, index: 2, value: id)
+                    Self.bindText(stmt, index: 3, value: sessionId.uuidString)
+                }
+                parked[id] = prior.seq
+            }
+        }
+
+        for (idx, turn) in turns.enumerated() {
+            let id = turn.id.uuidString
+            let newHash = Self.contentHash(for: turn)
+            // Skip rewriting unchanged turns (same id, same hash, same seq).
+            if let prior = existing[id], prior.hash == newHash, prior.seq == idx, parked[id] == nil {
+                continue
+            }
+            try transactionalStep(Self.insertTurnSQL) { stmt in
+                Self.bindTurn(
+                    stmt,
+                    sessionId: sessionId,
+                    seq: idx,
+                    turn: turn,
+                    contentHash: newHash
+                )
+            }
+        }
+    }
+
+    /// Canonical SHA-256 over the persisted shape of a turn — used by
+    /// `upsertTurnsIncrementally` to skip writes when nothing changed.
+    /// Hashes role + content + thinking + JSON-encoded attachments,
+    /// tool calls, tool call id, and tool results, in a stable order
+    /// that matches the column binding order.
+    static func contentHash(for turn: ChatTurnData) -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        var hasher = SHA256()
+        hasher.update(data: Data(turn.role.rawValue.utf8))
+        hasher.update(data: Data(turn.content.utf8))
+        hasher.update(data: Data(turn.thinking.utf8))
+        if let attachments = try? encoder.encode(turn.attachments) {
+            hasher.update(data: attachments)
+        }
+        if let calls = turn.toolCalls.flatMap({ try? encoder.encode($0) }) {
+            hasher.update(data: calls)
+        }
+        if let cid = turn.toolCallId {
+            hasher.update(data: Data(cid.utf8))
+        }
+        if let results = try? encoder.encode(turn.toolResults) {
+            hasher.update(data: results)
+        }
+        let digest = hasher.finalize()
+        return digest.map { String(format: "%02x", $0) }.joined()
     }
 
     private func loadTurns(sessionId: UUID) throws -> [ChatTurnData] {
@@ -459,8 +683,19 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
     private static let insertTurnSQL = """
         INSERT INTO turns
             (id, session_id, seq, role, content, attachments,
-             tool_calls, tool_call_id, tool_results, thinking)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+             tool_calls, tool_call_id, tool_results, thinking, content_hash)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+        ON CONFLICT(id) DO UPDATE SET
+            session_id   = excluded.session_id,
+            seq          = excluded.seq,
+            role         = excluded.role,
+            content      = excluded.content,
+            attachments  = excluded.attachments,
+            tool_calls   = excluded.tool_calls,
+            tool_call_id = excluded.tool_call_id,
+            tool_results = excluded.tool_results,
+            thinking     = excluded.thinking,
+            content_hash = excluded.content_hash
         """
 
     private static let selectTurnsSQL = """
@@ -533,7 +768,8 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         _ stmt: OpaquePointer,
         sessionId: UUID,
         seq: Int,
-        turn: ChatTurnData
+        turn: ChatTurnData,
+        contentHash: String? = nil
     ) {
         bindText(stmt, index: 1, value: turn.id.uuidString)
         bindText(stmt, index: 2, value: sessionId.uuidString)
@@ -545,6 +781,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         bindText(stmt, index: 8, value: turn.toolCallId)
         bindText(stmt, index: 9, value: encodeJSON(turn.toolResults))
         bindText(stmt, index: 10, value: turn.thinking)
+        bindText(stmt, index: 11, value: contentHash ?? Self.contentHash(for: turn))
     }
 
     // MARK: - JSON helpers
@@ -664,4 +901,19 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         bind(s)
         try process(s)
     }
+
+    // MARK: - Test hooks
+
+    #if DEBUG
+        /// Test-only: run `body` on the database's serial queue with
+        /// the connection handle. Used by storage tests to inspect
+        /// internal columns (e.g. `content_hash`) without exposing
+        /// every read path through a public API.
+        func queueRunForTest(_ body: (OpaquePointer) throws -> Void) throws {
+            try queue.sync {
+                guard let connection = db else { throw ChatHistoryDatabaseError.notOpen }
+                try body(connection)
+            }
+        }
+    #endif
 }

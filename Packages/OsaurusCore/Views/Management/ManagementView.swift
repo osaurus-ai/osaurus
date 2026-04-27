@@ -151,6 +151,8 @@ private extension ManagementView {
             PermissionsView()
         case .identity:
             IdentityView()
+        case .storage:
+            StorageSettingsView()
         case .settings:
             ConfigurationView(searchText: $searchText)
         case .none:

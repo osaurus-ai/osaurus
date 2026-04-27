@@ -125,6 +125,9 @@ private extension SandboxView {
         } else {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
+                    if SandboxBridgeMigrationFlag.needsRestart {
+                        bridgeMigrationBanner
+                    }
                     statusDashboard
                     if sandboxState.status == .running {
                         SandboxLogConsoleCard()
@@ -141,6 +144,52 @@ private extension SandboxView {
             }
             .onDisappear { stopRefreshTimer() }
         }
+    }
+
+    /// Non-blocking notice shown until the user restarts the sandbox so the
+    /// post-#950 bridge security fix takes effect inside the running guest.
+    @ViewBuilder
+    var bridgeMigrationBanner: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "lock.shield.fill")
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundColor(theme.accentColor)
+                .padding(.top, 2)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Security update is ready", bundle: .module)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+                Text(
+                    "Restart the sandbox to apply per-agent bridge tokens. Plugin calls will return 401 until the running container picks up the new shim.",
+                    bundle: .module
+                )
+                .font(.system(size: 12))
+                .foregroundColor(theme.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 12)
+
+            Button(action: performReset) {
+                Text("Restart sandbox", bundle: .module)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 12)
+                    .frame(height: 28)
+                    .background(Capsule().fill(theme.accentColor))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(theme.accentColor.opacity(0.08))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .strokeBorder(theme.accentColor.opacity(0.25), lineWidth: 1)
+                )
+        )
     }
 
     var unavailableEmptyState: some View {

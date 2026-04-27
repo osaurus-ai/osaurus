@@ -69,6 +69,17 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
     /// Memory management policy for loaded models
     public var modelEvictionPolicy: ModelEvictionPolicy
 
+    /// Maximum HTTP request body size, in bytes, accepted by the public
+    /// server before it returns `413 Payload Too Large`. Caps memory
+    /// pressure from unauthenticated clients sending oversized bodies.
+    /// Default: 32 MiB (generous for multimodal chat completions).
+    public var maxRequestBodyBytes: Int
+
+    /// Tighter ceiling for `POST /pair`, which is unauthenticated and
+    /// only ever carries a small JSON envelope. A 64 KiB cap is several
+    /// orders of magnitude more than a real pairing request needs.
+    public var maxPairingBodyBytes: Int
+
     private enum CodingKeys: String, CodingKey {
         case port
         case exposeToNetwork
@@ -81,6 +92,8 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
         case genMaxKVSize
         case allowedOrigins
         case modelEvictionPolicy
+        case maxRequestBodyBytes
+        case maxPairingBodyBytes
     }
 
     public init(from decoder: Decoder) throws {
@@ -106,6 +119,12 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
         self.modelEvictionPolicy =
             try container.decodeIfPresent(ModelEvictionPolicy.self, forKey: .modelEvictionPolicy)
             ?? defaults.modelEvictionPolicy
+        self.maxRequestBodyBytes =
+            try container.decodeIfPresent(Int.self, forKey: .maxRequestBodyBytes)
+            ?? defaults.maxRequestBodyBytes
+        self.maxPairingBodyBytes =
+            try container.decodeIfPresent(Int.self, forKey: .maxPairingBodyBytes)
+            ?? defaults.maxPairingBodyBytes
     }
 
     public init(
@@ -119,7 +138,9 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
         genTopP: Float,
         genMaxKVSize: Int?,
         allowedOrigins: [String] = [],
-        modelEvictionPolicy: ModelEvictionPolicy = .strictSingleModel
+        modelEvictionPolicy: ModelEvictionPolicy = .strictSingleModel,
+        maxRequestBodyBytes: Int = 32 * 1024 * 1024,
+        maxPairingBodyBytes: Int = 64 * 1024
     ) {
         self.port = port
         self.exposeToNetwork = exposeToNetwork
@@ -132,6 +153,8 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
         self.genMaxKVSize = genMaxKVSize
         self.allowedOrigins = allowedOrigins
         self.modelEvictionPolicy = modelEvictionPolicy
+        self.maxRequestBodyBytes = maxRequestBodyBytes
+        self.maxPairingBodyBytes = maxPairingBodyBytes
     }
 
     /// Default configuration
@@ -147,7 +170,9 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
             genTopP: 1.0,
             genMaxKVSize: nil,
             allowedOrigins: [],
-            modelEvictionPolicy: .strictSingleModel
+            modelEvictionPolicy: .strictSingleModel,
+            maxRequestBodyBytes: 32 * 1024 * 1024,
+            maxPairingBodyBytes: 64 * 1024
         )
     }
 

@@ -359,6 +359,54 @@ struct MemoryDatabaseTests {
         #expect(turns[0].content == "Hello")
     }
 
+    /// Regression for the 2026-04 memory consolidator crash:
+    /// `pruneTranscriptReturningKeys` opens an `inTransaction` block
+    /// (which holds `queue.sync`) and then called the locking
+    /// `prepareAndExecute` / `executeUpdate` wrappers from inside
+    /// that block. Re-entrant `queue.sync` on the same serial
+    /// `DispatchQueue` traps with `EXC_BREAKPOINT` (libdispatch
+    /// deadlock detector). The fix added non-locking
+    /// `…(on: connection, …)` cores; this test exercises the path
+    /// end-to-end with rows that span both the "old enough to
+    /// prune" and "keep" buckets.
+    @Test func pruneTranscriptReturningKeys_doesNotDeadlockTheTransactionQueue() throws {
+        let db = try makeTempDB()
+
+        // Insert one ancient row (will be pruned) + one fresh row
+        // (will survive). Use explicit dates so the predicate is
+        // deterministic.
+        try db.insertTranscriptTurn(
+            agentId: "a",
+            conversationId: "old-conv",
+            chunkIndex: 0,
+            role: "user",
+            content: "ancient",
+            tokenCount: 1,
+            createdAt: "2020-01-01 00:00:00"
+        )
+        try db.insertTranscriptTurn(
+            agentId: "a",
+            conversationId: "fresh-conv",
+            chunkIndex: 0,
+            role: "user",
+            content: "fresh",
+            tokenCount: 1
+        )
+
+        // Pre-fix, this call crashed with EXC_BREAKPOINT inside
+        // `prepareAndExecute → queue.sync` because `inTransaction`
+        // already held the serial queue.
+        let pruned = try db.pruneTranscriptReturningKeys(olderThanDays: 30)
+
+        #expect(pruned.count == 1)
+        #expect(pruned.first?.conversationId == "old-conv")
+
+        // Survivor row must remain.
+        let remaining = try db.loadTranscript(agentId: "a", days: 365)
+        #expect(remaining.count == 1)
+        #expect(remaining[0].conversationId == "fresh-conv")
+    }
+
     @Test func deleteTranscriptForConversation() throws {
         let db = try makeTempDB()
         try db.insertTranscriptTurn(

@@ -40,51 +40,57 @@ struct ResolveExecutionModeTests {
     }
 
     @Test
-    func sandboxBeatsFolder_whenAutonomousAndSandboxRegistered() {
-        registerSandboxExec()
-        defer { ToolRegistry.shared.unregisterAllSandboxTools() }
+    func sandboxBeatsFolder_whenAutonomousAndSandboxRegistered() async {
+        await SandboxTestLock.shared.run {
+            registerSandboxExec()
+            defer { ToolRegistry.shared.unregisterAllSandboxTools() }
 
-        let mode = ToolRegistry.shared.resolveExecutionMode(
-            folderContext: sampleFolderContext(),
-            autonomousEnabled: true
-        )
-        #expect(mode.usesSandboxTools)
-        #expect(!mode.usesHostFolderTools)
-    }
-
-    @Test
-    func folderWinsWhenAutonomousOff() {
-        registerSandboxExec()
-        defer { ToolRegistry.shared.unregisterAllSandboxTools() }
-
-        let mode = ToolRegistry.shared.resolveExecutionMode(
-            folderContext: sampleFolderContext(),
-            autonomousEnabled: false
-        )
-        #expect(mode.usesHostFolderTools)
-        #expect(!mode.usesSandboxTools)
-    }
-
-    @Test
-    func noFolderAutonomousOff_yieldsNone_evenIfSandboxRegistered() {
-        // The legacy single-arg overload would have returned `.sandbox`
-        // here just because `sandbox_exec` happens to be registered. The
-        // unified resolver requires the autonomous toggle to be on.
-        registerSandboxExec()
-        defer { ToolRegistry.shared.unregisterAllSandboxTools() }
-
-        let mode = ToolRegistry.shared.resolveExecutionMode(
-            folderContext: nil,
-            autonomousEnabled: false
-        )
-        switch mode {
-        case .none: break
-        default: Issue.record("expected .none, got \(mode)")
+            let mode = ToolRegistry.shared.resolveExecutionMode(
+                folderContext: sampleFolderContext(),
+                autonomousEnabled: true
+            )
+            #expect(mode.usesSandboxTools)
+            #expect(!mode.usesHostFolderTools)
         }
     }
 
     @Test
-    func noFolderAutonomousOn_butSandboxNotRegistered_yieldsNone() {
+    func folderWinsWhenAutonomousOff() async {
+        await SandboxTestLock.shared.run {
+            registerSandboxExec()
+            defer { ToolRegistry.shared.unregisterAllSandboxTools() }
+
+            let mode = ToolRegistry.shared.resolveExecutionMode(
+                folderContext: sampleFolderContext(),
+                autonomousEnabled: false
+            )
+            #expect(mode.usesHostFolderTools)
+            #expect(!mode.usesSandboxTools)
+        }
+    }
+
+    @Test
+    func noFolderAutonomousOff_yieldsNone_evenIfSandboxRegistered() async {
+        // The legacy single-arg overload would have returned `.sandbox`
+        // here just because `sandbox_exec` happens to be registered. The
+        // unified resolver requires the autonomous toggle to be on.
+        await SandboxTestLock.shared.run {
+            registerSandboxExec()
+            defer { ToolRegistry.shared.unregisterAllSandboxTools() }
+
+            let mode = ToolRegistry.shared.resolveExecutionMode(
+                folderContext: nil,
+                autonomousEnabled: false
+            )
+            switch mode {
+            case .none: break
+            default: Issue.record("expected .none, got \(mode)")
+            }
+        }
+    }
+
+    @Test
+    func noFolderAutonomousOn_butSandboxNotRegistered_yieldsNone() async {
         // Sandbox is opt-in but the container hasn't been provisioned yet;
         // the resolver should not lie and say `.sandbox` until the tool is
         // actually in the registry. The composer's "Sandbox not ready"
@@ -93,14 +99,16 @@ struct ResolveExecutionModeTests {
         // Defensive: explicitly clear any sandbox tools a prior test in
         // a different suite may have left registered. Test isolation is
         // serialised within a suite but not across suites in this package.
-        ToolRegistry.shared.unregisterAllSandboxTools()
-        let mode = ToolRegistry.shared.resolveExecutionMode(
-            folderContext: nil,
-            autonomousEnabled: true
-        )
-        switch mode {
-        case .none: break
-        default: Issue.record("expected .none when sandbox_exec missing, got \(mode)")
+        await SandboxTestLock.shared.run {
+            ToolRegistry.shared.unregisterAllSandboxTools()
+            let mode = ToolRegistry.shared.resolveExecutionMode(
+                folderContext: nil,
+                autonomousEnabled: true
+            )
+            switch mode {
+            case .none: break
+            default: Issue.record("expected .none when sandbox_exec missing, got \(mode)")
+            }
         }
     }
 }

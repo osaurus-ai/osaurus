@@ -7,7 +7,12 @@ on:
   workflow_dispatch:
     inputs:
       clear_cache:
-        description: "Skip restoring the DerivedData cache (force a cold build)"
+        # Re-runs of a failed job already force a cold build automatically
+        # (see "Wipe restored caches" step). This input is for the rare case
+        # where you want to start a brand-new run with a cold build — e.g.
+        # after a CACHE_SALT bump on `main` to verify the cold path before
+        # PR runs hit it.
+        description: "Force a cold build on the FIRST attempt (re-runs are already cold)"
         type: boolean
         default: false
 
@@ -28,26 +33,29 @@ env:
 
 jobs:
   test-core:
-    runs-on: macos-latest
-    # 30 min, not 15. Two-bucket budget:
-    #   ~13–14 min — full cold build (mlx-swift `Cmlx` C++ + OsaurusCore +
+    # Pinned (was `macos-latest`) so a runner image bump can't quietly
+    # change the build environment under us.
+    runs-on: macos-26
+    # 45 min, not 30. Three-bucket budget:
+    #   ~25–30 min — full cold build (mlx-swift `Cmlx` C++ + SQLCipher
+    #                 `sqlite3.c` ~250k LoC of C compiled with
+    #                 `-DSQLITE_HAS_CODEC=1` and friends + OsaurusCore +
     #                 OsaurusCoreTests Swift) when both SPM and DerivedData
-    #                 caches miss. Empirically that's the budget on a
-    #                 `macos-latest` runner; PR #881 (run 24573707695) hit
-    #                 exactly the 15-min wall mid-Swift-compile because no
-    #                 DerivedData cache existed (main hadn't successfully
-    #                 saved one since PR #878).
+    #                 caches miss. PR #951 (run 24937664669, attempt 2)
+    #                 hit the prior 30-min wall mid-Swift-compile after
+    #                 27:27 in the xcodebuild step — that's the empirical
+    #                 floor on `macos-26` with the SQLCipher amalgamation.
     #   ~ 2– 3 min — actual `xcodebuild test` once the build is warm.
-    #   ~ 5–10 min — buffer / future growth, runner variance.
+    #   ~10–15 min — buffer / future growth, runner variance.
     #
     # Once any successful run lands on `main`, the `Save DerivedData cache`
     # step at the bottom populates the cache and subsequent runs return to
-    # ~5 min total. The 30-min ceiling is an "even a worst-case cold build
+    # ~5 min total. The 45-min ceiling is an "even a worst-case cold build
     # finishes" guard, NOT an expected duration. If you find yourself
     # raising it again, the right fix is to split this into a separate
     # build-cache-warm job that runs nightly on `main`, not to bump the
     # ceiling indefinitely.
-    timeout-minutes: 30
+    timeout-minutes: 45
     env:
       WORKSPACE: osaurus.xcworkspace
       SPM_CACHE: .spm-cache
@@ -75,13 +83,52 @@ jobs:
 
       - name: Restore DerivedData cache
         id: dd-cache
-        if: ${{ github.event_name != 'workflow_dispatch' || !inputs.clear_cache }}
+        # Always restore so `cache-primary-key` is populated for the save
+        # step at the bottom (the wipe step below handles forced cold
+        # builds without preventing main from repopulating the cache).
         uses: actions/cache/restore@v5
         with:
           path: ~/Library/Developer/Xcode/DerivedData
-          key: dd-${{ runner.os }}-${{ env.CACHE_SALT }}-xcode${{ env.XCODE_VERSION }}-${{ hashFiles('osaurus.xcworkspace/xcshareddata/swiftpm/Package.resolved', 'Packages/**/*.swift', 'Packages/**/Package.swift', 'Packages/**/Resources/**') }}
+          # Include vendored C sources (currently the SQLCipher amalgamation
+          # under Packages/OsaurusCore/SQLCipher/). Without this, an
+          # SQLCipher bump would land its new sqlite3.{c,h} but CI would
+          # silently re-use a stale cached compile of the old code.
+          key: dd-${{ runner.os }}-${{ env.CACHE_SALT }}-xcode${{ env.XCODE_VERSION }}-${{ hashFiles('osaurus.xcworkspace/xcshareddata/swiftpm/Package.resolved', 'Packages/**/*.swift', 'Packages/**/Package.swift', 'Packages/**/Resources/**', 'Packages/**/*.c', 'Packages/**/*.h') }}
           restore-keys: |
             dd-${{ runner.os }}-${{ env.CACHE_SALT }}-xcode${{ env.XCODE_VERSION }}-
+
+      # Make "clear the build cache" a one-click operation. Two triggers:
+      #   1. `github.run_attempt != '1'` — i.e. a re-run. The default
+      #      "Re-run failed jobs" button is the natural place for someone
+      #      who just saw a build failure to land, so we make that the
+      #      intuitive escape hatch for cache poison: the first attempt
+      #      uses the cache (fast); any re-run forces a cold compile.
+      #   2. `workflow_dispatch.clear_cache=true` — manual force-cold on
+      #      a fresh run (e.g. validating a CACHE_SALT bump before PRs
+      #      start hitting it).
+      #
+      # We wipe ONLY DerivedData, not the SPM cache. DerivedData holds
+      # compiled object files / .swiftmodule / linked binaries — the
+      # actual build outputs that can carry over a stale-source bug across
+      # incremental builds. The SPM cache is just downloaded source code
+      # pinned by `Package.resolved` checksums; it can't be "poisoned" in
+      # any way that affects build correctness, and re-downloading it on
+      # every re-run cost ~2 min in PR #951 run 24937664669 — wasted
+      # budget that contributed to the 30-min cold-build cancellation.
+      #
+      # We wipe AFTER the restore step (rather than skipping the restore)
+      # so `steps.dd-cache.outputs.cache-primary-key` stays populated and
+      # the `Save DerivedData cache` step at the bottom can still
+      # repopulate the cache on a successful `main` run.
+      - name: Wipe restored DerivedData (re-run or workflow_dispatch clear_cache)
+        if: ${{ github.run_attempt != '1' || (github.event_name == 'workflow_dispatch' && inputs.clear_cache) }}
+        run: |
+          REASON="run_attempt=${{ github.run_attempt }}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.clear_cache }}" = "true" ]; then
+            REASON="$REASON, workflow_dispatch clear_cache=true"
+          fi
+          echo "::notice title=Cold build forced::Wiping restored DerivedData before build ($REASON). SPM cache preserved (it's source-only and pinned by Package.resolved). To re-run with the warm cache instead, push a new commit or trigger a fresh run."
+          rm -rf "$HOME/Library/Developer/Xcode/DerivedData"
 
       - name: Resolve dependencies
         run: >-
@@ -133,7 +180,13 @@ jobs:
         run: echo "::notice title=test-core duration::$SECONDS seconds"
 
       - name: Print failure summary
-        if: failure()
+        # Also run on `cancelled()` so a job-timeout cancellation (e.g. a
+        # cold build that ate the 45-min wall) still gets a Mode A diag
+        # block in the GitHub UI instead of being a silent skip — see
+        # PR #951 run 24937664669, where attempt 2's 27:27 cold compile
+        # was killed by the prior 30-min timeout AND `Print failure
+        # summary` was skipped because cancellation isn't `failure()`.
+        if: ${{ failure() || cancelled() }}
         env:
           # Surface the cache outcome inside the summary so the next person
           # can immediately tell "cold-cache compile timeout" from "warm
@@ -185,13 +238,17 @@ jobs:
           if [ ! -d "$XCRESULT_PATH" ]; then
             if [ -z "$XCTEST_BINARY" ]; then
               # Mode A.
-              CACHE_NOTE="_(DerivedData cache hit: \`${DD_CACHE_HIT:-unknown}\`)_"
+              CACHE_NOTE="_(DerivedData cache hit: \`${DD_CACHE_HIT:-unknown}\`, run attempt: \`${{ github.run_attempt }}\`)_"
               {
                 echo "**Mode A — build phase did not complete (no xctest bundle on disk).**"
                 echo
-                echo "Either a compile/link error fired (scroll the **Test OsaurusCore** log above for the first \`error:\` line), OR the cold build ran past the 30-min job timeout. ${CACHE_NOTE}"
+                echo "Either a compile/link error fired (scroll the **Test OsaurusCore** log above for the first \`error:\` line), OR the cold build ran past the 45-min job timeout. ${CACHE_NOTE}"
                 echo
                 echo "If \`cache-hit: false\` AND no \`error:\` lines appear in the raw log, this is the cold-cache-timeout flavor. The fix is to land one successful run on \`main\` so the \`Save DerivedData cache\` step at the bottom of this job populates the cache; subsequent PR runs warm-start from it and finish in ~5 min. Re-running this same job will hit the cache the second time only IF the first attempt finishes successfully."
+                echo
+                echo "**\`run_attempt > 1\` AND \`cache-hit: false\`?** That's the deliberate cold-rebuild path triggered by **Re-run failed jobs** — see the \`Wipe restored DerivedData\` step in this job. If the cold build is exhausting the 45-min budget on every re-run, the codebase has outgrown the budget; bump \`timeout-minutes\` and update its comment block, OR move warm-cache priming to a nightly \`main\` job so PRs always warm-start."
+                echo
+                echo "**Suspect cache poisoning on a fresh attempt?** Click **Re-run failed jobs** — re-runs automatically wipe DerivedData (the SPM cache is preserved because it's pinned by \`Package.resolved\` and can't be poisoned)."
               } >> "$GITHUB_STEP_SUMMARY"
             else
               # Mode B.
@@ -244,7 +301,10 @@ jobs:
             ' >> "$GITHUB_STEP_SUMMARY" || true
 
       - name: Upload xcresult on failure
-        if: failure()
+        # Same `failure() || cancelled()` rationale as the failure-summary
+        # step above: on a wall-timeout the xcresult bundle may be
+        # partially populated and is still useful for postmortem.
+        if: ${{ failure() || cancelled() }}
         uses: actions/upload-artifact@v5
         with:
           name: test-core-xcresult-${{ github.run_attempt }}
@@ -253,9 +313,10 @@ jobs:
           if-no-files-found: warn
 
       # Save the cache only on `main` so a half-baked PR can never poison it.
-      # If `clear_cache=true` was passed via workflow_dispatch we also skip the
-      # save (the restore step didn't run, so `cache-primary-key` is empty);
-      # the next normal `main` push will repopulate the cache.
+      # `actions/cache/save@v5` is a no-op when the key already exists, so a
+      # forced cold re-run on `main` (which wipes DerivedData and rebuilds
+      # from scratch) won't overwrite a known-good cache entry under the
+      # same key. To intentionally invalidate every cache, bump CACHE_SALT.
       - name: Save DerivedData cache
         if: ${{ github.ref == 'refs/heads/main' && success() && steps.dd-cache.outputs.cache-primary-key != '' }}
         uses: actions/cache/save@v5
@@ -264,7 +325,8 @@ jobs:
           key: ${{ steps.dd-cache.outputs.cache-primary-key }}
 
   test-cli:
-    runs-on: macos-latest
+    # Pinned (was `macos-latest`).
+    runs-on: macos-26
     timeout-minutes: 10
     steps:
       - name: Checkout code
@@ -290,7 +352,8 @@ jobs:
         run: echo "::notice title=test-cli duration::$SECONDS seconds"
 
   swiftlint:
-    runs-on: macos-latest
+    # Pinned (was `macos-latest`).
+    runs-on: macos-26
     timeout-minutes: 10
     steps:
       - name: Checkout code

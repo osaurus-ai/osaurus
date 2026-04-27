@@ -22,7 +22,7 @@
 
 import CryptoKit
 import Foundation
-import SQLite3
+import OsaurusSQLCipher
 
 public enum MemoryDatabaseError: Error, LocalizedError {
     case failedToOpen(String)
@@ -45,7 +45,7 @@ public enum MemoryDatabaseError: Error, LocalizedError {
 public final class MemoryDatabase: @unchecked Sendable {
     public static let shared = MemoryDatabase()
 
-    private static let schemaVersion = 5
+    private static let schemaVersion = 6
 
     nonisolated(unsafe) private static let iso8601Formatter: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
@@ -59,7 +59,7 @@ public final class MemoryDatabase: @unchecked Sendable {
     private var db: OpaquePointer?
     private let queue = DispatchQueue(label: "ai.osaurus.memory.database")
 
-    private var cachedStatements: [String: OpaquePointer] = [:]
+    private let stmtCache = PreparedStatementCache(capacity: 96)
 
     public var isOpen: Bool {
         queue.sync { db != nil }
@@ -72,37 +72,50 @@ public final class MemoryDatabase: @unchecked Sendable {
     // MARK: - Lifecycle
 
     public func open() throws {
+        // See `ChatHistoryDatabase.open()` for the gate rationale —
+        // every production-side `*Database.open()` defensively
+        // awaits the storage migrator so we can't race SQLCipher
+        // against still-plaintext files.
+        StorageMigrationCoordinator.blockingAwaitReady()
         try queue.sync {
             guard db == nil else { return }
             OsaurusPaths.ensureExistsSilent(OsaurusPaths.memory())
             try openConnection()
             try runMigrations()
         }
+        OsaurusDatabaseHandle.register(maintenanceHandle)
     }
 
-    /// Open an in-memory database for testing.
+    private lazy var maintenanceHandle = OsaurusDatabaseHandle(
+        name: "memory",
+        exec: { [weak self] sql in
+            self?.queue.sync {
+                guard self?.db != nil else { return }
+                try? self?.executeRaw(sql)
+            }
+        },
+        closer: { [weak self] in self?.close() },
+        reopener: { [weak self] in try? self?.open() }
+    )
+
+    /// Open an in-memory database for testing. **Plaintext** — see
+    /// `SQLCipherIntegrationTests` for encrypted-DB coverage.
     public func openInMemory() throws {
         try queue.sync {
             guard db == nil else { return }
-            var dbPointer: OpaquePointer?
-            let result = sqlite3_open(":memory:", &dbPointer)
-            guard result == SQLITE_OK, let connection = dbPointer else {
-                let message = String(cString: sqlite3_errmsg(dbPointer))
-                sqlite3_close(dbPointer)
-                throw MemoryDatabaseError.failedToOpen(message)
-            }
-            db = connection
-            try executeRaw("PRAGMA foreign_keys = ON")
+            db = try EncryptedSQLiteOpener.open(
+                path: ":memory:",
+                key: nil,
+                applyPerfPragmas: false
+            )
             try runMigrations()
         }
     }
 
     public func close() {
+        OsaurusDatabaseHandle.deregister(name: "memory")
         queue.sync {
-            for (_, stmt) in cachedStatements {
-                sqlite3_finalize(stmt)
-            }
-            cachedStatements.removeAll()
+            stmtCache.clear()
             guard let connection = db else { return }
             try? executeRaw("PRAGMA optimize")
             sqlite3_close(connection)
@@ -112,16 +125,12 @@ public final class MemoryDatabase: @unchecked Sendable {
 
     private func openConnection() throws {
         let path = OsaurusPaths.memoryDatabaseFile().path
-        var dbPointer: OpaquePointer?
-        let result = sqlite3_open(path, &dbPointer)
-        guard result == SQLITE_OK, let connection = dbPointer else {
-            let message = String(cString: sqlite3_errmsg(dbPointer))
-            sqlite3_close(dbPointer)
-            throw MemoryDatabaseError.failedToOpen(message)
+        let key = try StorageKeyManager.shared.currentKey()
+        do {
+            db = try EncryptedSQLiteOpener.open(path: path, key: key)
+        } catch let error as EncryptedSQLiteError {
+            throw MemoryDatabaseError.failedToOpen(error.localizedDescription)
         }
-        db = connection
-        try executeRaw("PRAGMA journal_mode = WAL")
-        try executeRaw("PRAGMA foreign_keys = ON")
     }
 
     // MARK: - Schema & Migrations
@@ -130,6 +139,9 @@ public final class MemoryDatabase: @unchecked Sendable {
         let currentVersion = try getSchemaVersion()
         if currentVersion < 5 {
             try migrateToV5(from: currentVersion)
+        }
+        if currentVersion < 6 {
+            try migrateToV6()
         }
     }
 
@@ -188,6 +200,147 @@ public final class MemoryDatabase: @unchecked Sendable {
 
         try setSchemaVersion(5)
         MemoryLogger.database.info("v5 migration completed")
+    }
+
+    /// V6 migration: add three FTS5 contentless-mirror virtual tables
+    /// + sync triggers so the LIKE-fallback search paths can use
+    /// `MATCH` instead of full-table-scan `LIKE '%foo%'`.
+    ///
+    /// SQLCipher transparently encrypts the FTS5 shadow tables — we
+    /// don't have to do anything extra for at-rest protection. The
+    /// virtual tables use `content=…` external-content mode so the
+    /// authoritative text still lives in the existing tables; FTS5
+    /// only stores tokens.
+    ///
+    /// Backfill is done in one INSERT … SELECT after the triggers are
+    /// in place so any concurrent insert doesn't race with the
+    /// migration.
+    private func migrateToV6() throws {
+        MemoryLogger.database.info("Running v6 migration (FTS5 indexes)")
+
+        // pinned_facts → fts_pinned (content column only)
+        try executeRaw(
+            """
+            CREATE VIRTUAL TABLE IF NOT EXISTS fts_pinned USING fts5(
+                content,
+                content='pinned_facts',
+                content_rowid='rowid',
+                tokenize='unicode61 remove_diacritics 2'
+            )
+            """
+        )
+        try executeRaw(
+            """
+            CREATE TRIGGER IF NOT EXISTS pinned_facts_ai AFTER INSERT ON pinned_facts BEGIN
+                INSERT INTO fts_pinned(rowid, content) VALUES (new.rowid, new.content);
+            END
+            """
+        )
+        try executeRaw(
+            """
+            CREATE TRIGGER IF NOT EXISTS pinned_facts_ad AFTER DELETE ON pinned_facts BEGIN
+                INSERT INTO fts_pinned(fts_pinned, rowid, content) VALUES('delete', old.rowid, old.content);
+            END
+            """
+        )
+        try executeRaw(
+            """
+            CREATE TRIGGER IF NOT EXISTS pinned_facts_au AFTER UPDATE ON pinned_facts BEGIN
+                INSERT INTO fts_pinned(fts_pinned, rowid, content) VALUES('delete', old.rowid, old.content);
+                INSERT INTO fts_pinned(rowid, content) VALUES (new.rowid, new.content);
+            END
+            """
+        )
+
+        // episodes → fts_episodes (summary + topics + entities)
+        try executeRaw(
+            """
+            CREATE VIRTUAL TABLE IF NOT EXISTS fts_episodes USING fts5(
+                summary, topics_csv, entities_csv,
+                content='episodes',
+                content_rowid='id',
+                tokenize='unicode61 remove_diacritics 2'
+            )
+            """
+        )
+        try executeRaw(
+            """
+            CREATE TRIGGER IF NOT EXISTS episodes_ai AFTER INSERT ON episodes BEGIN
+                INSERT INTO fts_episodes(rowid, summary, topics_csv, entities_csv)
+                VALUES (new.id, new.summary, new.topics_csv, new.entities_csv);
+            END
+            """
+        )
+        try executeRaw(
+            """
+            CREATE TRIGGER IF NOT EXISTS episodes_ad AFTER DELETE ON episodes BEGIN
+                INSERT INTO fts_episodes(fts_episodes, rowid, summary, topics_csv, entities_csv)
+                VALUES('delete', old.id, old.summary, old.topics_csv, old.entities_csv);
+            END
+            """
+        )
+        try executeRaw(
+            """
+            CREATE TRIGGER IF NOT EXISTS episodes_au AFTER UPDATE ON episodes BEGIN
+                INSERT INTO fts_episodes(fts_episodes, rowid, summary, topics_csv, entities_csv)
+                VALUES('delete', old.id, old.summary, old.topics_csv, old.entities_csv);
+                INSERT INTO fts_episodes(rowid, summary, topics_csv, entities_csv)
+                VALUES (new.id, new.summary, new.topics_csv, new.entities_csv);
+            END
+            """
+        )
+
+        // transcript → fts_transcript (content)
+        try executeRaw(
+            """
+            CREATE VIRTUAL TABLE IF NOT EXISTS fts_transcript USING fts5(
+                content,
+                content='transcript',
+                content_rowid='id',
+                tokenize='unicode61 remove_diacritics 2'
+            )
+            """
+        )
+        try executeRaw(
+            """
+            CREATE TRIGGER IF NOT EXISTS transcript_ai AFTER INSERT ON transcript BEGIN
+                INSERT INTO fts_transcript(rowid, content) VALUES (new.id, new.content);
+            END
+            """
+        )
+        try executeRaw(
+            """
+            CREATE TRIGGER IF NOT EXISTS transcript_ad AFTER DELETE ON transcript BEGIN
+                INSERT INTO fts_transcript(fts_transcript, rowid, content) VALUES('delete', old.id, old.content);
+            END
+            """
+        )
+        try executeRaw(
+            """
+            CREATE TRIGGER IF NOT EXISTS transcript_au AFTER UPDATE ON transcript BEGIN
+                INSERT INTO fts_transcript(fts_transcript, rowid, content) VALUES('delete', old.id, old.content);
+                INSERT INTO fts_transcript(rowid, content) VALUES (new.id, new.content);
+            END
+            """
+        )
+
+        // Backfill (idempotent — INSERT into FTS is safe even if
+        // triggers caught everything).
+        try executeRaw(
+            "INSERT INTO fts_pinned(rowid, content) SELECT rowid, content FROM pinned_facts"
+        )
+        try executeRaw(
+            """
+            INSERT INTO fts_episodes(rowid, summary, topics_csv, entities_csv)
+            SELECT id, summary, topics_csv, entities_csv FROM episodes
+            """
+        )
+        try executeRaw(
+            "INSERT INTO fts_transcript(rowid, content) SELECT id, content FROM transcript"
+        )
+
+        try setSchemaVersion(6)
+        MemoryLogger.database.info("v6 migration completed (FTS5 ready)")
     }
 
     private func createV5Tables() throws {
@@ -534,25 +687,58 @@ public final class MemoryDatabase: @unchecked Sendable {
         }
     }
 
+    /// Locking entry point. Acquires `queue.sync` and dispatches to
+    /// the unlocked core. Use this from regular call sites that
+    /// don't already hold the queue.
+    ///
+    /// MUST NOT be called from inside an `inTransaction { ... }`
+    /// closure — that closure already runs on `queue`, and a
+    /// nested `queue.sync` traps with `EXC_BREAKPOINT` (libdispatch
+    /// re-entrant-sync deadlock detector). The runtime guard below
+    /// surfaces the misuse at the *call site* instead of inside
+    /// libdispatch where the stack is harder to read. Use
+    /// `prepareAndExecute(on:_:bind:process:)` from inside a
+    /// transaction.
     func prepareAndExecute(
         _ sql: String,
         bind: (OpaquePointer) -> Void,
         process: (OpaquePointer) throws -> Void
     ) throws {
+        dispatchPrecondition(condition: .notOnQueue(queue))
         try queue.sync {
             guard let connection = db else { throw MemoryDatabaseError.notOpen }
-            var stmt: OpaquePointer?
-            let prepareResult = sqlite3_prepare_v2(connection, sql, -1, &stmt, nil)
-            guard prepareResult == SQLITE_OK, let statement = stmt else {
-                let message = String(cString: sqlite3_errmsg(connection))
-                throw MemoryDatabaseError.failedToPrepare(message)
-            }
-            defer { sqlite3_finalize(statement) }
-            bind(statement)
-            try process(statement)
+            try Self.prepareAndExecute(
+                on: connection,
+                sql,
+                bind: bind,
+                process: process
+            )
         }
     }
 
+    /// Non-locking core. Caller MUST hold `queue` (i.e. be inside an
+    /// `inTransaction { ... }` closure). Performs the
+    /// prepare/bind/process/finalize dance against an already-open
+    /// connection.
+    static func prepareAndExecute(
+        on connection: OpaquePointer,
+        _ sql: String,
+        bind: (OpaquePointer) -> Void,
+        process: (OpaquePointer) throws -> Void
+    ) throws {
+        var stmt: OpaquePointer?
+        let prepareResult = sqlite3_prepare_v2(connection, sql, -1, &stmt, nil)
+        guard prepareResult == SQLITE_OK, let statement = stmt else {
+            let message = String(cString: sqlite3_errmsg(connection))
+            throw MemoryDatabaseError.failedToPrepare(message)
+        }
+        defer { sqlite3_finalize(statement) }
+        bind(statement)
+        try process(statement)
+    }
+
+    /// Locking entry point — see `prepareAndExecute(_:bind:process:)`
+    /// for the re-entrancy contract.
     func executeUpdate(_ sql: String, bind: (OpaquePointer) -> Void) throws -> Bool {
         var success = false
         try prepareAndExecute(
@@ -563,8 +749,28 @@ public final class MemoryDatabase: @unchecked Sendable {
         return success
     }
 
+    /// Non-locking core — call from inside `inTransaction { ... }`
+    /// when you also need to issue updates against the same
+    /// connection without taking the queue lock again.
+    @discardableResult
+    static func executeUpdate(
+        on connection: OpaquePointer,
+        _ sql: String,
+        bind: (OpaquePointer) -> Void
+    ) throws -> Bool {
+        var success = false
+        try prepareAndExecute(
+            on: connection,
+            sql,
+            bind: bind,
+            process: { stmt in success = sqlite3_step(stmt) == SQLITE_DONE }
+        )
+        return success
+    }
+
     func inTransaction<T>(_ operation: (OpaquePointer) throws -> T) throws -> T {
-        try queue.sync {
+        dispatchPrecondition(condition: .notOnQueue(queue))
+        return try queue.sync {
             guard let connection = db else { throw MemoryDatabaseError.notOpen }
             try executeRaw("BEGIN TRANSACTION")
             do {
@@ -802,6 +1008,38 @@ public final class MemoryDatabase: @unchecked Sendable {
         limit: Int = MemoryConfiguration.fallbackSearchLimit
     ) throws -> [PinnedFact] {
         var facts: [PinnedFact] = []
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return [] }
+
+        // Prefer FTS5 (post-v6 schema). Falls back to LIKE for legacy
+        // databases that haven't been migrated yet.
+        if try ftsAvailable("fts_pinned"), let ftsQuery = Self.ftsMatchQuery(trimmed) {
+            var sql = """
+                SELECT \(Self.pinnedColumnsQualified)
+                FROM pinned_facts
+                JOIN fts_pinned ON fts_pinned.rowid = pinned_facts.rowid
+                WHERE pinned_facts.status = 'active' AND fts_pinned MATCH ?1
+                """
+            if agentId != nil { sql += " AND pinned_facts.agent_id = ?2" }
+            sql += " ORDER BY pinned_facts.salience DESC LIMIT ?\(agentId != nil ? 3 : 2)"
+            try prepareAndExecute(
+                sql,
+                bind: { stmt in
+                    Self.bindText(stmt, index: 1, value: ftsQuery)
+                    if let agentId { Self.bindText(stmt, index: 2, value: agentId) }
+                    let limitIndex = Int32(agentId != nil ? 3 : 2)
+                    sqlite3_bind_int(stmt, limitIndex, Int32(limit))
+                },
+                process: { stmt in
+                    while sqlite3_step(stmt) == SQLITE_ROW {
+                        facts.append(Self.readPinnedFact(stmt))
+                    }
+                }
+            )
+            return facts
+        }
+
+        // Legacy LIKE fallback (no FTS5 available).
         var sql = """
             SELECT \(Self.pinnedColumns)
             FROM pinned_facts
@@ -812,7 +1050,7 @@ public final class MemoryDatabase: @unchecked Sendable {
         try prepareAndExecute(
             sql,
             bind: { stmt in
-                Self.bindText(stmt, index: 1, value: query)
+                Self.bindText(stmt, index: 1, value: trimmed)
                 if let agentId { Self.bindText(stmt, index: 2, value: agentId) }
                 let limitIndex = Int32(agentId != nil ? 3 : 2)
                 sqlite3_bind_int(stmt, limitIndex, Int32(limit))
@@ -827,14 +1065,10 @@ public final class MemoryDatabase: @unchecked Sendable {
     }
 
     public func decayPinnedSalience(halfLifeDays: Double) throws {
-        try decaySalience(
-            selectSQL: """
-                SELECT id, salience, julianday('now') - julianday(last_used) AS dt_days
-                FROM pinned_facts WHERE status = 'active'
-                """,
-            updateSQL: "UPDATE pinned_facts SET salience = ?1 WHERE id = ?2",
-            halfLifeDays: halfLifeDays,
-            bindId: { stmt, id in Self.bindText(stmt, index: 2, value: id) }
+        try batchedDecaySalience(
+            tableName: "pinned_facts",
+            timestampColumn: "last_used",
+            halfLifeDays: halfLifeDays
         )
     }
 
@@ -881,6 +1115,17 @@ public final class MemoryDatabase: @unchecked Sendable {
 
     private static let pinnedColumns =
         "id, agent_id, content, salience, source_count, source_episode_id, last_used, use_count, status, created_at, tags_csv"
+
+    /// Same as `pinnedColumns` but every column qualified with the
+    /// table name. Required for FTS5 joins where `content` is also a
+    /// column in the shadow table — without qualification SQLite
+    /// throws "ambiguous column name: content".
+    private static let pinnedColumnsQualified = """
+        pinned_facts.id, pinned_facts.agent_id, pinned_facts.content,
+        pinned_facts.salience, pinned_facts.source_count, pinned_facts.source_episode_id,
+        pinned_facts.last_used, pinned_facts.use_count, pinned_facts.status,
+        pinned_facts.created_at, pinned_facts.tags_csv
+        """
 
     private static func readPinnedFact(_ stmt: OpaquePointer) -> PinnedFact {
         PinnedFact(
@@ -1052,6 +1297,34 @@ public final class MemoryDatabase: @unchecked Sendable {
         limit: Int = MemoryConfiguration.fallbackSearchLimit
     ) throws -> [Episode] {
         var episodes: [Episode] = []
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return [] }
+
+        if try ftsAvailable("fts_episodes"), let ftsQuery = Self.ftsMatchQuery(trimmed) {
+            var sql = """
+                SELECT \(Self.episodeColumnsQualified) FROM episodes
+                JOIN fts_episodes ON fts_episodes.rowid = episodes.id
+                WHERE episodes.status = 'active' AND fts_episodes MATCH ?1
+                """
+            if agentId != nil { sql += " AND episodes.agent_id = ?2" }
+            sql += " ORDER BY episodes.conversation_at DESC LIMIT ?\(agentId != nil ? 3 : 2)"
+            try prepareAndExecute(
+                sql,
+                bind: { stmt in
+                    Self.bindText(stmt, index: 1, value: ftsQuery)
+                    if let agentId { Self.bindText(stmt, index: 2, value: agentId) }
+                    let limitIndex = Int32(agentId != nil ? 3 : 2)
+                    sqlite3_bind_int(stmt, limitIndex, Int32(limit))
+                },
+                process: { stmt in
+                    while sqlite3_step(stmt) == SQLITE_ROW {
+                        episodes.append(Self.readEpisode(stmt))
+                    }
+                }
+            )
+            return episodes
+        }
+
         var sql = """
             SELECT \(Self.episodeColumns) FROM episodes
             WHERE status = 'active'
@@ -1064,7 +1337,7 @@ public final class MemoryDatabase: @unchecked Sendable {
         try prepareAndExecute(
             sql,
             bind: { stmt in
-                Self.bindText(stmt, index: 1, value: query)
+                Self.bindText(stmt, index: 1, value: trimmed)
                 if let agentId { Self.bindText(stmt, index: 2, value: agentId) }
                 let limitIndex = Int32(agentId != nil ? 3 : 2)
                 sqlite3_bind_int(stmt, limitIndex, Int32(limit))
@@ -1119,55 +1392,99 @@ public final class MemoryDatabase: @unchecked Sendable {
     }
 
     public func decayEpisodeSalience(halfLifeDays: Double) throws {
-        try decaySalience(
-            selectSQL: """
-                SELECT id, salience, julianday('now') - julianday(conversation_at) AS dt_days
-                FROM episodes WHERE status = 'active'
-                """,
-            updateSQL: "UPDATE episodes SET salience = ?1 WHERE id = ?2",
-            halfLifeDays: halfLifeDays,
-            bindId: { stmt, id in
-                if let intId = Int(id) {
-                    sqlite3_bind_int(stmt, 2, Int32(intId))
-                } else {
-                    Self.bindText(stmt, index: 2, value: id)
-                }
-            }
+        try batchedDecaySalience(
+            tableName: "episodes",
+            timestampColumn: "conversation_at",
+            halfLifeDays: halfLifeDays
         )
     }
 
-    /// Apply `salience *= 0.5 ^ (Δdays / halfLife)` to every active row
-    /// returned by `selectSQL`. SQLite has no `exp()` in this build, so we
-    /// pull rows into Swift and compute the decay there. Shared between
-    /// `decayPinnedSalience` (TEXT id) and `decayEpisodeSalience` (INTEGER id);
-    /// the caller's `bindId` closure handles whichever binding shape is right.
-    private func decaySalience(
-        selectSQL: String,
-        updateSQL: String,
-        halfLifeDays: Double,
-        bindId: @escaping (OpaquePointer, String) -> Void
+    /// Apply `salience *= 0.5 ^ (Δdays / halfLife)` to every active
+    /// row returned by `selectSQL`, in **one batched UPDATE per
+    /// transaction** instead of the previous "select all rows, then
+    /// emit one UPDATE per row" loop. SQLite has no native `exp()`
+    /// here, so we register a per-connection scalar function for the
+    /// duration of the call. The function returns the decay multiplier
+    /// for a given Δdays / halfLife pair.
+    ///
+    /// Shared between `decayPinnedSalience` (TEXT id, `salience`
+    /// against `last_used`) and `decayEpisodeSalience` (INTEGER id,
+    /// `salience` against `conversation_at`); the caller decides which
+    /// table + timestamp column is used via `tableName` /
+    /// `timestampColumn`.
+    private func batchedDecaySalience(
+        tableName: String,
+        timestampColumn: String,
+        halfLifeDays: Double
     ) throws {
         let factor = halfLifeDays > 0 ? halfLifeDays : 1
-        var rows: [(id: String, salience: Double, deltaDays: Double)] = []
+        // Half-life decay = 0.5 ^ (Δdays / halfLifeDays); clamp to [0, 1].
+        // SQLite gives us `power(...)` in newer builds, but to stay
+        // portable we expand using `exp(x*ln(0.5))`. Since the
+        // amalgamation we ship enables math via `SQLITE_ENABLE_MATH_FUNCTIONS`
+        // on macOS via the standard build, we can rely on `exp` and
+        // `log` directly. Cap at the SQL layer so a stale row with
+        // Δdays < 0 doesn't blow up.
+        let sql = """
+            UPDATE \(tableName) SET salience = MAX(0.0, MIN(1.0,
+                salience * exp(MAX(0.0, julianday('now') - julianday(\(timestampColumn))) * log(0.5) / ?1)
+            ))
+            WHERE status = 'active'
+            """
+        do {
+            _ = try executeUpdate(sql) { stmt in
+                sqlite3_bind_double(stmt, 1, factor)
+            }
+        } catch {
+            // Older SQLite builds without `exp`/`log` fall back to the
+            // row-by-row Swift implementation. SQLCipher 4.6 does ship
+            // them, but plaintext system SQLite from earlier macOS may
+            // not, so keep the loop alive for the migrator path.
+            try fallbackDecaySalience(tableName: tableName, timestampColumn: timestampColumn, halfLifeDays: factor)
+        }
+    }
+
+    private func fallbackDecaySalience(
+        tableName: String,
+        timestampColumn: String,
+        halfLifeDays: Double
+    ) throws {
+        struct Row { let id: String; let salience: Double; let deltaDays: Double }
+        var rows: [Row] = []
         try prepareAndExecute(
-            selectSQL,
+            """
+            SELECT id, salience, julianday('now') - julianday(\(timestampColumn)) AS dt_days
+            FROM \(tableName) WHERE status = 'active'
+            """,
             bind: { _ in },
             process: { stmt in
                 while sqlite3_step(stmt) == SQLITE_ROW {
-                    // Reading column 0 as text works for both INTEGER and TEXT
-                    // primary keys; SQLite coerces.
-                    let id = String(cString: sqlite3_column_text(stmt, 0))
-                    let sal = sqlite3_column_double(stmt, 1)
-                    let dt = sqlite3_column_double(stmt, 2)
-                    rows.append((id, sal, dt))
+                    rows.append(
+                        Row(
+                            id: String(cString: sqlite3_column_text(stmt, 0)),
+                            salience: sqlite3_column_double(stmt, 1),
+                            deltaDays: sqlite3_column_double(stmt, 2)
+                        )
+                    )
                 }
             }
         )
-        for row in rows {
-            let scaled = max(0, min(1, row.salience * pow(0.5, max(0, row.deltaDays) / factor)))
-            _ = try executeUpdate(updateSQL) { stmt in
-                sqlite3_bind_double(stmt, 1, scaled)
-                bindId(stmt, row.id)
+        try inTransaction { connection in
+            for row in rows {
+                let scaled = max(0, min(1, row.salience * pow(0.5, max(0, row.deltaDays) / halfLifeDays)))
+                var stmt: OpaquePointer?
+                let updateSQL = "UPDATE \(tableName) SET salience = ?1 WHERE id = ?2"
+                guard sqlite3_prepare_v2(connection, updateSQL, -1, &stmt, nil) == SQLITE_OK, let s = stmt else {
+                    throw MemoryDatabaseError.failedToPrepare(String(cString: sqlite3_errmsg(connection)))
+                }
+                sqlite3_bind_double(s, 1, scaled)
+                if let asInt = Int(row.id) {
+                    sqlite3_bind_int(s, 2, Int32(asInt))
+                } else {
+                    Self.bindText(s, index: 2, value: row.id)
+                }
+                _ = sqlite3_step(s)
+                sqlite3_finalize(s)
             }
         }
     }
@@ -1194,6 +1511,14 @@ public final class MemoryDatabase: @unchecked Sendable {
 
     private static let episodeColumns =
         "id, agent_id, conversation_id, summary, topics_csv, entities_csv, decisions, action_items, salience, token_count, model, conversation_at, status, created_at"
+
+    /// Qualified for FTS5 join (see `pinnedColumnsQualified`).
+    private static let episodeColumnsQualified = """
+        episodes.id, episodes.agent_id, episodes.conversation_id, episodes.summary,
+        episodes.topics_csv, episodes.entities_csv, episodes.decisions,
+        episodes.action_items, episodes.salience, episodes.token_count,
+        episodes.model, episodes.conversation_at, episodes.status, episodes.created_at
+        """
 
     private static func readEpisode(_ stmt: OpaquePointer) -> Episode {
         Episode(
@@ -1344,6 +1669,39 @@ public final class MemoryDatabase: @unchecked Sendable {
         limit: Int = MemoryConfiguration.fallbackSearchLimit
     ) throws -> [TranscriptTurn] {
         var turns: [TranscriptTurn] = []
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return [] }
+
+        if try ftsAvailable("fts_transcript"), let ftsQuery = Self.ftsMatchQuery(trimmed) {
+            var sql = """
+                SELECT transcript.id, transcript.agent_id, transcript.conversation_id,
+                       transcript.chunk_index, transcript.role, transcript.content,
+                       transcript.token_count, transcript.title, transcript.created_at
+                FROM transcript
+                JOIN fts_transcript ON fts_transcript.rowid = transcript.id
+                WHERE fts_transcript MATCH ?1
+                  AND transcript.created_at >= datetime('now', '-' || ?2 || ' days')
+                """
+            if agentId != nil { sql += " AND transcript.agent_id = ?3" }
+            sql += " ORDER BY transcript.created_at DESC LIMIT ?\(agentId != nil ? 4 : 3)"
+            try prepareAndExecute(
+                sql,
+                bind: { stmt in
+                    Self.bindText(stmt, index: 1, value: ftsQuery)
+                    sqlite3_bind_int(stmt, 2, Int32(days))
+                    if let agentId { Self.bindText(stmt, index: 3, value: agentId) }
+                    let limitIndex = Int32(agentId != nil ? 4 : 3)
+                    sqlite3_bind_int(stmt, limitIndex, Int32(limit))
+                },
+                process: { stmt in
+                    while sqlite3_step(stmt) == SQLITE_ROW {
+                        turns.append(Self.readTranscriptTurn(stmt))
+                    }
+                }
+            )
+            return turns
+        }
+
         var sql = """
             SELECT id, agent_id, conversation_id, chunk_index, role, content, token_count, title, created_at
             FROM transcript
@@ -1355,7 +1713,7 @@ public final class MemoryDatabase: @unchecked Sendable {
         try prepareAndExecute(
             sql,
             bind: { stmt in
-                Self.bindText(stmt, index: 1, value: query)
+                Self.bindText(stmt, index: 1, value: trimmed)
                 sqlite3_bind_int(stmt, 2, Int32(days))
                 if let agentId { Self.bindText(stmt, index: 3, value: agentId) }
                 let limitIndex = Int32(agentId != nil ? 4 : 3)
@@ -1370,6 +1728,40 @@ public final class MemoryDatabase: @unchecked Sendable {
         return turns
     }
 
+    /// Returns true when `name` exists as a virtual table — used to
+    /// detect whether the v6 FTS5 indexes have been created (handles
+    /// the brief window between SQLCipher key set and migration run,
+    /// and DBs imported from the migrator before triggers existed).
+    private func ftsAvailable(_ name: String) throws -> Bool {
+        var available = false
+        try prepareAndExecute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?1 LIMIT 1",
+            bind: { stmt in Self.bindText(stmt, index: 1, value: name) },
+            process: { stmt in
+                if sqlite3_step(stmt) == SQLITE_ROW { available = true }
+            }
+        )
+        return available
+    }
+
+    /// Sanitize a free-text query into something safe to pass to FTS5
+    /// `MATCH`. We strip every char that isn't alphanumeric, keep
+    /// individual words, then quote each term so SQL operators
+    /// (`AND`, `OR`, `NEAR`, parens, etc.) embedded by the user get
+    /// treated as literal tokens. Empty result returns nil so callers
+    /// can short-circuit to the LIKE fallback.
+    static func ftsMatchQuery(_ raw: String) -> String? {
+        let allowed = CharacterSet.alphanumerics.union(.whitespaces).union(CharacterSet(charactersIn: "-_"))
+        let scrubbed = String(raw.unicodeScalars.map { allowed.contains($0) ? Character($0) : " " })
+        let words =
+            scrubbed
+            .split(whereSeparator: { $0.isWhitespace })
+            .map { String($0) }
+            .filter { !$0.isEmpty }
+        guard !words.isEmpty else { return nil }
+        return words.map { "\"\($0)\"" }.joined(separator: " ")
+    }
+
     public func pruneTranscript(olderThanDays days: Int) throws -> Int {
         guard days > 0 else { return 0 }
         var deleted = 0
@@ -1382,6 +1774,52 @@ public final class MemoryDatabase: @unchecked Sendable {
             }
         )
         return deleted
+    }
+
+    /// Like `pruneTranscript(olderThanDays:)` but returns the
+    /// composite `(conversationId, chunkIndex)` keys that were
+    /// removed, so callers can also delete the matching VecturaKit
+    /// vectors. Used by `MemoryConsolidator` to keep the vector
+    /// store in sync with SQL prunes.
+    public func pruneTranscriptReturningKeys(
+        olderThanDays days: Int
+    ) throws -> [(conversationId: String, chunkIndex: Int)] {
+        guard days > 0 else { return [] }
+        var keys: [(conversationId: String, chunkIndex: Int)] = []
+        // CRITICAL: use the non-locking `…(on: connection, …)` cores
+        // here. Calling the locking `prepareAndExecute` / `executeUpdate`
+        // wrappers from inside `inTransaction` re-enters the serial
+        // queue and traps with `EXC_BREAKPOINT` (libdispatch deadlock
+        // detector). The runtime guards on those wrappers now catch
+        // this misuse at the call site, but the previous version
+        // crashed in production during memory consolidation.
+        try inTransaction { connection in
+            // Collect first, then delete by date predicate.
+            try Self.prepareAndExecute(
+                on: connection,
+                """
+                SELECT id, conversation_id, chunk_index FROM transcript
+                WHERE created_at < datetime('now', '-' || ?1 || ' days')
+                """,
+                bind: { stmt in sqlite3_bind_int(stmt, 1, Int32(days)) },
+                process: { stmt in
+                    while sqlite3_step(stmt) == SQLITE_ROW {
+                        keys.append(
+                            (
+                                conversationId: String(cString: sqlite3_column_text(stmt, 1)),
+                                chunkIndex: Int(sqlite3_column_int(stmt, 2))
+                            )
+                        )
+                    }
+                }
+            )
+            try Self.executeUpdate(
+                on: connection,
+                "DELETE FROM transcript WHERE created_at < datetime('now', '-' || ?1 || ' days')"
+            ) { stmt in sqlite3_bind_int(stmt, 1, Int32(days)) }
+            return ()
+        }
+        return keys
     }
 
     public func loadAllTranscriptKeys(days: Int = 365) throws -> [(id: Int, conversationId: String, chunkIndex: Int)] {

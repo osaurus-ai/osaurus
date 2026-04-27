@@ -185,12 +185,9 @@ final class ChatSession: ObservableObject {
             object: nil,
             queue: .main
         ) { [weak self] note in
-            guard let self,
-                let sid = note.userInfo?["sessionId"] as? String,
-                sid == self.expectedTodoSessionId
-            else { return }
-            Task { @MainActor [weak self] in
-                guard let self else { return }
+            guard let sid = note.userInfo?["sessionId"] as? String else { return }
+            Task { @MainActor in
+                guard let self, sid == self.expectedTodoSessionId else { return }
                 self.currentTodo = await AgentTodoStore.shared.todo(for: sid)
             }
         }
@@ -916,55 +913,68 @@ final class ChatSession: ObservableObject {
             let convId = sid.uuidString
             let aid = context.memoryAgentId
             let chunkIdx = turns.count
-            let db = MemoryDatabase.shared
             let userChunkIndex = chunkIdx - 1
-            do {
-                try db.insertTranscriptTurn(
-                    agentId: aid,
-                    conversationId: convId,
-                    chunkIndex: userChunkIndex,
-                    role: "user",
-                    content: context.userContent,
-                    tokenCount: max(1, context.userContent.count / 4),
-                    title: title
-                )
-            } catch {
-                MemoryLogger.database.warning("Failed to insert user transcript turn: \(error)")
-            }
-            let userTurn = TranscriptTurn(
-                conversationId: convId,
-                chunkIndex: userChunkIndex,
-                role: "user",
-                content: context.userContent,
-                tokenCount: max(1, context.userContent.count / 4),
-                agentId: aid
-            )
+            let conversationTitle = title
+            let userContent = context.userContent
+            let userTokenCount = max(1, userContent.count / 4)
+
+            // Move the SQL insert + Vectura indexing off the main
+            // actor. Previously `db.insertTranscriptTurn` was called
+            // synchronously here (against the database's serial
+            // queue), which blocked the chat view's main-thread
+            // post-stream cleanup. The companion Vectura calls were
+            // already detached.
             Task.detached {
-                await MemorySearchService.shared.indexTranscriptTurn(userTurn)
-            }
-            if let assistantContent, !assistantContent.isEmpty {
+                let db = MemoryDatabase.shared
                 do {
                     try db.insertTranscriptTurn(
                         agentId: aid,
                         conversationId: convId,
+                        chunkIndex: userChunkIndex,
+                        role: "user",
+                        content: userContent,
+                        tokenCount: userTokenCount,
+                        title: conversationTitle
+                    )
+                } catch {
+                    MemoryLogger.database.warning("Failed to insert user transcript turn: \(error)")
+                }
+                let userTurn = TranscriptTurn(
+                    conversationId: convId,
+                    chunkIndex: userChunkIndex,
+                    role: "user",
+                    content: userContent,
+                    tokenCount: userTokenCount,
+                    agentId: aid
+                )
+                await MemorySearchService.shared.indexTranscriptTurn(userTurn)
+            }
+
+            if let assistantContent, !assistantContent.isEmpty {
+                let assistantTokenCount = max(1, assistantContent.count / 4)
+                Task.detached {
+                    let db = MemoryDatabase.shared
+                    do {
+                        try db.insertTranscriptTurn(
+                            agentId: aid,
+                            conversationId: convId,
+                            chunkIndex: chunkIdx,
+                            role: "assistant",
+                            content: assistantContent,
+                            tokenCount: assistantTokenCount,
+                            title: conversationTitle
+                        )
+                    } catch {
+                        MemoryLogger.database.warning("Failed to insert assistant transcript turn: \(error)")
+                    }
+                    let assistantTurn = TranscriptTurn(
+                        conversationId: convId,
                         chunkIndex: chunkIdx,
                         role: "assistant",
                         content: assistantContent,
-                        tokenCount: max(1, assistantContent.count / 4),
-                        title: title
+                        tokenCount: assistantTokenCount,
+                        agentId: aid
                     )
-                } catch {
-                    MemoryLogger.database.warning("Failed to insert assistant transcript turn: \(error)")
-                }
-                let assistantTurn = TranscriptTurn(
-                    conversationId: convId,
-                    chunkIndex: chunkIdx,
-                    role: "assistant",
-                    content: assistantContent,
-                    tokenCount: max(1, assistantContent.count / 4),
-                    agentId: aid
-                )
-                Task.detached {
                     await MemorySearchService.shared.indexTranscriptTurn(assistantTurn)
                 }
             }
@@ -1449,7 +1459,7 @@ final class ChatSession: ObservableObject {
                             if let tools = toolSpecs.isEmpty ? nil : toolSpecs {
                                 promptDump += "── TOOLS (\(tools.count)) ──\n"
                                 for t in tools {
-                                    promptDump += "  - \(t.function.name): \(t.function.description)\n"
+                                    promptDump += "  - \(t.function.name): \(t.function.description ?? "")\n"
                                 }
                             }
                             promptDump += "═══ END PROMPT DUMP ═══"
@@ -2220,7 +2230,27 @@ struct ChatView: View {
                 windowState?.session.save()
             }
 
-            pendingWhatsNew = WhatsNewGate.pendingAutoShowRelease()
+            // Compute the conditional flags so we don't surface the
+            // "restart sandbox" / "review paired devices" pages to users
+            // who would have nothing to do on them.
+            let hasSandbox: Bool = {
+                #if os(macOS)
+                    if #available(macOS 26, *) {
+                        return SandboxConfigurationStore.load().setupComplete
+                    }
+                #endif
+                return false
+            }()
+            let knownAgentAddrs = Set(
+                AgentManager.shared.agents.compactMap { $0.agentAddress }
+            )
+            let hasLegacyPairedKeys = !APIKeyManager.shared
+                .legacyMasterScopedKeys(knownAgentAddresses: knownAgentAddrs)
+                .isEmpty
+            pendingWhatsNew = WhatsNewGate.pendingAutoShowRelease(
+                hasSandbox: hasSandbox,
+                hasLegacyPairedKeys: hasLegacyPairedKeys
+            )
         }
         .onDisappear {
             cleanupKeyMonitor()
@@ -2254,10 +2284,35 @@ struct ChatView: View {
         .environment(\.theme, windowState.theme)
         .tint(theme.accentColor)
         .sheet(item: $pendingWhatsNew) { release in
-            WhatsNewModal(release: release) {
-                WhatsNewGate.markShown(version: release.version)
-                pendingWhatsNew = nil
-            }
+            WhatsNewModal(
+                release: release,
+                onClose: {
+                    WhatsNewGate.markShown(version: release.version)
+                    pendingWhatsNew = nil
+                },
+                onAction: { action in
+                    // Mark the release seen first so the user can't loop
+                    // back into it if they reopen the chat window quickly.
+                    WhatsNewGate.markShown(version: release.version)
+                    pendingWhatsNew = nil
+                    switch action {
+                    case .openSandboxSettings:
+                        AppDelegate.shared?.showManagementWindow(initialTab: .sandbox)
+                    case .openAPIKeysSettings:
+                        AppDelegate.shared?.showManagementWindow(initialTab: .server)
+                    case .openSecurityDoc(let url):
+                        NSWorkspace.shared.open(url)
+                    case .openStorageSettings, .exportPlaintextBackup:
+                        // Both actions land on the Storage panel.
+                        // `exportPlaintextBackup` doesn't auto-open
+                        // the file picker — the user clicks
+                        // "Export plaintext backup…" once they're
+                        // there, which is the safer flow because it
+                        // forces them to pick a destination.
+                        AppDelegate.shared?.showManagementWindow(initialTab: .storage)
+                    }
+                }
+            )
             .environment(\.theme, windowState.theme)
         }
         .sheet(item: $pendingDiscoveredAgent) { agent in

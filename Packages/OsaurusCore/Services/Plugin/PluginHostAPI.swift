@@ -8,6 +8,7 @@
 //
 
 import Foundation
+import os
 
 extension Notification.Name {
     static let pluginConfigDidChange = Notification.Name("PluginConfigDidChange")
@@ -133,13 +134,51 @@ final class PluginHostContext: @unchecked Sendable {
     init(pluginId: String) throws {
         self.pluginId = pluginId
         self.database = PluginDatabase(pluginId: pluginId)
-        try database.open()
+        // NOTE: deliberately do NOT call `database.open()` here.
+        // Most plugins never call `db.exec` / `db.query`, so eagerly
+        // opening every plugin's SQLCipher database at host-api init
+        // costs the user 50–100ms × N-plugins of PBKDF2 work for
+        // nothing. The first `dbExec` / `dbQuery` call below opens
+        // it on demand instead. See `ensureDatabaseOpen()`.
     }
 
     deinit {
         hostAPIPtr?.deinitialize(count: 1)
         hostAPIPtr?.deallocate()
         database.close()
+    }
+
+    /// Set after the first `database.open()` failure so we don't
+    /// flood the log when a plugin keeps re-trying SQL against a
+    /// permanently-failed DB (e.g. disk full, wrong key).
+    /// `PluginDatabase.open()` is itself idempotent so the
+    /// "already open" common path is essentially free.
+    private let dbOpenLogLock = OSAllocatedUnfairLock<Bool>(initialState: false)
+
+    /// Lazy-open the per-plugin database on first SQL call.
+    /// Idempotent — `PluginDatabase.open()` short-circuits when the
+    /// connection is already up. Called from every `dbExec` /
+    /// `dbQuery` entry point so plugins that never touch SQL pay
+    /// zero open cost.
+    private func ensureDatabaseOpen() {
+        do {
+            try database.open()
+        } catch {
+            // Non-fatal — `dbExec` / `dbQuery` will return the
+            // standard `{"error":"Database not open"}` JSON
+            // envelope from `PluginDatabase` on any subsequent
+            // call when `db == nil`. Log the *first* failure per
+            // plugin only so a plugin that keeps re-trying doesn't
+            // flood the unified log.
+            let alreadyLogged = dbOpenLogLock.withLock { logged -> Bool in
+                if logged { return true }
+                logged = true
+                return false
+            }
+            if !alreadyLogged {
+                print("[PluginHostAPI:\(pluginId)] Failed to open plugin database: \(error)")
+            }
+        }
     }
 
     // MARK: - Config Callbacks
@@ -173,10 +212,12 @@ final class PluginHostContext: @unchecked Sendable {
     // MARK: - Database Callbacks
 
     func dbExec(sql: String, paramsJSON: String?) -> String {
+        ensureDatabaseOpen()
         return database.exec(sql: sql, paramsJSON: paramsJSON)
     }
 
     func dbQuery(sql: String, paramsJSON: String?) -> String {
+        ensureDatabaseOpen()
         return database.query(sql: sql, paramsJSON: paramsJSON)
     }
 
@@ -1917,7 +1958,7 @@ extension PluginHostContext {
     /// actor isolation or priority, and runs the signal on a dedicated
     /// concurrent GCD queue so the wakeup path doesn't depend on the
     /// cooperative pool having a free worker.
-    static func blockingAsync<T>(_ work: @escaping @Sendable () async -> T) -> T {
+    static func blockingAsync<T: Sendable>(_ work: @escaping @Sendable () async -> T) -> T {
         assert(!Thread.isMainThread, "Host API trampoline must not be called from main thread")
         let sem = DispatchSemaphore(value: 0)
         let box = ResultBox<T>()
@@ -1934,7 +1975,7 @@ extension PluginHostContext {
 
     /// Block the current (non-main) thread while running @MainActor work.
     @discardableResult
-    static func blockingMainActor<T>(_ work: @MainActor @escaping @Sendable () -> T) -> T {
+    static func blockingMainActor<T: Sendable>(_ work: @MainActor @escaping @Sendable () -> T) -> T {
         assert(!Thread.isMainThread, "Host API trampoline must not be called from main thread")
         let sem = DispatchSemaphore(value: 0)
         let box = ResultBox<T>()

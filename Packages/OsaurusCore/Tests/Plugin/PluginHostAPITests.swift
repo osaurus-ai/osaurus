@@ -659,6 +659,21 @@ struct TaskStateDictTests {
 
 // MARK: - Dispatch Rate Limiting
 
+/// These tests are purely in-memory: `PluginHostContext.init` only
+/// stores its `pluginId` + a `PluginDatabase` shell, and
+/// `teardown()` calls `database.close()` which is a no-op when the
+/// DB was never opened (only `dbExec` / `dbQuery` trigger
+/// `database.open()`, and these tests never touch SQL). So no
+/// `StoragePathsTestLock` is needed — the suite can run in
+/// parallel and avoids contending with the storage-path tests
+/// for the global lock.
+///
+/// The `com.test.` prefix on the synthetic plugin IDs is defense in
+/// depth: `StorageMigrator.databaseTargets()` filters those IDs
+/// out, so even if a future change starts opening the DB eagerly
+/// in `init`, the leftover dirs under `~/.osaurus/Tools/` won't
+/// surface in the Storage settings panel as "key mismatch"
+/// failures. See `StorageMigratorTargetFilterTests`.
 struct DispatchRateLimitTests {
 
     private let testAgentId = UUID()

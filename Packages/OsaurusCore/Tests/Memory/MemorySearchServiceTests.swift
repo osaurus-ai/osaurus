@@ -83,13 +83,13 @@ struct MemorySearchServiceTests {
 
     @Test func mmrRerankWithEmptyArrayReturnsEmpty() async {
         let results: [(item: String, score: Double, content: String)] = []
-        let reranked = await MemorySearchService.shared.mmrRerank(results: results, lambda: 0.85, topK: 5)
+        let reranked = MemorySearchService.shared.mmrRerank(results: results, lambda: 0.85, topK: 5)
         #expect(reranked.isEmpty)
     }
 
     @Test func mmrRerankWithSingleElementReturnsThatElement() async {
         let results = [(item: "only", score: 0.9, content: "only item")]
-        let reranked = await MemorySearchService.shared.mmrRerank(results: results, lambda: 0.85, topK: 5)
+        let reranked = MemorySearchService.shared.mmrRerank(results: results, lambda: 0.85, topK: 5)
         #expect(reranked.count == 1)
         #expect(reranked[0] == "only")
     }
@@ -98,7 +98,7 @@ struct MemorySearchServiceTests {
         let results = (0 ..< 10).map { i in
             (item: "item-\(i)", score: Double(10 - i) / 10.0, content: "content \(i)")
         }
-        let reranked = await MemorySearchService.shared.mmrRerank(results: results, lambda: 0.85, topK: 3)
+        let reranked = MemorySearchService.shared.mmrRerank(results: results, lambda: 0.85, topK: 3)
         #expect(reranked.count == 3)
     }
 
@@ -106,7 +106,7 @@ struct MemorySearchServiceTests {
         let results = (0 ..< 4).map { i in
             (item: "item-\(i)", score: 0.5, content: "unique content \(i)")
         }
-        let reranked = await MemorySearchService.shared.mmrRerank(results: results, lambda: 0.85, topK: 10)
+        let reranked = MemorySearchService.shared.mmrRerank(results: results, lambda: 0.85, topK: 10)
         #expect(reranked.count == 4)
     }
 
@@ -116,7 +116,7 @@ struct MemorySearchServiceTests {
             (item: "b", score: 0.7, content: "beta"),
             (item: "c", score: 0.7, content: "gamma"),
         ]
-        let reranked = await MemorySearchService.shared.mmrRerank(results: results, lambda: 0.85, topK: 3)
+        let reranked = MemorySearchService.shared.mmrRerank(results: results, lambda: 0.85, topK: 3)
         #expect(reranked.count == 3)
     }
 }

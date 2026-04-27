@@ -24,6 +24,14 @@ public struct Hotkey: Codable, Equatable, Sendable {
 }
 
 public struct ChatConfiguration: Codable, Equatable, Sendable {
+    /// Default name baked into `ChatConfiguration.default.coreModelName`
+    /// and used by the legacy-install backfill in
+    /// `AppConfiguration.backfillFoundationCoreModelIfMissing`.
+    /// Both call sites must reference this constant so they can
+    /// never drift apart and re-trigger the 2026-04 schema-migration
+    /// outage.
+    public static let defaultCoreModelName = "foundation"
+
     /// Optional global hotkey to toggle chat overlay; nil disables the hotkey
     public var hotkey: Hotkey?
     /// Global system prompt prepended to every chat session (optional)
@@ -42,9 +50,16 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
     public var defaultModel: String?
 
     // MARK: - Core Model Settings
-    /// Provider for the shared core model (e.g. "anthropic")
+    /// Provider for the shared core model. Empty / nil means a
+    /// local model (Apple Foundation, MLX) — only set this when
+    /// the user has selected a remote model like
+    /// `"anthropic/claude-haiku-4-5"`.
     public var coreModelProvider: String?
-    /// Name of the shared core model (e.g. "claude-haiku-4-5")
+    /// Name of the shared core model. Defaults to `"foundation"`
+    /// (Apple's on-device Language Model on macOS 26+) so that
+    /// memory consolidation, preflight tool selection, and the
+    /// transcription cleanup path all work out of the box without
+    /// the user needing to configure an API key.
     public var coreModelName: String?
 
     /// Full model identifier for routing, or nil when no core model is configured.
@@ -187,8 +202,19 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
             contextLength: 128000,
             topPOverride: nil,
             maxToolAttempts: 15,
+            // Pick Apple's on-device Foundation Model as the
+            // out-of-box core model. It needs no API key, costs
+            // nothing, and is bundled with macOS 26+. Users on
+            // older systems will get `CoreModelError.modelUnavailable`
+            // — surfaced cleanly in logs and the Storage settings
+            // panel — and can then pick a remote model instead.
+            // The literal name is centralised in
+            // `ChatConfiguration.defaultCoreModelName` so the
+            // legacy-install backfill picks exactly the same value.
+            // See `FoundationModelService.handles(requestedModel:)`
+            // for the resolution rules.
             coreModelProvider: nil,
-            coreModelName: nil,
+            coreModelName: defaultCoreModelName,
             workTemperature: 0.3,
             workMaxTokens: 4096,
             workTopPOverride: nil,

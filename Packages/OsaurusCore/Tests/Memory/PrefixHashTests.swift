@@ -11,15 +11,18 @@ import Testing
 
 @testable import OsaurusCore
 
+private struct CtxBox: @unchecked Sendable {
+    let ctx: ChannelHandlerContext
+}
+
 private extension EmbeddedChannel {
     func testContext() throws -> ChannelHandlerContext {
-        return try self.pipeline.context(handlerType: TestContextHandler.self)
-            .flatMapError { _ in
-                self.pipeline.addHandler(TestContextHandler()).flatMap {
-                    self.pipeline.context(handlerType: TestContextHandler.self)
-                }
-            }
-            .wait()
+        do {
+            return try self.pipeline.context(handlerType: TestContextHandler.self).map { CtxBox(ctx: $0) }.wait().ctx
+        } catch {
+            try self.pipeline.addHandler(TestContextHandler()).wait()
+            return try self.pipeline.context(handlerType: TestContextHandler.self).map { CtxBox(ctx: $0) }.wait().ctx
+        }
     }
 }
 

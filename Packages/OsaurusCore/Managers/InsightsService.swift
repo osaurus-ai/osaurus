@@ -208,9 +208,57 @@ extension InsightsService {
     /// Maximum stored body size (4 KB) to cap ring buffer memory usage.
     private nonisolated static let maxBodySize = 4096
 
+    /// Defense-in-depth credential redactors run on every logged body so a
+    /// future caller that forgets to scrub a `/pair` response (or any other
+    /// shape that carries an `osk-v1` token) still does not leak the key into
+    /// the request log ring buffer. The regexes target the credential value
+    /// itself and replace it with a marker — surrounding structure (JSON keys
+    /// or header names) is preserved.
+    private nonisolated static let bearerTokenRegex: NSRegularExpression? = {
+        // Match the token after a `Bearer` scheme (header or stringified header).
+        try? NSRegularExpression(
+            pattern: #"(?i)(bearer\s+)osk-[A-Za-z0-9._-]+"#,
+            options: []
+        )
+    }()
+
+    private nonisolated static let oskValueRegex: NSRegularExpression? = {
+        // Match osk-v1.<payload>.<sig> when it appears as a JSON string value.
+        try? NSRegularExpression(
+            pattern: #""osk-[A-Za-z0-9._-]+""#,
+            options: []
+        )
+    }()
+
+    /// Internal so tests can verify the redactor's surface independent of
+    /// the ring buffer plumbing.
+    nonisolated static func redactCredentials(_ body: String) -> String {
+        var redacted = body
+        let nsRange = { (s: String) -> NSRange in NSRange(s.startIndex ..< s.endIndex, in: s) }
+        if let regex = bearerTokenRegex {
+            redacted = regex.stringByReplacingMatches(
+                in: redacted,
+                options: [],
+                range: nsRange(redacted),
+                withTemplate: "$1<redacted>"
+            )
+        }
+        if let regex = oskValueRegex {
+            redacted = regex.stringByReplacingMatches(
+                in: redacted,
+                options: [],
+                range: nsRange(redacted),
+                withTemplate: "\"<redacted>\""
+            )
+        }
+        return redacted
+    }
+
     private nonisolated static func truncateBody(_ body: String?) -> String? {
-        guard let body, body.count > maxBodySize else { return body }
-        return String(body.prefix(maxBodySize)) + "…[truncated]"
+        guard let body else { return nil }
+        let scrubbed = redactCredentials(body)
+        guard scrubbed.count > maxBodySize else { return scrubbed }
+        return String(scrubbed.prefix(maxBodySize)) + "…[truncated]"
     }
 
     /// Thread-safe logging from non-main-actor contexts

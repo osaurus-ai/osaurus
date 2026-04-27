@@ -40,6 +40,10 @@ public actor CoreModelService {
 
     private var consecutiveFailures = 0
     private var circuitOpenUntil: Date?
+    /// Last error that contributed to the breaker opening. Surfaced
+    /// in log messages so callers (and humans reading the log) can
+    /// see the root cause instead of just "circuitBreakerOpen".
+    private var lastBreakerError: Error?
     private static let circuitBreakerThreshold = 5
     private static let circuitBreakerCooldownSeconds: TimeInterval = 60
 
@@ -60,9 +64,7 @@ public actor CoreModelService {
         maxTokens: Int = 2048,
         timeout: TimeInterval = 60
     ) async throws -> String {
-        if let openUntil = circuitOpenUntil, Date() < openUntil {
-            throw CoreModelError.circuitBreakerOpen
-        }
+        try checkBreakerOrEnterHalfOpen()
 
         let resolvedModel: String? = await MainActor.run {
             ChatConfigurationStore.load().coreModelIdentifier
@@ -71,50 +73,137 @@ public actor CoreModelService {
             throw CoreModelError.modelUnavailable("none")
         }
 
-        let messages: [ChatMessage] =
-            if let systemPrompt {
-                [ChatMessage(role: "system", content: systemPrompt), ChatMessage(role: "user", content: prompt)]
-            } else {
-                [ChatMessage(role: "user", content: prompt)]
-            }
+        let messages = buildMessages(prompt: prompt, systemPrompt: systemPrompt)
         let params = GenerationParameters(
             temperature: Float(temperature),
             maxTokens: maxTokens
         )
 
+        do {
+            return try await runWithRetries(
+                model: model,
+                messages: messages,
+                params: params,
+                timeout: timeout
+            )
+        } catch {
+            try recordFailureAndThrow(error)
+        }
+    }
+
+    /// Manually clear breaker state. Used by tests; could be wired
+    /// to a Settings affordance if we ever want a "Retry now" button.
+    public func resetBreaker() {
+        clearBreakerState()
+    }
+
+    // MARK: - Private — breaker bookkeeping
+
+    /// Throws `circuitBreakerOpen` while the cooldown is active.
+    /// When the cooldown has elapsed, transitions the breaker to
+    /// "half-open" by clearing all counters so the upcoming probe
+    /// has a clean slate. Without this the counter would sit at
+    /// `circuitBreakerThreshold` forever and a single subsequent
+    /// failure would immediately re-open the breaker — making it
+    /// permanently sticky.
+    private func checkBreakerOrEnterHalfOpen() throws {
+        guard let openUntil = circuitOpenUntil else { return }
+        if Date() < openUntil {
+            throw CoreModelError.circuitBreakerOpen
+        }
+        clearBreakerState()
+        logger.info("Circuit breaker cooldown elapsed — entering half-open probe")
+    }
+
+    private func clearBreakerState() {
+        consecutiveFailures = 0
+        circuitOpenUntil = nil
+        lastBreakerError = nil
+    }
+
+    /// Returns the model's response on success (and clears breaker
+    /// state). Throws the final error after all retries are
+    /// exhausted; the caller is responsible for the failure-
+    /// accounting path via `recordFailureAndThrow`.
+    private func runWithRetries(
+        model: String,
+        messages: [ChatMessage],
+        params: GenerationParameters,
+        timeout: TimeInterval
+    ) async throws -> String {
         var lastError: Error?
         for attempt in 0 ..< Self.maxRetries {
             do {
                 let result = try await withTimeout(seconds: timeout) {
                     try await self.executeModelCall(model: model, messages: messages, params: params)
                 }
-                consecutiveFailures = 0
-                circuitOpenUntil = nil
+                clearBreakerState()
                 return result
             } catch {
                 lastError = error
-                let isRetryable = !(error is CoreModelError) || error as? CoreModelError == .timedOut
-                if !isRetryable || attempt == Self.maxRetries - 1 { break }
+                if !Self.isRetryable(error) || attempt == Self.maxRetries - 1 { break }
                 let delay = Self.baseRetryDelayNanoseconds * UInt64(1 << attempt)
                 logger.warning(
-                    "Core model call failed (attempt \(attempt + 1)/\(Self.maxRetries)), retrying: \(error)"
+                    "Core model call failed (attempt \(attempt + 1)/\(Self.maxRetries)), retrying: \(error.localizedDescription)"
                 )
                 try? await Task.sleep(nanoseconds: delay)
             }
+        }
+        throw lastError ?? CoreModelError.modelUnavailable(model)
+    }
+
+    /// Bookkeeping for a final failure: throws-through configuration
+    /// errors (`modelUnavailable`) without touching the breaker, and
+    /// otherwise increments the failure counter and opens the breaker
+    /// once the threshold is reached. Always throws.
+    ///
+    /// `modelUnavailable` is a **configuration** error, not a flaky
+    /// backend — the user's `coreModelIdentifier` points at something
+    /// the router can't service (Foundation Model on pre-26 macOS, a
+    /// remote provider that was uninstalled, an MLX model that was
+    /// deleted). Counting it toward the breaker would lock the user
+    /// out of the preflight path permanently with a misleading
+    /// "circuitBreakerOpen" symptom that hides the real fix.
+    private func recordFailureAndThrow(_ error: Error) throws -> Never {
+        if let coreErr = error as? CoreModelError, case .modelUnavailable = coreErr {
+            throw coreErr
         }
 
         consecutiveFailures += 1
         if consecutiveFailures >= Self.circuitBreakerThreshold {
             circuitOpenUntil = Date().addingTimeInterval(Self.circuitBreakerCooldownSeconds)
+            lastBreakerError = error
             logger.error(
-                "Circuit breaker opened after \(self.consecutiveFailures) consecutive failures"
+                "Circuit breaker opened after \(self.consecutiveFailures) consecutive failures; last error: \(error.localizedDescription)"
             )
         }
 
-        throw lastError ?? CoreModelError.modelUnavailable(model)
+        throw error
     }
 
-    // MARK: - Private
+    /// Whether an error from `executeModelCall` should trigger a
+    /// retry within the same `generate` call. The contract:
+    /// non-`CoreModelError` failures (network blips, decode errors,
+    /// service-specific transient errors) are retryable; the only
+    /// `CoreModelError` worth retrying is `.timedOut`, since
+    /// `.modelUnavailable` and `.circuitBreakerOpen` won't change
+    /// shape across consecutive sub-second attempts.
+    private static func isRetryable(_ error: Error) -> Bool {
+        guard let coreErr = error as? CoreModelError else { return true }
+        return coreErr == .timedOut
+    }
+
+    private func buildMessages(prompt: String, systemPrompt: String?) -> [ChatMessage] {
+        if let systemPrompt {
+            return [
+                ChatMessage(role: "system", content: systemPrompt),
+                ChatMessage(role: "user", content: prompt),
+            ]
+        }
+        return [ChatMessage(role: "user", content: prompt)]
+    }
+
+    // MARK: - Private — execution
 
     private func executeModelCall(
         model: String,

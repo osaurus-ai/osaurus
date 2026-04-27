@@ -64,6 +64,7 @@ public actor ToolSearchService {
 
                 vectorDB = try await VecturaKit(config: config, embedder: EmbeddingService.sharedEmbedder)
                 isInitialized = true
+                rehydrateReverseIdMap()
                 ToolIndexLogger.search.info("VecturaKit initialized successfully for tools")
                 break
             } catch {
@@ -78,6 +79,26 @@ public actor ToolSearchService {
                 }
             }
         }
+    }
+
+    /// Populate `reverseIdMap` from the SQL source of truth. Without
+    /// this, a fresh launch opens the persistent VecturaKit dir but
+    /// the in-memory `UUID → toolId` map is empty until the next
+    /// `rebuildIndex()` runs. Search calls in that window get hits
+    /// from VecturaKit, fail to map them back to tool IDs, and
+    /// return `[]` — which then sends `PreflightCapabilitySearch`
+    /// down the "fall back to full catalog" path that overflows
+    /// Apple Foundation Models' 4K context window.
+    ///
+    /// Cheap: just iterates `ToolDatabase.loadAllEntries()` and
+    /// derives the deterministic UUID for each entry. No network,
+    /// no embeds, no VecturaKit calls.
+    private func rehydrateReverseIdMap() {
+        guard let entries = try? ToolDatabase.shared.loadAllEntries() else { return }
+        for entry in entries {
+            _ = deterministicUUID(for: entry.id)
+        }
+        ToolIndexLogger.search.info("Tool reverse-id map rehydrated with \(entries.count) entries")
     }
 
     // MARK: - Indexing

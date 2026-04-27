@@ -169,7 +169,7 @@ public final class BackgroundTaskManager: ObservableObject {
 
     /// Dispatch a chat task for background execution.
     public func dispatchChat(_ request: DispatchRequest) async -> DispatchHandle? {
-        guard canDispatchNewTask(agentId: request.agentId) else { return nil }
+        guard canDispatchNewTask(source: request.source, agentId: request.agentId) else { return nil }
 
         // Opt-in conversation grouping: when `external_session_key` is set
         // and a non-active matching session exists, reattach to it so the
@@ -303,7 +303,16 @@ public final class BackgroundTaskManager: ObservableObject {
     /// limit or the per-agent limit. The global limit is user-configurable via
     /// settings; the per-agent limit prevents a single agent from monopolizing
     /// all slots in multi-agent scenarios.
-    private func canDispatchNewTask(agentId: UUID?) -> Bool {
+    private func canDispatchNewTask(source: SessionSource, agentId: UUID?) -> Bool {
+        // Plugin / sandbox callers must supply an agentId. Without one, the
+        // per-agent cap below would be silently skipped — letting a single
+        // sandboxed plugin saturate every slot. The bridge always provides
+        // an id post-fix, so a nil here is a programmer error.
+        if source == .plugin, agentId == nil {
+            print("[BackgroundTaskManager] Refusing plugin dispatch without agentId")
+            return false
+        }
+
         let globalLimit = ToastConfigurationStore.load().maxConcurrentTasks
         let activeTasks = backgroundTasks.values.filter { $0.status.isActive }
 

@@ -9,46 +9,70 @@ struct SandboxManagerCleanupTests {
 
     @Test
     func cleanupAfterFailure_removesStaleContainerDirectory() async throws {
-        let staleDir = await manager.staleContainerDir
-        try FileManager.default.createDirectory(at: staleDir, withIntermediateDirectories: true)
-        #expect(FileManager.default.fileExists(atPath: staleDir.path))
+        try await withStableStoragePaths {
+            try await SandboxTestLock.shared.run {
+                let staleDir = await manager.staleContainerDir
+                try FileManager.default.createDirectory(at: staleDir, withIntermediateDirectories: true)
+                #expect(FileManager.default.fileExists(atPath: staleDir.path))
 
-        await manager.cleanupAfterFailure()
+                await manager.cleanupAfterFailure()
 
-        #expect(!FileManager.default.fileExists(atPath: staleDir.path))
+                #expect(!FileManager.default.fileExists(atPath: staleDir.path))
+            }
+        }
     }
 
     @Test
     func cleanupAfterFailure_stopsBridgeServer() async throws {
-        let socketPath = OsaurusPaths.container()
-            .appendingPathComponent("test-bridge.sock").path
-        try OsaurusPaths.ensureExists(OsaurusPaths.container())
-        try await HostAPIBridgeServer.shared.start(socketPath: socketPath)
-        #expect(await HostAPIBridgeServer.shared.isRunning)
+        try await withStableStoragePaths {
+            try await SandboxTestLock.shared.run {
+                let socketPath = OsaurusPaths.container()
+                    .appendingPathComponent("test-bridge.sock").path
+                try OsaurusPaths.ensureExists(OsaurusPaths.container())
+                try await HostAPIBridgeServer.shared.start(socketPath: socketPath)
+                #expect(await HostAPIBridgeServer.shared.isRunning)
 
-        await manager.cleanupAfterFailure()
+                await manager.cleanupAfterFailure()
 
-        #expect(await !HostAPIBridgeServer.shared.isRunning)
+                #expect(await !HostAPIBridgeServer.shared.isRunning)
+            }
+        }
     }
 
     @Test
     func cleanupAfterFailure_setsStatusToStopped() async throws {
-        await MainActor.run { SandboxManager.State.shared.status = .starting }
+        await withStableStoragePaths {
+            await SandboxTestLock.shared.run {
+                await MainActor.run { SandboxManager.State.shared.status = .starting }
 
-        await manager.cleanupAfterFailure()
+                await manager.cleanupAfterFailure()
 
-        let status = await manager.refreshStatus()
-        #expect(status == .stopped || status == .notProvisioned)
+                let status = await manager.refreshStatus()
+                #expect(status == .stopped || status == .notProvisioned)
+            }
+        }
     }
 
     @Test
     func cleanupAfterFailure_isIdempotent() async throws {
-        // Running cleanup twice should not crash or leave bad state,
-        // even when there's nothing to clean up.
-        await manager.cleanupAfterFailure()
-        await manager.cleanupAfterFailure()
+        await withStableStoragePaths {
+            await SandboxTestLock.shared.run {
+                // Running cleanup twice should not crash or leave bad state,
+                // even when there's nothing to clean up.
+                await manager.cleanupAfterFailure()
+                await manager.cleanupAfterFailure()
 
-        let status = await manager.refreshStatus()
-        #expect(status == .stopped || status == .notProvisioned)
+                let status = await manager.refreshStatus()
+                #expect(status == .stopped || status == .notProvisioned)
+            }
+        }
+    }
+
+    private func withStableStoragePaths<T: Sendable>(
+        _ body: @MainActor @Sendable () async throws -> T
+    ) async rethrows -> T {
+        try await StoragePathsTestLock.shared.run {
+            try await body()
+        }
     }
 }

@@ -602,6 +602,14 @@ public actor ModelRuntime {
             // `.toolCall` event, so we keep iterating until the stream
             // finishes naturally instead of bailing on the first invocation.
             var pendingTools: [ServiceToolInvocation] = []
+            // Defensive scrubber for orphan `<think>` / `</think>` markers
+            // that vmlx's reasoning parser leaves in `.chunk` text when a
+            // low-bit MoE checkpoint emits a closer without a matching
+            // opener (or vice versa). Only engaged when the model
+            // declares thinking support — non-thinking models route
+            // through the untouched passthrough so legitimate `<think>`
+            // text in code blocks stays intact.
+            var scrubber = ThinkTagScrubber()
             do {
                 for try await ev in events {
                     if Task.isCancelled {
@@ -610,7 +618,10 @@ public actor ModelRuntime {
                     }
                     switch ev {
                     case .tokens(let s):
-                        if !s.isEmpty { continuation.yield(s) }
+                        if !s.isEmpty {
+                            let cleaned = modelSupportsThinking ? scrubber.scrub(s) : s
+                            if !cleaned.isEmpty { continuation.yield(cleaned) }
+                        }
                     case .reasoning(let s):
                         if !s.isEmpty {
                             if modelSupportsThinking {
@@ -634,6 +645,13 @@ public actor ModelRuntime {
                         )
                     }
                 }
+                // Drain any tail bytes the scrubber held back as a
+                // partial-tag candidate. If the stream ended without a
+                // following chunk to complete the candidate, those bytes
+                // are real content (the model just happened to end on
+                // `<` or `<th` etc.) and must be surfaced.
+                let tail = scrubber.flush()
+                if !tail.isEmpty { continuation.yield(tail) }
                 do {
                     try Self.throwIfTools(pendingTools)
                     continuation.finish()

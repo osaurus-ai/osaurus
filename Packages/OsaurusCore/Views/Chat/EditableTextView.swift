@@ -155,6 +155,7 @@ struct EditableTextView: NSViewRepresentable {
 
     // MARK: - Coordinator
 
+    @MainActor
     class Coordinator: NSObject, NSTextViewDelegate {
         var parent: EditableTextView
 
@@ -187,6 +188,7 @@ struct EditableTextView: NSViewRepresentable {
             parent.isComposing = false
         }
 
+        @MainActor
         func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
             switch commandSelector {
             case #selector(NSResponder.moveUp(_:)):
@@ -202,6 +204,7 @@ struct EditableTextView: NSViewRepresentable {
             }
         }
 
+        @MainActor
         private func handleNewline() -> Bool {
             let isShift = NSApp.currentEvent?.modifierFlags.contains(.shift) ?? false
             if isShift {

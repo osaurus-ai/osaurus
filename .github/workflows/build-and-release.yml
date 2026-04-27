@@ -20,7 +20,10 @@ permissions:
 
 jobs:
   build:
-    runs-on: macos-latest
+    # Pin to a specific runner image (was `macos-latest`) so a runner image
+    # bump can't silently change the build environment. macos-26 is required
+    # because Containerization needs the macOS 26 SDK.
+    runs-on: macos-26
 
     steps:
       - name: Checkout code
@@ -31,7 +34,10 @@ jobs:
       - name: Set up Xcode
         uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: latest-stable
+          # Pin to a specific Xcode (was `latest-stable`) so the same
+          # commit always builds against the same toolchain. Bump
+          # intentionally — never let `latest-stable` drift in CI.
+          xcode-version: "26.4.1"
 
       - name: Install Metal Toolchain
         run: xcodebuild -downloadComponent MetalToolchain

@@ -16,6 +16,22 @@
 //    - MMR uses cheap content-hash dedup at the candidate stage instead
 //      of O(K²) Jaccard over long strings.
 //
+//  v3: per-agent partitioning. Each agent's memory lives in its own
+//  VecturaKit instance under `~/.osaurus/memory/vectura/<agentId>/`,
+//  so cross-agent vector leakage is structurally impossible — a
+//  `searchTranscript(agentId: A, ...)` call cannot return another
+//  agent's vectors because it never opens that index. The legacy
+//  `nil`-agent path opens a "shared" instance for back-compat with
+//  callers that haven't been threaded with agentId yet.
+//
+//  Encryption: each per-agent directory is intended to be wrapped by
+//  `EncryptedVecturaStorage` once the VecturaKit storage adapter
+//  protocol is wired through. Until then the rebuild-on-launch
+//  fallback is documented in `Storage/StorageMigrator.swift` — we
+//  rebuild from the encrypted source SQL on each major upgrade so
+//  the plaintext vector files are always derivable from data at
+//  rest that *is* encrypted.
+//
 
 import Foundation
 import VecturaKit
@@ -29,7 +45,11 @@ public actor MemorySearchService {
     private static let defaultMMRLambda: Double = 0.85
     private static let defaultFetchMultiplier: Double = 2.0
 
-    private var vectorDB: VecturaKit?
+    /// Per-agent VecturaKit instances. Key `""` is the legacy/shared
+    /// instance used for callers that don't supply an agent id (e.g.
+    /// global rebuilds, legacy global searches). Created lazily on
+    /// first index/search for that agent.
+    private var vectorDBs: [String: VecturaKit] = [:]
     private var isInitialized = false
 
     /// Reverse map from VecturaKit UUID → episode primary key. Populated
@@ -41,21 +61,50 @@ public actor MemorySearchService {
 
     private init() {}
 
+    private static let sharedAgentBucket = ""
+
+    private static func bucketKey(for agentId: String?) -> String {
+        if let agentId, !agentId.isEmpty { return agentId }
+        return sharedAgentBucket
+    }
+
+    private static func storageDir(for agentId: String?) -> URL {
+        let bucket = bucketKey(for: agentId)
+        let base = OsaurusPaths.memory().appendingPathComponent("vectura", isDirectory: true)
+        if bucket == sharedAgentBucket {
+            return base.appendingPathComponent("_shared", isDirectory: true)
+        }
+        return base.appendingPathComponent(bucket, isDirectory: true)
+    }
+
     // MARK: - Initialization
 
-    /// Initialize the VecturaKit index. Called once at app startup.
-    /// Non-fatal — search falls back to text if this fails.
+    /// Initialize the shared/default VecturaKit index. Called once at
+    /// app startup. Per-agent instances are created lazily on first
+    /// use. Non-fatal — search falls back to text if this fails.
     public func initialize() async {
         guard !isInitialized else { return }
+        isInitialized = true
+        _ = await ensureVectorDB(for: nil)
+    }
 
-        let storageDir = OsaurusPaths.memory().appendingPathComponent("vectura", isDirectory: true)
+    /// Return (creating if needed) the VecturaKit instance for the
+    /// supplied agent. `nil` agent maps to the shared bucket.
+    /// Returns `nil` when the service hasn't been `initialize()`d
+    /// yet — preserving the legacy contract that index/search calls
+    /// no-op until the host opts in.
+    private func ensureVectorDB(for agentId: String?) async -> VecturaKit? {
+        guard isInitialized else { return nil }
+        let bucket = Self.bucketKey(for: agentId)
+        if let existing = vectorDBs[bucket] { return existing }
+
+        let storageDir = Self.storageDir(for: agentId)
 
         for attempt in 1 ... 2 {
             do {
                 OsaurusPaths.ensureExistsSilent(storageDir)
-
                 let config = try VecturaConfig(
-                    name: "osaurus-memory",
+                    name: "osaurus-memory-\(bucket.isEmpty ? "shared" : bucket)",
                     directoryURL: storageDir,
                     dimension: EmbeddingService.embeddingDimension,
                     searchOptions: VecturaConfig.SearchOptions(
@@ -67,29 +116,32 @@ public actor MemorySearchService {
                     ),
                     memoryStrategy: .automatic()
                 )
-
-                vectorDB = try await VecturaKit(config: config, embedder: EmbeddingService.sharedEmbedder)
-                isInitialized = true
-                MemoryLogger.search.info("VecturaKit initialized")
-                break
+                let db = try await VecturaKit(config: config, embedder: EmbeddingService.sharedEmbedder)
+                vectorDBs[bucket] = db
+                MemoryLogger.search.info("VecturaKit ready for bucket=\(bucket.isEmpty ? "shared" : bucket)")
+                return db
             } catch {
                 if attempt == 1 {
-                    MemoryLogger.search.warning("VecturaKit init failed, deleting storage to recover: \(error)")
+                    MemoryLogger.search.warning(
+                        "VecturaKit init failed for \(bucket.isEmpty ? "shared" : bucket), deleting + retrying: \(error)"
+                    )
                     try? FileManager.default.removeItem(at: storageDir)
                 } else {
-                    MemoryLogger.search.error("VecturaKit init failed (text fallback active): \(error)")
-                    vectorDB = nil
+                    MemoryLogger.search.error(
+                        "VecturaKit init failed (text fallback active): \(error)"
+                    )
                 }
             }
         }
+        return nil
     }
 
-    public var isVecturaAvailable: Bool { vectorDB != nil }
+    public var isVecturaAvailable: Bool { !vectorDBs.isEmpty }
 
     // MARK: - Indexing
 
     public func indexPinnedFact(_ fact: PinnedFact) async {
-        guard let db = vectorDB else { return }
+        guard let db = await ensureVectorDB(for: fact.agentId) else { return }
         guard let id = UUID(uuidString: fact.id) else { return }
         do {
             _ = try await db.addDocument(text: fact.content, id: id)
@@ -99,7 +151,7 @@ public actor MemorySearchService {
     }
 
     public func indexEpisode(_ episode: Episode) async {
-        guard let db = vectorDB else { return }
+        guard let db = await ensureVectorDB(for: episode.agentId) else { return }
         let id = TextSimilarity.deterministicUUID(from: "episode:\(episode.id)")
         do {
             let text = episode.summary + " — " + episode.topicsCSV
@@ -111,7 +163,7 @@ public actor MemorySearchService {
     }
 
     public func indexTranscriptTurn(_ turn: TranscriptTurn) async {
-        guard let db = vectorDB else { return }
+        guard let db = await ensureVectorDB(for: turn.agentId) else { return }
         let id = TextSimilarity.deterministicUUID(from: "transcript:\(turn.conversationId):\(turn.chunkIndex)")
         do {
             _ = try await db.addDocument(text: turn.content, id: id)
@@ -121,10 +173,17 @@ public actor MemorySearchService {
         }
     }
 
-    public func removeDocument(id: String) async {
-        guard let db = vectorDB, let uuid = UUID(uuidString: id) else { return }
-        do { try await db.deleteDocuments(ids: [uuid]) } catch {
-            MemoryLogger.search.error("removeDocument failed: \(error)")
+    /// Remove a document by id. Without an agent hint we have to try
+    /// every open bucket — IDs are deterministic UUIDs so this is
+    /// idempotent. Pass `agentId` when known to avoid the fan-out.
+    public func removeDocument(id: String, agentId: String? = nil) async {
+        guard let uuid = UUID(uuidString: id) else { return }
+        if let agentId, let db = vectorDBs[Self.bucketKey(for: agentId)] {
+            try? await db.deleteDocuments(ids: [uuid])
+            return
+        }
+        for db in vectorDBs.values {
+            try? await db.deleteDocuments(ids: [uuid])
         }
     }
 
@@ -136,7 +195,10 @@ public actor MemorySearchService {
         topK: Int = 10
     ) async -> [PinnedFact] {
         guard topK > 0 else { return [] }
-        if let db = vectorDB {
+        // Per-agent partitioning: scope the vector search to the
+        // caller's agent index. Cross-agent leakage is now structural
+        // — agent A simply doesn't open agent B's index.
+        if let db = await ensureVectorDB(for: agentId) {
             do {
                 let fetchCount = Int(Double(topK) * Self.defaultFetchMultiplier)
                 let results = try await db.search(
@@ -176,7 +238,7 @@ public actor MemorySearchService {
         topK: Int = 10
     ) async -> [Episode] {
         guard topK > 0 else { return [] }
-        if let db = vectorDB {
+        if let db = await ensureVectorDB(for: agentId) {
             do {
                 let fetchCount = Int(Double(topK) * Self.defaultFetchMultiplier)
                 let results = try await db.search(
@@ -239,7 +301,7 @@ public actor MemorySearchService {
         topK: Int = 10
     ) async -> [TranscriptTurn] {
         guard topK > 0 else { return [] }
-        if let db = vectorDB {
+        if let db = await ensureVectorDB(for: agentId) {
             do {
                 let fetchCount = Int(Double(topK) * Self.defaultFetchMultiplier)
                 let results = try await db.search(
@@ -329,55 +391,75 @@ public actor MemorySearchService {
 
     // MARK: - Index management
 
+    /// Reset every per-agent index. Used on user-triggered "Clear
+    /// memory" + after migrations that re-encrypt the underlying
+    /// store.
     public func clearIndex() async {
         episodeKeyMap.removeAll()
         transcriptKeyMap.removeAll()
-        guard let db = vectorDB else { return }
-        do {
-            try await db.reset()
-            MemoryLogger.search.info("VecturaKit index cleared")
-        } catch {
-            MemoryLogger.search.error("Failed to clear VecturaKit index: \(error)")
+        for (bucket, db) in vectorDBs {
+            do {
+                try await db.reset()
+                MemoryLogger.search.info("VecturaKit reset for bucket=\(bucket.isEmpty ? "shared" : bucket)")
+            } catch {
+                MemoryLogger.search.error("clearIndex failed for \(bucket): \(error)")
+            }
         }
+        // Drop the directory contents too so plaintext leftovers from
+        // a pre-encryption build don't persist.
+        let base = OsaurusPaths.memory().appendingPathComponent("vectura", isDirectory: true)
+        try? FileManager.default.removeItem(at: base)
+        vectorDBs.removeAll()
+        isInitialized = false
     }
 
-    /// Stream-rebuild the entire index in batches of 200 to avoid OOM on
-    /// large databases.
+    /// Stream-rebuild every per-agent index from the (encrypted)
+    /// SQLite source of truth. Called by the storage migrator on
+    /// first launch after upgrade so vectors land in their per-agent
+    /// directories.
     public func rebuildIndex() async {
-        guard let db = vectorDB else { return }
         episodeKeyMap.removeAll()
         transcriptKeyMap.removeAll()
 
-        do {
-            try await db.reset()
-
-            let pinned = (try? MemoryDatabase.shared.loadPinnedFacts(limit: 5000)) ?? []
-            for fact in pinned {
-                if let id = UUID(uuidString: fact.id) {
-                    _ = try? await db.addDocument(text: fact.content, id: id)
-                }
-            }
-
-            let episodes = (try? MemoryDatabase.shared.loadEpisodes(limit: 5000)) ?? []
-            for ep in episodes {
-                let id = TextSimilarity.deterministicUUID(from: "episode:\(ep.id)")
-                _ = try? await db.addDocument(text: ep.summary + " — " + ep.topicsCSV, id: id)
-                episodeKeyMap[id.uuidString] = ep.id
-            }
-
-            let transcripts = (try? MemoryDatabase.shared.loadTranscript(days: 365, limit: 5000)) ?? []
-            for turn in transcripts {
-                let id = TextSimilarity.deterministicUUID(from: "transcript:\(turn.conversationId):\(turn.chunkIndex)")
-                _ = try? await db.addDocument(text: turn.content, id: id)
-                transcriptKeyMap[id.uuidString] = (turn.conversationId, turn.chunkIndex)
-            }
-
-            MemoryLogger.search.info(
-                "Index rebuilt: \(pinned.count) pinned, \(episodes.count) episodes, \(transcripts.count) transcript turns"
-            )
-        } catch {
-            MemoryLogger.search.error("rebuildIndex failed: \(error)")
+        // Reset the open instances first, then walk each agent's
+        // pinned/episode/transcript rows and re-index. Agents that
+        // have no vector instance yet will be created lazily by
+        // `ensureVectorDB`.
+        for db in vectorDBs.values {
+            try? await db.reset()
         }
+
+        let allPinned = (try? MemoryDatabase.shared.loadPinnedFacts(limit: 5000)) ?? []
+        for fact in allPinned {
+            guard let id = UUID(uuidString: fact.id),
+                let db = await ensureVectorDB(for: fact.agentId)
+            else { continue }
+            _ = try? await db.addDocument(text: fact.content, id: id)
+        }
+
+        let allEpisodes = (try? MemoryDatabase.shared.loadEpisodes(limit: 5000)) ?? []
+        for ep in allEpisodes {
+            guard let db = await ensureVectorDB(for: ep.agentId) else { continue }
+            let id = TextSimilarity.deterministicUUID(from: "episode:\(ep.id)")
+            _ = try? await db.addDocument(text: ep.summary + " — " + ep.topicsCSV, id: id)
+            episodeKeyMap[id.uuidString] = ep.id
+        }
+
+        let allTranscripts = (try? MemoryDatabase.shared.loadTranscript(days: 365, limit: 5000)) ?? []
+        for turn in allTranscripts {
+            guard let db = await ensureVectorDB(for: turn.agentId) else { continue }
+            let id = TextSimilarity.deterministicUUID(from: "transcript:\(turn.conversationId):\(turn.chunkIndex)")
+            _ = try? await db.addDocument(text: turn.content, id: id)
+            transcriptKeyMap[id.uuidString] = (turn.conversationId, turn.chunkIndex)
+        }
+
+        let bucketCount = vectorDBs.count
+        let pinnedCount = allPinned.count
+        let episodeCount = allEpisodes.count
+        let transcriptCount = allTranscripts.count
+        MemoryLogger.search.info(
+            "Index rebuilt across \(bucketCount) agent bucket(s): \(pinnedCount) pinned, \(episodeCount) episodes, \(transcriptCount) transcript turns"
+        )
     }
 
     // MARK: - MMR Reranking

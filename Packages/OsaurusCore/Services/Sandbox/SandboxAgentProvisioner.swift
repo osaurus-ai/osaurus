@@ -79,10 +79,21 @@ public final class SandboxAgentProvisioner {
         }
         let task = Task<Void, Error> { [agentId] in
             let agentName = Self.linuxName(for: agentId)
+            let linuxName = "agent-\(agentName)"
             Self.ensureHostWorkspace(for: agentName)
             try await SandboxManager.shared.startContainer()
             try await SandboxManager.shared.ensureAgentUser(agentName)
-            SandboxAgentMap.register(linuxName: "agent-\(agentName)", agentId: agentId)
+            SandboxAgentMap.register(linuxName: linuxName, agentId: agentId)
+            // Mint and write the per-agent bridge token now that the Linux
+            // user exists. The shim inside the guest reads this file to
+            // authenticate to the host bridge — without it, plugin calls
+            // fail closed instead of falling back to a default identity.
+            if let uuid = UUID(uuidString: agentId) {
+                try await SandboxManager.shared.provisionBridgeToken(
+                    linuxName: linuxName,
+                    agentId: uuid
+                )
+            }
         }
         inFlight[agentId] = task
         defer { inFlight[agentId] = nil }

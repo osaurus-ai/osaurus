@@ -403,7 +403,7 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
                 // SystemPromptComposer fires for sandbox+autonomous agents
                 // without manual intervention. Users who don't want the
                 // injection can disable this skill from the skill catalog
-                // — `pluginCreatorSkillSection` honours the flag.
+                // — `PluginCreatorGate` honours the flag via `skillEnabled`.
                 enabled: true,
                 instructions: sandboxPluginCreatorInstructions,
                 isBuiltIn: true,

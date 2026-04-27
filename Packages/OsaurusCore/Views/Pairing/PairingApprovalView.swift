@@ -51,12 +51,22 @@ struct PairingApprovalView: View {
                     .opacity(appeared ? 1 : 0)
                     .offset(y: appeared ? 0 : 4)
 
-                Toggle(isOn: $state.isPermanent) {
-                    Text("Remember this device", bundle: .module)
-                        .font(.system(size: 13))
-                        .foregroundColor(theme.primaryText)
+                VStack(alignment: .leading, spacing: 4) {
+                    Toggle(isOn: $state.isPermanent) {
+                        Text("Remember this device permanently", bundle: .module)
+                            .font(.system(size: 13))
+                            .foregroundColor(theme.primaryText)
+                    }
+                    .toggleStyle(.checkbox)
+
+                    Text(
+                        "Off: access expires in 90 days. On: access never expires until revoked.",
+                        bundle: .module
+                    )
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.secondaryText)
+                    .padding(.leading, 20)
                 }
-                .toggleStyle(.checkbox)
                 .padding(.top, 12)
                 .padding(.horizontal, 24)
                 .opacity(appeared ? 1 : 0)

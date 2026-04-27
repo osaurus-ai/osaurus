@@ -29,6 +29,53 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // Detect repeated startup crashes and enter safe mode if needed
         LaunchGuard.checkOnLaunch()
 
+        // CRITICAL SEQUENCING: run the at-rest encryption migrator
+        // BEFORE any database opens. Without this gate
+        // `MemoryDatabase.shared.open()` below would try SQLCipher
+        // against still-plaintext files and fail key verification,
+        // leaving the app in a degraded state on first launch after
+        // upgrade. We block the launch flow synchronously while the
+        // overlay shows progress; the run loop is pumped so SwiftUI
+        // updates keep painting.
+        StorageMigrationCoordinator.blockingAwaitReady()
+
+        // Wire up the periodic SQLite maintenance ticker (PRAGMA
+        // optimize / wal_checkpoint / VACUUM at sensible intervals).
+        // Idempotent — safe even if some DBs aren't open yet, the
+        // ticker only touches handles that are currently registered.
+        Task.detached(priority: .background) {
+            await StorageMaintenance.shared.start()
+        }
+
+        // vmlx-swift-lm DSV4 cache-mode default. Process-wide env var read
+        // by `LLMModelFactory.dispatchDeepseekV4` at model-load time.
+        //
+        // DSV4-Flash's stock default is `RotatingKVCache(maxSize: 128)` per
+        // layer — fine for FIM / short Q&A but loses prompt visibility on
+        // any decode > 128 tokens, which means any chat conversation /
+        // reasoning-mode trace / multi-turn response drifts off-topic
+        // (live-confirmed 2026-04-25 on DSV4-Flash JANGTQ: thinking traces
+        // produced random SQL queries because the original prompt scrolled
+        // out of attention).
+        //
+        // Setting `DSV4_KV_MODE=full` switches new caches to `KVCacheSimple`
+        // — full attention across the entire prompt + decode. Memory cost
+        // ~360 MB at 8K output (vs. ~6 MB rotating), which is a non-issue
+        // on any machine that can load DSV4 in the first place (79.5 GB+
+        // bundles).
+        //
+        // No effect on non-DSV4 models — vmlx ignores the var unless the
+        // factory dispatch hits the `deepseek_v4` model_type. Setting this
+        // unconditionally at launch is the recommended osaurus-side
+        // operating point per vmlx
+        // `Libraries/MLXLMCommon/BatchEngine/OSAURUS-INTEGRATION.md`
+        // §"DeepSeek-V4 — runtime knobs" (2026-04-25 update). Users who
+        // want the rotating-window memory savings can override by exporting
+        // a different value before launching osaurus.
+        if ProcessInfo.processInfo.environment["DSV4_KV_MODE"] == nil {
+            setenv("DSV4_KV_MODE", "full", 1)
+        }
+
         // Configure as regular app (show Dock icon) by default, or accessory if hidden
         let hideDockIcon = ServerConfigurationStore.load()?.hideDockIcon ?? false
         if hideDockIcon {
@@ -152,6 +199,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // MemorySearchService.initialize() needs it for reverse maps.
         // MetalGate serializes CoreML/MLX at runtime; this task is only held
         // for startup sequencing of orphan recovery + activity tracking below.
+        //
+        // The `blockingAwaitReady()` call above already gated the
+        // launch flow on the storage migrator, so by the time this
+        // Task runs the migrator is guaranteed done. Each
+        // `*Database.shared.open()` also calls the gate
+        // defensively (no-op fast path) for the plugin/HTTP entry
+        // points that don't go through this Task.
         let embeddingInitTask = Task {
             var memoryDBOpened = false
             for attempt in 1 ... 3 {
@@ -251,7 +305,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
 
                 // Ensure app is unhidden and active
                 NSApp.unhide(nil)
-                _ = NSRunningApplication.current.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
+                if #available(macOS 14.0, *) {
+                    _ = NSRunningApplication.current.activate(options: .activateAllWindows)
+                } else {
+                    _ = NSRunningApplication.current.activate(options: [
+                        .activateAllWindows, .activateIgnoringOtherApps,
+                    ])
+                }
 
                 if ChatWindowManager.shared.windowCount > 0 {
                     ChatWindowManager.shared.focusAllWindows()
