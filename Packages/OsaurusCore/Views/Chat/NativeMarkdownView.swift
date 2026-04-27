@@ -134,10 +134,8 @@ final class NativeMarkdownView: NSView {
         lastThemeFingerprint = themeFingerprint
         lastIsStreaming = isStreaming
 
-        // while streaming, hide raw inline delimiters that haven't received their closer
-        // yet. the cache key is the balanced text so the
-        // post-stream final render which uses the unmodified input gets a fresh parse
-        let parseInput = isStreaming ? StreamingMarkdownBalancer.balance(text) : text
+        // hide raw inline delimiters that haven't received their closer yet
+        let parseInput = StreamingMarkdownBalancer.balance(text)
 
         if let cached = ThreadCache.shared.markdown(for: parseInput) {
             applySegments(
@@ -522,6 +520,17 @@ final class NativeMarkdownView: NSView {
         tv.textContainerInset = .zero
         tv.isVerticallyResizable = false
         tv.isHorizontallyResizable = false
+        // disable idle-time text features (spell/grammar/link/data/substitution).
+        // These run against textStorage on every edit which is pure overhead for read-only
+        // streaming model output
+        tv.isContinuousSpellCheckingEnabled = false
+        tv.isGrammarCheckingEnabled = false
+        tv.isAutomaticSpellingCorrectionEnabled = false
+        tv.isAutomaticDashSubstitutionEnabled = false
+        tv.isAutomaticQuoteSubstitutionEnabled = false
+        tv.isAutomaticTextReplacementEnabled = false
+        tv.isAutomaticLinkDetectionEnabled = false
+        tv.isAutomaticDataDetectionEnabled = false
         // fixed container width + stale configure() width makes lines wrap too wide vs visible bounds
         tv.textContainer?.containerSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
         tv.textContainer?.widthTracksTextView = true

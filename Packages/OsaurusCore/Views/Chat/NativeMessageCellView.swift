@@ -1095,14 +1095,24 @@ final class NativeMessageCellView: NSTableCellView {
             targetBg = nil
             targetRadius = 0
         }
-        if targetBg != nil { self.wantsLayer = true }
-        if !cgColorsEqual(lastBubbleBackgroundCGColor, targetBg) {
-            self.layer?.backgroundColor = targetBg
-            lastBubbleBackgroundCGColor = targetBg
-        }
-        if lastBubbleCornerRadius != targetRadius {
-            self.layer?.cornerRadius = targetRadius
-            lastBubbleCornerRadius = targetRadius
+        // sppress implicit CABasicAnimation on layer property mutations. Without this,
+        // every backgroundColor / cornerRadius change kicks off a 0.25s animation that
+        // continues compositing across frames during streaming
+        let bgChanged = !cgColorsEqual(lastBubbleBackgroundCGColor, targetBg)
+        let radiusChanged = lastBubbleCornerRadius != targetRadius
+        if targetBg != nil || bgChanged || radiusChanged {
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            if targetBg != nil { self.wantsLayer = true }
+            if bgChanged {
+                self.layer?.backgroundColor = targetBg
+                lastBubbleBackgroundCGColor = targetBg
+            }
+            if radiusChanged {
+                self.layer?.cornerRadius = targetRadius
+                lastBubbleCornerRadius = targetRadius
+            }
+            CATransaction.commit()
         }
 
         // always report height: configure() can return early when text is unchanged (e.g. tool row
