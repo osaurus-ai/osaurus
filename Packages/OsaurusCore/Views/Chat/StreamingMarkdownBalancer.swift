@@ -73,6 +73,11 @@ enum StreamingMarkdownBalancer {
         //    - "Foo `" → drop "`" (could be start of fence ``` or inline code with no content)
         body = stripFreshlyOpenedTrailingMarker(body)
 
+        // re-run the list-marker strip: removing a freshly-opened "**"/"*"/"`" can leave
+        // a now-bare list marker line (e.g. "- **" → "- ") which parseBlocks would render
+        // as a literal "-" paragraph until the next chunk delivers actual content
+        body = stripIncompleteTrailingListMarkerLine(body)
+
         // 2. close unbalanced inline code spans first so bold inside a code span
         //    isn't mistakenly balanced
         if hasOddSingleBacktickCount(body) {
