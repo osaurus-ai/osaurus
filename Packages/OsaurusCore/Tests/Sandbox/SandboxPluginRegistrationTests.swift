@@ -150,63 +150,69 @@ struct SandboxPluginRegistrationTests {
 
     @Test
     func registerTool_rejectsMissingPluginJsonOnDisk() async throws {
-        let agentName = randomAgentName()
-        let pluginId = "missing-\(UUID().uuidString.prefix(6))"
-        let result = try await makeRegisterTool(agentName: agentName).execute(
-            argumentsJSON: #"{"plugin_id":"\#(pluginId)"}"#
-        )
-        let payload = try failurePayload(result)
-        #expect(payload["kind"] as? String == "execution_error")
-        #expect((payload["message"] as? String ?? "").contains("plugin.json not found"))
+        try await withIsolatedContainerWorkspace {
+            let agentName = randomAgentName()
+            let pluginId = "missing-\(UUID().uuidString.prefix(6))"
+            let result = try await makeRegisterTool(agentName: agentName).execute(
+                argumentsJSON: #"{"plugin_id":"\#(pluginId)"}"#
+            )
+            let payload = try failurePayload(result)
+            #expect(payload["kind"] as? String == "execution_error")
+            #expect((payload["message"] as? String ?? "").contains("plugin.json not found"))
+        }
     }
 
     @Test
     func registerTool_rejectsInvalidPluginJson() async throws {
-        let agentName = randomAgentName()
-        let pluginId = "broken-\(UUID().uuidString.prefix(6))"
-        try writePluginFile(
-            agentName: agentName,
-            pluginId: pluginId,
-            relativePath: "plugin.json",
-            contents: "{ this is not json }"
-        )
-        defer { cleanupAgentDir(agentName: agentName) }
+        try await withIsolatedContainerWorkspace {
+            let agentName = randomAgentName()
+            let pluginId = "broken-\(UUID().uuidString.prefix(6))"
+            try writePluginFile(
+                agentName: agentName,
+                pluginId: pluginId,
+                relativePath: "plugin.json",
+                contents: "{ this is not json }"
+            )
+            defer { cleanupAgentDir(agentName: agentName) }
 
-        let result = try await makeRegisterTool(agentName: agentName).execute(
-            argumentsJSON: #"{"plugin_id":"\#(pluginId)"}"#
-        )
-        let payload = try failurePayload(result)
-        #expect(payload["kind"] as? String == "invalid_args")
-        #expect((payload["message"] as? String ?? "").contains("Invalid plugin.json"))
+            let result = try await makeRegisterTool(agentName: agentName).execute(
+                argumentsJSON: #"{"plugin_id":"\#(pluginId)"}"#
+            )
+            let payload = try failurePayload(result)
+            #expect(payload["kind"] as? String == "invalid_args")
+            #expect((payload["message"] as? String ?? "").contains("Invalid plugin.json"))
+        }
     }
 
     @Test
     func registerTool_rejectsBinaryFiles() async throws {
-        let agentName = randomAgentName()
-        let pluginId = "bin-plugin"
+        try await withIsolatedContainerWorkspace {
+            let agentName = randomAgentName()
+            let pluginId = "bin-plugin"
 
-        try writePluginFile(
-            agentName: agentName,
-            pluginId: pluginId,
-            relativePath: "plugin.json",
-            contents: #"{"name":"Bin Plugin","description":"Includes a binary asset"}"#
-        )
-        // Random non-UTF-8 bytes — will not decode as UTF-8 and so trip
-        // the binary-file rejection.
-        try Data([0xFF, 0xFE, 0xFD, 0x00, 0xC0]).write(
-            to: pluginDir(agentName: agentName, pluginId: pluginId)
-                .appendingPathComponent("logo.bin")
-        )
-        defer { cleanupAgentDir(agentName: agentName) }
+            try writePluginFile(
+                agentName: agentName,
+                pluginId: pluginId,
+                relativePath: "plugin.json",
+                contents: #"{"name":"Bin Plugin","description":"Includes a binary asset"}"#
+            )
+            // Random non-UTF-8 bytes — will not decode as UTF-8 and so trip
+            // the binary-file rejection.
+            try Data([0xFF, 0xFE, 0xFD, 0x00, 0xC0]).write(
+                to: pluginDir(agentName: agentName, pluginId: pluginId)
+                    .appendingPathComponent("logo.bin")
+            )
+            defer { cleanupAgentDir(agentName: agentName) }
 
-        let result = try await makeRegisterTool(agentName: agentName).execute(
-            argumentsJSON: #"{"plugin_id":"\#(pluginId)"}"#
-        )
-        let payload = try failurePayload(result)
-        #expect(payload["kind"] as? String == "invalid_args")
-        let message = payload["message"] as? String ?? ""
-        #expect(message.contains("Binary files"))
-        #expect(message.contains("logo.bin"))
+            let result = try await makeRegisterTool(agentName: agentName).execute(
+                argumentsJSON: #"{"plugin_id":"\#(pluginId)"}"#
+            )
+            let payload = try failurePayload(result)
+            #expect(payload["kind"] as? String == "invalid_args")
+            let message = payload["message"] as? String ?? ""
+            #expect(message.contains("Binary files"))
+            #expect(message.contains("logo.bin"))
+        }
     }
 
     // MARK: - Helpers
@@ -243,6 +249,32 @@ struct SandboxPluginRegistrationTests {
     private func pluginDir(agentName: String, pluginId: String) -> URL {
         OsaurusPaths.containerWorkspace()
             .appendingPathComponent("agents/\(agentName)/plugins/\(pluginId)")
+    }
+
+    private func withIsolatedContainerWorkspace<T: Sendable>(
+        _ body: @MainActor @Sendable () async throws -> T
+    ) async rethrows -> T {
+        try await StoragePathsTestLock.shared.run {
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+                "osaurus-plugin-registration-\(UUID().uuidString)",
+                isDirectory: true
+            )
+            try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+            let previousRoot = OsaurusPaths.overrideRoot
+            OsaurusPaths.overrideRoot = root
+
+            do {
+                let value = try await body()
+                OsaurusPaths.overrideRoot = previousRoot
+                try? FileManager.default.removeItem(at: root)
+                return value
+            } catch {
+                OsaurusPaths.overrideRoot = previousRoot
+                try? FileManager.default.removeItem(at: root)
+                throw error
+            }
+        }
     }
 
     /// Run `body` and assert it throws `SandboxPluginRegistrationError.invalidArgs`.
