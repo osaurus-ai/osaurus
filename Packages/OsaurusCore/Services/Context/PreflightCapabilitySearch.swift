@@ -848,31 +848,74 @@ enum PreflightCapabilitySearch {
         return dot / denom
     }
 
-    // MARK: Plugin Creator Skill
+}
 
-    /// Compose the Sandbox Plugin Creator skill section. Returns nil when the
-    /// agent does not have plugin creation enabled or the skill is not
-    /// installed/enabled. Invoked by `SystemPromptComposer` after tool
-    /// resolution so the section is injected uniformly across auto/manual
-    /// modes, empty queries, and `preflightSearchMode == .off`.
-    static func pluginCreatorSkillSection(for agentId: UUID) async -> String? {
-        guard await CapabilitySearch.canCreatePlugins(agentId: agentId) else { return nil }
-        let skill = await MainActor.run { SkillManager.shared.skill(named: "Sandbox Plugin Creator") }
-        // Honour the user's explicit toggle in the skill catalog. Without
-        // this, disabling "Sandbox Plugin Creator" in the UI had no effect
-        // on the auto-injection path — the section still landed in every
-        // applicable system prompt.
-        guard let skill, skill.enabled else { return nil }
+// MARK: - Plugin Creator Gate
 
-        logger.info("Plugin creator: injecting \(skill.name) skill")
-        return """
-            ## No existing tools match this request
+/// Pure decision logic + formatting for the "Sandbox Plugin Creator" backstop.
+///
+/// Extracted from `SystemPromptComposer` so the gate can be unit-tested
+/// without fighting `ToolRegistry.shared` / `SkillManager.shared` / `AgentManager.shared`.
+/// The composer snapshots all inputs at the start of a turn, then calls
+/// `shouldInject(_:)` with plain booleans — no actor hops, no globals.
+public enum PluginCreatorGate {
+    /// Every input that decides whether to inject the skill this turn.
+    ///
+    /// All values are captured upfront in the composer so subsequent
+    /// `await`s can't race the decision (prior bug: `dynamicCatalogIsEmpty`
+    /// and the skill's `enabled` flag were read much later than
+    /// `canCreatePlugins`, and cross-suite tests were flipping them
+    /// mid-compose).
+    public struct Inputs: Equatable, Sendable {
+        public var effectiveToolsOff: Bool
+        public var sandboxAvailable: Bool
+        public var canCreatePlugins: Bool
+        public var dynamicCatalogIsEmpty: Bool
+        public var hasResolvedDynamicTools: Bool
+        public var skillEnabled: Bool
 
-            You can create new tools by writing a sandbox plugin.
-            Follow the instructions below.
+        public init(
+            effectiveToolsOff: Bool,
+            sandboxAvailable: Bool,
+            canCreatePlugins: Bool,
+            dynamicCatalogIsEmpty: Bool,
+            hasResolvedDynamicTools: Bool,
+            skillEnabled: Bool
+        ) {
+            self.effectiveToolsOff = effectiveToolsOff
+            self.sandboxAvailable = sandboxAvailable
+            self.canCreatePlugins = canCreatePlugins
+            self.dynamicCatalogIsEmpty = dynamicCatalogIsEmpty
+            self.hasResolvedDynamicTools = hasResolvedDynamicTools
+            self.skillEnabled = skillEnabled
+        }
+    }
 
-            ## Skill: \(skill.name)
-            \(skill.instructions)
-            """
+    /// Pure gate. Returns true iff every condition holds:
+    /// - tools aren't globally off
+    /// - sandbox is available (either already active or autonomous-enabled)
+    /// - the agent is allowed to create plugins
+    /// - the user has no dynamic tools installed AND this turn didn't resolve any
+    /// - the user hasn't disabled the built-in skill
+    public static func shouldInject(_ inputs: Inputs) -> Bool {
+        !inputs.effectiveToolsOff
+            && inputs.sandboxAvailable
+            && inputs.canCreatePlugins
+            && inputs.dynamicCatalogIsEmpty
+            && !inputs.hasResolvedDynamicTools
+            && inputs.skillEnabled
+    }
+
+    /// Pure formatter for the injected section.
+    public static func section(skillName: String, instructions: String) -> String {
+        """
+        ## No existing tools match this request
+
+        You can create new tools by writing a sandbox plugin.
+        Follow the instructions below.
+
+        ## Skill: \(skillName)
+        \(instructions)
+        """
     }
 }

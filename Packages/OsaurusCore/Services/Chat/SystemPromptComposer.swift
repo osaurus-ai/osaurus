@@ -151,7 +151,9 @@ public struct SystemPromptComposer: Sendable {
 
         let effectiveToolsOff = toolsDisabled || AgentManager.shared.effectiveToolsDisabled(for: agentId)
         let memoryOff = AgentManager.shared.effectiveMemoryDisabled(for: agentId)
-        let autonomousEnabled = AgentManager.shared.effectiveAutonomousExec(for: agentId)?.enabled == true
+        let autonomousConfig = AgentManager.shared.effectiveAutonomousExec(for: agentId)
+        let autonomousEnabled = autonomousConfig?.enabled == true
+        let canCreatePlugins = autonomousConfig.map { $0.enabled && $0.pluginCreate } ?? false
         let toolMode = AgentManager.shared.effectiveToolSelectionMode(for: agentId)
 
         // Memory is assembled here but returned separately (see ComposedContext.memorySection).
@@ -322,16 +324,32 @@ public struct SystemPromptComposer: Sendable {
         // We also fire during sandbox init-pending (autonomousEnabled but
         // sandbox tools haven't registered yet). Without that, the agent
         // had no signal that plugin creation would be available once the
-        // container finished provisioning — `pluginCreatorSkillSection`
-        // already gates on `canCreatePlugins`, so this stays correct.
-        let sandboxAvailable = executionMode.usesSandboxTools || autonomousEnabled
-        if !effectiveToolsOff,
-            sandboxAvailable,
-            ToolRegistry.shared.dynamicCatalogIsEmpty(),
-            !hasDynamicTools(toolMode: toolMode, preflight: preflight, agentId: agentId),
-            let pluginCreator = await PreflightCapabilitySearch.pluginCreatorSkillSection(for: agentId)
-        {
-            comp.append(.dynamic(id: "pluginCreator", label: "Plugin Creator", content: pluginCreator))
+        // container finished provisioning — `canCreatePlugins` already
+        // folds `autonomousEnabled && pluginCreate`, so this stays correct.
+        //
+        // All gate inputs are snapshotted here so the decision can't race
+        // a sibling test / plugin registration / skill toggle happening on
+        // the MainActor between our `await`s.
+        let pluginCreatorSkill = SkillManager.shared.skill(named: "Sandbox Plugin Creator")
+        let gateInputs = PluginCreatorGate.Inputs(
+            effectiveToolsOff: effectiveToolsOff,
+            sandboxAvailable: executionMode.usesSandboxTools || autonomousEnabled,
+            canCreatePlugins: canCreatePlugins,
+            dynamicCatalogIsEmpty: ToolRegistry.shared.dynamicCatalogIsEmpty(),
+            hasResolvedDynamicTools: hasDynamicTools(toolMode: toolMode, preflight: preflight, agentId: agentId),
+            skillEnabled: pluginCreatorSkill?.enabled ?? false
+        )
+        if PluginCreatorGate.shouldInject(gateInputs), let skill = pluginCreatorSkill {
+            comp.append(
+                .dynamic(
+                    id: "pluginCreator",
+                    label: "Plugin Creator",
+                    content: PluginCreatorGate.section(
+                        skillName: skill.name,
+                        instructions: skill.instructions
+                    )
+                )
+            )
             trace?.set("pluginCreatorInjected", "1")
         }
 
