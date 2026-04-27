@@ -52,6 +52,7 @@ final class NativeMarkdownView: NSView {
     // MARK: State
 
     private var coordinator = SelectableTextView.Coordinator()
+    private let fader = TrailingTextFader()
     private var lastText: String = ""
     private var lastBlocks: [SelectableTextBlock] = []
     private var lastWidth: CGFloat = 0
@@ -144,7 +145,8 @@ final class NativeMarkdownView: NSView {
                 textChanged: textChanged || themeChanged,
                 widthChanged: widthChanged,
                 width: width,
-                theme: theme
+                theme: theme,
+                isStreaming: isStreaming
             )
             lastText = text
             return
@@ -153,7 +155,15 @@ final class NativeMarkdownView: NSView {
         let blocks = parseBlocks(parseInput)
         let segs = groupBlocksIntoSegments(blocks)
         ThreadCache.shared.setMarkdown(blocks: blocks, segments: segs, for: parseInput)
-        applySegments(segs, cacheKey: cacheKey, textChanged: true, widthChanged: false, width: width, theme: theme)
+        applySegments(
+            segs,
+            cacheKey: cacheKey,
+            textChanged: true,
+            widthChanged: false,
+            width: width,
+            theme: theme,
+            isStreaming: isStreaming
+        )
         lastText = text
     }
 
@@ -163,7 +173,8 @@ final class NativeMarkdownView: NSView {
         _ blocks: [SelectableTextBlock],
         width: CGFloat,
         theme: any ThemeProtocol,
-        cacheKey: String?
+        cacheKey: String?,
+        isStreaming: Bool = false
     ) {
         let themeFingerprint = makeThemeFingerprint(theme)
         let textChanged = blocks != lastBlocks
@@ -195,6 +206,7 @@ final class NativeMarkdownView: NSView {
                 tv.textStorage?.setAttributedString(stv.buildAttributedString(coordinator: coordinator))
             }
             lastBlocks = blocks
+            updateFader(textView: tv, isStreaming: isStreaming, incrementalPath: incrementalPath)
             // incremental path sets a bounded tail rect internally. only the
             // full rebuild path needs to mark the whole view dirty
             if !incrementalPath {
@@ -301,7 +313,8 @@ final class NativeMarkdownView: NSView {
         textChanged: Bool,
         widthChanged: Bool,
         width: CGFloat,
-        theme: any ThemeProtocol
+        theme: any ThemeProtocol,
+        isStreaming: Bool
     ) {
         let isPureText = segments.allSatisfy {
             if case .textGroup = $0.kind { return true }; return false
@@ -319,10 +332,11 @@ final class NativeMarkdownView: NSView {
                 textChanged: textChanged,
                 widthChanged: widthChanged,
                 width: width,
-                theme: theme
+                theme: theme,
+                isStreaming: isStreaming
             )
         } else {
-            applyMixedSegments(segments, cacheKey: cacheKey, width: width, theme: theme)
+            applyMixedSegments(segments, cacheKey: cacheKey, width: width, theme: theme, isStreaming: isStreaming)
         }
     }
 
@@ -334,7 +348,8 @@ final class NativeMarkdownView: NSView {
         textChanged: Bool,
         widthChanged: Bool,
         width: CGFloat,
-        theme: any ThemeProtocol
+        theme: any ThemeProtocol,
+        isStreaming: Bool
     ) {
         removeSegmentViews()
 
@@ -357,6 +372,7 @@ final class NativeMarkdownView: NSView {
                 tv.textStorage?.setAttributedString(stv.buildAttributedString(coordinator: coordinator))
             }
             lastBlocks = blocks
+            updateFader(textView: tv, isStreaming: isStreaming, incrementalPath: incrementalPath)
             if !incrementalPath {
                 tv.needsDisplay = true
             }
@@ -367,13 +383,31 @@ final class NativeMarkdownView: NSView {
         onHeightChanged?()
     }
 
+    /// Drives the streaming fade. Called after every textStorage edit on the
+    /// pure-text path and the mixed-segment text path.
+    private func updateFader(textView: SelectableNSTextView, isStreaming: Bool, incrementalPath: Bool) {
+        if !isStreaming {
+            // Streaming ended (or never started for this update) — settle any in-flight fade.
+            fader.snap()
+            return
+        }
+        if incrementalPath {
+            // Real append: animate the diff.
+            fader.recordAppend(textView: textView)
+        } else {
+            // Full rebuild (first paint, width change, theme change)
+            fader.resync(textView: textView)
+        }
+    }
+
     // MARK: - Private: Mixed Segment Path
 
     private func applyMixedSegments(
         _ segments: [ContentSegment],
         cacheKey: String?,
         width: CGFloat,
-        theme: any ThemeProtocol
+        theme: any ThemeProtocol,
+        isStreaming: Bool
     ) {
         removeTextView()
         lastMixedSegments = segments
@@ -422,7 +456,7 @@ final class NativeMarkdownView: NSView {
                 mv.onHeightChanged = { [weak self] in
                     self?.onHeightChanged?()
                 }
-                mv.configureWithBlocks(blocks, width: width, theme: theme, cacheKey: cacheKey)
+                mv.configureWithBlocks(blocks, width: width, theme: theme, cacheKey: cacheKey, isStreaming: isStreaming)
                 segView = mv
 
             case .codeBlock(let code, let language):
@@ -578,6 +612,7 @@ final class NativeMarkdownView: NSView {
     // MARK: - Cleanup
 
     private func removeTextView() {
+        fader.reset()
         textView?.removeFromSuperview()
         textView = nil
         lastBlocks = []
