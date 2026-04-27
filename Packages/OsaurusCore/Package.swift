@@ -67,6 +67,11 @@ let package = Package(
         //     `Tests/Storage/SQLCipherVendorGuardTests.swift` asserts
         //     both the header guard and the cSettings flag are in
         //     place — CI fails if a SQLCipher bump strips the guard.
+        //
+        // ⚠️  `sqlite3ext.h` struct collision. A similar issue occurs
+        //     with `struct sqlite3_api_routines` in `sqlite3ext.h`.
+        //     We wrap its contents in `#ifndef OSAURUS_OMIT_SQLITE3EXT_HEADERS`
+        //     and define it below.
         .target(
             name: "OsaurusSQLCipher",
             path: "SQLCipher",
@@ -103,6 +108,12 @@ let package = Package(
                 // copy of sqlite3.h text is unaffected, so the C
                 // compilation of FTS5 keeps working.
                 .define("OSAURUS_OMIT_FTS5_HEADERS"),
+                // Hide the `sqlite3_api_routines` struct from
+                // `include/sqlite3ext.h` so the Swift Clang importer
+                // doesn't conflict with the system SQLite3 module.
+                // `sqlite3.c`'s inlined copy of sqlite3ext.h text is
+                // unaffected.
+                .define("OSAURUS_OMIT_SQLITE3EXT_HEADERS"),
                 // The SQLite amalgamation calls a few self-references
                 // before their forward declarations show up; modern
                 // Apple clang upgrades this from a warning to an

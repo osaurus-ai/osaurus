@@ -51,6 +51,19 @@ struct SQLCipherVendorGuardTests {
         return FileManager.default.fileExists(atPath: header.path) ? header : nil
     }
 
+    private static func sqlite3ExtHeaderURL() -> URL? {
+        let here = URL(fileURLWithPath: #filePath)
+        var cursor = here.deletingLastPathComponent()  // Storage/
+        cursor.deleteLastPathComponent()  // Tests/
+        let pkg = cursor.deletingLastPathComponent()  // OsaurusCore/
+        let header =
+            pkg
+            .appendingPathComponent("SQLCipher", isDirectory: true)
+            .appendingPathComponent("include", isDirectory: true)
+            .appendingPathComponent("sqlite3ext.h")
+        return FileManager.default.fileExists(atPath: header.path) ? header : nil
+    }
+
     @Test
     func sqlite3Header_containsFts5OmitGuard() throws {
         guard let url = Self.sqlite3HeaderURL() else {
@@ -91,6 +104,42 @@ struct SQLCipherVendorGuardTests {
             but not the matching close. The wrap is incomplete; FTS5
             typedefs will still leak. Re-read the README "Re-applying
             the FTS5 header guard" section.
+            """
+        )
+    }
+
+    @Test
+    func sqlite3ExtHeader_containsSqlite3ExtOmitGuard() throws {
+        guard let url = Self.sqlite3ExtHeaderURL() else {
+            Issue.record(
+                "Could not locate Packages/OsaurusCore/SQLCipher/include/sqlite3ext.h. If the path moved, update this test."
+            )
+            return
+        }
+        let contents = try String(contentsOf: url, encoding: .utf8)
+
+        let openGuard = "#ifndef OSAURUS_OMIT_SQLITE3EXT_HEADERS"
+        let closeGuard = "#endif /* OSAURUS_OMIT_SQLITE3EXT_HEADERS"
+
+        #expect(
+            contents.contains(openGuard),
+            """
+            sqlite3ext.h is missing the OSAURUS_OMIT_SQLITE3EXT_HEADERS open guard.
+
+            This means a SQLCipher amalgamation bump overwrote the
+            OSAURUS LOCAL MODIFICATION block. Without this guard,
+            `import OsaurusSQLCipher` collides with Apple's system
+            `SQLite3` module on `struct sqlite3_api_routines`.
+
+            Re-apply the guard by wrapping the contents of sqlite3ext.h.
+            """
+        )
+
+        #expect(
+            contents.contains(closeGuard),
+            """
+            sqlite3ext.h has the OSAURUS_OMIT_SQLITE3EXT_HEADERS open guard
+            but not the matching close. The wrap is incomplete.
             """
         )
     }
@@ -156,6 +205,17 @@ struct SQLCipherVendorGuardTests {
             failing with FTS5 typedef collision errors. Add it back:
 
                 .define("OSAURUS_OMIT_FTS5_HEADERS"),
+            """
+        )
+
+        #expect(
+            contents.contains("OSAURUS_OMIT_SQLITE3EXT_HEADERS"),
+            """
+            Package.swift no longer defines OSAURUS_OMIT_SQLITE3EXT_HEADERS
+            in the OsaurusSQLCipher target's cSettings. The header
+            guard is useless without this flag. Add it back:
+
+                .define("OSAURUS_OMIT_SQLITE3EXT_HEADERS"),
             """
         )
     }

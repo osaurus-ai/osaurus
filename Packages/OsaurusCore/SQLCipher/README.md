@@ -51,7 +51,7 @@ cp sqlite3ext.h  <osaurus>/Packages/OsaurusCore/SQLCipher/include/sqlite3ext.h
 Bump the version table above and the SQLCipher pin in the audit notes
 when you do.
 
-### Re-applying the FTS5 header guard
+### Re-applying the FTS5 and sqlite3ext header guards
 
 `include/sqlite3.h` has an OSAURUS LOCAL MODIFICATION that wraps the
 entire `_FTS5_H` block in `#ifndef OSAURUS_OMIT_FTS5_HEADERS`. Without
@@ -75,6 +75,27 @@ After copying a fresh `sqlite3.h` over the top, re-apply by:
 
    ```c
    #endif /* OSAURUS_OMIT_FTS5_HEADERS — END OSAURUS LOCAL MODIFICATION */
+   ```
+
+Similarly, `include/sqlite3ext.h` has an OSAURUS LOCAL MODIFICATION that
+wraps the entire file in `#ifndef OSAURUS_OMIT_SQLITE3EXT_HEADERS` to
+prevent `struct sqlite3_api_routines` from colliding with Apple's system
+`SQLite3` module.
+
+After copying a fresh `sqlite3ext.h` over the top, re-apply by:
+
+1. Find the `#ifndef SQLITE3EXT_H` line. Insert this block immediately
+   after `#define SQLITE3EXT_H`:
+
+   ```c
+   #ifndef OSAURUS_OMIT_SQLITE3EXT_HEADERS
+   ```
+
+2. Find the matching `#endif /* SQLITE3EXT_H */` line at the end. Insert
+   immediately before it:
+
+   ```c
+   #endif /* OSAURUS_OMIT_SQLITE3EXT_HEADERS — END OSAURUS LOCAL MODIFICATION */
    ```
 
 3. Run `swift build`. If anything red, see the explainer in

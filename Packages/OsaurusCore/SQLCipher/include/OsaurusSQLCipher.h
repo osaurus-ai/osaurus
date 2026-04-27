@@ -40,9 +40,13 @@
  *   warning: umbrella header for module 'OsaurusSQLCipher' does not
  *            include header 'sqlite3ext.h'
  *
- * that would otherwise fire on every Swift import of this module —
- * adding noise to PR CI annotations and pushing real warnings off
- * the visible window. */
+ * that would otherwise fire on every Swift import of this module.
+ * We define `OSAURUS_OMIT_SQLITE3EXT_HEADERS` to hide the
+ * `sqlite3_api_routines` struct from the Swift Clang importer
+ * so it doesn't conflict with Apple's system `SQLite3` module. */
+#ifndef OSAURUS_OMIT_SQLITE3EXT_HEADERS
+#define OSAURUS_OMIT_SQLITE3EXT_HEADERS 1
+#endif
 #include "sqlite3ext.h"
 
 #endif
