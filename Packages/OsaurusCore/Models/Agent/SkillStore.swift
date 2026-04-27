@@ -9,6 +9,9 @@
 import Foundation
 
 public enum SkillStore {
+    /// Optional directory override for tests that need isolated skill
+    /// persistence without touching the user's real catalog.
+    nonisolated(unsafe) static var overrideDirectory: URL?
 
     // MARK: - Public API
 
@@ -245,7 +248,10 @@ public enum SkillStore {
     // MARK: - Private
 
     private static func skillsDirectory() -> URL {
-        OsaurusPaths.skills()
+        if let overrideDirectory {
+            return overrideDirectory
+        }
+        return OsaurusPaths.skills()
     }
 
     private static func loadFromDirectory(_ directoryURL: URL) -> Skill? {

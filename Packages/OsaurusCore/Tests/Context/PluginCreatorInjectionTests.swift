@@ -56,14 +56,14 @@ struct PluginCreatorInjectionTests {
         AgentManager.shared.add(agent)
         defer { Task { _ = await AgentManager.shared.delete(id: agent.id) } }
 
-        await ensurePluginCreatorSkill(enabled: true)
-
-        let section = await PreflightCapabilitySearch.pluginCreatorSkillSection(
-            for: agent.id
-        )
-        let content = try #require(section)
-        #expect(content.contains("Sandbox Plugin Creator"))
-        #expect(content.contains("sandbox_plugin_register"))
+        try await withIsolatedPluginCreatorSkill(enabled: true) {
+            let section = await PreflightCapabilitySearch.pluginCreatorSkillSection(
+                for: agent.id
+            )
+            let content = try #require(section)
+            #expect(content.contains("Sandbox Plugin Creator"))
+            #expect(content.contains("sandbox_plugin_register"))
+        }
     }
 
     @Test
@@ -75,16 +75,12 @@ struct PluginCreatorInjectionTests {
         AgentManager.shared.add(agent)
         defer { Task { _ = await AgentManager.shared.delete(id: agent.id) } }
 
-        await ensurePluginCreatorSkill(enabled: false)
-
-        let section = await PreflightCapabilitySearch.pluginCreatorSkillSection(
-            for: agent.id
-        )
-        #expect(section == nil)
-
-        // restore the skill synchronously before returning so the persisted
-        // disabled state doesn't leak into later tests
-        await ensurePluginCreatorSkill(enabled: true)
+        await withIsolatedPluginCreatorSkill(enabled: false) {
+            let section = await PreflightCapabilitySearch.pluginCreatorSkillSection(
+                for: agent.id
+            )
+            #expect(section == nil)
+        }
     }
 
     // MARK: - SystemPromptComposer integration
@@ -98,35 +94,35 @@ struct PluginCreatorInjectionTests {
         AgentManager.shared.add(agent)
         defer { Task { _ = await AgentManager.shared.delete(id: agent.id) } }
 
-        await ensurePluginCreatorSkill(enabled: true)
+        await withIsolatedPluginCreatorSkill(enabled: true) {
+            // Hold the cross-suite lock around the whole catalog snapshot →
+            // composeChatContext → assertion → restore window. Without it,
+            // a sibling suite (e.g. `MCPHTTPHandlerTests`) can register a
+            // dynamic tool while `composeChatContext` is suspended, flipping
+            // `dynamicCatalogIsEmpty()` to false and skipping the
+            // "Plugin Creator" injection. `@Suite(.serialized)` only
+            // serializes within this suite.
+            await DynamicCatalogTestLock.shared.run {
+                // The test premise is a dynamic catalog that is empty. In an
+                // app-hosted xctest, `AppDelegate.applicationDidFinishLaunching`
+                // may have already called `PluginManager.shared.loadAll()` and
+                // registered plugin tools. Temporarily disable them (under a
+                // temp config dir so the user's real enablement isn't touched),
+                // then restore synchronously before returning so later tests
+                // see their plugin tools enabled again.
+                let (restore, cleanupTempDir) = await self.temporarilyEmptyDynamicCatalog()
 
-        // Hold the cross-suite lock around the whole catalog snapshot →
-        // composeChatContext → assertion → restore window. Without it,
-        // a sibling suite (e.g. `MCPHTTPHandlerTests`) can register a
-        // dynamic tool while `composeChatContext` is suspended, flipping
-        // `dynamicCatalogIsEmpty()` to false and skipping the
-        // "Plugin Creator" injection. `@Suite(.serialized)` only
-        // serializes within this suite.
-        await DynamicCatalogTestLock.shared.run {
-            // The test premise is a dynamic catalog that is empty. In an
-            // app-hosted xctest, `AppDelegate.applicationDidFinishLaunching`
-            // may have already called `PluginManager.shared.loadAll()` and
-            // registered plugin tools. Temporarily disable them (under a
-            // temp config dir so the user's real enablement isn't touched),
-            // then restore synchronously before returning so later tests
-            // see their plugin tools enabled again.
-            let (restore, cleanupTempDir) = await self.temporarilyEmptyDynamicCatalog()
+                let context = await SystemPromptComposer.composeChatContext(
+                    agentId: agent.id,
+                    executionMode: .sandbox
+                )
+                let labels = context.manifest.sections.map(\.label)
+                #expect(labels.contains("Plugin Creator"))
+                #expect(context.prompt.contains("Sandbox Plugin Creator"))
 
-            let context = await SystemPromptComposer.composeChatContext(
-                agentId: agent.id,
-                executionMode: .sandbox
-            )
-            let labels = context.manifest.sections.map(\.label)
-            #expect(labels.contains("Plugin Creator"))
-            #expect(context.prompt.contains("Sandbox Plugin Creator"))
-
-            await restore()
-            cleanupTempDir()
+                await restore()
+                cleanupTempDir()
+            }
         }
     }
 
@@ -163,6 +159,40 @@ struct PluginCreatorInjectionTests {
         }
         if skill.enabled == enabled { return }
         await SkillManager.shared.setEnabled(enabled, for: skill.id)
+    }
+
+    /// Run a test against an isolated skill catalog so toggling the built-in
+    /// plugin creator skill cannot leak into the user's real settings or
+    /// depend on app-hosted XCTest startup state.
+    private func withIsolatedPluginCreatorSkill<T: Sendable>(
+        enabled: Bool,
+        _ body: @MainActor @Sendable () async throws -> T
+    ) async rethrows -> T {
+        try await StoragePathsTestLock.shared.run {
+            let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(
+                "osaurus-plugin-creator-skills-\(UUID().uuidString)",
+                isDirectory: true
+            )
+            try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+
+            let previousOverride = SkillStore.overrideDirectory
+            SkillStore.overrideDirectory = tempDir
+            await SkillManager.shared.refresh()
+            await ensurePluginCreatorSkill(enabled: enabled)
+
+            do {
+                let value = try await body()
+                SkillStore.overrideDirectory = previousOverride
+                await SkillManager.shared.refresh()
+                try? FileManager.default.removeItem(at: tempDir)
+                return value
+            } catch {
+                SkillStore.overrideDirectory = previousOverride
+                await SkillManager.shared.refresh()
+                try? FileManager.default.removeItem(at: tempDir)
+                throw error
+            }
+        }
     }
 
     /// Snapshot the currently-enabled dynamic tools, disable them, and
