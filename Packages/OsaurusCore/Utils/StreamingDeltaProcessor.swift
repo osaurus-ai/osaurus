@@ -3,7 +3,7 @@
 //  osaurus
 //
 //  Streaming delta processing pipeline used by ChatView. Handles delta
-//  buffering, adaptive flush tuning, and throttled UI sync.
+//  buffering and per-frame UI sync.
 //
 //  Reasoning routing is owned by the engine layer:
 //    - Local MLX models: vmlx-swift-lm's `BatchEngine.generate` emits
@@ -39,8 +39,8 @@ final class StreamingDeltaProcessor {
     /// Adaptive flush tuning — tracked lengths avoid calling String.count on large buffers
     private var contentLength = 0
     private var thinkingLength = 0
-    private var flushIntervalMs: Double = 50
-    private var maxBufferSize: Int = 256
+    private var flushIntervalMs: Double = 16
+    private var maxBufferSize: Int = 64
     private var longestFlushMs: Double = 0
 
     /// Sync batching — flush parses tags and appends to turn,
@@ -72,7 +72,6 @@ final class StreamingDeltaProcessor {
 
         let now = Date()
         let timeSinceFlush = now.timeIntervalSince(lastFlushTime) * 1000
-        recomputeFlushTuning()
 
         if deltaBuffer.count >= maxBufferSize || timeSinceFlush >= flushIntervalMs {
             flush()
@@ -141,8 +140,8 @@ final class StreamingDeltaProcessor {
         deltaBuffer = ""
         contentLength = 0
         thinkingLength = 0
-        flushIntervalMs = 50
-        maxBufferSize = 256
+        flushIntervalMs = 16
+        maxBufferSize = 64
         longestFlushMs = 0
         hasPendingContent = false
         lastSyncTime = Date()
@@ -182,17 +181,7 @@ final class StreamingDeltaProcessor {
     }
 
     private func syncIfNeeded(now: Date) {
-        let totalChars = contentLength + thinkingLength
-        // First-tier bumped 100 → 150ms: at a typical remote-provider rate (~125 B/s),
-        // the perceptual difference is invisible but it halves WindowServer load driven
-        // by streaming height updates + scroll-to-bottom re-damages per sync.
-        let syncIntervalMs: Double =
-            switch totalChars {
-            case 0 ..< 2_000: 150
-            case 2_000 ..< 5_000: 200
-            case 5_000 ..< 10_000: 250
-            default: 300
-            }
+        let syncIntervalMs: Double = 16
 
         let timeSinceSync = now.timeIntervalSince(lastSyncTime) * 1000
         if (syncCount == 0 && hasPendingContent)
@@ -202,22 +191,4 @@ final class StreamingDeltaProcessor {
         }
     }
 
-    private func recomputeFlushTuning() {
-        let totalChars = contentLength + thinkingLength
-
-        switch totalChars {
-        case 0 ..< 2_000:
-            flushIntervalMs = 50; maxBufferSize = 256
-        case 2_000 ..< 8_000:
-            flushIntervalMs = 75; maxBufferSize = 512
-        case 8_000 ..< 20_000:
-            flushIntervalMs = 100; maxBufferSize = 768
-        default:
-            flushIntervalMs = 150; maxBufferSize = 1024
-        }
-
-        if longestFlushMs > 50 {
-            flushIntervalMs = min(200, flushIntervalMs * 1.5)
-        }
-    }
 }

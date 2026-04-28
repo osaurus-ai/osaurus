@@ -180,6 +180,14 @@ final class ChatTurn: ObservableObject, Identifiable {
     var generationTokensPerSecond: Double?
     /// Total tokens generated in this turn
     var generationTokenCount: Int?
+    /// `true` when vmlx's `GenerateCompletionInfo.unclosedReasoning` fired —
+    /// the model ended the stream still inside a `<think>` block (trapped
+    /// thinking). Reasoning-trained Qwen3.6-A3B / DeepSeek-V4 fine-tunes
+    /// hit this on validation-style prompts; the visible content channel
+    /// is typically empty while the answer is buried in `.reasoning`.
+    /// The chat UI uses this to surface a fallback banner suggesting the
+    /// user toggle "Disable Thinking" for the next turn.
+    var unclosedReasoning: Bool = false
 
     private static let maxArgPreviewLength = 500
 

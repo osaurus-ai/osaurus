@@ -757,6 +757,7 @@ final class NativeStatsView: NSView {
         ttft: TimeInterval?,
         tokensPerSecond: Double?,
         tokenCount: Int?,
+        unclosedReasoning: Bool = false,
         theme: any ThemeProtocol
     ) {
         var parts: [String] = []
@@ -772,6 +773,23 @@ final class NativeStatsView: NSView {
         }
         if let count = tokenCount {
             parts.append("\(count) tokens")
+        }
+        // Trailing diagnostic chip — vmlx tells us the model never emitted
+        // `</think>` (or the family's close tag) before EOS / max_tokens.
+        // Three observed scenarios all benefit from the same hint:
+        //   1. Reasoning-trained Qwen3.6-A3B / DSV4 fine-tunes loop on
+        //      validation prompts ("give me a 20-digit number") — answer
+        //      buried in reasoning; user should toggle the model's
+        //      "Disable Thinking" option for the next turn (verified live).
+        //   2. Gemma-4 / harmony-channel models capped early by
+        //      `max_tokens` — analysis channel didn't close; user should
+        //      raise the cap (verified live, gemma-4-e2b at 32 tok cap).
+        //   3. Any thinking model that emitted EOS while still in
+        //      reasoning — answer is in the pane above.
+        // Text intentionally does NOT name a specific toggle so the chip
+        // reads accurately for every model family.
+        if unclosedReasoning {
+            parts.append("⚠ thinking didn't close — answer may be in reasoning above")
         }
         label.stringValue = parts.joined(separator: " \u{2022} ")
         label.font = NSFont.monospacedDigitSystemFont(
@@ -961,11 +979,12 @@ final class NativeMessageCellView: NSTableCellView {
         case let .preflightCapabilities(items):
             configureAsPreflight(block: block, items: items, context: context, sameKind: sameKind)
 
-        case let .generationStats(ttft, tokensPerSecond, tokenCount):
+        case let .generationStats(ttft, tokensPerSecond, tokenCount, unclosedReasoning):
             configureAsStats(
                 ttft: ttft,
                 tokensPerSecond: tokensPerSecond,
                 tokenCount: tokenCount,
+                unclosedReasoning: unclosedReasoning,
                 context: context,
                 sameKind: sameKind
             )
@@ -1091,14 +1110,24 @@ final class NativeMessageCellView: NSTableCellView {
             targetBg = nil
             targetRadius = 0
         }
-        if targetBg != nil { self.wantsLayer = true }
-        if !cgColorsEqual(lastBubbleBackgroundCGColor, targetBg) {
-            self.layer?.backgroundColor = targetBg
-            lastBubbleBackgroundCGColor = targetBg
-        }
-        if lastBubbleCornerRadius != targetRadius {
-            self.layer?.cornerRadius = targetRadius
-            lastBubbleCornerRadius = targetRadius
+        // sppress implicit CABasicAnimation on layer property mutations. Without this,
+        // every backgroundColor / cornerRadius change kicks off a 0.25s animation that
+        // continues compositing across frames during streaming
+        let bgChanged = !cgColorsEqual(lastBubbleBackgroundCGColor, targetBg)
+        let radiusChanged = lastBubbleCornerRadius != targetRadius
+        if targetBg != nil || bgChanged || radiusChanged {
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            if targetBg != nil { self.wantsLayer = true }
+            if bgChanged {
+                self.layer?.backgroundColor = targetBg
+                lastBubbleBackgroundCGColor = targetBg
+            }
+            if radiusChanged {
+                self.layer?.cornerRadius = targetRadius
+                lastBubbleCornerRadius = targetRadius
+            }
+            CATransaction.commit()
         }
 
         // always report height: configure() can return early when text is unchanged (e.g. tool row
@@ -1532,6 +1561,7 @@ final class NativeMessageCellView: NSTableCellView {
         ttft: TimeInterval?,
         tokensPerSecond: Double?,
         tokenCount: Int?,
+        unclosedReasoning: Bool,
         context: CellRenderingContext,
         sameKind: Bool
     ) {
@@ -1553,6 +1583,7 @@ final class NativeMessageCellView: NSTableCellView {
             ttft: ttft,
             tokensPerSecond: tokensPerSecond,
             tokenCount: tokenCount,
+            unclosedReasoning: unclosedReasoning,
             theme: context.theme
         )
     }

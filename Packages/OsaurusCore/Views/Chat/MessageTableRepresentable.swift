@@ -359,7 +359,7 @@ extension MessageTableRepresentable {
         // MARK: Streaming Height Debounce
 
         private var streamingHeightWorkItem: DispatchWorkItem?
-        private let streamingHeightInterval: TimeInterval = 0.06
+        private let streamingHeightInterval: TimeInterval = 0.016
 
         // MARK: Minimap Tracking
 

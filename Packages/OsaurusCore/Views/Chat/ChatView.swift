@@ -1123,6 +1123,11 @@ final class ChatSession: ObservableObject {
                 } else if let stats = StreamingStatsHint.decode(delta) {
                     currentTurn.generationTokenCount = stats.tokenCount
                     currentTurn.generationTokensPerSecond = stats.tokensPerSecond
+                    // Vmlx tells us the model never closed `</think>` before
+                    // EOS / max_tokens. Persist on the turn so the bubble
+                    // renderer can surface a one-line banner suggesting
+                    // the user toggle Disable Thinking for this prompt class.
+                    currentTurn.unclosedReasoning = stats.unclosedReasoning
                 } else if let reasoning = StreamingReasoningHint.decode(delta) {
                     processor.receiveReasoning(reasoning)
                 } else if !delta.isEmpty {

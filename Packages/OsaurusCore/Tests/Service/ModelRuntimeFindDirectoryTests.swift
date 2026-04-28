@@ -107,6 +107,48 @@ struct ModelRuntimeFindDirectoryTests {
         try ModelRuntime.validateJANGTQSidecarIfRequired(at: dir, name: "Gemma-vanilla")
     }
 
+    /// Inverse mismatch (the live-repro from 2026-04-25): bundle ships the
+    /// JANGTQ sidecar but jang_config.json was stamped as `bf16`. vmlx's
+    /// factory then dispatches to the BASE DeepSeekV4 / MiniMax / etc. class,
+    /// hits `tq_norms` / `tq_packed` tensors in the safetensors, and the
+    /// parameter loader throws `Unhandled keys [...]`. The preflight catches
+    /// it before any shards load and tells the user how to fix it.
+    @Test("Mislabeled bundle (bf16 stamp + sidecar present) throws inverse-mismatch error")
+    func jangtq_mislabeledBundle_bf16WithSidecar_throws() throws {
+        let dir = try makeIsolatedDir()
+        try writeJangConfig(weightFormat: "bf16", at: dir)
+        try Data("dummy".utf8).write(to: dir.appendingPathComponent("jangtq_runtime.safetensors"))
+        #expect(throws: Error.self) {
+            try ModelRuntime.validateJANGTQSidecarIfRequired(at: dir, name: "DSV4-mislabeled")
+        }
+    }
+
+    /// Inverse mismatch with no `weight_format` field at all. Same failure
+    /// shape — bundle ships the sidecar so the safetensors carry TurboQuant
+    /// tensors, but no stamp tells vmlx's factory to dispatch JANGTQ.
+    @Test("Mislabeled bundle (absent weight_format + sidecar present) throws inverse-mismatch error")
+    func jangtq_mislabeledBundle_absentStampWithSidecar_throws() throws {
+        let dir = try makeIsolatedDir()
+        // jang_config exists but omits weight_format entirely.
+        let json = #"{"profile":"unknown"}"#
+        try Data(json.utf8).write(to: dir.appendingPathComponent("jang_config.json"))
+        try Data("dummy".utf8).write(to: dir.appendingPathComponent("jangtq_runtime.safetensors"))
+        #expect(throws: Error.self) {
+            try ModelRuntime.validateJANGTQSidecarIfRequired(at: dir, name: "Generic-mislabeled")
+        }
+    }
+
+    /// Genuine bf16 dense bundle: stamp says bf16 AND no sidecar. This is
+    /// the common case for non-quantized JANG bundles (DSV4-Flash-JANG_2L,
+    /// Mistral-Small-4-JANG_2L, etc.) — must pass through cleanly.
+    @Test("Genuine bf16 bundle (no sidecar) passes through")
+    func jangtq_bf16NoSidecar_passes() throws {
+        let dir = try makeIsolatedDir()
+        try writeJangConfig(weightFormat: "bf16", at: dir)
+        // No sidecar — this is a real dense bf16 bundle, must not throw.
+        try ModelRuntime.validateJANGTQSidecarIfRequired(at: dir, name: "DSV4-bf16-dense")
+    }
+
     // MARK: - Existing resolveLocalModelDirectory tests (below)
 
     @Test("Nonexistent path returns nil")

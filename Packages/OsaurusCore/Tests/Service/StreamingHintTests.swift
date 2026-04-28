@@ -59,6 +59,61 @@ struct StreamingHintTests {
         #expect(StreamingToolHint.decodeArgs(statsEncoded) == nil)
     }
 
+    // MARK: - StreamingStatsHint — unclosedReasoning flag
+
+    @Test func statsHint_encode_omitsFlagsWhenUnclosedFalse() {
+        // Default-false: encoded payload must NOT contain the trailing
+        // `;unclosed` field — keeps the wire compact and matches the legacy
+        // 2-field form so the bumped pin doesn't change wire bytes for
+        // healthy generations.
+        let encoded = StreamingStatsHint.encode(
+            tokenCount: 50, tokensPerSecond: 12.5)
+        #expect(!encoded.contains("unclosed"))
+    }
+
+    @Test func statsHint_encode_includesFlagWhenUnclosedTrue() {
+        let encoded = StreamingStatsHint.encode(
+            tokenCount: 1024, tokensPerSecond: 12.27, unclosedReasoning: true)
+        #expect(encoded.hasPrefix("\u{FFFE}stats:"))
+        #expect(encoded.hasSuffix(";unclosed"))
+    }
+
+    @Test func statsHint_decode_recoversUnclosedFlagWhenPresent() {
+        let encoded = StreamingStatsHint.encode(
+            tokenCount: 424, tokensPerSecond: 7.8, unclosedReasoning: true)
+        let decoded = StreamingStatsHint.decode(encoded)
+        #expect(decoded?.tokenCount == 424)
+        #expect(abs((decoded?.tokensPerSecond ?? 0) - 7.8) < 0.0001)
+        #expect(decoded?.unclosedReasoning == true)
+    }
+
+    @Test func statsHint_decode_defaultsUnclosedFalseOnLegacyTwoFieldPayload() {
+        // Forward-compat: a payload encoded by the legacy 2-field form
+        // (no flags suffix) must still decode cleanly with unclosed=false.
+        // This guards against pin-bump asymmetry where a streaming
+        // session straddles the upgrade and still works.
+        let legacy = "\u{FFFE}stats:128;99.4321"
+        let decoded = StreamingStatsHint.decode(legacy)
+        #expect(decoded?.tokenCount == 128)
+        #expect(decoded?.unclosedReasoning == false)
+    }
+
+    @Test func statsHint_decode_ignoresUnknownFlags() {
+        // Forward-compat for future flags — an unknown flag in the third
+        // field must not crash the decoder, and unclosed stays false.
+        let payload = "\u{FFFE}stats:10;5.0;futureflag,anotherflag"
+        let decoded = StreamingStatsHint.decode(payload)
+        #expect(decoded?.tokenCount == 10)
+        #expect(decoded?.unclosedReasoning == false)
+    }
+
+    @Test func statsHint_decode_recoversUnclosedFlagAlongsideUnknownFlags() {
+        // `unclosed` mixed with future flags in a comma list — still detected.
+        let payload = "\u{FFFE}stats:10;5.0;futureflag,unclosed"
+        let decoded = StreamingStatsHint.decode(payload)
+        #expect(decoded?.unclosedReasoning == true)
+    }
+
     // Issue #856 regression: the sentinel must NEVER appear in the
     // visible text of an assistant message. ChatView filters it out
     // before render. Here we lock in the contract that the decoder
