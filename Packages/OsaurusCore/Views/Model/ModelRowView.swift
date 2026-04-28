@@ -84,7 +84,7 @@ struct ModelRowView: View {
                 footer
             }
             .padding(14)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .frame(maxWidth: .infinity, minHeight: 180, alignment: .topLeading)
             .background(cardBackground)
             .contentShape(RoundedRectangle(cornerRadius: 12))
         }

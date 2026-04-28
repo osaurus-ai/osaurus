@@ -219,6 +219,19 @@ struct ModelDownloadView: View {
 
     // MARK: - Filter Popover
 
+    /// Spring used for grid mosaic animation when the visible model set
+    /// changes. Wrapping mutations in `withAnimation(gridSpring)` so that
+    /// ForEach insert/remove/move transitions actually fire — implicit
+    /// `.animation(_:value:)` on a LazyVGrid doesn't propagate to
+    /// structural diffs
+    private var gridSpring: Animation {
+        .spring(response: 0.42, dampingFraction: 0.82)
+    }
+
+    private func mutateFilter(_ change: () -> Void) {
+        withAnimation(gridSpring) { change() }
+    }
+
     private var filterPopoverView: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
@@ -228,7 +241,7 @@ struct ModelDownloadView: View {
                     Spacer()
                     if filterState.isActive {
                         Button {
-                            filterState.reset()
+                            mutateFilter { filterState.reset() }
                         } label: {
                             HStack(spacing: 4) {
                                 Image(systemName: "arrow.counterclockwise")
@@ -247,10 +260,14 @@ struct ModelDownloadView: View {
                     FilterSection(title: "Model Type") {
                         HStack(spacing: 8) {
                             FilterChip(label: "LLM", isSelected: filterState.typeFilter.isLLM) {
-                                filterState.typeFilter = filterState.typeFilter.isLLM ? .all : .llm
+                                mutateFilter {
+                                    filterState.typeFilter = filterState.typeFilter.isLLM ? .all : .llm
+                                }
                             }
                             FilterChip(label: "VLM", isSelected: filterState.typeFilter.isVLM) {
-                                filterState.typeFilter = filterState.typeFilter.isVLM ? .all : .vlm
+                                mutateFilter {
+                                    filterState.typeFilter = filterState.typeFilter.isVLM ? .all : .vlm
+                                }
                             }
                         }
                     }
@@ -259,7 +276,9 @@ struct ModelDownloadView: View {
                         FlowLayout(spacing: 8) {
                             ForEach(ModelManager.ModelFilterState.SizeCategory.allCases) { cat in
                                 FilterChip(label: cat.rawValue, isSelected: filterState.sizeCategory == cat) {
-                                    filterState.sizeCategory = filterState.sizeCategory == cat ? nil : cat
+                                    mutateFilter {
+                                        filterState.sizeCategory = filterState.sizeCategory == cat ? nil : cat
+                                    }
                                 }
                             }
                         }
@@ -269,7 +288,9 @@ struct ModelDownloadView: View {
                         HStack(spacing: 8) {
                             ForEach(ModelManager.ModelFilterState.ParamCategory.allCases) { cat in
                                 FilterChip(label: cat.rawValue, isSelected: filterState.paramCategory == cat) {
-                                    filterState.paramCategory = filterState.paramCategory == cat ? nil : cat
+                                    mutateFilter {
+                                        filterState.paramCategory = filterState.paramCategory == cat ? nil : cat
+                                    }
                                 }
                             }
                         }
@@ -285,8 +306,10 @@ struct ModelDownloadView: View {
                                     label: opt.displayName,
                                     isSelected: filterState.performance == opt
                                 ) {
-                                    filterState.performance =
-                                        filterState.performance == opt ? nil : opt
+                                    mutateFilter {
+                                        filterState.performance =
+                                            filterState.performance == opt ? nil : opt
+                                    }
                                 }
                             }
                         }
@@ -301,7 +324,9 @@ struct ModelDownloadView: View {
                             FlowLayout(spacing: 8) {
                                 ForEach(families, id: \.self) { fam in
                                     FilterChip(label: fam, isSelected: filterState.family == fam) {
-                                        filterState.family = filterState.family == fam ? nil : fam
+                                        mutateFilter {
+                                            filterState.family = filterState.family == fam ? nil : fam
+                                        }
                                     }
                                 }
                             }
@@ -385,7 +410,11 @@ struct ModelDownloadView: View {
         }
     }
 
-    /// Grid of ModelRowView cards.
+    /// Grid of ModelRowView cards. Surviving cells (same `id` before and
+    /// after a filter change) slide to their new grid position; cells
+    /// that drop out scale-fade away; new cells scale-fade in. The
+    /// position interpolation is driven by `withAnimation(gridSpring)` at
+    /// the chip mutation sites
     private func modelGrid(models: [MLXModel]) -> some View {
         LazyVGrid(columns: gridColumns, spacing: 12) {
             ForEach(models, id: \.id) { model in
@@ -397,8 +426,15 @@ struct ModelDownloadView: View {
                     onViewDetails: { modelToShowDetails = model },
                     onCancel: { modelManager.cancelDownload(model.id) }
                 )
+                .transition(
+                    .asymmetric(
+                        insertion: .scale(scale: 0.85).combined(with: .opacity),
+                        removal: .scale(scale: 0.85).combined(with: .opacity)
+                    )
+                )
             }
         }
+        .animation(gridSpring, value: searchText)
     }
 
     /// Main content area with scrollable model list
