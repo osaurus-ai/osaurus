@@ -853,7 +853,7 @@ struct WatcherEditorSheet: View {
                     } label: {
                         Text("Responsiveness", bundle: .module)
                     }
-                    .pickerStyle(.segmented)
+                    .pickerStyle(.menu)
                     .labelsHidden()
 
                     Text(responsiveness.displayDescription)
