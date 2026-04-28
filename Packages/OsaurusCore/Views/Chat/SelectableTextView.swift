@@ -89,6 +89,17 @@ struct SelectableTextView: NSViewRepresentable {
         textView.drawsBackground = false
         textView.backgroundColor = .clear
         textView.textContainerInset = .zero
+        // disable idle-time text features. NSTextView's defaults run these against
+        // textStorage on every edit which is useless overhead for read-only model output and
+        // measurably expensive at 60Hz streaming
+        textView.isContinuousSpellCheckingEnabled = false
+        textView.isGrammarCheckingEnabled = false
+        textView.isAutomaticSpellingCorrectionEnabled = false
+        textView.isAutomaticDashSubstitutionEnabled = false
+        textView.isAutomaticQuoteSubstitutionEnabled = false
+        textView.isAutomaticTextReplacementEnabled = false
+        textView.isAutomaticLinkDetectionEnabled = false
+        textView.isAutomaticDataDetectionEnabled = false
 
         // Don't allow scrolling - we size to fit content
         textView.isVerticallyResizable = false

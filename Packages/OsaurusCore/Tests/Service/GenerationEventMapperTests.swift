@@ -83,12 +83,34 @@ struct GenerationEventMapperTests {
         )
         let events: [Generation] = [.chunk("ok"), .info(info)]
         let out = try await collect(events: events)
-        guard case .completionInfo(let count, let tps) = out.last else {
+        guard case .completionInfo(let count, let tps, let unclosed) = out.last else {
             Issue.record("expected completionInfo at end, got \(String(describing: out.last))")
             return
         }
         #expect(count == 8)
         #expect(tps > 0)
+        // Default-constructed GenerateCompletionInfo carries unclosedReasoning=false;
+        // a healthy stream that emitted </think> properly should mirror that here.
+        #expect(unclosed == false)
+    }
+
+    @Test func info_propagates_unclosedReasoning_when_trapped() async throws {
+        let info = GenerateCompletionInfo(
+            promptTokenCount: 11,
+            generationTokenCount: 1024,
+            promptTime: 0.1,
+            generationTime: 90.0,
+            stopReason: .length,
+            unclosedReasoning: true
+        )
+        let events: [Generation] = [.reasoning("Self-Correction…"), .info(info)]
+        let out = try await collect(events: events)
+        guard case .completionInfo(_, _, let unclosed) = out.last else {
+            Issue.record("expected completionInfo at end, got \(String(describing: out.last))")
+            return
+        }
+        #expect(unclosed == true,
+            "vmlx flagged trapped-thinking; mapper must surface it on the runtime event.")
     }
 
     @Test func empty_chunks_are_ignored() async throws {

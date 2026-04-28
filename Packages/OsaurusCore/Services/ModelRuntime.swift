@@ -636,11 +636,12 @@ public actor ModelRuntime {
                         pendingTools.append(
                             ServiceToolInvocation(toolName: name, jsonArguments: argsJSON)
                         )
-                    case .completionInfo(let tokenCount, let tokensPerSecond):
+                    case .completionInfo(let tokenCount, let tokensPerSecond, let unclosedReasoning):
                         continuation.yield(
                             StreamingStatsHint.encode(
                                 tokenCount: tokenCount,
-                                tokensPerSecond: tokensPerSecond
+                                tokensPerSecond: tokensPerSecond,
+                                unclosedReasoning: unclosedReasoning
                             )
                         )
                     }
@@ -912,17 +913,35 @@ public actor ModelRuntime {
     }
 
     /// Preflight check for JANGTQ-routed models. Reads `jang_config.json`
-    /// and, if `weight_format == "mxtq"`, verifies the `jangtq_runtime.safetensors`
-    /// sidecar is present in the model directory. Throws a clear error on
-    /// mismatch so callers see a message instead of waiting for vmlx to
-    /// report the same problem later.
+    /// and validates the bundle's `weight_format` stamp against the presence
+    /// of the `jangtq_runtime.safetensors` sidecar. Throws a clear error
+    /// on either mismatch (forward or inverse) so callers see a message
+    /// instead of waiting for vmlx to report the same problem 60+ shards
+    /// later — or worse, hitting an unhandled-keys runtime crash.
     ///
-    /// As of `vmlx-swift-lm 9e647a6`, vmlx itself fails-fast with an equivalent
-    /// NSError at weight-load time, so this osaurus-side check is primarily a
-    /// speed optimization: we refuse before the 60+ safetensors shards start
-    /// loading, giving users an instant error instead of a multi-second wait.
-    /// It also defends against older vmlx pins where the same mismatch would
-    /// instead reach `TurboQuantSwitchLinear.fatalError` and abort the process.
+    /// Two failure modes detected:
+    ///
+    /// 1. **Forward mismatch**: `weight_format == "mxtq"` declared but the
+    ///    sidecar is absent. vmlx's `LLMModelFactory.dispatchDeepseekV4`
+    ///    routes to the JANGTQ class purely on the stamp, then
+    ///    `TurboQuantSwitchLinear.callAsFunction` `fatalError`s on the first
+    ///    forward pass when the runtime cache is empty. (As of
+    ///    `vmlx-swift-lm 9e647a6` vmlx fails-fast with an NSError at load
+    ///    time instead of aborting, but defense-in-depth costs nothing.)
+    ///
+    /// 2. **Inverse mismatch (mislabeled bundle)**: sidecar IS present but
+    ///    `weight_format != "mxtq"` (typically stamped `"bf16"` from a
+    ///    quantization pipeline that forgot to update the label after
+    ///    swapping in TurboQuant codebooks). vmlx's factory then dispatches
+    ///    to the BASE `DeepseekV4Model` / `MiniMaxModel` / etc. class, hits
+    ///    the `tq_norms` / `tq_packed` keys in the safetensors, and the
+    ///    parameter loader throws `Unhandled keys [...]`. Confirmed in the
+    ///    wild on early DSV4-Flash JANGTQ bundles (live-repro 2026-04-25).
+    ///    The vmlx integration doc explicitly notes this case via the
+    ///    `DSV4_FORCE_JANGTQ=1` env-var workaround. Throwing here gives the
+    ///    user a remediation step (patch `weight_format` to `"mxtq"` or
+    ///    re-download from a corrected source) before vmlx loads any shards.
+    ///
     /// Exposed at module scope for unit testing (same pattern as
     /// `resolveLocalModelDirectory`).
     static func validateJANGTQSidecarIfRequired(at directory: URL, name: String) throws {
@@ -936,25 +955,49 @@ public actor ModelRuntime {
             let weight_format: String?
         }
         guard let data = try? Data(contentsOf: jangConfigURL),
-            let probe = try? JSONDecoder().decode(JangConfigProbe.self, from: data),
-            probe.weight_format == "mxtq"
+            let probe = try? JSONDecoder().decode(JangConfigProbe.self, from: data)
         else {
             return
         }
 
         let sidecarURL = directory.appendingPathComponent("jangtq_runtime.safetensors")
-        guard !FileManager.default.fileExists(atPath: sidecarURL.path) else { return }
+        let sidecarPresent = FileManager.default.fileExists(atPath: sidecarURL.path)
+        let isMxtq = probe.weight_format == "mxtq"
 
-        throw NSError(
-            domain: "ModelRuntime",
-            code: 2,
-            userInfo: [
-                NSLocalizedDescriptionKey:
-                    "Model '\(name)' declares JANGTQ (weight_format: \"mxtq\") but is missing "
-                    + "required sidecar file 'jangtq_runtime.safetensors'. "
-                    + "Re-download the full model or obtain the sidecar from the original publisher."
-            ]
-        )
+        // Forward mismatch: declared JANGTQ, sidecar missing.
+        if isMxtq && !sidecarPresent {
+            throw NSError(
+                domain: "ModelRuntime",
+                code: 2,
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "Model '\(name)' declares JANGTQ (weight_format: \"mxtq\") but is missing "
+                        + "required sidecar file 'jangtq_runtime.safetensors'. "
+                        + "Re-download the full model or obtain the sidecar from the original publisher."
+                ]
+            )
+        }
+
+        // Inverse mismatch: sidecar present but stamp says non-JANGTQ. The
+        // safetensors carry `tq_norms` / `tq_packed` keys vmlx's base class
+        // can't decode → "Unhandled keys" runtime error. Catch it here.
+        if sidecarPresent && !isMxtq {
+            let actualStamp = probe.weight_format ?? "absent"
+            throw NSError(
+                domain: "ModelRuntime",
+                code: 3,
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "Model '\(name)' ships the JANGTQ runtime sidecar "
+                        + "('jangtq_runtime.safetensors') but its jang_config.json "
+                        + "declares weight_format: \"\(actualStamp)\". This is a mislabeled "
+                        + "bundle — the safetensors carry TurboQuant tensors (tq_norms / "
+                        + "tq_packed) that vmlx's base model class cannot decode. "
+                        + "Fix: set weight_format to \"mxtq\" in jang_config.json, "
+                        + "or re-download from a corrected source."
+                ]
+            )
+        }
     }
 
     /// Pure, testable sibling of `findLocalDirectory` that takes the root

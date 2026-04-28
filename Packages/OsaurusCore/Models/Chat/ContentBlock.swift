@@ -35,7 +35,17 @@ enum ContentBlockKind: Equatable {
     case sharedArtifact(artifact: SharedArtifact)
     case pendingToolCall(toolName: String, argPreview: String?, argSize: Int)
     case preflightCapabilities(items: [PreflightCapabilityItem])
-    case generationStats(ttft: TimeInterval?, tokensPerSecond: Double?, tokenCount: Int?)
+    /// Generation benchmarks footer for a completed assistant turn.
+    /// `unclosedReasoning` is true when vmlx's `GenerateCompletionInfo.unclosedReasoning`
+    /// fires — model ended the stream still inside a `<think>` block (trapped
+    /// thinking). Cell renderer surfaces a one-line "thinking didn't close"
+    /// warning beside the tok/s chip when set.
+    case generationStats(
+        ttft: TimeInterval?,
+        tokensPerSecond: Double?,
+        tokenCount: Int?,
+        unclosedReasoning: Bool
+    )
     case typingIndicator
     case groupSpacer
     case chart(spec: ChartSpec)
@@ -81,8 +91,12 @@ enum ContentBlockKind: Equatable {
         case let (.preflightCapabilities(lItems), .preflightCapabilities(rItems)):
             return lItems == rItems
 
-        case let (.generationStats(lTtft, lTps, lCount), .generationStats(rTtft, rTps, rCount)):
+        case let (
+            .generationStats(lTtft, lTps, lCount, lUnclosed),
+            .generationStats(rTtft, rTps, rCount, rUnclosed)
+        ):
             return lTtft == rTtft && lTps == rTps && lCount == rCount
+                && lUnclosed == rUnclosed
 
         case (.typingIndicator, .typingIndicator):
             return true
@@ -245,12 +259,18 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
         ttft: TimeInterval?,
         tokensPerSecond: Double?,
         tokenCount: Int?,
+        unclosedReasoning: Bool = false,
         position: BlockPosition
     ) -> ContentBlock {
         ContentBlock(
             id: "stats-\(turnId.uuidString)",
             turnId: turnId,
-            kind: .generationStats(ttft: ttft, tokensPerSecond: tokensPerSecond, tokenCount: tokenCount),
+            kind: .generationStats(
+                ttft: ttft,
+                tokensPerSecond: tokensPerSecond,
+                tokenCount: tokenCount,
+                unclosedReasoning: unclosedReasoning
+            ),
             position: position
         )
     }
@@ -469,6 +489,7 @@ extension ContentBlock {
                         ttft: turn.timeToFirstToken,
                         tokensPerSecond: turn.generationTokensPerSecond,
                         tokenCount: turn.generationTokenCount,
+                        unclosedReasoning: turn.unclosedReasoning,
                         position: .middle
                     )
                 )
