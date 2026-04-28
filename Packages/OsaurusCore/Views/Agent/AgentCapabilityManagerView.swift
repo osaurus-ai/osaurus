@@ -835,4 +835,3 @@ struct AgentCapabilityManagerView: View {
         }
     }
 }
-

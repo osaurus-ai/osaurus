@@ -395,7 +395,8 @@ struct ShareAgentSheet: View {
                 AgentSectionEmptyState(
                     icon: "tray",
                     title: "No invites issued yet",
-                    hint: "Generate one above to share this agent. Past invites appear here so you can revoke them anytime."
+                    hint:
+                        "Generate one above to share this agent. Past invites appear here so you can revoke them anytime."
                 )
             } else {
                 VStack(spacing: 4) {
@@ -538,7 +539,8 @@ struct ShareAgentSheet: View {
     private func revokeMessage(for record: IssuedInviteRecord) -> String {
         switch record.displayStatus {
         case .used:
-            return "The receiver who accepted this invite will lose access immediately. Their access key will be revoked."
+            return
+                "The receiver who accepted this invite will lose access immediately. Their access key will be revoked."
         case .active:
             return "The link will stop working. Anyone trying to use it will be turned away."
         case .expired:

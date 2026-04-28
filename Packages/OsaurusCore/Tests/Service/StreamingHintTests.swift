@@ -67,20 +67,28 @@ struct StreamingHintTests {
         // 2-field form so the bumped pin doesn't change wire bytes for
         // healthy generations.
         let encoded = StreamingStatsHint.encode(
-            tokenCount: 50, tokensPerSecond: 12.5)
+            tokenCount: 50,
+            tokensPerSecond: 12.5
+        )
         #expect(!encoded.contains("unclosed"))
     }
 
     @Test func statsHint_encode_includesFlagWhenUnclosedTrue() {
         let encoded = StreamingStatsHint.encode(
-            tokenCount: 1024, tokensPerSecond: 12.27, unclosedReasoning: true)
+            tokenCount: 1024,
+            tokensPerSecond: 12.27,
+            unclosedReasoning: true
+        )
         #expect(encoded.hasPrefix("\u{FFFE}stats:"))
         #expect(encoded.hasSuffix(";unclosed"))
     }
 
     @Test func statsHint_decode_recoversUnclosedFlagWhenPresent() {
         let encoded = StreamingStatsHint.encode(
-            tokenCount: 424, tokensPerSecond: 7.8, unclosedReasoning: true)
+            tokenCount: 424,
+            tokensPerSecond: 7.8,
+            unclosedReasoning: true
+        )
         let decoded = StreamingStatsHint.decode(encoded)
         #expect(decoded?.tokenCount == 424)
         #expect(abs((decoded?.tokensPerSecond ?? 0) - 7.8) < 0.0001)

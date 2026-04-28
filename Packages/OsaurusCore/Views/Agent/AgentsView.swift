@@ -17,6 +17,18 @@ private func formatModelName(_ model: String) -> String {
 // MARK: - Agents View
 
 struct AgentsView: View {
+    /// Shared spring used for grid ↔ detail navigation. Centralized so the
+    /// transition feels identical whether the user opens a local agent, a
+    /// remote agent, or a freshly-duplicated one.
+    fileprivate static let navTransition = Animation.spring(response: 0.35, dampingFraction: 0.85)
+
+    /// Two-column grid layout reused by the main agent grid and the
+    /// "Paired Remote Agents" section in the empty state.
+    fileprivate static let gridColumns: [GridItem] = [
+        GridItem(.flexible(minimum: 300), spacing: 20),
+        GridItem(.flexible(minimum: 300), spacing: 20),
+    ]
+
     @ObservedObject private var themeManager = ThemeManager.shared
     @ObservedObject private var agentManager = AgentManager.shared
     @ObservedObject private var remoteAgentManager = RemoteAgentManager.shared
@@ -46,30 +58,22 @@ struct AgentsView: View {
             }
 
             if let agent = selectedAgent {
+                // `.id(agent.id)` below makes SwiftUI tear down + recreate the
+                // detail view when the user switches agents, so all editable
+                // state reloads via onAppear without manual onChange wiring.
                 AgentDetailView(
                     agent: agent,
                     onBack: {
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                            selectedAgent = nil
-                        }
+                        withAnimation(Self.navTransition) { selectedAgent = nil }
                     },
                     onDelete: { p in
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                            selectedAgent = nil
-                        }
+                        withAnimation(Self.navTransition) { selectedAgent = nil }
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                             deleteAgent(p)
                         }
                     },
-                    onSwitchAgent: { newAgent in
-                        // Pinning the detail view by `agent.id` (.id below) makes
-                        // SwiftUI tear down + recreate it on swap, so all editable
-                        // state reloads via onAppear without manual onChange wiring.
-                        selectedAgent = newAgent
-                    },
-                    showSuccess: { msg in
-                        showSuccess(msg)
-                    }
+                    onSwitchAgent: { newAgent in selectedAgent = newAgent },
+                    showSuccess: showSuccess
                 )
                 .id(agent.id)
                 .transition(.opacity.combined(with: .move(edge: .trailing)))
@@ -79,19 +83,13 @@ struct AgentsView: View {
                 RemoteAgentDetailView(
                     remoteId: remoteId,
                     onBack: {
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                            selectedRemoteAgentId = nil
-                        }
+                        withAnimation(Self.navTransition) { selectedRemoteAgentId = nil }
                     },
                     onRemoved: {
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                            selectedRemoteAgentId = nil
-                        }
+                        withAnimation(Self.navTransition) { selectedRemoteAgentId = nil }
                         showSuccess("Removed remote agent")
                     },
-                    onChat: { _ in
-                        ChatWindowManager.shared.toggleLastFocused()
-                    }
+                    onChat: { _ in ChatWindowManager.shared.toggleLastFocused() }
                 )
                 .id(remoteId)
                 .transition(.opacity.combined(with: .move(edge: .trailing)))
@@ -164,7 +162,11 @@ struct AgentsView: View {
                             subtitle: L("Custom AI assistants with unique prompts, tools, and styles."),
                             examples: [
                                 .init(icon: "calendar", title: "Daily Planner", description: "Manage your schedule"),
-                                .init(icon: "message.fill", title: "Message Assistant", description: "Draft and send texts"),
+                                .init(
+                                    icon: "message.fill",
+                                    title: "Message Assistant",
+                                    description: "Draft and send texts"
+                                ),
                                 .init(icon: "map.fill", title: "Local Guide", description: "Find places nearby"),
                             ],
                             primaryAction: .init(title: "Create Agent", icon: "plus", handler: { isCreating = true }),
@@ -181,13 +183,7 @@ struct AgentsView: View {
                 .opacity(hasAppeared ? 1 : 0)
             } else {
                 ScrollView {
-                    LazyVGrid(
-                        columns: [
-                            GridItem(.flexible(minimum: 300), spacing: 20),
-                            GridItem(.flexible(minimum: 300), spacing: 20),
-                        ],
-                        spacing: 20
-                    ) {
+                    LazyVGrid(columns: Self.gridColumns, spacing: 20) {
                         ForEach(Array(customAgents.enumerated()), id: \.element.id) { index, agent in
                             AgentCard(
                                 agent: agent,
@@ -195,24 +191,18 @@ struct AgentsView: View {
                                 animationDelay: Double(index) * 0.05,
                                 hasAppeared: hasAppeared,
                                 onSelect: {
-                                    withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                                        selectedAgent = agent
-                                    }
+                                    withAnimation(Self.navTransition) { selectedAgent = agent }
                                 },
-                                onDuplicate: {
-                                    duplicateAgent(agent)
-                                },
-                                onDelete: {
-                                    deleteAgent(agent)
-                                }
+                                onDuplicate: { duplicateAgent(agent) },
+                                onDelete: { deleteAgent(agent) }
                             )
                         }
 
-                        // Remote (paired) agents render after local ones with their
-                        // own "Remote" treatment. Tap → RemoteAgentDetailView via
-                        // `selectedRemoteAgentId`. Underlying chat plumbing lives in
-                        // RemoteProviderManager (created at pair time), so the chat
-                        // window already lists this agent in its picker.
+                        // Remote (paired) agents follow local ones with their own
+                        // "Remote" treatment. Tap → RemoteAgentDetailView; the
+                        // underlying chat plumbing lives in RemoteProviderManager
+                        // (created at pair time) so the chat window already lists
+                        // this agent in its picker.
                         ForEach(Array(remoteAgents.enumerated()), id: \.element.id) { index, remote in
                             remoteCardCell(remote: remote, indexInGrid: customAgents.count + index)
                         }
@@ -238,13 +228,7 @@ struct AgentsView: View {
                 Spacer()
             }
 
-            LazyVGrid(
-                columns: [
-                    GridItem(.flexible(minimum: 300), spacing: 20),
-                    GridItem(.flexible(minimum: 300), spacing: 20),
-                ],
-                spacing: 20
-            ) {
+            LazyVGrid(columns: Self.gridColumns, spacing: 20) {
                 ForEach(Array(remoteAgents.enumerated()), id: \.element.id) { index, remote in
                     remoteCardCell(remote: remote, indexInGrid: index)
                 }
@@ -260,13 +244,9 @@ struct AgentsView: View {
             animationDelay: Double(indexInGrid) * 0.05,
             hasAppeared: hasAppeared,
             onSelect: {
-                withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                    selectedRemoteAgentId = remote.id
-                }
+                withAnimation(Self.navTransition) { selectedRemoteAgentId = remote.id }
             },
-            onChat: {
-                ChatWindowManager.shared.toggleLastFocused()
-            },
+            onChat: { ChatWindowManager.shared.toggleLastFocused() },
             onRemove: {
                 _ = remoteAgentManager.remove(id: remote.id)
                 showSuccess("Removed remote agent")
@@ -351,7 +331,7 @@ struct AgentsView: View {
         showSuccess("Duplicated as \"\(newName)\"")
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+            withAnimation(Self.navTransition) {
                 selectedAgent = duplicated
             }
         }
@@ -768,7 +748,6 @@ struct AgentDetailView: View {
     private var scheduleManager = ScheduleManager.shared
     private var watcherManager = WatcherManager.shared
     @ObservedObject private var relayManager = RelayTunnelManager.shared
-    @EnvironmentObject private var server: ServerController
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
@@ -841,13 +820,18 @@ struct AgentDetailView: View {
     @State private var isInitialLoadComplete = false
     /// Captured by `GeometryReader`s wrapped around the tab strip so the
     /// "scrollable" affordance (right-edge fade + chevron) only renders when
-    /// the tab content actually overflows the viewport.
+    /// the tab content actually overflows the viewport AND the user hasn't
+    /// already scrolled to the trailing edge.
     @State private var tabBarContentWidth: CGFloat = 0
     @State private var tabBarViewportWidth: CGFloat = 0
+    @State private var tabBarScrollOffset: CGFloat = 0
     private var tabsOverflowRight: Bool {
-        // 1pt fudge so equal widths don't trigger phantom indicators on
-        // pixel-aligned strips.
-        tabBarContentWidth > tabBarViewportWidth + 1
+        // 1pt fudge so pixel-aligned end-of-scroll positions don't leave a
+        // phantom indicator on screen.
+        tabBarContentWidth > tabBarViewportWidth + tabBarScrollOffset + 1
+    }
+    private var tabsOverflowLeft: Bool {
+        tabBarScrollOffset > 1
     }
 
     private var currentAgent: Agent {
@@ -1007,8 +991,8 @@ struct AgentDetailView: View {
             }
             .buttonStyle(PlainButtonStyle())
 
-            // Vertical separator between back and identity so the layout reads clearly
-            // even when the agent name is long.
+            // Vertical hairline so the back button reads as distinct from the
+            // identity block even when the agent name is long.
             Rectangle()
                 .fill(theme.primaryBorder)
                 .frame(width: 1, height: 16)
@@ -1030,29 +1014,18 @@ struct AgentDetailView: View {
             }
 
             HStack(spacing: 6) {
-                Button {
-                    showingShareSheet = true
-                } label: {
-                    Image(systemName: "square.and.arrow.up")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(theme.accentColor)
-                        .frame(width: 28, height: 28)
-                        .background(Circle().fill(theme.accentColor.opacity(0.12)))
-                }
-                .buttonStyle(PlainButtonStyle())
-                .help(Text("Share Agent", bundle: .module))
-
-                Button {
-                    showDeleteConfirm = true
-                } label: {
-                    Image(systemName: "trash")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(theme.errorColor)
-                        .frame(width: 28, height: 28)
-                        .background(Circle().fill(theme.errorColor.opacity(0.1)))
-                }
-                .buttonStyle(PlainButtonStyle())
-                .help(Text("Delete", bundle: .module))
+                headerActionButton(
+                    icon: "square.and.arrow.up",
+                    tint: theme.accentColor,
+                    help: "Share Agent",
+                    action: { showingShareSheet = true }
+                )
+                headerActionButton(
+                    icon: "trash",
+                    tint: theme.errorColor,
+                    help: "Delete",
+                    action: { showDeleteConfirm = true }
+                )
             }
         }
         .padding(.horizontal, 24)
@@ -1070,6 +1043,26 @@ struct AgentDetailView: View {
             ShareAgentSheet(agent: currentAgent)
                 .environment(\.theme, themeManager.currentTheme)
         }
+    }
+
+    /// 28x28 circular icon button used by the detail header for Share / Delete.
+    /// Background is a 10–12% tint of the foreground color so destructive vs.
+    /// accent intent reads at a glance without shouting.
+    private func headerActionButton(
+        icon: String,
+        tint: Color,
+        help: LocalizedStringKey,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(tint)
+                .frame(width: 28, height: 28)
+                .background(Circle().fill(tint.opacity(0.12)))
+        }
+        .buttonStyle(PlainButtonStyle())
+        .help(Text(help, bundle: .module))
     }
 
     /// Compact tappable identity block (avatar + name + optional description) inside
@@ -1295,24 +1288,26 @@ struct AgentDetailView: View {
             )
             .onPreferenceChange(TabBarContentWidthKey.self) { tabBarContentWidth = $0 }
             .onPreferenceChange(TabBarViewportWidthKey.self) { tabBarViewportWidth = $0 }
-            // Right-edge fade — `mask` runs before any overlay, so the chevron
-            // sits ON TOP of the fade rather than being faded itself.
-            .mask(
-                LinearGradient(
-                    stops: tabsOverflowRight
-                        ? [
-                            .init(color: .black, location: 0.0),
-                            .init(color: .black, location: 0.88),
-                            .init(color: .clear, location: 1.0),
-                        ]
-                        : [.init(color: .black, location: 0.0), .init(color: .black, location: 1.0)],
-                    startPoint: .leading,
-                    endPoint: .trailing
-                )
-            )
-            .overlay(alignment: .trailing) {
-                if tabsOverflowRight { scrollMoreChevron }
+            // `onScrollGeometryChange` is the canonical macOS 15+ way to
+            // observe scroll offset; the older GeometryReader-in-named-
+            // coordinate-space pattern is flaky on horizontal AppKit-backed
+            // scroll views and was leaving the trailing indicator stuck on.
+            .onScrollGeometryChange(for: CGFloat.self) { geometry in
+                geometry.contentOffset.x
+            } action: { _, newOffset in
+                tabBarScrollOffset = max(0, newOffset)
             }
+            // Edge fades on whichever side has off-screen content. `mask`
+            // runs before any overlay, so the chevrons sit ON TOP of the
+            // fades rather than being faded themselves.
+            .mask(tabBarFadeMask)
+            .overlay(alignment: .leading) {
+                if tabsOverflowLeft { scrollMoreChevron(direction: .leading) }
+            }
+            .overlay(alignment: .trailing) {
+                if tabsOverflowRight { scrollMoreChevron(direction: .trailing) }
+            }
+            .animation(.easeOut(duration: 0.2), value: tabsOverflowLeft)
             .animation(.easeOut(duration: 0.2), value: tabsOverflowRight)
             // Auto-scroll the active tab into view when it changes (tap or programmatic).
             .onChange(of: selectedTab) { _, newValue in
@@ -1323,11 +1318,29 @@ struct AgentDetailView: View {
         }
     }
 
-    /// Floating "more →" affordance pinned to the trailing edge of the tab
-    /// strip. Sits above the fade mask so it stays fully opaque, and is
-    /// `allowsHitTesting(false)` so it never swallows tab taps.
-    private var scrollMoreChevron: some View {
-        Image(systemName: "chevron.right")
+    /// Linear gradient used as the tab strip's mask. Fades whichever side
+    /// has content scrolled off; both sides can fade at once if the user is
+    /// in the middle of an overflowed strip.
+    private var tabBarFadeMask: LinearGradient {
+        let fadeStart: CGFloat = 0.06  // ~6% of the strip on the leading edge
+        let fadeEnd: CGFloat = 0.94  // ~6% on the trailing edge
+        var stops: [Gradient.Stop] = []
+        stops.append(.init(color: tabsOverflowLeft ? .clear : .black, location: 0.0))
+        if tabsOverflowLeft {
+            stops.append(.init(color: .black, location: fadeStart))
+        }
+        if tabsOverflowRight {
+            stops.append(.init(color: .black, location: fadeEnd))
+        }
+        stops.append(.init(color: tabsOverflowRight ? .clear : .black, location: 1.0))
+        return LinearGradient(stops: stops, startPoint: .leading, endPoint: .trailing)
+    }
+
+    /// Floating "more →"/"← more" affordance pinned to whichever edge has
+    /// off-screen content. Sits above the fade mask so it stays fully opaque,
+    /// and is `allowsHitTesting(false)` so it never swallows tab taps.
+    private func scrollMoreChevron(direction: HorizontalEdge) -> some View {
+        Image(systemName: direction == .leading ? "chevron.left" : "chevron.right")
             .font(.system(size: 10, weight: .bold))
             .foregroundColor(theme.accentColor)
             .frame(width: 20, height: 20)
@@ -1336,8 +1349,13 @@ struct AgentDetailView: View {
                     .fill(theme.primaryBackground)
                     .overlay(Circle().strokeBorder(theme.accentColor.opacity(0.25), lineWidth: 1))
             )
-            .shadow(color: Color.black.opacity(0.08), radius: 4, x: -1, y: 1)
-            .padding(.trailing, 2)
+            .shadow(
+                color: Color.black.opacity(0.08),
+                radius: 4,
+                x: direction == .leading ? 1 : -1,
+                y: 1
+            )
+            .padding(direction == .leading ? .leading : .trailing, 2)
             .allowsHitTesting(false)
             .transition(.opacity.combined(with: .scale(scale: 0.7)))
     }
@@ -2080,13 +2098,15 @@ struct AgentDetailView: View {
                     AgentSectionEmptyState(
                         icon: "shippingbox",
                         title: "Sandbox unavailable",
-                        hint: "Container-based execution requires macOS 26 or later. Native plugins continue to work normally on this device."
+                        hint:
+                            "Container-based execution requires macOS 26 or later. Native plugins continue to work normally on this device."
                     )
                 } else if !sandboxRunning {
                     AgentSectionEmptyState(
                         icon: "shippingbox",
                         title: "Sandbox not running",
-                        hint: "Start the sandbox container from the Sandbox status bar to enable autonomous execution and plugin creation."
+                        hint:
+                            "Start the sandbox container from the Sandbox status bar to enable autonomous execution and plugin creation."
                     )
                 } else {
                     HStack {
@@ -2690,7 +2710,8 @@ struct AgentDetailView: View {
                     AgentSectionEmptyState(
                         icon: "clock.badge.questionmark",
                         title: "No schedules yet",
-                        hint: "Schedule this agent to run on a recurring cadence — perfect for daily briefings or automated check-ins.",
+                        hint:
+                            "Schedule this agent to run on a recurring cadence — perfect for daily briefings or automated check-ins.",
                         actionLabel: "Create Schedule",
                         action: { showCreateSchedule = true }
                     )
@@ -2887,7 +2908,8 @@ struct AgentDetailView: View {
                         AgentSectionEmptyState(
                             icon: "bubble.left.and.bubble.right.fill",
                             title: "No chats yet",
-                            hint: "Start a conversation to build this agent's memory — history, pinned facts, and episode summaries all flow from here.",
+                            hint:
+                                "Start a conversation to build this agent's memory — history, pinned facts, and episode summaries all flow from here.",
                             actionLabel: "New Chat",
                             action: { ChatWindowManager.shared.createWindow(agentId: agent.id) }
                         )
@@ -2945,7 +2967,8 @@ struct AgentDetailView: View {
                 AgentSectionEmptyState(
                     icon: "pin.slash",
                     title: "No pinned facts yet",
-                    hint: "Facts are promoted from session distillations once they accumulate enough salience. Keep chatting and they'll show up here."
+                    hint:
+                        "Facts are promoted from session distillations once they accumulate enough salience. Keep chatting and they'll show up here."
                 )
             } else {
                 PinnedFactsPanel(
@@ -2968,7 +2991,8 @@ struct AgentDetailView: View {
                 AgentSectionEmptyState(
                     icon: "doc.text.magnifyingglass",
                     title: "No episodes yet",
-                    hint: "After each chat, the agent distills the conversation into a short summary. Episodes accumulate here so the agent can recall past sessions."
+                    hint:
+                        "After each chat, the agent distills the conversation into a short summary. Episodes accumulate here so the agent can recall past sessions."
                 )
             } else {
                 VStack(alignment: .leading, spacing: 0) {
@@ -3292,6 +3316,12 @@ private struct AgentEditorSheet: View {
 
     @State private var selectedTemplate: AgentStarterTemplate = .blank
     @State private var name: String = ""
+    /// Flips to `true` the first time the user types into the name field.
+    /// Until then, switching presets is allowed to overwrite the name with
+    /// the new preset's default — so toggling between Writer/Coder/etc. keeps
+    /// the suggested name in sync. Once the user types their own value, the
+    /// name is theirs and presets stop touching it.
+    @State private var nameUserEdited: Bool = false
     @State private var systemPrompt: String = ""
     @State private var selectedModel: String?
     @State private var pickerItems: [ModelPickerItem] = []
@@ -3473,6 +3503,15 @@ private struct AgentEditorSheet: View {
                 icon: "textformat"
             )
             .focused($nameFocused)
+            // Distinguish "user typed something the preset wouldn't have"
+            // from "preset just wrote its defaultName here". Only the former
+            // locks the name. Equality covers the harmless case where the
+            // user types the exact preset name themselves.
+            .onChange(of: name) { _, newValue in
+                if newValue != selectedTemplate.defaultName {
+                    nameUserEdited = true
+                }
+            }
         }
     }
 
@@ -3621,7 +3660,8 @@ private struct AgentEditorSheet: View {
     private var capabilitiesSubtitle: String {
         let toolCount = draftToolNames.count
         let skillCount = draftSkillNames.count
-        let modeBlurb = draftMode == .auto
+        let modeBlurb =
+            draftMode == .auto
             ? L("Pre-flight picks the most relevant per turn.")
             : L("All enabled items are sent every turn.")
         return "\(toolCount) tools and \(skillCount) skills enabled · \(modeBlurb)"
@@ -3790,14 +3830,15 @@ private struct AgentEditorSheet: View {
 
     // MARK: Actions
 
-    /// Apply a starter template's prompt to the form. Only fills the name
-    /// when the user hasn't typed anything yet, so a typed name is never
-    /// clobbered by toggling between templates. Re-selecting `.blank`
-    /// clears the prompt but never the name.
+    /// Apply a starter template's prompt to the form. The name follows the
+    /// preset until the user types their own value (tracked by
+    /// `nameUserEdited`); after that, presets stop touching the name. Picking
+    /// `.blank` resets the name back to empty, which is the right "blank
+    /// slate" behavior when the user is just sampling presets.
     private func applyTemplate(_ template: AgentStarterTemplate) {
         selectedTemplate = template
         systemPrompt = template.systemPrompt
-        if name.isEmpty, !template.defaultName.isEmpty {
+        if !nameUserEdited {
             name = template.defaultName
         }
     }
