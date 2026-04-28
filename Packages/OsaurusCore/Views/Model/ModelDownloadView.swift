@@ -206,7 +206,7 @@ struct ModelDownloadView: View {
                 counts: [
                     .all: filteredModels.count,
                     .suggested: filteredSuggestedModels.count,
-                    .downloaded: completedDownloadedModelsCount,
+                    .downloaded: filteredDownloadedModels.count,
                 ],
                 badges: modelManager.activeDownloadsCount > 0
                     ? [.downloaded: modelManager.activeDownloadsCount]
