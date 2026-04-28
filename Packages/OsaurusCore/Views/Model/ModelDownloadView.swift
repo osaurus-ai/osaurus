@@ -52,6 +52,9 @@ struct ModelDownloadView: View {
     @State private var filterState = ModelManager.ModelFilterState()
     @State private var showFilterPopover = false
 
+    /// Import-from-Hugging-Face sheet state
+    @State private var showImportSheet = false
+
     // MARK: - Deep Link Support
 
     /// Optional model ID for deep linking (e.g., from URL schemes)
@@ -130,6 +133,16 @@ struct ModelDownloadView: View {
             ModelDetailView(model: model)
                 .environment(\.theme, themeManager.currentTheme)
         }
+        .sheet(isPresented: $showImportSheet) {
+            HuggingFaceImportSheet(
+                onImported: { repoId in
+                    showImportSheet = false
+                    selectedTab = .all
+                    searchText = repoId
+                }
+            )
+            .environment(\.theme, themeManager.currentTheme)
+        }
     }
 
     // MARK: - Header View
@@ -170,6 +183,27 @@ struct ModelDownloadView: View {
                     .disabled(modelManager.isLoadingSuggested)
                     .help(L("Refresh OsaurusAI models from Hugging Face"))
                 }
+
+                // Import from Hugging Face
+                Button {
+                    showImportSheet = true
+                } label: {
+                    HStack(spacing: 6) {
+                        Text("🤗")
+                            .font(.system(size: 13))
+                        Text("Import", bundle: .module)
+                            .font(.system(size: 13, weight: .medium))
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 7)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(theme.tertiaryBackground.opacity(0.5))
+                    )
+                    .foregroundColor(theme.secondaryText)
+                }
+                .buttonStyle(PlainButtonStyle())
+                .help(L("Import an MLX model from Hugging Face"))
 
                 // Filter button
                 Button {
@@ -371,9 +405,10 @@ struct ModelDownloadView: View {
         }
 
         var body: some View {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 10) {
                 Text(title)
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: 10, weight: .bold))
+                    .tracking(0.6)
                     .foregroundColor(theme.tertiaryText)
                     .textCase(.uppercase)
                 content
@@ -386,24 +421,47 @@ struct ModelDownloadView: View {
         let isSelected: Bool
         let action: () -> Void
         @Environment(\.theme) private var theme
+        @State private var isHovering = false
 
         var body: some View {
             Button(action: action) {
-                Text(label)
-                    .font(.system(size: 12, weight: .medium))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(
-                        RoundedRectangle(cornerRadius: 16)
-                            .fill(isSelected ? theme.accentColor : theme.tertiaryBackground.opacity(0.4))
-                    )
-                    .foregroundColor(isSelected ? .white : theme.secondaryText)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 16)
-                            .stroke(theme.primaryBorder.opacity(isSelected ? 0 : 0.1), lineWidth: 1)
-                    )
+                HStack(spacing: 4) {
+                    if isSelected {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 9, weight: .bold))
+                    }
+                    Text(label)
+                        .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(
+                    RoundedRectangle(cornerRadius: 16)
+                        .fill(
+                            isSelected
+                                ? theme.accentColor.opacity(0.15)
+                                : (isHovering
+                                    ? theme.tertiaryBackground.opacity(0.7)
+                                    : theme.tertiaryBackground.opacity(0.4))
+                        )
+                )
+                .foregroundColor(isSelected ? theme.accentColor : theme.secondaryText)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16)
+                        .stroke(
+                            isSelected
+                                ? theme.accentColor.opacity(0.45)
+                                : theme.primaryBorder.opacity(0.1),
+                            lineWidth: 1
+                        )
+                )
             }
             .buttonStyle(.plain)
+            .onHover { hovering in
+                withAnimation(.easeOut(duration: 0.12)) {
+                    isHovering = hovering
+                }
+            }
         }
     }
 
@@ -1053,6 +1111,205 @@ private struct ResourceGauge: View {
             }
         }
         .frame(maxWidth: .infinity)
+    }
+}
+
+// MARK: - Hugging Face Import Sheet
+
+/// Modal that lets users paste a Hugging Face URL or repo id and surface
+/// a friendly error when the repo isn't MLX-compatible. On success, the
+/// caller routes the resolved repo id back into the search field, which
+/// triggers the existing `fetchRemoteMLXModels` resolution path
+private struct HuggingFaceImportSheet: View {
+    @Environment(\.theme) private var theme
+    @Environment(\.dismiss) private var dismiss
+
+    let onImported: (String) -> Void
+
+    @State private var inputText: String = ""
+    @State private var errorMessage: String? = nil
+    @State private var isResolving = false
+
+    private var trimmedInput: String {
+        inputText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var canSubmit: Bool {
+        !isResolving && ModelManager.parseHuggingFaceRepoId(from: trimmedInput) != nil
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            header
+            Divider()
+
+            VStack(alignment: .leading, spacing: 16) {
+                explainer
+                inputField
+                if let errorMessage {
+                    errorBanner(errorMessage)
+                }
+            }
+            .padding(20)
+
+            Divider()
+            footer
+        }
+        .frame(width: 460)
+        .background(theme.primaryBackground)
+    }
+
+    private var header: some View {
+        HStack(spacing: 10) {
+            Text("🤗")
+                .font(.system(size: 18))
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Import from Hugging Face", bundle: .module)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+                Text("Paste a model URL or repo id", bundle: .module)
+                    .font(.system(size: 12))
+                    .foregroundColor(theme.secondaryText)
+            }
+            Spacer()
+            Button(action: { dismiss() }) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(theme.tertiaryText)
+                    .frame(width: 22, height: 22)
+                    .background(Circle().fill(theme.tertiaryBackground))
+            }
+            .buttonStyle(PlainButtonStyle())
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 16)
+    }
+
+    private var explainer: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "info.circle")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(theme.accentColor)
+                .padding(.top, 1)
+            Text(
+                "Osaurus only runs MLX models. Try a repo from `mlx-community` or any MLX converted model.",
+                bundle: .module
+            )
+            .font(.system(size: 12))
+            .foregroundColor(theme.secondaryText)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(theme.accentColor.opacity(0.08))
+        )
+    }
+
+    private var inputField: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Repository", bundle: .module)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(theme.tertiaryText)
+                .textCase(.uppercase)
+
+            TextField(
+                "mlx-community/Llama-3.2-1B-Instruct-4bit",
+                text: $inputText,
+                onCommit: submit
+            )
+            .textFieldStyle(.plain)
+            .font(.system(size: 13, design: .monospaced))
+            .padding(10)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(theme.tertiaryBackground.opacity(0.6))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(theme.cardBorder, lineWidth: 1)
+                    )
+            )
+        }
+    }
+
+    private func errorBanner(_ message: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 12))
+                .foregroundColor(.orange)
+                .padding(.top, 1)
+            Text(message)
+                .font(.system(size: 12))
+                .foregroundColor(theme.primaryText)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.orange.opacity(0.1))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.orange.opacity(0.3), lineWidth: 1)
+                )
+        )
+    }
+
+    private var footer: some View {
+        HStack {
+            Spacer()
+            Button(action: { dismiss() }) {
+                Text("Cancel", bundle: .module)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+            }
+            .buttonStyle(PlainButtonStyle())
+            .keyboardShortcut(.cancelAction)
+
+            Button(action: submit) {
+                HStack(spacing: 6) {
+                    if isResolving {
+                        ProgressView()
+                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                            .scaleEffect(0.5)
+                            .frame(width: 12, height: 12)
+                    }
+                    Text("Import", bundle: .module)
+                        .font(.system(size: 13, weight: .semibold))
+                }
+                .foregroundColor(.white)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(canSubmit ? theme.accentColor : theme.accentColor.opacity(0.4))
+                )
+            }
+            .buttonStyle(PlainButtonStyle())
+            .disabled(!canSubmit)
+            .keyboardShortcut(.defaultAction)
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 14)
+    }
+
+    private func submit() {
+        guard let repoId = ModelManager.parseHuggingFaceRepoId(from: trimmedInput) else {
+            errorMessage = L("That doesn't look like a Hugging Face repo. Use the format org/repo or paste a huggingface.co URL.")
+            return
+        }
+        errorMessage = nil
+        isResolving = true
+        Task { @MainActor in
+            let resolved = await ModelManager.shared.resolveModelIfMLXCompatible(byRepoId: repoId)
+            isResolving = false
+            if resolved != nil {
+                onImported(repoId)
+            } else {
+                errorMessage = L("This repo doesn't appear to be MLX-compatible. Try a model from mlx-community or one with “-mlx” in its name.")
+            }
+        }
     }
 }
 

@@ -47,7 +47,7 @@ struct ModelRowView: View {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(alignment: .center, spacing: 10) {
                     modelIcon
-                    Text(model.name)
+                    Text(ModelMetadataParser.simpleName(from: model.name))
                         .font(.system(size: 14, weight: .semibold, design: .rounded))
                         .foregroundColor(theme.primaryText)
                         .lineLimit(2)
@@ -80,8 +80,6 @@ struct ModelRowView: View {
                 }
 
                 Spacer(minLength: 0)
-
-                footer
             }
             .padding(14)
             .frame(maxWidth: .infinity, minHeight: 180, alignment: .topLeading)
@@ -98,48 +96,23 @@ struct ModelRowView: View {
     // MARK: - Metadata Badges
     private var metadataBadges: some View {
         FlowLayout(spacing: 6) {
-            compatibilityBadge
+            // Size leads; Top Pick takes precedence so curated picks stand
+            // out, in which case size slots in right after.
             if model.isTopSuggestion {
                 topSuggestionBadge
             }
-            modelTypeBadge
-            if let params = model.parameterCount {
-                MetadataPill(text: params, icon: "cpu")
+            if let size = model.formattedDownloadSize {
+                MetadataPill(text: size, icon: "internaldrive")
             }
+            compatibilityBadge
+            modelTypeBadge
             if let quant = model.quantization {
                 MetadataPill(text: quant, icon: "gauge.with.dots.needle.bottom.50percent")
             }
         }
     }
 
-    // MARK: - Footer
-    @ViewBuilder
-    private var footer: some View {
-        if let url = URL(string: model.downloadURL) {
-            Button(action: { NSWorkspace.shared.open(url) }) {
-                HStack(spacing: 4) {
-                    Image(systemName: "arrow.up.right.square")
-                        .font(.system(size: 10, weight: .semibold))
-                    Text(shortRepoLabel(from: model.downloadURL))
-                        .font(.system(size: 11, weight: .medium))
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-                .foregroundColor(theme.accentColor.opacity(isHovering ? 1.0 : 0.85))
-            }
-            .buttonStyle(.plain)
-            .onHover { hovering in
-                if hovering { NSCursor.pointingHand.push() } else { NSCursor.pop() }
-            }
-        }
-    }
-
-    private func shortRepoLabel(from urlString: String) -> String {
-        let full = repositoryName(from: urlString)
-        return full.split(separator: "/").last.map(String.init) ?? full
-    }
-
-    @ViewBuilder
+@ViewBuilder
     private var compatibilityBadge: some View {
         switch model.compatibility(totalMemoryGB: totalMemoryGB) {
         case .compatible:
