@@ -11,6 +11,7 @@ import SwiftUI
 
 /// Deep linking is supported via `deeplinkModelId` to open the view with a specific model pre-selected.
 struct ModelDownloadView: View {
+    
     // MARK: - State Management
 
     /// Shared model manager for handling downloads and model state
@@ -274,13 +275,12 @@ struct ModelDownloadView: View {
                             }
                         }
                     }
-                    // The two Performance chips are mutually exclusive —
-                    // picking one clears the other so the filter stays a
-                    // single optional (matches SizeCategory / ParamCategory
-                    // conventions and keeps `isActive` trivially
-                    // `performance != nil`).
+                    // Performance chips are mutually exclusive — picking one
+                    // clears the others so the filter stays a single optional
+                    // (matches SizeCategory / ParamCategory conventions and
+                    // keeps `isActive` trivially `performance != nil`).
                     FilterSection(title: "Performance") {
-                        HStack(spacing: 8) {
+                        FlowLayout(spacing: 8) {
                             ForEach(ModelManager.ModelFilterState.PerformanceFilter.allCases) { opt in
                                 FilterChip(
                                     label: opt.displayName,

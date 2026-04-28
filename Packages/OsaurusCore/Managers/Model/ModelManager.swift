@@ -111,10 +111,12 @@ final class ModelManager: NSObject, ObservableObject {
             /// Only include models whose `compatibility` is `.compatible`
             /// (memory usage below the 75 % ratio threshold).
             case runsWell = "Runs Well"
+            /// Only include models whose `compatibility` is `.tight`
+            /// (memory usage between 75 % and 95 % of total RAM)
+            case tightFit = "Tight Fit"
             /// Exclude models whose `compatibility` is `.tooLarge`
             /// (memory usage above the 95 % ratio threshold). Models with
-            /// unknown memory info pass through unchanged — we don't
-            /// punish ambiguity.
+            /// unknown memory info pass through unchanged
             case hideTooLarge = "Hide Too Large"
 
             var id: String { rawValue }
@@ -122,6 +124,7 @@ final class ModelManager: NSObject, ObservableObject {
             var displayName: String {
                 switch self {
                 case .runsWell: return L("Runs Well")
+                case .tightFit: return L("Tight Fit")
                 case .hideTooLarge: return L("Hide Too Large")
                 }
             }
@@ -132,6 +135,8 @@ final class ModelManager: NSObject, ObservableObject {
                 switch self {
                 case .runsWell:
                     return compat == .compatible
+                case .tightFit:
+                    return compat == .tight
                 case .hideTooLarge:
                     return compat != .tooLarge
                 }
