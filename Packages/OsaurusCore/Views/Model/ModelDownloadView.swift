@@ -26,14 +26,21 @@ struct ModelDownloadView: View {
     /// Use computed property to always get the current theme from ThemeManager
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
-    /// Current search query text
+    /// Current search query text  bound directly to the search field so
+    /// keystrokes are reflected immediately in the input.
     @State private var searchText: String = ""
+
+    /// Debounced copy of `searchText` that drives filtering + grid animation
+    @State private var debouncedSearchText: String = ""
 
     /// Currently selected tab (All, Suggested, or Downloaded)
     @State private var selectedTab: ModelListTab = .all
 
-    /// Debounce task to prevent excessive API calls during typing
+    /// Debounce task for the remote Hugging Face fetch.
     @State private var searchDebounceTask: Task<Void, Never>? = nil
+
+    /// Debounce task for the local filter / animation trigger.
+    @State private var localSearchDebounceTask: Task<Void, Never>? = nil
 
     /// Model to show in the detail sheet
     @State private var modelToShowDetails: MLXModel? = nil
@@ -81,6 +88,7 @@ struct ModelDownloadView: View {
             // If invoked via deeplink, prefill search and ensure the model is visible
             if let modelId = deeplinkModelId, !modelId.isEmpty {
                 searchText = modelId.split(separator: "/").last.map(String.init) ?? modelId
+                debouncedSearchText = searchText
                 _ = modelManager.resolveModel(byRepoId: modelId)
             }
 
@@ -100,7 +108,17 @@ struct ModelDownloadView: View {
             if ModelManager.parseHuggingFaceRepoId(from: newValue) != nil, selectedTab != .all {
                 selectedTab = .all
             }
-            // Debounce remote search to avoid spamming the API
+            // 150ms debounce for the local filter + grid animation: avoids
+            // running the mosaic transition on every keystroke.
+            localSearchDebounceTask?.cancel()
+            localSearchDebounceTask = Task { @MainActor in
+                do { try await Task.sleep(nanoseconds: 150_000_000) } catch { return }
+                if Task.isCancelled { return }
+                withAnimation(gridSpring) {
+                    debouncedSearchText = newValue
+                }
+            }
+            // 300ms debounce for the remote fetch.
             searchDebounceTask?.cancel()
             searchDebounceTask = Task { @MainActor in
                 do { try await Task.sleep(nanoseconds: 300_000_000) } catch { return }
@@ -434,7 +452,7 @@ struct ModelDownloadView: View {
                 )
             }
         }
-        .animation(gridSpring, value: searchText)
+        .animation(gridSpring, value: debouncedSearchText)
     }
 
     /// Main content area with scrollable model list
@@ -706,7 +724,7 @@ struct ModelDownloadView: View {
     // MARK: - Model Filtering
 
     private var filteredModels: [MLXModel] {
-        let searched = SearchService.filterModels(modelManager.availableModels, with: searchText)
+        let searched = SearchService.filterModels(modelManager.availableModels, with: debouncedSearchText)
         let filtered = filterState.apply(to: searched, totalMemoryGB: systemMonitor.totalMemoryGB)
         return filtered.sorted { lhs, rhs in
             lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
@@ -720,7 +738,7 @@ struct ModelDownloadView: View {
     /// 2. Auto-fetched entries from the OsaurusAI HF org listing.
     /// 3. Within each tier: newer `releasedAt` first, then alphabetical.
     private var filteredSuggestedModels: [MLXModel] {
-        let searched = SearchService.filterModels(modelManager.suggestedModels, with: searchText)
+        let searched = SearchService.filterModels(modelManager.suggestedModels, with: debouncedSearchText)
         let filtered = filterState.apply(to: searched, totalMemoryGB: systemMonitor.totalMemoryGB)
         let curatedIds = ModelManager.curatedSuggestedIds
         return filtered.sorted { lhs, rhs in
@@ -770,7 +788,7 @@ struct ModelDownloadView: View {
             }
         }
         // Apply search filter
-        let searched = SearchService.filterModels(merged, with: searchText)
+        let searched = SearchService.filterModels(merged, with: debouncedSearchText)
         let filtered = filterState.apply(to: searched, totalMemoryGB: systemMonitor.totalMemoryGB)
 
         // Sort: active first, then by name
@@ -791,7 +809,7 @@ struct ModelDownloadView: View {
     /// Count of completed (on-disk) downloaded models respecting current search and filters
     private var completedDownloadedModelsCount: Int {
         let completed = modelManager.deduplicatedModels().filter { $0.isDownloaded }
-        let searched = SearchService.filterModels(Array(completed), with: searchText)
+        let searched = SearchService.filterModels(Array(completed), with: debouncedSearchText)
         let filtered = filterState.apply(to: searched, totalMemoryGB: systemMonitor.totalMemoryGB)
         return filtered.count
     }
