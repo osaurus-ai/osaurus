@@ -369,31 +369,33 @@ struct ModelDownloadView: View {
         [GridItem(.adaptive(minimum: 260), spacing: 12, alignment: .top)]
     }
 
-    /// Section with a header label and a model grid below.
-    private func modelGridSection(title: String, models: [MLXModel], animationOffset: Int) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+    private func modelGridSection(
+        title: String,
+        models: [MLXModel],
+        isFirst: Bool = false
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
             Text(title)
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundColor(theme.tertiaryText)
                 .textCase(.uppercase)
                 .padding(.horizontal, 2)
-            modelGrid(models: models, animationOffset: animationOffset)
+                .padding(.top, isFirst ? 0 : 16)
+            modelGrid(models: models)
         }
     }
 
-    /// Grid of ModelRowView cards. `animationOffset` lets the second section
-    /// continue the entrance stagger from where the first left off.
-    private func modelGrid(models: [MLXModel], animationOffset: Int) -> some View {
+    /// Grid of ModelRowView cards.
+    private func modelGrid(models: [MLXModel]) -> some View {
         LazyVGrid(columns: gridColumns, spacing: 12) {
-            ForEach(Array(models.enumerated()), id: \.element.id) { index, model in
+            ForEach(models, id: \.id) { model in
                 ModelRowView(
                     model: model,
                     downloadState: modelManager.effectiveDownloadState(for: model),
                     metrics: modelManager.downloadMetrics[model.id],
                     totalMemoryGB: systemMonitor.totalMemoryGB,
                     onViewDetails: { modelToShowDetails = model },
-                    onCancel: { modelManager.cancelDownload(model.id) },
-                    animationIndex: index + animationOffset
+                    onCancel: { modelManager.cancelDownload(model.id) }
                 )
             }
         }
@@ -420,18 +422,18 @@ struct ModelDownloadView: View {
                                     modelGridSection(
                                         title: L("Recommended"),
                                         models: filteredSuggestedModels,
-                                        animationOffset: 0
+                                        isFirst: true
                                     )
                                 }
                                 if !othersInAllTab.isEmpty {
                                     modelGridSection(
                                         title: L("Others"),
                                         models: othersInAllTab,
-                                        animationOffset: filteredSuggestedModels.count
+                                        isFirst: filteredSuggestedModels.isEmpty
                                     )
                                 }
                             case .downloaded:
-                                modelGrid(models: filteredDownloadedModels, animationOffset: 0)
+                                modelGrid(models: filteredDownloadedModels)
                             }
                         }
                     }

@@ -37,16 +37,10 @@ struct ModelRowView: View {
     /// Optional cancel action when downloading
     let onCancel: (() -> Void)?
 
-    /// Index for staggered animation
-    var animationIndex: Int = 0
-
     // MARK: - State
 
     /// Whether the user is currently hovering over this row
     @State private var isHovering = false
-
-    /// Whether the card has appeared (for entrance animation)
-    @State private var hasAppeared = false
 
     var body: some View {
         Button(action: onViewDetails) {
@@ -98,14 +92,6 @@ struct ModelRowView: View {
         .animation(.easeOut(duration: 0.15), value: isHovering)
         .onHover { hovering in
             isHovering = hovering
-        }
-        .opacity(hasAppeared ? 1 : 0)
-        .onAppear {
-            if hasAppeared { return }
-            let delay = animationIndex < 10 ? Double(animationIndex) * 0.04 : 0
-            withAnimation(.easeOut(duration: 0.25).delay(delay)) {
-                hasAppeared = true
-            }
         }
     }
 
