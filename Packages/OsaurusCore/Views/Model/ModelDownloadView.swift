@@ -122,8 +122,8 @@ struct ModelDownloadView: View {
             subtitle: "\(completedDownloadedModelsCount) downloaded • \(modelManager.totalDownloadedSizeString)"
         ) {
             HStack(spacing: 12) {
-                // Refresh OsaurusAI HF org listing (Recommended tab only)
-                if selectedTab == .suggested {
+                // Refresh OsaurusAI HF org listing (Recommended section lives inside All)
+                if selectedTab == .all {
                     Button {
                         Task { await modelManager.refreshSuggestedModels() }
                     } label: {
@@ -205,8 +205,7 @@ struct ModelDownloadView: View {
             HeaderTabsRow(
                 selection: $selectedTab,
                 counts: [
-                    .all: filteredModels.count,
-                    .suggested: filteredSuggestedModels.count,
+                    .all: filteredSuggestedModels.count + othersInAllTab.count,
                     .downloaded: filteredDownloadedModels.count,
                 ],
                 badges: modelManager.activeDownloadsCount > 0
@@ -370,6 +369,36 @@ struct ModelDownloadView: View {
         [GridItem(.adaptive(minimum: 260), spacing: 12, alignment: .top)]
     }
 
+    /// Section with a header label and a model grid below.
+    private func modelGridSection(title: String, models: [MLXModel], animationOffset: Int) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(theme.tertiaryText)
+                .textCase(.uppercase)
+                .padding(.horizontal, 2)
+            modelGrid(models: models, animationOffset: animationOffset)
+        }
+    }
+
+    /// Grid of ModelRowView cards. `animationOffset` lets the second section
+    /// continue the entrance stagger from where the first left off.
+    private func modelGrid(models: [MLXModel], animationOffset: Int) -> some View {
+        LazyVGrid(columns: gridColumns, spacing: 12) {
+            ForEach(Array(models.enumerated()), id: \.element.id) { index, model in
+                ModelRowView(
+                    model: model,
+                    downloadState: modelManager.effectiveDownloadState(for: model),
+                    metrics: modelManager.downloadMetrics[model.id],
+                    totalMemoryGB: systemMonitor.totalMemoryGB,
+                    onViewDetails: { modelToShowDetails = model },
+                    onCancel: { modelManager.cancelDownload(model.id) },
+                    animationIndex: index + animationOffset
+                )
+            }
+        }
+    }
+
     /// Main content area with scrollable model list
     private var modelListView: some View {
         Group {
@@ -385,18 +414,24 @@ struct ModelDownloadView: View {
                         if displayedModels.isEmpty {
                             emptyState
                         } else {
-                            LazyVGrid(columns: gridColumns, spacing: 12) {
-                                ForEach(Array(displayedModels.enumerated()), id: \.element.id) { index, model in
-                                    ModelRowView(
-                                        model: model,
-                                        downloadState: modelManager.effectiveDownloadState(for: model),
-                                        metrics: modelManager.downloadMetrics[model.id],
-                                        totalMemoryGB: systemMonitor.totalMemoryGB,
-                                        onViewDetails: { modelToShowDetails = model },
-                                        onCancel: { modelManager.cancelDownload(model.id) },
-                                        animationIndex: index
+                            switch selectedTab {
+                            case .all:
+                                if !filteredSuggestedModels.isEmpty {
+                                    modelGridSection(
+                                        title: L("Recommended"),
+                                        models: filteredSuggestedModels,
+                                        animationOffset: 0
                                     )
                                 }
+                                if !othersInAllTab.isEmpty {
+                                    modelGridSection(
+                                        title: L("Others"),
+                                        models: othersInAllTab,
+                                        animationOffset: filteredSuggestedModels.count
+                                    )
+                                }
+                            case .downloaded:
+                                modelGrid(models: filteredDownloadedModels, animationOffset: 0)
                             }
                         }
                     }
@@ -611,7 +646,7 @@ struct ModelDownloadView: View {
 
     private var emptyStateIcon: String {
         switch selectedTab {
-        case .all, .suggested:
+        case .all:
             return "cube.box"
         case .downloaded:
             return "arrow.down.circle"
@@ -625,8 +660,6 @@ struct ModelDownloadView: View {
         switch selectedTab {
         case .all:
             return L("No models available")
-        case .suggested:
-            return L("No recommended models")
         case .downloaded:
             return L("No downloaded models")
         }
@@ -735,19 +768,23 @@ struct ModelDownloadView: View {
         return activeProgress.reduce(0, +) / Double(activeProgress.count)
     }
 
-    /// Models to display based on the currently selected tab
+    /// "Others" section in the All tab: the full filtered model list minus
+    /// anything already shown in the Recommended section above it, so users
+    /// don't see the same model twice when they appear in both lists
+    private var othersInAllTab: [MLXModel] {
+        let recommendedIds = Set(filteredSuggestedModels.map { $0.id.lowercased() })
+        return filteredModels.filter { !recommendedIds.contains($0.id.lowercased()) }
+    }
+
+    /// Total set of models the active tab will render. used to decide
+    /// whether to show the empty state or the loading skeletons
     private var displayedModels: [MLXModel] {
-        let baseModels: [MLXModel]
         switch selectedTab {
         case .all:
-            baseModels = filteredModels
-        case .suggested:
-            baseModels = filteredSuggestedModels
+            return filteredSuggestedModels + othersInAllTab
         case .downloaded:
-            baseModels = filteredDownloadedModels
+            return filteredDownloadedModels
         }
-
-        return baseModels
     }
 }
 

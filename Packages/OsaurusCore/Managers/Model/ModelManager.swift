@@ -16,11 +16,8 @@ extension Notification.Name {
 }
 
 enum ModelListTab: String, CaseIterable, AnimatedTabItem {
-    /// All available models from Hugging Face
+    /// All available models rendered as two sections (Recommended + Others)
     case all = "All"
-
-    /// Curated list of recommended models
-    case suggested = "Recommended"
 
     /// Only models downloaded locally (includes active downloads)
     case downloaded = "Downloads"
@@ -29,7 +26,6 @@ enum ModelListTab: String, CaseIterable, AnimatedTabItem {
     var title: String {
         switch self {
         case .all: return L("All")
-        case .suggested: return L("Recommended")
         case .downloaded: return L("Downloads")
         }
     }

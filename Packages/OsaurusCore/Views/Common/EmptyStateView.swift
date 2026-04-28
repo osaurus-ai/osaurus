@@ -71,8 +71,6 @@ struct EmptyStateView: View {
         switch selectedTab {
         case .all:
             return L("No models available")
-        case .suggested:
-            return L("No suggested models")
         case .downloaded:
             return L("No downloaded models")
         }
@@ -87,8 +85,6 @@ struct EmptyStateView: View {
         switch selectedTab {
         case .all:
             return L("Language models will appear here")
-        case .suggested:
-            return L("Suggested models will appear here")
         case .downloaded:
             return L("Downloaded models will appear here")
         }
