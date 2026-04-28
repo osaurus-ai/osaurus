@@ -401,6 +401,23 @@ public final class SkillManager {
         return sections.joined(separator: "\n\n")
     }
 
+    /// Builds the combined skill instructions section for an agent's enabled skills,
+    /// regardless of tool selection mode. Returns nil when the agent has not been
+    /// seeded yet (legacy behaviour: skills only inject in Manual via the older
+    /// `manualSkillPromptSection`) or has no enabled skills.
+    public func enabledSkillPromptSection(for agentId: UUID) async -> String? {
+        guard let skillNames = AgentManager.shared.effectiveEnabledSkillNames(for: agentId),
+            !skillNames.isEmpty
+        else { return nil }
+        let instructions = await loadInstructions(for: skillNames)
+        guard !instructions.isEmpty else { return nil }
+        let sections = skillNames.compactMap { name -> String? in
+            guard let body = instructions[name] else { return nil }
+            return "## Skill: \(name)\n\n\(body)"
+        }
+        return sections.joined(separator: "\n\n")
+    }
+
     public func loadInstructions(for skillNames: [String]) async -> [String: String] {
         var result: [String: String] = [:]
         for name in skillNames {

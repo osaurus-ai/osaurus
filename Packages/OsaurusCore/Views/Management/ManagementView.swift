@@ -27,6 +27,7 @@ struct ManagementView: View {
     @ObservedObject private var speechModelManager = SpeechModelManager.shared
     @ObservedObject private var sandboxPluginLibrary = SandboxPluginLibrary.shared
     @ObservedObject private var stateManager = ManagementStateManager.shared
+    @ObservedObject private var pairCoordinator = IncomingPairCoordinator.shared
 
     @EnvironmentObject private var updater: UpdaterViewModel
 
@@ -34,6 +35,10 @@ struct ManagementView: View {
 
     @State private var hasAppeared = false
     @State private var searchText = ""
+
+    /// Captured at sheet-presentation time so the sheet body keeps a stable
+    /// reference even after the coordinator clears `pendingInvite` on dismiss.
+    @State private var presentingInvite: AgentInvite?
 
     // MARK: Properties
 
@@ -70,6 +75,37 @@ struct ManagementView: View {
             .onAppear(perform: handleAppear)
             .onChange(of: stateManager.selectedTab) { handleTabChange(to: $1) }
             .onChange(of: searchText) { handleSearchChange(to: $1) }
+            // The pairing deeplink router publishes an invite here when an
+            // `osaurus://...?pair=...` URL is opened. Forwarding it through
+            // a local @State (`presentingInvite`) gives the sheet a stable
+            // identity to bind to even after the coordinator nils out, and
+            // lets us route the user to the Agents tab on success.
+            .onChange(of: pairCoordinator.pendingInvite) { _, newValue in
+                if let invite = newValue {
+                    presentingInvite = invite
+                }
+            }
+            .sheet(
+                isPresented: Binding(
+                    get: { presentingInvite != nil },
+                    set: { newValue in
+                        if !newValue {
+                            presentingInvite = nil
+                            pairCoordinator.pendingInvite = nil
+                        }
+                    }
+                )
+            ) {
+                if let invite = presentingInvite {
+                    IncomingPairSheet(
+                        invite: invite,
+                        onCompleted: { _ in
+                            stateManager.selectedTab = .agents
+                        }
+                    )
+                    .environment(\.theme, themeManager.currentTheme)
+                }
+            }
     }
 }
 

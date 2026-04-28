@@ -552,16 +552,49 @@ struct GroupHeaderCell: View {
 
     @Environment(\.theme) private var theme
 
-    private var allEnabled: Bool { enabledCount == totalCount }
+    private var allEnabled: Bool { totalCount > 0 && enabledCount == totalCount }
     private var noneEnabled: Bool { enabledCount == 0 }
+    private var partialEnabled: Bool { !allEnabled && !noneEnabled }
+
+    /// Tri-state master glyph: filled when every child is on, dashed when some are
+    /// on, empty when all are off. Tap toggles all-or-nothing (mixed -> all on).
+    private var masterIcon: String {
+        if allEnabled { return "checkmark.square.fill" }
+        if partialEnabled { return "minus.square.fill" }
+        return "square"
+    }
+
+    private var masterIconColor: Color {
+        if noneEnabled { return theme.tertiaryText }
+        return theme.accentColor
+    }
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 10) {
             Image(systemName: "chevron.right")
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundColor(theme.tertiaryText)
                 .frame(width: 12)
                 .rotationEffect(.degrees(isExpanded ? 90 : 0))
+
+            // Tri-state master toggle. Tap = enable-all when none/some are on,
+            // disable-all when all are on. Larger hit target via padding so users
+            // can hit it without precision.
+            Button {
+                if allEnabled {
+                    onDisableAll()
+                } else {
+                    onEnableAll()
+                }
+            } label: {
+                Image(systemName: masterIcon)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(masterIconColor)
+                    .frame(width: 18, height: 18)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(allEnabled ? "Disable all" : "Enable all")
 
             Image(systemName: icon)
                 .font(.system(size: 11))
@@ -619,37 +652,13 @@ struct GroupHeaderCell: View {
 
             Spacer()
 
-            HStack(spacing: 4) {
-                Button {
-                    onEnableAll()
-                } label: {
-                    Text("All", bundle: .module)
-                        .font(.system(size: 9, weight: allEnabled ? .bold : .medium))
-                        .foregroundColor(allEnabled ? theme.accentColor : theme.tertiaryText)
-                }
-                Text("/").font(.system(size: 9)).foregroundColor(theme.tertiaryText)
-                Button {
-                    onDisableAll()
-                } label: {
-                    Text("None", bundle: .module)
-                        .font(.system(size: 9, weight: noneEnabled ? .bold : .medium))
-                        .foregroundColor(noneEnabled ? theme.accentColor : theme.tertiaryText)
-                }
-            }
-            .buttonStyle(.plain)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .background(
-                Capsule()
-                    .fill(theme.primaryBackground)
-                    .overlay(Capsule().strokeBorder(theme.primaryBorder.opacity(0.15), lineWidth: 1))
-            )
-
             CountBadge(enabled: enabledCount, total: totalCount)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 12)
         .contentShape(Rectangle())
+        // Tap on the row body (outside the master button) toggles expansion only;
+        // the master button has its own hit area for select-all-or-none.
         .onTapGesture { onToggle() }
         .modifier(HoverRowStyle(isHovered: isHovered, showAccent: true))
     }

@@ -74,10 +74,17 @@ struct MemoryView: View {
                         }
                         loadData()
                     },
+                    onSwitchAgent: { newAgent in
+                        // Same id-based reload pattern as `AgentsView`. Memory's
+                        // entry point is read-only context (no Agents grid), so we
+                        // just swap the in-memory selection.
+                        selectedAgent = newAgent
+                    },
                     showSuccess: { msg in
                         showToast(msg)
                     }
                 )
+                .id(agent.id)
                 .transition(.opacity.combined(with: .move(edge: .trailing)))
             }
         }

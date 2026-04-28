@@ -20,10 +20,12 @@ private func formatModelName(_ model: String) -> String {
 struct AgentsView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
     @ObservedObject private var agentManager = AgentManager.shared
+    @ObservedObject private var remoteAgentManager = RemoteAgentManager.shared
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
     @State private var selectedAgent: Agent?
+    @State private var selectedRemoteAgentId: UUID?
     @State private var isCreating = false
     @State private var hasAppeared = false
     @State private var successMessage: String?
@@ -37,9 +39,13 @@ struct AgentsView: View {
         agentManager.agents.filter { !$0.isBuiltIn }
     }
 
+    private var remoteAgents: [RemoteAgent] {
+        remoteAgentManager.remoteAgents
+    }
+
     var body: some View {
         ZStack {
-            if selectedAgent == nil {
+            if selectedAgent == nil && selectedRemoteAgentId == nil {
                 gridContent
                     .transition(.opacity.combined(with: .move(edge: .leading)))
             }
@@ -63,10 +69,39 @@ struct AgentsView: View {
                             deleteAgent(p)
                         }
                     },
+                    onSwitchAgent: { newAgent in
+                        // Pinning the detail view by `agent.id` (.id below) makes
+                        // SwiftUI tear down + recreate it on swap, so all editable
+                        // state reloads via onAppear without manual onChange wiring.
+                        selectedAgent = newAgent
+                    },
                     showSuccess: { msg in
                         showSuccess(msg)
                     }
                 )
+                .id(agent.id)
+                .transition(.opacity.combined(with: .move(edge: .trailing)))
+            }
+
+            if let remoteId = selectedRemoteAgentId {
+                RemoteAgentDetailView(
+                    remoteId: remoteId,
+                    onBack: {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                            selectedRemoteAgentId = nil
+                        }
+                    },
+                    onRemoved: {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                            selectedRemoteAgentId = nil
+                        }
+                        showSuccess("Removed remote agent")
+                    },
+                    onChat: { _ in
+                        ChatWindowManager.shared.toggleLastFocused()
+                    }
+                )
+                .id(remoteId)
                 .transition(.opacity.combined(with: .move(edge: .trailing)))
             }
 
@@ -141,7 +176,7 @@ struct AgentsView: View {
                 .offset(y: hasAppeared ? 0 : -10)
                 .animation(.spring(response: 0.4, dampingFraction: 0.8), value: hasAppeared)
 
-            if customAgents.isEmpty {
+            if customAgents.isEmpty && remoteAgents.isEmpty {
                 SettingsEmptyState(
                     icon: "theatermasks.fill",
                     title: L("Create Your First Agent"),
@@ -190,6 +225,31 @@ struct AgentsView: View {
                                 }
                             )
                         }
+
+                        // Remote (paired) agents render after local ones with their
+                        // own "Remote" treatment. Tap → RemoteAgentDetailView via
+                        // `selectedRemoteAgentId`. Underlying chat plumbing lives in
+                        // RemoteProviderManager (created at pair time), so the chat
+                        // window already lists this agent in its picker.
+                        ForEach(Array(remoteAgents.enumerated()), id: \.element.id) { index, remote in
+                            RemoteAgentCard(
+                                remote: remote,
+                                animationDelay: Double(customAgents.count + index) * 0.05,
+                                hasAppeared: hasAppeared,
+                                onSelect: {
+                                    withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                                        selectedRemoteAgentId = remote.id
+                                    }
+                                },
+                                onChat: {
+                                    ChatWindowManager.shared.toggleLastFocused()
+                                },
+                                onRemove: {
+                                    _ = remoteAgentManager.remove(id: remote.id)
+                                    showSuccess("Removed remote agent")
+                                }
+                            )
+                        }
                     }
                     .padding(24)
                 }
@@ -201,10 +261,11 @@ struct AgentsView: View {
     // MARK: - Header
 
     private var headerView: some View {
-        ManagerHeaderWithActions(
+        let totalCount = customAgents.count + remoteAgents.count
+        return ManagerHeaderWithActions(
             title: L("Agents"),
             subtitle: L("Create custom assistant personalities with unique behaviors"),
-            count: customAgents.isEmpty ? nil : customAgents.count
+            count: totalCount == 0 ? nil : totalCount
         ) {
             HeaderIconButton("arrow.clockwise", help: "Refresh agents") {
                 agentManager.refresh()
@@ -644,6 +705,7 @@ struct AgentDetailView: View {
     let onBack: () -> Void
     let onExport: (Agent) -> Void
     let onDelete: (Agent) -> Void
+    let onSwitchAgent: (Agent) -> Void
     let showSuccess: (String) -> Void
 
     init(
@@ -651,12 +713,14 @@ struct AgentDetailView: View {
         onBack: @escaping () -> Void,
         onExport: @escaping (Agent) -> Void,
         onDelete: @escaping (Agent) -> Void,
+        onSwitchAgent: @escaping (Agent) -> Void,
         showSuccess: @escaping (String) -> Void
     ) {
         self.agent = agent
         self.onBack = onBack
         self.onExport = onExport
         self.onDelete = onDelete
+        self.onSwitchAgent = onSwitchAgent
         self.showSuccess = showSuccess
     }
 
@@ -674,14 +738,27 @@ struct AgentDetailView: View {
     @State private var pluginInstructionsMap: [String: String] = [:]
     @State private var disableTools: Bool = false
     @State private var disableMemory: Bool = false
-    @State private var toolSelectionMode: ToolSelectionMode = .auto
-    @State private var manualToolNames: Set<String> = []
-    @State private var manualSkillNames: Set<String> = []
-    @State private var toolSearchText: String = ""
-    @State private var cachedTools: [ToolRegistry.ToolEntry] = []
-    @State private var cachedSkills: [Skill] = []
-    @State private var displayedTools: [ToolRegistry.ToolEntry] = []
-    @State private var displayedSkills: [Skill] = []
+    /// When true, the Configure tab body is replaced by `AgentCapabilityManagerView`.
+    /// All tool/skill selection state lives inside that view — the parent intentionally
+    /// holds no mirrors so the debounced `saveAgent` path can never stomp the picker's
+    /// writes.
+    @State private var showingCapabilityManager: Bool = false
+
+    /// Drives the title-bar agent picker popover. Tapping the avatar / name in the
+    /// header bar reveals the list of other custom agents so the user can jump
+    /// between them without bouncing back to the Agents grid every time.
+    @State private var showingAgentSwitcher: Bool = false
+
+    /// Drives the new "share agent over network" sheet that replaced the JSON
+    /// export-on-share button. Export still exists for backup, but it's tucked
+    /// into an overflow menu so it doesn't compete with the primary share action.
+    @State private var showingShareSheet: Bool = false
+
+    /// Local UI state: which tabs the user has dropped into the "Advanced" disclosure
+    /// of the Configure tab. Persists only for the lifetime of this view (intentional —
+    /// the disclosure defaults to collapsed each time the agent is opened so the
+    /// primary settings always greet the user first).
+    @State private var showAdvancedSettings: Bool = false
 
     // MARK: - UI State
 
@@ -737,36 +814,49 @@ struct AgentDetailView: View {
             detailHeaderBar
 
             VStack(alignment: .leading, spacing: 0) {
-                heroHeader
-                    .padding(.horizontal, 24)
-                    .padding(.top, 20)
-                    .padding(.bottom, 12)
-
                 tabBar
                     .padding(.horizontal, 20)
+                    .padding(.top, 8)
 
                 Divider()
                     .foregroundColor(theme.primaryBorder)
 
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 16) {
-                        switch selectedTab {
-                        case .builtIn(.configure):
-                            configureTabContent
-                        case .builtIn(.sandbox):
-                            sandboxTabContent
-                        case .builtIn(.automation):
-                            automationTabContent
-                        case .builtIn(.memory):
-                            memoryTabContent
-                        case .plugin(let pid):
-                            pluginTabContent(for: pid)
+                if showingCapabilityManager, case .builtIn(.configure) = selectedTab {
+                    // Full-tab takeover for the capability picker. Avoids the nested
+                    // ScrollView problem the inline picker used to have, and gives the
+                    // table the entire panel area for browsing.
+                    AgentCapabilityManagerView(
+                        agentId: agent.id,
+                        onDismiss: {
+                            withAnimation(.spring(response: 0.32, dampingFraction: 0.85)) {
+                                showingCapabilityManager = false
+                            }
                         }
+                    )
+                    .environment(\.theme, themeManager.currentTheme)
+                    .transition(.opacity.combined(with: .move(edge: .trailing)))
+                } else {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 16) {
+                            switch selectedTab {
+                            case .builtIn(.configure):
+                                configureTabContent
+                            case .builtIn(.sandbox):
+                                sandboxTabContent
+                            case .builtIn(.automation):
+                                automationTabContent
+                            case .builtIn(.memory):
+                                memoryTabContent
+                            case .plugin(let pid):
+                                pluginTabContent(for: pid)
+                            }
+                        }
+                        .padding(24)
+                        .id(selectedTab)
                     }
-                    .padding(24)
-                    .id(selectedTab)
+                    .animation(nil, value: selectedTab)
+                    .transition(.opacity)
                 }
-                .animation(nil, value: selectedTab)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -848,6 +938,9 @@ struct AgentDetailView: View {
 
     // MARK: - Detail Header Bar
 
+    /// Compact identity bar: back, avatar + name + optional description, actions.
+    /// Tapping the identity block opens the agent switcher popover; editing the
+    /// name / description happens inside the Configure tab's Identity section.
     private var detailHeaderBar: some View {
         HStack(spacing: 12) {
             Button(action: onBack) {
@@ -861,7 +954,16 @@ struct AgentDetailView: View {
             }
             .buttonStyle(PlainButtonStyle())
 
-            Spacer()
+            // Vertical separator between back and identity so the layout reads clearly
+            // even when the agent name is long.
+            Rectangle()
+                .fill(theme.primaryBorder)
+                .frame(width: 1, height: 16)
+                .opacity(0.6)
+
+            identityButton
+
+            Spacer(minLength: 8)
 
             if let indicator = saveIndicator {
                 HStack(spacing: 4) {
@@ -876,16 +978,37 @@ struct AgentDetailView: View {
 
             HStack(spacing: 6) {
                 Button {
-                    onExport(currentAgent)
+                    showingShareSheet = true
                 } label: {
                     Image(systemName: "square.and.arrow.up")
                         .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(theme.accentColor)
+                        .frame(width: 28, height: 28)
+                        .background(Circle().fill(theme.accentColor.opacity(0.12)))
+                }
+                .buttonStyle(PlainButtonStyle())
+                .help(Text("Share Agent", bundle: .module))
+
+                // Backup / advanced actions — JSON export lives here now so the
+                // primary Share button can be a single, obvious "send invite link"
+                // affordance instead of dropping into a save panel.
+                Menu {
+                    Button {
+                        onExport(currentAgent)
+                    } label: {
+                        Label("Export to JSON…", systemImage: "doc.on.doc")
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 11, weight: .semibold))
                         .foregroundColor(theme.secondaryText)
                         .frame(width: 28, height: 28)
                         .background(Circle().fill(theme.tertiaryBackground))
                 }
-                .buttonStyle(PlainButtonStyle())
-                .help(Text("Export", bundle: .module))
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .frame(width: 28, height: 28)
+                .help(Text("More actions", bundle: .module))
 
                 Button {
                     showDeleteConfirm = true
@@ -901,7 +1024,7 @@ struct AgentDetailView: View {
             }
         }
         .padding(.horizontal, 24)
-        .padding(.vertical, 14)
+        .padding(.vertical, 10)
         .background(
             theme.secondaryBackground
                 .overlay(
@@ -911,57 +1034,172 @@ struct AgentDetailView: View {
                     alignment: .bottom
                 )
         )
+        .sheet(isPresented: $showingShareSheet) {
+            ShareAgentSheet(agent: currentAgent)
+                .environment(\.theme, themeManager.currentTheme)
+        }
     }
 
-    // MARK: - Hero Header
-
-    private var heroHeader: some View {
-        HStack(spacing: 20) {
-            ZStack {
-                Circle()
-                    .fill(
-                        LinearGradient(
-                            colors: [agentColor.opacity(0.2), agentColor.opacity(0.05)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
+    /// Compact tappable identity block (avatar + name + optional description) inside
+    /// the header bar. Tap opens an agent switcher so the user can jump straight to
+    /// another agent's detail view. Editing the name / description happens inside the
+    /// Configure tab's "Identity" section, not here — the title bar is for navigation.
+    private var identityButton: some View {
+        Button {
+            showingAgentSwitcher = true
+        } label: {
+            HStack(spacing: 10) {
+                ZStack {
+                    Circle()
+                        .fill(
+                            LinearGradient(
+                                colors: [agentColor.opacity(0.2), agentColor.opacity(0.05)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
                         )
-                    )
-                Circle()
-                    .strokeBorder(agentColor.opacity(0.5), lineWidth: 2.5)
-                Text(name.isEmpty ? "?" : name.prefix(1).uppercased())
-                    .font(.system(size: 28, weight: .bold, design: .rounded))
-                    .foregroundColor(agentColor)
+                    Circle()
+                        .strokeBorder(agentColor.opacity(0.5), lineWidth: 1.5)
+                    Text(name.isEmpty ? "?" : name.prefix(1).uppercased())
+                        .font(.system(size: 13, weight: .bold, design: .rounded))
+                        .foregroundColor(agentColor)
+                }
+                .frame(width: 28, height: 28)
+                .animation(.spring(response: 0.3), value: name)
+
+                VStack(alignment: .leading, spacing: 1) {
+                    HStack(spacing: 6) {
+                        Text(name.isEmpty ? L("Untitled Agent") : name)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(theme.primaryText)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 8, weight: .semibold))
+                            .foregroundColor(theme.tertiaryText)
+                    }
+                    if !description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        Text(description)
+                            .font(.system(size: 11))
+                            .foregroundColor(theme.tertiaryText)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+                }
+                .frame(maxWidth: 260, alignment: .leading)
             }
-            .frame(width: 72, height: 72)
-            .animation(.spring(response: 0.3), value: name)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(PlainButtonStyle())
+        .help(Text("Switch agent", bundle: .module))
+        .popover(isPresented: $showingAgentSwitcher, arrowEdge: .bottom) {
+            agentSwitcherPopover
+        }
+    }
 
-            VStack(alignment: .leading, spacing: 8) {
-                StyledTextField(
-                    placeholder: "e.g., Code Assistant",
-                    text: $name,
-                    icon: "textformat"
-                )
+    /// Popover content listing every custom agent for quick navigation. Tapping a
+    /// row swaps the detail view to that agent (the parent uses `.id(agent.id)` to
+    /// force a clean state reload). Built-in / Default agent is excluded — it has
+    /// its own settings surface elsewhere and isn't represented in the Agents grid.
+    private var agentSwitcherPopover: some View {
+        let switchableAgents = agentManager.agents
+            .filter { !$0.isBuiltIn }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
 
-                StyledTextField(
-                    placeholder: "Brief description (optional)",
-                    text: $description,
-                    icon: "text.alignleft"
-                )
+        return VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 6) {
+                Image(systemName: "person.2.fill")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(theme.tertiaryText)
+                Text("Switch Agent", bundle: .module)
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(theme.tertiaryText)
+                    .tracking(0.5)
+                Spacer()
+                Text("\(switchableAgents.count)", bundle: .module)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(theme.tertiaryText)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 1)
+                    .background(Capsule().fill(theme.inputBackground))
+            }
+            .padding(.horizontal, 14)
+            .padding(.top, 12)
+            .padding(.bottom, 8)
 
-                HStack(spacing: 8) {
-                    Image(systemName: "calendar")
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundColor(theme.tertiaryText)
-                    Text("Created \(agent.createdAt.formatted(date: .abbreviated, time: .omitted))", bundle: .module)
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(theme.tertiaryText)
+            Divider().opacity(0.5)
+
+            ScrollView {
+                VStack(spacing: 2) {
+                    ForEach(switchableAgents, id: \.id) { other in
+                        agentSwitcherRow(other)
+                    }
+                }
+                .padding(.vertical, 6)
+                .padding(.horizontal, 6)
+            }
+            .frame(maxHeight: 360)
+        }
+        .frame(width: 280)
+        .background(theme.cardBackground)
+    }
+
+    private func agentSwitcherRow(_ other: Agent) -> some View {
+        let isCurrent = other.id == agent.id
+        let color = agentColorFor(other.name)
+        return Button {
+            showingAgentSwitcher = false
+            if !isCurrent {
+                onSwitchAgent(other)
+            }
+        } label: {
+            HStack(spacing: 10) {
+                ZStack {
+                    Circle()
+                        .fill(
+                            LinearGradient(
+                                colors: [color.opacity(0.2), color.opacity(0.05)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                    Circle().strokeBorder(color.opacity(0.5), lineWidth: 1.5)
+                    Text(other.name.isEmpty ? "?" : other.name.prefix(1).uppercased())
+                        .font(.system(size: 11, weight: .bold, design: .rounded))
+                        .foregroundColor(color)
+                }
+                .frame(width: 26, height: 26)
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(other.name.isEmpty ? L("Untitled Agent") : other.name)
+                        .font(.system(size: 12, weight: isCurrent ? .semibold : .medium))
+                        .foregroundColor(theme.primaryText)
+                        .lineLimit(1)
+                    if !other.description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        Text(other.description)
+                            .font(.system(size: 10))
+                            .foregroundColor(theme.tertiaryText)
+                            .lineLimit(1)
+                    }
+                }
+
+                Spacer(minLength: 4)
+
+                if isCurrent {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundColor(theme.accentColor)
                 }
             }
-
-            Spacer()
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(isCurrent ? theme.accentColor.opacity(0.10) : Color.clear)
+            )
+            .contentShape(Rectangle())
         }
-        .onChange(of: name) { debouncedSave() }
-        .onChange(of: description) { debouncedSave() }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Tab Bar
@@ -984,26 +1222,61 @@ struct AgentDetailView: View {
         }
     }
 
+    /// Horizontally scrollable tab bar — built-in tabs stay leftmost, then one tab
+    /// per plugin. Wrapping the row in `ScrollView(.horizontal)` instead of forcing
+    /// `Spacer()`-padding lets installs with many plugins keep every tab reachable
+    /// without crushing or wrapping; the right-edge fade hints at overflow content.
     private var tabBar: some View {
-        HStack(spacing: 0) {
-            ForEach(DetailTab.allCases, id: \.self) { tab in
-                tabButton(for: .builtIn(tab), label: tab.label, icon: tab.icon)
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 0) {
+                    ForEach(DetailTab.allCases, id: \.self) { tab in
+                        tabButton(for: .builtIn(tab), label: tab.label, icon: tab.icon)
+                            .id(AgentTab.builtIn(tab))
+                    }
+                    ForEach(agentPlugins, id: \.plugin.id) { loaded in
+                        tabButton(
+                            for: .plugin(loaded.plugin.id),
+                            label: loaded.plugin.manifest.name ?? loaded.plugin.id,
+                            icon: "puzzlepiece.extension"
+                        )
+                        .id(AgentTab.plugin(loaded.plugin.id))
+                    }
+                }
+                .padding(.horizontal, 4)
             }
-            ForEach(agentPlugins, id: \.plugin.id) { loaded in
-                tabButton(
-                    for: .plugin(loaded.plugin.id),
-                    label: loaded.plugin.manifest.name ?? loaded.plugin.id,
-                    icon: "puzzlepiece.extension"
+            // Subtle right-edge fade — tells the user "there's more this way" when
+            // plugin tabs spill beyond the visible width. The mask is keyed off
+            // plugin count so empty installs don't show a phantom fade.
+            .mask(
+                LinearGradient(
+                    stops: agentPlugins.count > 2
+                        ? [
+                            .init(color: .black, location: 0.0),
+                            .init(color: .black, location: 0.94),
+                            .init(color: .clear, location: 1.0),
+                        ]
+                        : [.init(color: .black, location: 0.0), .init(color: .black, location: 1.0)],
+                    startPoint: .leading,
+                    endPoint: .trailing
                 )
+            )
+            // Auto-scroll the active tab into view when it changes (tab tap or programmatic).
+            .onChange(of: selectedTab) { _, newValue in
+                withAnimation(.easeOut(duration: 0.2)) {
+                    proxy.scrollTo(newValue, anchor: .center)
+                }
             }
-            Spacer()
         }
-        .padding(.horizontal, 4)
     }
 
     private func tabButton(for tab: AgentTab, label: String, icon: String) -> some View {
         let isSelected = selectedTab == tab
         return Button {
+            // Switching tabs always returns to the regular tab body, even mid-takeover.
+            if showingCapabilityManager {
+                showingCapabilityManager = false
+            }
             selectedTab = tab
         } label: {
             VStack(spacing: 0) {
@@ -1054,17 +1327,135 @@ struct AgentDetailView: View {
 
     // MARK: - Tab Content
 
+    /// Information architecture for the Configure tab is layered:
+    ///
+    ///   PRIMARY (always visible, in the order users reach for them):
+    ///     1. Identity     — name + description (the title bar's avatar/dropdown is
+    ///                       a *navigation* affordance, not an editor).
+    ///     2. System Prompt — the most-edited surface; defines the agent.
+    ///     3. Model         — single picker, no override knobs.
+    ///     4. Tools & Skills — opens the full capability manager on demand.
+    ///
+    ///   ADVANCED (collapsed by default behind a single disclosure):
+    ///     - Generation overrides (Temperature, Max Tokens)
+    ///     - Disable Tools / Disable Memory toggles
+    ///     - Quick Actions
+    ///     - Theme
+    ///
+    /// Anything advanced exists for power users; surfacing it inline pushed the
+    /// primary settings off-screen and made the panel feel like a wall of options.
     @ViewBuilder
     private var configureTabContent: some View {
-        tabHelperText(DetailTab.configure.helperText)
+        identitySection
         systemPromptSection
-        generationSection
-        disableTogglesSection
+        defaultModelSection
         if !disableTools {
             toolSelectionSection
         }
-        quickActionsSection
-        themeSection
+
+        advancedSettingsDisclosure
+    }
+
+    /// Editable identity card — name, description, and "Created" footer. Lives at
+    /// the top of the Configure tab now that the title bar's avatar/dropdown is
+    /// dedicated to switching between agents.
+    private var identitySection: some View {
+        AgentDetailSection(title: "Identity", icon: "person.crop.circle") {
+            VStack(alignment: .leading, spacing: 10) {
+                StyledTextField(
+                    placeholder: "e.g., Code Assistant",
+                    text: $name,
+                    icon: "textformat"
+                )
+
+                StyledTextField(
+                    placeholder: "Brief description (optional)",
+                    text: $description,
+                    icon: "text.alignleft"
+                )
+
+                HStack(spacing: 6) {
+                    Image(systemName: "calendar")
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundColor(theme.tertiaryText)
+                    Text(
+                        "Created \(agent.createdAt.formatted(date: .abbreviated, time: .omitted))",
+                        bundle: .module
+                    )
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(theme.tertiaryText)
+                }
+                .padding(.top, 2)
+            }
+            .onChange(of: name) { debouncedSave() }
+            .onChange(of: description) { debouncedSave() }
+        }
+    }
+
+    private var advancedSettingsDisclosure: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.18)) {
+                    showAdvancedSettings.toggle()
+                }
+            } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(theme.tertiaryText)
+                        .rotationEffect(.degrees(showAdvancedSettings ? 90 : 0))
+
+                    Image(systemName: "wrench.adjustable")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(theme.secondaryText)
+
+                    Text("Advanced Settings", bundle: .module)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
+
+                    Text(advancedSummary)
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.tertiaryText)
+
+                    Spacer()
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(theme.cardBackground.opacity(0.6))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(theme.cardBorder.opacity(0.5), lineWidth: 1)
+                        )
+                )
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if showAdvancedSettings {
+                VStack(alignment: .leading, spacing: 16) {
+                    generationOverridesSection
+                    disableTogglesSection
+                    quickActionsSection
+                    themeSection
+                }
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+    }
+
+    /// Tiny one-line summary shown next to "Advanced Settings" so users can see at
+    /// a glance whether anything in there is overridden. Reads as "Defaults" when
+    /// nothing's been touched, otherwise lists the customized facets.
+    private var advancedSummary: String {
+        var parts: [String] = []
+        if !temperature.isEmpty || !maxTokens.isEmpty { parts.append("generation") }
+        if disableTools { parts.append("tools off") }
+        if disableMemory { parts.append("memory off") }
+        if chatQuickActions != nil || workQuickActions != nil { parts.append("quick actions") }
+        if selectedThemeId != nil { parts.append("theme") }
+        return parts.isEmpty ? L("Defaults") : parts.joined(separator: " · ")
     }
 
     @ViewBuilder
@@ -1132,83 +1523,86 @@ struct AgentDetailView: View {
         }
     }
 
-    private var generationSection: some View {
-        AgentDetailSection(title: "Generation", icon: "cpu") {
-            VStack(spacing: 16) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Label {
-                        Text("Default Model", bundle: .module)
-                    } icon: {
-                        Image(systemName: "cube.fill")
-                    }
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
-
-                    Button {
-                        showModelPicker.toggle()
-                    } label: {
-                        HStack(spacing: 8) {
-                            if let model = selectedModel {
-                                Text(formatModelName(model))
-                                    .font(.system(size: 13, weight: .medium))
-                                    .foregroundColor(theme.primaryText)
-                                    .lineLimit(1)
-                            } else {
-                                Text("Default (from global settings)", bundle: .module)
-                                    .font(.system(size: 13))
-                                    .foregroundColor(theme.placeholderText)
-                            }
-                            Spacer()
-                            Image(systemName: "chevron.up.chevron.down")
-                                .font(.system(size: 10, weight: .medium))
-                                .foregroundColor(theme.tertiaryText)
+    /// Primary "what model does this agent use?" picker. Lives at the top of the
+    /// Configure tab next to System Prompt and Capabilities — the three things users
+    /// reach for most. Temperature / Max Tokens overrides moved into the Advanced
+    /// disclosure below.
+    private var defaultModelSection: some View {
+        AgentDetailSection(title: "Model", icon: "cube.fill") {
+            VStack(alignment: .leading, spacing: 10) {
+                Button {
+                    showModelPicker.toggle()
+                } label: {
+                    HStack(spacing: 8) {
+                        if let model = selectedModel {
+                            Text(formatModelName(model))
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundColor(theme.primaryText)
+                                .lineLimit(1)
+                        } else {
+                            Text("Default (from global settings)", bundle: .module)
+                                .font(.system(size: 13))
+                                .foregroundColor(theme.placeholderText)
                         }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 10)
-                        .background(
-                            RoundedRectangle(cornerRadius: 10)
-                                .fill(theme.inputBackground)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 10)
-                                        .stroke(theme.inputBorder, lineWidth: 1)
-                                )
-                        )
+                        Spacer()
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundColor(theme.tertiaryText)
                     }
-                    .buttonStyle(PlainButtonStyle())
-                    .popover(isPresented: $showModelPicker, arrowEdge: .bottom) {
-                        ModelPickerView(
-                            options: pickerItems,
-                            selectedModel: Binding(
-                                get: { selectedModel },
-                                set: { newModel in
-                                    selectedModel = newModel
-                                    agentManager.updateDefaultModel(for: agent.id, model: newModel)
-                                    showSaveIndicator()
-                                }
-                            ),
-                            agentId: agent.id,
-                            onDismiss: { showModelPicker = false }
-                        )
-                    }
-
-                    if selectedModel != nil {
-                        Button {
-                            selectedModel = nil
-                            agentManager.updateDefaultModel(for: agent.id, model: nil)
-                            showSaveIndicator()
-                        } label: {
-                            HStack(spacing: 4) {
-                                Image(systemName: "arrow.uturn.backward")
-                                    .font(.system(size: 10))
-                                Text("Reset to default", bundle: .module)
-                                    .font(.system(size: 11, weight: .medium))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10)
+                            .fill(theme.inputBackground)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .stroke(theme.inputBorder, lineWidth: 1)
+                            )
+                    )
+                }
+                .buttonStyle(PlainButtonStyle())
+                .popover(isPresented: $showModelPicker, arrowEdge: .bottom) {
+                    ModelPickerView(
+                        options: pickerItems,
+                        selectedModel: Binding(
+                            get: { selectedModel },
+                            set: { newModel in
+                                selectedModel = newModel
+                                agentManager.updateDefaultModel(for: agent.id, model: newModel)
+                                showSaveIndicator()
                             }
-                            .foregroundColor(theme.accentColor)
-                        }
-                        .buttonStyle(PlainButtonStyle())
-                    }
+                        ),
+                        agentId: agent.id,
+                        onDismiss: { showModelPicker = false }
+                    )
                 }
 
+                if selectedModel != nil {
+                    Button {
+                        selectedModel = nil
+                        agentManager.updateDefaultModel(for: agent.id, model: nil)
+                        showSaveIndicator()
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "arrow.uturn.backward")
+                                .font(.system(size: 10))
+                            Text("Reset to default", bundle: .module)
+                                .font(.system(size: 11, weight: .medium))
+                        }
+                        .foregroundColor(theme.accentColor)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                }
+            }
+        }
+    }
+
+    /// Power-user generation overrides. Tucked inside the Advanced disclosure so
+    /// the Configure tab leads with model + capabilities + system prompt for the
+    /// 90% case.
+    private var generationOverridesSection: some View {
+        AgentDetailSection(title: "Generation Overrides", icon: "slider.horizontal.3") {
+            VStack(spacing: 12) {
                 HStack(spacing: 16) {
                     VStack(alignment: .leading, spacing: 6) {
                         Label {
@@ -1238,6 +1632,7 @@ struct AgentDetailView: View {
                 Text("Leave empty to use default values from global settings.", bundle: .module)
                     .font(.system(size: 11))
                     .foregroundColor(theme.tertiaryText)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
             .onChange(of: temperature) { debouncedSave() }
             .onChange(of: maxTokens) { debouncedSave() }
@@ -1245,45 +1640,6 @@ struct AgentDetailView: View {
     }
 
     // MARK: - Tool Selection
-
-    private func reloadToolsAndSkills() {
-        let hidden = ToolRegistry.shared.builtInToolNames
-            .union(ToolRegistry.shared.runtimeManagedToolNames)
-        cachedTools = ToolRegistry.shared.listTools().filter { $0.enabled && !hidden.contains($0.name) }
-        cachedSkills = SkillManager.shared.skills.filter { $0.enabled || !$0.isBuiltIn }
-        applyToolSearchFilter()
-    }
-
-    private func applyToolSearchFilter() {
-        guard !toolSearchText.isEmpty else {
-            displayedTools = cachedTools
-            displayedSkills = cachedSkills
-            return
-        }
-        let query = toolSearchText.lowercased()
-        displayedTools =
-            cachedTools
-            .compactMap { entry -> (ToolRegistry.ToolEntry, Int)? in
-                let score = fuzzyScore(query: query, name: entry.name, description: entry.description)
-                return score > 0 ? (entry, score) : nil
-            }
-            .sorted { $0.1 > $1.1 }
-            .map(\.0)
-        displayedSkills = cachedSkills.filter {
-            fuzzyScore(query: query, name: $0.name, description: $0.description) > 0
-        }
-    }
-
-    private func fuzzyScore(query: String, name: String, description: String) -> Int {
-        let n = name.lowercased()
-        let d = description.lowercased()
-        if n == query { return 100 }
-        if n.hasPrefix(query) { return 80 }
-        if n.contains(query) { return 60 }
-        if d.contains(query) { return 40 }
-        if SearchService.fuzzyMatch(query: query, in: n) { return 20 }
-        return 0
-    }
 
     private var disableTogglesSection: some View {
         AgentDetailSection(title: "Features", icon: "switch.2") {
@@ -1331,201 +1687,22 @@ struct AgentDetailView: View {
         )
     }
 
+    /// Compact entry point in the Configure tab. Tapping "Manage Capabilities" sets
+    /// `showingCapabilityManager = true`, which `configureTabContent` swaps in for
+    /// the rest of the tab — see the body of `configureTabContent`. Persistence is
+    /// handled by `AgentManager` directly so the parent's debounced save never
+    /// touches `manualToolNames` / `manualSkillNames` for the picker path.
     private var toolSelectionSection: some View {
-        AgentDetailSection(title: "Tools", icon: "wrench.and.screwdriver") {
-            VStack(alignment: .leading, spacing: 12) {
-                Picker("", selection: $toolSelectionMode) {
-                    Text("Auto", bundle: .module).tag(ToolSelectionMode.auto)
-                    Text("Manual", bundle: .module).tag(ToolSelectionMode.manual)
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-
-                Text(
-                    toolSelectionMode == .auto
-                        ? "Tools are discovered automatically using pre-flight search."
-                        : "Core tools are always available. Select additional tools and skills below."
-                )
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
-
-                if toolSelectionMode == .manual {
-                    manualSearchField
-                    manualToolList
-                    manualSkillList
-                    manualSelectionSummary
-                }
-            }
-            .onChange(of: toolSelectionMode) {
-                if toolSelectionMode == .manual { reloadToolsAndSkills() }
-                debouncedSave()
-            }
-            .task(id: toolSearchText) {
-                try? await Task.sleep(nanoseconds: 150_000_000)
-                guard !Task.isCancelled else { return }
-                applyToolSearchFilter()
-            }
-            .onReceive(NotificationCenter.default.publisher(for: .toolsListChanged)) { _ in
-                reloadToolsAndSkills()
-            }
-            .onAppear {
-                if toolSelectionMode == .manual { reloadToolsAndSkills() }
-            }
-        }
-    }
-
-    private var manualSearchField: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
-            TextField(text: $toolSearchText, prompt: Text("Search tools and skills...", bundle: .module)) {
-                Text("Search tools and skills...", bundle: .module)
-            }
-            .font(.system(size: 12))
-            .textFieldStyle(.plain)
-            .foregroundColor(theme.primaryText)
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 7)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(theme.inputBackground)
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(theme.inputBorder, lineWidth: 1))
-        )
-    }
-
-    @ViewBuilder
-    private var manualToolList: some View {
-        if !displayedTools.isEmpty {
-            selectableSection("Tools", maxHeight: 300) {
-                ForEach(displayedTools, id: \.name) { entry in
-                    selectableRow(
-                        title: entry.name,
-                        subtitle: entry.description,
-                        isSelected: manualToolNames.contains(entry.name),
-                        titleFont: .system(size: 12, weight: .medium, design: .monospaced)
-                    ) {
-                        manualToolNames.formSymmetricDifference([entry.name])
-                        debouncedSave()
-                    }
-                    if entry.name != displayedTools.last?.name {
-                        Divider().foregroundColor(theme.primaryBorder)
+        AgentDetailSection(title: "Tools & Skills", icon: "wrench.and.screwdriver") {
+            CapabilitySummaryCard(
+                agentId: agent.id,
+                onManage: {
+                    withAnimation(.spring(response: 0.32, dampingFraction: 0.85)) {
+                        showingCapabilityManager = true
                     }
                 }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var manualSkillList: some View {
-        if !displayedSkills.isEmpty {
-            selectableSection("Skills", maxHeight: 200) {
-                ForEach(displayedSkills, id: \.id) { skill in
-                    selectableRow(
-                        title: skill.name,
-                        subtitle: skill.description,
-                        isSelected: manualSkillNames.contains(skill.name),
-                        badge: skill.category
-                    ) {
-                        manualSkillNames.formSymmetricDifference([skill.name])
-                        debouncedSave()
-                    }
-                    if skill.id != displayedSkills.last?.id {
-                        Divider().foregroundColor(theme.primaryBorder)
-                    }
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var manualSelectionSummary: some View {
-        let parts = [
-            pluralized("tool", count: manualToolNames.count),
-            pluralized("skill", count: manualSkillNames.count),
-        ].compactMap { $0 }
-
-        if !parts.isEmpty {
-            Text(parts.joined(separator: ", ") + " selected")
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
-        }
-    }
-
-    private func pluralized(_ word: String, count: Int) -> String? {
-        guard count > 0 else { return nil }
-        return "\(count) \(word)\(count == 1 ? "" : "s")"
-    }
-
-    private func selectableSection<Content: View>(
-        _ title: String,
-        maxHeight: CGFloat,
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(theme.secondaryText)
-                .textCase(.uppercase)
-
-            ScrollView {
-                VStack(spacing: 0) { content() }
-            }
-            .frame(maxHeight: maxHeight)
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(theme.inputBackground)
-                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(theme.inputBorder, lineWidth: 1))
             )
-            .clipShape(RoundedRectangle(cornerRadius: 10))
         }
-    }
-
-    private func selectableRow(
-        title: String,
-        subtitle: String,
-        isSelected: Bool,
-        titleFont: Font = .system(size: 12, weight: .medium),
-        badge: String? = nil,
-        onToggle: @escaping () -> Void
-    ) -> some View {
-        Button(action: onToggle) {
-            HStack(spacing: 10) {
-                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 14))
-                    .foregroundColor(isSelected ? theme.accentColor : theme.tertiaryText)
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 6) {
-                        Text(title)
-                            .font(titleFont)
-                            .foregroundColor(theme.primaryText)
-                        if let badge {
-                            Text(badge)
-                                .font(.system(size: 9, weight: .medium))
-                                .foregroundColor(theme.tertiaryText)
-                                .padding(.horizontal, 5)
-                                .padding(.vertical, 1)
-                                .background(
-                                    Capsule().fill(theme.inputBackground)
-                                        .overlay(Capsule().stroke(theme.inputBorder, lineWidth: 0.5))
-                                )
-                        }
-                    }
-                    if !subtitle.isEmpty {
-                        Text(subtitle)
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.tertiaryText)
-                            .lineLimit(2)
-                    }
-                }
-                Spacer()
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
     }
 
     // MARK: - Plugin Tab Content
@@ -2778,10 +2955,6 @@ struct AgentDetailView: View {
         workQuickActions = agent.workQuickActions
         disableTools = agent.disableTools ?? false
         disableMemory = agent.disableMemory ?? false
-        toolSelectionMode = agent.toolSelectionMode ?? .auto
-        manualToolNames = Set(agent.manualToolNames ?? [])
-        manualSkillNames = Set(agent.manualSkillNames ?? [])
-
         var instrMap: [String: String] = [:]
         let overrides = agent.pluginInstructions ?? [:]
         for loaded in PluginManager.shared.plugins {
@@ -2828,6 +3001,12 @@ struct AgentDetailView: View {
         }()
 
         let current = currentAgent
+        // The capability picker writes `manualToolNames`, `manualSkillNames`, and
+        // `toolSelectionMode` directly via `AgentManager.update*` calls (so they
+        // save instantly without going through this debounced path). We therefore
+        // pass through `current.*` values rather than this view's local mirrors,
+        // which only get refreshed via `loadAgentData()`. Otherwise the debounced
+        // save could lose a picker change made between load and save.
         let updated = Agent(
             id: agent.id,
             name: trimmedName,
@@ -2846,9 +3025,9 @@ struct AgentDetailView: View {
             agentAddress: current.agentAddress,
             autonomousExec: current.autonomousExec,
             pluginInstructions: effectivePluginInstructions,
-            toolSelectionMode: toolSelectionMode,
-            manualToolNames: toolSelectionMode == .manual ? Array(manualToolNames) : nil,
-            manualSkillNames: toolSelectionMode == .manual ? Array(manualSkillNames) : nil,
+            toolSelectionMode: current.toolSelectionMode,
+            manualToolNames: current.manualToolNames,
+            manualSkillNames: current.manualSkillNames,
             disableTools: disableTools ? true : nil,
             disableMemory: disableMemory ? true : nil
         )
