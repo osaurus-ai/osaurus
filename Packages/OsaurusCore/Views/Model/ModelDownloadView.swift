@@ -366,6 +366,9 @@ struct ModelDownloadView: View {
     }
 
     // MARK: - Model List View
+    private var gridColumns: [GridItem] {
+        [GridItem(.adaptive(minimum: 260), spacing: 12, alignment: .top)]
+    }
 
     /// Main content area with scrollable model list
     private var modelListView: some View {
@@ -374,7 +377,7 @@ struct ModelDownloadView: View {
                 loadingState
             } else {
                 ScrollView {
-                    LazyVStack(spacing: 12) {
+                    VStack(spacing: 12) {
                         if !modelManager.deprecationNotices.isEmpty {
                             deprecationBanner
                         }
@@ -382,16 +385,18 @@ struct ModelDownloadView: View {
                         if displayedModels.isEmpty {
                             emptyState
                         } else {
-                            ForEach(Array(displayedModels.enumerated()), id: \.element.id) { index, model in
-                                ModelRowView(
-                                    model: model,
-                                    downloadState: modelManager.effectiveDownloadState(for: model),
-                                    metrics: modelManager.downloadMetrics[model.id],
-                                    totalMemoryGB: systemMonitor.totalMemoryGB,
-                                    onViewDetails: { modelToShowDetails = model },
-                                    onCancel: { modelManager.cancelDownload(model.id) },
-                                    animationIndex: index
-                                )
+                            LazyVGrid(columns: gridColumns, spacing: 12) {
+                                ForEach(Array(displayedModels.enumerated()), id: \.element.id) { index, model in
+                                    ModelRowView(
+                                        model: model,
+                                        downloadState: modelManager.effectiveDownloadState(for: model),
+                                        metrics: modelManager.downloadMetrics[model.id],
+                                        totalMemoryGB: systemMonitor.totalMemoryGB,
+                                        onViewDetails: { modelToShowDetails = model },
+                                        onCancel: { modelManager.cancelDownload(model.id) },
+                                        animationIndex: index
+                                    )
+                                }
                             }
                         }
                     }

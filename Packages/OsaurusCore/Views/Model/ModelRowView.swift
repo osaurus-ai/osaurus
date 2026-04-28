@@ -50,76 +50,47 @@ struct ModelRowView: View {
 
     var body: some View {
         Button(action: onViewDetails) {
-            HStack(spacing: 16) {
-                // Model icon
-                modelIcon
-
-                // Model info
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(alignment: .center, spacing: 8) {
-                        Text(model.name)
-                            .font(.system(size: 15, weight: .semibold, design: .rounded))
-                            .foregroundColor(theme.primaryText)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-
-                        if model.isDownloaded {
-                            Image(systemName: "checkmark.circle.fill")
-                                .font(.system(size: 13))
-                                .foregroundColor(theme.successColor)
-                        }
-                    }
-
-                    // Metadata pills row
-                    metadataPillsRow
-
-                    if !model.description.isEmpty {
-                        Text(model.description)
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .center, spacing: 10) {
+                    modelIcon
+                    Text(model.name)
+                        .font(.system(size: 14, weight: .semibold, design: .rounded))
+                        .foregroundColor(theme.primaryText)
+                        .lineLimit(2)
+                        .truncationMode(.tail)
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 4)
+                    if model.isDownloaded {
+                        Image(systemName: "checkmark.circle.fill")
                             .font(.system(size: 13))
-                            .foregroundColor(theme.secondaryText)
-                            .lineLimit(2)
-                            .truncationMode(.tail)
+                            .foregroundColor(theme.successColor)
                     }
+                }
 
-                    // Repository link - use Button instead of Link to control color explicitly
-                    if let url = URL(string: model.downloadURL) {
-                        Button(action: { NSWorkspace.shared.open(url) }) {
-                            HStack(spacing: 4) {
-                                Image(systemName: "link")
-                                    .font(.system(size: 10))
-                                Text(repositoryName(from: model.downloadURL))
-                                    .font(.system(size: 12))
-                                    .lineLimit(1)
-                                    .truncationMode(.middle)
-                            }
-                            .foregroundColor(theme.accentColor)
-                        }
-                        .buttonStyle(.plain)
-                        .onHover { hovering in
-                            if hovering {
-                                NSCursor.pointingHand.push()
-                            } else {
-                                NSCursor.pop()
-                            }
-                        }
-                    }
+                // Wrapping badges row
+                metadataBadges
 
-                    // Download progress
-                    if case .downloading(let progress) = downloadState {
-                        downloadProgressView(progress: progress)
-                            .padding(.top, 4)
-                    }
+                if !model.description.isEmpty {
+                    Text(model.description)
+                        .font(.system(size: 12))
+                        .foregroundColor(theme.secondaryText)
+                        .lineLimit(2)
+                        .truncationMode(.tail)
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                if case .downloading(let progress) = downloadState {
+                    downloadProgressView(progress: progress)
                 }
 
                 Spacer(minLength: 0)
 
-                // Chevron indicator
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.tertiaryText)
-                    .opacity(isHovering ? 1 : 0.5)
+                footer
             }
-            .padding(16)
+            .padding(14)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .background(cardBackground)
             .contentShape(RoundedRectangle(cornerRadius: 12))
         }
@@ -128,62 +99,58 @@ struct ModelRowView: View {
         .onHover { hovering in
             isHovering = hovering
         }
-        .offset(y: hasAppeared ? 0 : 24)
         .opacity(hasAppeared ? 1 : 0)
         .onAppear {
             if hasAppeared { return }
-
-            // High-frequency stagger logic:
-            // 1. Initial items (0-10) get a polished cascade (40ms steps).
-            // 2. Scrolling items use a micro-stagger (max 40ms total) to ensure
-            //    instant responsiveness while maintaining the 'liquid' ripple effect.
-            let delay: Double = {
-                if animationIndex < 10 {
-                    return Double(animationIndex) * 0.04
-                } else {
-                    // Maximum delay is 0.01 + (3 * 0.01) = 0.04s (approx 2 frames)
-                    // This is fast enough to feel instant but still provides a stagger.
-                    return 0.01 + Double(animationIndex % 4) * 0.01
-                }
-            }()
-
-            withAnimation(.spring(response: 0.38, dampingFraction: 0.82).delay(delay)) {
+            let delay = animationIndex < 10 ? Double(animationIndex) * 0.04 : 0
+            withAnimation(.easeOut(duration: 0.25).delay(delay)) {
                 hasAppeared = true
             }
         }
     }
 
-    // MARK: - Metadata Pills Row
-
-    /// Row of small pills showing model type, parameters, quantization, and compatibility
-    private var metadataPillsRow: some View {
-        HStack(spacing: 6) {
-            // Top suggestion badge
+    // MARK: - Metadata Badges
+    private var metadataBadges: some View {
+        FlowLayout(spacing: 6) {
+            compatibilityBadge
             if model.isTopSuggestion {
                 topSuggestionBadge
             }
-
-            // Model type badge (LLM/VLM)
             modelTypeBadge
-
-            // Parameter count pill
             if let params = model.parameterCount {
                 MetadataPill(text: params, icon: "cpu")
             }
-
-            // Quantization pill
             if let quant = model.quantization {
                 MetadataPill(text: quant, icon: "gauge.with.dots.needle.bottom.50percent")
             }
-
-            // Estimated memory pill
-            if let mem = model.formattedEstimatedMemory {
-                MetadataPill(text: mem, icon: "memorychip")
-            }
-
-            // Hardware compatibility badge
-            compatibilityBadge
         }
+    }
+
+    // MARK: - Footer
+    @ViewBuilder
+    private var footer: some View {
+        if let url = URL(string: model.downloadURL) {
+            Button(action: { NSWorkspace.shared.open(url) }) {
+                HStack(spacing: 4) {
+                    Image(systemName: "arrow.up.right.square")
+                        .font(.system(size: 10, weight: .semibold))
+                    Text(shortRepoLabel(from: model.downloadURL))
+                        .font(.system(size: 11, weight: .medium))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                .foregroundColor(theme.accentColor.opacity(isHovering ? 1.0 : 0.85))
+            }
+            .buttonStyle(.plain)
+            .onHover { hovering in
+                if hovering { NSCursor.pointingHand.push() } else { NSCursor.pop() }
+            }
+        }
+    }
+
+    private func shortRepoLabel(from urlString: String) -> String {
+        let full = repositoryName(from: urlString)
+        return full.split(separator: "/").last.map(String.init) ?? full
     }
 
     @ViewBuilder
@@ -238,14 +205,14 @@ struct ModelRowView: View {
                 )
 
             Image(systemName: model.isDownloaded ? "cube.fill" : "cube")
-                .font(.system(size: 20, weight: .medium))
+                .font(.system(size: 16, weight: .medium))
                 .foregroundColor(
                     model.isDownloaded
                         ? theme.successColor
                         : theme.accentColor
                 )
         }
-        .frame(width: 44, height: 44)
+        .frame(width: 32, height: 32)
     }
 
     // MARK: - Card Background
