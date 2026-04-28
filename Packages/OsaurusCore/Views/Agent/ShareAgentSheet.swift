@@ -77,8 +77,12 @@ struct ShareAgentSheet: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            header
-            Divider().opacity(0.5)
+            AgentSheetHeader(
+                icon: "paperplane.circle.fill",
+                title: "Share Agent",
+                subtitle: "Send a one-tap invite link to add this agent on another device.",
+                onClose: { dismiss() }
+            )
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
@@ -86,13 +90,18 @@ struct ShareAgentSheet: View {
                     if relayBaseURL != nil {
                         inviteCard
                     }
-                    if !ledger.isEmpty {
-                        ledgerCard
-                    }
+                    ledgerCard
                 }
                 .padding(20)
             }
             .background(theme.primaryBackground)
+
+            AgentSheetFooter(
+                secondary: AgentSheetFooter.Action(
+                    label: "Done",
+                    handler: { dismiss() }
+                )
+            )
         }
         .frame(width: 520, height: 640)
         .background(theme.cardBackground)
@@ -109,54 +118,25 @@ struct ShareAgentSheet: View {
                 Task { await generateInvite() }
             }
         }
+        // Use `.contained` so the confirmation renders as a local overlay on
+        // this sheet rather than going through `ThemedAlertCenter`. The
+        // central host is anchored to `ManagementView`, which sits BEHIND the
+        // sheet's window — `.window` style would render the dialog there and
+        // it would be invisible to the user.
         .themedAlert(
             "Revoke this invite?",
             isPresented: Binding(
                 get: { revokeConfirm != nil },
                 set: { if !$0 { revokeConfirm = nil } }
             ),
-            message: revokeConfirm.map {
-                "Anyone holding this link will lose access. The matching access key will also be revoked.\n\nNonce: \($0.nonce.prefix(12))…"
-            },
+            message: revokeConfirm.map { revokeMessage(for: $0) },
             primaryButton: .destructive("Revoke") {
                 if let target = revokeConfirm { revoke(target) }
                 revokeConfirm = nil
             },
-            secondaryButton: .cancel("Cancel")
+            secondaryButton: .cancel("Cancel"),
+            presentationStyle: .contained
         )
-    }
-
-    // MARK: Header
-
-    private var header: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "paperplane.circle.fill")
-                .font(.system(size: 18))
-                .foregroundColor(theme.accentColor)
-            VStack(alignment: .leading, spacing: 1) {
-                Text("Share Agent", bundle: .module)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-                Text("Send a one-tap invite link to add \(agent.name) on another device.", bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
-                    .lineLimit(2)
-            }
-            Spacer()
-            Button {
-                dismiss()
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundColor(theme.tertiaryText)
-                    .frame(width: 24, height: 24)
-                    .background(Circle().fill(theme.tertiaryBackground))
-            }
-            .buttonStyle(.plain)
-        }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 14)
-        .background(theme.secondaryBackground)
     }
 
     // MARK: Relay status card
@@ -179,13 +159,8 @@ struct ShareAgentSheet: View {
                     relayManager.setTunnelEnabled(true, for: agent.id)
                 } label: {
                     Text("Enable Relay", bundle: .module)
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(Capsule().fill(theme.accentColor))
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(PrimaryButtonStyle())
             }
         }
         .padding(12)
@@ -242,10 +217,7 @@ struct ShareAgentSheet: View {
     private var inviteCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("Invite Link", bundle: .module)
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundColor(theme.tertiaryText)
-                    .tracking(0.5)
+                AgentSheetSectionLabel("Invite Link")
                 Spacer()
                 expiryPicker
             }
@@ -271,13 +243,9 @@ struct ShareAgentSheet: View {
                     Task { await generateInvite() }
                 } label: {
                     Text("Generate Invite", bundle: .module)
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 8)
-                        .background(Capsule().fill(theme.accentColor))
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(PrimaryButtonStyle())
+                .disabled(relayBaseURL == nil)
             }
         }
         .padding(14)
@@ -346,39 +314,26 @@ struct ShareAgentSheet: View {
                             )
                     )
 
-                HStack(spacing: 6) {
+                HStack(spacing: 8) {
                     Button {
                         copyToPasteboard(url.absoluteString)
                     } label: {
-                        HStack(spacing: 4) {
+                        HStack(spacing: 6) {
                             Image(systemName: copiedFlash ? "checkmark" : "doc.on.doc")
-                                .font(.system(size: 10))
+                                .font(.system(size: 11))
                             Text(copiedFlash ? "Copied" : "Copy")
-                                .font(.system(size: 11, weight: .semibold))
                         }
-                        .foregroundColor(copiedFlash ? theme.successColor : theme.accentColor)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(
-                            Capsule()
-                                .fill((copiedFlash ? theme.successColor : theme.accentColor).opacity(0.12))
-                        )
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(PrimaryButtonStyle())
 
                     ShareLink(item: url) {
-                        HStack(spacing: 4) {
+                        HStack(spacing: 6) {
                             Image(systemName: "square.and.arrow.up")
-                                .font(.system(size: 10))
+                                .font(.system(size: 11))
                             Text("Share…", bundle: .module)
-                                .font(.system(size: 11, weight: .semibold))
                         }
-                        .foregroundColor(theme.accentColor)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(Capsule().fill(theme.accentColor.opacity(0.12)))
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(SecondaryButtonStyle())
                 }
             }
         }
@@ -388,7 +343,7 @@ struct ShareAgentSheet: View {
                 Image(systemName: "info.circle")
                     .font(.system(size: 10))
                 Text(
-                    "Single-use, expires \(invite.expirationDate.formatted(date: .abbreviated, time: .shortened)). Anyone with this link can add this agent on their device."
+                    "Single-use — once someone accepts, this link can't be used again. Expires \(invite.expirationDate.formatted(date: .abbreviated, time: .shortened))."
                 )
                 .lineLimit(3)
             }
@@ -424,22 +379,29 @@ struct ShareAgentSheet: View {
     private var ledgerCard: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text("Issued Invites", bundle: .module)
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundColor(theme.tertiaryText)
-                    .tracking(0.5)
+                AgentSheetSectionLabel("Issued Invites")
                 Spacer()
-                Text("\(ledger.count)")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(theme.tertiaryText)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 1)
-                    .background(Capsule().fill(theme.inputBackground))
+                if !ledger.isEmpty {
+                    Text("\(ledger.count)")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(theme.tertiaryText)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 1)
+                        .background(Capsule().fill(theme.inputBackground))
+                }
             }
 
-            VStack(spacing: 4) {
-                ForEach(ledger) { record in
-                    ledgerRow(record)
+            if ledger.isEmpty {
+                AgentSectionEmptyState(
+                    icon: "tray",
+                    title: "No invites issued yet",
+                    hint: "Generate one above to share this agent. Past invites appear here so you can revoke them anytime."
+                )
+            } else {
+                VStack(spacing: 4) {
+                    ForEach(ledger) { record in
+                        ledgerRow(record)
+                    }
                 }
             }
         }
@@ -466,7 +428,7 @@ struct ShareAgentSheet: View {
                     Text("Issued \(record.issuedAt.formatted(date: .abbreviated, time: .shortened))")
                     if let used = record.usedAt {
                         Text("·")
-                        Text("Used \(used.formatted(date: .abbreviated, time: .shortened))")
+                        Text("Accepted \(used.formatted(date: .abbreviated, time: .shortened))")
                     } else if record.displayStatus == .expired {
                         Text("·")
                         Text("Expired \(record.expirationDate.formatted(date: .abbreviated, time: .shortened))")
@@ -484,14 +446,19 @@ struct ShareAgentSheet: View {
                 Button {
                     revokeConfirm = record
                 } label: {
-                    Text("Revoke", bundle: .module)
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(theme.errorColor)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(Capsule().fill(theme.errorColor.opacity(0.12)))
+                    HStack(spacing: 4) {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 10))
+                        Text("Revoke", bundle: .module)
+                            .font(.system(size: 11, weight: .semibold))
+                    }
+                    .foregroundColor(theme.errorColor)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .help(Text("Revoke this invite", bundle: .module))
             }
         }
         .padding(.horizontal, 8)
@@ -506,8 +473,7 @@ struct ShareAgentSheet: View {
         let (color, label, icon): (Color, String, String) = {
             switch status {
             case .active: return (theme.successColor, "Active", "checkmark.circle.fill")
-            case .used: return (theme.accentColor, "Used", "person.fill.checkmark")
-            case .revoked: return (theme.errorColor, "Revoked", "xmark.octagon.fill")
+            case .used: return (theme.accentColor, "Accepted", "person.fill.checkmark")
             case .expired: return (theme.tertiaryText, "Expired", "clock.badge.xmark.fill")
             }
         }()
@@ -564,6 +530,20 @@ struct ShareAgentSheet: View {
             qrImage = nil
         }
         reloadLedger()
+    }
+
+    /// Different copy depending on whether the invite has already been accepted —
+    /// a never-redeemed invite just disappears from the share network, while an
+    /// accepted one had a real access key minted that revoke also kills.
+    private func revokeMessage(for record: IssuedInviteRecord) -> String {
+        switch record.displayStatus {
+        case .used:
+            return "The receiver who accepted this invite will lose access immediately. Their access key will be revoked."
+        case .active:
+            return "The link will stop working. Anyone trying to use it will be turned away."
+        case .expired:
+            return "Removes this entry from the list."
+        }
     }
 
     private func copyToPasteboard(_ string: String) {

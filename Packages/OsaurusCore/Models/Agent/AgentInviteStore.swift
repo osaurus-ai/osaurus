@@ -24,7 +24,10 @@ public struct IssuedInviteRecord: Codable, Identifiable, Sendable, Equatable {
         case active
         /// Consumed by a successful /pair-invite redemption.
         case used
-        /// User explicitly revoked. Server rejects further redemption.
+        /// Legacy: previously written by an older `revoke(...)` that marked
+        /// records instead of deleting them. New code never writes this value
+        /// — `revoke(...)` now removes the record outright. Records that still
+        /// carry it are filtered out at load time so they don't surface.
         case revoked
     }
 
@@ -52,15 +55,17 @@ public struct IssuedInviteRecord: Codable, Identifiable, Sendable, Equatable {
     }
 
     /// Effective display status: collapses `.active && isPastExpiry` to a
-    /// pseudo-`.expired` state for the UI without writing it to disk.
+    /// pseudo-`.expired` state for the UI without writing it to disk. Legacy
+    /// `.revoked` rows are filtered out before we get here; if one slips
+    /// through, treat it as expired so the UI never renders a "Revoked" pill.
     public enum DisplayStatus: String, Sendable {
-        case active, used, revoked, expired
+        case active, used, expired
     }
 
     public var displayStatus: DisplayStatus {
         switch status {
         case .used: return .used
-        case .revoked: return .revoked
+        case .revoked: return .expired
         case .active: return isPastExpiry ? .expired : .active
         }
     }
@@ -171,19 +176,23 @@ public enum AgentInviteStore {
         save(ledger, for: agentId)
     }
 
-    /// Mark an invite as revoked. Returns the access key (if any) that was
-    /// minted from it so the caller can revoke that as well via APIKeyManager.
+    /// Revoke an invite by removing it from the ledger entirely. Returns the
+    /// access key (if any) that was minted from it so the caller can revoke
+    /// that as well via APIKeyManager.
+    ///
+    /// Removing the record (rather than just marking it `.revoked`) keeps the
+    /// share sheet honest with what the user expects from "Revoke" and lets
+    /// `purgeOld` stay simple. Server-side replay protection is unaffected:
+    /// `verifyAndConsume` returns `.unknownNonce` for missing records and the
+    /// HTTP layer rejects with 401 — exactly what we want for stolen links.
     @discardableResult
     public static func revoke(nonce: String, for agentId: UUID) -> UUID? {
         var ledger = load(for: agentId)
         guard let idx = ledger.firstIndex(where: { $0.nonce == nonce }) else { return nil }
-        var record = ledger[idx]
-        guard record.status != .revoked else { return record.accessKeyId }
-        record.status = .revoked
-        record.revokedAt = Date()
-        ledger[idx] = record
+        let accessKeyId = ledger[idx].accessKeyId
+        ledger.remove(at: idx)
         save(ledger, for: agentId)
-        return record.accessKeyId
+        return accessKeyId
     }
 
     /// Garbage-collect ledger entries older than `keepFor` past their expiry.
@@ -214,7 +223,10 @@ public enum AgentInviteStore {
             let data = try Data(contentsOf: url)
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .iso8601
+            // Filter out legacy `.revoked` rows so the new UI never has to
+            // know about them. New `revoke(...)` deletes records outright.
             return try decoder.decode([IssuedInviteRecord].self, from: data)
+                .filter { $0.status != .revoked }
         } catch {
             print("[Osaurus] Failed to load invite ledger for \(agentId): \(error)")
             return []

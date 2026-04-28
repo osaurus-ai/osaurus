@@ -24,8 +24,12 @@ struct IncomingPairSheet: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            header
-            Divider().opacity(0.5)
+            AgentSheetHeader(
+                icon: "person.crop.circle.badge.plus",
+                title: "Add Remote Agent",
+                subtitle: "Authorize this invite to chat with someone else's agent.",
+                onClose: { dismiss() }
+            )
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
@@ -42,8 +46,20 @@ struct IncomingPairSheet: View {
             }
             .background(theme.primaryBackground)
 
-            Divider().opacity(0.5)
-            actionBar
+            AgentSheetFooter(
+                primary: AgentSheetFooter.Action(
+                    label: isWorking ? "Adding…" : "Add Remote Agent",
+                    isEnabled: !isWorking,
+                    isLoading: isWorking,
+                    handler: { Task { await accept() } }
+                ),
+                secondary: AgentSheetFooter.Action(
+                    label: "Decline",
+                    isEnabled: !isWorking,
+                    handler: { dismiss() }
+                ),
+                hint: "+ Enter to add"
+            )
         }
         .frame(width: 480, height: 580)
         .background(theme.cardBackground)
@@ -53,36 +69,6 @@ struct IncomingPairSheet: View {
     }
 
     // MARK: Sections
-
-    private var header: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "person.crop.circle.badge.plus")
-                .font(.system(size: 18))
-                .foregroundColor(theme.accentColor)
-            VStack(alignment: .leading, spacing: 1) {
-                Text("Add Remote Agent", bundle: .module)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-                Text("Authorize this invite to chat with someone else's agent.", bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
-            }
-            Spacer()
-            Button {
-                dismiss()
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundColor(theme.tertiaryText)
-                    .frame(width: 24, height: 24)
-                    .background(Circle().fill(theme.tertiaryBackground))
-            }
-            .buttonStyle(.plain)
-        }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 14)
-        .background(theme.secondaryBackground)
-    }
 
     private var agentCard: some View {
         let color = agentColorFor(invite.name)
@@ -170,24 +156,15 @@ struct IncomingPairSheet: View {
             )
 
             VStack(alignment: .leading, spacing: 6) {
-                Text("Note (optional)", bundle: .module)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(theme.tertiaryText)
-                    .tracking(0.3)
-                TextField(text: $note, prompt: Text("e.g., Alice's research agent", bundle: .module)) {
-                    Text("Note", bundle: .module)
-                }
-                .textFieldStyle(.plain)
-                .font(.system(size: 12))
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(theme.inputBackground)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8).stroke(theme.inputBorder, lineWidth: 1)
-                        )
+                AgentSheetSectionLabel("Note (optional)")
+                StyledTextField(
+                    placeholder: "e.g., Alice's research agent",
+                    text: $note,
+                    icon: "text.alignleft"
                 )
+                Text("Will be saved when you accept.", bundle: .module)
+                    .font(.system(size: 10))
+                    .foregroundColor(theme.tertiaryText)
             }
 
             Text(
@@ -245,49 +222,6 @@ struct IncomingPairSheet: View {
                         .stroke(theme.errorColor.opacity(0.25), lineWidth: 1)
                 )
         )
-    }
-
-    private var actionBar: some View {
-        HStack(spacing: 10) {
-            Spacer()
-            Button {
-                dismiss()
-            } label: {
-                Text("Decline", bundle: .module)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 7)
-                    .background(
-                        Capsule().fill(theme.tertiaryBackground)
-                    )
-            }
-            .buttonStyle(.plain)
-            .disabled(isWorking)
-            .keyboardShortcut(.cancelAction)
-
-            Button {
-                Task { await accept() }
-            } label: {
-                HStack(spacing: 6) {
-                    if isWorking {
-                        ProgressView().controlSize(.small)
-                    }
-                    Text(isWorking ? "Adding…" : "Add Remote Agent")
-                        .font(.system(size: 12, weight: .semibold))
-                }
-                .foregroundColor(.white)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 7)
-                .background(Capsule().fill(theme.accentColor))
-            }
-            .buttonStyle(.plain)
-            .disabled(isWorking)
-            .keyboardShortcut(.defaultAction)
-        }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 12)
-        .background(theme.secondaryBackground)
     }
 
     // MARK: Actions

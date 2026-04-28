@@ -343,30 +343,79 @@ private enum CapabilityRowBuilder {
 
 // MARK: - Manager View
 
-/// Full-tab takeover that replaces the cramped inline tool/skill picker.
-/// Owns its own search / filter / expansion state but persists every selection
-/// change to `AgentManager` immediately so the parent view's debounced save is
-/// not on the critical path.
+/// Picker for an agent's enabled tools and skills, grouped by source. Hosts
+/// either as the Capabilities tab body (live mode → writes through
+/// `AgentManager`) or embedded in the Create Agent sheet (draft mode → writes
+/// through `@Binding`s the caller bakes into the new agent on save).
 struct AgentCapabilityManagerView: View {
+
+    /// Where the picker reads and writes capability state.
+    ///
+    /// - `live`: Capabilities-tab path. Writes go through `AgentManager` and
+    ///   persist immediately; `.agentUpdated` notifications keep the local
+    ///   mirror in sync.
+    /// - `draft`: Create-sheet path. Writes flow into the caller's bindings
+    ///   and are baked into the new agent only when the user clicks "Create
+    ///   Agent" — the agent doesn't exist yet, so no `AgentManager` calls.
+    enum Source {
+        case live(agentId: UUID)
+        case draft(
+            mode: Binding<ToolSelectionMode>,
+            tools: Binding<Set<String>>,
+            skills: Binding<Set<String>>
+        )
+    }
+
     @Environment(\.theme) private var theme
     @ObservedObject private var agentManager = AgentManager.shared
-    @State private var skillManager = SkillManager.shared
 
-    let agentId: UUID
-    let onDismiss: () -> Void
+    let source: Source
+    /// When non-nil, a "Done" affordance appears in the sticky header so the
+    /// host (sheet / takeover) can be dismissed. When nil, the picker IS the
+    /// host (e.g. the Capabilities tab body) and there's nothing to go back to.
+    let onDismiss: (() -> Void)?
+
+    /// Embedded mode used when the picker sits inside a host sheet that
+    /// already supplies its own title chrome. Drops the picker's title row
+    /// and bottom rule so the two headers don't stack, and relocates the
+    /// Done affordance into the search row.
+    let compact: Bool
+
+    /// Live-mode init used by the Capabilities tab.
+    init(agentId: UUID, onDismiss: (() -> Void)?, compact: Bool = false) {
+        self.source = .live(agentId: agentId)
+        self.onDismiss = onDismiss
+        self.compact = compact
+    }
+
+    /// Draft-mode init used by the Create Agent sheet.
+    init(
+        draftMode: Binding<ToolSelectionMode>,
+        draftTools: Binding<Set<String>>,
+        draftSkills: Binding<Set<String>>,
+        onDismiss: (() -> Void)?,
+        compact: Bool = false
+    ) {
+        self.source = .draft(mode: draftMode, tools: draftTools, skills: draftSkills)
+        self.onDismiss = onDismiss
+        self.compact = compact
+    }
 
     // MARK: Local UI state
+
     @State private var searchText: String = ""
+    @State private var searchFocused: Bool = false
     @State private var filter: CapabilityFilter = .all
     @State private var expandedGroups: Set<String> = []
 
-    // Mirror of the agent's enabled sets — kept here so updates feel instant.
-    // Persistence happens via AgentManager helpers.
+    /// Local mirror of capability state. In live mode it's seeded from
+    /// `AgentManager` and re-synced on `.agentUpdated`; in draft mode it's
+    /// seeded from the bindings and written back through them.
     @State private var enabledToolNames: Set<String> = []
     @State private var enabledSkillNames: Set<String> = []
     @State private var toolMode: ToolSelectionMode = .auto
 
-    // Snapshot of the registries this turn (rebuilt on notifications).
+    /// Snapshot of the registries this turn (rebuilt on `.toolsListChanged`).
     @State private var visibleTools: [ToolRegistry.ToolEntry] = []
     @State private var visibleSkills: [Skill] = []
     @State private var plugins: [PluginManager.LoadedPlugin] = []
@@ -378,22 +427,21 @@ struct AgentCapabilityManagerView: View {
                 .overlay(
                     Rectangle()
                         .fill(theme.primaryBorder)
-                        .frame(height: 1),
+                        .frame(height: 1)
+                        .opacity(compact ? 0 : 1),
                     alignment: .bottom
                 )
 
-            // NOTE: do NOT slap `.id()` on the table — it forces SwiftUI to recreate
-            // the underlying NSScrollView on every state change and resets scroll
-            // position to the top, which is jarring when toggling rows. The table's
-            // coordinator already diffs its rows in place via NSDiffableDataSource
-            // and reconfigures visible cells when only content (not structure)
-            // changed, so identity is intentionally stable across updates here.
+            // Intentionally NO `.id()` on the table: SwiftUI would recreate
+            // the underlying NSScrollView on every state change and snap the
+            // scroll position to the top. The coordinator already diffs rows
+            // in place via NSDiffableDataSource, so identity stays stable.
             CapabilitiesTableRepresentable(
                 rows: rows,
                 theme: theme,
                 onToggleGroup: handleToggleGroup,
-                onEnableAllInGroup: { handleEnableAll(in: $0) },
-                onDisableAllInGroup: { handleDisableAll(in: $0) },
+                onEnableAllInGroup: { handleBulkToggle(in: $0, enable: true) },
+                onDisableAllInGroup: { handleBulkToggle(in: $0, enable: false) },
                 onToggleTool: handleToggleTool,
                 onToggleSkill: handleToggleSkill
             )
@@ -403,18 +451,16 @@ struct AgentCapabilityManagerView: View {
         .onAppear {
             loadFromRegistries()
             seedIfNeeded()
-            loadFromAgent()
+            loadInitialState()
         }
-        .onReceive(
-            NotificationCenter.default.publisher(for: .toolsListChanged)
-        ) { _ in
+        .onReceive(NotificationCenter.default.publisher(for: .toolsListChanged)) { _ in
             loadFromRegistries()
-            // After auto-grow, the agent's enabled set may have changed — reload.
+            // Live mode auto-grows the agent's enabled set when new tools
+            // register, so the local mirror needs to re-sync. Draft mode's
+            // bindings stay authoritative.
             loadFromAgent()
         }
-        .onReceive(
-            NotificationCenter.default.publisher(for: .agentUpdated)
-        ) { _ in
+        .onReceive(NotificationCenter.default.publisher(for: .agentUpdated)) { _ in
             loadFromAgent()
         }
     }
@@ -423,38 +469,54 @@ struct AgentCapabilityManagerView: View {
 
     private var stickyHeader: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 10) {
-                Button(action: onDismiss) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "chevron.left")
-                            .font(.system(size: 11, weight: .semibold))
-                        Text("Done", bundle: .module)
-                            .font(.system(size: 12, weight: .medium))
-                    }
-                    .foregroundColor(theme.accentColor)
+            // Title row only renders in standalone (tab-host) mode. In compact
+            // mode the host sheet's header already supplies the title context.
+            if !compact {
+                HStack(spacing: 10) {
+                    if onDismiss != nil { doneButton }
+
+                    Image(systemName: "wrench.and.screwdriver.fill")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(theme.secondaryText)
+                    Text("Capabilities", bundle: .module)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
+
+                    Spacer()
+                    summaryPill
                 }
-                .buttonStyle(.plain)
-
-                Image(systemName: "wrench.and.screwdriver.fill")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.secondaryText)
-                Text("Capabilities", bundle: .module)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-
-                Spacer()
-
-                summaryPill
             }
 
-            searchField
+            // Compact mode places the Done affordance left of the search field
+            // so it reads as a "back" arrow into the host form, not a trailing
+            // accessory of the input.
+            HStack(spacing: 10) {
+                if compact, onDismiss != nil { doneButton }
+                searchField
+                if compact { summaryPill }
+            }
 
             autoDiscoverCard
-
             filterChips
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 14)
+    }
+
+    @ViewBuilder
+    private var doneButton: some View {
+        if let onDismiss {
+            Button(action: onDismiss) {
+                HStack(spacing: 4) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text("Done", bundle: .module)
+                        .font(.system(size: 12, weight: .medium))
+                }
+                .foregroundColor(theme.accentColor)
+            }
+            .buttonStyle(.plain)
+        }
     }
 
     private var summaryPill: some View {
@@ -476,37 +538,57 @@ struct AgentCapabilityManagerView: View {
     }
 
     private var searchField: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 10) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
-            TextField(
-                text: $searchText,
-                prompt: Text("Search by name or description...", bundle: .module)
-            ) {
-                Text("Search by name or description...", bundle: .module)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(searchFocused ? theme.accentColor : theme.tertiaryText)
+                .frame(width: 16)
+
+            ZStack(alignment: .leading) {
+                if searchText.isEmpty {
+                    Text("Search by name or description...", bundle: .module)
+                        .font(.system(size: 13))
+                        .foregroundColor(theme.placeholderText)
+                        .allowsHitTesting(false)
+                }
+                TextField(
+                    "",
+                    text: $searchText,
+                    onEditingChanged: { editing in
+                        withAnimation(.easeOut(duration: 0.15)) {
+                            searchFocused = editing
+                        }
+                    }
+                )
+                .textFieldStyle(.plain)
+                .font(.system(size: 13))
+                .foregroundColor(theme.primaryText)
             }
-            .font(.system(size: 12))
-            .textFieldStyle(.plain)
-            .foregroundColor(theme.primaryText)
 
             if !searchText.isEmpty {
                 Button {
                     searchText = ""
                 } label: {
                     Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 11))
+                        .font(.system(size: 12))
                         .foregroundColor(theme.tertiaryText)
                 }
                 .buttonStyle(.plain)
+                .help(Text("Clear search", bundle: .module))
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 7)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
         .background(
-            RoundedRectangle(cornerRadius: 8)
+            RoundedRectangle(cornerRadius: 10)
                 .fill(theme.inputBackground)
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(theme.inputBorder, lineWidth: 1))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(
+                            searchFocused ? theme.accentColor.opacity(0.5) : theme.inputBorder,
+                            lineWidth: searchFocused ? 1.5 : 1
+                        )
+                )
         )
     }
 
@@ -544,12 +626,7 @@ struct AgentCapabilityManagerView: View {
                 "",
                 isOn: Binding(
                     get: { toolMode == .auto },
-                    set: { newValue in
-                        let next: ToolSelectionMode = newValue ? .auto : .manual
-                        guard next != toolMode else { return }
-                        toolMode = next
-                        agentManager.updateToolSelectionMode(next, for: agentId)
-                    }
+                    set: { newValue in commit(mode: newValue ? .auto : .manual) }
                 )
             )
             .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
@@ -623,7 +700,12 @@ struct AgentCapabilityManagerView: View {
         plugins = PluginManager.shared.plugins
     }
 
+    /// Live mode only: ensure the agent's `manualToolNames` / `manualSkillNames`
+    /// fields are populated so the picker reads a real list instead of "nil".
+    /// Draft mode skips this — its bindings are seeded by the parent before
+    /// the manager is shown.
     private func seedIfNeeded() {
+        guard case .live(let agentId) = source else { return }
         let liveToolNames = ToolRegistry.shared.listDynamicTools().map(\.name)
         let liveSkillNames = SkillManager.shared.skills.map(\.name)
         agentManager.seedEnabledCapabilitiesIfNeeded(
@@ -633,7 +715,20 @@ struct AgentCapabilityManagerView: View {
         )
     }
 
+    /// Populate the local mirror from whichever source is authoritative.
+    private func loadInitialState() {
+        switch source {
+        case .live:
+            loadFromAgent()
+        case .draft(let mode, let tools, let skills):
+            toolMode = mode.wrappedValue
+            enabledToolNames = tools.wrappedValue
+            enabledSkillNames = skills.wrappedValue
+        }
+    }
+
     private func loadFromAgent() {
+        guard case .live(let agentId) = source else { return }
         toolMode = agentManager.effectiveToolSelectionMode(for: agentId)
         enabledToolNames = Set(agentManager.effectiveEnabledToolNames(for: agentId) ?? [])
         enabledSkillNames = Set(agentManager.effectiveEnabledSkillNames(for: agentId) ?? [])
@@ -649,23 +744,20 @@ struct AgentCapabilityManagerView: View {
         }
     }
 
-    private func handleEnableAll(in groupId: String) {
+    /// Bulk-flip every (non-restricted) child of a group on or off in one
+    /// commit. Wired to the group header's enable-all / disable-all glyphs.
+    private func handleBulkToggle(in groupId: String, enable: Bool) {
         let (toolNames, skillNames) = childrenOf(groupId: groupId)
         guard !toolNames.isEmpty || !skillNames.isEmpty else { return }
         var nextTools = enabledToolNames
-        nextTools.formUnion(toolNames)
         var nextSkills = enabledSkillNames
-        nextSkills.formUnion(skillNames)
-        commit(nextTools: nextTools, nextSkills: nextSkills)
-    }
-
-    private func handleDisableAll(in groupId: String) {
-        let (toolNames, skillNames) = childrenOf(groupId: groupId)
-        guard !toolNames.isEmpty || !skillNames.isEmpty else { return }
-        var nextTools = enabledToolNames
-        nextTools.subtract(toolNames)
-        var nextSkills = enabledSkillNames
-        nextSkills.subtract(skillNames)
+        if enable {
+            nextTools.formUnion(toolNames)
+            nextSkills.formUnion(skillNames)
+        } else {
+            nextTools.subtract(toolNames)
+            nextSkills.subtract(skillNames)
+        }
         commit(nextTools: nextTools, nextSkills: nextSkills)
     }
 
@@ -682,7 +774,8 @@ struct AgentCapabilityManagerView: View {
 
     private func handleToggleSkill(_ rowId: String) {
         guard let decoded = CapabilityRowBuilder.decode(rowId: rowId), decoded.kind == "skill" else { return }
-        // Find the skill name from the current snapshot using its UUID payload.
+        // Skill rows encode their UUID, not their name (the name can change
+        // when a plugin is renamed). Resolve via the live snapshot.
         guard let uuid = UUID(uuidString: decoded.payload),
             let skill = visibleSkills.first(where: { $0.id == uuid })
         else { return }
@@ -713,178 +806,33 @@ struct AgentCapabilityManagerView: View {
     private func commit(nextTools: Set<String>, nextSkills: Set<String>) {
         if nextTools != enabledToolNames {
             enabledToolNames = nextTools
-            agentManager.updateEnabledToolNames(Array(nextTools), for: agentId)
+            switch source {
+            case .live(let agentId):
+                agentManager.updateEnabledToolNames(Array(nextTools), for: agentId)
+            case .draft(_, let tools, _):
+                tools.wrappedValue = nextTools
+            }
         }
         if nextSkills != enabledSkillNames {
             enabledSkillNames = nextSkills
-            agentManager.updateEnabledSkillNames(Array(nextSkills), for: agentId)
+            switch source {
+            case .live(let agentId):
+                agentManager.updateEnabledSkillNames(Array(nextSkills), for: agentId)
+            case .draft(_, _, let skills):
+                skills.wrappedValue = nextSkills
+            }
+        }
+    }
+
+    private func commit(mode: ToolSelectionMode) {
+        guard mode != toolMode else { return }
+        toolMode = mode
+        switch source {
+        case .live(let agentId):
+            agentManager.updateToolSelectionMode(mode, for: agentId)
+        case .draft(let modeBinding, _, _):
+            modeBinding.wrappedValue = mode
         }
     }
 }
 
-// MARK: - Summary Card (used in the configure tab)
-
-/// Compact preview shown in the agent's Configure tab. Tapping "Manage" replaces
-/// the configure body with `AgentCapabilityManagerView` (in-place takeover). This
-/// avoids the nested-scroll issue from the previous inline picker design.
-struct CapabilitySummaryCard: View {
-    @Environment(\.theme) private var theme
-    @ObservedObject private var agentManager = AgentManager.shared
-
-    let agentId: UUID
-    let onManage: () -> Void
-
-    @State private var enabledToolCount: Int = 0
-    @State private var enabledSkillCount: Int = 0
-    @State private var sourceCount: Int = 0
-    @State private var toolMode: ToolSelectionMode = .auto
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top, spacing: 12) {
-                ZStack {
-                    Circle().fill(theme.accentColor.opacity(0.12))
-                    Image(systemName: "wrench.and.screwdriver.fill")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundColor(theme.accentColor)
-                }
-                .frame(width: 36, height: 36)
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(summaryHeadline)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
-                    Text(summarySubline)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.secondaryText)
-                        .lineLimit(2)
-                }
-
-                Spacer()
-
-                modePill
-            }
-
-            Button(action: onManage) {
-                HStack {
-                    Image(systemName: "slider.horizontal.3")
-                        .font(.system(size: 11, weight: .semibold))
-                    Text("Manage Capabilities", bundle: .module)
-                        .font(.system(size: 12, weight: .semibold))
-                    Spacer()
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(theme.tertiaryText)
-                }
-                .foregroundColor(theme.accentColor)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(theme.accentColor.opacity(0.10))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8)
-                                .strokeBorder(theme.accentColor.opacity(0.25), lineWidth: 1)
-                        )
-                )
-            }
-            .buttonStyle(.plain)
-        }
-        .padding(14)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(theme.inputBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(theme.inputBorder, lineWidth: 1)
-                )
-        )
-        .onAppear { refresh() }
-        .onReceive(
-            NotificationCenter.default.publisher(for: .toolsListChanged)
-        ) { _ in refresh() }
-        .onReceive(
-            NotificationCenter.default.publisher(for: .agentUpdated)
-        ) { _ in refresh() }
-    }
-
-    private var modePill: some View {
-        HStack(spacing: 5) {
-            Image(systemName: toolMode == .auto ? "sparkles" : "list.bullet")
-                .font(.system(size: 9, weight: .semibold))
-            Text(toolMode == .auto ? "Auto-discover" : "Custom")
-                .font(.system(size: 10, weight: .semibold))
-        }
-        .foregroundColor(toolMode == .auto ? theme.accentColor : theme.secondaryText)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(
-            Capsule()
-                .fill(toolMode == .auto ? theme.accentColor.opacity(0.12) : theme.inputBackground)
-                .overlay(
-                    Capsule()
-                        .strokeBorder(
-                            toolMode == .auto ? theme.accentColor.opacity(0.25) : theme.inputBorder,
-                            lineWidth: 1
-                        )
-                )
-        )
-    }
-
-    private var summaryHeadline: String {
-        let total = enabledToolCount + enabledSkillCount
-        if total == 0 { return "No tools or skills enabled" }
-        let toolPart = "\(enabledToolCount) tool\(enabledToolCount == 1 ? "" : "s")"
-        let skillPart = "\(enabledSkillCount) skill\(enabledSkillCount == 1 ? "" : "s")"
-        return "\(toolPart) · \(skillPart) enabled"
-    }
-
-    private var summarySubline: String {
-        if sourceCount == 0 {
-            return toolMode == .auto
-                ? "Auto-discover will load relevant capabilities each turn."
-                : "Enable items below to give the agent capabilities."
-        }
-        let sourceLabel = "across \(sourceCount) source\(sourceCount == 1 ? "" : "s")"
-        return toolMode == .auto
-            ? "Auto-discover picks per turn from your enabled set, \(sourceLabel)."
-            : "All enabled items are sent every turn, \(sourceLabel)."
-    }
-
-    private func refresh() {
-        toolMode = agentManager.effectiveToolSelectionMode(for: agentId)
-        let enabledTools = Set(agentManager.effectiveEnabledToolNames(for: agentId) ?? [])
-        let enabledSkills = Set(agentManager.effectiveEnabledSkillNames(for: agentId) ?? [])
-        enabledToolCount = enabledTools.count
-        enabledSkillCount = enabledSkills.count
-        sourceCount = computeSourceCount(toolNames: enabledTools, skillNames: enabledSkills)
-    }
-
-    private func computeSourceCount(toolNames: Set<String>, skillNames: Set<String>) -> Int {
-        let registry = ToolRegistry.shared
-        var sources: Set<String> = []
-        let builtInNames = registry.builtInToolNames
-        let runtimeNames = registry.runtimeManagedToolNames
-        for name in toolNames {
-            if builtInNames.contains(name) || runtimeNames.contains(name) {
-                sources.insert("builtin")
-            } else if let group = registry.groupName(for: name) {
-                sources.insert(group)
-            } else {
-                sources.insert("misc")
-            }
-        }
-        let pluginIdsForSkills = SkillManager.shared.skills
-            .filter { skillNames.contains($0.name) }
-            .compactMap { $0.pluginId }
-        for pid in pluginIdsForSkills {
-            sources.insert(pid)
-        }
-        if !skillNames.isEmpty,
-            SkillManager.shared.skills.contains(where: { skillNames.contains($0.name) && $0.pluginId == nil })
-        {
-            sources.insert("standalone-skills")
-        }
-        return sources.count
-    }
-}

@@ -200,20 +200,6 @@ public final class AgentManager: ObservableObject {
         return agent(byAddress: identifier)?.id
     }
 
-    /// Import an agent from JSON data
-    @discardableResult
-    public func importAgent(from data: Data) throws -> Agent {
-        let agent = try Agent.importFromJSON(data)
-        AgentStore.save(agent)
-        refresh()
-        return agent
-    }
-
-    /// Export an agent to JSON data
-    public func exportAgent(_ agent: Agent) throws -> Data {
-        try agent.exportToJSON()
-    }
-
     // MARK: - Active Agent Persistence
 
     private static let activeAgentKey = "activeAgentId"

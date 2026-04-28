@@ -49,21 +49,38 @@ struct RemoteAgentCard: View {
                         .lineLimit(2)
                         .lineSpacing(2)
                         .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    Text("No description", bundle: .module)
+                        .font(.system(size: 12).italic())
+                        .foregroundColor(theme.tertiaryText)
+                        .lineLimit(2)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
+                Spacer(minLength: 0)
                 stats
             }
-            .frame(maxHeight: .infinity, alignment: .top)
+            .frame(maxWidth: .infinity, minHeight: 140, alignment: .top)
             .padding(16)
             .background(cardBackground)
             .overlay(hoverGradient)
+            .overlay(alignment: .bottomTrailing) { hoverChevron }
             .clipShape(RoundedRectangle(cornerRadius: 12))
             .overlay(cardBorder)
-            .scaleEffect(hasAppeared ? 1 : 0.95)
-            .opacity(hasAppeared ? 1 : 0)
-            .animation(.spring(response: 0.35, dampingFraction: 0.85).delay(animationDelay), value: hasAppeared)
+            .shadow(
+                color: Color.black.opacity(isHovered ? 0.08 : 0.04),
+                radius: isHovered ? 10 : 5,
+                x: 0,
+                y: isHovered ? 3 : 2
+            )
+            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(PlainButtonStyle())
+        .scaleEffect(isHovered ? 1.01 : (hasAppeared ? 1 : 0.95))
+        .opacity(hasAppeared ? 1 : 0)
+        .offset(y: hasAppeared ? 0 : 20)
+        .animation(.spring(response: 0.4, dampingFraction: 0.8).delay(animationDelay), value: hasAppeared)
+        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isHovered)
         .onHover { hovering in
             withAnimation(.easeOut(duration: 0.15)) { isHovered = hovering }
         }
@@ -116,12 +133,18 @@ struct RemoteAgentCard: View {
                     .foregroundColor(theme.primaryText)
                     .lineLimit(1)
 
-                Text("Remote", bundle: .module)
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundColor(theme.accentColor)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Capsule().fill(theme.accentColor.opacity(0.12)))
+                // Pill metrics match local AgentCard's "Active" badge so the
+                // grid's status chips read at the same weight/size.
+                HStack(spacing: 3) {
+                    Image(systemName: "antenna.radiowaves.left.and.right")
+                        .font(.system(size: 8, weight: .bold))
+                    Text("Remote", bundle: .module)
+                        .font(.system(size: 10, weight: .semibold))
+                }
+                .foregroundColor(theme.accentColor)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(Capsule().fill(theme.accentColor.opacity(0.12)))
             }
             Text(remote.shortAddress)
                 .font(.system(size: 10, design: .monospaced))
@@ -137,7 +160,7 @@ struct RemoteAgentCard: View {
                 Label {
                     Text("Chat", bundle: .module)
                 } icon: {
-                    Image(systemName: "bubble.left.and.bubble.right")
+                    Image(systemName: "bubble.left.and.bubble.right.fill")
                 }
             }
             Button(action: onSelect) {
@@ -194,34 +217,48 @@ struct RemoteAgentCard: View {
     }
 
     private var cardBackground: some View {
-        LinearGradient(
-            colors: [
-                isHovered ? theme.cardBackground : theme.cardBackground.opacity(0.95),
-                theme.cardBackground.opacity(0.85),
-            ],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-        )
+        RoundedRectangle(cornerRadius: 12)
+            .fill(theme.cardBackground)
     }
 
     private var hoverGradient: some View {
-        Group {
-            if isHovered {
+        RoundedRectangle(cornerRadius: 12)
+            .fill(
                 LinearGradient(
-                    colors: [theme.accentColor.opacity(0.06), Color.clear],
+                    colors: [
+                        color.opacity(isHovered ? 0.06 : 0),
+                        Color.clear,
+                    ],
                     startPoint: .topLeading,
                     endPoint: .bottomTrailing
                 )
-            }
-        }
+            )
+            .allowsHitTesting(false)
+            .animation(.easeOut(duration: 0.15), value: isHovered)
     }
 
     private var cardBorder: some View {
         RoundedRectangle(cornerRadius: 12)
-            .stroke(
-                isHovered ? theme.accentColor.opacity(0.35) : theme.cardBorder,
-                lineWidth: 1
+            .strokeBorder(
+                isHovered ? color.opacity(0.25) : theme.cardBorder,
+                lineWidth: isHovered ? 1.5 : 1
             )
+    }
+
+    /// Same hover-reveal "open" affordance the local AgentCard uses, tinted to
+    /// the agent's deterministic color so local + remote cards share a
+    /// hover language.
+    private var hoverChevron: some View {
+        Image(systemName: "arrow.up.right")
+            .font(.system(size: 10, weight: .bold))
+            .foregroundColor(color)
+            .frame(width: 22, height: 22)
+            .background(Circle().fill(color.opacity(0.12)))
+            .padding(10)
+            .opacity(isHovered ? 1 : 0)
+            .scaleEffect(isHovered ? 1 : 0.85)
+            .allowsHitTesting(false)
+            .animation(.easeOut(duration: 0.15), value: isHovered)
     }
 }
 
@@ -238,6 +275,16 @@ struct RemoteAgentDetailView: View {
 
     @State private var note: String = ""
     @State private var showRemoveConfirm: Bool = false
+    /// Transient "Saved" pill toggled by `commitNote()` after the debounce
+    /// fires. Lives next to the note label so the user has explicit feedback
+    /// that their typing was persisted (mirroring the local agent detail's
+    /// header `saveIndicator`).
+    @State private var noteSaved: Bool = false
+    @State private var noteSaveTask: Task<Void, Never>?
+    /// Tracks whether the on-disk note matches the typed text. Used to
+    /// suppress the initial onChange that fires when `note` is hydrated on
+    /// appear, so the user doesn't see a phantom "Saved" pill on every visit.
+    @State private var noteHydrated: Bool = false
 
     private var remote: RemoteAgent? { manager.remoteAgent(for: remoteId) }
     private var color: Color { agentColorFor(remote?.name ?? "") }
@@ -279,6 +326,13 @@ struct RemoteAgentDetailView: View {
         .background(theme.primaryBackground)
         .onAppear {
             note = remote?.note ?? ""
+            // Mark hydrated on the next runloop tick so the onChange that
+            // fires from this assignment is treated as the initial sync, not
+            // a user edit.
+            DispatchQueue.main.async { noteHydrated = true }
+        }
+        .onDisappear {
+            noteSaveTask?.cancel()
         }
         .themedAlert(
             "Remove this remote agent?",
@@ -392,7 +446,7 @@ struct RemoteAgentDetailView: View {
 
     private func sourceCard(for remote: RemoteAgent) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            sectionTitle("Source")
+            AgentSheetSectionLabel("Source")
             metadataRow(label: "Relay URL", value: remote.relayBaseURL, mono: true)
             metadataRow(
                 label: "Paired",
@@ -419,28 +473,31 @@ struct RemoteAgentDetailView: View {
 
     private func noteCard(for remote: RemoteAgent) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            sectionTitle("Your Note")
-
-            TextField(
-                text: $note,
-                prompt: Text("e.g., Alice's research agent", bundle: .module),
-                axis: .vertical
-            ) {
-                Text("Note", bundle: .module)
+            HStack(spacing: 6) {
+                AgentSheetSectionLabel("Your Note")
+                if noteSaved {
+                    HStack(spacing: 4) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 10))
+                        Text("Saved", bundle: .module)
+                            .font(.system(size: 11, weight: .medium))
+                    }
+                    .foregroundColor(theme.successColor)
+                    .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                }
+                Spacer()
             }
-            .lineLimit(3, reservesSpace: true)
-            .textFieldStyle(.plain)
-            .font(.system(size: 12))
-            .padding(10)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(theme.inputBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8).stroke(theme.inputBorder, lineWidth: 1)
-                    )
+
+            StyledTextField(
+                placeholder: "e.g., Alice's research agent",
+                text: $note,
+                icon: "text.alignleft",
+                axis: .vertical,
+                lineLimit: 3
             )
             .onChange(of: note) { _, newValue in
-                manager.updateNote(newValue, for: remote.id)
+                guard noteHydrated else { return }
+                scheduleNoteSave(newValue, for: remote.id)
             }
         }
         .padding(16)
@@ -453,6 +510,22 @@ struct RemoteAgentDetailView: View {
         )
     }
 
+    /// Debounced autosave — mirrors the local-agent header's `debouncedSave`
+    /// pattern. After 500ms of inactivity, persist the note and flash the
+    /// "Saved" pill for ~1.5s.
+    private func scheduleNoteSave(_ value: String, for id: UUID) {
+        noteSaveTask?.cancel()
+        noteSaveTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            guard !Task.isCancelled else { return }
+            manager.updateNote(value, for: id)
+            withAnimation(.easeOut(duration: 0.2)) { noteSaved = true }
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeOut(duration: 0.3)) { noteSaved = false }
+        }
+    }
+
     private func actionCard(for remote: RemoteAgent) -> some View {
         HStack(spacing: 10) {
             Button {
@@ -460,16 +533,11 @@ struct RemoteAgentDetailView: View {
             } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "bubble.left.and.bubble.right.fill")
-                        .font(.system(size: 11))
+                        .font(.system(size: 12))
                     Text("Chat with this Agent", bundle: .module)
-                        .font(.system(size: 12, weight: .semibold))
                 }
-                .foregroundColor(.white)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(Capsule().fill(theme.accentColor))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(PrimaryButtonStyle())
 
             Spacer()
 
@@ -478,24 +546,12 @@ struct RemoteAgentDetailView: View {
             } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "trash")
-                        .font(.system(size: 11))
+                        .font(.system(size: 12))
                     Text("Remove", bundle: .module)
-                        .font(.system(size: 12, weight: .semibold))
                 }
-                .foregroundColor(theme.errorColor)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(Capsule().fill(theme.errorColor.opacity(0.12)))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(DestructiveButtonStyle())
         }
-    }
-
-    private func sectionTitle(_ text: String) -> some View {
-        Text(LocalizedStringKey(text), bundle: .module)
-            .font(.system(size: 11, weight: .bold))
-            .foregroundColor(theme.tertiaryText)
-            .tracking(0.5)
     }
 
     private func metadataRow(label: String, value: String, mono: Bool) -> some View {
