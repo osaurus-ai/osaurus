@@ -73,7 +73,8 @@ enum GenerationEventMapper {
                         continuation.yield(
                             .completionInfo(
                                 tokenCount: info.generationTokenCount,
-                                tokensPerSecond: info.tokensPerSecond
+                                tokensPerSecond: info.tokensPerSecond,
+                                unclosedReasoning: info.unclosedReasoning
                             )
                         )
 
@@ -109,7 +110,7 @@ enum GenerationEventMapper {
     /// it actually is.
     private static func logCompletionInfo(_ info: GenerateCompletionInfo) {
         mapperLog.info(
-            "[perf] mlxStats promptTokens=\(info.promptTokenCount, privacy: .public) promptTps=\(info.promptTokensPerSecond, privacy: .public) promptMs=\(Int(info.promptTime * 1000), privacy: .public) genTokens=\(info.generationTokenCount, privacy: .public) genTps=\(info.tokensPerSecond, privacy: .public) genMs=\(Int(info.generateTime * 1000), privacy: .public)"
+            "[perf] mlxStats promptTokens=\(info.promptTokenCount, privacy: .public) promptTps=\(info.promptTokensPerSecond, privacy: .public) promptMs=\(Int(info.promptTime * 1000), privacy: .public) genTokens=\(info.generationTokenCount, privacy: .public) genTps=\(info.tokensPerSecond, privacy: .public) genMs=\(Int(info.generateTime * 1000), privacy: .public) stop=\(String(describing: info.stopReason), privacy: .public) unclosedReasoning=\(info.unclosedReasoning, privacy: .public)"
         )
         mapperSignposter.emitEvent(
             "mlxStats",

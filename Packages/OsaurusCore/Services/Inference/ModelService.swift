@@ -182,24 +182,44 @@ enum StreamingReasoningHint: Sendable {
 
 /// In-band signaling for generation benchmarks (tok/s, token count).
 /// Uses the same `\u{FFFE}` sentinel pattern as `StreamingToolHint`.
+///
+/// Wire format: `<sentinel>stats:<tokenCount>;<tokensPerSecond>[;<flags>]`.
+/// The optional third field carries comma-separated flags so future
+/// observability signals can be added without breaking older decoders —
+/// today's only flag is `unclosed`, set when vmlx's
+/// `GenerateCompletionInfo.unclosedReasoning == true` (the model ended
+/// the stream still inside a `<think>` block, i.e. trapped-thinking).
 enum StreamingStatsHint: Sendable {
     private static let statsPrefix = "\u{FFFE}stats:"
     private static let posixLocale = Locale(identifier: "en_US_POSIX")
+    private static let unclosedFlag = "unclosed"
 
-    static func encode(tokenCount: Int, tokensPerSecond: Double) -> String {
+    static func encode(
+        tokenCount: Int,
+        tokensPerSecond: Double,
+        unclosedReasoning: Bool = false
+    ) -> String {
         let tps = String(format: "%.4f", locale: posixLocale, tokensPerSecond)
-        return "\(statsPrefix)\(tokenCount);\(tps)"
+        let suffix = unclosedReasoning ? ";\(unclosedFlag)" : ""
+        return "\(statsPrefix)\(tokenCount);\(tps)\(suffix)"
     }
 
-    static func decode(_ delta: String) -> (tokenCount: Int, tokensPerSecond: Double)? {
+    static func decode(
+        _ delta: String
+    ) -> (tokenCount: Int, tokensPerSecond: Double, unclosedReasoning: Bool)? {
         guard delta.hasPrefix(statsPrefix) else { return nil }
         let payload = delta.dropFirst(statsPrefix.count)
-        let parts = payload.split(separator: ";", maxSplits: 1)
-        guard parts.count == 2,
+        // Split into at most 3 parts: count, tps, optional flags. `maxSplits=2`
+        // means a future flags-string containing extra `;` separators stays
+        // in the third field intact — forward-compat for new flags.
+        let parts = payload.split(separator: ";", maxSplits: 2)
+        guard parts.count >= 2,
             let count = Int(parts[0]),
             let tps = Double(parts[1])
         else { return nil }
-        return (count, tps)
+        let flags = parts.count >= 3 ? parts[2].split(separator: ",") : []
+        let unclosed = flags.contains { $0 == Substring(unclosedFlag) }
+        return (count, tps, unclosed)
     }
 }
 
