@@ -62,10 +62,10 @@ public struct ToolsDev {
 
         let configURL = cwd.appendingPathComponent("osaurus-plugin.json")
         guard fm.fileExists(atPath: configURL.path) else {
-            fputs("No osaurus-plugin.json found in current directory.\n", stderr)
-            fputs("Run this command from a plugin project root, or pass a plugin_id:\n", stderr)
+            fputs("В текущем каталоге не найден osaurus-plugin.json.\n", stderr)
+            fputs("Запустите команду из корня проекта плагина или передайте plugin_id:\n", stderr)
             fputs("  osaurus tools dev <plugin_id>\n\n", stderr)
-            fputs("To create a new plugin project:\n", stderr)
+            fputs("Чтобы создать новый проект плагина:\n", stderr)
             fputs("  osaurus tools create MyPlugin\n", stderr)
             exit(EXIT_FAILURE)
         }
@@ -73,7 +73,7 @@ public struct ToolsDev {
         guard let configData = try? Data(contentsOf: configURL),
             let config = try? JSONDecoder().decode(PluginConfig.self, from: configData)
         else {
-            fputs("Failed to parse osaurus-plugin.json\n", stderr)
+            fputs("Не удалось разобрать osaurus-plugin.json\n", stderr)
             exit(EXIT_FAILURE)
         }
 
@@ -83,25 +83,25 @@ public struct ToolsDev {
         } else if fm.fileExists(atPath: cwd.appendingPathComponent("Cargo.toml").path) {
             language = .rust
         } else {
-            fputs("Cannot detect project language. Expected Package.swift or Cargo.toml in cwd.\n", stderr)
+            fputs("Не удалось определить язык проекта. Ожидался Package.swift или Cargo.toml в текущем каталоге.\n", stderr)
             exit(EXIT_FAILURE)
         }
 
-        print("  Plugin: \(config.plugin_id) v\(config.version)")
+        print("  Плагин: \(config.plugin_id) v\(config.version)")
 
         // Initial build
-        print("  Building...", terminator: "")
+        print("  Сборка...", terminator: "")
         fflush(stdout)
         let buildStart = Date()
         guard build(language: language, cwd: cwd) else {
-            fputs(" failed\nBuild failed. Fix the errors above and try again.\n", stderr)
+            fputs(" неудачно\nСборка не удалась. Исправьте ошибки выше и попробуйте снова.\n", stderr)
             exit(EXIT_FAILURE)
         }
         let elapsed = String(format: "%.1f", Date().timeIntervalSince(buildStart))
-        print(" done (\(elapsed)s)")
+        print(" готово (\(elapsed)с)")
 
         guard let dylibURL = findBuiltDylib(language: language, cwd: cwd) else {
-            fputs("No .dylib found in build output.\n", stderr)
+            fputs("В выходных данных сборки не найден .dylib.\n", stderr)
             exit(EXIT_FAILURE)
         }
 
@@ -111,16 +111,16 @@ public struct ToolsDev {
             projectDir: cwd
         )
 
-        print("  Installed to \(installDir.path)")
+        print("  Установлено в \(installDir.path)")
 
         setupWebProxy(pluginId: config.plugin_id, webProxyURL: webProxyURL)
         await AppControl.launchAppIfNeeded()
         sendReload()
 
         if let proxy = webProxyURL {
-            print("  Web proxy: \(proxy)")
+            print("  Веб-прокси: \(proxy)")
         }
-        print("  Watching for changes... Press Ctrl+C to stop\n")
+        print("  Наблюдение за изменениями... Нажмите Ctrl+C, чтобы остановить.\n")
 
         setupSignalHandler()
 
@@ -135,23 +135,23 @@ public struct ToolsDev {
             let currentAssetMtime = latestAssetMtime(cwd: cwd)
 
             if currentSourceMtime > lastSourceMtime {
-                print("[\(timestamp())] Source changed, rebuilding...")
+                print("[\(timestamp())] Источник изменён, пересборка...")
                 if build(language: language, cwd: cwd) {
                     if let newDylib = findBuiltDylib(language: language, cwd: cwd) {
                         _ = installPlugin(config: config, dylibURL: newDylib, projectDir: cwd)
                         sendReload()
-                        print("[\(timestamp())] Reload signal sent.")
+                        print("[\(timestamp())] Сигнал перезагрузки отправлен.")
                     }
                 } else {
-                    fputs("[\(timestamp())] Build failed. Waiting for next change...\n", stderr)
+                    fputs("[\(timestamp())] Сборка не удалась. Ждём следующего изменения...\n", stderr)
                 }
                 lastSourceMtime = latestMtime(in: srcDir)
                 lastAssetMtime = latestAssetMtime(cwd: cwd)
             } else if currentAssetMtime > lastAssetMtime {
-                print("[\(timestamp())] Assets changed, copying...")
+                print("[\(timestamp())] Активы изменены, копирование...")
                 _ = installPlugin(config: config, dylibURL: dylibURL, projectDir: cwd)
                 sendReload()
-                print("[\(timestamp())] Reload signal sent.")
+                print("[\(timestamp())] Сигнал перезагрузки отправлен.")
                 lastAssetMtime = currentAssetMtime
             }
         }
@@ -164,18 +164,18 @@ public struct ToolsDev {
             .appendingPathComponent(pluginId, isDirectory: true)
 
         guard FileManager.default.fileExists(atPath: pluginDir.path) else {
-            fputs("Plugin not found: \(pluginId)\n", stderr)
-            fputs("Install it first or create the directory at: \(pluginDir.path)\n", stderr)
+            fputs("Плагин не найден: \(pluginId)\n", stderr)
+            fputs("Сначала установите его или создайте каталог по адресу: \(pluginDir.path)\n", stderr)
             exit(EXIT_FAILURE)
         }
 
-        print("Starting dev mode for \(pluginId)")
+        print("Запуск режима разработки для \(pluginId)")
         if let proxy = webProxyURL {
-            print("Web proxy: \(proxy)")
-            print("Requests to /plugins/\(pluginId)/app/* will be proxied to \(proxy)")
+            print("Веб-прокси: \(proxy)")
+            print("Запросы к /plugins/\(pluginId)/app/* будут проксированы через \(proxy)")
         }
-        print("Watching for .dylib changes in \(pluginDir.path)")
-        print("Press Ctrl+C to stop\n")
+        print("Наблюдение за изменениями .dylib в \(pluginDir.path)")
+        print("Нажмите Ctrl+C, чтобы остановить.\n")
 
         setupWebProxy(pluginId: pluginId, webProxyURL: webProxyURL)
         setupSignalHandler()
@@ -225,10 +225,10 @@ public struct ToolsDev {
             let modified = dylibMtime(dylib)
 
             if let modified, let last = lastModified, modified > last {
-                print("[\(timestamp())] Detected dylib change, sending reload signal...")
+                print("[\(timestamp())] Обнаружено изменение dylib, отправка сигнала перезагрузки...")
                 sendReload()
                 lastModified = modified
-                print("[\(timestamp())] Reload signal sent.")
+                print("[\(timestamp())] Сигнал перезагрузки отправлен.")
             } else if lastModified == nil {
                 lastModified = modified
             }

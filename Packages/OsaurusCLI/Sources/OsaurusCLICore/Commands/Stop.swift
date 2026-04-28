@@ -17,12 +17,12 @@ public struct StopCommand: Command {
         let deadline = Date().addingTimeInterval(3.0)
         while Date() < deadline {
             if !(await ServerControl.checkHealth(port: port)) {
-                print("stopped")
+                print("остановлен")
                 exit(EXIT_SUCCESS)
             }
             try? await Task.sleep(nanoseconds: 200_000_000)
         }
-        fputs("Server did not stop in time\n", stderr)
+        fputs("Сервер не остановился вовремя\n", stderr)
         exit(EXIT_FAILURE)
     }
 }

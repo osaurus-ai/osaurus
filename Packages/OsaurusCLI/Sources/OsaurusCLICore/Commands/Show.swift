@@ -102,15 +102,15 @@ public struct ShowCommand: Command {
 
     public static func execute(args: [String]) async {
         guard let modelArg = args.first, !modelArg.isEmpty else {
-            fputs("Missing required <model_id>\n", stderr)
-            fputs("Usage: osaurus show <model_id>\n", stderr)
+            fputs("Отсутствует обязательный <model_id>\n", stderr)
+            fputs("Использование: osaurus show <model_id>\n", stderr)
             exit(EXIT_FAILURE)
         }
 
         let port = await ServerControl.ensureServerReadyOrExit()
 
         guard let url = URL(string: "http://127.0.0.1:\(port)/api/show") else {
-            fputs("Invalid URL for show endpoint\n", stderr)
+            fputs("Неверный URL для эндпоинта show\n", stderr)
             exit(EXIT_FAILURE)
         }
 
@@ -125,14 +125,14 @@ public struct ShowCommand: Command {
         do {
             request.httpBody = try JSONEncoder().encode(body)
         } catch {
-            fputs("Failed to encode request: \(error.localizedDescription)\n", stderr)
+            fputs("Не удалось закодировать запрос: \(error.localizedDescription)\n", stderr)
             exit(EXIT_FAILURE)
         }
 
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
             guard let http = response as? HTTPURLResponse else {
-                fputs("Invalid response from server\n", stderr)
+                fputs("Неверный ответ от сервера\n", stderr)
                 exit(EXIT_FAILURE)
             }
 
@@ -141,9 +141,9 @@ public struct ShowCommand: Command {
                 if let errorResp = try? JSONDecoder().decode(ErrorResponse.self, from: data),
                     let message = errorResp.error?.message
                 {
-                    fputs("Error: \(message)\n", stderr)
+                    fputs("Ошибка: \(message)\n", stderr)
                 } else {
-                    fputs("Failed to get model info (status \(http.statusCode))\n", stderr)
+                    fputs("Не удалось получить информацию о модели (статус \(http.statusCode))\n", stderr)
                 }
                 exit(EXIT_FAILURE)
             }
@@ -153,7 +153,7 @@ public struct ShowCommand: Command {
             printFormattedOutput(modelArg: modelArg, response: showResponse)
             exit(EXIT_SUCCESS)
         } catch {
-            fputs("Error: \(error.localizedDescription)\n", stderr)
+            fputs("Ошибка: \(error.localizedDescription)\n", stderr)
             exit(EXIT_FAILURE)
         }
     }
@@ -217,26 +217,26 @@ public struct ShowCommand: Command {
         }
 
         // Print Model section
-        print("  Model")
+        print("  Модель")
         if let arch = architecture {
-            print("    \(pad("architecture", to: 20))\(arch)")
+            print("    \(pad("архитектура", to: 20))\(arch)")
         }
         if let params = parameterCount {
-            print("    \(pad("parameters", to: 20))\(params)")
+            print("    \(pad("параметры", to: 20))\(params)")
         }
         if let ctx = contextLength {
-            print("    \(pad("context length", to: 20))\(formatNumber(ctx))")
+            print("    \(pad("длина контекста", to: 20))\(formatNumber(ctx))")
         }
         if let embed = embeddingLength {
-            print("    \(pad("embedding length", to: 20))\(formatNumber(embed))")
+            print("    \(pad("длина эмбеддинга", to: 20))\(formatNumber(embed))")
         }
         if let quant = quantization, !quant.isEmpty {
-            print("    \(pad("quantization", to: 20))\(quant)")
+            print("    \(pad("квантование", to: 20))\(quant)")
         }
 
         // Print Capabilities section
         print("")
-        print("  Capabilities")
+        print("  Возможности")
         for cap in capabilities {
             print("    \(cap)")
         }
@@ -244,7 +244,7 @@ public struct ShowCommand: Command {
         // Print Parameters section if available
         if let paramsString = response.parameters, !paramsString.isEmpty {
             print("")
-            print("  Parameters")
+            print("  Параметры")
             let lines = paramsString.split(separator: "\n")
             for line in lines {
                 let parts = line.split(separator: " ", maxSplits: 1)

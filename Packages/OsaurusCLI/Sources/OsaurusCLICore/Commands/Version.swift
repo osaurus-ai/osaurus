@@ -23,7 +23,7 @@ public struct VersionCommand: Command {
         } else if let v = versionString {
             output = "Osaurus \(v)"
         } else {
-            output = "Osaurus dev"
+            output = "Osaurus для разработки"
         }
         print(output)
         exit(EXIT_SUCCESS)

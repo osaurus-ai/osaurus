@@ -14,7 +14,7 @@ public struct StatusCommand: Command {
         let port = Configuration.resolveConfiguredPort() ?? 1337
 
         guard let url = URL(string: "http://127.0.0.1:\(port)/health") else {
-            fputs("Invalid URL for health check\n", stderr)
+            fputs("Неверный URL для проверки состояния\n", stderr)
             exit(EXIT_FAILURE)
         }
 
@@ -25,14 +25,14 @@ public struct StatusCommand: Command {
         do {
             let (_, response) = try await URLSession.shared.data(for: request)
             if let http = response as? HTTPURLResponse, http.statusCode == 200 {
-                print("running (port \(port))")
+                print("запущен (порт \(port))")
                 exit(EXIT_SUCCESS)
             } else {
-                print("stopped")
+                print("остановлен")
                 exit(EXIT_FAILURE)
             }
         } catch {
-            print("stopped")
+            print("остановлен")
             exit(EXIT_FAILURE)
         }
     }

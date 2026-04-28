@@ -83,12 +83,12 @@ final class ManifestExtractTests: XCTestCase {
 
     func testErrorDescriptions() {
         let cases: [(ManifestExtract.ExtractionError, String)] = [
-            (.fileNotFound("/path/to/file"), "File not found: /path/to/file"),
-            (.loadFailed("bad format"), "Failed to load dylib: bad format"),
-            (.missingEntryPoint, "Missing plugin entry point (osaurus_plugin_entry or osaurus_plugin_entry_v2)"),
-            (.entryReturnedNull, "Plugin entry returned null"),
-            (.initFailed, "Plugin init failed"),
-            (.manifestFailed, "Failed to get manifest"),
+            (.fileNotFound("/path/to/file"), "Файл не найден: /path/to/file"),
+            (.loadFailed("bad format"), "Не удалось загрузить dylib: bad format"),
+            (.missingEntryPoint, "Не найдена точка входа плагина (osaurus_plugin_entry или osaurus_plugin_entry_v2)"),
+            (.entryReturnedNull, "Точка входа плагина вернула null"),
+            (.initFailed, "Не удалось инициализировать плагин"),
+            (.manifestFailed, "Не удалось получить манифест"),
         ]
 
         for (error, expected) in cases {

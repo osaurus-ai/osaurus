@@ -12,7 +12,7 @@ import OsaurusRepository
 public struct ToolsInstall {
     public static func execute(args: [String]) async {
         guard let src = args.first, !src.isEmpty else {
-            fputs("Usage: osaurus tools install <plugin_id|url-or-path> [--version <semver>]\n", stderr)
+            fputs("Использование: osaurus tools install <plugin_id|url-or-path> [--version <semver>]\n", stderr)
             exit(EXIT_FAILURE)
         }
 
@@ -30,7 +30,7 @@ public struct ToolsInstall {
             let vstr = args[idx + 1]
             preferredVersion = SemanticVersion.parse(vstr)
             if preferredVersion == nil {
-                fputs("Invalid semver: \(vstr)\n", stderr)
+                fputs("Неверный semver: \(vstr)\n", stderr)
                 exit(EXIT_FAILURE)
             }
         }
@@ -40,13 +40,13 @@ public struct ToolsInstall {
                 preferredVersion: preferredVersion
             )
             print(
-                "Installed \(result.receipt.plugin_id) @ \(result.receipt.version) to \(result.installDirectory.path)"
+                "Установлен \(result.receipt.plugin_id) @ \(result.receipt.version) в \(result.installDirectory.path)"
             )
             // Notify app to reload tools
             AppControl.postDistributedNotification(name: "com.dinoki.osaurus.control.toolsReload", userInfo: [:])
             exit(EXIT_SUCCESS)
         } catch {
-            fputs("Install failed: \(error)\n", stderr)
+            fputs("Установка не удалась: \(error)\n", stderr)
             exit(EXIT_FAILURE)
         }
     }
@@ -58,7 +58,7 @@ public struct ToolsInstall {
         do {
             try fm.createDirectory(at: tmpDir, withIntermediateDirectories: true)
         } catch {
-            fputs("Failed to create temp directory: \(error)\n", stderr)
+            fputs("Не удалось создать временный каталог: \(error)\n", stderr)
             exit(EXIT_FAILURE)
         }
 
@@ -72,7 +72,7 @@ public struct ToolsInstall {
         // 1. Unpack/Copy to staging
         if src.hasPrefix("http://") || src.hasPrefix("https://") {
             guard let url = URL(string: src) else {
-                fputs("Invalid URL: \(src)\n", stderr)
+                fputs("Неверный URL: \(src)\n", stderr)
                 exit(EXIT_FAILURE)
             }
             // Extract filename from URL path
@@ -81,13 +81,13 @@ public struct ToolsInstall {
             do {
                 let (data, resp) = try await URLSession.shared.data(from: url)
                 guard let http = resp as? HTTPURLResponse, (200 ... 299).contains(http.statusCode) else {
-                    fputs("Download failed (status \((resp as? HTTPURLResponse)?.statusCode ?? -1))\n", stderr)
+                    fputs("Загрузка не удалась (статус \((resp as? HTTPURLResponse)?.statusCode ?? -1))\n", stderr)
                     exit(EXIT_FAILURE)
                 }
                 try data.write(to: zipFile)
                 try unzip(zipURL: zipFile, to: tmpDir)
             } catch {
-                fputs("Download/Unzip error: \(error)\n", stderr)
+                fputs("Ошибка загрузки/распаковки: \(error)\n", stderr)
                 exit(EXIT_FAILURE)
             }
         } else {
@@ -103,22 +103,22 @@ public struct ToolsInstall {
                             try fm.copyItem(at: item, to: tmpDir.appendingPathComponent(item.lastPathComponent))
                         }
                     } catch {
-                        fputs("Failed to copy directory: \(error)\n", stderr)
+                        fputs("Не удалось скопировать каталог: \(error)\n", stderr)
                         exit(EXIT_FAILURE)
                     }
                 } else if pathURL.pathExtension.lowercased() == "zip" {
                     do {
                         try unzip(zipURL: pathURL, to: tmpDir)
                     } catch {
-                        fputs("Unzip error: \(error)\n", stderr)
+                        fputs("Ошибка распаковки: \(error)\n", stderr)
                         exit(EXIT_FAILURE)
                     }
                 } else {
-                    fputs("Unsupported file type: \(src)\n", stderr)
+                    fputs("Неподдерживаемый тип файла: \(src)\n", stderr)
                     exit(EXIT_FAILURE)
                 }
             } else {
-                fputs("Path not found: \(src)\n", stderr)
+                fputs("Путь не найден: \(src)\n", stderr)
                 exit(EXIT_FAILURE)
             }
         }
@@ -126,7 +126,7 @@ public struct ToolsInstall {
         // 2. Parse plugin_id and version from source name
         // Expected format: <plugin_id>-<version> (e.g., my-plugin-1.0.0)
         guard let (pluginId, semver) = parsePluginIdAndVersion(from: sourceName) else {
-            fputs("Invalid naming format. Expected: <plugin_id>-<version>.zip (e.g., my-plugin-1.0.0.zip)\n", stderr)
+            fputs("Неверный формат имени. Ожидается: <plugin_id>-<version>.zip (например, my-plugin-1.0.0.zip)\n", stderr)
             exit(EXIT_FAILURE)
         }
 
@@ -162,14 +162,14 @@ public struct ToolsInstall {
             // 5. Update Current Symlink
             try PluginInstallManager.updateCurrentSymlink(pluginId: pluginId, version: semver)
 
-            print("Installed \(pluginId) @ \(semver) to \(installDir.path)")
+            print("Установлен \(pluginId) @ \(semver) в \(installDir.path)")
 
             // Notify app
             AppControl.postDistributedNotification(name: "com.dinoki.osaurus.control.toolsReload", userInfo: [:])
             exit(EXIT_SUCCESS)
 
         } catch {
-            fputs("Installation failed: \(error)\n", stderr)
+            fputs("Установка не удалась: \(error)\n", stderr)
             exit(EXIT_FAILURE)
         }
     }
@@ -261,7 +261,7 @@ public struct ToolsInstall {
             throw NSError(
                 domain: "ToolsInstall",
                 code: 1,
-                userInfo: [NSLocalizedDescriptionKey: "unzip command failed"]
+                userInfo: [NSLocalizedDescriptionKey: "Команда unzip завершилась с ошибкой"]
             )
         }
     }

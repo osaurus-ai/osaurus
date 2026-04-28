@@ -42,13 +42,13 @@ public struct PullCommand: Command {
 
     public static func execute(args: [String]) async {
         guard let modelId = args.first, !modelId.isEmpty else {
-            fputs("Missing required <model_id>\n", stderr)
-            fputs("Usage: osaurus pull <model_id>\n", stderr)
-            fputs("Example: osaurus pull mlx-community/Llama-3.2-1B-4bit\n", stderr)
+            fputs("Отсутствует обязательный <model_id>\n", stderr)
+            fputs("Использование: osaurus pull <model_id>\n", stderr)
+            fputs("Пример: osaurus pull mlx-community/Llama-3.2-1B-4bit\n", stderr)
             exit(EXIT_FAILURE)
         }
 
-        print("Pulling \(modelId) ...")
+        print("Загружается \(modelId) ...")
 
         // Resolve the local destination: ~/.osaurus/models/<org>/<name>
         let destination = resolveLocalDirectory(for: modelId)
@@ -59,19 +59,19 @@ public struct PullCommand: Command {
                 withIntermediateDirectories: true
             )
         } catch {
-            fputs("Failed to create model directory: \(error.localizedDescription)\n", stderr)
+            fputs("Не удалось создать каталог модели: \(error.localizedDescription)\n", stderr)
             exit(EXIT_FAILURE)
         }
 
         // Fetch file list from Hugging Face tree API
         guard let files = await fetchMatchingFiles(repoId: modelId, patterns: downloadFilePatterns) else {
-            fputs("Could not retrieve file list from Hugging Face for '\(modelId)'.\n", stderr)
-            fputs("Check that the model exists and is an MLX-compatible repository.\n", stderr)
+            fputs("Не удалось получить список файлов из Hugging Face для '\(modelId)'.\n", stderr)
+            fputs("Проверьте, что модель существует и совместима с MLX.\n", stderr)
             exit(EXIT_FAILURE)
         }
 
         if files.isEmpty {
-            fputs("No matching files found for '\(modelId)'.\n", stderr)
+            fputs("Не найдено подходящих файлов для '\(modelId)'.\n", stderr)
             exit(EXIT_FAILURE)
         }
 
@@ -92,13 +92,13 @@ public struct PullCommand: Command {
         }
 
         if filesToDownload.isEmpty {
-            print("Model '\(modelId)' is already up to date.")
+            print("Модель '\(modelId)' уже актуальна.")
             exit(EXIT_SUCCESS)
         }
 
         print(
-            "Downloading \(filesToDownload.count) file(s) "
-                + "(\(ByteCountFormatter.string(fromByteCount: totalBytes, countStyle: .file)) total) ..."
+            "Загружается \(filesToDownload.count) файл(ов) "
+                + "(\(ByteCountFormatter.string(fromByteCount: totalBytes, countStyle: .file)) всего) ..."
         )
 
         // Download each file sequentially with progress
@@ -111,7 +111,7 @@ public struct PullCommand: Command {
                     string: "https://huggingface.co/\(modelId)/resolve/main/\(encodedPath)"
                 )
             else {
-                fputs("Invalid URL for file: \(file.path)\n", stderr)
+                fputs("Неверный URL для файла: \(file.path)\n", stderr)
                 continue
             }
 
@@ -132,12 +132,12 @@ public struct PullCommand: Command {
                 )
                 completedBytes += file.size
             } catch {
-                fputs("\nFailed to download '\(file.path)': \(error.localizedDescription)\n", stderr)
+                fputs("\nНе удалось скачать '\(file.path)': \(error.localizedDescription)\n", stderr)
                 exit(EXIT_FAILURE)
             }
         }
 
-        print("\nDone. Model saved to: \(destination.path)")
+        print("\nГотово. Модель сохранена в: \(destination.path)")
         exit(EXIT_SUCCESS)
     }
 
@@ -191,7 +191,7 @@ public struct PullCommand: Command {
             let (data, response) = try await URLSession.shared.data(for: request)
             guard let http = response as? HTTPURLResponse else { return nil }
             if http.statusCode == 404 {
-                fputs("Model '\(repoId)' not found on Hugging Face (404).\n", stderr)
+                fputs("Модель '\(repoId)' не найдена на Hugging Face (404).\n", stderr)
                 return nil
             }
             guard (200 ..< 300).contains(http.statusCode) else { return nil }

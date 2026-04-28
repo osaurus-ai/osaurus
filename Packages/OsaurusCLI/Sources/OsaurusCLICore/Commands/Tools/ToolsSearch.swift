@@ -19,11 +19,11 @@ public struct ToolsSearch {
             return false
         }
         if filtered.isEmpty {
-            print("(no matches)")
+            print("Совпадений не найдено")
         } else {
             for spec in filtered.sorted(by: { $0.plugin_id < $1.plugin_id }) {
                 let latest = spec.versions.map(\.version).sorted(by: >).first?.description ?? "-"
-                print("\(spec.plugin_id)\tlatest: \(latest)\t\(spec.name ?? "")")
+                print("\(spec.plugin_id)\tпоследняя: \(latest)\t\(spec.name ?? "")")
             }
         }
         exit(EXIT_SUCCESS)

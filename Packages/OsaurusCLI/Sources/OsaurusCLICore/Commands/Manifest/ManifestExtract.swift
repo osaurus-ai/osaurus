@@ -10,7 +10,7 @@ import Foundation
 public struct ManifestExtract {
     public static func execute(args: [String]) {
         guard let dylibPath = args.first, !dylibPath.isEmpty else {
-            fputs("Usage: osaurus manifest extract <dylib-path>\n", stderr)
+            fputs("Использование: osaurus manifest extract <dylib-path>\n", stderr)
             exit(EXIT_FAILURE)
         }
 
@@ -19,10 +19,10 @@ public struct ManifestExtract {
             print(json)
             exit(EXIT_SUCCESS)
         } catch let error as ExtractionError {
-            fputs("Error: \(error.description)\n", stderr)
+            fputs("Ошибка: \(error.description)\n", stderr)
             exit(EXIT_FAILURE)
         } catch {
-            fputs("Error: \(error.localizedDescription)\n", stderr)
+            fputs("Ошибка: \(error.localizedDescription)\n", stderr)
             exit(EXIT_FAILURE)
         }
     }
@@ -111,17 +111,17 @@ public struct ManifestExtract {
         var description: String {
             switch self {
             case .fileNotFound(let path):
-                return "File not found: \(path)"
+                return "Файл не найден: \(path)"
             case .loadFailed(let msg):
-                return "Failed to load dylib: \(msg)"
+                return "Не удалось загрузить dylib: \(msg)"
             case .missingEntryPoint:
-                return "Missing plugin entry point (osaurus_plugin_entry or osaurus_plugin_entry_v2)"
+                return "Не найдена точка входа плагина (osaurus_plugin_entry или osaurus_plugin_entry_v2)"
             case .entryReturnedNull:
-                return "Plugin entry returned null"
+                return "Точка входа плагина вернула null"
             case .initFailed:
-                return "Plugin init failed"
+                return "Не удалось инициализировать плагин"
             case .manifestFailed:
-                return "Failed to get manifest"
+                return "Не удалось получить манифест"
             }
         }
     }

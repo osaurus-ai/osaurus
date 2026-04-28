@@ -46,9 +46,9 @@ public struct ToolsPackage {
 
     public static func execute(args: [String]) {
         guard args.count >= 2 else {
-            fputs("Usage: osaurus tools package <plugin_id> <version> [dylib_path]\n", stderr)
-            fputs("  If dylib_path is omitted, auto-detects .dylib files in current directory.\n", stderr)
-            fputs("  Also includes web/, SKILL.md, README.md, CHANGELOG.md if present.\n", stderr)
+            fputs("Использование: osaurus tools package <plugin_id> <version> [dylib_path]\n", stderr)
+            fputs("  Если dylib_path не указан, .dylib-файлы будут найдены автоматически в текущем каталоге.\n", stderr)
+            fputs("  Также включает web/, SKILL.md, README.md и CHANGELOG.md, если они есть.\n", stderr)
             exit(EXIT_FAILURE)
         }
 
@@ -63,7 +63,7 @@ public struct ToolsPackage {
         if args.count >= 3 {
             let dylibPath = args[2]
             guard fm.fileExists(atPath: cwd.appendingPathComponent(dylibPath).path) else {
-                fputs("Dylib not found: \(dylibPath)\n", stderr)
+                fputs("Dylib не найден: \(dylibPath)\n", stderr)
                 exit(EXIT_FAILURE)
             }
             dylibPaths.append(dylibPath)
@@ -71,12 +71,12 @@ public struct ToolsPackage {
             do {
                 dylibPaths = try findDylibs(in: cwd)
             } catch {
-                fputs("Failed to read current directory: \(error)\n", stderr)
+                fputs("Не удалось прочитать текущий каталог: \(error)\n", stderr)
                 exit(EXIT_FAILURE)
             }
             guard !dylibPaths.isEmpty else {
-                fputs("No .dylib files found in current directory.\n", stderr)
-                fputs("Build your plugin first, or specify the dylib path explicitly.\n", stderr)
+                fputs("В текущем каталоге не найдено .dylib-файлов.\n", stderr)
+                fputs("Сначала соберите плагин или явно укажите путь к dylib.\n", stderr)
                 exit(EXIT_FAILURE)
             }
         }
@@ -100,21 +100,21 @@ public struct ToolsPackage {
             try proc.run()
             proc.waitUntilExit()
             if proc.terminationStatus != 0 {
-                fputs("zip command failed; ensure /usr/bin/zip is available.\n", stderr)
+                fputs("Команда zip завершилась с ошибкой; убедитесь, что /usr/bin/zip доступен.\n", stderr)
                 exit(EXIT_FAILURE)
             }
         } catch {
-            fputs("Failed to run zip: \(error)\n", stderr)
+            fputs("Не удалось запустить zip: \(error)\n", stderr)
             exit(EXIT_FAILURE)
         }
 
         let extras = zipEntries.filter { !$0.hasSuffix(".dylib") }
         if !extras.isEmpty {
-            print("Created \(name) (includes: \(extras.joined(separator: ", ")))")
+            print("Создан \(name) (включая: \(extras.joined(separator: ", ")))")
         } else {
-            print("Created \(name)")
+            print("Создан \(name)")
         }
-        print("Install with: osaurus tools install ./\(name)")
+        print("Установите командой: osaurus tools install ./\(name)")
         exit(EXIT_SUCCESS)
     }
 }
