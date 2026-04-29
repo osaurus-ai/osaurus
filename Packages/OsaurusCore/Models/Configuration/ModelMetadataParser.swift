@@ -64,17 +64,17 @@ enum ModelMetadataParser {
 
         // whole word patterns to drop entirely (case insensitive)
         let dropPatterns: [String] = [
-            #"(?i)\bmxfp\d+\b"#,                  // mxfp4
-            #"(?i)\bfp(16|32)\b"#,                // fp16 / fp32
+            #"(?i)\bmxfp\d+\b"#,  // mxfp4
+            #"(?i)\bfp(16|32)\b"#,  // fp16 / fp32
             #"(?i)\bbf16\b"#,
-            #"(?i)\bq\d+(_[a-z0-9]+)*\b"#,        // q4_0, q8_k_m
-            #"(?i)\b\d+-?bit\b"#,                 // 4bit, 4-bit, 8-bit
+            #"(?i)\bq\d+(_[a-z0-9]+)*\b"#,  // q4_0, q8_k_m
+            #"(?i)\b\d+-?bit\b"#,  // 4bit, 4-bit, 8-bit
             #"(?i)\bmlx\b"#,
-            #"(?i)\bit\b"#,                       // "it" = instruction tuned
+            #"(?i)\bit\b"#,  // "it" = instruction tuned
             #"(?i)\binstruct\b"#,
             #"(?i)\bchat\b"#,
-            #"(?i)\bjangtq\d*\b"#,                // TurboQuant variants
-            #"(?i)\ba\d+(\.\d+)?b\b"#,            // A3B / A2.5B active param count
+            #"(?i)\bjangtq\d*\b"#,  // TurboQuant variants
+            #"(?i)\ba\d+(\.\d+)?b\b"#,  // A3B / A2.5B active param count
         ]
         for pat in dropPatterns {
             if let re = try? NSRegularExpression(pattern: pat) {
@@ -94,7 +94,9 @@ enum ModelMetadataParser {
 
         // collapse repeated whitespace and trim
         text = text.replacingOccurrences(
-            of: #"\s+"#, with: " ", options: .regularExpression
+            of: #"\s+"#,
+            with: " ",
+            options: .regularExpression
         ).trimmingCharacters(in: .whitespaces)
 
         return text.isEmpty ? name : text

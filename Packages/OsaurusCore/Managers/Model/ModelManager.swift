@@ -1010,7 +1010,8 @@ extension ModelManager {
         let curatedIds = Self.curatedSuggestedIds
         let enrich: (MLXModel) -> MLXModel = { model in
             let key = model.id.lowercased()
-            return model
+            return
+                model
                 .withDownloads(statsById[key] ?? model.downloads)
                 .withDownloadSize(sizesById[key])
         }

@@ -202,19 +202,16 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
             contextLength: 128000,
             topPOverride: nil,
             maxToolAttempts: 15,
-            // Pick Apple's on-device Foundation Model as the
-            // out-of-box core model. It needs no API key, costs
-            // nothing, and is bundled with macOS 26+. Users on
-            // older systems will get `CoreModelError.modelUnavailable`
-            // — surfaced cleanly in logs and the Storage settings
-            // panel — and can then pick a remote model instead.
-            // The literal name is centralised in
-            // `ChatConfiguration.defaultCoreModelName` so the
-            // legacy-install backfill picks exactly the same value.
-            // See `FoundationModelService.handles(requestedModel:)`
-            // for the resolution rules.
+            // Out-of-box core model: Apple Foundation when this Mac can
+            // actually run it (macOS 26+ with Apple Intelligence). On
+            // older systems / Intel, leave the core model unset and let
+            // `CoreModelService` fall back to the active chat model —
+            // shipping `"foundation"` here was the root cause of
+            // GitHub issue #823. The literal name is centralised in
+            // `defaultCoreModelName` so the legacy-install backfill in
+            // `AppConfiguration` picks exactly the same value.
             coreModelProvider: nil,
-            coreModelName: defaultCoreModelName,
+            coreModelName: defaultCoreModelNameIfAvailable,
             workTemperature: 0.3,
             workMaxTokens: 4096,
             workTopPOverride: nil,
@@ -223,5 +220,14 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
             preflightSearchMode: .balanced,
             enableClipboardMonitoring: true
         )
+    }
+
+    /// `defaultCoreModelName` gated by runtime Foundation availability.
+    /// Returns `nil` on any Mac where `FoundationModelService` can't
+    /// actually serve the model, keeping the data layer honest so the
+    /// chat-model fallback (and the AppConfiguration cleanup migration)
+    /// don't have to chase the silent-invalid-default state.
+    public static var defaultCoreModelNameIfAvailable: String? {
+        FoundationModelService.isDefaultModelAvailable() ? defaultCoreModelName : nil
     }
 }

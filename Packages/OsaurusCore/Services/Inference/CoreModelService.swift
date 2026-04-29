@@ -56,32 +56,36 @@ public actor CoreModelService {
     ///   - temperature: Sampling temperature (default 0.3).
     ///   - maxTokens: Maximum response tokens (default 2048).
     ///   - timeout: Maximum wall-clock seconds for the call (default 60).
+    ///   - fallbackModel: Model identifier to fall back to when the configured
+    ///     core model is unset or `modelUnavailable` on this machine. Callers
+    ///     should pass the active conversation model so preflight and other
+    ///     background calls work out of the box without an explicit Core Model
+    ///     setting (root cause of GitHub issue #823 — macOS < 26 ships with
+    ///     `coreModelName = "foundation"` persisted but the router can't
+    ///     satisfy it). Transient failures (timeouts, breaker open) do NOT
+    ///     trigger the fallback.
     /// - Returns: The model's text response.
     public func generate(
         prompt: String,
         systemPrompt: String? = nil,
         temperature: Double = 0.3,
         maxTokens: Int = 2048,
-        timeout: TimeInterval = 60
+        timeout: TimeInterval = 60,
+        fallbackModel: String? = nil
     ) async throws -> String {
         try checkBreakerOrEnterHalfOpen()
 
-        let resolvedModel: String? = await MainActor.run {
+        let configured = await MainActor.run {
             ChatConfigurationStore.load().coreModelIdentifier
         }
-        guard let model = resolvedModel else {
-            throw CoreModelError.modelUnavailable("none")
-        }
-
+        let fallback = Self.normaliseFallback(fallbackModel)
         let messages = buildMessages(prompt: prompt, systemPrompt: systemPrompt)
-        let params = GenerationParameters(
-            temperature: Float(temperature),
-            maxTokens: maxTokens
-        )
+        let params = GenerationParameters(temperature: Float(temperature), maxTokens: maxTokens)
 
         do {
-            return try await runWithRetries(
-                model: model,
+            return try await runWithChatModelFallback(
+                primary: configured,
+                fallback: fallback,
                 messages: messages,
                 params: params,
                 timeout: timeout
@@ -89,6 +93,47 @@ public actor CoreModelService {
         } catch {
             try recordFailureAndThrow(error)
         }
+    }
+
+    /// Single-attempt run with at most one chat-model fallback. Split out so
+    /// `generate(...)` reads as a flat "run + bookkeeping" pair instead of
+    /// nested do-catch arms.
+    private func runWithChatModelFallback(
+        primary: String?,
+        fallback: String?,
+        messages: [ChatMessage],
+        params: GenerationParameters,
+        timeout: TimeInterval
+    ) async throws -> String {
+        guard let primary else {
+            guard let fb = fallback else { throw CoreModelError.modelUnavailable("none") }
+            logger.info("Core model unset; using chat model '\(fb)' as fallback")
+            return try await runWithRetries(model: fb, messages: messages, params: params, timeout: timeout)
+        }
+
+        do {
+            return try await runWithRetries(model: primary, messages: messages, params: params, timeout: timeout)
+        } catch let coreErr as CoreModelError {
+            // Only fall back when the configured model is fundamentally
+            // unusable on this machine. `.timedOut` and `.circuitBreakerOpen`
+            // are transient — retrying with a different model would mask
+            // the real issue.
+            guard case .modelUnavailable = coreErr,
+                let fb = fallback,
+                fb != primary
+            else { throw coreErr }
+            logger.info("Core model '\(primary)' unavailable; falling back to chat model '\(fb)'")
+            return try await runWithRetries(model: fb, messages: messages, params: params, timeout: timeout)
+        }
+    }
+
+    /// Trim whitespace and treat empty fallback identifiers as nil so callers
+    /// can pass `request.model` through without pre-validating.
+    private static func normaliseFallback(_ raw: String?) -> String? {
+        guard let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !trimmed.isEmpty
+        else { return nil }
+        return trimmed
     }
 
     /// Manually clear breaker state. Used by tests; could be wired

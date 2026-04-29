@@ -191,7 +191,14 @@ public struct SystemPromptComposer: Sendable {
         } else if !effectiveToolsOff && toolMode == .auto && !query.isEmpty {
             let mode = ChatConfigurationStore.load().preflightSearchMode ?? .balanced
             trace?.mark("preflight_search_start")
-            preflight = await PreflightCapabilitySearch.search(query: query, mode: mode, agentId: agentId)
+            // `model` is forwarded as the chat-model fallback for the
+            // preflight LLM call — see GitHub issue #823.
+            preflight = await PreflightCapabilitySearch.search(
+                query: query,
+                mode: mode,
+                agentId: agentId,
+                model: model
+            )
             trace?.mark("preflight_search_done")
             trace?.set("preflightSource", "fresh")
         } else {

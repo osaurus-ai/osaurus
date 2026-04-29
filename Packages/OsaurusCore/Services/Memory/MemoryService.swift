@@ -118,7 +118,13 @@ public actor MemoryService {
         let config = MemoryConfigurationStore.load()
         guard config.enabled else { return }
         guard await hasCoreModel() else {
-            MemoryLogger.service.debug("syncNow: no core model configured; skipping")
+            // .info (not .debug) so support can see this in Console
+            // without enabling debug logs. Background consolidation
+            // has no per-turn chat model to fall back to, so it stays
+            // opt-in via Settings → Core Model.
+            MemoryLogger.service.info(
+                "syncNow: no core model configured; memory consolidation skipped (configure one in Settings → Core Model)"
+            )
             return
         }
 
@@ -153,9 +159,12 @@ public actor MemoryService {
         guard let modelId = await MainActor.run(body: { ChatConfigurationStore.load().coreModelIdentifier }) else {
             return false
         }
-        guard let local = ModelManager.discoverLocalModels()
-            .first(where: { $0.id.caseInsensitiveCompare(modelId) == .orderedSame
-                || $0.name.caseInsensitiveCompare(modelId) == .orderedSame })
+        guard
+            let local = ModelManager.discoverLocalModels()
+                .first(where: {
+                    $0.id.caseInsensitiveCompare(modelId) == .orderedSame
+                        || $0.name.caseInsensitiveCompare(modelId) == .orderedSame
+                })
         else { return true }
 
         if await ModelRuntime.shared.isResident(name: local.name) { return true }
@@ -177,7 +186,9 @@ public actor MemoryService {
         let config = MemoryConfigurationStore.load()
         guard config.enabled else { return }
         guard await hasCoreModel() else {
-            MemoryLogger.service.debug("distill: no core model; signals stay pending")
+            MemoryLogger.service.info(
+                "distill: no core model configured; signals stay pending (configure one in Settings → Core Model)"
+            )
             return
         }
 
