@@ -152,7 +152,7 @@ struct ModelDownloadView: View {
             localSearchDebounceTask = Task { @MainActor in
                 do { try await Task.sleep(nanoseconds: 150_000_000) } catch { return }
                 if Task.isCancelled { return }
-                withAnimation(gridSpring) {
+                withAnimation(GridDiff.spring) {
                     debouncedSearchText = newValue
                 }
             }
@@ -341,17 +341,11 @@ struct ModelDownloadView: View {
 
     // MARK: - Filter Popover
 
-    /// Spring used for grid mosaic animation when the visible model set
-    /// changes. Wrapping mutations in `withAnimation(gridSpring)` so that
-    /// ForEach insert/remove/move transitions actually fire — implicit
-    /// `.animation(_:value:)` on a LazyVGrid doesn't propagate to
-    /// structural diffs
-    private var gridSpring: Animation {
-        .spring(response: 0.42, dampingFraction: 0.82)
-    }
-
+    /// Wraps filter/sort mutations in the shared grid spring so the
+    /// popover-side animations stay in sync with the grid mosaic. The
+    /// grid diff itself is driven by the implicit `.gridDiffAnimation`.
     private func mutateFilter(_ change: () -> Void) {
-        withAnimation(gridSpring) { change() }
+        withAnimation(GridDiff.spring) { change() }
     }
 
     private var sortPopoverView: some View {
@@ -633,9 +627,8 @@ struct ModelDownloadView: View {
 
     /// Grid of ModelRowView cards. Surviving cells (same `id` before and
     /// after a filter change) slide to their new grid position; cells
-    /// that drop out scale-fade away; new cells scale-fade in. The
-    /// position interpolation is driven by `withAnimation(gridSpring)` at
-    /// the chip mutation sites
+    /// that drop out scale-fade away; new cells scale-fade in. Driven by
+    /// the shared `gridDiffAnimation(token:)` modifier below.
     private func modelGrid(models: [MLXModel]) -> some View {
         LazyVGrid(columns: gridColumns, spacing: 20) {
             ForEach(models, id: \.id) { model in
@@ -647,15 +640,10 @@ struct ModelDownloadView: View {
                     onViewDetails: { modelToShowDetails = model },
                     onCancel: { modelManager.cancelDownload(model.id) }
                 )
-                .transition(
-                    .asymmetric(
-                        insertion: .scale(scale: 0.85).combined(with: .opacity),
-                        removal: .scale(scale: 0.85).combined(with: .opacity)
-                    )
-                )
+                .gridDiffCell()
             }
         }
-        .animation(gridSpring, value: gridChangeToken)
+        .gridDiffAnimation(token: gridChangeToken)
     }
 
     /// Main content area with scrollable model list

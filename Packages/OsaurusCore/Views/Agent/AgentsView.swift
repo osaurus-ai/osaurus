@@ -50,6 +50,14 @@ struct AgentsView: View {
         remoteAgentManager.remoteAgents
     }
 
+    /// Token fingerprinting the visible cell set. Drives `gridDiffAnimation`
+    /// so SwiftUI snapshot-diffs the grid when agents are added/removed.
+    private var gridChangeToken: String {
+        let local = customAgents.map { $0.id.uuidString }.joined(separator: ",")
+        let remote = remoteAgents.map { $0.id.uuidString }.joined(separator: ",")
+        return "\(local)|\(remote)"
+    }
+
     var body: some View {
         ZStack {
             if selectedAgent == nil && selectedRemoteAgentId == nil {
@@ -196,6 +204,7 @@ struct AgentsView: View {
                                 onDuplicate: { duplicateAgent(agent) },
                                 onDelete: { deleteAgent(agent) }
                             )
+                            .gridDiffCell()
                         }
 
                         // Remote (paired) agents follow local ones with their own
@@ -205,9 +214,11 @@ struct AgentsView: View {
                         // this agent in its picker.
                         ForEach(Array(remoteAgents.enumerated()), id: \.element.id) { index, remote in
                             remoteCardCell(remote: remote, indexInGrid: customAgents.count + index)
+                                .gridDiffCell()
                         }
                     }
                     .padding(24)
+                    .gridDiffAnimation(token: gridChangeToken)
                 }
                 .opacity(hasAppeared ? 1 : 0)
             }
@@ -231,8 +242,10 @@ struct AgentsView: View {
             LazyVGrid(columns: Self.gridColumns, spacing: 20) {
                 ForEach(Array(remoteAgents.enumerated()), id: \.element.id) { index, remote in
                     remoteCardCell(remote: remote, indexInGrid: index)
+                        .gridDiffCell()
                 }
             }
+            .gridDiffAnimation(token: gridChangeToken)
         }
     }
 

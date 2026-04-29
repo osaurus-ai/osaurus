@@ -125,13 +125,13 @@ struct ModelRowView: View {
                 .padding(.horizontal, 16)
 
             VStack {
-                HStack(alignment: .top) {
-                    if model.isDownloaded {
-                        downloadedBadge
-                    }
+                HStack(alignment: .top, spacing: 6) {
                     Spacer(minLength: 0)
                     if model.isTopSuggestion {
                         topPickRibbon
+                    }
+                    if model.isDownloaded {
+                        downloadedBadge
                     }
                 }
                 Spacer(minLength: 0)
