@@ -134,10 +134,38 @@ public actor MemoryService {
     }
 
     /// Startup hook: drain anything that didn't get distilled before the
-    /// previous launch was killed.
+    /// previous launch was killed. Skips when cold-loading the core model
+    /// would peg the GPU on app open (see `canDistillCheaply`).
     public func recoverOrphanedSignals() async {
+        guard await canDistillCheaply() else {
+            MemoryLogger.service.info(
+                "recoverOrphanedSignals: deferring — core model not resident, avoiding cold load on launch"
+            )
+            return
+        }
         await syncNow()
     }
+
+    /// Foundation/remote: always cheap. Local MLX: cheap iff already
+    /// cached or small (<= `coldLoadParamBudgetBillions`). Unknown
+    /// param count is treated as large
+    private func canDistillCheaply() async -> Bool {
+        guard let modelId = await MainActor.run(body: { ChatConfigurationStore.load().coreModelIdentifier }) else {
+            return false
+        }
+        guard let local = ModelManager.discoverLocalModels()
+            .first(where: { $0.id.caseInsensitiveCompare(modelId) == .orderedSame
+                || $0.name.caseInsensitiveCompare(modelId) == .orderedSame })
+        else { return true }
+
+        if await ModelRuntime.shared.isResident(name: local.name) { return true }
+        if let params = local.parameterCountBillions, params <= Self.coldLoadParamBudgetBillions {
+            return true
+        }
+        return false
+    }
+
+    private static let coldLoadParamBudgetBillions: Double = 2.0
 
     // MARK: - Distillation (one LLM call per session)
 
