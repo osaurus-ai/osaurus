@@ -99,14 +99,15 @@ struct ModelDownloadView: View {
     var deeplinkFile: String? = nil
 
     var body: some View {
-        VStack(spacing: 0) {
-            // Header with search and tabs
-            headerView
+        // compute the grid lists once per body pass and thread them down
+        // so derived properties don't re-run multiple times during animation frames
+        let lists = gridLists
+        return VStack(spacing: 0) {
+            headerView(lists: lists)
                 .opacity(hasAppeared ? 1 : 0)
                 .offset(y: hasAppeared ? 0 : -10)
                 .animation(.spring(response: 0.4, dampingFraction: 0.8), value: hasAppeared)
 
-            // System status bar
             SystemStatusBar(
                 totalMemoryGB: systemMonitor.totalMemoryGB,
                 usedMemoryGB: systemMonitor.usedMemoryGB,
@@ -115,8 +116,7 @@ struct ModelDownloadView: View {
             )
             .opacity(hasAppeared ? 1 : 0)
 
-            // Model list
-            modelListView
+            modelListView(lists: lists)
                 .opacity(hasAppeared ? 1 : 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -182,7 +182,7 @@ struct ModelDownloadView: View {
 
     // MARK: - Header View
 
-    private var headerView: some View {
+    private func headerView(lists: GridLists) -> some View {
         ManagerHeaderWithTabs(
             title: L("Models"),
             subtitle: "\(completedDownloadedModelsCount) downloaded • \(modelManager.totalDownloadedSizeString)"
@@ -327,8 +327,8 @@ struct ModelDownloadView: View {
             HeaderTabsRow(
                 selection: $selectedTab,
                 counts: [
-                    .all: filteredSuggestedModels.count + othersInAllTab.count,
-                    .downloaded: filteredDownloadedModels.count,
+                    .all: lists.suggested.count + lists.others.count,
+                    .downloaded: lists.downloaded.count,
                 ],
                 badges: modelManager.activeDownloadsCount > 0
                     ? [.downloaded: modelManager.activeDownloadsCount]
@@ -655,13 +655,13 @@ struct ModelDownloadView: View {
                 )
             }
         }
-        .animation(gridSpring, value: debouncedSearchText)
+        .animation(gridSpring, value: gridChangeToken)
     }
 
     /// Main content area with scrollable model list
-    private var modelListView: some View {
+    private func modelListView(lists: GridLists) -> some View {
         Group {
-            if modelManager.isLoadingModels && displayedModels.isEmpty {
+            if modelManager.isLoadingModels && lists.displayed.isEmpty {
                 loadingState
             } else {
                 ScrollView {
@@ -670,27 +670,27 @@ struct ModelDownloadView: View {
                             deprecationBanner
                         }
 
-                        if displayedModels.isEmpty {
+                        if lists.displayed.isEmpty {
                             emptyState
                         } else {
                             switch selectedTab {
                             case .all:
-                                if !filteredSuggestedModels.isEmpty {
+                                if !lists.suggested.isEmpty {
                                     modelGridSection(
                                         title: L("Recommended"),
-                                        models: filteredSuggestedModels,
+                                        models: lists.suggested,
                                         isFirst: true
                                     )
                                 }
-                                if !othersInAllTab.isEmpty {
+                                if !lists.others.isEmpty {
                                     modelGridSection(
                                         title: L("Others"),
-                                        models: othersInAllTab,
-                                        isFirst: filteredSuggestedModels.isEmpty
+                                        models: lists.others,
+                                        isFirst: lists.suggested.isEmpty
                                     )
                                 }
                             case .downloaded:
-                                modelGrid(models: filteredDownloadedModels)
+                                modelGrid(models: lists.downloaded)
                             }
                         }
                     }
@@ -926,10 +926,110 @@ struct ModelDownloadView: View {
 
     // MARK: - Model Filtering
 
-    private var filteredModels: [MLXModel] {
-        let searched = SearchService.filterModels(modelManager.availableModels, with: debouncedSearchText)
-        let filtered = filterState.apply(to: searched, totalMemoryGB: systemMonitor.totalMemoryGB)
-        return applySort(to: filtered)
+    /// Snapshot of every list the grid renders, computed once per body
+    /// pass to avoid running `applySort` / `SearchService.filterModels` /
+    /// `filterState.apply` 4–6 times during animation frames.
+    struct GridLists {
+        let suggested: [MLXModel]
+        let others: [MLXModel]
+        let downloaded: [MLXModel]
+        let displayed: [MLXModel]
+    }
+
+    /// Single token for the implicit grid animation. Driving the implicit
+    /// `.animation(_:value:)` modifier (rather than `withAnimation`) gives
+    /// `LazyVGrid` reliable reorder animations — same path search uses.
+    private var gridChangeToken: String {
+        "\(selectedTab.rawValue)|\(sortOption.rawValue)|\(debouncedSearchText)|\(filterStateToken)"
+    }
+
+    private var filterStateToken: String {
+        let type: String
+        switch filterState.typeFilter {
+        case .all: type = "all"
+        case .llm: type = "llm"
+        case .vlm: type = "vlm"
+        }
+        return "\(type)|\(filterState.sizeCategory?.rawValue ?? "_")|\(filterState.paramCategory?.rawValue ?? "_")|\(filterState.performance?.rawValue ?? "_")|\(filterState.family ?? "_")"
+    }
+
+    /// Consolidates all list computations. Each input pipeline runs once.
+    private var gridLists: GridLists {
+        let mem = systemMonitor.totalMemoryGB
+
+        let availSearched = SearchService.filterModels(modelManager.availableModels, with: debouncedSearchText)
+        let availFiltered = filterState.apply(to: availSearched, totalMemoryGB: mem)
+        let allFiltered = applySort(to: availFiltered)
+
+        let suggSearched = SearchService.filterModels(modelManager.suggestedModels, with: debouncedSearchText)
+        let suggFiltered = filterState.apply(to: suggSearched, totalMemoryGB: mem)
+        let suggested = sortedSuggested(suggFiltered)
+
+        let recommendedIds = Set(suggested.map { $0.id.lowercased() })
+        let others = allFiltered.filter { !recommendedIds.contains($0.id.lowercased()) }
+
+        let downloaded = computeDownloadedList(memory: mem)
+
+        let displayed: [MLXModel]
+        switch selectedTab {
+        case .all: displayed = suggested + others
+        case .downloaded: displayed = downloaded
+        }
+
+        return GridLists(suggested: suggested, others: others, downloaded: downloaded, displayed: displayed)
+    }
+
+    private func sortedSuggested(_ filtered: [MLXModel]) -> [MLXModel] {
+        if sortOption != .recommended {
+            return applySort(to: filtered)
+        }
+        let curatedIds = ModelManager.curatedSuggestedIds
+        return filtered.sorted { lhs, rhs in
+            let lhsCurated = curatedIds.contains(lhs.id.lowercased())
+            let rhsCurated = curatedIds.contains(rhs.id.lowercased())
+            if lhsCurated != rhsCurated { return lhsCurated }
+
+            if lhsCurated && lhs.isTopSuggestion != rhs.isTopSuggestion {
+                return lhs.isTopSuggestion
+            }
+
+            switch (lhs.releasedAt, rhs.releasedAt) {
+            case let (l?, r?) where l != r:
+                return l > r
+            case (.some, .none):
+                return true
+            case (.none, .some):
+                return false
+            default:
+                break
+            }
+
+            return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+        }
+    }
+
+    private func computeDownloadedList(memory mem: Double) -> [MLXModel] {
+        let all = modelManager.deduplicatedModels()
+        let isActive: (MLXModel) -> Bool = { m in
+            if case .downloading = (modelManager.downloadStates[m.id] ?? .notStarted) { return true }
+            return false
+        }
+        let active = all.filter(isActive)
+        let completed = all.filter { $0.isDownloaded }
+        var seen: Set<String> = []
+        var merged: [MLXModel] = []
+        for m in active + completed {
+            let k = m.id.lowercased()
+            if !seen.contains(k) {
+                seen.insert(k)
+                merged.append(m)
+            }
+        }
+        let searched = SearchService.filterModels(merged, with: debouncedSearchText)
+        let filtered = filterState.apply(to: searched, totalMemoryGB: mem)
+        let activeGroup = applySort(to: filtered.filter(isActive))
+        let restGroup = applySort(to: filtered.filter { !isActive($0) })
+        return activeGroup + restGroup
     }
 
     /// Apply the active `sortOption` to a list. `.recommended` falls back to
@@ -966,78 +1066,6 @@ struct ModelDownloadView: View {
         }
     }
 
-    /// Suggested (curated + auto-fetched) models filtered by current search text and filters.
-    ///
-    /// Sort order (top to bottom):
-    /// 1. Curated entries (pinned across the app) — within curated, Top Picks first.
-    /// 2. Auto-fetched entries from the OsaurusAI HF org listing.
-    /// 3. Within each tier: newer `releasedAt` first, then alphabetical.
-    private var filteredSuggestedModels: [MLXModel] {
-        let searched = SearchService.filterModels(modelManager.suggestedModels, with: debouncedSearchText)
-        let filtered = filterState.apply(to: searched, totalMemoryGB: systemMonitor.totalMemoryGB)
-        if sortOption != .recommended {
-            return applySort(to: filtered)
-        }
-        let curatedIds = ModelManager.curatedSuggestedIds
-        return filtered.sorted { lhs, rhs in
-            let lhsCurated = curatedIds.contains(lhs.id.lowercased())
-            let rhsCurated = curatedIds.contains(rhs.id.lowercased())
-            if lhsCurated != rhsCurated { return lhsCurated }
-
-            if lhsCurated && lhs.isTopSuggestion != rhs.isTopSuggestion {
-                return lhs.isTopSuggestion
-            }
-
-            switch (lhs.releasedAt, rhs.releasedAt) {
-            case let (l?, r?) where l != r:
-                return l > r
-            case (.some, .none):
-                return true
-            case (.none, .some):
-                return false
-            default:
-                break
-            }
-
-            return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
-        }
-    }
-
-    /// Downloaded tab contents: include active downloads at the top, then completed ones
-    private var filteredDownloadedModels: [MLXModel] {
-        let all = modelManager.deduplicatedModels()
-        // Active: in-progress downloads regardless of on-disk completion
-        let active: [MLXModel] = all.filter { m in
-            switch modelManager.downloadStates[m.id] ?? .notStarted {
-            case .downloading: return true
-            default: return false
-            }
-        }
-        // Completed: on-disk completed models
-        let completed: [MLXModel] = all.filter { $0.isDownloaded }
-        // Merge with active first; de-dupe by lowercase id while preserving order
-        var seen: Set<String> = []
-        var merged: [MLXModel] = []
-        for m in active + completed {
-            let k = m.id.lowercased()
-            if !seen.contains(k) {
-                seen.insert(k)
-                merged.append(m)
-            }
-        }
-        // Apply search filter
-        let searched = SearchService.filterModels(merged, with: debouncedSearchText)
-        let filtered = filterState.apply(to: searched, totalMemoryGB: systemMonitor.totalMemoryGB)
-
-        let isActive: (MLXModel) -> Bool = { m in
-            if case .downloading = (modelManager.downloadStates[m.id] ?? .notStarted) { return true }
-            return false
-        }
-        let activeGroup = applySort(to: filtered.filter(isActive))
-        let restGroup = applySort(to: filtered.filter { !isActive($0) })
-        return activeGroup + restGroup
-    }
-
     /// Count of completed (on-disk) downloaded models respecting current search and filters
     private var completedDownloadedModelsCount: Int {
         let completed = modelManager.deduplicatedModels().filter { $0.isDownloaded }
@@ -1056,24 +1084,6 @@ struct ModelDownloadView: View {
         return activeProgress.reduce(0, +) / Double(activeProgress.count)
     }
 
-    /// "Others" section in the All tab: the full filtered model list minus
-    /// anything already shown in the Recommended section above it, so users
-    /// don't see the same model twice when they appear in both lists
-    private var othersInAllTab: [MLXModel] {
-        let recommendedIds = Set(filteredSuggestedModels.map { $0.id.lowercased() })
-        return filteredModels.filter { !recommendedIds.contains($0.id.lowercased()) }
-    }
-
-    /// Total set of models the active tab will render. used to decide
-    /// whether to show the empty state or the loading skeletons
-    private var displayedModels: [MLXModel] {
-        switch selectedTab {
-        case .all:
-            return filteredSuggestedModels + othersInAllTab
-        case .downloaded:
-            return filteredDownloadedModels
-        }
-    }
 }
 
 // MARK: - Skeleton Loading Card
