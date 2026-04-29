@@ -492,7 +492,7 @@ struct ModelDownloadView: View {
     /// position interpolation is driven by `withAnimation(gridSpring)` at
     /// the chip mutation sites
     private func modelGrid(models: [MLXModel]) -> some View {
-        LazyVGrid(columns: gridColumns, spacing: 12) {
+        LazyVGrid(columns: gridColumns, spacing: 20) {
             ForEach(models, id: \.id) { model in
                 ModelRowView(
                     model: model,
@@ -1087,7 +1087,7 @@ private struct ResourceGauge: View {
                 .font(.system(size: 12, weight: .medium))
                 .foregroundColor(theme.secondaryText)
 
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: 7) {
                 HStack(spacing: 4) {
                     Text(label)
                         .font(.system(size: 11, weight: .medium))

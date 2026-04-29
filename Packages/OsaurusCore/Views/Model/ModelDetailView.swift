@@ -75,14 +75,17 @@ struct ModelDetailView: View, Identifiable {
             // Hero Header
             heroHeader
 
+            // Metadata pills + Hugging Face link sit just under the hero
+            metaStrip
+
             // Scrollable Content
             ScrollView {
                 VStack(spacing: 16) {
                     compatibilityCallout
 
-                    statsGrid
-
                     modelDetailsCard
+
+                    statsGrid
 
                     advancedSection
                 }
@@ -124,87 +127,112 @@ struct ModelDetailView: View, Identifiable {
     // MARK: - Hero Header
 
     private var heroHeader: some View {
-        VStack(spacing: 0) {
-            HStack(alignment: .top, spacing: 0) {
-                // Model Info
-                VStack(alignment: .leading, spacing: 8) {
-                    // Model name and status
-                    HStack(spacing: 8) {
-                        Text(model.name)
-                            .font(.system(size: 20, weight: .bold))
-                            .foregroundColor(theme.primaryText)
-                            .lineLimit(1)
+        ZStack {
+            LinearGradient(
+                colors: ModelCardGradient.colors(for: model),
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
 
-                        if model.isDownloaded {
-                            Image(systemName: "checkmark.circle.fill")
-                                .font(.system(size: 14))
-                                .foregroundColor(theme.successColor)
-                        }
-                    }
+            RadialGradient(
+                colors: [.white.opacity(0.32), .white.opacity(0)],
+                center: UnitPoint(x: 0.18, y: 0.18),
+                startRadius: 4,
+                endRadius: 320
+            )
 
-                    // Metadata pills
-                    HStack(spacing: 6) {
-                        modelTypeBadge
+            RadialGradient(
+                colors: [.black.opacity(0.30), .black.opacity(0)],
+                center: UnitPoint(x: 0.92, y: 0.95),
+                startRadius: 4,
+                endRadius: 360
+            )
 
-                        if let params = model.parameterCount {
-                            MetadataPill(text: params, icon: nil, color: theme.secondaryText)
-                        }
+            VStack(spacing: 8) {
+                HStack(spacing: 8) {
+                    Text(model.name)
+                        .font(.system(size: 22, weight: .bold))
+                        .foregroundColor(.white)
+                        .shadow(color: .black.opacity(0.22), radius: 2, x: 0, y: 1)
+                        .lineLimit(1)
+                        .multilineTextAlignment(.center)
 
-                        if let quant = model.quantization {
-                            MetadataPill(text: quant, icon: nil, color: theme.secondaryText)
-                        }
-                    }
-
-                    // Description
-                    if !model.description.isEmpty {
-                        Text(model.description)
-                            .font(.system(size: 13))
-                            .foregroundColor(theme.secondaryText)
-                            .lineLimit(2)
+                    if model.isDownloaded {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 15))
+                            .foregroundColor(.white)
                     }
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
 
-                // Close button
-                Button(action: { dismiss() }) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(theme.tertiaryText)
-                        .frame(width: 24, height: 24)
-                        .background(
-                            Circle()
-                                .fill(theme.tertiaryBackground)
-                        )
+                if !model.description.isEmpty {
+                    Text(model.description)
+                        .font(.system(size: 13))
+                        .foregroundColor(.white.opacity(0.88))
+                        .lineLimit(2)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                .buttonStyle(PlainButtonStyle())
             }
-            .padding(.horizontal, 20)
-            .padding(.top, 20)
-            .padding(.bottom, 16)
+            .padding(.horizontal, 56)
 
-            // Hugging Face link (Copy Model ID is in Advanced — it's developer-only)
-            HStack(spacing: 12) {
-                Button(action: openHuggingFace) {
-                    HStack(spacing: 5) {
-                        Text("🤗")
-                            .font(.system(size: 12))
-                        Text("View on Hugging Face", bundle: .module)
-                            .font(.system(size: 12, weight: .medium))
-                        Image(systemName: "arrow.up.right")
-                            .font(.system(size: 9, weight: .semibold))
+            VStack {
+                HStack {
+                    Spacer()
+                    Button(action: { dismiss() }) {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundColor(.white)
+                            .frame(width: 24, height: 24)
+                            .background(Circle().fill(.black.opacity(0.32)))
                     }
-                    .foregroundColor(theme.accentColor)
+                    .buttonStyle(PlainButtonStyle())
                 }
-                .buttonStyle(PlainButtonStyle())
-
                 Spacer()
             }
-            .padding(.horizontal, 20)
-            .padding(.bottom, 16)
-
-            Divider()
+            .padding(16)
         }
+    }
+
+    private var metaStrip: some View {
+        HStack(spacing: 8) {
+            if let size = sizeChipText {
+                MetadataPill(text: size, icon: nil, color: theme.secondaryText)
+            }
+
+            modelTypeBadge
+
+            if let params = model.parameterCount {
+                MetadataPill(text: params, icon: nil, color: theme.secondaryText)
+            }
+
+            if let quant = model.quantization {
+                MetadataPill(text: quant, icon: nil, color: theme.secondaryText)
+            }
+
+            Spacer()
+
+            Button(action: openHuggingFace) {
+                HStack(spacing: 5) {
+                    Text("🤗")
+                        .font(.system(size: 12))
+                    Text("View on Hugging Face", bundle: .module)
+                        .font(.system(size: 12, weight: .medium))
+                    Image(systemName: "arrow.up.right")
+                        .font(.system(size: 9, weight: .semibold))
+                }
+                .foregroundColor(theme.accentColor)
+            }
+            .buttonStyle(PlainButtonStyle())
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 12)
         .background(theme.secondaryBackground)
+        .overlay(
+            Rectangle()
+                .fill(theme.cardBorder)
+                .frame(height: 1),
+            alignment: .bottom
+        )
     }
 
     /// Open HuggingFace page in browser
@@ -650,6 +678,16 @@ struct ModelDetailView: View, Identifiable {
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .abbreviated
         return formatter.localizedString(for: date, relativeTo: Date())
+    }
+
+    /// Compact size string for the meta-strip pill. Uses the
+    /// network resolved size when available, otherwise the params×quant
+    /// estimate. Returns nil only when neither is known.
+    private var sizeChipText: String? {
+        if let s = estimatedSize, s > 0 {
+            return ByteCountFormatter.string(fromByteCount: s, countStyle: .file)
+        }
+        return model.formattedDownloadSize
     }
 
     /// Formatted string for the estimated download size.
