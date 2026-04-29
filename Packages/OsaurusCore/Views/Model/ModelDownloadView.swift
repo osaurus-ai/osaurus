@@ -12,6 +12,7 @@ import SwiftUI
 /// Sort options for the model list.
 enum ModelSortOption: String, CaseIterable, Identifiable {
     case recommended
+    case downloadsDesc
     case nameAsc
     case compatibility
     case sizeAsc
@@ -22,6 +23,7 @@ enum ModelSortOption: String, CaseIterable, Identifiable {
     var displayName: String {
         switch self {
         case .recommended: return "Recommended"
+        case .downloadsDesc: return "Most Downloaded"
         case .nameAsc: return "Name (A–Z)"
         case .compatibility: return "Compatibility"
         case .sizeAsc: return "Size (Smallest first)"
@@ -32,6 +34,7 @@ enum ModelSortOption: String, CaseIterable, Identifiable {
     var iconName: String {
         switch self {
         case .recommended: return "sparkles"
+        case .downloadsDesc: return "arrow.down.app"
         case .nameAsc: return "textformat"
         case .compatibility: return "checkmark.seal"
         case .sizeAsc: return "arrow.up.circle"
@@ -1027,6 +1030,14 @@ struct ModelDownloadView: View {
         case .recommended, .nameAsc:
             return models.sorted { lhs, rhs in
                 lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+            }
+        case .downloadsDesc:
+            // Models without a known HF download count drop to the bottom.
+            return models.sorted { lhs, rhs in
+                let l = lhs.downloads ?? -1
+                let r = rhs.downloads ?? -1
+                if l != r { return l > r }
+                return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
             }
         case .compatibility:
             return models.sorted { lhs, rhs in

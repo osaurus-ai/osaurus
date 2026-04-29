@@ -362,7 +362,9 @@ final class ModelManager: NSObject, ObservableObject {
                     id: hf.id,
                     name: ModelMetadataParser.friendlyName(from: hf.id),
                     description: "Discovered on Hugging Face",
-                    downloadURL: "https://huggingface.co/\(hf.id)"
+                    downloadURL: "https://huggingface.co/\(hf.id)",
+                    releasedAt: Self.parseHFTimestamp(hf.lastModified),
+                    downloads: hf.downloads
                 )
             }
 
@@ -817,6 +819,7 @@ extension ModelManager {
         let id: String
         let tags: [String]?
         let lastModified: String?
+        let downloads: Int?
     }
 
     /// Build the HF models API URL
@@ -910,7 +913,8 @@ extension ModelManager {
             description: "From OsaurusAI on Hugging Face.",
             downloadURL: "https://huggingface.co/\(hf.id)",
             modelType: inferModelType(from: hf.tags),
-            releasedAt: parseHFTimestamp(hf.lastModified)
+            releasedAt: parseHFTimestamp(hf.lastModified),
+            downloads: hf.downloads
         )
     }
 
@@ -935,15 +939,27 @@ extension ModelManager {
             .filter { !curatedIds.contains($0.id.lowercased()) }
             .map(Self.makeAutoFetchedModel(from:))
 
-        applyOsaurusOrgFetch(autoFetched: autoFetched)
+        var statsById: [String: Int] = [:]
+        for hf in raw {
+            if let count = hf.downloads {
+                statsById[hf.id.lowercased()] = count
+            }
+        }
+
+        applyOsaurusOrgFetch(autoFetched: autoFetched, statsById: statsById)
     }
 
     /// Replace the auto-fetched portion of `suggestedModels` while preserving
     /// curated entries (and any unrelated entries that may have been added).
     /// Internal so tests can drive the merge without hitting the network.
-    func applyOsaurusOrgFetch(autoFetched: [MLXModel]) {
-        let curated = Self.curatedSuggestedModels
+    /// `statsById` carries HF Hub `downloads` counts so curated entries
+    /// (hand-coded, missing `downloads`) pick them up at merge time.
+    func applyOsaurusOrgFetch(autoFetched: [MLXModel], statsById: [String: Int] = [:]) {
         let curatedIds = Self.curatedSuggestedIds
+        let curated = Self.curatedSuggestedModels.map { model -> MLXModel in
+            guard let count = statsById[model.id.lowercased()] else { return model }
+            return model.withDownloads(count)
+        }
 
         // Drop previous OsaurusAI auto-fetched entries, keeping curated and
         // any non-OsaurusAI entries other code may have injected.
