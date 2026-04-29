@@ -67,17 +67,23 @@ struct MemoryView: View {
                             selectedAgent = nil
                         }
                     },
-                    onExport: { _ in },
                     onDelete: { _ in
                         withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
                             selectedAgent = nil
                         }
                         loadData()
                     },
+                    onSwitchAgent: { newAgent in
+                        // Same id-based reload pattern as `AgentsView`. Memory's
+                        // entry point is read-only context (no Agents grid), so we
+                        // just swap the in-memory selection.
+                        selectedAgent = newAgent
+                    },
                     showSuccess: { msg in
                         showToast(msg)
                     }
                 )
+                .id(agent.id)
                 .transition(.opacity.combined(with: .move(edge: .trailing)))
             }
         }

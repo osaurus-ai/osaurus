@@ -15,10 +15,75 @@ import Security
 public enum AgentSecretsKeychain {
     private static let service = "ai.osaurus.agent-secrets"
 
+    #if DEBUG
+        private static let inMemoryStoreLock = NSLock()
+        nonisolated(unsafe) private static var inMemoryStoreForTesting: [String: String]?
+
+        static func _withInMemoryStoreForTesting<T>(
+            _ body: () throws -> T
+        ) rethrows -> T {
+            inMemoryStoreLock.lock()
+            let previous = inMemoryStoreForTesting
+            inMemoryStoreForTesting = [:]
+            inMemoryStoreLock.unlock()
+
+            defer {
+                inMemoryStoreLock.lock()
+                inMemoryStoreForTesting = previous
+                inMemoryStoreLock.unlock()
+            }
+
+            return try body()
+        }
+
+        private static func testingSave(_ value: String, account: String) -> (enabled: Bool, saved: Bool) {
+            inMemoryStoreLock.lock()
+            defer { inMemoryStoreLock.unlock() }
+            guard inMemoryStoreForTesting != nil else {
+                return (enabled: false, saved: false)
+            }
+            inMemoryStoreForTesting?[account] = value
+            return (enabled: true, saved: true)
+        }
+
+        private static func testingGet(account: String) -> (enabled: Bool, value: String?) {
+            inMemoryStoreLock.lock()
+            defer { inMemoryStoreLock.unlock() }
+            guard let store = inMemoryStoreForTesting else {
+                return (enabled: false, value: nil)
+            }
+            return (enabled: true, value: store[account])
+        }
+
+        private static func testingDelete(account: String) -> (enabled: Bool, deleted: Bool) {
+            inMemoryStoreLock.lock()
+            defer { inMemoryStoreLock.unlock() }
+            guard inMemoryStoreForTesting != nil else {
+                return (enabled: false, deleted: false)
+            }
+            inMemoryStoreForTesting?[account] = nil
+            return (enabled: true, deleted: true)
+        }
+
+        private static func testingAllAccounts() -> [String]? {
+            inMemoryStoreLock.lock()
+            defer { inMemoryStoreLock.unlock() }
+            guard let store = inMemoryStoreForTesting else { return nil }
+            return Array(store.keys)
+        }
+    #endif
+
     @discardableResult
     public static func saveSecret(_ value: String, id: String, agentId: UUID) -> Bool {
         let account = "\(agentId.uuidString).\(id)"
         guard let valueData = value.data(using: .utf8) else { return false }
+
+        #if DEBUG
+            let testing = testingSave(value, account: account)
+            if testing.enabled {
+                return testing.saved
+            }
+        #endif
 
         deleteSecret(id: id, agentId: agentId)
 
@@ -34,6 +99,13 @@ public enum AgentSecretsKeychain {
 
     public static func getSecret(id: String, agentId: UUID) -> String? {
         let account = "\(agentId.uuidString).\(id)"
+
+        #if DEBUG
+            let testing = testingGet(account: account)
+            if testing.enabled {
+                return testing.value
+            }
+        #endif
 
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -54,6 +126,13 @@ public enum AgentSecretsKeychain {
     @discardableResult
     public static func deleteSecret(id: String, agentId: UUID) -> Bool {
         let account = "\(agentId.uuidString).\(id)"
+
+        #if DEBUG
+            let testing = testingDelete(account: account)
+            if testing.enabled {
+                return testing.deleted
+            }
+        #endif
 
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -119,6 +198,12 @@ public enum AgentSecretsKeychain {
     // MARK: - Private
 
     private static func allAccounts() -> [String] {
+        #if DEBUG
+            if let accounts = testingAllAccounts() {
+                return accounts
+            }
+        #endif
+
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,

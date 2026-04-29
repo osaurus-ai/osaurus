@@ -104,37 +104,38 @@ struct SandboxPluginRegistrationTests {
 
     @Test
     func validateAndStage_rejectsMissingSecrets() {
-        // Use a fresh random agent UUID so the keychain lookup definitely
-        // misses (the keychain is shared across the test runner).
-        let agentId = UUID()
-        var plugin = SandboxPlugin(
-            name: "Needs Secrets",
-            description: "Declares an API key it never received",
-            secrets: ["__OSAURUS_TEST_SECRET_THAT_DOES_NOT_EXIST__"]
-        )
-        let message = expectInvalidArgs {
-            try SandboxPluginRegistration.validateAndStage(&plugin, agentId: agentId.uuidString)
+        AgentSecretsKeychain._withInMemoryStoreForTesting {
+            let agentId = UUID()
+            var plugin = SandboxPlugin(
+                name: "Needs Secrets",
+                description: "Declares an API key it never received",
+                secrets: ["__OSAURUS_TEST_SECRET_THAT_DOES_NOT_EXIST__"]
+            )
+            let message = expectInvalidArgs {
+                try SandboxPluginRegistration.validateAndStage(&plugin, agentId: agentId.uuidString)
+            }
+            #expect(message?.contains("Missing secrets") == true)
+            #expect(message?.contains("__OSAURUS_TEST_SECRET_THAT_DOES_NOT_EXIST__") == true)
         }
-        #expect(message?.contains("Missing secrets") == true)
-        #expect(message?.contains("__OSAURUS_TEST_SECRET_THAT_DOES_NOT_EXIST__") == true)
     }
 
     @Test
     func validateAndStage_acceptsSecretsAfterUserStores() throws {
-        let agentId = UUID()
-        let key = "OSAURUS_TEST_REGISTRATION_SECRET_\(UUID().uuidString.prefix(8))"
-        AgentSecretsKeychain.saveSecret("value", id: key, agentId: agentId)
-        defer { AgentSecretsKeychain.deleteSecret(id: key, agentId: agentId) }
+        try AgentSecretsKeychain._withInMemoryStoreForTesting {
+            let agentId = UUID()
+            let key = "OSAURUS_TEST_REGISTRATION_SECRET_\(UUID().uuidString.prefix(8))"
+            AgentSecretsKeychain.saveSecret("value", id: key, agentId: agentId)
 
-        var plugin = SandboxPlugin(
-            name: "Has Secret",
-            description: "Reads an API key set by the user",
-            secrets: [key]
-        )
-        try SandboxPluginRegistration.validateAndStage(
-            &plugin,
-            agentId: agentId.uuidString
-        )
+            var plugin = SandboxPlugin(
+                name: "Has Secret",
+                description: "Reads an API key set by the user",
+                secrets: [key]
+            )
+            try SandboxPluginRegistration.validateAndStage(
+                &plugin,
+                agentId: agentId.uuidString
+            )
+        }
     }
 
     // MARK: - SandboxPluginRegisterTool early-failure paths

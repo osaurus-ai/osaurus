@@ -176,7 +176,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             // Access key authentication gate (all data snapshotted at server start, zero locks)
             // Plugin routes handle their own auth per-route, so skip the global gate.
             // Loopback connections (CLI / local tools) are trusted without a token.
-            let publicPaths: Set<String> = ["/", "/health", "/pair"]
+            let publicPaths: Set<String> = ["/", "/health", "/pair", "/pair-invite"]
             let isPluginRoute = path.hasPrefix("/plugins/")
             let isLoopback = trustLoopback && (context.channel.remoteAddress?.isLoopback ?? false)
             if !publicPaths.contains(path) && !isPluginRoute && !isLoopback {
@@ -326,6 +326,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 handleMemoryIngest(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .POST, path == "/pair" {
                 handlePairEndpoint(head: head, context: context, startTime: startTime, userAgent: userAgent)
+            } else if head.method == .POST, path == "/pair-invite" {
+                handlePairInviteEndpoint(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .GET, path == "/agents" {
                 handleListAgents(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .GET, path.hasPrefix("/agents/") {
@@ -1226,12 +1228,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     }
 
     /// Decide the body-byte cap for the request based on its route. Most
-    /// endpoints get the generic configuration limit; `/pair` is tighter
-    /// because it is unauthenticated and only ever carries a small JSON
-    /// envelope.
+    /// endpoints get the generic configuration limit; `/pair` and
+    /// `/pair-invite` are tighter because they are unauthenticated and only
+    /// ever carry a small JSON envelope.
     private func bodyByteLimit(for head: HTTPRequestHead) -> Int {
         let path = normalize(extractPath(from: head.uri))
-        if path == "/pair" {
+        if path == "/pair" || path == "/pair-invite" {
             return configuration.maxPairingBodyBytes
         }
         return configuration.maxRequestBodyBytes
@@ -1838,6 +1840,206 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     responseStatus: 200,
                     startTime: logStartTime
                 )
+            }
+        }
+    }
+
+    // MARK: - /pair-invite (signed deeplink redemption)
+
+    private struct PairInviteResponse: Codable {
+        let agentAddress: String
+        let agentName: String
+        let agentDescription: String?
+        let relayBaseURL: String
+        let apiKey: String
+    }
+
+    /// POST /pair-invite — unauthenticated endpoint that swaps a signed
+    /// `AgentInvite` for an `osk-v1` access key. The invite IS the auth: it's
+    /// signed by the agent's per-agent child key, it carries a single-use
+    /// nonce that's recorded server-side, and it has a hard expiry.
+    ///
+    /// The receiving client is expected to POST the EXACT JSON body that was
+    /// embedded in the deeplink's `pair` query parameter so the server can
+    /// re-verify the signature it has on hand.
+    private func handlePairInviteEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        let data: Data
+        let requestBodyString: String?
+        if let body = stateRef.value.requestBodyBuffer {
+            var bodyCopy = body
+            let bytes = bodyCopy.readBytes(length: bodyCopy.readableBytes) ?? []
+            data = Data(bytes)
+            requestBodyString = String(decoding: data, as: UTF8.self)
+        } else {
+            data = Data()
+            requestBodyString = nil
+        }
+
+        let cors = stateRef.value.corsHeaders
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        let logSelf = self
+        let logStartTime = startTime
+        let logUserAgent = userAgent
+        let logRequestBody = requestBodyString
+        // Origin label for the issued-invite ledger (purely informational).
+        let origin =
+            (head.headers.first(name: "X-Forwarded-For")
+            ?? head.headers.first(name: "Host"))?.components(separatedBy: ",").first?
+            .trimmingCharacters(in: .whitespaces)
+
+        func reply(status: HTTPResponseStatus, body: String, code: Int) {
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(
+                    context: ctx.value,
+                    version: head.version,
+                    status: status,
+                    headers: headers,
+                    body: body
+                )
+                logSelf.logRequest(
+                    method: "POST",
+                    path: "/pair-invite",
+                    userAgent: logUserAgent,
+                    requestBody: logRequestBody,
+                    responseBody: body,
+                    responseStatus: code,
+                    startTime: logStartTime
+                )
+            }
+        }
+
+        guard let invite = try? JSONDecoder().decode(AgentInvite.self, from: data) else {
+            reply(status: .badRequest, body: #"{"error":"Invalid invite payload"}"#, code: 400)
+            return
+        }
+        guard invite.v == AgentInvite.currentVersion else {
+            reply(status: .badRequest, body: #"{"error":"Unsupported invite version"}"#, code: 400)
+            return
+        }
+        do {
+            try invite.verifySignature()
+        } catch {
+            reply(status: .unauthorized, body: #"{"error":"Signature verification failed"}"#, code: 401)
+            return
+        }
+        if invite.isExpired {
+            reply(status: .gone, body: #"{"error":"Invite has expired"}"#, code: 410)
+            return
+        }
+
+        Task(priority: .userInitiated) {
+            // 1. Resolve a local agent that matches the invite address. The
+            //    receiver only ever connects via the relay tunnel, so the
+            //    address has to belong to an agent on THIS device.
+            let agents = await MainActor.run { AgentManager.shared.agents }
+            guard
+                let agent = agents.first(where: { ($0.agentAddress?.lowercased() ?? "") == invite.addr.lowercased() }),
+                let agentIndex = agent.agentIndex,
+                let agentAddress = agent.agentAddress
+            else {
+                reply(status: .notFound, body: #"{"error":"Agent address not found on this server"}"#, code: 404)
+                return
+            }
+
+            // 2. Verify + consume the nonce atomically so concurrent redemptions
+            //    of the same invite cannot both succeed.
+            let consume = await MainActor.run {
+                AgentInviteStore.verifyAndConsume(nonce: invite.nonce, for: agent.id, from: origin)
+            }
+            switch consume {
+            case .unknownNonce:
+                // The signature checks out but we have no record of this nonce.
+                // Could be a replay against a different agent, an invite issued
+                // before a wipe, or simply a mismatched device. Reject so a
+                // stolen URL can't mint forever-keys against a fresh ledger.
+                reply(status: .unauthorized, body: #"{"error":"Invite is not registered on this server"}"#, code: 401)
+                return
+            case .alreadyUsed:
+                reply(status: .conflict, body: #"{"error":"Invite has already been redeemed"}"#, code: 409)
+                return
+            case .revoked:
+                reply(status: .forbidden, body: #"{"error":"Invite was revoked"}"#, code: 403)
+                return
+            case .expired:
+                reply(status: .gone, body: #"{"error":"Invite has expired"}"#, code: 410)
+                return
+            case .consumed:
+                break
+            }
+
+            // 3. Mint an agent-scoped osk-v1 access key. Triggers biometric.
+            //    1-year expiry matches the share-link UX: long enough that
+            //    users don't get random disconnects, short enough that a
+            //    forgotten leak self-resolves. Sender can revoke any time
+            //    via the issued-invites list.
+            let label = "Invite – \(invite.name) (\(invite.nonce.prefix(8)))"
+            do {
+                let (fullKey, keyInfo) = try APIKeyManager.shared.generate(
+                    label: label,
+                    expiration: .year1,
+                    agentIndex: agentIndex
+                )
+                await MainActor.run {
+                    AgentInviteStore.attachAccessKey(
+                        nonce: invite.nonce,
+                        for: agent.id,
+                        accessKeyId: keyInfo.id
+                    )
+                }
+
+                func responseBody(apiKey: String) -> String {
+                    let body = PairInviteResponse(
+                        agentAddress: agentAddress,
+                        agentName: agent.name,
+                        agentDescription: agent.description.isEmpty ? nil : agent.description,
+                        relayBaseURL: invite.url,
+                        apiKey: apiKey
+                    )
+                    return (try? JSONEncoder().encode(body))
+                        .map { String(decoding: $0, as: UTF8.self) }
+                        ?? #"{"error":"Encoding failed"}"#
+                }
+
+                let json = responseBody(apiKey: fullKey)
+                // Redacted twin for the request log — the ring buffer powers
+                // the in-app diagnostics panel and must never echo the key.
+                let redactedJson = responseBody(apiKey: "<redacted>")
+                hop {
+                    var headers = [("Content-Type", "application/json; charset=utf-8")]
+                    headers.append(contentsOf: cors)
+                    self.sendResponse(
+                        context: ctx.value,
+                        version: head.version,
+                        status: .ok,
+                        headers: headers,
+                        body: json
+                    )
+                    logSelf.logRequest(
+                        method: "POST",
+                        path: "/pair-invite",
+                        userAgent: logUserAgent,
+                        requestBody: logRequestBody,
+                        responseBody: redactedJson,
+                        responseStatus: 200,
+                        startTime: logStartTime
+                    )
+                }
+            } catch {
+                // Roll the nonce back to active so a transient APIKeyManager
+                // failure doesn't permanently brick the invite.
+                await MainActor.run {
+                    AgentInviteStore.rollbackConsume(nonce: invite.nonce, for: agent.id)
+                }
+                reply(status: .internalServerError, body: #"{"error":"Failed to mint access key"}"#, code: 500)
             }
         }
     }

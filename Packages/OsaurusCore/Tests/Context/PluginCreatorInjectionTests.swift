@@ -137,18 +137,22 @@ struct PluginCreatorComposerWiringTests {
 
     @Test
     func composeChatContext_skipsPluginCreatorOutsideSandbox() async {
-        let agent = Agent(
-            name: "Plugin Creator Non-Sandbox Agent",
-            autonomousExec: AutonomousExecConfig(enabled: false, pluginCreate: true)
-        )
-        AgentManager.shared.add(agent)
-        defer { Task { _ = await AgentManager.shared.delete(id: agent.id) } }
+        await SandboxTestLock.shared.run {
+            let agent = Agent(
+                name: "Plugin Creator Non-Sandbox Agent",
+                agentAddress: "test-plugin-creator-\(UUID().uuidString)",
+                autonomousExec: AutonomousExecConfig(enabled: false, pluginCreate: true)
+            )
+            AgentManager.shared.add(agent)
 
-        let context = await SystemPromptComposer.composeChatContext(
-            agentId: agent.id,
-            executionMode: .none
-        )
-        let labels = context.manifest.sections.map(\.label)
-        #expect(labels.contains("Plugin Creator") == false)
+            let context = await SystemPromptComposer.composeChatContext(
+                agentId: agent.id,
+                executionMode: .none
+            )
+            let labels = context.manifest.sections.map(\.label)
+            #expect(labels.contains("Plugin Creator") == false)
+
+            _ = await AgentManager.shared.delete(id: agent.id)
+        }
     }
 }

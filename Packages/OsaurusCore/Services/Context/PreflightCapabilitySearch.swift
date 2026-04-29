@@ -267,15 +267,26 @@ enum PreflightCapabilitySearch {
 
     // MARK: Search
 
-    /// Public entry point. `agentId` is reserved for future agent-aware
-    /// behavior (e.g. per-agent tool restrictions) so callers don't have to
-    /// change when that lands; it is intentionally unused today.
+    /// Public entry point. Wires the agent's enabled-tool allowlist into the
+    /// pre-flight catalog so Auto-discover only ever picks from tools the user
+    /// has explicitly enabled in the capability picker. A `nil` allowlist
+    /// (un-seeded legacy agent) preserves the historical behaviour of
+    /// considering every dynamic tool in the registry.
     static func search(
         query: String,
         mode: PreflightSearchMode = .balanced,
         agentId: UUID
     ) async -> PreflightResult {
-        await search(query: query, mode: mode, llm: defaultLLM, embedder: defaultEmbedder)
+        let allowed = await MainActor.run {
+            AgentManager.shared.effectiveEnabledToolNames(for: agentId).map(Set.init)
+        }
+        return await search(
+            query: query,
+            mode: mode,
+            allowedNames: allowed,
+            llm: defaultLLM,
+            embedder: defaultEmbedder
+        )
     }
 
     /// Internal entry point with injectable LLM + embedder seams. Tests call
@@ -284,12 +295,14 @@ enum PreflightCapabilitySearch {
     static func search(
         query: String,
         mode: PreflightSearchMode,
+        allowedNames: Set<String>? = nil,
         llm: LLMGenerator,
         embedder: Embedder?
     ) async -> PreflightResult {
         let (result, _) = await searchWithDiagnostic(
             query: query,
             mode: mode,
+            allowedNames: allowedNames,
             llm: llm,
             embedder: embedder
         )
@@ -299,16 +312,20 @@ enum PreflightCapabilitySearch {
     /// Diagnostic-capturing entry point. Wires the production LLM +
     /// embedder so callers (the eval CLI, future scoreboards) get the
     /// exact same one-shot generation contract the chat path uses.
-    /// `agentId` is reserved for future per-agent gating, mirroring
-    /// `search(query:mode:agentId:)`.
+    /// Threads the same agent allowlist as `search(query:mode:agentId:)`
+    /// so eval results match production scoping.
     static func searchWithDiagnostic(
         query: String,
         mode: PreflightSearchMode = .balanced,
         agentId: UUID
     ) async -> (PreflightResult, PreflightDiagnostic?) {
-        await searchWithDiagnostic(
+        let allowed = await MainActor.run {
+            AgentManager.shared.effectiveEnabledToolNames(for: agentId).map(Set.init)
+        }
+        return await searchWithDiagnostic(
             query: query,
             mode: mode,
+            allowedNames: allowed,
             llm: defaultLLM,
             embedder: defaultEmbedder
         )
@@ -327,9 +344,16 @@ enum PreflightCapabilitySearch {
     /// path uses the bare `search(...)` so the diagnostic doesn't ride
     /// along on the per-session `SessionToolState.initialPreflight`
     /// cache and inflate it.
+    ///
+    /// `allowedNames` (when non-nil) restricts the dynamic catalog to the
+    /// user's enabled set so the per-item Enabled toggles in the agent
+    /// capability picker are the single source of truth in both Auto and
+    /// Manual modes. `nil` keeps the legacy registry-wide behaviour for
+    /// callers that don't have an agent context.
     static func searchWithDiagnostic(
         query: String,
         mode: PreflightSearchMode,
+        allowedNames: Set<String>? = nil,
         llm: LLMGenerator,
         embedder: Embedder?
     ) async -> (PreflightResult, PreflightDiagnostic?) {
@@ -338,7 +362,9 @@ enum PreflightCapabilitySearch {
             !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         else { return (.empty, nil) }
 
-        let (catalog, groups) = await MainActor.run { loadDynamicCatalog() }
+        let (catalog, groups) = await MainActor.run {
+            loadDynamicCatalog(allowedNames: allowedNames)
+        }
         // Empty-catalog short-circuit: still emit a diagnostic so verbose
         // eval output tells the operator "the LLM was never called
         // because there are no plugin tools enabled" instead of leaving
@@ -502,9 +528,20 @@ enum PreflightCapabilitySearch {
     /// Snapshot the dynamic-tool catalog and its `tool → group` map from the
     /// registry, sorted by group so `formatCatalog` can emit deterministic
     /// section order. Must run on the main actor.
+    ///
+    /// When `allowedNames` is non-nil, only tools in that set survive — the
+    /// user's enabled allowlist from the agent capability picker scopes the
+    /// catalog so Auto-discover never sees a tool the user has disabled.
+    /// `nil` returns the full dynamic registry (legacy behaviour for callers
+    /// that don't have an agent context).
     @MainActor
-    private static func loadDynamicCatalog() -> (catalog: [ToolRegistry.ToolEntry], groups: [String: String]) {
-        let tools = ToolRegistry.shared.listDynamicTools()
+    private static func loadDynamicCatalog(
+        allowedNames: Set<String>? = nil
+    ) -> (catalog: [ToolRegistry.ToolEntry], groups: [String: String]) {
+        var tools = ToolRegistry.shared.listDynamicTools()
+        if let allowedNames {
+            tools = tools.filter { allowedNames.contains($0.name) }
+        }
         let groupMap = Dictionary(
             uniqueKeysWithValues: tools.compactMap { tool in
                 ToolRegistry.shared.groupName(for: tool.name).map { (tool.name, $0) }

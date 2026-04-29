@@ -13,49 +13,76 @@ import Foundation
 /// How quickly a watcher reacts to filesystem changes.
 /// Maps to debounce window duration internally.
 public enum Responsiveness: String, Codable, Sendable, CaseIterable, Equatable {
-    /// ~200ms -- screenshots, single-file drops
+    /// Screenshots, single-file drops
     case fast
-    /// ~1s -- general use (default)
+    /// General use (default)
     case balanced
-    /// ~3s -- downloads, torrents, build output
+    /// Downloads, batch operations
     case patient
+    /// Note-taking, wiki edits, active editing sessions
+    case relaxed
+    /// Extended writing sessions, periodic syncs
+    case deferred
+    /// End-of-session checkpoints, long-running activity
+    case extended
 
-    /// The debounce window duration in seconds
-    public var debounceWindow: TimeInterval {
+    /// Single source of truth for each tier's timing and UI strings.
+    private var spec: (window: TimeInterval, name: String, description: String) {
         switch self {
-        case .fast: return 0.2
-        case .balanced: return 1.0
-        case .patient: return 3.0
+        case .fast:
+            return (
+                0.2,
+                L("Fast"),
+                L("Triggers in ~200ms. Best for screenshots and single-file drops.")
+            )
+        case .balanced:
+            return (
+                1.0,
+                L("Balanced"),
+                L("Triggers in ~1s. Good for general-purpose monitoring.")
+            )
+        case .patient:
+            return (
+                3.0,
+                L("Patient"),
+                L("Triggers in ~3s. Good for downloads and batch operations.")
+            )
+        case .relaxed:
+            return (
+                60.0,
+                L("Relaxed"),
+                L("Triggers in ~1 minute. Best for note-taking, wiki edits, and other active editing sessions.")
+            )
+        case .deferred:
+            return (
+                300.0,
+                L("Deferred"),
+                L("Triggers in ~5 minutes. Best for extended writing sessions or periodic syncs.")
+            )
+        case .extended:
+            return (
+                600.0,
+                L("Extended"),
+                L("Triggers in ~10 minutes. Best for end-of-session checkpoints or long-running activity.")
+            )
         }
     }
 
-    /// Human-readable display name
-    public var displayName: String {
-        switch self {
-        case .fast: return L("Fast")
-        case .balanced: return L("Balanced")
-        case .patient: return L("Patient")
-        }
-    }
+    /// The debounce window duration in seconds.
+    public var debounceWindow: TimeInterval { spec.window }
 
-    /// Description for UI
-    public var displayDescription: String {
-        switch self {
-        case .fast: return L("Triggers quickly. Best for screenshots, single-file drops.")
-        case .balanced: return L("Waits for rapid changes to settle. Good for general use.")
-        case .patient: return L("Waits longer for downloads and batch operations to finish.")
-        }
-    }
+    /// Human-readable display name.
+    public var displayName: String { spec.name }
 
-    /// Map a legacy debounceSeconds value to the nearest Responsiveness
+    /// One-line description shown beneath the picker.
+    public var displayDescription: String { spec.description }
+
+    /// Map a legacy `debounceSeconds` value to a `Responsiveness` tier.
+    /// Legacy data only ever held values from the original 3-tier scale (≤3s).
     public static func from(debounceSeconds: TimeInterval) -> Responsiveness {
-        if debounceSeconds <= 0.5 {
-            return .fast
-        } else if debounceSeconds <= 2.0 {
-            return .balanced
-        } else {
-            return .patient
-        }
+        if debounceSeconds <= 0.5 { return .fast }
+        if debounceSeconds <= 2.0 { return .balanced }
+        return .patient
     }
 }
 

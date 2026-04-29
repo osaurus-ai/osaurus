@@ -484,12 +484,8 @@ final class PluginHostContext: @unchecked Sendable {
             }
         }
         let resolvedAgentId = agentCtx?.agentId ?? Agent.defaultId
-        let (agentToolsOff, isManual) = await MainActor.run {
-            let mgr = AgentManager.shared
-            return (
-                mgr.effectiveToolsDisabled(for: resolvedAgentId),
-                mgr.effectiveToolSelectionMode(for: resolvedAgentId) == .manual
-            )
+        let agentToolsOff = await MainActor.run {
+            AgentManager.shared.effectiveToolsDisabled(for: resolvedAgentId)
         }
         if options.wantsPreflight && !agentToolsOff {
             enriched = await applyPreflightSearch(
@@ -498,8 +494,10 @@ final class PluginHostContext: @unchecked Sendable {
                 agentId: resolvedAgentId
             )
         }
-        if isManual,
-            let section = await SkillManager.shared.manualSkillPromptSection(for: resolvedAgentId)
+        // Skills inject in BOTH modes — see the matching block in
+        // `SystemPromptComposer.compose` for the full rationale.
+        if !agentToolsOff,
+            let section = await SkillManager.shared.enabledSkillPromptSection(for: resolvedAgentId)
         {
             SystemPromptComposer.appendSystemContent(section, into: &enriched.request.messages)
         }

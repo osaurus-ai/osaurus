@@ -1,5 +1,4 @@
 import SwiftUI
-import UniformTypeIdentifiers
 
 // MARK: - Shared Helpers
 
@@ -18,55 +17,81 @@ private func formatModelName(_ model: String) -> String {
 // MARK: - Agents View
 
 struct AgentsView: View {
+    /// Shared spring used for grid ↔ detail navigation. Centralized so the
+    /// transition feels identical whether the user opens a local agent, a
+    /// remote agent, or a freshly-duplicated one.
+    fileprivate static let navTransition = Animation.spring(response: 0.35, dampingFraction: 0.85)
+
+    /// Two-column grid layout reused by the main agent grid and the
+    /// "Paired Remote Agents" section in the empty state.
+    fileprivate static let gridColumns: [GridItem] = [
+        GridItem(.flexible(minimum: 300), spacing: 20),
+        GridItem(.flexible(minimum: 300), spacing: 20),
+    ]
+
     @ObservedObject private var themeManager = ThemeManager.shared
     @ObservedObject private var agentManager = AgentManager.shared
+    @ObservedObject private var remoteAgentManager = RemoteAgentManager.shared
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
     @State private var selectedAgent: Agent?
+    @State private var selectedRemoteAgentId: UUID?
     @State private var isCreating = false
     @State private var hasAppeared = false
     @State private var successMessage: String?
     @State private var sandboxCleanupNotice: SandboxCleanupNotice?
 
-    @State private var showImportPicker = false
-    @State private var importError: String?
-    @State private var showExportSuccess = false
-
     private var customAgents: [Agent] {
         agentManager.agents.filter { !$0.isBuiltIn }
     }
 
+    private var remoteAgents: [RemoteAgent] {
+        remoteAgentManager.remoteAgents
+    }
+
     var body: some View {
         ZStack {
-            if selectedAgent == nil {
+            if selectedAgent == nil && selectedRemoteAgentId == nil {
                 gridContent
                     .transition(.opacity.combined(with: .move(edge: .leading)))
             }
 
             if let agent = selectedAgent {
+                // `.id(agent.id)` below makes SwiftUI tear down + recreate the
+                // detail view when the user switches agents, so all editable
+                // state reloads via onAppear without manual onChange wiring.
                 AgentDetailView(
                     agent: agent,
                     onBack: {
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                            selectedAgent = nil
-                        }
-                    },
-                    onExport: { p in
-                        exportAgent(p)
+                        withAnimation(Self.navTransition) { selectedAgent = nil }
                     },
                     onDelete: { p in
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                            selectedAgent = nil
-                        }
+                        withAnimation(Self.navTransition) { selectedAgent = nil }
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                             deleteAgent(p)
                         }
                     },
-                    showSuccess: { msg in
-                        showSuccess(msg)
-                    }
+                    onSwitchAgent: { newAgent in selectedAgent = newAgent },
+                    showSuccess: showSuccess
                 )
+                .id(agent.id)
+                .transition(.opacity.combined(with: .move(edge: .trailing)))
+            }
+
+            if let remoteId = selectedRemoteAgentId {
+                RemoteAgentDetailView(
+                    remoteId: remoteId,
+                    onBack: {
+                        withAnimation(Self.navTransition) { selectedRemoteAgentId = nil }
+                    },
+                    onRemoved: {
+                        withAnimation(Self.navTransition) { selectedRemoteAgentId = nil }
+                        showSuccess("Removed remote agent")
+                    },
+                    onChat: { _ in ChatWindowManager.shared.toggleLastFocused() }
+                )
+                .id(remoteId)
                 .transition(.opacity.combined(with: .move(edge: .trailing)))
             }
 
@@ -95,24 +120,6 @@ struct AgentsView: View {
                 }
             )
         }
-        .fileImporter(
-            isPresented: $showImportPicker,
-            allowedContentTypes: [.json],
-            allowsMultipleSelection: false
-        ) { result in
-            handleImport(result)
-        }
-        .themedAlert(
-            "Import Error",
-            isPresented: Binding(
-                get: { importError != nil },
-                set: { newValue in
-                    if !newValue { importError = nil }
-                }
-            ),
-            message: importError,
-            primaryButton: .primary("OK") { importError = nil }
-        )
         .themedAlert(
             sandboxCleanupNotice?.title ?? "Sandbox Cleanup",
             isPresented: Binding(
@@ -141,33 +148,42 @@ struct AgentsView: View {
                 .offset(y: hasAppeared ? 0 : -10)
                 .animation(.spring(response: 0.4, dampingFraction: 0.8), value: hasAppeared)
 
+            // First-agent onboarding stays reachable as long as the user has no
+            // *local* agents — even if they've already paired a remote agent.
+            // That way the "Create Your First Agent" CTA never silently
+            // disappears just because someone else's agent is sitting in the
+            // grid. When both lists exist, we fall through to the normal grid.
             if customAgents.isEmpty {
-                SettingsEmptyState(
-                    icon: "theatermasks.fill",
-                    title: L("Create Your First Agent"),
-                    subtitle: L("Custom AI assistants with unique prompts, tools, and styles."),
-                    examples: [
-                        .init(icon: "calendar", title: "Daily Planner", description: "Manage your schedule"),
-                        .init(icon: "message.fill", title: "Message Assistant", description: "Draft and send texts"),
-                        .init(icon: "map.fill", title: "Local Guide", description: "Find places nearby"),
-                    ],
-                    primaryAction: .init(title: "Create Agent", icon: "plus", handler: { isCreating = true }),
-                    secondaryAction: .init(
-                        title: L("Import"),
-                        icon: "square.and.arrow.down",
-                        handler: { showImportPicker = true }
-                    ),
-                    hasAppeared: hasAppeared
-                )
+                ScrollView {
+                    VStack(spacing: 24) {
+                        SettingsEmptyState(
+                            icon: "theatermasks.fill",
+                            title: L("Create Your First Agent"),
+                            subtitle: L("Custom AI assistants with unique prompts, tools, and styles."),
+                            examples: [
+                                .init(icon: "calendar", title: "Daily Planner", description: "Manage your schedule"),
+                                .init(
+                                    icon: "message.fill",
+                                    title: "Message Assistant",
+                                    description: "Draft and send texts"
+                                ),
+                                .init(icon: "map.fill", title: "Local Guide", description: "Find places nearby"),
+                            ],
+                            primaryAction: .init(title: "Create Agent", icon: "plus", handler: { isCreating = true }),
+                            hasAppeared: hasAppeared
+                        )
+
+                        if !remoteAgents.isEmpty {
+                            remoteAgentsSection
+                                .padding(.horizontal, 24)
+                                .padding(.bottom, 24)
+                        }
+                    }
+                }
+                .opacity(hasAppeared ? 1 : 0)
             } else {
                 ScrollView {
-                    LazyVGrid(
-                        columns: [
-                            GridItem(.flexible(minimum: 300), spacing: 20),
-                            GridItem(.flexible(minimum: 300), spacing: 20),
-                        ],
-                        spacing: 20
-                    ) {
+                    LazyVGrid(columns: Self.gridColumns, spacing: 20) {
                         ForEach(Array(customAgents.enumerated()), id: \.element.id) { index, agent in
                             AgentCard(
                                 agent: agent,
@@ -175,20 +191,20 @@ struct AgentsView: View {
                                 animationDelay: Double(index) * 0.05,
                                 hasAppeared: hasAppeared,
                                 onSelect: {
-                                    withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                                        selectedAgent = agent
-                                    }
+                                    withAnimation(Self.navTransition) { selectedAgent = agent }
                                 },
-                                onDuplicate: {
-                                    duplicateAgent(agent)
-                                },
-                                onExport: {
-                                    exportAgent(agent)
-                                },
-                                onDelete: {
-                                    deleteAgent(agent)
-                                }
+                                onDuplicate: { duplicateAgent(agent) },
+                                onDelete: { deleteAgent(agent) }
                             )
+                        }
+
+                        // Remote (paired) agents follow local ones with their own
+                        // "Remote" treatment. Tap → RemoteAgentDetailView; the
+                        // underlying chat plumbing lives in RemoteProviderManager
+                        // (created at pair time) so the chat window already lists
+                        // this agent in its picker.
+                        ForEach(Array(remoteAgents.enumerated()), id: \.element.id) { index, remote in
+                            remoteCardCell(remote: remote, indexInGrid: customAgents.count + index)
                         }
                     }
                     .padding(24)
@@ -198,19 +214,57 @@ struct AgentsView: View {
         }
     }
 
+    /// Standalone "Paired Remote Agents" group rendered below the empty-state
+    /// CTA when the user has zero local agents but does have remotes paired.
+    /// Keeps remotes discoverable without obscuring the create-first-agent
+    /// onboarding above.
+    private var remoteAgentsSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 6) {
+                Image(systemName: "antenna.radiowaves.left.and.right")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(theme.tertiaryText)
+                AgentSheetSectionLabel("Paired Remote Agents")
+                Spacer()
+            }
+
+            LazyVGrid(columns: Self.gridColumns, spacing: 20) {
+                ForEach(Array(remoteAgents.enumerated()), id: \.element.id) { index, remote in
+                    remoteCardCell(remote: remote, indexInGrid: index)
+                }
+            }
+        }
+    }
+
+    /// Single source of truth for how a `RemoteAgentCard` is wired in either
+    /// the main grid or the standalone remote section.
+    private func remoteCardCell(remote: RemoteAgent, indexInGrid: Int) -> some View {
+        RemoteAgentCard(
+            remote: remote,
+            animationDelay: Double(indexInGrid) * 0.05,
+            hasAppeared: hasAppeared,
+            onSelect: {
+                withAnimation(Self.navTransition) { selectedRemoteAgentId = remote.id }
+            },
+            onChat: { ChatWindowManager.shared.toggleLastFocused() },
+            onRemove: {
+                _ = remoteAgentManager.remove(id: remote.id)
+                showSuccess("Removed remote agent")
+            }
+        )
+    }
+
     // MARK: - Header
 
     private var headerView: some View {
-        ManagerHeaderWithActions(
+        let totalCount = customAgents.count + remoteAgents.count
+        return ManagerHeaderWithActions(
             title: L("Agents"),
             subtitle: L("Create custom assistant personalities with unique behaviors"),
-            count: customAgents.isEmpty ? nil : customAgents.count
+            count: totalCount == 0 ? nil : totalCount
         ) {
             HeaderIconButton("arrow.clockwise", help: "Refresh agents") {
                 agentManager.refresh()
-            }
-            HeaderSecondaryButton("Import", icon: "square.and.arrow.down") {
-                showImportPicker = true
             }
             HeaderPrimaryButton("Create Agent", icon: "plus") {
                 isCreating = true
@@ -277,55 +331,12 @@ struct AgentsView: View {
         showSuccess("Duplicated as \"\(newName)\"")
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+            withAnimation(Self.navTransition) {
                 selectedAgent = duplicated
             }
         }
     }
 
-    // MARK: - Import/Export
-
-    private func handleImport(_ result: Result<[URL], Error>) {
-        switch result {
-        case .success(let urls):
-            guard let url = urls.first else { return }
-            guard url.startAccessingSecurityScopedResource() else {
-                importError = "Unable to access the selected file"
-                return
-            }
-            defer { url.stopAccessingSecurityScopedResource() }
-
-            do {
-                let data = try Data(contentsOf: url)
-                try agentManager.importAgent(from: data)
-                showSuccess("Imported agent successfully")
-            } catch {
-                importError = "Failed to import agent: \(error.localizedDescription)"
-            }
-
-        case .failure(let error):
-            importError = "Failed to select file: \(error.localizedDescription)"
-        }
-    }
-
-    private func exportAgent(_ agent: Agent) {
-        do {
-            let data = try agentManager.exportAgent(agent)
-
-            let panel = NSSavePanel()
-            panel.allowedContentTypes = [.json]
-            panel.nameFieldStringValue = "\(agent.name).json"
-            panel.title = "Export Agent"
-            panel.message = "Choose where to save the agent file"
-
-            if panel.runModal() == .OK, let url = panel.url {
-                try data.write(to: url)
-                showSuccess("Exported \"\(agent.name)\"")
-            }
-        } catch {
-            print("[Osaurus] Failed to export agent: \(error)")
-        }
-    }
 }
 
 // MARK: - Agent Card
@@ -334,6 +345,7 @@ private struct AgentCard: View {
     @Environment(\.theme) private var theme
     @ObservedObject private var agentManager = AgentManager.shared
     private var scheduleManager = ScheduleManager.shared
+    private var watcherManager = WatcherManager.shared
 
     let agent: Agent
     let isActive: Bool
@@ -341,7 +353,6 @@ private struct AgentCard: View {
     let hasAppeared: Bool
     let onSelect: () -> Void
     let onDuplicate: () -> Void
-    let onExport: () -> Void
     let onDelete: () -> Void
 
     init(
@@ -351,7 +362,6 @@ private struct AgentCard: View {
         hasAppeared: Bool,
         onSelect: @escaping () -> Void,
         onDuplicate: @escaping () -> Void,
-        onExport: @escaping () -> Void,
         onDelete: @escaping () -> Void
     ) {
         self.agent = agent
@@ -360,7 +370,6 @@ private struct AgentCard: View {
         self.hasAppeared = hasAppeared
         self.onSelect = onSelect
         self.onDuplicate = onDuplicate
-        self.onExport = onExport
         self.onDelete = onDelete
     }
 
@@ -371,6 +380,19 @@ private struct AgentCard: View {
 
     private var scheduleCount: Int {
         scheduleManager.schedules.filter { $0.agentId == agent.id }.count
+    }
+
+    private var watcherCount: Int {
+        watcherManager.watchers.filter { $0.agentId == agent.id }.count
+    }
+
+    private var automationCount: Int { scheduleCount + watcherCount }
+
+    /// Number of explicitly-enabled tools. `nil` when the agent has never
+    /// engaged the capability picker (legacy / fresh agent that uses the
+    /// global registry implicitly), so the UI can read "all" instead of "0".
+    private var enabledToolCount: Int? {
+        agentManager.effectiveEnabledToolNames(for: agent.id)?.count
     }
 
     var body: some View {
@@ -416,12 +438,19 @@ private struct AgentCard: View {
                             }
                         }
 
-                        if !agent.description.isEmpty {
-                            Text(agent.description)
-                                .font(.system(size: 11))
-                                .foregroundColor(theme.secondaryText)
-                                .lineLimit(1)
-                        }
+                        // Always render the description line so card heights line
+                        // up across the grid — placeholder when the agent has none.
+                        Text(
+                            agent.description.isEmpty
+                                ? L("No description")
+                                : agent.description
+                        )
+                        .font(.system(size: 11))
+                        .foregroundColor(
+                            agent.description.isEmpty ? theme.tertiaryText : theme.secondaryText
+                        )
+                        .lineLimit(1)
+                        .truncationMode(.tail)
                     }
 
                     Spacer(minLength: 8)
@@ -439,13 +468,6 @@ private struct AgentCard: View {
                                 Text("Duplicate", bundle: .module)
                             } icon: {
                                 Image(systemName: "doc.on.doc")
-                            }
-                        }
-                        Button(action: onExport) {
-                            Label {
-                                Text("Export", bundle: .module)
-                            } icon: {
-                                Image(systemName: "square.and.arrow.up")
                             }
                         }
                         Divider()
@@ -473,7 +495,15 @@ private struct AgentCard: View {
                     .frame(width: 24)
                 }
 
-                if !agent.systemPrompt.isEmpty {
+                // System-prompt preview slot — always 2-line tall to keep
+                // card rhythm uniform. Italic placeholder when empty.
+                if agent.systemPrompt.isEmpty {
+                    Text("No system prompt", bundle: .module)
+                        .font(.system(size: 12).italic())
+                        .foregroundColor(theme.tertiaryText)
+                        .lineLimit(2)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
                     Text(agent.systemPrompt)
                         .font(.system(size: 12))
                         .foregroundColor(theme.secondaryText)
@@ -482,12 +512,14 @@ private struct AgentCard: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
+                Spacer(minLength: 0)
                 compactStats
             }
-            .frame(maxHeight: .infinity, alignment: .top)
+            .frame(maxWidth: .infinity, minHeight: 140, alignment: .top)
             .padding(16)
             .background(cardBackground)
             .overlay(hoverGradient)
+            .overlay(alignment: .bottomTrailing) { hoverChevron }
             .clipShape(RoundedRectangle(cornerRadius: 12))
             .overlay(cardBorder)
             .shadow(
@@ -552,20 +584,53 @@ private struct AgentCard: View {
 
     // MARK: - Compact Stats
 
-    @ViewBuilder
+    /// Always-on metadata strip. Builds the chips eagerly so we can intersperse
+    /// `statDot` separators without nested `if` chains.
     private var compactStats: some View {
         HStack(spacing: 0) {
-            if scheduleCount > 0 {
-                statItem(icon: "clock", text: "\(scheduleCount)")
+            let chips = buildStatChips()
+            ForEach(Array(chips.enumerated()), id: \.offset) { index, chip in
+                if index > 0 { statDot }
+                statItem(icon: chip.icon, text: chip.text)
             }
-
-            if let model = agent.defaultModel {
-                if scheduleCount > 0 { statDot }
-                statItem(icon: "cube", text: formatModelName(model))
-            }
-
             Spacer(minLength: 0)
         }
+    }
+
+    private struct StatChip {
+        let icon: String
+        let text: String
+    }
+
+    private func buildStatChips() -> [StatChip] {
+        var chips: [StatChip] = []
+
+        // Model: always shown, "Default" when the agent inherits the global one.
+        let modelText = agent.defaultModel.map(formatModelName) ?? L("Default")
+        chips.append(.init(icon: "cube", text: modelText))
+
+        // Capabilities: hide when 0 in `.auto` mode (means "all available"
+        // until the user explicitly picks a subset). The "· Auto" / "· Custom"
+        // suffix surfaces the discovery mode at a glance so the user can tell
+        // a customized agent from one that's running on defaults without
+        // opening the detail view.
+        let mode = agentManager.effectiveToolSelectionMode(for: agent.id)
+        if let count = enabledToolCount, count > 0 || mode != .auto {
+            let modeLabel = mode == .auto ? L("Auto") : L("Custom")
+            chips.append(.init(icon: "wrench.and.screwdriver", text: "\(count) · \(modeLabel)"))
+        }
+
+        // Automation: schedules + watchers, shown when non-zero.
+        if automationCount > 0 {
+            chips.append(.init(icon: "clock.badge.checkmark", text: "\(automationCount)"))
+        }
+
+        // Updated: relative time so it stays meaningful at a glance.
+        chips.append(
+            .init(icon: "clock", text: agent.updatedAt.formatted(.relative(presentation: .named)))
+        )
+
+        return chips
     }
 
     private func statItem(icon: String, text: String) -> some View {
@@ -585,12 +650,30 @@ private struct AgentCard: View {
             .frame(width: 3, height: 3)
             .padding(.horizontal, 8)
     }
+
+    /// Subtle "open" affordance that fades in on hover. Pinned to the
+    /// card's bottom-trailing corner so it never collides with the menu.
+    private var hoverChevron: some View {
+        Image(systemName: "arrow.up.right")
+            .font(.system(size: 10, weight: .bold))
+            .foregroundColor(agentColor)
+            .frame(width: 22, height: 22)
+            .background(Circle().fill(agentColor.opacity(0.12)))
+            .padding(10)
+            .opacity(isHovered ? 1 : 0)
+            .scaleEffect(isHovered ? 1 : 0.85)
+            .allowsHitTesting(false)
+            .animation(.easeOut(duration: 0.15), value: isHovered)
+    }
 }
 
 // MARK: - Detail Tab
 
 private enum DetailTab: String, CaseIterable {
     case configure
+    case capabilities
+    case customization
+    case network
     case sandbox
     case automation
     case memory
@@ -598,6 +681,9 @@ private enum DetailTab: String, CaseIterable {
     var label: String {
         switch self {
         case .configure: return "Configure"
+        case .capabilities: return "Capabilities"
+        case .customization: return "Customization"
+        case .network: return "Network"
         case .sandbox: return "Sandbox"
         case .automation: return "Automation"
         case .memory: return "Memory"
@@ -607,6 +693,9 @@ private enum DetailTab: String, CaseIterable {
     var icon: String {
         switch self {
         case .configure: return "gear"
+        case .capabilities: return "wrench.and.screwdriver"
+        case .customization: return "paintpalette.fill"
+        case .network: return "network"
         case .sandbox: return "shippingbox"
         case .automation: return "clock.badge.checkmark"
         case .memory: return "brain.head.profile"
@@ -615,10 +704,13 @@ private enum DetailTab: String, CaseIterable {
 
     var helperText: String {
         switch self {
-        case .configure: return "Set up instructions, model settings, shortcuts, and appearance."
-        case .sandbox: return "Configure sandbox execution and relay tunnel access."
-        case .automation: return "Set up schedules and file watchers for autonomous behavior."
-        case .memory: return "View conversation history, working memory, and summaries."
+        case .configure: return "Identity, model, and behavior overrides."
+        case .capabilities: return "Pick which tools and skills this agent can use."
+        case .customization: return "Quick actions and visual theme."
+        case .network: return "Bonjour discovery and relay tunnel."
+        case .sandbox: return "Container-based code execution."
+        case .automation: return "Schedules and file watchers for autonomous behavior."
+        case .memory: return "Conversation history, pinned facts, and episode summaries."
         }
     }
 }
@@ -626,6 +718,26 @@ private enum DetailTab: String, CaseIterable {
 private enum AgentTab: Hashable {
     case builtIn(DetailTab)
     case plugin(String)
+}
+
+// MARK: - Tab Bar Preference Keys
+
+/// Reports the natural width of the tab strip's HStack content (i.e. the
+/// width *before* any horizontal scroll clipping). Compared against the
+/// viewport width to decide whether the strip overflows.
+private struct TabBarContentWidthKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
+/// Reports the visible width of the tab strip's ScrollView container.
+private struct TabBarViewportWidthKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
 }
 
 // MARK: - Agent Detail View
@@ -636,27 +748,26 @@ struct AgentDetailView: View {
     private var scheduleManager = ScheduleManager.shared
     private var watcherManager = WatcherManager.shared
     @ObservedObject private var relayManager = RelayTunnelManager.shared
-    @EnvironmentObject private var server: ServerController
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
     let agent: Agent
     let onBack: () -> Void
-    let onExport: (Agent) -> Void
     let onDelete: (Agent) -> Void
+    let onSwitchAgent: (Agent) -> Void
     let showSuccess: (String) -> Void
 
     init(
         agent: Agent,
         onBack: @escaping () -> Void,
-        onExport: @escaping (Agent) -> Void,
         onDelete: @escaping (Agent) -> Void,
+        onSwitchAgent: @escaping (Agent) -> Void,
         showSuccess: @escaping (String) -> Void
     ) {
         self.agent = agent
         self.onBack = onBack
-        self.onExport = onExport
         self.onDelete = onDelete
+        self.onSwitchAgent = onSwitchAgent
         self.showSuccess = showSuccess
     }
 
@@ -674,14 +785,19 @@ struct AgentDetailView: View {
     @State private var pluginInstructionsMap: [String: String] = [:]
     @State private var disableTools: Bool = false
     @State private var disableMemory: Bool = false
-    @State private var toolSelectionMode: ToolSelectionMode = .auto
-    @State private var manualToolNames: Set<String> = []
-    @State private var manualSkillNames: Set<String> = []
-    @State private var toolSearchText: String = ""
-    @State private var cachedTools: [ToolRegistry.ToolEntry] = []
-    @State private var cachedSkills: [Skill] = []
-    @State private var displayedTools: [ToolRegistry.ToolEntry] = []
-    @State private var displayedSkills: [Skill] = []
+    /// Drives the title-bar agent picker popover. Tapping the avatar / name in the
+    /// header bar reveals the list of other custom agents so the user can jump
+    /// between them without bouncing back to the Agents grid every time.
+    @State private var showingAgentSwitcher: Bool = false
+
+    /// Drives the share-agent sheet (cross-device deeplink invite flow).
+    @State private var showingShareSheet: Bool = false
+
+    /// Local UI state: which tabs the user has dropped into the "Advanced" disclosure
+    /// of the Configure tab. Persists only for the lifetime of this view (intentional —
+    /// the disclosure defaults to collapsed each time the agent is opened so the
+    /// primary settings always greet the user first).
+    @State private var showAdvancedSettings: Bool = false
 
     // MARK: - UI State
 
@@ -702,6 +818,21 @@ struct AgentDetailView: View {
     @State private var episodes: [Episode] = []
     @State private var showAllSummaries = false
     @State private var isInitialLoadComplete = false
+    /// Captured by `GeometryReader`s wrapped around the tab strip so the
+    /// "scrollable" affordance (right-edge fade + chevron) only renders when
+    /// the tab content actually overflows the viewport AND the user hasn't
+    /// already scrolled to the trailing edge.
+    @State private var tabBarContentWidth: CGFloat = 0
+    @State private var tabBarViewportWidth: CGFloat = 0
+    @State private var tabBarScrollOffset: CGFloat = 0
+    private var tabsOverflowRight: Bool {
+        // 1pt fudge so pixel-aligned end-of-scroll positions don't leave a
+        // phantom indicator on screen.
+        tabBarContentWidth > tabBarViewportWidth + tabBarScrollOffset + 1
+    }
+    private var tabsOverflowLeft: Bool {
+        tabBarScrollOffset > 1
+    }
 
     private var currentAgent: Agent {
         agentManager.agent(for: agent.id) ?? agent
@@ -737,36 +868,32 @@ struct AgentDetailView: View {
             detailHeaderBar
 
             VStack(alignment: .leading, spacing: 0) {
-                heroHeader
-                    .padding(.horizontal, 24)
-                    .padding(.top, 20)
-                    .padding(.bottom, 12)
-
                 tabBar
                     .padding(.horizontal, 20)
+                    .padding(.top, 8)
 
                 Divider()
                     .foregroundColor(theme.primaryBorder)
 
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 16) {
-                        switch selectedTab {
-                        case .builtIn(.configure):
-                            configureTabContent
-                        case .builtIn(.sandbox):
-                            sandboxTabContent
-                        case .builtIn(.automation):
-                            automationTabContent
-                        case .builtIn(.memory):
-                            memoryTabContent
-                        case .plugin(let pid):
-                            pluginTabContent(for: pid)
+                // Capabilities is the only tab whose body has its own scroll
+                // (NSTableView inside `AgentCapabilityManagerView`). Rendering
+                // it directly — without the outer ScrollView the other tabs
+                // share — keeps the table flush and avoids nested scrolling.
+                switch selectedTab {
+                case .builtIn(.capabilities):
+                    AgentCapabilityManagerView(agentId: agent.id, onDismiss: nil)
+                        .environment(\.theme, themeManager.currentTheme)
+                        .id(selectedTab)
+                default:
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 16) {
+                            scrollableTabContent
                         }
+                        .padding(24)
+                        .id(selectedTab)
                     }
-                    .padding(24)
-                    .id(selectedTab)
+                    .animation(nil, value: selectedTab)
                 }
-                .animation(nil, value: selectedTab)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -848,6 +975,9 @@ struct AgentDetailView: View {
 
     // MARK: - Detail Header Bar
 
+    /// Compact identity bar: back, avatar + name + optional description, actions.
+    /// Tapping the identity block opens the agent switcher popover; editing the
+    /// name / description happens inside the Configure tab's Identity section.
     private var detailHeaderBar: some View {
         HStack(spacing: 12) {
             Button(action: onBack) {
@@ -861,7 +991,16 @@ struct AgentDetailView: View {
             }
             .buttonStyle(PlainButtonStyle())
 
-            Spacer()
+            // Vertical hairline so the back button reads as distinct from the
+            // identity block even when the agent name is long.
+            Rectangle()
+                .fill(theme.primaryBorder)
+                .frame(width: 1, height: 16)
+                .opacity(0.6)
+
+            identityButton
+
+            Spacer(minLength: 8)
 
             if let indicator = saveIndicator {
                 HStack(spacing: 4) {
@@ -875,33 +1014,22 @@ struct AgentDetailView: View {
             }
 
             HStack(spacing: 6) {
-                Button {
-                    onExport(currentAgent)
-                } label: {
-                    Image(systemName: "square.and.arrow.up")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
-                        .frame(width: 28, height: 28)
-                        .background(Circle().fill(theme.tertiaryBackground))
-                }
-                .buttonStyle(PlainButtonStyle())
-                .help(Text("Export", bundle: .module))
-
-                Button {
-                    showDeleteConfirm = true
-                } label: {
-                    Image(systemName: "trash")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(theme.errorColor)
-                        .frame(width: 28, height: 28)
-                        .background(Circle().fill(theme.errorColor.opacity(0.1)))
-                }
-                .buttonStyle(PlainButtonStyle())
-                .help(Text("Delete", bundle: .module))
+                headerActionButton(
+                    icon: "square.and.arrow.up",
+                    tint: theme.accentColor,
+                    help: "Share Agent",
+                    action: { showingShareSheet = true }
+                )
+                headerActionButton(
+                    icon: "trash",
+                    tint: theme.errorColor,
+                    help: "Delete",
+                    action: { showDeleteConfirm = true }
+                )
             }
         }
         .padding(.horizontal, 24)
-        .padding(.vertical, 14)
+        .padding(.vertical, 10)
         .background(
             theme.secondaryBackground
                 .overlay(
@@ -911,57 +1039,192 @@ struct AgentDetailView: View {
                     alignment: .bottom
                 )
         )
+        .sheet(isPresented: $showingShareSheet) {
+            ShareAgentSheet(agent: currentAgent)
+                .environment(\.theme, themeManager.currentTheme)
+        }
     }
 
-    // MARK: - Hero Header
+    /// 28x28 circular icon button used by the detail header for Share / Delete.
+    /// Background is a 10–12% tint of the foreground color so destructive vs.
+    /// accent intent reads at a glance without shouting.
+    private func headerActionButton(
+        icon: String,
+        tint: Color,
+        help: LocalizedStringKey,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(tint)
+                .frame(width: 28, height: 28)
+                .background(Circle().fill(tint.opacity(0.12)))
+        }
+        .buttonStyle(PlainButtonStyle())
+        .help(Text(help, bundle: .module))
+    }
 
-    private var heroHeader: some View {
-        HStack(spacing: 20) {
-            ZStack {
-                Circle()
-                    .fill(
-                        LinearGradient(
-                            colors: [agentColor.opacity(0.2), agentColor.opacity(0.05)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
+    /// Compact tappable identity block (avatar + name + optional description) inside
+    /// the header bar. Tap opens an agent switcher so the user can jump straight to
+    /// another agent's detail view. Editing the name / description happens inside the
+    /// Configure tab's "Identity" section, not here — the title bar is for navigation.
+    private var identityButton: some View {
+        Button {
+            showingAgentSwitcher = true
+        } label: {
+            HStack(spacing: 10) {
+                ZStack {
+                    Circle()
+                        .fill(
+                            LinearGradient(
+                                colors: [agentColor.opacity(0.2), agentColor.opacity(0.05)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
                         )
-                    )
-                Circle()
-                    .strokeBorder(agentColor.opacity(0.5), lineWidth: 2.5)
-                Text(name.isEmpty ? "?" : name.prefix(1).uppercased())
-                    .font(.system(size: 28, weight: .bold, design: .rounded))
-                    .foregroundColor(agentColor)
+                    Circle()
+                        .strokeBorder(agentColor.opacity(0.5), lineWidth: 1.5)
+                    Text(name.isEmpty ? "?" : name.prefix(1).uppercased())
+                        .font(.system(size: 13, weight: .bold, design: .rounded))
+                        .foregroundColor(agentColor)
+                }
+                .frame(width: 28, height: 28)
+                .animation(.spring(response: 0.3), value: name)
+
+                VStack(alignment: .leading, spacing: 1) {
+                    HStack(spacing: 6) {
+                        Text(name.isEmpty ? L("Untitled Agent") : name)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(theme.primaryText)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 8, weight: .semibold))
+                            .foregroundColor(theme.tertiaryText)
+                    }
+                    if !description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        Text(description)
+                            .font(.system(size: 11))
+                            .foregroundColor(theme.tertiaryText)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+                }
+                .frame(maxWidth: 260, alignment: .leading)
             }
-            .frame(width: 72, height: 72)
-            .animation(.spring(response: 0.3), value: name)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(PlainButtonStyle())
+        .help(Text("Switch agent", bundle: .module))
+        .popover(isPresented: $showingAgentSwitcher, arrowEdge: .bottom) {
+            agentSwitcherPopover
+        }
+    }
 
-            VStack(alignment: .leading, spacing: 8) {
-                StyledTextField(
-                    placeholder: "e.g., Code Assistant",
-                    text: $name,
-                    icon: "textformat"
-                )
+    /// Popover content listing every custom agent for quick navigation. Tapping a
+    /// row swaps the detail view to that agent (the parent uses `.id(agent.id)` to
+    /// force a clean state reload). Built-in / Default agent is excluded — it has
+    /// its own settings surface elsewhere and isn't represented in the Agents grid.
+    private var agentSwitcherPopover: some View {
+        let switchableAgents = agentManager.agents
+            .filter { !$0.isBuiltIn }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
 
-                StyledTextField(
-                    placeholder: "Brief description (optional)",
-                    text: $description,
-                    icon: "text.alignleft"
-                )
+        return VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 6) {
+                Image(systemName: "person.2.fill")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(theme.tertiaryText)
+                Text("Switch Agent", bundle: .module)
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(theme.tertiaryText)
+                    .tracking(0.5)
+                Spacer()
+                Text("\(switchableAgents.count)", bundle: .module)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(theme.tertiaryText)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 1)
+                    .background(Capsule().fill(theme.inputBackground))
+            }
+            .padding(.horizontal, 14)
+            .padding(.top, 12)
+            .padding(.bottom, 8)
 
-                HStack(spacing: 8) {
-                    Image(systemName: "calendar")
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundColor(theme.tertiaryText)
-                    Text("Created \(agent.createdAt.formatted(date: .abbreviated, time: .omitted))", bundle: .module)
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(theme.tertiaryText)
+            Divider().opacity(0.5)
+
+            ScrollView {
+                VStack(spacing: 2) {
+                    ForEach(switchableAgents, id: \.id) { other in
+                        agentSwitcherRow(other)
+                    }
+                }
+                .padding(.vertical, 6)
+                .padding(.horizontal, 6)
+            }
+            .frame(maxHeight: 360)
+        }
+        .frame(width: 280)
+        .background(theme.cardBackground)
+    }
+
+    private func agentSwitcherRow(_ other: Agent) -> some View {
+        let isCurrent = other.id == agent.id
+        let color = agentColorFor(other.name)
+        return Button {
+            showingAgentSwitcher = false
+            if !isCurrent {
+                onSwitchAgent(other)
+            }
+        } label: {
+            HStack(spacing: 10) {
+                ZStack {
+                    Circle()
+                        .fill(
+                            LinearGradient(
+                                colors: [color.opacity(0.2), color.opacity(0.05)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                    Circle().strokeBorder(color.opacity(0.5), lineWidth: 1.5)
+                    Text(other.name.isEmpty ? "?" : other.name.prefix(1).uppercased())
+                        .font(.system(size: 11, weight: .bold, design: .rounded))
+                        .foregroundColor(color)
+                }
+                .frame(width: 26, height: 26)
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(other.name.isEmpty ? L("Untitled Agent") : other.name)
+                        .font(.system(size: 12, weight: isCurrent ? .semibold : .medium))
+                        .foregroundColor(theme.primaryText)
+                        .lineLimit(1)
+                    if !other.description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        Text(other.description)
+                            .font(.system(size: 10))
+                            .foregroundColor(theme.tertiaryText)
+                            .lineLimit(1)
+                    }
+                }
+
+                Spacer(minLength: 4)
+
+                if isCurrent {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundColor(theme.accentColor)
                 }
             }
-
-            Spacer()
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(isCurrent ? theme.accentColor.opacity(0.10) : Color.clear)
+            )
+            .contentShape(Rectangle())
         }
-        .onChange(of: name) { debouncedSave() }
-        .onChange(of: description) { debouncedSave() }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Tab Bar
@@ -970,8 +1233,8 @@ struct AgentDetailView: View {
         switch tab {
         case .builtIn(let dt):
             switch dt {
-            case .configure: return nil
-            case .sandbox: return nil
+            case .configure, .capabilities, .customization, .network, .sandbox:
+                return nil
             case .automation:
                 let count = linkedSchedules.count + linkedWatchers.count
                 return count > 0 ? count : nil
@@ -984,21 +1247,117 @@ struct AgentDetailView: View {
         }
     }
 
+    /// Horizontally scrollable tab bar — built-in tabs stay leftmost, then one
+    /// per plugin. Wrapping in `ScrollView(.horizontal)` keeps every tab
+    /// reachable when many plugins are installed; the right-edge fade + chevron
+    /// signal the strip is scrollable when content overflows.
     private var tabBar: some View {
-        HStack(spacing: 0) {
-            ForEach(DetailTab.allCases, id: \.self) { tab in
-                tabButton(for: .builtIn(tab), label: tab.label, icon: tab.icon)
-            }
-            ForEach(agentPlugins, id: \.plugin.id) { loaded in
-                tabButton(
-                    for: .plugin(loaded.plugin.id),
-                    label: loaded.plugin.manifest.name ?? loaded.plugin.id,
-                    icon: "puzzlepiece.extension"
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 0) {
+                    ForEach(DetailTab.allCases, id: \.self) { tab in
+                        tabButton(for: .builtIn(tab), label: tab.label, icon: tab.icon)
+                            .id(AgentTab.builtIn(tab))
+                    }
+                    ForEach(agentPlugins, id: \.plugin.id) { loaded in
+                        tabButton(
+                            for: .plugin(loaded.plugin.id),
+                            label: loaded.plugin.manifest.name ?? loaded.plugin.id,
+                            icon: "puzzlepiece.extension"
+                        )
+                        .id(AgentTab.plugin(loaded.plugin.id))
+                    }
+                }
+                .padding(.horizontal, 4)
+                .background(
+                    GeometryReader { inner in
+                        Color.clear.preference(
+                            key: TabBarContentWidthKey.self,
+                            value: inner.size.width
+                        )
+                    }
                 )
             }
-            Spacer()
+            .background(
+                GeometryReader { outer in
+                    Color.clear.preference(
+                        key: TabBarViewportWidthKey.self,
+                        value: outer.size.width
+                    )
+                }
+            )
+            .onPreferenceChange(TabBarContentWidthKey.self) { tabBarContentWidth = $0 }
+            .onPreferenceChange(TabBarViewportWidthKey.self) { tabBarViewportWidth = $0 }
+            // `onScrollGeometryChange` is the canonical macOS 15+ way to
+            // observe scroll offset; the older GeometryReader-in-named-
+            // coordinate-space pattern is flaky on horizontal AppKit-backed
+            // scroll views and was leaving the trailing indicator stuck on.
+            .onScrollGeometryChange(for: CGFloat.self) { geometry in
+                geometry.contentOffset.x
+            } action: { _, newOffset in
+                tabBarScrollOffset = max(0, newOffset)
+            }
+            // Edge fades on whichever side has off-screen content. `mask`
+            // runs before any overlay, so the chevrons sit ON TOP of the
+            // fades rather than being faded themselves.
+            .mask(tabBarFadeMask)
+            .overlay(alignment: .leading) {
+                if tabsOverflowLeft { scrollMoreChevron(direction: .leading) }
+            }
+            .overlay(alignment: .trailing) {
+                if tabsOverflowRight { scrollMoreChevron(direction: .trailing) }
+            }
+            .animation(.easeOut(duration: 0.2), value: tabsOverflowLeft)
+            .animation(.easeOut(duration: 0.2), value: tabsOverflowRight)
+            // Auto-scroll the active tab into view when it changes (tap or programmatic).
+            .onChange(of: selectedTab) { _, newValue in
+                withAnimation(.easeOut(duration: 0.2)) {
+                    proxy.scrollTo(newValue, anchor: .center)
+                }
+            }
         }
-        .padding(.horizontal, 4)
+    }
+
+    /// Linear gradient used as the tab strip's mask. Fades whichever side
+    /// has content scrolled off; both sides can fade at once if the user is
+    /// in the middle of an overflowed strip.
+    private var tabBarFadeMask: LinearGradient {
+        let fadeStart: CGFloat = 0.06  // ~6% of the strip on the leading edge
+        let fadeEnd: CGFloat = 0.94  // ~6% on the trailing edge
+        var stops: [Gradient.Stop] = []
+        stops.append(.init(color: tabsOverflowLeft ? .clear : .black, location: 0.0))
+        if tabsOverflowLeft {
+            stops.append(.init(color: .black, location: fadeStart))
+        }
+        if tabsOverflowRight {
+            stops.append(.init(color: .black, location: fadeEnd))
+        }
+        stops.append(.init(color: tabsOverflowRight ? .clear : .black, location: 1.0))
+        return LinearGradient(stops: stops, startPoint: .leading, endPoint: .trailing)
+    }
+
+    /// Floating "more →"/"← more" affordance pinned to whichever edge has
+    /// off-screen content. Sits above the fade mask so it stays fully opaque,
+    /// and is `allowsHitTesting(false)` so it never swallows tab taps.
+    private func scrollMoreChevron(direction: HorizontalEdge) -> some View {
+        Image(systemName: direction == .leading ? "chevron.left" : "chevron.right")
+            .font(.system(size: 10, weight: .bold))
+            .foregroundColor(theme.accentColor)
+            .frame(width: 20, height: 20)
+            .background(
+                Circle()
+                    .fill(theme.primaryBackground)
+                    .overlay(Circle().strokeBorder(theme.accentColor.opacity(0.25), lineWidth: 1))
+            )
+            .shadow(
+                color: Color.black.opacity(0.08),
+                radius: 4,
+                x: direction == .leading ? 1 : -1,
+                y: 1
+            )
+            .padding(direction == .leading ? .leading : .trailing, 2)
+            .allowsHitTesting(false)
+            .transition(.opacity.combined(with: .scale(scale: 0.7)))
     }
 
     private func tabButton(for tab: AgentTab, label: String, icon: String) -> some View {
@@ -1054,25 +1413,166 @@ struct AgentDetailView: View {
 
     // MARK: - Tab Content
 
+    /// Configure tab content. The Capabilities, Customization, and Network
+    /// tabs handle their own concerns now, so this tab leads with the three
+    /// fields that DEFINE an agent and tucks the rarely-touched knobs behind
+    /// the Advanced disclosure.
+    ///
+    ///   PRIMARY: Identity, System Prompt, Model.
+    ///   ADVANCED: Generation overrides (Temperature, Max Tokens) and the
+    ///   Disable Tools / Disable Memory toggles.
     @ViewBuilder
     private var configureTabContent: some View {
         tabHelperText(DetailTab.configure.helperText)
+        identitySection
         systemPromptSection
-        generationSection
-        disableTogglesSection
-        if !disableTools {
-            toolSelectionSection
+        defaultModelSection
+        advancedSettingsDisclosure
+    }
+
+    /// Routed by `selectedTab` from the body. Capabilities is rendered
+    /// directly (it has its own scroll); every other tab body is enumerated
+    /// here so the outer ScrollView can wrap it uniformly.
+    @ViewBuilder
+    private var scrollableTabContent: some View {
+        switch selectedTab {
+        case .builtIn(.configure):
+            configureTabContent
+        case .builtIn(.customization):
+            customizationTabContent
+        case .builtIn(.network):
+            networkTabContent
+        case .builtIn(.sandbox):
+            sandboxTabContent
+        case .builtIn(.automation):
+            automationTabContent
+        case .builtIn(.memory):
+            memoryTabContent
+        case .builtIn(.capabilities):
+            // Routed at the body level outside the ScrollView; nothing to
+            // render here. This branch keeps the switch exhaustive.
+            EmptyView()
+        case .plugin(let pid):
+            pluginTabContent(for: pid)
         }
+    }
+
+    /// Editable identity card — name, description, and "Created" footer. Lives at
+    /// the top of the Configure tab now that the title bar's avatar/dropdown is
+    /// dedicated to switching between agents.
+    private var identitySection: some View {
+        AgentDetailSection(title: "Identity", icon: "person.crop.circle") {
+            VStack(alignment: .leading, spacing: 10) {
+                StyledTextField(
+                    placeholder: "e.g., Code Assistant",
+                    text: $name,
+                    icon: "textformat"
+                )
+
+                StyledTextField(
+                    placeholder: "Brief description (optional)",
+                    text: $description,
+                    icon: "text.alignleft"
+                )
+
+                HStack(spacing: 6) {
+                    Image(systemName: "calendar")
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundColor(theme.tertiaryText)
+                    Text(
+                        "Created \(agent.createdAt.formatted(date: .abbreviated, time: .omitted))",
+                        bundle: .module
+                    )
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(theme.tertiaryText)
+                }
+                .padding(.top, 2)
+            }
+            .onChange(of: name) { debouncedSave() }
+            .onChange(of: description) { debouncedSave() }
+        }
+    }
+
+    private var advancedSettingsDisclosure: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.18)) {
+                    showAdvancedSettings.toggle()
+                }
+            } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(theme.tertiaryText)
+                        .rotationEffect(.degrees(showAdvancedSettings ? 90 : 0))
+
+                    Image(systemName: "wrench.adjustable")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(theme.secondaryText)
+
+                    Text("Advanced Settings", bundle: .module)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
+
+                    Text(advancedSummary)
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.tertiaryText)
+
+                    Spacer()
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(theme.cardBackground.opacity(0.6))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(theme.cardBorder.opacity(0.5), lineWidth: 1)
+                        )
+                )
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if showAdvancedSettings {
+                VStack(alignment: .leading, spacing: 16) {
+                    generationOverridesSection
+                    disableTogglesSection
+                }
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+    }
+
+    /// Tiny one-line summary shown next to "Advanced Settings" so users can see at
+    /// a glance whether anything in there is overridden. Quick Actions and Theme
+    /// moved to the Customization tab and are no longer reachable from here.
+    private var advancedSummary: String {
+        var parts: [String] = []
+        if !temperature.isEmpty || !maxTokens.isEmpty { parts.append("generation") }
+        if disableTools { parts.append("tools off") }
+        if disableMemory { parts.append("memory off") }
+        return parts.isEmpty ? L("Defaults") : parts.joined(separator: " · ")
+    }
+
+    @ViewBuilder
+    private var customizationTabContent: some View {
+        tabHelperText(DetailTab.customization.helperText)
         quickActionsSection
         themeSection
+    }
+
+    @ViewBuilder
+    private var networkTabContent: some View {
+        tabHelperText(DetailTab.network.helperText)
+        bonjourSection
+        relaySection
     }
 
     @ViewBuilder
     private var sandboxTabContent: some View {
         tabHelperText(DetailTab.sandbox.helperText)
         sandboxSection
-        bonjourSection
-        relaySection
     }
 
     @ViewBuilder
@@ -1132,83 +1632,86 @@ struct AgentDetailView: View {
         }
     }
 
-    private var generationSection: some View {
-        AgentDetailSection(title: "Generation", icon: "cpu") {
-            VStack(spacing: 16) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Label {
-                        Text("Default Model", bundle: .module)
-                    } icon: {
-                        Image(systemName: "cube.fill")
-                    }
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
-
-                    Button {
-                        showModelPicker.toggle()
-                    } label: {
-                        HStack(spacing: 8) {
-                            if let model = selectedModel {
-                                Text(formatModelName(model))
-                                    .font(.system(size: 13, weight: .medium))
-                                    .foregroundColor(theme.primaryText)
-                                    .lineLimit(1)
-                            } else {
-                                Text("Default (from global settings)", bundle: .module)
-                                    .font(.system(size: 13))
-                                    .foregroundColor(theme.placeholderText)
-                            }
-                            Spacer()
-                            Image(systemName: "chevron.up.chevron.down")
-                                .font(.system(size: 10, weight: .medium))
-                                .foregroundColor(theme.tertiaryText)
+    /// Primary "what model does this agent use?" picker. Lives at the top of the
+    /// Configure tab next to System Prompt and Capabilities — the three things users
+    /// reach for most. Temperature / Max Tokens overrides moved into the Advanced
+    /// disclosure below.
+    private var defaultModelSection: some View {
+        AgentDetailSection(title: "Model", icon: "cube.fill") {
+            VStack(alignment: .leading, spacing: 10) {
+                Button {
+                    showModelPicker.toggle()
+                } label: {
+                    HStack(spacing: 8) {
+                        if let model = selectedModel {
+                            Text(formatModelName(model))
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundColor(theme.primaryText)
+                                .lineLimit(1)
+                        } else {
+                            Text("Default (from global settings)", bundle: .module)
+                                .font(.system(size: 13))
+                                .foregroundColor(theme.placeholderText)
                         }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 10)
-                        .background(
-                            RoundedRectangle(cornerRadius: 10)
-                                .fill(theme.inputBackground)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 10)
-                                        .stroke(theme.inputBorder, lineWidth: 1)
-                                )
-                        )
+                        Spacer()
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundColor(theme.tertiaryText)
                     }
-                    .buttonStyle(PlainButtonStyle())
-                    .popover(isPresented: $showModelPicker, arrowEdge: .bottom) {
-                        ModelPickerView(
-                            options: pickerItems,
-                            selectedModel: Binding(
-                                get: { selectedModel },
-                                set: { newModel in
-                                    selectedModel = newModel
-                                    agentManager.updateDefaultModel(for: agent.id, model: newModel)
-                                    showSaveIndicator()
-                                }
-                            ),
-                            agentId: agent.id,
-                            onDismiss: { showModelPicker = false }
-                        )
-                    }
-
-                    if selectedModel != nil {
-                        Button {
-                            selectedModel = nil
-                            agentManager.updateDefaultModel(for: agent.id, model: nil)
-                            showSaveIndicator()
-                        } label: {
-                            HStack(spacing: 4) {
-                                Image(systemName: "arrow.uturn.backward")
-                                    .font(.system(size: 10))
-                                Text("Reset to default", bundle: .module)
-                                    .font(.system(size: 11, weight: .medium))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10)
+                            .fill(theme.inputBackground)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .stroke(theme.inputBorder, lineWidth: 1)
+                            )
+                    )
+                }
+                .buttonStyle(PlainButtonStyle())
+                .popover(isPresented: $showModelPicker, arrowEdge: .bottom) {
+                    ModelPickerView(
+                        options: pickerItems,
+                        selectedModel: Binding(
+                            get: { selectedModel },
+                            set: { newModel in
+                                selectedModel = newModel
+                                agentManager.updateDefaultModel(for: agent.id, model: newModel)
+                                showSaveIndicator()
                             }
-                            .foregroundColor(theme.accentColor)
-                        }
-                        .buttonStyle(PlainButtonStyle())
-                    }
+                        ),
+                        agentId: agent.id,
+                        onDismiss: { showModelPicker = false }
+                    )
                 }
 
+                if selectedModel != nil {
+                    Button {
+                        selectedModel = nil
+                        agentManager.updateDefaultModel(for: agent.id, model: nil)
+                        showSaveIndicator()
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "arrow.uturn.backward")
+                                .font(.system(size: 10))
+                            Text("Reset to default", bundle: .module)
+                                .font(.system(size: 11, weight: .medium))
+                        }
+                        .foregroundColor(theme.accentColor)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                }
+            }
+        }
+    }
+
+    /// Power-user generation overrides. Tucked inside the Advanced disclosure so
+    /// the Configure tab leads with model + capabilities + system prompt for the
+    /// 90% case.
+    private var generationOverridesSection: some View {
+        AgentDetailSection(title: "Generation Overrides", icon: "slider.horizontal.3") {
+            VStack(spacing: 12) {
                 HStack(spacing: 16) {
                     VStack(alignment: .leading, spacing: 6) {
                         Label {
@@ -1238,6 +1741,7 @@ struct AgentDetailView: View {
                 Text("Leave empty to use default values from global settings.", bundle: .module)
                     .font(.system(size: 11))
                     .foregroundColor(theme.tertiaryText)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
             .onChange(of: temperature) { debouncedSave() }
             .onChange(of: maxTokens) { debouncedSave() }
@@ -1245,45 +1749,6 @@ struct AgentDetailView: View {
     }
 
     // MARK: - Tool Selection
-
-    private func reloadToolsAndSkills() {
-        let hidden = ToolRegistry.shared.builtInToolNames
-            .union(ToolRegistry.shared.runtimeManagedToolNames)
-        cachedTools = ToolRegistry.shared.listTools().filter { $0.enabled && !hidden.contains($0.name) }
-        cachedSkills = SkillManager.shared.skills.filter { $0.enabled || !$0.isBuiltIn }
-        applyToolSearchFilter()
-    }
-
-    private func applyToolSearchFilter() {
-        guard !toolSearchText.isEmpty else {
-            displayedTools = cachedTools
-            displayedSkills = cachedSkills
-            return
-        }
-        let query = toolSearchText.lowercased()
-        displayedTools =
-            cachedTools
-            .compactMap { entry -> (ToolRegistry.ToolEntry, Int)? in
-                let score = fuzzyScore(query: query, name: entry.name, description: entry.description)
-                return score > 0 ? (entry, score) : nil
-            }
-            .sorted { $0.1 > $1.1 }
-            .map(\.0)
-        displayedSkills = cachedSkills.filter {
-            fuzzyScore(query: query, name: $0.name, description: $0.description) > 0
-        }
-    }
-
-    private func fuzzyScore(query: String, name: String, description: String) -> Int {
-        let n = name.lowercased()
-        let d = description.lowercased()
-        if n == query { return 100 }
-        if n.hasPrefix(query) { return 80 }
-        if n.contains(query) { return 60 }
-        if d.contains(query) { return 40 }
-        if SearchService.fuzzyMatch(query: query, in: n) { return 20 }
-        return 0
-    }
 
     private var disableTogglesSection: some View {
         AgentDetailSection(title: "Features", icon: "switch.2") {
@@ -1329,203 +1794,6 @@ struct AgentDetailView: View {
                         .stroke(theme.inputBorder, lineWidth: 1)
                 )
         )
-    }
-
-    private var toolSelectionSection: some View {
-        AgentDetailSection(title: "Tools", icon: "wrench.and.screwdriver") {
-            VStack(alignment: .leading, spacing: 12) {
-                Picker("", selection: $toolSelectionMode) {
-                    Text("Auto", bundle: .module).tag(ToolSelectionMode.auto)
-                    Text("Manual", bundle: .module).tag(ToolSelectionMode.manual)
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-
-                Text(
-                    toolSelectionMode == .auto
-                        ? "Tools are discovered automatically using pre-flight search."
-                        : "Core tools are always available. Select additional tools and skills below."
-                )
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
-
-                if toolSelectionMode == .manual {
-                    manualSearchField
-                    manualToolList
-                    manualSkillList
-                    manualSelectionSummary
-                }
-            }
-            .onChange(of: toolSelectionMode) {
-                if toolSelectionMode == .manual { reloadToolsAndSkills() }
-                debouncedSave()
-            }
-            .task(id: toolSearchText) {
-                try? await Task.sleep(nanoseconds: 150_000_000)
-                guard !Task.isCancelled else { return }
-                applyToolSearchFilter()
-            }
-            .onReceive(NotificationCenter.default.publisher(for: .toolsListChanged)) { _ in
-                reloadToolsAndSkills()
-            }
-            .onAppear {
-                if toolSelectionMode == .manual { reloadToolsAndSkills() }
-            }
-        }
-    }
-
-    private var manualSearchField: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
-            TextField(text: $toolSearchText, prompt: Text("Search tools and skills...", bundle: .module)) {
-                Text("Search tools and skills...", bundle: .module)
-            }
-            .font(.system(size: 12))
-            .textFieldStyle(.plain)
-            .foregroundColor(theme.primaryText)
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 7)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(theme.inputBackground)
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(theme.inputBorder, lineWidth: 1))
-        )
-    }
-
-    @ViewBuilder
-    private var manualToolList: some View {
-        if !displayedTools.isEmpty {
-            selectableSection("Tools", maxHeight: 300) {
-                ForEach(displayedTools, id: \.name) { entry in
-                    selectableRow(
-                        title: entry.name,
-                        subtitle: entry.description,
-                        isSelected: manualToolNames.contains(entry.name),
-                        titleFont: .system(size: 12, weight: .medium, design: .monospaced)
-                    ) {
-                        manualToolNames.formSymmetricDifference([entry.name])
-                        debouncedSave()
-                    }
-                    if entry.name != displayedTools.last?.name {
-                        Divider().foregroundColor(theme.primaryBorder)
-                    }
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var manualSkillList: some View {
-        if !displayedSkills.isEmpty {
-            selectableSection("Skills", maxHeight: 200) {
-                ForEach(displayedSkills, id: \.id) { skill in
-                    selectableRow(
-                        title: skill.name,
-                        subtitle: skill.description,
-                        isSelected: manualSkillNames.contains(skill.name),
-                        badge: skill.category
-                    ) {
-                        manualSkillNames.formSymmetricDifference([skill.name])
-                        debouncedSave()
-                    }
-                    if skill.id != displayedSkills.last?.id {
-                        Divider().foregroundColor(theme.primaryBorder)
-                    }
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var manualSelectionSummary: some View {
-        let parts = [
-            pluralized("tool", count: manualToolNames.count),
-            pluralized("skill", count: manualSkillNames.count),
-        ].compactMap { $0 }
-
-        if !parts.isEmpty {
-            Text(parts.joined(separator: ", ") + " selected")
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
-        }
-    }
-
-    private func pluralized(_ word: String, count: Int) -> String? {
-        guard count > 0 else { return nil }
-        return "\(count) \(word)\(count == 1 ? "" : "s")"
-    }
-
-    private func selectableSection<Content: View>(
-        _ title: String,
-        maxHeight: CGFloat,
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(theme.secondaryText)
-                .textCase(.uppercase)
-
-            ScrollView {
-                VStack(spacing: 0) { content() }
-            }
-            .frame(maxHeight: maxHeight)
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(theme.inputBackground)
-                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(theme.inputBorder, lineWidth: 1))
-            )
-            .clipShape(RoundedRectangle(cornerRadius: 10))
-        }
-    }
-
-    private func selectableRow(
-        title: String,
-        subtitle: String,
-        isSelected: Bool,
-        titleFont: Font = .system(size: 12, weight: .medium),
-        badge: String? = nil,
-        onToggle: @escaping () -> Void
-    ) -> some View {
-        Button(action: onToggle) {
-            HStack(spacing: 10) {
-                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 14))
-                    .foregroundColor(isSelected ? theme.accentColor : theme.tertiaryText)
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 6) {
-                        Text(title)
-                            .font(titleFont)
-                            .foregroundColor(theme.primaryText)
-                        if let badge {
-                            Text(badge)
-                                .font(.system(size: 9, weight: .medium))
-                                .foregroundColor(theme.tertiaryText)
-                                .padding(.horizontal, 5)
-                                .padding(.vertical, 1)
-                                .background(
-                                    Capsule().fill(theme.inputBackground)
-                                        .overlay(Capsule().stroke(theme.inputBorder, lineWidth: 0.5))
-                                )
-                        }
-                    }
-                    if !subtitle.isEmpty {
-                        Text(subtitle)
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.tertiaryText)
-                            .lineLimit(2)
-                    }
-                }
-                Spacer()
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
     }
 
     // MARK: - Plugin Tab Content
@@ -1827,23 +2095,19 @@ struct AgentDetailView: View {
         ) {
             VStack(alignment: .leading, spacing: 12) {
                 if !sandboxAvailable {
-                    HStack(spacing: 8) {
-                        Image(systemName: "info.circle")
-                            .font(.system(size: 12))
-                            .foregroundColor(theme.tertiaryText)
-                        Text("Sandbox requires macOS 26+. Native plugins work normally.", bundle: .module)
-                            .font(.system(size: 12))
-                            .foregroundColor(theme.secondaryText)
-                    }
+                    AgentSectionEmptyState(
+                        icon: "shippingbox",
+                        title: "Sandbox unavailable",
+                        hint:
+                            "Container-based execution requires macOS 26 or later. Native plugins continue to work normally on this device."
+                    )
                 } else if !sandboxRunning {
-                    HStack(spacing: 8) {
-                        Image(systemName: "info.circle")
-                            .font(.system(size: 12))
-                            .foregroundColor(theme.tertiaryText)
-                        Text("Start the sandbox container to enable these options.", bundle: .module)
-                            .font(.system(size: 12))
-                            .foregroundColor(theme.secondaryText)
-                    }
+                    AgentSectionEmptyState(
+                        icon: "shippingbox",
+                        title: "Sandbox not running",
+                        hint:
+                            "Start the sandbox container from the Sandbox status bar to enable autonomous execution and plugin creation."
+                    )
                 } else {
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
@@ -2443,16 +2707,14 @@ struct AgentDetailView: View {
         ) {
             VStack(alignment: .leading, spacing: 12) {
                 if linkedSchedules.isEmpty {
-                    VStack(spacing: 8) {
-                        Image(systemName: "clock.badge.questionmark")
-                            .font(.system(size: 24))
-                            .foregroundColor(theme.tertiaryText)
-                        Text("No schedules linked to this agent", bundle: .module)
-                            .font(.system(size: 12))
-                            .foregroundColor(theme.secondaryText)
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 12)
+                    AgentSectionEmptyState(
+                        icon: "clock.badge.questionmark",
+                        title: "No schedules yet",
+                        hint:
+                            "Schedule this agent to run on a recurring cadence — perfect for daily briefings or automated check-ins.",
+                        actionLabel: "Create Schedule",
+                        action: { showCreateSchedule = true }
+                    )
                 } else {
                     ForEach(linkedSchedules) { schedule in
                         HStack(spacing: 12) {
@@ -2502,20 +2764,20 @@ struct AgentDetailView: View {
                                 )
                         )
                     }
-                }
 
-                Button {
-                    showCreateSchedule = true
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "plus.circle")
-                            .font(.system(size: 11))
-                        Text("Create Schedule", bundle: .module)
-                            .font(.system(size: 11, weight: .medium))
+                    Button {
+                        showCreateSchedule = true
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "plus.circle")
+                                .font(.system(size: 11))
+                            Text("Create Schedule", bundle: .module)
+                                .font(.system(size: 11, weight: .medium))
+                        }
+                        .foregroundColor(theme.accentColor)
                     }
-                    .foregroundColor(theme.accentColor)
+                    .buttonStyle(PlainButtonStyle())
                 }
-                .buttonStyle(PlainButtonStyle())
             }
         }
     }
@@ -2528,34 +2790,31 @@ struct AgentDetailView: View {
         ) {
             VStack(alignment: .leading, spacing: 12) {
                 if linkedWatchers.isEmpty {
-                    VStack(spacing: 8) {
-                        Image(systemName: "eye.slash")
-                            .font(.system(size: 24))
-                            .foregroundColor(theme.tertiaryText)
-                        Text("No watchers linked to this agent", bundle: .module)
-                            .font(.system(size: 12))
-                            .foregroundColor(theme.secondaryText)
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 12)
+                    AgentSectionEmptyState(
+                        icon: "eye.slash",
+                        title: "No watchers yet",
+                        hint: "Watch a folder for new files — the agent runs automatically whenever something changes.",
+                        actionLabel: "Create Watcher",
+                        action: { showCreateWatcher = true }
+                    )
                 } else {
                     ForEach(linkedWatchers) { watcher in
                         watcherRow(watcher)
                     }
-                }
 
-                Button {
-                    showCreateWatcher = true
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "plus.circle")
-                            .font(.system(size: 11))
-                        Text("Create Watcher", bundle: .module)
-                            .font(.system(size: 11, weight: .medium))
+                    Button {
+                        showCreateWatcher = true
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "plus.circle")
+                                .font(.system(size: 11))
+                            Text("Create Watcher", bundle: .module)
+                                .font(.system(size: 11, weight: .medium))
+                        }
+                        .foregroundColor(theme.accentColor)
                     }
-                    .foregroundColor(theme.accentColor)
+                    .buttonStyle(PlainButtonStyle())
                 }
-                .buttonStyle(PlainButtonStyle())
             }
         }
     }
@@ -2622,7 +2881,7 @@ struct AgentDetailView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
                         HStack(spacing: 6) {
-                            Image(systemName: "bubble.left.and.bubble.right")
+                            Image(systemName: "bubble.left.and.bubble.right.fill")
                                 .font(.system(size: 10, weight: .medium))
                                 .foregroundColor(theme.accentColor)
                             Text("RECENT CHATS", bundle: .module)
@@ -2646,10 +2905,14 @@ struct AgentDetailView: View {
                     }
 
                     if chatSessions.isEmpty {
-                        Text("No chat sessions yet", bundle: .module)
-                            .font(.system(size: 12))
-                            .foregroundColor(theme.tertiaryText)
-                            .padding(.vertical, 8)
+                        AgentSectionEmptyState(
+                            icon: "bubble.left.and.bubble.right.fill",
+                            title: "No chats yet",
+                            hint:
+                                "Start a conversation to build this agent's memory — history, pinned facts, and episode summaries all flow from here.",
+                            actionLabel: "New Chat",
+                            action: { ChatWindowManager.shared.createWindow(agentId: agent.id) }
+                        )
                     } else {
                         ForEach(chatSessions.prefix(5)) { session in
                             ClickableHistoryRow {
@@ -2701,13 +2964,12 @@ struct AgentDetailView: View {
             subtitle: pinnedFacts.isEmpty ? "None" : "\(pinnedFacts.count)"
         ) {
             if pinnedFacts.isEmpty {
-                Text(
-                    "No pinned facts yet. Facts are promoted from session distillations once they accumulate enough salience.",
-                    bundle: .module
+                AgentSectionEmptyState(
+                    icon: "pin.slash",
+                    title: "No pinned facts yet",
+                    hint:
+                        "Facts are promoted from session distillations once they accumulate enough salience. Keep chatting and they'll show up here."
                 )
-                .font(.system(size: 12))
-                .foregroundColor(theme.tertiaryText)
-                .padding(.vertical, 8)
             } else {
                 PinnedFactsPanel(
                     facts: pinnedFacts,
@@ -2726,10 +2988,12 @@ struct AgentDetailView: View {
             subtitle: episodes.isEmpty ? "None" : "\(episodes.count)"
         ) {
             if episodes.isEmpty {
-                Text("No episodes yet.", bundle: .module)
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.tertiaryText)
-                    .padding(.vertical, 8)
+                AgentSectionEmptyState(
+                    icon: "doc.text.magnifyingglass",
+                    title: "No episodes yet",
+                    hint:
+                        "After each chat, the agent distills the conversation into a short summary. Episodes accumulate here so the agent can recall past sessions."
+                )
             } else {
                 VStack(alignment: .leading, spacing: 0) {
                     let displayed = showAllSummaries ? episodes : Array(episodes.prefix(10))
@@ -2778,10 +3042,6 @@ struct AgentDetailView: View {
         workQuickActions = agent.workQuickActions
         disableTools = agent.disableTools ?? false
         disableMemory = agent.disableMemory ?? false
-        toolSelectionMode = agent.toolSelectionMode ?? .auto
-        manualToolNames = Set(agent.manualToolNames ?? [])
-        manualSkillNames = Set(agent.manualSkillNames ?? [])
-
         var instrMap: [String: String] = [:]
         let overrides = agent.pluginInstructions ?? [:]
         for loaded in PluginManager.shared.plugins {
@@ -2828,6 +3088,12 @@ struct AgentDetailView: View {
         }()
 
         let current = currentAgent
+        // The capability picker writes `manualToolNames`, `manualSkillNames`, and
+        // `toolSelectionMode` directly via `AgentManager.update*` calls (so they
+        // save instantly without going through this debounced path). We therefore
+        // pass through `current.*` values rather than this view's local mirrors,
+        // which only get refreshed via `loadAgentData()`. Otherwise the debounced
+        // save could lose a picker change made between load and save.
         let updated = Agent(
             id: agent.id,
             name: trimmedName,
@@ -2846,9 +3112,9 @@ struct AgentDetailView: View {
             agentAddress: current.agentAddress,
             autonomousExec: current.autonomousExec,
             pluginInstructions: effectivePluginInstructions,
-            toolSelectionMode: toolSelectionMode,
-            manualToolNames: toolSelectionMode == .manual ? Array(manualToolNames) : nil,
-            manualSkillNames: toolSelectionMode == .manual ? Array(manualSkillNames) : nil,
+            toolSelectionMode: current.toolSelectionMode,
+            manualToolNames: current.manualToolNames,
+            manualSkillNames: current.manualSkillNames,
             disableTools: disableTools ? true : nil,
             disableMemory: disableMemory ? true : nil
         )
@@ -2955,7 +3221,90 @@ private struct AgentDetailSection<Content: View>: View {
     }
 }
 
-// MARK: - Agent Editor Sheet
+// MARK: - Starter Templates
+
+/// Lightweight presets for the create-agent sheet. Picking one prefills the
+/// system prompt and (only when the user hasn't typed yet) a default name.
+/// Description, generation overrides, and visual theme are intentionally NOT
+/// part of the create flow — they're all editable post-creation in Configure.
+private enum AgentStarterTemplate: String, CaseIterable, Identifiable {
+    case blank
+    case writer
+    case researcher
+    case coder
+    case productivity
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .blank: return "Blank"
+        case .writer: return "Writer"
+        case .researcher: return "Researcher"
+        case .coder: return "Coder"
+        case .productivity: return "Productivity"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .blank: return "doc"
+        case .writer: return "pencil.line"
+        case .researcher: return "magnifyingglass"
+        case .coder: return "chevron.left.forwardslash.chevron.right"
+        case .productivity: return "checkmark.circle"
+        }
+    }
+
+    /// Default name suggestion — only applied when the form's name field is
+    /// still empty, so a user who started typing isn't clobbered.
+    var defaultName: String {
+        switch self {
+        case .blank: return ""
+        case .writer: return "Writer"
+        case .researcher: return "Researcher"
+        case .coder: return "Coder"
+        case .productivity: return "Productivity"
+        }
+    }
+
+    var systemPrompt: String {
+        switch self {
+        case .blank:
+            return ""
+        case .writer:
+            return """
+                You are a thoughtful writing partner. Help the user draft, edit, and \
+                polish prose. Match their voice, suggest sharper word choices, and \
+                keep edits surgical unless they ask for a rewrite. When they share a \
+                draft, lead with what's working before what to change.
+                """
+        case .researcher:
+            return """
+                You are a careful research assistant. Break questions down, surface \
+                what's known versus what's contested, and cite sources where you can. \
+                Distinguish facts from opinions, prefer primary sources, and never \
+                invent citations. When uncertain, say so plainly.
+                """
+        case .coder:
+            return """
+                You are a pragmatic coding partner. Read the user's code carefully, \
+                ask clarifying questions when intent is ambiguous, and prefer minimal \
+                diffs that match the surrounding style. Explain trade-offs briefly. \
+                When you write code, make sure it actually compiles and runs.
+                """
+        case .productivity:
+            return """
+                You are a focused productivity assistant. Help the user plan their \
+                day, capture todos, and triage what's important from what's noisy. \
+                Be concise, action-oriented, and respect their time — short answers \
+                beat long ones unless they ask for more.
+                """
+        }
+    }
+}
+
+// MARK: - Agent Editor Sheet (Smart Create)
 
 private struct AgentEditorSheet: View {
     @ObservedObject private var themeManager = ThemeManager.shared
@@ -2965,175 +3314,80 @@ private struct AgentEditorSheet: View {
     let onSave: (Agent) -> Void
     let onCancel: () -> Void
 
+    @State private var selectedTemplate: AgentStarterTemplate = .blank
     @State private var name: String = ""
-    @State private var description: String = ""
+    /// Flips to `true` the first time the user types into the name field.
+    /// Until then, switching presets is allowed to overwrite the name with
+    /// the new preset's default — so toggling between Writer/Coder/etc. keeps
+    /// the suggested name in sync. Once the user types their own value, the
+    /// name is theirs and presets stop touching it.
+    @State private var nameUserEdited: Bool = false
     @State private var systemPrompt: String = ""
-    @State private var temperature: String = ""
-    @State private var maxTokens: String = ""
-    @State private var selectedThemeId: UUID?
-    @State private var hasAppeared = false
+    @State private var selectedModel: String?
+    @State private var pickerItems: [ModelPickerItem] = []
+    @State private var showModelPicker: Bool = false
+    @State private var hasAppeared: Bool = false
+
+    /// When true, the form column is replaced in place by an embedded
+    /// `AgentCapabilityManagerView` operating in draft mode. Toggling this
+    /// is purely a within-sheet view swap — no agent is created, no parent
+    /// navigation occurs.
+    @State private var inlineCustomize: Bool = false
+
+    /// Draft capability state. Seeded on first appear from the live registries
+    /// (matching what `AgentManager.seedEnabledCapabilitiesIfNeeded` would have
+    /// written on first picker open) and then mutated in place by the embedded
+    /// picker. Baked into the saved Agent's `manualToolNames` /
+    /// `manualSkillNames` so the seed step is a no-op for newly created agents.
+    @State private var draftMode: ToolSelectionMode = .auto
+    @State private var draftToolNames: Set<String> = []
+    @State private var draftSkillNames: Set<String> = []
+    @State private var draftSeeded: Bool = false
+
+    @FocusState private var nameFocused: Bool
 
     private var agentColor: Color { agentColorFor(name) }
+
+    private var canSave: Bool {
+        !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             headerView
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
-                    EditorSection(title: "Identity", icon: "person.circle.fill") {
-                        VStack(spacing: 16) {
-                            HStack(spacing: 16) {
-                                ZStack {
-                                    Circle()
-                                        .fill(
-                                            LinearGradient(
-                                                colors: [agentColor.opacity(0.2), agentColor.opacity(0.05)],
-                                                startPoint: .topLeading,
-                                                endPoint: .bottomTrailing
-                                            )
-                                        )
-                                    Circle()
-                                        .strokeBorder(agentColor.opacity(0.5), lineWidth: 2)
-                                    Text(name.isEmpty ? "?" : name.prefix(1).uppercased())
-                                        .font(.system(size: 20, weight: .bold, design: .rounded))
-                                        .foregroundColor(agentColor)
-                                }
-                                .frame(width: 52, height: 52)
-                                .animation(.spring(response: 0.3), value: name)
-
-                                VStack(alignment: .leading, spacing: 12) {
-                                    StyledTextField(
-                                        placeholder: "e.g., Code Assistant",
-                                        text: $name,
-                                        icon: "textformat"
-                                    )
-                                }
-                            }
-
-                            StyledTextField(
-                                placeholder: "Brief description (optional)",
-                                text: $description,
-                                icon: "text.alignleft"
+            ZStack {
+                if inlineCustomize {
+                    capabilitiesPane
+                        .transition(
+                            .asymmetric(
+                                insertion: .move(edge: .trailing).combined(with: .opacity),
+                                removal: .move(edge: .trailing).combined(with: .opacity)
                             )
-                        }
+                        )
+                } else {
+                    HStack(spacing: 0) {
+                        formColumn
+                            .frame(width: 440)
+                        Divider()
+                        previewColumn
+                            .frame(maxWidth: .infinity)
                     }
-
-                    EditorSection(title: "System Prompt", icon: "brain") {
-                        VStack(alignment: .leading, spacing: 8) {
-                            ZStack(alignment: .topLeading) {
-                                if systemPrompt.isEmpty {
-                                    Text("Enter instructions for this agent...", bundle: .module)
-                                        .font(.system(size: 13, design: .monospaced))
-                                        .foregroundColor(theme.placeholderText)
-                                        .padding(.top, 12)
-                                        .padding(.leading, 16)
-                                        .allowsHitTesting(false)
-                                }
-
-                                TextEditor(text: $systemPrompt)
-                                    .font(.system(size: 13, design: .monospaced))
-                                    .foregroundColor(theme.primaryText)
-                                    .scrollContentBackground(.hidden)
-                                    .frame(minHeight: 140, maxHeight: 200)
-                                    .padding(12)
-                            }
-                            .background(
-                                RoundedRectangle(cornerRadius: 10)
-                                    .fill(theme.inputBackground)
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 10)
-                                            .stroke(theme.inputBorder, lineWidth: 1)
-                                    )
-                            )
-
-                            Text(
-                                "Instructions that define this agent's behavior. Leave empty to use global settings.",
-                                bundle: .module
-                            )
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.tertiaryText)
-                        }
-                    }
-
-                    EditorSection(title: "Generation", icon: "cpu") {
-                        VStack(spacing: 16) {
-                            HStack(spacing: 16) {
-                                VStack(alignment: .leading, spacing: 6) {
-                                    Label {
-                                        Text("Temperature", bundle: .module)
-                                    } icon: {
-                                        Image(systemName: "thermometer.medium")
-                                    }
-                                    .font(.system(size: 11, weight: .medium))
-                                    .foregroundColor(theme.secondaryText)
-
-                                    StyledTextField(
-                                        placeholder: "0.7",
-                                        text: $temperature,
-                                        icon: nil
-                                    )
-                                }
-
-                                VStack(alignment: .leading, spacing: 6) {
-                                    Label {
-                                        Text("Max Tokens", bundle: .module)
-                                    } icon: {
-                                        Image(systemName: "number")
-                                    }
-                                    .font(.system(size: 11, weight: .medium))
-                                    .foregroundColor(theme.secondaryText)
-
-                                    StyledTextField(
-                                        placeholder: "4096",
-                                        text: $maxTokens,
-                                        icon: nil
-                                    )
-                                }
-                            }
-
-                            Text("Leave empty to use default values from global settings.", bundle: .module)
-                                .font(.system(size: 11))
-                                .foregroundColor(theme.tertiaryText)
-                        }
-                    }
-
-                    EditorSection(title: "Visual Theme", icon: "paintpalette.fill") {
-                        VStack(alignment: .leading, spacing: 12) {
-                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 100), spacing: 12)], spacing: 12) {
-                                ThemeOptionCard(
-                                    name: "Default",
-                                    colors: [theme.accentColor, theme.primaryBackground, theme.successColor],
-                                    isSelected: selectedThemeId == nil,
-                                    onSelect: { selectedThemeId = nil }
-                                )
-
-                                ForEach(themeManager.installedThemes, id: \.metadata.id) { customTheme in
-                                    ThemeOptionCard(
-                                        name: customTheme.metadata.name,
-                                        colors: [
-                                            Color(themeHex: customTheme.colors.accentColor),
-                                            Color(themeHex: customTheme.colors.primaryBackground),
-                                            Color(themeHex: customTheme.colors.successColor),
-                                        ],
-                                        isSelected: selectedThemeId == customTheme.metadata.id,
-                                        onSelect: { selectedThemeId = customTheme.metadata.id }
-                                    )
-                                }
-                            }
-
-                            Text("Optionally assign a visual theme to this agent.", bundle: .module)
-                                .font(.system(size: 11))
-                                .foregroundColor(theme.tertiaryText)
-                        }
-                    }
+                    .transition(
+                        .asymmetric(
+                            insertion: .move(edge: .leading).combined(with: .opacity),
+                            removal: .move(edge: .leading).combined(with: .opacity)
+                        )
+                    )
                 }
-                .padding(24)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(theme.primaryBackground)
+            .clipped()
 
             footerView
         }
-        .frame(width: 580, height: 620)
+        .frame(width: 760, height: 580)
         .background(theme.primaryBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .overlay(
@@ -3141,117 +3395,452 @@ private struct AgentEditorSheet: View {
                 .stroke(theme.primaryBorder.opacity(0.5), lineWidth: 1)
         )
         .opacity(hasAppeared ? 1 : 0)
-        .scaleEffect(hasAppeared ? 1 : 0.95)
+        .scaleEffect(hasAppeared ? 1 : 0.97)
         .animation(.spring(response: 0.3, dampingFraction: 0.8), value: hasAppeared)
         .onAppear {
             withAnimation { hasAppeared = true }
+            seedDraftIfNeeded()
+            // Slight delay so the sheet is fully presented before focus lands.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                nameFocused = true
+            }
+        }
+        .onReceive(ModelPickerItemCache.shared.$items) { pickerItems = $0 }
+    }
+
+    /// Embedded picker pane shown when the user clicks "Customize…". Operates
+    /// in draft mode so toggles update local @State only — nothing is
+    /// persisted until the user clicks "Create Agent" in the footer.
+    /// `compact: true` drops the picker's own title row + bottom rule so it
+    /// reads as a continuation of the editor's header rather than a stacked
+    /// secondary chrome.
+    private var capabilitiesPane: some View {
+        AgentCapabilityManagerView(
+            draftMode: $draftMode,
+            draftTools: $draftToolNames,
+            draftSkills: $draftSkillNames,
+            onDismiss: {
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.9)) {
+                    inlineCustomize = false
+                }
+            },
+            compact: true
+        )
+        .environment(\.theme, theme)
+    }
+
+    /// One-shot seed of the draft sets to the same defaults
+    /// `seedEnabledCapabilitiesIfNeeded` would have written. Idempotent: only
+    /// runs once per sheet open so re-renders don't clobber user edits.
+    private func seedDraftIfNeeded() {
+        guard !draftSeeded else { return }
+        draftSeeded = true
+        draftToolNames = Set(ToolRegistry.shared.listDynamicTools().map(\.name))
+        draftSkillNames = Set(SkillManager.shared.skills.map(\.name))
+    }
+
+    // MARK: Form column
+
+    private var formColumn: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                templatesStrip
+                nameField
+                modelField
+                capabilitiesField
+                promptField
+            }
+            .padding(20)
         }
     }
 
-    // MARK: - Header View
-
-    private var headerView: some View {
-        HStack(spacing: 12) {
-            ZStack {
-                Circle()
-                    .fill(
-                        LinearGradient(
-                            colors: [theme.accentColor.opacity(0.2), theme.accentColor.opacity(0.05)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                Image(systemName: "person.crop.circle.badge.plus")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(
-                        LinearGradient(
-                            colors: [theme.accentColor, theme.accentColor.opacity(0.7)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
+    private var templatesStrip: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            AgentSheetSectionLabel("Start From")
+            HStack(spacing: 6) {
+                ForEach(AgentStarterTemplate.allCases) { template in
+                    templateChip(template)
+                }
             }
-            .frame(width: 40, height: 40)
+        }
+    }
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Create Agent", bundle: .module)
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-
-                Text("Build your custom AI assistant", bundle: .module)
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.secondaryText)
+    private func templateChip(_ template: AgentStarterTemplate) -> some View {
+        let isSelected = selectedTemplate == template
+        return Button {
+            applyTemplate(template)
+        } label: {
+            VStack(spacing: 4) {
+                Image(systemName: template.icon)
+                    .font(.system(size: 13, weight: .semibold))
+                Text(LocalizedStringKey(template.label), bundle: .module)
+                    .font(.system(size: 10, weight: isSelected ? .semibold : .medium))
             }
+            .foregroundColor(isSelected ? theme.accentColor : theme.secondaryText)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(isSelected ? theme.accentColor.opacity(0.12) : theme.inputBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .strokeBorder(
+                                isSelected ? theme.accentColor.opacity(0.35) : theme.inputBorder,
+                                lineWidth: 1
+                            )
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+    }
 
-            Spacer()
+    private var nameField: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            AgentSheetSectionLabel("Name")
+            StyledTextField(
+                placeholder: "e.g., Code Assistant",
+                text: $name,
+                icon: "textformat"
+            )
+            .focused($nameFocused)
+            // Distinguish "user typed something the preset wouldn't have"
+            // from "preset just wrote its defaultName here". Only the former
+            // locks the name. Equality covers the harmless case where the
+            // user types the exact preset name themselves.
+            .onChange(of: name) { _, newValue in
+                if newValue != selectedTemplate.defaultName {
+                    nameUserEdited = true
+                }
+            }
+        }
+    }
 
-            Button(action: onCancel) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.secondaryText)
-                    .frame(width: 28, height: 28)
-                    .background(Circle().fill(theme.tertiaryBackground))
+    private var modelField: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            AgentSheetSectionLabel("Default Model")
+            Button {
+                showModelPicker.toggle()
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "cube.fill")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(selectedModel == nil ? theme.tertiaryText : theme.accentColor)
+                    if let model = selectedModel {
+                        Text(formatModelName(model))
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundColor(theme.primaryText)
+                            .lineLimit(1)
+                    } else {
+                        Text("Default (from global settings)", bundle: .module)
+                            .font(.system(size: 13))
+                            .foregroundColor(theme.placeholderText)
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(theme.tertiaryText)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(theme.inputBackground)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10).stroke(theme.inputBorder, lineWidth: 1)
+                        )
+                )
             }
             .buttonStyle(PlainButtonStyle())
-            .keyboardShortcut(.escape, modifiers: [])
-        }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 20)
-        .background(
-            theme.secondaryBackground
-                .overlay(
-                    LinearGradient(
-                        colors: [theme.accentColor.opacity(0.03), Color.clear],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
+            .popover(isPresented: $showModelPicker, arrowEdge: .bottom) {
+                ModelPickerView(
+                    options: pickerItems,
+                    selectedModel: $selectedModel,
+                    agentId: nil,
+                    onDismiss: { showModelPicker = false }
                 )
-        )
+            }
+        }
     }
 
-    // MARK: - Footer View
+    /// Capabilities row in the create sheet. Mirrors the Auto-discover affordance
+    /// from the picker but renders against the draft sets so the count line
+    /// stays honest as the user toggles things in the embedded picker pane.
+    /// "Customize…" performs an inline view swap (no save) — the embedded
+    /// picker writes back to the same draft bindings, so closing it and
+    /// reopening it preserves all selections.
+    private var capabilitiesField: some View {
+        let isAuto = draftMode == .auto
+        return VStack(alignment: .leading, spacing: 6) {
+            AgentSheetSectionLabel("Capabilities")
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 10) {
+                    Image(systemName: isAuto ? "sparkles" : "list.bullet.rectangle")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(isAuto ? theme.accentColor : theme.secondaryText)
+                        .frame(width: 22, height: 22)
+                        .background(
+                            Circle().fill(
+                                isAuto
+                                    ? theme.accentColor.opacity(0.12)
+                                    : theme.inputBackground
+                            )
+                        )
 
-    private var footerView: some View {
-        HStack(spacing: 12) {
-            HStack(spacing: 4) {
-                Text("\u{2318}", bundle: .module)
-                    .font(.system(size: 10, weight: .medium, design: .rounded))
-                    .padding(.horizontal, 4)
-                    .padding(.vertical, 2)
-                    .background(
-                        RoundedRectangle(cornerRadius: 4)
-                            .fill(theme.tertiaryBackground)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Auto-discover relevant capabilities", bundle: .module)
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(theme.primaryText)
+                        Text(capabilitiesSubtitle)
+                            .font(.system(size: 11))
+                            .foregroundColor(theme.tertiaryText)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    Spacer(minLength: 8)
+
+                    Toggle(
+                        "",
+                        isOn: Binding(
+                            get: { draftMode == .auto },
+                            set: { draftMode = $0 ? .auto : .manual }
+                        )
                     )
-                Text("+ Enter to save", bundle: .module)
-                    .font(.system(size: 11))
+                    .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
+                    .labelsHidden()
+                }
+
+                Button {
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.9)) {
+                        inlineCustomize = true
+                    }
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "slider.horizontal.3")
+                            .font(.system(size: 11, weight: .semibold))
+                        Text("Customize…", bundle: .module)
+                            .font(.system(size: 12, weight: .semibold))
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(theme.tertiaryText)
+                    }
+                    .foregroundColor(theme.accentColor)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(theme.accentColor.opacity(0.10))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .strokeBorder(
+                                        theme.accentColor.opacity(0.25),
+                                        lineWidth: 1
+                                    )
+                            )
+                    )
+                }
+                .buttonStyle(.plain)
+                .help(Text("Pick which tools and skills this agent can use", bundle: .module))
             }
+            .padding(12)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(theme.inputBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10).stroke(theme.inputBorder, lineWidth: 1)
+                    )
+            )
+        }
+    }
+
+    /// Honest one-liner for the Capabilities row: counts come from the draft
+    /// sets, so editing inside the embedded picker is reflected as soon as
+    /// the user returns to the form.
+    private var capabilitiesSubtitle: String {
+        let toolCount = draftToolNames.count
+        let skillCount = draftSkillNames.count
+        let modeBlurb =
+            draftMode == .auto
+            ? L("Pre-flight picks the most relevant per turn.")
+            : L("All enabled items are sent every turn.")
+        return "\(toolCount) tools and \(skillCount) skills enabled · \(modeBlurb)"
+    }
+
+    private var promptField: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            AgentSheetSectionLabel("System Prompt")
+            ZStack(alignment: .topLeading) {
+                if systemPrompt.isEmpty {
+                    Text("Enter instructions for this agent…", bundle: .module)
+                        .font(.system(size: 13, design: .monospaced))
+                        .foregroundColor(theme.placeholderText)
+                        .padding(.top, 12)
+                        .padding(.leading, 16)
+                        .allowsHitTesting(false)
+                }
+                TextEditor(text: $systemPrompt)
+                    .font(.system(size: 13, design: .monospaced))
+                    .foregroundColor(theme.primaryText)
+                    .scrollContentBackground(.hidden)
+                    .frame(minHeight: 120, maxHeight: 180)
+                    .padding(12)
+            }
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(theme.inputBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10).stroke(theme.inputBorder, lineWidth: 1)
+                    )
+            )
+            Text(
+                "Capabilities, generation overrides, and theme are editable after creation in the Configure tab.",
+                bundle: .module
+            )
+            .font(.system(size: 11))
+            .foregroundColor(theme.tertiaryText)
+        }
+    }
+
+    // MARK: Preview column
+
+    private var previewColumn: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 6) {
+                Image(systemName: "eye")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(theme.tertiaryText)
+                AgentSheetSectionLabel("Preview")
+            }
+
+            previewCard
+
+            Text(
+                "This is how your agent will look in the grid.",
+                bundle: .module
+            )
+            .font(.system(size: 11))
             .foregroundColor(theme.tertiaryText)
 
             Spacer()
-
-            Button(action: onCancel) { Text("Cancel", bundle: .module) }
-                .buttonStyle(SecondaryButtonStyle())
-
-            Button {
-                saveAgent()
-            } label: {
-                Text("Create Agent", bundle: .module)
-            }
-            .buttonStyle(PrimaryButtonStyle())
-            .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            .keyboardShortcut(.return, modifiers: .command)
         }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 16)
+        .padding(20)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(theme.secondaryBackground.opacity(0.4))
+    }
+
+    private var previewCard: some View {
+        let displayName = name.isEmpty ? L("Untitled Agent") : name
+        let modelText = selectedModel.map(formatModelName) ?? L("Default")
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .center, spacing: 12) {
+                ZStack {
+                    Circle()
+                        .fill(
+                            LinearGradient(
+                                colors: [agentColor.opacity(0.15), agentColor.opacity(0.05)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                    Circle().strokeBorder(agentColor.opacity(0.4), lineWidth: 2)
+                    Text(name.isEmpty ? "?" : name.prefix(1).uppercased())
+                        .font(.system(size: 16, weight: .bold, design: .rounded))
+                        .foregroundColor(agentColor)
+                }
+                .frame(width: 36, height: 36)
+                .animation(.spring(response: 0.3), value: name)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(displayName)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
+                        .lineLimit(1)
+                    Text("No description", bundle: .module)
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.tertiaryText)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 0)
+            }
+
+            if systemPrompt.isEmpty {
+                Text("No system prompt", bundle: .module)
+                    .font(.system(size: 12).italic())
+                    .foregroundColor(theme.tertiaryText)
+                    .lineLimit(2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                Text(systemPrompt)
+                    .font(.system(size: 12))
+                    .foregroundColor(theme.secondaryText)
+                    .lineLimit(2)
+                    .lineSpacing(2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            Spacer(minLength: 0)
+            HStack(spacing: 4) {
+                Image(systemName: "cube")
+                    .font(.system(size: 9, weight: .medium))
+                Text(modelText)
+                    .font(.system(size: 10, weight: .medium))
+                    .lineLimit(1)
+            }
+            .foregroundColor(theme.tertiaryText)
+        }
+        .frame(maxWidth: .infinity, minHeight: 140, alignment: .top)
+        .padding(16)
         .background(
-            theme.secondaryBackground
+            RoundedRectangle(cornerRadius: 12)
+                .fill(theme.cardBackground)
                 .overlay(
-                    Rectangle()
-                        .fill(theme.primaryBorder)
-                        .frame(height: 1),
-                    alignment: .top
+                    RoundedRectangle(cornerRadius: 12)
+                        .strokeBorder(theme.cardBorder, lineWidth: 1)
                 )
         )
+        .shadow(color: Color.black.opacity(0.04), radius: 5, x: 0, y: 2)
+    }
+
+    // MARK: Header / Footer
+
+    private var headerView: some View {
+        AgentSheetHeader(
+            icon: "person.crop.circle.badge.plus",
+            title: "Create Agent",
+            subtitle: "Pick a starter, name it, write a prompt",
+            onClose: onCancel
+        )
+    }
+
+    private var footerView: some View {
+        AgentSheetFooter(
+            primary: AgentSheetFooter.Action(
+                label: "Create Agent",
+                isEnabled: canSave,
+                handler: { saveAgent() }
+            ),
+            secondary: AgentSheetFooter.Action(
+                label: "Cancel",
+                handler: onCancel
+            ),
+            hint: "+ Enter to create"
+        )
+    }
+
+    // MARK: Actions
+
+    /// Apply a starter template's prompt to the form. The name follows the
+    /// preset until the user types their own value (tracked by
+    /// `nameUserEdited`); after that, presets stop touching the name. Picking
+    /// `.blank` resets the name back to empty, which is the right "blank
+    /// slate" behavior when the user is just sampling presets.
+    private func applyTemplate(_ template: AgentStarterTemplate) {
+        selectedTemplate = template
+        systemPrompt = template.systemPrompt
+        if !nameUserEdited {
+            name = template.defaultName
+        }
     }
 
     @MainActor
@@ -3259,115 +3848,28 @@ private struct AgentEditorSheet: View {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedName.isEmpty else { return }
 
+        // Bake the (possibly user-edited) draft sets directly into the new
+        // agent so `seedEnabledCapabilitiesIfNeeded` is a no-op on first
+        // Capabilities-tab open. The auto-grow path keeps these sets fresh
+        // when new plugins are installed later.
         let agent = Agent(
             id: UUID(),
             name: trimmedName,
-            description: description.trimmingCharacters(in: .whitespacesAndNewlines),
+            description: "",
             systemPrompt: systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines),
-            themeId: selectedThemeId,
-            defaultModel: nil,
-            temperature: Float(temperature),
-            maxTokens: Int(maxTokens),
+            themeId: nil,
+            defaultModel: selectedModel,
+            temperature: nil,
+            maxTokens: nil,
             isBuiltIn: false,
             createdAt: Date(),
-            updatedAt: Date()
+            updatedAt: Date(),
+            toolSelectionMode: draftMode,
+            manualToolNames: Array(draftToolNames),
+            manualSkillNames: Array(draftSkillNames)
         )
 
         onSave(agent)
-    }
-}
-
-// MARK: - Editor Section
-
-private struct EditorSection<Content: View>: View {
-    @Environment(\.theme) private var theme
-
-    let title: String
-    let icon: String
-    @ViewBuilder let content: () -> Content
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 8) {
-                Image(systemName: icon)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.accentColor)
-
-                Text(title.uppercased())
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundColor(theme.secondaryText)
-                    .tracking(0.5)
-            }
-
-            content()
-        }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(theme.cardBorder, lineWidth: 1)
-                )
-        )
-    }
-}
-
-// MARK: - Styled Text Field
-
-private struct StyledTextField: View {
-    @Environment(\.theme) private var theme
-
-    let placeholder: String
-    @Binding var text: String
-    let icon: String?
-
-    @State private var isFocused = false
-
-    var body: some View {
-        HStack(spacing: 10) {
-            if let icon = icon {
-                Image(systemName: icon)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(isFocused ? theme.accentColor : theme.tertiaryText)
-                    .frame(width: 16)
-            }
-
-            ZStack(alignment: .leading) {
-                if text.isEmpty {
-                    Text(placeholder)
-                        .font(.system(size: 13))
-                        .foregroundColor(theme.placeholderText)
-                        .allowsHitTesting(false)
-                }
-
-                TextField(
-                    "",
-                    text: $text,
-                    onEditingChanged: { editing in
-                        withAnimation(.easeOut(duration: 0.15)) {
-                            isFocused = editing
-                        }
-                    }
-                )
-                .textFieldStyle(.plain)
-                .font(.system(size: 13))
-                .foregroundColor(theme.primaryText)
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(theme.inputBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(
-                            isFocused ? theme.accentColor.opacity(0.5) : theme.inputBorder,
-                            lineWidth: isFocused ? 1.5 : 1
-                        )
-                )
-        )
     }
 }
 
@@ -3424,46 +3926,6 @@ private struct ThemeOptionCard: View {
         .onHover { hovering in
             isHovered = hovering
         }
-    }
-}
-
-// MARK: - Button Styles
-
-private struct PrimaryButtonStyle: ButtonStyle {
-    @Environment(\.theme) private var theme
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: 13, weight: .medium))
-            .foregroundColor(.white)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(theme.accentColor)
-            )
-            .opacity(configuration.isPressed ? 0.8 : 1.0)
-    }
-}
-
-private struct SecondaryButtonStyle: ButtonStyle {
-    @Environment(\.theme) private var theme
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: 13, weight: .medium))
-            .foregroundColor(theme.primaryText)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(theme.tertiaryBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(theme.inputBorder, lineWidth: 1)
-                    )
-            )
-            .opacity(configuration.isPressed ? 0.8 : 1.0)
     }
 }
 

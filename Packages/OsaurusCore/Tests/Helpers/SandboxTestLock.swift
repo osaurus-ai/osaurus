@@ -2,9 +2,10 @@
 //  SandboxTestLock.swift
 //  OsaurusCoreTests
 //
-//  Process-wide serialization for tests that mutate sandbox globals:
+//  Process-wide serialization for tests that mutate sandbox-adjacent globals:
 //  `ToolRegistry` sandbox tools, `SandboxManager.State`,
-//  `SandboxToolRegistrar` overrides, or `HostAPIBridgeServer.shared`.
+//  `SandboxToolRegistrar` overrides, `HostAPIBridgeServer.shared`,
+//  or synthetic `AgentManager.shared` agents used to resolve sandbox modes.
 //
 
 import Foundation

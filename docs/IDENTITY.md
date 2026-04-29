@@ -213,14 +213,16 @@ Fields are sorted alphabetically for canonical JSON encoding (ensuring consisten
 - **Master-scoped:** Signed by the master key. `iss` and `aud` are both the master address. Grants access to all agents.
 - **Agent-scoped:** Signed by a derived agent key. `iss` and `aud` are both the agent address. Grants access only to that specific agent.
 
+The `/pair` Bonjour flow always issues **agent-scoped** keys (`agentIndex` taken from the approved agent). Keys generated manually from the Settings UI may be either, depending on what the user selects.
+
 ### Expiration Options
 
 | Option | Duration |
 |--------|----------|
 | `30d` | 30 days |
-| `90d` | 90 days |
+| `90d` | 90 days (default for `/pair`) |
 | `1y` | 1 year |
-| `never` | No expiration |
+| `never` | No expiration (only when the user explicitly opts in via the pairing dialog's "Remember this device permanently" toggle) |
 
 ### Validation
 
@@ -333,6 +335,29 @@ External tools, MCP clients, and remote agents authenticate using `osk-v1` acces
 
 Access keys bridge the gap between the hardware-bound internal identity and the need for third-party integrations that can't access the Secure Enclave.
 
+### Bonjour Pairing
+
+The `POST /pair` endpoint is an unauthenticated, signature-verified flow used by the in-app connector to onboard a new device against a Bonjour-discovered agent.
+
+1. Connector signs a nonce with its `connectorAddress` private key (domain prefix `Osaurus Signed Pairing`).
+2. The Osaurus instance verifies the signature, resolves the target agent, and shows an approval dialog naming both the connector and the agent.
+3. On approval, the host mints an **agent-scoped** `osk-v1` key for the approved agent (`agentIndex = agent.agentIndex`) with a **90-day expiration** by default. The user can opt in to a non-expiring key via the dialog's "Remember this device permanently" toggle.
+4. The response body containing the new key is sent on the wire but **never persisted to the request log** — `InsightsService` redacts both `apiKey` JSON values and `Bearer osk-…` headers as defense-in-depth across all logged bodies.
+
+Pairings approved before the agent-scoping fix are master-scoped, never-expiring keys. The Settings → Server pane labels them as **Legacy** and explains: *"Pre-upgrade pairing — grants access to all agents and never expires."* Users can revoke and re-pair to scope them tighter.
+
+### Pre-auth request limits
+
+Both Osaurus HTTP servers reject oversized request bodies before the auth gate runs, so an unauthenticated client cannot exhaust host memory:
+
+| Endpoint | Limit | Configurable via |
+|----------|-------|------------------|
+| `POST /pair` | 64 KiB | `ServerConfiguration.maxPairingBodyBytes` |
+| Other public HTTP routes | 32 MiB | `ServerConfiguration.maxRequestBodyBytes` |
+| Sandbox host bridge | 8 MiB | hard-coded in `HostAPIBridgeHandler` |
+
+Both servers enforce the cap with a `Content-Length` pre-check at request head and a streaming guard at body chunks, so chunked clients and clients that lie about their declared length both hit `413 Payload Too Large`.
+
 ### Future: Cross-Instance Communication
 
 The address-based design naturally extends to agent-to-agent communication across different Osaurus instances. Since every agent has a globally unique address and can sign messages, agents can verify each other's identity without a shared authority — only knowledge of the other agent's address is needed.
@@ -347,10 +372,13 @@ The address-based design naturally extends to agent-to-agent communication acros
 | Agent keys never stored | Re-derived on demand via HMAC-SHA512 from master key |
 | Device keys hardware-bound | Secure Enclave P-256 via App Attest (`DCAppAttestService`) |
 | Anti-replay | Per-device monotonic counter (`cnt`) persisted in `UserDefaults`; server rejects seen values |
-| Domain separation | `Osaurus Signed Message` and `Osaurus Signed Access` prefixes prevent cross-protocol signature reuse |
+| Domain separation | `Osaurus Signed Message`, `Osaurus Signed Access`, and `Osaurus Signed Pairing` prefixes prevent cross-protocol signature reuse |
 | Recovery code single-use | Generated from `SecRandomCopyBytes`, shown once, never stored on device |
 | Canonical encoding | Access key payloads use sorted-key JSON for deterministic signature verification |
 | Memory safety | Master key bytes are zeroed after use (`memset` / index-level zeroing) |
+| Pairings scoped to one agent | `/pair` mints agent-scoped keys (`agentIndex` from approved agent), 90-day default expiry |
+| Issued credentials never logged | `/pair` success path logs a redacted body; `InsightsService.redactCredentials` scrubs `osk-v1` values and `Bearer` headers everywhere as a backstop |
+| Pre-auth body-size limits | `/pair` capped at 64 KiB, other public routes at 32 MiB; rejected with `413` before the auth gate |
 
 ---
 

@@ -132,8 +132,8 @@ final class TrailingTextFader {
 
     private func applyAlpha(now: CFTimeInterval) {
         guard let tv = textView,
-              let lm = tv.layoutManager,
-              let storage = tv.textStorage
+            let lm = tv.layoutManager,
+            let storage = tv.textStorage
         else {
             stopTimer()
             return
@@ -186,8 +186,8 @@ final class TrailingTextFader {
 
     private func clearTempAttributes() {
         guard let tv = textView,
-              let lm = tv.layoutManager,
-              let storage = tv.textStorage
+            let lm = tv.layoutManager,
+            let storage = tv.textStorage
         else { return }
         let full = NSRange(location: 0, length: storage.length)
         lm.removeTemporaryAttribute(.foregroundColor, forCharacterRange: full)

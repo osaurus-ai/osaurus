@@ -923,7 +923,32 @@ extension AppDelegate {
         }
     }
     fileprivate func handleDeepLink(_ url: URL) {
-        guard let scheme = url.scheme?.lowercased(), scheme == "huggingface" else { return }
+        let scheme = url.scheme?.lowercased() ?? ""
+        switch scheme {
+        case "osaurus":
+            handleOsaurusDeepLink(url)
+        case "huggingface":
+            handleHuggingFaceDeepLink(url)
+        default:
+            return
+        }
+    }
+
+    /// `osaurus://<addr>?pair=<base64url(invite)>` — incoming agent share link.
+    /// Stages the decoded invite for `IncomingPairSheet` to present.
+    fileprivate func handleOsaurusDeepLink(_ url: URL) {
+        Task { @MainActor in
+            // Make sure SOMETHING is on screen so the approval panel doesn't
+            // open behind a hidden app. Bring the management window forward
+            // as the anchor — it doesn't matter which tab is selected; the
+            // approval is presented as its own NSPanel via PairingPromptService.
+            NSApp.activate(ignoringOtherApps: true)
+            showManagementWindow(initialTab: .agents)
+            _ = PairingDeepLinkRouter.handle(url)
+        }
+    }
+
+    fileprivate func handleHuggingFaceDeepLink(_ url: URL) {
         guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return }
         let items = components.queryItems ?? []
         let modelId = items.first(where: { $0.name.lowercased() == "model" })?.value?

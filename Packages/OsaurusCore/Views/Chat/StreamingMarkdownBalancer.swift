@@ -50,9 +50,9 @@ enum StreamingMarkdownBalancer {
     private static func lastParagraphRange(in s: String) -> Range<String.Index>? {
         if s.isEmpty { return nil }
         if let r = s.range(of: "\n\n", options: .backwards) {
-            return r.upperBound..<s.endIndex
+            return r.upperBound ..< s.endIndex
         }
-        return s.startIndex..<s.endIndex
+        return s.startIndex ..< s.endIndex
     }
 
     private static func balanceParagraph(_ paragraph: String) -> String {
@@ -111,12 +111,12 @@ enum StreamingMarkdownBalancer {
         if endIdx == s.startIndex { return s }
 
         let lineStart: String.Index
-        if let nl = s.range(of: "\n", options: .backwards, range: s.startIndex..<endIdx) {
+        if let nl = s.range(of: "\n", options: .backwards, range: s.startIndex ..< endIdx) {
             lineStart = nl.upperBound
         } else {
             lineStart = s.startIndex
         }
-        let lastLine = String(s[lineStart..<endIdx]).trimmingCharacters(in: .whitespaces)
+        let lastLine = String(s[lineStart ..< endIdx]).trimmingCharacters(in: .whitespaces)
         guard isIncompleteListMarker(lastLine) else { return s }
 
         let dropFrom = lineStart > s.startIndex ? s.index(before: lineStart) : s.startIndex
@@ -129,7 +129,8 @@ enum StreamingMarkdownBalancer {
         if trimmed.count >= 2,
             let last = trimmed.last,
             (last == "." || last == ")"),
-            trimmed.dropLast().allSatisfy({ $0.isNumber }) {
+            trimmed.dropLast().allSatisfy({ $0.isNumber })
+        {
             return true
         }
         return false
@@ -173,7 +174,7 @@ enum StreamingMarkdownBalancer {
     private static func hasOddDoubleAsteriskCount(_ s: String) -> Bool {
         var count = 0
         var search = s.startIndex
-        while let r = s.range(of: "**", range: search..<s.endIndex) {
+        while let r = s.range(of: "**", range: search ..< s.endIndex) {
             count += 1
             search = r.upperBound
         }
@@ -199,6 +200,6 @@ private extension String {
             if !predicate(self[prev]) { break }
             idx = prev
         }
-        return self[idx..<endIndex]
+        return self[idx ..< endIndex]
     }
 }
