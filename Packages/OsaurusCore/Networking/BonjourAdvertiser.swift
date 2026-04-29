@@ -101,6 +101,11 @@ public final class BonjourAdvertiser: NSObject {
         if let address = agent.agentAddress {
             fields["address"] = address.data(using: .utf8)
         }
+        // E2E encryption key — base64url(32B X25519 public). Process-scoped,
+        // regenerated each launch. Clients see this and switch to HPKE on
+        // any traffic to this agent (LAN or relay).
+        fields["hpke"] = HPKEKeyStore.shared.publicKeyEncoded.data(using: .utf8)
+        fields["hpke_suite"] = HPKEKeyStore.suiteIdentifier.data(using: .utf8)
         return NetService.data(fromTXTRecord: fields)
     }
 }

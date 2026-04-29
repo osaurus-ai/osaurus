@@ -2364,6 +2364,9 @@ struct ChatView: View {
         let host = rawHost.hasSuffix(".") ? String(rawHost.dropLast()) : rawHost
         let manager = RemoteProviderManager.shared
 
+        let hpkeB64 = agent.hpkePublicKey?.base64urlEncoded
+        let hpkeSuite = agent.hpkeSuite
+
         let providerId: UUID
         // Reuse an existing Osaurus provider that already targets the same agent
         if let existing = manager.configuration.providers.first(where: {
@@ -2376,6 +2379,11 @@ struct ChatView: View {
             updated.port = agent.port
             updated.enabled = true
             if let address = agent.address { updated.remoteAgentAddress = address }
+            // Refresh the encryption key on every reconnection — the
+            // remote process regenerates X25519 each launch, so a stale
+            // saved key would prevent every encrypted request.
+            updated.hpkePublicKeyB64 = hpkeB64
+            updated.hpkeSuite = hpkeSuite
             if !token.isEmpty {
                 updated.authType = .apiKey
                 manager.updateProvider(updated, apiKey: token)
@@ -2396,7 +2404,9 @@ struct ChatView: View {
                 enabled: true,
                 autoConnect: true,
                 remoteAgentId: agent.id,
-                remoteAgentAddress: agent.address
+                remoteAgentAddress: agent.address,
+                hpkePublicKeyB64: hpkeB64,
+                hpkeSuite: hpkeSuite
             )
             providerId = provider.id
             manager.addProvider(provider, apiKey: token.isEmpty ? nil : token, isEphemeral: isEphemeral)

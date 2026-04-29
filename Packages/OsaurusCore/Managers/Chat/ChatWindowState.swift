@@ -271,7 +271,8 @@ final class ChatWindowState: ObservableObject {
                 id: agentId,
                 name: provider.name,
                 remoteAgentAddress: relayAddress,
-                providerId: provider.id
+                providerId: provider.id,
+                supportsEncryption: provider.supportsEncryption
             )
         }
     }

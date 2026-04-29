@@ -21,6 +21,23 @@ public struct PairedRelayAgent: Identifiable, Equatable, Sendable {
     public let remoteAgentAddress: String
     /// The local provider ID used to connect to this agent.
     public let providerId: UUID
+    /// True when the backing provider has a usable HPKE public key on file
+    /// (captured at pairing time when the peer was on the local network).
+    public let supportsEncryption: Bool
+
+    public init(
+        id: UUID,
+        name: String,
+        remoteAgentAddress: String,
+        providerId: UUID,
+        supportsEncryption: Bool = false
+    ) {
+        self.id = id
+        self.name = name
+        self.remoteAgentAddress = remoteAgentAddress
+        self.providerId = providerId
+        self.supportsEncryption = supportsEncryption
+    }
 }
 
 // MARK: - DiscoveredAgent
@@ -33,9 +50,20 @@ public struct DiscoveredAgent: Identifiable, Equatable, Sendable {
     public let address: String?
     public let host: String?
     public let port: Int
+    /// Raw 32-byte X25519 public key (HPKE recipient) when the peer
+    /// published one in its TXT record. nil = unencrypted peer.
+    public let hpkePublicKey: Data?
+    /// Wire identifier of the encryption suite (must match
+    /// `HPKEKeyStore.suiteIdentifier` to be usable). nil = unencrypted.
+    public let hpkeSuite: String?
 
     /// Internal key that matches the NetService name for lookup/removal.
     internal let serviceName: String
+
+    /// True when the peer published a usable HPKE key.
+    public var supportsEncryption: Bool {
+        hpkePublicKey != nil && hpkeSuite == HPKEKeyStore.suiteIdentifier
+    }
 }
 
 // MARK: - BonjourBrowser
@@ -89,6 +117,11 @@ public final class BonjourBrowser: NSObject, ObservableObject {
 
         let desc = fields["description"].flatMap { String(data: $0, encoding: .utf8) } ?? ""
         let addr = fields["address"].flatMap { String(data: $0, encoding: .utf8) }
+        let hpkeSuite = fields["hpke_suite"].flatMap { String(data: $0, encoding: .utf8) }
+        let hpkePub = fields["hpke"]
+            .flatMap { String(data: $0, encoding: .utf8) }
+            .flatMap { Data(base64urlEncoded: $0) }
+            .flatMap { $0.count == 32 ? $0 : nil }
 
         let agent = DiscoveredAgent(
             id: agentId,
@@ -97,6 +130,8 @@ public final class BonjourBrowser: NSObject, ObservableObject {
             address: addr,
             host: service.hostName,
             port: Int(service.port),
+            hpkePublicKey: hpkePub,
+            hpkeSuite: hpkeSuite,
             serviceName: service.name
         )
 

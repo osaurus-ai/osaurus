@@ -97,10 +97,19 @@ public struct RemoteProvider: Codable, Identifiable, Sendable, Equatable {
     /// Only used when providerType == .osaurus.
     public var remoteAgentAddress: String?
 
+    /// Base64url-encoded X25519 public key of the remote peer (HPKE recipient).
+    /// Captured from Bonjour TXT at pairing time; nil for peers that don't advertise one.
+    public var hpkePublicKeyB64: String?
+
+    /// Wire identifier of the encryption suite the peer supports (e.g. "x25519-sha256-chachapoly").
+    /// Must match `HPKEKeyStore.suiteIdentifier` to be usable.
+    public var hpkeSuite: String?
+
     private enum CodingKeys: String, CodingKey {
         case id, name, host, providerProtocol, port, basePath
         case customHeaders, authType, providerType, enabled, autoConnect, timeout
         case secretHeaderKeys, remoteAgentId, remoteAgentAddress
+        case hpkePublicKeyB64, hpkeSuite
     }
 
     public init(
@@ -118,7 +127,9 @@ public struct RemoteProvider: Codable, Identifiable, Sendable, Equatable {
         timeout: TimeInterval = 60,
         secretHeaderKeys: [String] = [],
         remoteAgentId: UUID? = nil,
-        remoteAgentAddress: String? = nil
+        remoteAgentAddress: String? = nil,
+        hpkePublicKeyB64: String? = nil,
+        hpkeSuite: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -135,6 +146,8 @@ public struct RemoteProvider: Codable, Identifiable, Sendable, Equatable {
         self.secretHeaderKeys = secretHeaderKeys
         self.remoteAgentId = remoteAgentId
         self.remoteAgentAddress = remoteAgentAddress
+        self.hpkePublicKeyB64 = hpkePublicKeyB64
+        self.hpkeSuite = hpkeSuite
     }
 
     /// Custom decoder – uses `decodeIfPresent` for backward compatibility with older config files.
@@ -157,7 +170,23 @@ public struct RemoteProvider: Codable, Identifiable, Sendable, Equatable {
         secretHeaderKeys = try container.decodeIfPresent([String].self, forKey: .secretHeaderKeys) ?? []
         remoteAgentId = try container.decodeIfPresent(UUID.self, forKey: .remoteAgentId)
         remoteAgentAddress = try container.decodeIfPresent(String.self, forKey: .remoteAgentAddress)
+        hpkePublicKeyB64 = try container.decodeIfPresent(String.self, forKey: .hpkePublicKeyB64)
+        hpkeSuite = try container.decodeIfPresent(String.self, forKey: .hpkeSuite)
     }
+
+    /// Raw 32-byte X25519 public key, decoded from `hpkePublicKeyB64`,
+    /// usable only when `hpkeSuite` matches `HPKEKeyStore.suiteIdentifier`.
+    public var hpkePublicKey: Data? {
+        guard let b64 = hpkePublicKeyB64,
+              hpkeSuite == HPKEKeyStore.suiteIdentifier,
+              let data = Data(base64urlEncoded: b64),
+              data.count == 32
+        else { return nil }
+        return data
+    }
+
+    /// True when the provider has a usable encryption key on file.
+    public var supportsEncryption: Bool { hpkePublicKey != nil }
 
     /// Get the effective port (uses protocol default if not specified)
     public var effectivePort: Int {

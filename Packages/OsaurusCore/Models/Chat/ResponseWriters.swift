@@ -10,6 +10,46 @@ import IkigaJSON
 import NIOCore
 import NIOHTTP1
 
+/// Wraps the per-event NIO body write so it can transparently route
+/// through an `HPKEServerContext` when one is attached. When encryption
+/// is active the buffer is sealed with ChaChaPoly (key derived from the
+/// HPKE base context exporter) and emitted as a single SSE event of the
+/// form `data: <counter>:<base64>\n\n`.
+private func emitEvent(
+    plaintext buffer: ByteBuffer,
+    encryption: HPKEServerContext?,
+    context: ChannelHandlerContext
+) {
+    if let enc = encryption {
+        let bytes = buffer.getBytes(at: buffer.readerIndex, length: buffer.readableBytes) ?? []
+        let plaintext = Data(bytes)
+        guard let result = try? enc.sealStreamChunk(plaintext) else {
+            context.close(promise: nil)
+            return
+        }
+        var out = context.channel.allocator.buffer(capacity: result.base64.count + 32)
+        out.writeString("data: ")
+        out.writeString(String(result.counter))
+        out.writeString(":")
+        out.writeString(result.base64)
+        out.writeString("\n\n")
+        context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(out))), promise: nil)
+        context.flush()
+    } else {
+        context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
+        context.flush()
+    }
+}
+
+/// Adds the X-Osaurus-Encryption header in stream mode when encryption
+/// is active, so the client knows to run each `data:` line through
+/// `HPKEClientContext.openStreamChunk`.
+private func appendEncryptionHeaders(_ headers: inout HTTPHeaders, encryption: HPKEServerContext?) {
+    if encryption != nil {
+        headers.add(name: HPKEHeader.encryption, value: HPKEHeader.streamValue)
+    }
+}
+
 protocol ResponseWriter {
     func writeHeaders(_ context: ChannelHandlerContext, extraHeaders: [(String, String)]?)
     func writeRole(
@@ -39,6 +79,10 @@ protocol ResponseWriter {
 }
 
 final class SSEResponseWriter: ResponseWriter {
+    /// Set by handlers when the inbound request was HPKE-encrypted; each
+    /// SSE event is then sealed and emitted as a single encrypted
+    /// `data: <counter>:<b64>\n\n` line.
+    var encryption: HPKEServerContext?
 
     func writeHeaders(_ context: ChannelHandlerContext, extraHeaders: [(String, String)]? = nil) {
         var head = HTTPResponseHead(version: .http1_1, status: .ok)
@@ -51,6 +95,7 @@ final class SSEResponseWriter: ResponseWriter {
         if let extraHeaders {
             for (n, v) in extraHeaders { headers.add(name: n, value: v) }
         }
+        appendEncryptionHeaders(&headers, encryption: encryption)
         head.headers = headers
         context.write(NIOAny(HTTPServerResponsePart.head(head)), promise: nil)
         context.flush()
@@ -255,8 +300,7 @@ final class SSEResponseWriter: ResponseWriter {
         do {
             try encoder.encodeAndWrite(chunk, into: &buffer)
             buffer.writeString("\n\n")
-            context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
-            context.flush()
+            emitEvent(plaintext: buffer, encryption: encryption, context: context)
         } catch {
             // Log encoding error and close connection gracefully
             print("Error encoding SSE chunk: \(error)")
@@ -279,23 +323,21 @@ final class SSEResponseWriter: ResponseWriter {
             )
             try encoder.encodeAndWrite(err, into: &buffer)
             buffer.writeString("\n\n")
-            context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
-            context.flush()
+            emitEvent(plaintext: buffer, encryption: encryption, context: context)
         } catch {
             // As a last resort, send a minimal JSON error payload
             buffer.clear()
             buffer.writeString("data: {\"error\":{\"message\":\"")
             buffer.writeString(message)
             buffer.writeString("\",\"type\":\"internal_error\"}}\n\n")
-            context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
-            context.flush()
+            emitEvent(plaintext: buffer, encryption: encryption, context: context)
         }
     }
 
     func writeEnd(_ context: ChannelHandlerContext) {
         var tail = context.channel.allocator.buffer(capacity: 16)
         tail.writeString("data: [DONE]\n\n")
-        context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(tail))), promise: nil)
+        emitEvent(plaintext: tail, encryption: encryption, context: context)
         let ctx = NIOLoopBound(context, eventLoop: context.eventLoop)
         context.writeAndFlush(NIOAny(HTTPServerResponsePart.end(nil as HTTPHeaders?))).whenComplete {
             _ in
@@ -307,6 +349,8 @@ final class SSEResponseWriter: ResponseWriter {
     /// lines start with `:` and are ignored by clients per the SSE spec, but
     /// they keep intermediate proxies / load balancers from idling out long
     /// tool/thinking pauses. Safe to call mid-stream.
+    /// Always plaintext: the comment carries no payload and skipping
+    /// encryption avoids burning AEAD counters on heartbeats.
     func writePing(_ context: ChannelHandlerContext) {
         var buf = context.channel.allocator.buffer(capacity: 16)
         buf.writeString(": ping\n\n")
@@ -343,6 +387,8 @@ final class SSEResponseWriter: ResponseWriter {
 }
 
 final class NDJSONResponseWriter: ResponseWriter {
+    var encryption: HPKEServerContext?
+
     func writeHeaders(_ context: ChannelHandlerContext, extraHeaders: [(String, String)]? = nil) {
         var head = HTTPResponseHead(version: .http1_1, status: .ok)
         var headers = HTTPHeaders()
@@ -353,6 +399,7 @@ final class NDJSONResponseWriter: ResponseWriter {
         if let extraHeaders {
             for (n, v) in extraHeaders { headers.add(name: n, value: v) }
         }
+        appendEncryptionHeaders(&headers, encryption: encryption)
         head.headers = headers
         context.write(NIOAny(HTTPServerResponsePart.head(head)), promise: nil)
         context.flush()
@@ -411,8 +458,7 @@ final class NDJSONResponseWriter: ResponseWriter {
             var buffer = context.channel.allocator.buffer(capacity: 256)
             buffer.writeBytes(jsonData)
             buffer.writeString("\n")
-            context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
-            context.flush()
+            emitEvent(plaintext: buffer, encryption: encryption, context: context)
         }
     }
 
@@ -428,8 +474,7 @@ final class NDJSONResponseWriter: ResponseWriter {
             var buffer = context.channel.allocator.buffer(capacity: 256)
             buffer.writeBytes(jsonData)
             buffer.writeString("\n")
-            context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
-            context.flush()
+            emitEvent(plaintext: buffer, encryption: encryption, context: context)
         }
     }
 
@@ -447,6 +492,7 @@ final class NDJSONResponseWriter: ResponseWriter {
 /// SSE Response Writer for Anthropic Messages API format
 /// Emits events: message_start, content_block_start, content_block_delta, content_block_stop, message_delta, message_stop
 final class AnthropicSSEResponseWriter {
+    var encryption: HPKEServerContext?
     private var messageId: String = ""
     private var model: String = ""
     private var inputTokens: Int = 0
@@ -466,6 +512,7 @@ final class AnthropicSSEResponseWriter {
         if let extraHeaders {
             for (n, v) in extraHeaders { headers.add(name: n, value: v) }
         }
+        appendEncryptionHeaders(&headers, encryption: encryption)
         head.headers = headers
         context.write(NIOAny(HTTPServerResponsePart.head(head)), promise: nil)
         context.flush()
@@ -610,8 +657,7 @@ final class AnthropicSSEResponseWriter {
         do {
             try encoder.encodeAndWrite(error, into: &buffer)
             buffer.writeString("\n\n")
-            context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
-            context.flush()
+            emitEvent(plaintext: buffer, encryption: encryption, context: context)
         } catch {
             buffer.clear()
             buffer.writeString(
@@ -619,8 +665,7 @@ final class AnthropicSSEResponseWriter {
             )
             buffer.writeString(message)
             buffer.writeString("\"}}\n\n")
-            context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
-            context.flush()
+            emitEvent(plaintext: buffer, encryption: encryption, context: context)
         }
     }
 
@@ -659,8 +704,7 @@ final class AnthropicSSEResponseWriter {
         do {
             try encoder.encodeAndWrite(payload, into: &buffer)
             buffer.writeString("\n\n")
-            context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
-            context.flush()
+            emitEvent(plaintext: buffer, encryption: encryption, context: context)
         } catch {
             print("Error encoding Anthropic SSE event: \(error)")
             context.close(promise: nil)
@@ -673,6 +717,7 @@ final class AnthropicSSEResponseWriter {
 /// SSE Response Writer for Open Responses API format
 /// Emits semantic events: response.created, response.output_item.added, response.output_text.delta, etc.
 final class OpenResponsesSSEWriter {
+    var encryption: HPKEServerContext?
     private var responseId: String = ""
     private var model: String = ""
     private var inputTokens: Int = 0
@@ -702,6 +747,7 @@ final class OpenResponsesSSEWriter {
         if let extraHeaders {
             for (n, v) in extraHeaders { headers.add(name: n, value: v) }
         }
+        appendEncryptionHeaders(&headers, encryption: encryption)
         head.headers = headers
         context.write(NIOAny(HTTPServerResponsePart.head(head)), promise: nil)
         context.flush()
@@ -1035,7 +1081,7 @@ final class OpenResponsesSSEWriter {
     func writeEnd(_ context: ChannelHandlerContext) {
         var tail = context.channel.allocator.buffer(capacity: 16)
         tail.writeString("data: [DONE]\n\n")
-        context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(tail))), promise: nil)
+        emitEvent(plaintext: tail, encryption: encryption, context: context)
         let ctx = NIOLoopBound(context, eventLoop: context.eventLoop)
         context.writeAndFlush(NIOAny(HTTPServerResponsePart.end(nil as HTTPHeaders?))).whenComplete {
             _ in
@@ -1055,8 +1101,7 @@ final class OpenResponsesSSEWriter {
         do {
             try encoder.encodeAndWrite(payload, into: &buffer)
             buffer.writeString("\n\n")
-            context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
-            context.flush()
+            emitEvent(plaintext: buffer, encryption: encryption, context: context)
         } catch {
             print("Error encoding Open Responses SSE event: \(error)")
             context.close(promise: nil)

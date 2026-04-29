@@ -40,6 +40,11 @@ public struct MasterKey: Sendable {
             }
         }
 
+        // Derive and persist the HPKE keypair while the master key is in
+        // scope, so future server launches can publish a stable public
+        // key without prompting for biometric again.
+        HPKEKeyStore.shared.warmUp(masterKey: keyData)
+
         return osaurusId
     }
 

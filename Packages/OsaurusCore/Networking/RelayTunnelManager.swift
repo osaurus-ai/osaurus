@@ -184,6 +184,11 @@ public final class RelayTunnelManager: ObservableObject {
             return
         }
 
+        // Opportunistically warm the HPKE keypair while we have the
+        // master key unlocked. Idempotent — covers the post-upgrade case
+        // where the keychain entry is empty even though identity exists.
+        HPKEKeyStore.shared.warmUp(masterKey: masterKey)
+
         let session = URLSession(configuration: .default)
         let task = session.webSocketTask(with: Self.relayURL)
         self.urlSession = session

@@ -176,18 +176,25 @@ public actor RemoteProviderService: ToolCapableService {
         )
 
         try await refreshCodexOAuthIfNeeded()
-        let (data, response) = try await session.data(for: try buildURLRequest(for: request))
+        let outgoing = try buildOutgoingRequest(for: request)
+        let (data, response) = try await session.data(for: outgoing.request)
 
         guard let httpResponse = response as? HTTPURLResponse else {
             throw RemoteProviderServiceError.invalidResponse
         }
 
+        let plaintext = try Self.decryptResponseIfNeeded(
+            data: data,
+            response: httpResponse,
+            hpke: outgoing.encryption
+        )
+
         if httpResponse.statusCode >= 400 {
-            let errorMessage = String(data: data, encoding: .utf8) ?? "Unknown error"
+            let errorMessage = String(data: plaintext, encoding: .utf8) ?? "Unknown error"
             throw RemoteProviderServiceError.requestFailed("HTTP \(httpResponse.statusCode): \(errorMessage)")
         }
 
-        let (content, _) = try parseResponse(data)
+        let (content, _) = try parseResponse(plaintext)
         return content ?? ""
     }
 
@@ -261,18 +268,25 @@ public actor RemoteProviderService: ToolCapableService {
         }
 
         try await refreshCodexOAuthIfNeeded()
-        let (data, response) = try await session.data(for: try buildURLRequest(for: request))
+        let outgoing = try buildOutgoingRequest(for: request)
+        let (data, response) = try await session.data(for: outgoing.request)
 
         guard let httpResponse = response as? HTTPURLResponse else {
             throw RemoteProviderServiceError.invalidResponse
         }
 
+        let plaintext = try Self.decryptResponseIfNeeded(
+            data: data,
+            response: httpResponse,
+            hpke: outgoing.encryption
+        )
+
         if httpResponse.statusCode >= 400 {
-            let errorMessage = String(data: data, encoding: .utf8) ?? "Unknown error"
+            let errorMessage = String(data: plaintext, encoding: .utf8) ?? "Unknown error"
             throw RemoteProviderServiceError.requestFailed("HTTP \(httpResponse.statusCode): \(errorMessage)")
         }
 
-        let (content, toolCalls) = try parseResponse(data)
+        let (content, toolCalls) = try parseResponse(plaintext)
 
         // Check for tool calls
         if let toolCalls = toolCalls, let firstCall = toolCalls.first {
@@ -527,6 +541,89 @@ public actor RemoteProviderService: ToolCapableService {
             }
             continuation.onTermination = { _ in pumpTask.cancel() }
         }
+    }
+
+    /// Wrap a byte stream with HPKE decryption. The server emits each
+    /// SSE event as `data: <counter>:<base64>\n\n` with the original
+    /// event bytes (which may themselves be multi-line) inside; plaintext
+    /// keepalives stay as `: ping\n\n`. Returns a chunk stream of the
+    /// recovered plaintext SSE bytes — drop-in replacement for
+    /// `makeChunkStream` so the existing line parser sees plaintext.
+    static func makeDecryptingChunkStream(
+        from bytes: URLSession.AsyncBytes,
+        hpke: HPKEClientContext
+    ) -> AsyncThrowingStream<Data, Error> {
+        AsyncThrowingStream<Data, Error> { continuation in
+            let pumpTask = Task {
+                let separator = Data("\n\n".utf8)
+                let dataPrefix = Data("data: ".utf8)
+                let commentPrefix = Data(":".utf8)
+                var buffer = Data()
+                // Index in `buffer` from which the next \n\n search may
+                // start. Avoids the O(n²) cost of re-scanning bytes that
+                // were already known not to contain the separator.
+                var searchStart = 0
+                do {
+                    for try await byte in bytes {
+                        if Task.isCancelled { break }
+                        buffer.append(byte)
+                        while let r = buffer.range(
+                            of: separator,
+                            in: searchStart..<buffer.count
+                        ) {
+                            let event = buffer.subdata(in: 0..<r.lowerBound)
+                            buffer.removeSubrange(0..<r.upperBound)
+                            searchStart = 0
+                            if event.isEmpty { continue }
+                            if event.starts(with: dataPrefix) {
+                                let payloadBytes = event.subdata(in: dataPrefix.count..<event.count)
+                                guard let payload = String(data: payloadBytes, encoding: .utf8) else {
+                                    continuation.finish(throwing: HPKEError.malformedStreamEvent)
+                                    return
+                                }
+                                let opened = try hpke.openStreamChunk(payload)
+                                continuation.yield(opened.plaintext)
+                            } else if event.starts(with: commentPrefix) {
+                                // Heartbeat — pass straight through with the
+                                // boundary the parser expects.
+                                var passthrough = event
+                                passthrough.append(separator)
+                                continuation.yield(passthrough)
+                            }
+                            // Unknown lines drop on the floor.
+                        }
+                        // Advance the search window past the bytes we've
+                        // already inspected, leaving 1 byte of overlap so
+                        // a separator straddling the boundary still matches.
+                        searchStart = max(0, buffer.count - (separator.count - 1))
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in pumpTask.cancel() }
+        }
+    }
+
+    /// Decrypt a non-streaming response if the server signaled HPKE.
+    /// No-op when the request was unencrypted or the response wasn't.
+    static func decryptResponseIfNeeded(
+        data: Data,
+        response: HTTPURLResponse,
+        hpke: HPKEClientContext?
+    ) throws -> Data {
+        guard let hpke,
+              let header = response.value(forHTTPHeaderField: HPKEHeader.encryption),
+              header.contains("hpke;")
+        else {
+            return data
+        }
+        let encoded = String(data: data, encoding: .utf8) ?? ""
+        guard let combined = Data(base64urlEncoded: encoded) ?? Data(base64Encoded: encoded) else {
+            throw HPKEError.invalidBodyEncoding
+        }
+        return try hpke.openResponseBody(combined)
     }
 
     /// Mutable holder for an `AsyncThrowingStream<Data, Error>` iterator so it
@@ -1147,7 +1244,9 @@ public actor RemoteProviderService: ToolCapableService {
         if !stopSequences.isEmpty { request.stop = stopSequences }
 
         try await refreshCodexOAuthIfNeeded()
-        let urlRequest = try buildURLRequest(for: request)
+        let outgoing = try buildOutgoingRequest(for: request)
+        let urlRequest = outgoing.request
+        let hpkeCtx = outgoing.encryption
         let currentSession = self.session
         let providerType = self.provider.providerType
         let inactivityTimeout = self.streamInactivityTimeout
@@ -1181,7 +1280,12 @@ public actor RemoteProviderService: ToolCapableService {
                     for try await byte in bytes {
                         errorData.append(byte)
                     }
-                    let errorMessage = String(data: errorData, encoding: .utf8) ?? "Unknown error"
+                    let plaintextError = (try? Self.decryptResponseIfNeeded(
+                        data: errorData,
+                        response: httpResponse,
+                        hpke: hpkeCtx
+                    )) ?? errorData
+                    let errorMessage = String(data: plaintextError, encoding: .utf8) ?? "Unknown error"
                     continuation.finish(
                         throwing: RemoteProviderServiceError.requestFailed(
                             "HTTP \(httpResponse.statusCode): \(errorMessage)"
@@ -1197,7 +1301,15 @@ public actor RemoteProviderService: ToolCapableService {
                 // chunk arrival — no intermediate AsyncStream layer.
                 var sseEventData = ""
                 var lineParser = SSELineParser()
-                let chunkStream = Self.makeChunkStream(from: bytes)
+                let chunkStream: AsyncThrowingStream<Data, Error>
+                if let hpkeCtx,
+                   let header = httpResponse.value(forHTTPHeaderField: HPKEHeader.encryption),
+                   header.contains("hpke;")
+                {
+                    chunkStream = Self.makeDecryptingChunkStream(from: bytes, hpke: hpkeCtx)
+                } else {
+                    chunkStream = Self.makeChunkStream(from: bytes)
+                }
                 let chunkIter = ChunkIteratorRef(chunkStream.makeAsyncIterator())
 
                 chunkLoop: while true {
@@ -1612,22 +1724,28 @@ public actor RemoteProviderService: ToolCapableService {
             request.stop = stopSequences
         }
 
-        let urlRequest = try buildURLRequest(for: request)
+        let outgoing = try buildOutgoingRequest(for: request)
         let currentSession = self.session
 
         let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
 
         let producerTask = Task {
             do {
-                let (data, response) = try await currentSession.data(for: urlRequest)
+                let (data, response) = try await currentSession.data(for: outgoing.request)
 
                 guard let httpResponse = response as? HTTPURLResponse else {
                     continuation.finish(throwing: RemoteProviderServiceError.invalidResponse)
                     return
                 }
 
+                let plaintext = try Self.decryptResponseIfNeeded(
+                    data: data,
+                    response: httpResponse,
+                    hpke: outgoing.encryption
+                )
+
                 if httpResponse.statusCode >= 400 {
-                    let errorMessage = String(data: data, encoding: .utf8) ?? "Unknown error"
+                    let errorMessage = String(data: plaintext, encoding: .utf8) ?? "Unknown error"
                     continuation.finish(
                         throwing: RemoteProviderServiceError.requestFailed(
                             "HTTP \(httpResponse.statusCode): \(errorMessage)"
@@ -1638,7 +1756,7 @@ public actor RemoteProviderService: ToolCapableService {
 
                 let geminiResponse = try JSONDecoder().decode(
                     GeminiGenerateContentResponse.self,
-                    from: data
+                    from: plaintext
                 )
 
                 if let parts = geminiResponse.candidates?.first?.content?.parts {
@@ -1690,7 +1808,21 @@ public actor RemoteProviderService: ToolCapableService {
     }
 
     /// Build a URLRequest for the chat completions endpoint
+    /// Result of building a remote URL request. When `encryption` is
+    /// non-nil the request body has been HPKE-sealed and base64-encoded;
+    /// callers must run the corresponding response back through the
+    /// returned context (`openResponseBody` for non-streaming, the
+    /// decrypting chunk stream for SSE).
+    struct OutgoingRequest {
+        let request: URLRequest
+        let encryption: HPKEClientContext?
+    }
+
     private func buildURLRequest(for request: RemoteChatRequest) throws -> URLRequest {
+        try buildOutgoingRequest(for: request).request
+    }
+
+    private func buildOutgoingRequest(for request: RemoteChatRequest) throws -> OutgoingRequest {
         let url: URL
 
         if provider.providerType == .gemini {
@@ -1808,8 +1940,31 @@ public actor RemoteProviderService: ToolCapableService {
             // Both providers consume the unmodified OpenAI-compatible body.
             bodyData = try encoder.encode(request)
         }
+
+        // HPKE wrap: when the peer published an X25519 key, replace the
+        // plaintext body with the sealed-and-base64 form and stamp the
+        // request with the encryption headers. Path used in the AAD is
+        // the URL path *as the relay will forward it* — `url.path` matches
+        // what the inference server sees in `HTTPHandler.normalize(...)`.
+        if let recipientKey = provider.hpkePublicKey {
+            let path = url.path + (url.query.map { "?\($0)" } ?? "")
+            let hpke = try HPKEClientContext(
+                recipientPublicKey: recipientKey,
+                method: "POST",
+                path: path
+            )
+            let sealed = try hpke.sealRequestBody(bodyData)
+            let b64 = sealed.base64urlEncoded
+            urlRequest.httpBody = Data(b64.utf8)
+            urlRequest.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+            for (name, value) in hpke.requestHeaders {
+                urlRequest.setValue(value, forHTTPHeaderField: name)
+            }
+            return OutgoingRequest(request: urlRequest, encryption: hpke)
+        }
+
         urlRequest.httpBody = bodyData
-        return urlRequest
+        return OutgoingRequest(request: urlRequest, encryption: nil)
     }
 
     /// Parse response based on provider type

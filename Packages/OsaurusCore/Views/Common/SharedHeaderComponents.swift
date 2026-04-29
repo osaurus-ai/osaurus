@@ -141,7 +141,34 @@ struct AgentPill: View {
         var parts = [agent.name]
         if let host = agent.host { parts.append("(\(shortHost(host)))") }
         if !agent.agentDescription.isEmpty { parts.append("– \(agent.agentDescription)") }
+        if !agent.supportsEncryption { parts.append("· unencrypted") }
         return parts.joined(separator: " ")
+    }
+
+    /// Lock-flavored icon for an encrypted peer; plain network/antenna
+    /// icon for an unencrypted one. The active row shows a checkmark
+    /// instead so the selection state remains the dominant signal.
+    private func icon(for remote: DiscoveredAgent) -> String {
+        if activeDiscoveredAgent?.id == remote.id { return "checkmark" }
+        return remote.supportsEncryption ? "lock.shield" : "network"
+    }
+
+    private func icon(for relay: PairedRelayAgent) -> String {
+        if activeRelayAgent?.id == relay.id { return "checkmark" }
+        return relay.supportsEncryption ? "lock.shield" : "antenna.radiowaves.left.and.right"
+    }
+
+    /// Short status string appended to the active selection in the pill
+    /// label so the user sees `(end-to-end encrypted)` or `(unencrypted)`
+    /// without opening the menu.
+    private var encryptionBadge: String? {
+        if let r = activeDiscoveredAgent {
+            return r.supportsEncryption ? "end-to-end encrypted" : "unencrypted"
+        }
+        if let r = activeRelayAgent {
+            return r.supportsEncryption ? "end-to-end encrypted" : "unencrypted"
+        }
+        return nil
     }
 
     private var displayName: String {
@@ -177,10 +204,7 @@ struct AgentPill: View {
                 Section {
                     ForEach(discoveredAgents) { remote in
                         Button(action: { onSelectDiscoveredAgent?(remote) }) {
-                            Label(
-                                label(for: remote),
-                                systemImage: activeDiscoveredAgent?.id == remote.id ? "checkmark" : "network"
-                            )
+                            Label(label(for: remote), systemImage: icon(for: remote))
                         }
                     }
                 } header: {
@@ -194,9 +218,10 @@ struct AgentPill: View {
                     ForEach(pairedRelayAgents) { relay in
                         Button(action: { onSelectRelayAgent?(relay) }) {
                             Label(
-                                relay.name,
-                                systemImage: activeRelayAgent?.id == relay.id
-                                    ? "checkmark" : "antenna.radiowaves.left.and.right"
+                                relay.supportsEncryption
+                                    ? relay.name
+                                    : "\(relay.name) · unencrypted",
+                                systemImage: icon(for: relay)
                             )
                         }
                     }
@@ -218,9 +243,19 @@ struct AgentPill: View {
             }
         } label: {
             HStack(spacing: 6) {
-                Image(systemName: isRemoteActive ? "network" : "person.fill")
+                let pillIcon: String = {
+                    if let r = activeDiscoveredAgent {
+                        return r.supportsEncryption ? "lock.shield" : "network"
+                    }
+                    if let r = activeRelayAgent {
+                        return r.supportsEncryption ? "lock.shield" : "antenna.radiowaves.left.and.right"
+                    }
+                    return "person.fill"
+                }()
+                Image(systemName: pillIcon)
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(isHovered ? theme.accentColor : theme.secondaryText)
+                    .help(encryptionBadge ?? "")
 
                 Text(displayName)
                     .font(theme.font(size: CGFloat(theme.bodySize), weight: .medium))
