@@ -45,7 +45,7 @@ enum ModelSortOption: String, CaseIterable, Identifiable {
 
 /// Deep linking is supported via `deeplinkModelId` to open the view with a specific model pre-selected.
 struct ModelDownloadView: View {
-    
+
     // MARK: - State Management
 
     /// Shared model manager for handling downloads and model state
@@ -1009,7 +1009,8 @@ struct ModelDownloadView: View {
         case .llm: type = "llm"
         case .vlm: type = "vlm"
         }
-        return "\(type)|\(filterState.sizeCategory?.rawValue ?? "_")|\(filterState.paramCategory?.rawValue ?? "_")|\(filterState.performance?.rawValue ?? "_")|\(filterState.family ?? "_")"
+        return
+            "\(type)|\(filterState.sizeCategory?.rawValue ?? "_")|\(filterState.paramCategory?.rawValue ?? "_")|\(filterState.performance?.rawValue ?? "_")|\(filterState.family ?? "_")"
     }
 
     /// Consolidates all list computations. Each input pipeline runs once.
@@ -1547,7 +1548,9 @@ private struct HuggingFaceImportSheet: View {
 
     private func submit() {
         guard let repoId = ModelManager.parseHuggingFaceRepoId(from: trimmedInput) else {
-            errorMessage = L("That doesn't look like a Hugging Face repo. Use the format org/repo or paste a huggingface.co URL.")
+            errorMessage = L(
+                "That doesn't look like a Hugging Face repo. Use the format org/repo or paste a huggingface.co URL."
+            )
             return
         }
         errorMessage = nil
@@ -1558,7 +1561,9 @@ private struct HuggingFaceImportSheet: View {
             if resolved != nil {
                 onImported(repoId)
             } else {
-                errorMessage = L("This repo doesn't appear to be MLX-compatible. Try a model from mlx-community or one with “-mlx” in its name.")
+                errorMessage = L(
+                    "This repo doesn't appear to be MLX-compatible. Try a model from mlx-community or one with “-mlx” in its name."
+                )
             }
         }
     }

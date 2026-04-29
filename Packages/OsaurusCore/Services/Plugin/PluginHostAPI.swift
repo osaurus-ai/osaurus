@@ -537,19 +537,28 @@ final class PluginHostContext: @unchecked Sendable {
         // (sandbox > host folder > none). Previously this path was hard-
         // coded to `folderContext: nil`, so a host-folder agent driven via
         // a plugin would silently lose its folder tools.
-        let execMode = await MainActor.run {
-            ToolRegistry.shared.resolveExecutionMode(
+        let (execMode, agentModel) = await MainActor.run { () -> (ExecutionMode, String?) in
+            let mode = ToolRegistry.shared.resolveExecutionMode(
                 folderContext: FolderContextService.shared.currentContext,
                 autonomousEnabled: resolved.autonomousEnabled
             )
+            // Snapshot the agent's effective model so it can ride along to
+            // `composeChatContext` as the preflight chat-model fallback
+            // (GitHub issue #823).
+            let model = AgentManager.shared.effectiveModel(for: agentId)
+            return (mode, model)
         }
-        let composed = await SystemPromptComposer.composeChatContext(agentId: agentId, executionMode: execMode)
+        let composed = await SystemPromptComposer.composeChatContext(
+            agentId: agentId,
+            executionMode: execMode,
+            model: agentModel
+        )
         return await MainActor.run {
             let mgr = AgentManager.shared
             return AgentContext(
                 agentId: agentId,
                 systemPrompt: composed.prompt,
-                model: mgr.effectiveModel(for: agentId),
+                model: agentModel,
                 temperature: mgr.effectiveTemperature(for: agentId),
                 maxTokens: mgr.effectiveMaxTokens(for: agentId),
                 tools: composed.tools.isEmpty ? nil : composed.tools,
@@ -734,7 +743,14 @@ final class PluginHostContext: @unchecked Sendable {
             return (mode, tools)
         }
 
-        let preflight = await PreflightCapabilitySearch.search(query: query, mode: preflightMode, agentId: agentId)
+        // Forward `request.model` as the preflight chat-model fallback —
+        // see `PreflightCapabilitySearch.search(...)` and GitHub issue #823.
+        let preflight = await PreflightCapabilitySearch.search(
+            query: query,
+            mode: preflightMode,
+            agentId: agentId,
+            model: inference.request.model
+        )
 
         if let sid = inference.request.session_id {
             // Snapshot the always-loaded names this turn so subsequent

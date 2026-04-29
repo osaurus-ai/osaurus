@@ -375,24 +375,33 @@ struct ModelDetailView: View, Identifiable {
                 return (
                     "checkmark.shield.fill",
                     L("Should run smoothly on this Mac"),
-                    String(format: L("Estimated %@ used of %.0f GB unified memory"),
-                           model.formattedEstimatedMemory ?? "—", totalMem),
+                    String(
+                        format: L("Estimated %@ used of %.0f GB unified memory"),
+                        model.formattedEstimatedMemory ?? "—",
+                        totalMem
+                    ),
                     theme.successColor
                 )
             case .tight:
                 return (
                     "exclamationmark.triangle.fill",
                     L("Will be a tight fit"),
-                    String(format: L("Estimated %@ on a %.0f GB Mac — close other apps for best results"),
-                           model.formattedEstimatedMemory ?? "—", totalMem),
+                    String(
+                        format: L("Estimated %@ on a %.0f GB Mac — close other apps for best results"),
+                        model.formattedEstimatedMemory ?? "—",
+                        totalMem
+                    ),
                     theme.warningColor
                 )
             case .tooLarge:
                 return (
                     "xmark.octagon.fill",
                     L("Too large for this Mac"),
-                    String(format: L("Estimated %@ exceeds the %.0f GB available — try a smaller variant"),
-                           model.formattedEstimatedMemory ?? "—", totalMem),
+                    String(
+                        format: L("Estimated %@ exceeds the %.0f GB available — try a smaller variant"),
+                        model.formattedEstimatedMemory ?? "—",
+                        totalMem
+                    ),
                     theme.errorColor
                 )
             case .unknown:

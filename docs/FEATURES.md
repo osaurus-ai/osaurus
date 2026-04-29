@@ -279,7 +279,7 @@ See [INFERENCE_RUNTIME.md](./INFERENCE_RUNTIME.md) for the full runtime architec
 
 ### Anthropic API Compatibility
 
-**Purpose:** Provide Anthropic Messages API compatibility for Claude Code and other Anthropic SDK clients.
+**Purpose:** Provide Anthropic Messages API compatibility for Anthropic SDK-compatible clients.
 
 **Components:**
 

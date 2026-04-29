@@ -77,33 +77,40 @@ After copying a fresh `sqlite3.h` over the top, re-apply by:
    #endif /* OSAURUS_OMIT_FTS5_HEADERS — END OSAURUS LOCAL MODIFICATION */
    ```
 
-Similarly, `include/sqlite3ext.h` has an OSAURUS LOCAL MODIFICATION that
-wraps the entire file in `#ifndef OSAURUS_OMIT_SQLITE3EXT_HEADERS` to
-prevent `struct sqlite3_api_routines` from colliding with Apple's system
-`SQLite3` module.
-
-After copying a fresh `sqlite3ext.h` over the top, re-apply by:
-
-1. Find the `#ifndef SQLITE3EXT_H` line. Insert this block immediately
-   after `#define SQLITE3EXT_H`:
-
-   ```c
-   #ifndef OSAURUS_OMIT_SQLITE3EXT_HEADERS
-   ```
-
-2. Find the matching `#endif /* SQLITE3EXT_H */` line at the end. Insert
-   immediately before it:
-
-   ```c
-   #endif /* OSAURUS_OMIT_SQLITE3EXT_HEADERS — END OSAURUS LOCAL MODIFICATION */
-   ```
-
-3. Run `swift build`. If anything red, see the explainer in
-   `sqlcipher_amalgamation.c`.
+3. Confirm `OsaurusSQLCipher.h` still defines
+   `OSAURUS_OMIT_FTS5_HEADERS` before it includes `sqlite3.h`, and
+   `Package.swift` still defines the same flag in the
+   `OsaurusSQLCipher` target `cSettings`.
 
 The amalgamation `sqlite3.c` itself is **not** modified — it inlines
 its own copy of sqlite3.h text, so the C compilation of FTS5 keeps
 working.
+
+### Re-applying the sqlite3ext import guard
+
+`include/sqlite3ext.h` has an OSAURUS LOCAL MODIFICATION that hides the
+loadable-extension API behind `OSAURUS_OMIT_SQLITE_EXTENSION_API`.
+`include/OsaurusSQLCipher.h` defines that macro before including
+`sqlite3ext.h`.
+
+This exists because Osaurus imports SQLCipher from Swift for the core
+SQLite API, not for compiling SQLite loadable extensions. Apple's
+system `SQLite3` module is also imported by dependencies in the same
+Swift build. When newer macOS SDKs append fields to
+`sqlite3_api_routines` before this pinned SQLCipher version adopts the
+same upstream SQLite release, Swift's Clang importer rejects the build
+with a cross-module struct-definition mismatch.
+
+After copying a fresh `sqlite3ext.h` over the top, re-apply by:
+
+1. Find `#include "sqlite3.h"` near the top of the file. Insert the
+   `#ifndef OSAURUS_OMIT_SQLITE_EXTENSION_API` block immediately after
+   it.
+2. Insert the matching close immediately before the final
+   `#endif /* SQLITE3EXT_H */`.
+3. Confirm `OsaurusSQLCipher.h` still defines
+   `OSAURUS_OMIT_SQLITE_EXTENSION_API` immediately before it includes
+   `sqlite3ext.h`.
 
 ## Why CommonCrypto?
 

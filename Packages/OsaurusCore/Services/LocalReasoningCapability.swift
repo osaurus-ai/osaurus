@@ -21,12 +21,15 @@ enum LocalReasoningCapability {
     struct Capability: Sendable {
         /// Template references `<think>` or `</think>` tags.
         let supportsThinking: Bool
-        /// Template reads an `enable_thinking` kwarg — i.e. thinking is toggleable.
+        /// Template reads an `enable_thinking` kwarg.
         let hasEnableThinkingKwarg: Bool
         /// Template itself injects a literal `<think>` opener into the assistant prompt
         /// tail, which means the model's generated stream will only contain the closing
         /// `</think>` and needs a middleware prepend for the UI tag parser to work.
         let templateInjectsThinkTag: Bool
+        /// True when the template both exposes a toggle kwarg and uses
+        /// reasoning markers the runtime recognizes.
+        var isToggleableThinking: Bool { supportsThinking && hasEnableThinkingKwarg }
 
         static let none = Capability(
             supportsThinking: false,

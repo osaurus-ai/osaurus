@@ -51,7 +51,7 @@ struct SQLCipherVendorGuardTests {
         return FileManager.default.fileExists(atPath: header.path) ? header : nil
     }
 
-    private static func sqlite3ExtHeaderURL() -> URL? {
+    private static func sqlCipherHeaderURL(named name: String) -> URL? {
         let here = URL(fileURLWithPath: #filePath)
         var cursor = here.deletingLastPathComponent()  // Storage/
         cursor.deleteLastPathComponent()  // Tests/
@@ -60,7 +60,7 @@ struct SQLCipherVendorGuardTests {
             pkg
             .appendingPathComponent("SQLCipher", isDirectory: true)
             .appendingPathComponent("include", isDirectory: true)
-            .appendingPathComponent("sqlite3ext.h")
+            .appendingPathComponent(name)
         return FileManager.default.fileExists(atPath: header.path) ? header : nil
     }
 
@@ -109,53 +109,11 @@ struct SQLCipherVendorGuardTests {
     }
 
     @Test
-    func sqlite3ExtHeader_containsSqlite3ExtOmitGuard() throws {
-        guard let url = Self.sqlite3ExtHeaderURL() else {
-            Issue.record(
-                "Could not locate Packages/OsaurusCore/SQLCipher/include/sqlite3ext.h. If the path moved, update this test."
-            )
-            return
-        }
-        let contents = try String(contentsOf: url, encoding: .utf8)
-
-        let openGuard = "#ifndef OSAURUS_OMIT_SQLITE3EXT_HEADERS"
-        let closeGuard = "#endif /* OSAURUS_OMIT_SQLITE3EXT_HEADERS"
-
-        #expect(
-            contents.contains(openGuard),
-            """
-            sqlite3ext.h is missing the OSAURUS_OMIT_SQLITE3EXT_HEADERS open guard.
-
-            This means a SQLCipher amalgamation bump overwrote the
-            OSAURUS LOCAL MODIFICATION block. Without this guard,
-            `import OsaurusSQLCipher` collides with Apple's system
-            `SQLite3` module on `struct sqlite3_api_routines`.
-
-            Re-apply the guard by wrapping the contents of sqlite3ext.h.
-            """
-        )
-
-        #expect(
-            contents.contains(closeGuard),
-            """
-            sqlite3ext.h has the OSAURUS_OMIT_SQLITE3EXT_HEADERS open guard
-            but not the matching close. The wrap is incomplete.
-            """
-        )
-    }
-
-    @Test
     func umbrellaHeader_definesSqliteHasCodec() throws {
-        let here = URL(fileURLWithPath: #filePath)
-        var cursor = here.deletingLastPathComponent()  // Storage/
-        cursor.deleteLastPathComponent()  // Tests/
-        let pkg = cursor.deletingLastPathComponent()  // OsaurusCore/
-        let umbrella =
-            pkg
-            .appendingPathComponent("SQLCipher", isDirectory: true)
-            .appendingPathComponent("include", isDirectory: true)
-            .appendingPathComponent("OsaurusSQLCipher.h")
-        guard let contents = try? String(contentsOf: umbrella, encoding: .utf8) else {
+        guard
+            let umbrella = Self.sqlCipherHeaderURL(named: "OsaurusSQLCipher.h"),
+            let contents = try? String(contentsOf: umbrella, encoding: .utf8)
+        else {
             Issue.record(
                 """
                 OsaurusSQLCipher.h umbrella header is missing. Despite
@@ -179,8 +137,69 @@ struct SQLCipherVendorGuardTests {
             """
         )
         #expect(
+            contents.contains("OSAURUS_OMIT_FTS5_HEADERS"),
+            """
+            OsaurusSQLCipher.h must define OSAURUS_OMIT_FTS5_HEADERS
+            before including sqlite3.h. The target cSettings flag
+            protects the C compilation, but Swift's Clang module
+            import parses this umbrella header separately.
+            """
+        )
+        #expect(
             contents.contains("#include \"sqlite3.h\""),
             "OsaurusSQLCipher.h must #include \"sqlite3.h\" so the codec define applies in the same translation unit."
+        )
+    }
+
+    @Test
+    func sqlite3ExtHeader_omitsLoadableExtensionApiFromSwiftImport() throws {
+        guard let url = Self.sqlCipherHeaderURL(named: "sqlite3ext.h") else {
+            Issue.record(
+                "Could not locate Packages/OsaurusCore/SQLCipher/include/sqlite3ext.h. If the path moved, update this test."
+            )
+            return
+        }
+        let contents = try String(contentsOf: url, encoding: .utf8)
+
+        #expect(
+            contents.contains("#ifndef OSAURUS_OMIT_SQLITE_EXTENSION_API"),
+            """
+            sqlite3ext.h is missing the OSAURUS_OMIT_SQLITE_EXTENSION_API open guard.
+
+            Newer macOS SDKs can append fields to sqlite3_api_routines
+            before this pinned SQLCipher version adopts the same SQLite
+            version. Without this guard, Swift's Clang importer can
+            reject OsaurusSQLCipher when another dependency imports
+            Apple's system SQLite3 module in the same build.
+            """
+        )
+        #expect(
+            contents.contains("#endif /* OSAURUS_OMIT_SQLITE_EXTENSION_API"),
+            """
+            sqlite3ext.h has the OSAURUS_OMIT_SQLITE_EXTENSION_API open guard
+            but not the matching close. Re-read the README
+            "Re-applying the sqlite3ext import guard" section.
+            """
+        )
+    }
+
+    @Test
+    func umbrellaHeader_definesOmitExtensionApi() throws {
+        guard
+            let umbrella = Self.sqlCipherHeaderURL(named: "OsaurusSQLCipher.h"),
+            let contents = try? String(contentsOf: umbrella, encoding: .utf8)
+        else {
+            Issue.record("Could not read OsaurusSQLCipher.h")
+            return
+        }
+        #expect(
+            contents.contains("OSAURUS_OMIT_SQLITE_EXTENSION_API"),
+            """
+            OsaurusSQLCipher.h must define OSAURUS_OMIT_SQLITE_EXTENSION_API
+            before including sqlite3ext.h. Otherwise the vendored
+            sqlite3_api_routines struct can collide with the system
+            SQLite3 module on newer macOS SDKs.
+            """
         )
     }
 
@@ -205,17 +224,6 @@ struct SQLCipherVendorGuardTests {
             failing with FTS5 typedef collision errors. Add it back:
 
                 .define("OSAURUS_OMIT_FTS5_HEADERS"),
-            """
-        )
-
-        #expect(
-            contents.contains("OSAURUS_OMIT_SQLITE3EXT_HEADERS"),
-            """
-            Package.swift no longer defines OSAURUS_OMIT_SQLITE3EXT_HEADERS
-            in the OsaurusSQLCipher target's cSettings. The header
-            guard is useless without this flag. Add it back:
-
-                .define("OSAURUS_OMIT_SQLITE3EXT_HEADERS"),
             """
         )
     }

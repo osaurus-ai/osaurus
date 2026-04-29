@@ -29,7 +29,7 @@ env:
   CACHE_SALT: v2-vmlx-5b84387
   # Pin Xcode so cache keys are stable across runner image bumps. When you
   # need to upgrade, change here AND in setup-xcode below.
-  XCODE_VERSION: "26.3"
+  XCODE_VERSION: "26.4.1"
 
 jobs:
   test-core:
@@ -333,7 +333,7 @@ jobs:
         uses: actions/checkout@v5
 
       # OsaurusCLI's Package.swift requires `swift-tools-version: 6.2`, which
-      # ships with Xcode 26.3. The runner's default `swift` may be older
+      # ships with the pinned Xcode. The runner's default `swift` may be older
       # (currently 6.1), so point xcrun at the pinned Xcode for these steps.
       # GitHub Actions doesn't let job-level `env:` reference workflow-level
       # `env:`, so keep XCODE_VERSION in sync here if it ever changes.

@@ -93,12 +93,55 @@ public final class AppConfiguration: ObservableObject {
         initial: ChatConfiguration,
         rawData: Data
     ) -> ChatConfiguration {
-        guard chatJsonNeedsLegacyMigration(rawData) else { return initial }
         var config = initial
-        config = migrateCoreModelFromMemoryConfig(into: config)
-        config = backfillFoundationCoreModelIfMissing(config)
-        saveToDisk(config)
+
+        // Run the unavailable-Foundation cleanup unconditionally — it
+        // fires on every cold start for users on macOS < 26 who still
+        // have the historical `"foundation"` default persisted (root
+        // cause for several #823 reports). Idempotent.
+        config = clearUnavailableFoundationCoreModel(config)
+
+        // Order matters: cleanup above can leave `coreModelName` nil,
+        // which then re-enters the legacy memory.json migration so a
+        // legacy install gets a chance to adopt an explicit chat-side
+        // name before backfill takes over.
+        if chatJsonNeedsLegacyMigration(rawData) {
+            config = migrateCoreModelFromMemoryConfig(into: config)
+            config = backfillFoundationCoreModelIfMissing(config)
+        }
+
+        if config != initial {
+            saveToDisk(config)
+        }
         return config
+    }
+
+    /// Clear a persisted `coreModelName == "foundation"` when this Mac
+    /// can't actually run the Foundation Model (older macOS, Intel,
+    /// Apple Intelligence not enabled). Pairs with the gated
+    /// `ChatConfiguration.defaultCoreModelNameIfAvailable` so the
+    /// chat-model fallback in `CoreModelService.generate` takes over
+    /// instead of preflight silently failing — see GitHub issue #823.
+    /// Idempotent: only touches `coreModelName` when it holds the
+    /// literal default name AND Foundation isn't usable.
+    static func clearUnavailableFoundationCoreModel(
+        _ config: ChatConfiguration
+    ) -> ChatConfiguration {
+        let trimmed = config.coreModelName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard trimmed.caseInsensitiveCompare(ChatConfiguration.defaultCoreModelName) == .orderedSame,
+            !FoundationModelService.isDefaultModelAvailable()
+        else {
+            return config
+        }
+        var updated = config
+        updated.coreModelName = nil
+        updated.coreModelProvider = nil
+        print(
+            "[Osaurus] Cleared persisted core model 'foundation' "
+                + "(Foundation Models unavailable on this Mac); "
+                + "preflight will fall back to the active chat model"
+        )
+        return updated
     }
 
     /// Trigger condition for the legacy `memory.json` → `chat.json`

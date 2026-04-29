@@ -30,22 +30,26 @@
 #define SQLITE_HAS_CODEC 1
 #endif
 
+#ifndef OSAURUS_OMIT_FTS5_HEADERS
+#define OSAURUS_OMIT_FTS5_HEADERS 1
+#endif
+
 #include "sqlite3.h"
 /* `sqlite3ext.h` lives in the same `include/` dir alongside us, so
  * Clang's umbrella-header consistency check requires it to either
  * be included from this umbrella or excluded via a module map.
- * Pulling it in here is harmless (it's just the loadable-extension
- * SQLite API) and silences the
+ * We include it with the loadable-extension API hidden because
+ * Osaurus does not compile SQLite loadable extensions, and newer
+ * macOS SDKs may expose extension fields that SQLCipher 4.6.1 does
+ * not. This silences the
  *
  *   warning: umbrella header for module 'OsaurusSQLCipher' does not
  *            include header 'sqlite3ext.h'
  *
- * that would otherwise fire on every Swift import of this module.
- * We define `OSAURUS_OMIT_SQLITE3EXT_HEADERS` to hide the
- * `sqlite3_api_routines` struct from the Swift Clang importer
- * so it doesn't conflict with Apple's system `SQLite3` module. */
-#ifndef OSAURUS_OMIT_SQLITE3EXT_HEADERS
-#define OSAURUS_OMIT_SQLITE3EXT_HEADERS 1
+ * without reintroducing Swift Clang-importer type collisions against
+ * Apple's system SQLite3 module. */
+#ifndef OSAURUS_OMIT_SQLITE_EXTENSION_API
+#define OSAURUS_OMIT_SQLITE_EXTENSION_API 1
 #endif
 #include "sqlite3ext.h"
 

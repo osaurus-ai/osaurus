@@ -126,7 +126,7 @@ Connect to OpenAI, Anthropic, Gemini, xAI/Grok, [Venice AI](https://venice.ai), 
 
 ## MCP
 
-Osaurus is a full MCP (Model Context Protocol) server. Give Cursor, Claude Desktop, or any MCP client access to your tools:
+Osaurus is a full MCP (Model Context Protocol) server. Give any MCP-compatible client access to your tools:
 
 ```json
 {
@@ -172,7 +172,7 @@ Drop-in endpoints for existing tools:
 | Anthropic | `http://127.0.0.1:1337/anthropic/v1/messages` |
 | Ollama    | `http://127.0.0.1:1337/api/chat`              |
 
-All prefixes supported (`/v1`, `/api`, `/v1/api`). Full function calling with streaming tool call deltas. `/chat/completions` keeps **strict OpenAI semantics** — it returns `tool_calls` and the client executes them, so Osaurus drops in cleanly behind harnesses (Cursor, OpenWebUI, Continue, Aider) that already manage their own tool loop. For server-side autonomous loops use `POST /agents/{id}/run`; to expose Osaurus tools to remote MCP harnesses use `/mcp/tools` + `/mcp/call`. See [OpenAI API Guide](docs/OpenAI_API_GUIDE.md) for tool calling, streaming, and SDK examples. Building a macOS app that connects to Osaurus? See the [Shared Configuration Guide](docs/SHARED_CONFIGURATION_GUIDE.md).
+All prefixes supported (`/v1`, `/api`, `/v1/api`). Full function calling with streaming tool call deltas. `/chat/completions` keeps **strict OpenAI semantics** -- it returns `tool_calls` and the client executes them, so Osaurus drops in cleanly behind harnesses that already manage their own tool loop. For server-side autonomous loops use `POST /agents/{id}/run`; to expose Osaurus tools to remote MCP harnesses use `/mcp/tools` + `/mcp/call`. See [OpenAI API Guide](docs/OpenAI_API_GUIDE.md) for tool calling, streaming, and SDK examples. Building a macOS app that connects to Osaurus? See the [Shared Configuration Guide](docs/SHARED_CONFIGURATION_GUIDE.md).
 
 ## CLI
 

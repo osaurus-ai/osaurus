@@ -272,10 +272,16 @@ enum PreflightCapabilitySearch {
     /// has explicitly enabled in the capability picker. A `nil` allowlist
     /// (un-seeded legacy agent) preserves the historical behaviour of
     /// considering every dynamic tool in the registry.
+    ///
+    /// `model` is the active conversation model, threaded into the LLM call
+    /// as a chat-model fallback when no core model is configured (or when the
+    /// configured one is `modelUnavailable`). See
+    /// `CoreModelService.generate(...)` and GitHub issue #823.
     static func search(
         query: String,
         mode: PreflightSearchMode = .balanced,
-        agentId: UUID
+        agentId: UUID,
+        model: String? = nil
     ) async -> PreflightResult {
         let allowed = await MainActor.run {
             AgentManager.shared.effectiveEnabledToolNames(for: agentId).map(Set.init)
@@ -284,7 +290,7 @@ enum PreflightCapabilitySearch {
             query: query,
             mode: mode,
             allowedNames: allowed,
-            llm: defaultLLM,
+            llm: defaultLLM(fallbackModel: model),
             embedder: defaultEmbedder
         )
     }
@@ -312,12 +318,13 @@ enum PreflightCapabilitySearch {
     /// Diagnostic-capturing entry point. Wires the production LLM +
     /// embedder so callers (the eval CLI, future scoreboards) get the
     /// exact same one-shot generation contract the chat path uses.
-    /// Threads the same agent allowlist as `search(query:mode:agentId:)`
-    /// so eval results match production scoping.
+    /// Threads the same agent allowlist and chat-model fallback as
+    /// `search(query:mode:agentId:model:)`.
     static func searchWithDiagnostic(
         query: String,
         mode: PreflightSearchMode = .balanced,
-        agentId: UUID
+        agentId: UUID,
+        model: String? = nil
     ) async -> (PreflightResult, PreflightDiagnostic?) {
         let allowed = await MainActor.run {
             AgentManager.shared.effectiveEnabledToolNames(for: agentId).map(Set.init)
@@ -326,7 +333,7 @@ enum PreflightCapabilitySearch {
             query: query,
             mode: mode,
             allowedNames: allowed,
-            llm: defaultLLM,
+            llm: defaultLLM(fallbackModel: model),
             embedder: defaultEmbedder
         )
     }
@@ -554,16 +561,22 @@ enum PreflightCapabilitySearch {
     // MARK: LLM Tool Selection
 
     /// Default production LLM bridge — kept as a typed closure so the
-    /// signature matches `LLMGenerator` and so test paths can swap it
-    /// without touching `CoreModelService`.
-    private static let defaultLLM: LLMGenerator = { prompt, systemPrompt in
-        try await CoreModelService.shared.generate(
-            prompt: prompt,
-            systemPrompt: systemPrompt,
-            temperature: 0.0,
-            maxTokens: 256,
-            timeout: selectionTimeout
-        )
+    /// signature matches `LLMGenerator` and tests can swap it without
+    /// touching `CoreModelService`. Factored as a factory so the closure
+    /// can capture the per-request chat model and forward it as
+    /// `CoreModelService.generate`'s `fallbackModel:`. See GitHub issue
+    /// #823 for why preflight needs the fallback.
+    private static func defaultLLM(fallbackModel: String?) -> LLMGenerator {
+        { prompt, systemPrompt in
+            try await CoreModelService.shared.generate(
+                prompt: prompt,
+                systemPrompt: systemPrompt,
+                temperature: 0.0,
+                maxTokens: 256,
+                timeout: selectionTimeout,
+                fallbackModel: fallbackModel
+            )
+        }
     }
 
     /// Default production embedder. The internal `search` seam takes
@@ -646,11 +659,17 @@ enum PreflightCapabilitySearch {
             return (picks, response, systemPrompt, nil)
         } catch {
             // Log `localizedDescription` rather than the raw error
-            // so the message is human-readable in Console — the raw
-            // form ("OsaurusCore.CoreModelError.circuitBreakerOpen")
-            // hid the actual cause and made misconfigured core
-            // models look like an internal bug.
-            logger.info("Pre-flight tool selection skipped: \(error.localizedDescription)")
+            // so the message is human-readable in Console; bump the
+            // log to .notice for the unavailable-with-no-fallback
+            // case so #823-style reports surface without enabling
+            // debug logs.
+            if let coreErr = error as? CoreModelError, case .modelUnavailable = coreErr {
+                logger.notice(
+                    "Pre-flight tool selection skipped: \(coreErr.localizedDescription) — no chat-model fallback was supplied; plugin tools will not be auto-selected this turn"
+                )
+            } else {
+                logger.info("Pre-flight tool selection skipped: \(error.localizedDescription)")
+            }
             return ([], nil, systemPrompt, String(describing: error))
         }
     }

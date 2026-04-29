@@ -85,9 +85,9 @@ struct ModelProfileRegistryTests {
 
     @Test("Non-reasoning Gemma variants do not get a thinking toggle")
     func gemma_noThinkingToggle() {
-        let profile = ModelProfileRegistry.profile(for: "gemma-4-e2b-it-4bit")
-        // Gemma can match an image-options profile but should never expose
-        // the thinking toggle because it doesn't honor `enable_thinking`.
+        let profile = ModelProfileRegistry.profile(for: "gemma-2-non-reasoning-\(UUID().uuidString)")
+        // Use a guaranteed-missing suffix so this stays independent of the
+        // developer's locally installed model directory.
         #expect(profile?.thinkingOption == nil)
     }
 }

@@ -235,6 +235,137 @@ struct AppConfigurationMigrationTests {
         input.coreModelName = "  "
         input.coreModelProvider = nil
         let result = AppConfiguration.backfillFoundationCoreModelIfMissing(input)
+        // Only meaningful when Foundation is unavailable; in that case
+        // the gated default would also be nil. Backfill always sets the
+        // literal name regardless of availability — the per-machine
+        // gating happens in `clearUnavailableFoundationCoreModel`.
         #expect(result.coreModelName == "foundation")
+    }
+
+    // MARK: - clearUnavailableFoundationCoreModel
+    //
+    // Pairs with `ChatConfiguration.defaultCoreModelNameIfAvailable`
+    // (gated default) to keep the persisted state honest about what
+    // this Mac can run. Pre-fix, fresh installs on macOS < 26 shipped
+    // with `coreModelName = "foundation"` baked in and persisted —
+    // the picker showed it as "set", `CoreModelService.generate` threw
+    // `modelUnavailable` every turn, and preflight tool selection
+    // silently broke. See GitHub issue #823.
+
+    /// Branch the assertion on the running OS's Foundation
+    /// availability so the test passes on both macOS 26+ (Foundation
+    /// available — must NOT clear) and macOS < 26 (must clear). The
+    /// alternative — mocking `FoundationModelService` — would require
+    /// dependency-injecting through a static, which doesn't justify
+    /// its complexity here.
+    @Test
+    @MainActor
+    func clearUnavailableFoundation_handlesPersistedFoundationName() {
+        var input = ChatConfiguration.default
+        input.coreModelName = "foundation"
+        input.coreModelProvider = nil
+        let result = AppConfiguration.clearUnavailableFoundationCoreModel(input)
+
+        if FoundationModelService.isDefaultModelAvailable() {
+            // macOS 26+ with Apple Intelligence: keep the persisted
+            // value; the user's saved Foundation choice is real.
+            #expect(result.coreModelName == "foundation")
+            #expect(result.coreModelProvider == nil)
+        } else {
+            // macOS < 26 (or Apple Intelligence disabled): clear the
+            // unrunnable persisted value so the chat-model fallback
+            // takes over and the picker stops showing an orphan
+            // entry.
+            #expect(result.coreModelName == nil)
+            #expect(result.coreModelProvider == nil)
+        }
+    }
+
+    /// Case-insensitive match on the literal default name so a
+    /// stray-cased `"Foundation"` from a hand-edited chat.json gets
+    /// cleaned the same way as the canonical lowercase form.
+    @Test
+    @MainActor
+    func clearUnavailableFoundation_isCaseInsensitive() {
+        guard !FoundationModelService.isDefaultModelAvailable() else {
+            // Only meaningful on macOS where Foundation isn't available;
+            // when it is, the case-insensitive cleanup is a no-op anyway.
+            return
+        }
+        var input = ChatConfiguration.default
+        input.coreModelName = "Foundation"
+        input.coreModelProvider = nil
+        let result = AppConfiguration.clearUnavailableFoundationCoreModel(input)
+        #expect(result.coreModelName == nil)
+    }
+
+    /// Whitespace around the literal name still triggers the cleanup
+    /// (defensive against picker bugs that submit a trailing space).
+    @Test
+    @MainActor
+    func clearUnavailableFoundation_trimsWhitespace() {
+        guard !FoundationModelService.isDefaultModelAvailable() else { return }
+        var input = ChatConfiguration.default
+        input.coreModelName = "  foundation  "
+        input.coreModelProvider = nil
+        let result = AppConfiguration.clearUnavailableFoundationCoreModel(input)
+        #expect(result.coreModelName == nil)
+    }
+
+    /// Cleanup must be a strict no-op for any other persisted model —
+    /// e.g. an explicit Anthropic / Ollama / MLX choice — regardless
+    /// of Foundation availability.
+    @Test
+    @MainActor
+    func clearUnavailableFoundation_neverTouchesOtherModels() {
+        var input = ChatConfiguration.default
+        input.coreModelName = "claude-haiku-4-5"
+        input.coreModelProvider = "anthropic"
+        let result = AppConfiguration.clearUnavailableFoundationCoreModel(input)
+        #expect(result.coreModelName == "claude-haiku-4-5")
+        #expect(result.coreModelProvider == "anthropic")
+    }
+
+    /// Already-nil persisted state stays nil; no spurious mutation.
+    @Test
+    @MainActor
+    func clearUnavailableFoundation_preservesNilState() {
+        var input = ChatConfiguration.default
+        input.coreModelName = nil
+        input.coreModelProvider = nil
+        let result = AppConfiguration.clearUnavailableFoundationCoreModel(input)
+        #expect(result.coreModelName == nil)
+        #expect(result.coreModelProvider == nil)
+    }
+
+    // MARK: - ChatConfiguration.defaultCoreModelNameIfAvailable
+
+    /// Pin the contract that the gated default tracks runtime
+    /// Foundation availability. Without this, the data layer can drift
+    /// from the service layer and re-introduce the "persisted but
+    /// unrunnable `foundation`" state on a future refactor.
+    @Test
+    @MainActor
+    func defaultCoreModelNameIfAvailable_matchesFoundationAvailability() {
+        let value = ChatConfiguration.defaultCoreModelNameIfAvailable
+        if FoundationModelService.isDefaultModelAvailable() {
+            #expect(value == ChatConfiguration.defaultCoreModelName)
+        } else {
+            #expect(value == nil)
+        }
+    }
+
+    /// `ChatConfiguration.default` must use the gated value, not the
+    /// raw literal — so a fresh install never persists an unrunnable
+    /// `"foundation"` on macOS where Apple Intelligence isn't there.
+    @Test
+    @MainActor
+    func defaultConfig_coreModelNameIsGated() {
+        let cfg = ChatConfiguration.default
+        if FoundationModelService.isDefaultModelAvailable() {
+            #expect(cfg.coreModelName == "foundation")
+        } else {
+            #expect(cfg.coreModelName == nil)
+        }
     }
 }

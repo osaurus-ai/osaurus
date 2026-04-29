@@ -90,6 +90,12 @@ public actor ModelRuntime {
 
     // MARK: - Public API
 
+    /// True iff `name` is currently held in `modelCache`. Lets background
+    /// callers skip work that would otherwise trigger a heavy cold load.
+    func isResident(name: String) -> Bool {
+        return modelCache[name] != nil
+    }
+
     func cachedModelSummaries() -> [ModelCacheSummary] {
         return modelCache.values.map { holder in
             ModelCacheSummary(
