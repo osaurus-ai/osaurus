@@ -209,6 +209,8 @@ struct ModelDownloadView: View {
                             Text("Refresh", bundle: .module)
                                 .font(.system(size: 13, weight: .medium))
                         }
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 7)
                         .background(
@@ -232,6 +234,8 @@ struct ModelDownloadView: View {
                         Text("Import", bundle: .module)
                             .font(.system(size: 13, weight: .medium))
                     }
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 7)
                     .background(
@@ -250,14 +254,18 @@ struct ModelDownloadView: View {
                     HStack(spacing: 6) {
                         Image(systemName: "arrow.up.arrow.down")
                             .font(.system(size: 13))
-                        Text("Sort", bundle: .module)
-                            .font(.system(size: 13, weight: .medium))
-                        if sortOption != .recommended {
-                            Circle()
-                                .fill(theme.accentColor)
-                                .frame(width: 6, height: 6)
+                        if sortOption == .recommended {
+                            Text("Sort", bundle: .module)
+                                .font(.system(size: 13, weight: .medium))
+                        } else {
+                            Text("Sort: ", bundle: .module)
+                                .font(.system(size: 13, weight: .medium))
+                            + Text(sortOption.displayName)
+                                .font(.system(size: 13, weight: .semibold))
                         }
                     }
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 7)
                     .background(
@@ -288,14 +296,18 @@ struct ModelDownloadView: View {
                                 ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle"
                         )
                         .font(.system(size: 13))
-                        Text("Filter", bundle: .module)
-                            .font(.system(size: 13, weight: .medium))
-                        if filterState.isActive {
-                            Circle()
-                                .fill(theme.accentColor)
-                                .frame(width: 6, height: 6)
+                        if let active = activeFilterSummary {
+                            Text("Filter: ", bundle: .module)
+                                .font(.system(size: 13, weight: .medium))
+                            + Text(active)
+                                .font(.system(size: 13, weight: .semibold))
+                        } else {
+                            Text("Filter", bundle: .module)
+                                .font(.system(size: 13, weight: .medium))
                         }
                     }
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 7)
                     .background(
@@ -932,6 +944,28 @@ struct ModelDownloadView: View {
     /// `LazyVGrid` reliable reorder animations — same path search uses.
     private var gridChangeToken: String {
         "\(selectedTab.rawValue)|\(sortOption.rawValue)|\(debouncedSearchText)|\(filterStateToken)"
+    }
+
+    /// Compact label for the active filter selection. `nil` when no
+    /// filters are applied, the chosen value's name when exactly one
+    /// dimension is active;,`"<n> active"` when multiple dimensions are
+    private var activeFilterSummary: String? {
+        var parts: [String] = []
+        switch filterState.typeFilter {
+        case .all: break
+        case .llm: parts.append("LLM")
+        case .vlm: parts.append("VLM")
+        }
+        if let size = filterState.sizeCategory { parts.append(size.displayName) }
+        if let param = filterState.paramCategory { parts.append(param.rawValue) }
+        if let perf = filterState.performance { parts.append(perf.displayName) }
+        if let family = filterState.family { parts.append(family) }
+
+        switch parts.count {
+        case 0: return nil
+        case 1: return parts[0]
+        default: return "\(parts.count) active"
+        }
     }
 
     private var filterStateToken: String {
