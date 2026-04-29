@@ -9,6 +9,37 @@ import AppKit
 import Foundation
 import SwiftUI
 
+/// Sort options for the model list.
+enum ModelSortOption: String, CaseIterable, Identifiable {
+    case recommended
+    case nameAsc
+    case compatibility
+    case sizeAsc
+    case sizeDesc
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .recommended: return "Recommended"
+        case .nameAsc: return "Name (A–Z)"
+        case .compatibility: return "Compatibility"
+        case .sizeAsc: return "Size (Smallest first)"
+        case .sizeDesc: return "Size (Largest first)"
+        }
+    }
+
+    var iconName: String {
+        switch self {
+        case .recommended: return "sparkles"
+        case .nameAsc: return "textformat"
+        case .compatibility: return "checkmark.seal"
+        case .sizeAsc: return "arrow.up.circle"
+        case .sizeDesc: return "arrow.down.circle"
+        }
+    }
+}
+
 /// Deep linking is supported via `deeplinkModelId` to open the view with a specific model pre-selected.
 struct ModelDownloadView: View {
     
@@ -51,6 +82,10 @@ struct ModelDownloadView: View {
     /// Filter state
     @State private var filterState = ModelManager.ModelFilterState()
     @State private var showFilterPopover = false
+
+    /// Sort option for the model list
+    @State private var sortOption: ModelSortOption = .recommended
+    @State private var showSortPopover = false
 
     /// Import-from-Hugging-Face sheet state
     @State private var showImportSheet = false
@@ -205,6 +240,41 @@ struct ModelDownloadView: View {
                 .buttonStyle(PlainButtonStyle())
                 .help(L("Import an MLX model from Hugging Face"))
 
+                // Sort button
+                Button {
+                    showSortPopover.toggle()
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "arrow.up.arrow.down")
+                            .font(.system(size: 13))
+                        Text("Sort", bundle: .module)
+                            .font(.system(size: 13, weight: .medium))
+                        if sortOption != .recommended {
+                            Circle()
+                                .fill(theme.accentColor)
+                                .frame(width: 6, height: 6)
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 7)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(
+                                sortOption != .recommended
+                                    ? theme.accentColor.opacity(0.12)
+                                    : theme.tertiaryBackground.opacity(0.5)
+                            )
+                    )
+                    .foregroundColor(
+                        sortOption != .recommended ? theme.accentColor : theme.secondaryText
+                    )
+                }
+                .buttonStyle(PlainButtonStyle())
+                .popover(isPresented: $showSortPopover, arrowEdge: .top) {
+                    sortPopoverView
+                }
+                .help(L("Sort models"))
+
                 // Filter button
                 Button {
                     showFilterPopover.toggle()
@@ -282,6 +352,81 @@ struct ModelDownloadView: View {
 
     private func mutateFilter(_ change: () -> Void) {
         withAnimation(gridSpring) { change() }
+    }
+
+    private var sortPopoverView: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Sort by", bundle: .module)
+                .font(.system(size: 10, weight: .bold))
+                .tracking(0.6)
+                .foregroundColor(theme.tertiaryText)
+                .textCase(.uppercase)
+                .padding(.horizontal, 12)
+                .padding(.top, 12)
+                .padding(.bottom, 6)
+
+            ForEach(ModelSortOption.allCases) { option in
+                SortOptionRow(
+                    option: option,
+                    isSelected: sortOption == option
+                ) {
+                    mutateFilter { sortOption = option }
+                    showSortPopover = false
+                }
+            }
+            Spacer(minLength: 8)
+        }
+        .frame(width: 240)
+        .background(theme.primaryBackground)
+        .environment(\.theme, themeManager.currentTheme)
+    }
+
+    private struct SortOptionRow: View {
+        let option: ModelSortOption
+        let isSelected: Bool
+        let action: () -> Void
+        @Environment(\.theme) private var theme
+        @State private var isHovering = false
+
+        var body: some View {
+            Button(action: action) {
+                HStack(spacing: 10) {
+                    Image(systemName: option.iconName)
+                        .font(.system(size: 12, weight: .medium))
+                        .frame(width: 16)
+                        .foregroundColor(isSelected ? theme.accentColor : theme.secondaryText)
+                    Text(option.displayName)
+                        .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
+                        .foregroundColor(isSelected ? theme.accentColor : theme.primaryText)
+                    Spacer(minLength: 0)
+                    if isSelected {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundColor(theme.accentColor)
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(
+                            isSelected
+                                ? theme.accentColor.opacity(0.12)
+                                : (isHovering
+                                    ? theme.tertiaryBackground.opacity(0.7)
+                                    : Color.clear)
+                        )
+                )
+                .padding(.horizontal, 6)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .onHover { hovering in
+                withAnimation(.easeOut(duration: 0.12)) {
+                    isHovering = hovering
+                }
+            }
+        }
     }
 
     private var filterPopoverView: some View {
@@ -784,8 +929,40 @@ struct ModelDownloadView: View {
     private var filteredModels: [MLXModel] {
         let searched = SearchService.filterModels(modelManager.availableModels, with: debouncedSearchText)
         let filtered = filterState.apply(to: searched, totalMemoryGB: systemMonitor.totalMemoryGB)
-        return filtered.sorted { lhs, rhs in
-            lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+        return applySort(to: filtered)
+    }
+
+    /// Apply the active `sortOption` to a list. `.recommended` falls back to
+    /// alphabetical so the "Others" section in the All tab stays stable.
+    private func applySort(to models: [MLXModel]) -> [MLXModel] {
+        switch sortOption {
+        case .recommended, .nameAsc:
+            return models.sorted { lhs, rhs in
+                lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+            }
+        case .compatibility:
+            return models.sorted { lhs, rhs in
+                let l = compatibilityRank(lhs)
+                let r = compatibilityRank(rhs)
+                if l != r { return l < r }
+                return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+            }
+        case .sizeAsc, .sizeDesc:
+            return models.sorted { lhs, rhs in
+                let l = lhs.totalSizeEstimateBytes ?? Int64.max
+                let r = rhs.totalSizeEstimateBytes ?? Int64.max
+                if l != r { return sortOption == .sizeAsc ? l < r : l > r }
+                return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+            }
+        }
+    }
+
+    private func compatibilityRank(_ model: MLXModel) -> Int {
+        switch model.compatibility(totalMemoryGB: systemMonitor.totalMemoryGB) {
+        case .compatible: return 0
+        case .tight: return 1
+        case .tooLarge: return 2
+        case .unknown: return 3
         }
     }
 
@@ -798,6 +975,9 @@ struct ModelDownloadView: View {
     private var filteredSuggestedModels: [MLXModel] {
         let searched = SearchService.filterModels(modelManager.suggestedModels, with: debouncedSearchText)
         let filtered = filterState.apply(to: searched, totalMemoryGB: systemMonitor.totalMemoryGB)
+        if sortOption != .recommended {
+            return applySort(to: filtered)
+        }
         let curatedIds = ModelManager.curatedSuggestedIds
         return filtered.sorted { lhs, rhs in
             let lhsCurated = curatedIds.contains(lhs.id.lowercased())
@@ -849,19 +1029,13 @@ struct ModelDownloadView: View {
         let searched = SearchService.filterModels(merged, with: debouncedSearchText)
         let filtered = filterState.apply(to: searched, totalMemoryGB: systemMonitor.totalMemoryGB)
 
-        // Sort: active first, then by name
-        return filtered.sorted { lhs, rhs in
-            let lhsActive: Bool = {
-                if case .downloading = (modelManager.downloadStates[lhs.id] ?? .notStarted) { return true }
-                return false
-            }()
-            let rhsActive: Bool = {
-                if case .downloading = (modelManager.downloadStates[rhs.id] ?? .notStarted) { return true }
-                return false
-            }()
-            if lhsActive != rhsActive { return lhsActive && !rhsActive }
-            return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+        let isActive: (MLXModel) -> Bool = { m in
+            if case .downloading = (modelManager.downloadStates[m.id] ?? .notStarted) { return true }
+            return false
         }
+        let activeGroup = applySort(to: filtered.filter(isActive))
+        let restGroup = applySort(to: filtered.filter { !isActive($0) })
+        return activeGroup + restGroup
     }
 
     /// Count of completed (on-disk) downloaded models respecting current search and filters
