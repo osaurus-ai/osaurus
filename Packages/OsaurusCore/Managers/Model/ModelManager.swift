@@ -839,6 +839,36 @@ extension ModelManager {
         return comps.url
     }
 
+    /// Per-repo info we care about. Currently just `usedStorage` (total
+    /// bytes across all files in the repo) so we can populate
+    /// `MLXModel.downloadSizeBytes` for repo ids whose names don't carry a
+    /// parseable parameter token.
+    fileprivate struct HFRepoInfo: Decodable {
+        let usedStorage: Int64?
+    }
+
+    /// Fetch `usedStorage` for a single repo. Returns `nil` on any error
+    /// (network, decode, missing field) so callers can fall through to
+    /// the existing parameter-count estimate.
+    fileprivate static func fetchUsedStorage(repoId: String) async -> Int64? {
+        var comps = URLComponents()
+        comps.scheme = "https"
+        comps.host = "huggingface.co"
+        comps.path = "/api/models/\(repoId)"
+        comps.queryItems = [URLQueryItem(name: "expand[]", value: "usedStorage")]
+        guard let url = comps.url else { return nil }
+
+        var request = URLRequest(url: url)
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        guard
+            let (data, response) = try? await URLSession.shared.data(for: request),
+            let http = response as? HTTPURLResponse,
+            (200 ..< 300).contains(http.statusCode)
+        else { return nil }
+
+        return (try? JSONDecoder().decode(HFRepoInfo.self, from: data))?.usedStorage
+    }
+
     /// Request HF models at URL
     fileprivate static func requestHFModels(at url: URL) async throws -> [HFModel] {
         var request = URLRequest(url: url)
@@ -946,20 +976,46 @@ extension ModelManager {
             }
         }
 
-        applyOsaurusOrgFetch(autoFetched: autoFetched, statsById: statsById)
+        // The /api/models listing endpoint doesn't return file sizes, so
+        // fan out one request per repo to `/api/models/<id>?expand[]=usedStorage`
+        // and fold the results in. URLSession multiplexes these over a few
+        // HTTP/2 connections; with ~100 repos this completes in a second
+        // or two and is only triggered by the OsaurusAI org refresh
+        // (Recommended tab refresh button + initial load), not by search.
+        let sizesById: [String: Int64] = await withTaskGroup(of: (String, Int64?).self) { group in
+            for hf in raw {
+                group.addTask { (hf.id.lowercased(), await Self.fetchUsedStorage(repoId: hf.id)) }
+            }
+            var collected: [String: Int64] = [:]
+            for await (key, value) in group {
+                if let value { collected[key] = value }
+            }
+            return collected
+        }
+
+        applyOsaurusOrgFetch(autoFetched: autoFetched, statsById: statsById, sizesById: sizesById)
     }
 
     /// Replace the auto-fetched portion of `suggestedModels` while preserving
     /// curated entries (and any unrelated entries that may have been added).
     /// Internal so tests can drive the merge without hitting the network.
-    /// `statsById` carries HF Hub `downloads` counts so curated entries
-    /// (hand-coded, missing `downloads`) pick them up at merge time.
-    func applyOsaurusOrgFetch(autoFetched: [MLXModel], statsById: [String: Int] = [:]) {
+    /// `statsById` carries HF Hub `downloads` counts; `sizesById` carries
+    /// per-repo `usedStorage` byte counts. Both flow into curated entries
+    /// (hand-coded, no HF metadata) and auto-fetched entries at merge time.
+    func applyOsaurusOrgFetch(
+        autoFetched: [MLXModel],
+        statsById: [String: Int] = [:],
+        sizesById: [String: Int64] = [:]
+    ) {
         let curatedIds = Self.curatedSuggestedIds
-        let curated = Self.curatedSuggestedModels.map { model -> MLXModel in
-            guard let count = statsById[model.id.lowercased()] else { return model }
-            return model.withDownloads(count)
+        let enrich: (MLXModel) -> MLXModel = { model in
+            let key = model.id.lowercased()
+            return model
+                .withDownloads(statsById[key] ?? model.downloads)
+                .withDownloadSize(sizesById[key])
         }
+        let curated = Self.curatedSuggestedModels.map(enrich)
+        let enrichedAutoFetched = autoFetched.map(enrich)
 
         // Drop previous OsaurusAI auto-fetched entries, keeping curated and
         // any non-OsaurusAI entries other code may have injected.
@@ -971,7 +1027,7 @@ extension ModelManager {
 
         var merged: [MLXModel] = curated + preserved
         var seen = Set(merged.map { $0.id.lowercased() })
-        for model in autoFetched {
+        for model in enrichedAutoFetched {
             let key = model.id.lowercased()
             if seen.insert(key).inserted {
                 merged.append(model)

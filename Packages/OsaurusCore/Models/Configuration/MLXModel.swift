@@ -61,6 +61,26 @@ struct MLXModel: Identifiable, Codable {
         self.rootDirectory = rootDirectory
     }
 
+    /// Returns a copy with `downloadSizeBytes` overridden. Used to fold in
+    /// the per-repo `usedStorage` value HF returns from
+    /// `/api/models/<id>?expand[]=usedStorage`, so the size chip renders
+    /// for repo ids whose names don't carry a parseable parameter token.
+    func withDownloadSize(_ bytes: Int64?) -> MLXModel {
+        guard let bytes else { return self }
+        return MLXModel(
+            id: id,
+            name: name,
+            description: description,
+            downloadURL: downloadURL,
+            isTopSuggestion: isTopSuggestion,
+            downloadSizeBytes: bytes,
+            modelType: modelType,
+            releasedAt: releasedAt,
+            downloads: downloads,
+            rootDirectory: rootDirectory
+        )
+    }
+
     /// Returns a copy with the HF Hub `downloads` count populated. Used to
     /// fold in stats from the OsaurusAI org listing onto curated entries
     /// without rewriting their hand-tuned descriptions / Top Pick flags
