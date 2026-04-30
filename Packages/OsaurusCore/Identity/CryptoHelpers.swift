@@ -168,6 +168,13 @@ func signPairingPayload(_ payload: Data, privateKey: Data) throws -> Data {
     try signWithPrefix(payload, privateKey: privateKey, prefix: "Osaurus Signed Pairing")
 }
 
+/// Sign an `AgentInvite` payload. Distinct domain prefix from access /
+/// pairing so an attacker can't substitute an invite signature for any
+/// other class of token.
+func signInvitePayload(_ payload: Data, privateKey: Data) throws -> Data {
+    try signWithPrefix(payload, privateKey: privateKey, prefix: "Osaurus Signed Invite")
+}
+
 /// EIP-191 personal_sign compatible signing.
 /// Produces `\x19Ethereum Signed Message:\n<len><message>` hash + secp256k1 recoverable signature.
 func signEIP191Message(_ message: String, privateKey: Data) throws -> Data {

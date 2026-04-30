@@ -355,7 +355,23 @@ The Host API Bridge connects the container to Osaurus services on the host. Insi
 | `osaurus-host plugin create` | Create a plugin from stdin JSON |
 | `osaurus-host log <message>` | Append to the sandbox log buffer |
 
-All requests include the calling Linux username for identity verification.
+### Bridge authentication
+
+Every request authenticates with a per-agent bearer token:
+
+- The host mints a 256-bit token per agent and writes it to `/run/osaurus/<linuxName>.token` inside the guest, mode `0600`, owned by that agent's Linux user. The directory is mode `0711` so users can open their own file by name without enumerating siblings.
+- The `osaurus-host` shim reads the token (allowed by uid) and sends it as `Authorization: Bearer <token>`. The shim refuses to run if the token file is missing or unreadable.
+- The bridge resolves the token to an `(agentId, linuxName)` pair via `SandboxBridgeTokenStore`. Unknown or missing tokens get `401` — there is **no fallback to a default agent**.
+- `X-Osaurus-User` is no longer trusted. Identity is bound to the token, which is bound to a Linux uid by file permissions inside the guest.
+- `X-Osaurus-Plugin` is still self-reported by the shim. It namespaces config and secrets within an agent but is not a security boundary between plugins of the same agent.
+
+The `agent dispatch` route additionally rejects any body whose `agent_id` doesn't match the token-bound identity (`403`); `agent memory query` filters results to the calling agent's pinned facts.
+
+Tokens are revoked when the agent is unprovisioned or the container is stopped, and re-minted on the next `ensureProvisioned`. After an Osaurus upgrade, plugin bridge calls fail closed until the container restarts and the new shim and token files are written — this happens automatically when Sparkle relaunches the app.
+
+### Request size limits
+
+Bridge requests are capped at **8 MiB** per body. Oversized requests are rejected with `413 Payload Too Large` before reaching any handler. Combined with the public HTTP server's pre-auth caps (32 MiB generic, 64 KiB on `/pair`), this prevents an unauthenticated client from forcing unbounded memory allocation.
 
 ---
 
@@ -377,6 +393,20 @@ Container networking can be set to `outbound` (NAT with internet access) or `non
 
 - `SandboxExecLimiter` — Limits the number of commands an agent can run per conversation turn
 - `SandboxRateLimiter` — General rate limiting for sandbox operations and Host API bridge calls
+
+### Artifact Integrity
+
+Every external artifact the sandbox depends on is pinned to an immutable digest, and downloaded blobs are verified before they touch the on-disk container store. A registry, CDN, or release-host compromise cannot silently change the boundary the sandbox enforces.
+
+| Artifact | Pin |
+|----------|-----|
+| GHCR image (`ghcr.io/osaurus-ai/sandbox`) | Multi-arch index digest (`@sha256:...`); the `:latest` tag is never used at runtime |
+| Kata kernel tarball | SHA-256 verified after download against an in-source constant |
+| Initfs blob | SHA-256 verified after download against an in-source constant |
+
+A digest mismatch is **fail-closed**: the temp file is deleted, alternate mirrors are not tried (silent fallback would mask exactly the upstream-compromise scenario this defends against), and provisioning aborts with `SandboxError.integrityCheckFailed`. The hashing pass is bounded at 512 MiB to stop a runaway download from turning into a multi-GB hash job.
+
+To rotate a pin (e.g. after intentionally bumping the sandbox image): fetch the new digest with `crane digest …` or `docker buildx imagetools inspect …`, paste the multi-arch index digest into `containerImage` in `SandboxManager.swift`, and update the corresponding SHA-256 constants alongside the URL in the same file.
 
 ---
 

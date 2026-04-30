@@ -37,152 +37,176 @@ struct ModelRowView: View {
     /// Optional cancel action when downloading
     let onCancel: (() -> Void)?
 
-    /// Index for staggered animation
-    var animationIndex: Int = 0
-
     // MARK: - State
 
     /// Whether the user is currently hovering over this row
     @State private var isHovering = false
 
-    /// Whether the card has appeared (for entrance animation)
-    @State private var hasAppeared = false
-
     var body: some View {
         Button(action: onViewDetails) {
-            HStack(spacing: 16) {
-                // Model icon
-                modelIcon
+            VStack(spacing: 0) {
+                gradientHeader
 
-                // Model info
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(alignment: .center, spacing: 8) {
-                        Text(model.name)
-                            .font(.system(size: 15, weight: .semibold, design: .rounded))
-                            .foregroundColor(theme.primaryText)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-
-                        if model.isDownloaded {
-                            Image(systemName: "checkmark.circle.fill")
-                                .font(.system(size: 13))
-                                .foregroundColor(theme.successColor)
-                        }
-                    }
-
-                    // Metadata pills row
-                    metadataPillsRow
+                VStack(alignment: .leading, spacing: 10) {
+                    metadataBadges
 
                     if !model.description.isEmpty {
                         Text(model.description)
-                            .font(.system(size: 13))
+                            .font(.system(size: 12))
                             .foregroundColor(theme.secondaryText)
                             .lineLimit(2)
                             .truncationMode(.tail)
+                            .multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
 
-                    // Repository link - use Button instead of Link to control color explicitly
-                    if let url = URL(string: model.downloadURL) {
-                        Button(action: { NSWorkspace.shared.open(url) }) {
-                            HStack(spacing: 4) {
-                                Image(systemName: "link")
-                                    .font(.system(size: 10))
-                                Text(repositoryName(from: model.downloadURL))
-                                    .font(.system(size: 12))
-                                    .lineLimit(1)
-                                    .truncationMode(.middle)
-                            }
-                            .foregroundColor(theme.accentColor)
-                        }
-                        .buttonStyle(.plain)
-                        .onHover { hovering in
-                            if hovering {
-                                NSCursor.pointingHand.push()
-                            } else {
-                                NSCursor.pop()
-                            }
-                        }
-                    }
-
-                    // Download progress
                     if case .downloading(let progress) = downloadState {
                         downloadProgressView(progress: progress)
-                            .padding(.top, 4)
                     }
+
+                    Spacer(minLength: 0)
                 }
-
-                Spacer(minLength: 0)
-
-                // Chevron indicator
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.tertiaryText)
-                    .opacity(isHovering ? 1 : 0.5)
+                .padding(14)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
             }
-            .padding(16)
-            .background(cardBackground)
-            .contentShape(RoundedRectangle(cornerRadius: 12))
+            .frame(maxWidth: .infinity, minHeight: 200, alignment: .top)
+            .background(theme.cardBackground)
+            .clipShape(RoundedRectangle(cornerRadius: 14))
+            .overlay(
+                RoundedRectangle(cornerRadius: 14)
+                    .stroke(
+                        isHovering ? theme.accentColor.opacity(0.25) : theme.cardBorder,
+                        lineWidth: 1
+                    )
+            )
+            .shadow(
+                color: theme.shadowColor.opacity(
+                    isHovering ? theme.shadowOpacity * 1.5 : theme.shadowOpacity
+                ),
+                radius: isHovering ? 12 : theme.cardShadowRadius,
+                x: 0,
+                y: isHovering ? 4 : theme.cardShadowY
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 14))
         }
         .buttonStyle(PlainButtonStyle())
         .animation(.easeOut(duration: 0.15), value: isHovering)
         .onHover { hovering in
             isHovering = hovering
         }
-        .offset(y: hasAppeared ? 0 : 24)
-        .opacity(hasAppeared ? 1 : 0)
-        .onAppear {
-            if hasAppeared { return }
+    }
 
-            // High-frequency stagger logic:
-            // 1. Initial items (0-10) get a polished cascade (40ms steps).
-            // 2. Scrolling items use a micro-stagger (max 40ms total) to ensure
-            //    instant responsiveness while maintaining the 'liquid' ripple effect.
-            let delay: Double = {
-                if animationIndex < 10 {
-                    return Double(animationIndex) * 0.04
-                } else {
-                    // Maximum delay is 0.01 + (3 * 0.01) = 0.04s (approx 2 frames)
-                    // This is fast enough to feel instant but still provides a stagger.
-                    return 0.01 + Double(animationIndex % 4) * 0.01
+    // MARK: - Gradient Header
+
+    private var gradientHeader: some View {
+        ZStack {
+            LinearGradient(
+                colors: ModelCardGradient.colors(for: model),
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+
+            highlightLayer
+
+            RadialGradient(
+                colors: [.black.opacity(0.30), .black.opacity(0)],
+                center: UnitPoint(x: 0.88, y: 0.95),
+                startRadius: 4,
+                endRadius: 240
+            )
+
+            Text(ModelMetadataParser.simpleName(from: model.name))
+                .font(.system(size: 18, weight: .bold, design: .rounded))
+                .foregroundColor(.white)
+                .lineLimit(2)
+                .truncationMode(.tail)
+                .multilineTextAlignment(.center)
+                .shadow(color: .black.opacity(0.22), radius: 2, x: 0, y: 1)
+                .padding(.horizontal, 16)
+
+            VStack {
+                HStack(alignment: .top, spacing: 6) {
+                    Spacer(minLength: 0)
+                    if model.isTopSuggestion {
+                        topPickRibbon
+                    }
+                    if model.isDownloaded {
+                        downloadedBadge
+                    }
                 }
-            }()
-
-            withAnimation(.spring(response: 0.38, dampingFraction: 0.82).delay(delay)) {
-                hasAppeared = true
+                Spacer(minLength: 0)
             }
+            .padding(10)
+        }
+        .frame(height: 110)
+        .frame(maxWidth: .infinity)
+    }
+
+    @ViewBuilder
+    private var highlightLayer: some View {
+        if isHovering {
+            // TimelineView only ticks while it's in the view tree, so
+            // un-hovered cards don't pay any animation cost.
+            TimelineView(.animation) { context in
+                let t = context.date.timeIntervalSinceReferenceDate
+                let x = 0.34 + sin(t * 0.7) * 0.22
+                let y = 0.28 + cos(t * 0.5) * 0.18
+                RadialGradient(
+                    colors: [.white.opacity(0.38), .white.opacity(0)],
+                    center: UnitPoint(x: x, y: y),
+                    startRadius: 4,
+                    endRadius: 220
+                )
+            }
+            .transition(.opacity)
+        } else {
+            RadialGradient(
+                colors: [.white.opacity(0.32), .white.opacity(0)],
+                center: UnitPoint(x: 0.22, y: 0.18),
+                startRadius: 4,
+                endRadius: 220
+            )
+            .transition(.opacity)
         }
     }
 
-    // MARK: - Metadata Pills Row
+    private var topPickRibbon: some View {
+        HStack(spacing: 3) {
+            Image(systemName: "star.fill")
+                .font(.system(size: 9, weight: .bold))
+            Text("Top Pick", bundle: .module)
+                .font(.system(size: 10, weight: .bold))
+        }
+        .foregroundColor(.white)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(
+            Capsule().fill(.black.opacity(0.28))
+        )
+    }
 
-    /// Row of small pills showing model type, parameters, quantization, and compatibility
-    private var metadataPillsRow: some View {
-        HStack(spacing: 6) {
-            // Top suggestion badge
-            if model.isTopSuggestion {
-                topSuggestionBadge
+    private var downloadedBadge: some View {
+        Image(systemName: "checkmark.circle.fill")
+            .font(.system(size: 15, weight: .semibold))
+            .foregroundColor(.white)
+            .padding(3)
+            .background(
+                Circle().fill(.black.opacity(0.28))
+            )
+    }
+
+    // MARK: - Metadata Badges
+
+    private var metadataBadges: some View {
+        FlowLayout(spacing: 6) {
+            if let size = model.formattedDownloadSize {
+                MetadataPill(text: size, icon: "internaldrive")
             }
-
-            // Model type badge (LLM/VLM)
+            compatibilityBadge
             modelTypeBadge
-
-            // Parameter count pill
-            if let params = model.parameterCount {
-                MetadataPill(text: params, icon: "cpu")
-            }
-
-            // Quantization pill
             if let quant = model.quantization {
                 MetadataPill(text: quant, icon: "gauge.with.dots.needle.bottom.50percent")
             }
-
-            // Estimated memory pill
-            if let mem = model.formattedEstimatedMemory {
-                MetadataPill(text: mem, icon: "memorychip")
-            }
-
-            // Hardware compatibility badge
-            compatibilityBadge
         }
     }
 
@@ -198,10 +222,6 @@ struct ModelRowView: View {
         case .unknown:
             EmptyView()
         }
-    }
-
-    private var topSuggestionBadge: some View {
-        CompatibilityPill(text: "Top Pick", icon: "star.fill", color: .orange)
     }
 
     /// Badge showing whether model is LLM or VLM
@@ -224,50 +244,6 @@ struct ModelRowView: View {
             Capsule()
                 .fill(color.opacity(0.12))
         )
-    }
-
-    // MARK: - Model Icon
-
-    private var modelIcon: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 10)
-                .fill(
-                    model.isDownloaded
-                        ? theme.successColor.opacity(0.12)
-                        : theme.accentColor.opacity(0.12)
-                )
-
-            Image(systemName: model.isDownloaded ? "cube.fill" : "cube")
-                .font(.system(size: 20, weight: .medium))
-                .foregroundColor(
-                    model.isDownloaded
-                        ? theme.successColor
-                        : theme.accentColor
-                )
-        }
-        .frame(width: 44, height: 44)
-    }
-
-    // MARK: - Card Background
-
-    private var cardBackground: some View {
-        RoundedRectangle(cornerRadius: 12)
-            .fill(theme.cardBackground)
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(
-                        isHovering ? theme.accentColor.opacity(0.2) : theme.cardBorder,
-                        lineWidth: 1
-                    )
-            )
-            .shadow(
-                color: theme.shadowColor.opacity(
-                    isHovering ? theme.shadowOpacity * 1.5 : theme.shadowOpacity
-                ),
-                radius: isHovering ? 12 : theme.cardShadowRadius,
-                x: 0,
-                y: isHovering ? 4 : theme.cardShadowY
-            )
     }
 
     // MARK: - Download Progress View
@@ -376,6 +352,62 @@ private struct CompatibilityPill: View {
             Capsule()
                 .fill(color.opacity(0.12))
         )
+    }
+}
+
+// MARK: - Card Gradient Palette
+
+/// Color provider for the model card spotlight header. Curated families
+/// get a hand-picked two-stop gradient. everything else gets a
+/// deterministic hue derived from the repo id so unknown families stay
+/// distinguishable at a glance without a manual mapping
+enum ModelCardGradient {
+    static func colors(for model: MLXModel) -> [Color] {
+        let key = model.family.lowercased()
+        if let palette = curated[key] { return palette }
+        return hashed(for: model.id)
+    }
+
+    /// Two-stop gradients tuned for white text. Stops sit roughly at
+    /// Tailwind 500 and 700 of the same family saturated enough that
+    /// white reads without a heavy shadow
+    private static let curated: [String: [Color]] = [
+        "qwen": [Color(hex: "0EA5E9"), Color(hex: "0E7490")],
+        "gemma": [Color(hex: "6366F1"), Color(hex: "1D4ED8")],
+        "llama": [Color(hex: "8B5CF6"), Color(hex: "A21CAF")],
+        "phi": [Color(hex: "10B981"), Color(hex: "0F766E")],
+        "mistral": [Color(hex: "F97316"), Color(hex: "DC2626")],
+        "mixtral": [Color(hex: "F43F5E"), Color(hex: "C2410C")],
+        "deepseek": [Color(hex: "2563EB"), Color(hex: "4338CA")],
+        "granite": [Color(hex: "64748B"), Color(hex: "334155")],
+        "liquid": [Color(hex: "EC4899"), Color(hex: "7C3AED")],
+        "smollm": [Color(hex: "65A30D"), Color(hex: "15803D")],
+        "hermes": [Color(hex: "F59E0B"), Color(hex: "C2410C")],
+        "starcoder": [Color(hex: "0EA5E9"), Color(hex: "6D28D9")],
+        "command-r": [Color(hex: "A855F7"), Color(hex: "BE185D")],
+        "nemotron": [Color(hex: "22C55E"), Color(hex: "047857")],
+        "yi": [Color(hex: "F59E0B"), Color(hex: "B91C1C")],
+        "falcon": [Color(hex: "B45309"), Color(hex: "9A3412")],
+        "internlm": [Color(hex: "0891B2"), Color(hex: "1D4ED8")],
+        "stablelm": [Color(hex: "8B5CF6"), Color(hex: "1D4ED8")],
+        "grok": [Color(hex: "334155"), Color(hex: "4338CA")],
+    ]
+
+    /// djb2 hash → two HSB hues separated by ~0.1 on the wheel, with a
+    /// noticeable brightness drop between stops so the gradient reads
+    /// as one. Saturation/brightness mirror the curated palette so the
+    /// fallback feels like part of the same family
+    private static func hashed(for id: String) -> [Color] {
+        var hash: UInt64 = 5381
+        for scalar in id.unicodeScalars {
+            hash = (hash &* 33) &+ UInt64(scalar.value)
+        }
+        let h1 = Double(hash % 360) / 360.0
+        let h2 = (h1 + 0.1).truncatingRemainder(dividingBy: 1.0)
+        return [
+            Color(hue: h1, saturation: 0.70, brightness: 0.78),
+            Color(hue: h2, saturation: 0.78, brightness: 0.55),
+        ]
     }
 }
 

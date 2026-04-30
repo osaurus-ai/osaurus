@@ -26,27 +26,27 @@ struct SearchService {
 
     // MARK: - Search Matching
 
-    /// Main fuzzy search function. Returns true if query matches target via:
-    /// 1. Token matching (each query word found in target)
-    /// 2. Normalized substring (ignoring special characters)
-    /// 3. Sequential character matching (fuzzy subsequence)
-    static func matches(query: String, in target: String) -> Bool {
+    /// Returns true if query matches target via token matching, normalized
+    /// substring, or (when `allowFuzzy`) sequential character matching.
+    ///
+    /// `allowFuzzy` should only be enabled for short identifier-style
+    /// fields (name, id). Subsequence matching against prose-length strings
+    /// like a description produces false positives
+    static func matches(query: String, in target: String, allowFuzzy: Bool = true) -> Bool {
         let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return true }
 
-        // Try token-based matching first (handles multi-word queries)
         if tokenizedMatch(query: query, in: target) {
             return true
         }
 
-        // Try normalized substring matching (handles queries like "glm47")
         let normalizedQuery = normalizeForSearch(query)
         let normalizedTarget = normalizeForSearch(target)
         if normalizedTarget.contains(normalizedQuery) {
             return true
         }
 
-        // Fall back to fuzzy subsequence matching
+        guard allowFuzzy else { return false }
         return fuzzyMatch(query: query, in: target)
     }
 
@@ -84,13 +84,17 @@ struct SearchService {
     // MARK: - Model Filtering
 
     /// Filters models by matching query against name, id, description, and URL.
+    /// Fuzzy subsequence matching is enabled only for the short identifier
+    /// fields (name, id)
     static func filterModels(_ models: [MLXModel], with searchText: String) -> [MLXModel] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return models }
 
         return models.filter { model in
-            [model.name, model.id, model.description, model.downloadURL]
-                .contains { matches(query: query, in: $0) }
+            matches(query: query, in: model.name)
+                || matches(query: query, in: model.id)
+                || matches(query: query, in: model.description, allowFuzzy: false)
+                || matches(query: query, in: model.downloadURL, allowFuzzy: false)
         }
     }
 }

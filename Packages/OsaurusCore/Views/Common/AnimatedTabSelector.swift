@@ -183,7 +183,7 @@ enum SandboxTab: String, CaseIterable, AnimatedTabItem {
             VStack(spacing: 40) {
                 AnimatedTabSelector(
                     selection: $modelTab,
-                    counts: [.all: 150, .suggested: 12, .downloaded: 3]
+                    counts: [.all: 150, .downloaded: 3]
                 )
 
                 AnimatedTabSelector(

@@ -21,6 +21,7 @@ struct LocalReasoningCapabilityTests {
         #expect(cap.supportsThinking)
         #expect(cap.hasEnableThinkingKwarg)
         #expect(cap.templateInjectsThinkTag)
+        #expect(cap.isToggleableThinking)
     }
 
     @Test("Qwen3-style: supports thinking but no template-side injection")
@@ -35,6 +36,7 @@ struct LocalReasoningCapabilityTests {
         #expect(cap.supportsThinking)
         #expect(cap.hasEnableThinkingKwarg)
         #expect(!cap.templateInjectsThinkTag)
+        #expect(cap.isToggleableThinking)
     }
 
     @Test("Non-reasoning template: all signals false")
@@ -46,6 +48,21 @@ struct LocalReasoningCapabilityTests {
         #expect(!cap.supportsThinking)
         #expect(!cap.hasEnableThinkingKwarg)
         #expect(!cap.templateInjectsThinkTag)
+        #expect(!cap.isToggleableThinking)
+    }
+
+    @Test("enable_thinking alone is not enough for a UI toggle")
+    func enableThinkingWithoutRecognizedThinkingMarkers() {
+        let template = """
+            {%- if enable_thinking is defined and enable_thinking -%}
+            {{- '<|reason|>' -}}
+            {%- endif -%}
+            """
+        let cap = LocalReasoningCapability.analyze(template: template)
+        #expect(!cap.supportsThinking)
+        #expect(cap.hasEnableThinkingKwarg)
+        #expect(!cap.templateInjectsThinkTag)
+        #expect(!cap.isToggleableThinking)
     }
 
     @Test("GLM-flash style: emits </think> without injection (middleware-needed)")
@@ -60,6 +77,7 @@ struct LocalReasoningCapabilityTests {
         #expect(cap.supportsThinking)
         #expect(!cap.hasEnableThinkingKwarg)
         #expect(!cap.templateInjectsThinkTag)
+        #expect(!cap.isToggleableThinking)
     }
 
     /// Gemma-4's chat_template.jinja opens thinking with the pipe-wrapped
@@ -83,6 +101,7 @@ struct LocalReasoningCapabilityTests {
         #expect(cap.supportsThinking)
         #expect(cap.hasEnableThinkingKwarg)
         #expect(cap.templateInjectsThinkTag)
+        #expect(cap.isToggleableThinking)
     }
 
     // MARK: - jang_config.json chat.reasoning fallback (DSV4-class bundles)
@@ -123,6 +142,7 @@ struct LocalReasoningCapabilityTests {
         // Python encoder takes `thinking_mode` as a positional argument
         // instead, so the kwarg flag stays false.
         #expect(cap?.hasEnableThinkingKwarg == false)
+        #expect(cap?.isToggleableThinking == false)
         // DSV4's template is outside the bundle (Python module) — vmlx
         // injects the thinking tag itself when the caller picks thinking
         // mode. From osaurus's perspective there is no on-disk Jinja to

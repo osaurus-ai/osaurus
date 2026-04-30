@@ -16,11 +16,8 @@ extension Notification.Name {
 }
 
 enum ModelListTab: String, CaseIterable, AnimatedTabItem {
-    /// All available models from Hugging Face
+    /// All available models rendered as two sections (Recommended + Others)
     case all = "All"
-
-    /// Curated list of recommended models
-    case suggested = "Recommended"
 
     /// Only models downloaded locally (includes active downloads)
     case downloaded = "Downloads"
@@ -29,7 +26,6 @@ enum ModelListTab: String, CaseIterable, AnimatedTabItem {
     var title: String {
         switch self {
         case .all: return L("All")
-        case .suggested: return L("Recommended")
         case .downloaded: return L("Downloads")
         }
     }
@@ -111,10 +107,12 @@ final class ModelManager: NSObject, ObservableObject {
             /// Only include models whose `compatibility` is `.compatible`
             /// (memory usage below the 75 % ratio threshold).
             case runsWell = "Runs Well"
+            /// Only include models whose `compatibility` is `.tight`
+            /// (memory usage between 75 % and 95 % of total RAM)
+            case tightFit = "Tight Fit"
             /// Exclude models whose `compatibility` is `.tooLarge`
             /// (memory usage above the 95 % ratio threshold). Models with
-            /// unknown memory info pass through unchanged — we don't
-            /// punish ambiguity.
+            /// unknown memory info pass through unchanged
             case hideTooLarge = "Hide Too Large"
 
             var id: String { rawValue }
@@ -122,6 +120,7 @@ final class ModelManager: NSObject, ObservableObject {
             var displayName: String {
                 switch self {
                 case .runsWell: return L("Runs Well")
+                case .tightFit: return L("Tight Fit")
                 case .hideTooLarge: return L("Hide Too Large")
                 }
             }
@@ -132,6 +131,8 @@ final class ModelManager: NSObject, ObservableObject {
                 switch self {
                 case .runsWell:
                     return compat == .compatible
+                case .tightFit:
+                    return compat == .tight
                 case .hideTooLarge:
                     return compat != .tooLarge
                 }
@@ -361,7 +362,9 @@ final class ModelManager: NSObject, ObservableObject {
                     id: hf.id,
                     name: ModelMetadataParser.friendlyName(from: hf.id),
                     description: "Discovered on Hugging Face",
-                    downloadURL: "https://huggingface.co/\(hf.id)"
+                    downloadURL: "https://huggingface.co/\(hf.id)",
+                    releasedAt: Self.parseHFTimestamp(hf.lastModified),
+                    downloads: hf.downloads
                 )
             }
 
@@ -816,6 +819,7 @@ extension ModelManager {
         let id: String
         let tags: [String]?
         let lastModified: String?
+        let downloads: Int?
     }
 
     /// Build the HF models API URL
@@ -833,6 +837,36 @@ extension ModelManager {
         if !search.isEmpty { items.append(URLQueryItem(name: "search", value: search)) }
         comps.queryItems = items
         return comps.url
+    }
+
+    /// Per-repo info we care about. Currently just `usedStorage` (total
+    /// bytes across all files in the repo) so we can populate
+    /// `MLXModel.downloadSizeBytes` for repo ids whose names don't carry a
+    /// parseable parameter token.
+    fileprivate struct HFRepoInfo: Decodable {
+        let usedStorage: Int64?
+    }
+
+    /// Fetch `usedStorage` for a single repo. Returns `nil` on any error
+    /// (network, decode, missing field) so callers can fall through to
+    /// the existing parameter-count estimate.
+    fileprivate static func fetchUsedStorage(repoId: String) async -> Int64? {
+        var comps = URLComponents()
+        comps.scheme = "https"
+        comps.host = "huggingface.co"
+        comps.path = "/api/models/\(repoId)"
+        comps.queryItems = [URLQueryItem(name: "expand[]", value: "usedStorage")]
+        guard let url = comps.url else { return nil }
+
+        var request = URLRequest(url: url)
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        guard
+            let (data, response) = try? await URLSession.shared.data(for: request),
+            let http = response as? HTTPURLResponse,
+            (200 ..< 300).contains(http.statusCode)
+        else { return nil }
+
+        return (try? JSONDecoder().decode(HFRepoInfo.self, from: data))?.usedStorage
     }
 
     /// Request HF models at URL
@@ -909,7 +943,8 @@ extension ModelManager {
             description: "From OsaurusAI on Hugging Face.",
             downloadURL: "https://huggingface.co/\(hf.id)",
             modelType: inferModelType(from: hf.tags),
-            releasedAt: parseHFTimestamp(hf.lastModified)
+            releasedAt: parseHFTimestamp(hf.lastModified),
+            downloads: hf.downloads
         )
     }
 
@@ -934,15 +969,54 @@ extension ModelManager {
             .filter { !curatedIds.contains($0.id.lowercased()) }
             .map(Self.makeAutoFetchedModel(from:))
 
-        applyOsaurusOrgFetch(autoFetched: autoFetched)
+        var statsById: [String: Int] = [:]
+        for hf in raw {
+            if let count = hf.downloads {
+                statsById[hf.id.lowercased()] = count
+            }
+        }
+
+        // The /api/models listing endpoint doesn't return file sizes, so
+        // fan out one request per repo to `/api/models/<id>?expand[]=usedStorage`
+        // and fold the results in. URLSession multiplexes these over a few
+        // HTTP/2 connections; with ~100 repos this completes in a second
+        // or two and is only triggered by the OsaurusAI org refresh
+        // (Recommended tab refresh button + initial load), not by search.
+        let sizesById: [String: Int64] = await withTaskGroup(of: (String, Int64?).self) { group in
+            for hf in raw {
+                group.addTask { (hf.id.lowercased(), await Self.fetchUsedStorage(repoId: hf.id)) }
+            }
+            var collected: [String: Int64] = [:]
+            for await (key, value) in group {
+                if let value { collected[key] = value }
+            }
+            return collected
+        }
+
+        applyOsaurusOrgFetch(autoFetched: autoFetched, statsById: statsById, sizesById: sizesById)
     }
 
     /// Replace the auto-fetched portion of `suggestedModels` while preserving
     /// curated entries (and any unrelated entries that may have been added).
     /// Internal so tests can drive the merge without hitting the network.
-    func applyOsaurusOrgFetch(autoFetched: [MLXModel]) {
-        let curated = Self.curatedSuggestedModels
+    /// `statsById` carries HF Hub `downloads` counts; `sizesById` carries
+    /// per-repo `usedStorage` byte counts. Both flow into curated entries
+    /// (hand-coded, no HF metadata) and auto-fetched entries at merge time.
+    func applyOsaurusOrgFetch(
+        autoFetched: [MLXModel],
+        statsById: [String: Int] = [:],
+        sizesById: [String: Int64] = [:]
+    ) {
         let curatedIds = Self.curatedSuggestedIds
+        let enrich: (MLXModel) -> MLXModel = { model in
+            let key = model.id.lowercased()
+            return
+                model
+                .withDownloads(statsById[key] ?? model.downloads)
+                .withDownloadSize(sizesById[key])
+        }
+        let curated = Self.curatedSuggestedModels.map(enrich)
+        let enrichedAutoFetched = autoFetched.map(enrich)
 
         // Drop previous OsaurusAI auto-fetched entries, keeping curated and
         // any non-OsaurusAI entries other code may have injected.
@@ -954,7 +1028,7 @@ extension ModelManager {
 
         var merged: [MLXModel] = curated + preserved
         var seen = Set(merged.map { $0.id.lowercased() })
-        for model in autoFetched {
+        for model in enrichedAutoFetched {
             let key = model.id.lowercased()
             if seen.insert(key).inserted {
                 merged.append(model)

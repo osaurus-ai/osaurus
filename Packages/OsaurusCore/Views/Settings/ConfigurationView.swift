@@ -138,7 +138,7 @@ struct ConfigurationView: View {
                                         VStack(alignment: .leading, spacing: 8) {
                                             coreModelPicker
                                             Text(
-                                                "Lightweight model used for memory extraction, preflight search optimization, and other background inference tasks.",
+                                                "Lightweight model used for memory consolidation and preflight tool selection. If unset, your active chat model is used as a fallback. Note: tools must also be enabled on the active agent — check Agent → Capabilities.",
                                                 bundle: .module
                                             )
                                             .font(.system(size: 11))
@@ -1000,11 +1000,16 @@ struct ConfigurationView: View {
 
     private var coreModelPicker: some View {
         Picker("", selection: coreModelIdentifierBinding) {
-            Text("None", bundle: .module).tag("")
+            // Empty tag = "use chat model fallback". Renamed from the
+            // previous "None" footgun (GitHub issue #823).
+            Text("Use chat model (default)", bundle: .module).tag("")
+            // Surface persisted-but-uninstalled values (e.g. "foundation"
+            // on macOS < 26, a disconnected remote model) with an
+            // "(unavailable)" hint so the row isn't an unlabelled orphan.
             if !coreModelIdentifierBinding.wrappedValue.isEmpty,
                 !coreModelPickerItems.contains(where: { $0.id == coreModelIdentifierBinding.wrappedValue })
             {
-                Text(coreModelIdentifierBinding.wrappedValue)
+                Text("\(coreModelIdentifierBinding.wrappedValue) (unavailable)", bundle: .module)
                     .tag(coreModelIdentifierBinding.wrappedValue)
             }
             ForEach(coreModelPickerItems) { option in

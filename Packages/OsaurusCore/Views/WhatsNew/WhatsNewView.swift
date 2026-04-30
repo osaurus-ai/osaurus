@@ -45,8 +45,8 @@ public struct WhatsNewModal: View {
             .clipShape(
                 UnevenRoundedRectangle(
                     topLeadingRadius: 16,
-                    bottomLeadingRadius: 12,
-                    bottomTrailingRadius: 12,
+                    bottomLeadingRadius: 16,
+                    bottomTrailingRadius: 16,
                     topTrailingRadius: 16
                 )
             )

@@ -266,63 +266,8 @@ public struct AutonomousExecConfig: Codable, Sendable, Equatable {
     }
 }
 
-// MARK: - Export/Import Support
-
-extension Agent {
-    /// Export format for sharing agents
-    public struct ExportData: Codable {
-        public let version: Int
-        public let agent: Agent
-
-        enum CodingKeys: String, CodingKey {
-            case version
-            case agent = "persona"
-        }
-
-        public init(agent: Agent) {
-            self.version = 1
-            let exportedAgent = agent
-            self.agent = Agent(
-                id: UUID(),
-                name: exportedAgent.name,
-                description: exportedAgent.description,
-                systemPrompt: exportedAgent.systemPrompt,
-                themeId: nil,
-                defaultModel: exportedAgent.defaultModel,
-                temperature: exportedAgent.temperature,
-                maxTokens: exportedAgent.maxTokens,
-                chatQuickActions: exportedAgent.chatQuickActions,
-                workQuickActions: exportedAgent.workQuickActions,
-                isBuiltIn: false,
-                createdAt: Date(),
-                updatedAt: Date(),
-                agentIndex: nil,
-                agentAddress: nil,
-                autonomousExec: exportedAgent.autonomousExec,
-                toolSelectionMode: exportedAgent.toolSelectionMode,
-                manualToolNames: exportedAgent.manualToolNames,
-                manualSkillNames: exportedAgent.manualSkillNames,
-                disableTools: exportedAgent.disableTools,
-                disableMemory: exportedAgent.disableMemory
-            )
-        }
-    }
-
-    /// Export this agent to JSON data
-    public func exportToJSON() throws -> Data {
-        let exportData = ExportData(agent: self)
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        encoder.dateEncodingStrategy = .iso8601
-        return try encoder.encode(exportData)
-    }
-
-    /// Import an agent from JSON data
-    @MainActor
-    public static func importFromJSON(_ data: Data) throws -> Agent {
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        let exportData = try decoder.decode(ExportData.self, from: data)
-        return exportData.agent
-    }
-}
+// Persona-as-JSON export/import was removed: the share-deeplink flow
+// (`AgentInvite`) covers cross-device sharing and the in-grid Duplicate
+// action covers local copies. The JSON export couldn't carry memories,
+// schedules, watchers, paired remote keys, or the sandbox container, so
+// keeping it would have advertised a backup story it couldn't deliver.

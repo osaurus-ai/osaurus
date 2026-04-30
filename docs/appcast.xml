@@ -3,6 +3,83 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.18.2</title>
+            <pubDate>Wed, 29 Apr 2026 16:47:41 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.18.2</sparkle:version>
+            <sparkle:shortVersionString>0.18.2</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.18.2/Osaurus-0.18.2.dmg" length="35723084" type="application/octet-stream" sparkle:edSignature="4uLMMe59cpkFYOn6Lh5prGiMnlowf0N3F6fS91AMJRvnVSuE69JDZtr0GFjHTDdYcBNW05uuq7NNdsj1YHNfAA=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- [codex] Gate local thinking controls and SQLCipher import (#954) by @mimeding
+- improved model manager (#961) by @RaajeevChandran
+
+## 🐛 Bug Fixes
+
+- prevent cold loading large core MLX models on launch for memory distillation (#970) by @RaajeevChandran
+
+## 🧰 Maintenance
+
+- minor changes (#972) by @RaajeevChandran
+- added core model fallback if missing (#971) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.18.1...0.18.2
+]]></description>
+        </item>
+        <item>
+            <title>0.18.1</title>
+            <pubDate>Tue, 28 Apr 2026 22:59:51 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.18.1</sparkle:version>
+            <sparkle:shortVersionString>0.18.1</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.18.1/Osaurus-0.18.1.dmg" length="35644819" type="application/octet-stream" sparkle:edSignature="zJtBsEFCh930OFc3abtzsRTQsXtExM7FMkm+iwNS2RqAaLr0sgx441Na0WfkMIT8G+/5V1WOWhRakXNPgAp0DQ=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- feat(documents): foundations for document format adapters (#926) by @mimeding
+
+## 🚀 Features
+
+- added additional responsiveness to watchers (#968) by @tpae
+- Agent View Updates - added Share Agent feature (#966) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.18.0...0.18.1
+]]></description>
+        </item>
+        <item>
+            <title>0.18.0</title>
+            <pubDate>Tue, 28 Apr 2026 12:24:14 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.18.0</sparkle:version>
+            <sparkle:shortVersionString>0.18.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.18.0/Osaurus-0.18.0.dmg" length="35354685" type="application/octet-stream" sparkle:edSignature="qMo8u68DL2lJZo4g2CEjSFVMVXfXw3UBmtLgWAfqa3catxsPo4P6YPxg8HqsMn3hwGDSA9/qysH8+m8TByKMDg=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- markdown rendering improvements (#960) by @RaajeevChandran
+- feat: jang\_config.json chat metadata + vmlx bump (DSV4 / Kimi K2.6 / LFM factory fix) (#944) by @jjang-ai
+
+## 🐛 Bug Fixes
+
+- fix(preflight): detect mislabeled JANGTQ bundles + vmlx fa77575 auto-correct (#953) by @jjang-ai
+- render copy/regenerate footer once per assistant group (#949) by @RaajeevChandran
+
+## 🧰 Maintenance
+
+- fix flaky tests and updated headers for sqlite collision prevention (#956) by @tpae
+- improved security with full storage encryption and sandbox hardening (#951) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.17.6...0.17.7
+]]></description>
+        </item>
+        <item>
             <title>0.17.6</title>
             <pubDate>Fri, 24 Apr 2026 22:12:11 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>

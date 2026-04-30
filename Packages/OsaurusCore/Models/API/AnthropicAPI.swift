@@ -2,7 +2,7 @@
 //  AnthropicAPI.swift
 //  osaurus
 //
-//  Anthropic Messages API compatible request/response models for Claude Code compatibility.
+//  Anthropic Messages API compatible request/response models for SDK-compatible clients.
 //
 
 import Foundation

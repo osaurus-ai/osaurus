@@ -44,7 +44,7 @@ public actor RemoteProviderService: ToolCapableService {
     private var session: URLSession
     private var cachedOAuthTokens: RemoteProviderOAuthTokens?
 
-    public nonisolated var id: String {
+    nonisolated public var id: String {
         "remote-\(provider.id.uuidString)"
     }
 
@@ -76,6 +76,33 @@ public actor RemoteProviderService: ToolCapableService {
             || GeminiFlashImageProfile.matches(modelId: modelName)
     }
 
+    static func allowsChatCompletionsReasoningObject(
+        providerType: RemoteProviderType,
+        host: String
+    ) -> Bool {
+        switch providerType {
+        case .openaiLegacy:
+            return !host.lowercased().contains("openai.com")
+        case .azureOpenAI, .anthropic, .openResponses, .openAICodex, .gemini, .osaurus:
+            return false
+        }
+    }
+
+    static func effectiveRequestProviderType(
+        configuredProviderType: RemoteProviderType,
+        request: RemoteChatRequest
+    ) -> RemoteProviderType {
+        guard configuredProviderType == .azureOpenAI else {
+            return configuredProviderType
+        }
+
+        if request.reasoning_effort != nil || request.tools?.isEmpty == false {
+            return .openResponses
+        }
+
+        return configuredProviderType
+    }
+
     /// Inactivity timeout for streaming: if no bytes arrive within this interval,
     /// assume the provider has stalled and end the stream. Floor of 120s accommodates
     /// thinking models that pause between tokens during reasoning.
@@ -104,11 +131,11 @@ public actor RemoteProviderService: ToolCapableService {
 
     // MARK: - ModelService Protocol
 
-    public nonisolated func isAvailable() -> Bool {
+    nonisolated public func isAvailable() -> Bool {
         return provider.enabled
     }
 
-    public nonisolated func handles(requestedModel: String?) -> Bool {
+    nonisolated public func handles(requestedModel: String?) -> Bool {
         guard let model = requestedModel?.trimmingCharacters(in: .whitespacesAndNewlines),
             !model.isEmpty
         else {
@@ -187,7 +214,11 @@ public actor RemoteProviderService: ToolCapableService {
             throw RemoteProviderServiceError.requestFailed("HTTP \(httpResponse.statusCode): \(errorMessage)")
         }
 
-        let (content, _) = try parseResponse(data)
+        let responseProviderType = Self.effectiveRequestProviderType(
+            configuredProviderType: provider.providerType,
+            request: request
+        )
+        let (content, _) = try parseResponse(data, providerType: responseProviderType)
         return content ?? ""
     }
 
@@ -272,7 +303,11 @@ public actor RemoteProviderService: ToolCapableService {
             throw RemoteProviderServiceError.requestFailed("HTTP \(httpResponse.statusCode): \(errorMessage)")
         }
 
-        let (content, toolCalls) = try parseResponse(data)
+        let responseProviderType = Self.effectiveRequestProviderType(
+            configuredProviderType: provider.providerType,
+            request: request
+        )
+        let (content, toolCalls) = try parseResponse(data, providerType: responseProviderType)
 
         // Check for tool calls
         if let toolCalls = toolCalls, let firstCall = toolCalls.first {
@@ -412,6 +447,7 @@ public actor RemoteProviderService: ToolCapableService {
         // Decode the line as UTF-8. SSE field names and the optional space after
         // the colon are ASCII; lossy decoding is safe for any non-UTF-8 bytes
         // that would only appear inside the value portion.
+        // swiftlint:disable:next optional_data_string_conversion
         let lineStr = String(decoding: line, as: UTF8.self)
 
         // Comment line — entire line starts with ":" (no field name).
@@ -741,7 +777,7 @@ public actor RemoteProviderService: ToolCapableService {
                 return try handleAnthropicEvent(jsonData, state: &state, yield: yield)
             case .openResponses, .openAICodex:
                 return try handleOpenResponsesEvent(jsonData, state: &state, yield: yield)
-            case .openaiLegacy, .osaurus:
+            case .openaiLegacy, .azureOpenAI, .osaurus:
                 return try handleOpenAIEvent(jsonData, state: &state, yield: yield)
             }
         } catch {
@@ -887,8 +923,7 @@ public actor RemoteProviderService: ToolCapableService {
 
         case "message_delta":
             if let deltaEvent = try? JSONDecoder().decode(MessageDeltaEvent.self, from: jsonData),
-                let stopReason = deltaEvent.delta.stop_reason
-            {
+                let stopReason = deltaEvent.delta.stop_reason {
                 state.lastFinishReason = stopReason
             }
 
@@ -931,8 +966,7 @@ public actor RemoteProviderService: ToolCapableService {
 
         case "response.output_item.added":
             if let addedEvent = try? JSONDecoder().decode(OutputItemAddedEvent.self, from: jsonData),
-                case .functionCall(let funcCall) = addedEvent.item
-            {
+                case .functionCall(let funcCall) = addedEvent.item {
                 let idx = addedEvent.output_index
                 state.accumulatedToolCalls[idx] = (
                     id: funcCall.call_id, name: funcCall.name, args: "", thoughtSignature: nil
@@ -975,8 +1009,7 @@ public actor RemoteProviderService: ToolCapableService {
             // Final confirmed item — extract args from the completed function_call
             // when no `.delta` events landed first (common for short calls).
             if let doneEvent = try? JSONDecoder().decode(OutputItemDoneEvent.self, from: jsonData),
-                case .functionCall(let funcCall) = doneEvent.item
-            {
+                case .functionCall(let funcCall) = doneEvent.item {
                 let idx = doneEvent.output_index
                 var current =
                     state.accumulatedToolCalls[idx] ?? (
@@ -1047,16 +1080,14 @@ public actor RemoteProviderService: ToolCapableService {
         // it in the Think panel — without ever emitting `<think>` literals.
         if state.accumulatedToolCalls.isEmpty,
             let reasoning = chunk.choices.first?.delta.reasoning_content,
-            !reasoning.isEmpty
-        {
+            !reasoning.isEmpty {
             yield(StreamingReasoningHint.encode(reasoning))
         }
 
         // Only yield content if no tool calls have been detected, to avoid
         // function-call JSON leaking into the chat UI.
         if state.accumulatedToolCalls.isEmpty,
-            let delta = chunk.choices.first?.delta.content, !delta.isEmpty
-        {
+            let delta = chunk.choices.first?.delta.content, !delta.isEmpty {
             let (truncated, hitStop) = applyStopSequences(delta, stopSequences: state.stopSequences)
             state.recordYield(truncated)
             yield(truncated)
@@ -1109,8 +1140,7 @@ public actor RemoteProviderService: ToolCapableService {
                 let (name, args) = RemoteToolDetection.detectInlineToolCall(
                     in: state.accumulatedContent,
                     tools: tools
-                )
-            {
+                ) {
                 print("[Osaurus] Fallback: detected inline tool call '\(name)' in text")
                 continuation.finish(
                     throwing: ServiceToolInvocation(
@@ -1149,7 +1179,10 @@ public actor RemoteProviderService: ToolCapableService {
         try await refreshCodexOAuthIfNeeded()
         let urlRequest = try buildURLRequest(for: request)
         let currentSession = self.session
-        let providerType = self.provider.providerType
+        let providerType = Self.effectiveRequestProviderType(
+            configuredProviderType: self.provider.providerType,
+            request: request
+        )
         let inactivityTimeout = self.streamInactivityTimeout
         let toolList = tools ?? []
         // Only the with-tools path needs accumulated text for the inline
@@ -1285,8 +1318,7 @@ public actor RemoteProviderService: ToolCapableService {
     private static func geminiArgsJSON(from args: [String: AnyCodableValue]?) -> String {
         let dict = (args ?? [:]).mapValues { $0.value }
         if let data = try? JSONSerialization.data(withJSONObject: dict),
-            let s = String(data: data, encoding: .utf8)
-        {
+            let s = String(data: data, encoding: .utf8) {
             return s
         }
         return "{}"
@@ -1306,7 +1338,7 @@ public actor RemoteProviderService: ToolCapableService {
     private static func makeToolInvocation(
         from accumulated: [Int: (id: String?, name: String?, args: String, thoughtSignature: String?)]
     ) -> (invocation: ServiceToolInvocation, wasRepaired: Bool)? {
-        guard let first = accumulated.sorted(by: { $0.key < $1.key }).first,
+        guard let first = accumulated.min(by: { $0.key < $1.key }),
             let name = first.value.name
         else { return nil }
 
@@ -1422,8 +1454,7 @@ public actor RemoteProviderService: ToolCapableService {
 
         // Quick validation: try to parse as-is.
         if let data = trimmed.data(using: .utf8),
-            (try? JSONSerialization.jsonObject(with: data)) != nil
-        {
+            (try? JSONSerialization.jsonObject(with: data)) != nil {
             return ValidatedToolCallJSON(json: trimmed, wasRepaired: false)
         }
 
@@ -1494,8 +1525,7 @@ public actor RemoteProviderService: ToolCapableService {
 
         // Verify the repair worked
         if let data = repaired.data(using: .utf8),
-            (try? JSONSerialization.jsonObject(with: data)) != nil
-        {
+            (try? JSONSerialization.jsonObject(with: data)) != nil {
             print("[Osaurus] Repaired incomplete tool call JSON (\(json.count) -> \(repaired.count) chars)")
             return ValidatedToolCallJSON(json: repaired, wasRepaired: true)
         }
@@ -1515,7 +1545,11 @@ public actor RemoteProviderService: ToolCapableService {
         toolChoice: ToolChoiceOption?
     ) -> RemoteChatRequest {
         let effortValue = parameters.modelOptions["reasoningEffort"]?.stringValue
-        let isOfficialOpenAI = provider.host.lowercased().contains("openai.com")
+        let allowsReasoningObject =
+            Self.allowsChatCompletionsReasoningObject(
+                providerType: provider.providerType,
+                host: provider.host
+            )
         let isReasoningModel = OpenAIReasoningProfile.matches(modelId: model)
 
         return RemoteChatRequest(
@@ -1536,7 +1570,7 @@ public actor RemoteProviderService: ToolCapableService {
             tools: tools,
             tool_choice: toolChoice,
             reasoning_effort: effortValue,
-            reasoning: isOfficialOpenAI ? nil : effortValue.map { ReasoningConfig(effort: $0) },
+            reasoning: allowsReasoningObject ? effortValue.map { ReasoningConfig(effort: $0) } : nil,
             modelOptions: parameters.modelOptions,
             veniceParameters: buildVeniceParameters(from: parameters.modelOptions)
         )
@@ -1642,7 +1676,7 @@ public actor RemoteProviderService: ToolCapableService {
                 )
 
                 if let parts = geminiResponse.candidates?.first?.content?.parts {
-                    var pendingToolCall: ServiceToolInvocation? = nil
+                    var pendingToolCall: ServiceToolInvocation?
 
                     for part in parts {
                         if part.thought == true { continue }
@@ -1692,8 +1726,12 @@ public actor RemoteProviderService: ToolCapableService {
     /// Build a URLRequest for the chat completions endpoint
     private func buildURLRequest(for request: RemoteChatRequest) throws -> URLRequest {
         let url: URL
+        let requestProviderType = Self.effectiveRequestProviderType(
+            configuredProviderType: provider.providerType,
+            request: request
+        )
 
-        if provider.providerType == .gemini {
+        if requestProviderType == .gemini {
             // Gemini uses model-in-URL pattern: /models/{model}:generateContent or :streamGenerateContent
             let action = request.stream ? "streamGenerateContent" : "generateContent"
             // Validate the model segment before interpolating into the
@@ -1743,7 +1781,7 @@ public actor RemoteProviderService: ToolCapableService {
             } else {
                 url = geminiURL
             }
-        } else if provider.providerType == .osaurus {
+        } else if requestProviderType == .osaurus {
             // Native Osaurus agent: POST /agents/{remoteAgentId}/run
             guard let agentId = provider.remoteAgentId else {
                 throw RemoteProviderServiceError.invalidURL
@@ -1753,7 +1791,7 @@ public actor RemoteProviderService: ToolCapableService {
             }
             url = agentURL
         } else {
-            let endpoint = provider.providerType.chatEndpoint
+            let endpoint = requestProviderType.chatEndpoint
             guard let standardURL = provider.url(for: endpoint) else {
                 throw RemoteProviderServiceError.invalidURL
             }
@@ -1792,7 +1830,7 @@ public actor RemoteProviderService: ToolCapableService {
         encoder.outputFormatting = .prettyPrinted
 
         let bodyData: Data
-        switch provider.providerType {
+        switch requestProviderType {
         case .anthropic:
             let anthropicRequest = request.toAnthropicRequest()
             bodyData = try encoder.encode(anthropicRequest)
@@ -1804,8 +1842,8 @@ public actor RemoteProviderService: ToolCapableService {
         case .gemini:
             let geminiRequest = request.toGeminiRequest()
             bodyData = try encoder.encode(geminiRequest)
-        case .openaiLegacy, .osaurus:
-            // Both providers consume the unmodified OpenAI-compatible body.
+        case .openaiLegacy, .azureOpenAI, .osaurus:
+            // These providers consume the unmodified OpenAI-compatible body.
             bodyData = try encoder.encode(request)
         }
         urlRequest.httpBody = bodyData
@@ -1813,8 +1851,11 @@ public actor RemoteProviderService: ToolCapableService {
     }
 
     /// Parse response based on provider type
-    private func parseResponse(_ data: Data) throws -> (content: String?, toolCalls: [ToolCall]?) {
-        switch provider.providerType {
+    private func parseResponse(
+        _ data: Data,
+        providerType: RemoteProviderType
+    ) throws -> (content: String?, toolCalls: [ToolCall]?) {
+        switch providerType {
         case .anthropic:
             let response = try JSONDecoder().decode(AnthropicMessagesResponse.self, from: data)
             var textContent = ""
@@ -1839,7 +1880,7 @@ public actor RemoteProviderService: ToolCapableService {
 
             return (textContent.isEmpty ? nil : textContent, toolCalls.isEmpty ? nil : toolCalls)
 
-        case .openaiLegacy:
+        case .openaiLegacy, .azureOpenAI:
             let response = try JSONDecoder().decode(ChatCompletionResponse.self, from: data)
             let content = response.choices.first?.message.content
             let toolCalls = response.choices.first?.message.tool_calls
@@ -1972,8 +2013,7 @@ public actor RemoteProviderService: ToolCapableService {
 
             if let altRange = Range(match.range(at: 1), in: text),
                 let mimeRange = Range(match.range(at: 2), in: text),
-                let dataRange = Range(match.range(at: 3), in: text)
-            {
+                let dataRange = Range(match.range(at: 3), in: text) {
                 let altText = String(text[altRange])
                 let sig: String? =
                     altText.hasPrefix("image|ts:")
@@ -2038,13 +2078,16 @@ struct ReasoningConfig: Encodable {
     let effort: String
 }
 
-/// Venice-specific parameters injected into the request body for Venice AI providers.
-/// See https://docs.venice.ai/api-reference/api-spec
+// Venice-specific parameters injected into the request body for Venice AI providers.
+// See https://docs.venice.ai/api-reference/api-spec
+// Nil values intentionally omit provider-specific flags from the encoded JSON.
+// swiftlint:disable discouraged_optional_boolean
 struct VeniceParameters: Encodable {
     var enable_web_search: String?
     var disable_thinking: Bool?
     var include_venice_system_prompt: Bool?
 }
+// swiftlint:enable discouraged_optional_boolean
 
 /// Chat request structure for remote providers (matches OpenAI format)
 struct RemoteChatRequest: Encodable {
@@ -2117,7 +2160,7 @@ struct RemoteChatRequest: Encodable {
 
     /// Convert to Anthropic Messages API request format
     func toAnthropicRequest() -> AnthropicMessagesRequest {
-        var systemContent: AnthropicSystemContent? = nil
+        var systemContent: AnthropicSystemContent?
         var anthropicMessages: [AnthropicMessage] = []
 
         // Collect consecutive tool_result blocks to batch them into a single user message
@@ -2175,8 +2218,7 @@ struct RemoteChatRequest: Encodable {
                         var input: [String: AnyCodableValue] = [:]
 
                         if let argsData = toolCall.function.arguments.data(using: .utf8),
-                            let argsDict = try? JSONSerialization.jsonObject(with: argsData) as? [String: Any]
-                        {
+                            let argsDict = try? JSONSerialization.jsonObject(with: argsData) as? [String: Any] {
                             input = argsDict.mapValues { AnyCodableValue($0) }
                         }
 
@@ -2216,11 +2258,9 @@ struct RemoteChatRequest: Encodable {
                         )
                     )
                 }
-
             default:
                 // Flush any pending tool results before unknown message type
                 flushToolResults()
-                break
             }
         }
 
@@ -2229,7 +2269,7 @@ struct RemoteChatRequest: Encodable {
 
         // Convert tools
         let emptySchema: JSONValue = .object(["type": .string("object"), "properties": .object([:])])
-        var anthropicTools: [AnthropicTool]? = nil
+        var anthropicTools: [AnthropicTool]?
         if let tools = tools {
             anthropicTools = tools.map { tool in
                 AnthropicTool(
@@ -2241,7 +2281,7 @@ struct RemoteChatRequest: Encodable {
         }
 
         // Convert tool choice
-        var anthropicToolChoice: AnthropicToolChoice? = nil
+        var anthropicToolChoice: AnthropicToolChoice?
         if let choice = tool_choice {
             switch choice {
             case .auto:
@@ -2272,7 +2312,7 @@ struct RemoteChatRequest: Encodable {
     /// Convert to Gemini GenerateContent API request format
     func toGeminiRequest() -> GeminiGenerateContentRequest {
         var geminiContents: [GeminiContent] = []
-        var systemInstruction: GeminiContent? = nil
+        var systemInstruction: GeminiContent?
 
         // Collect consecutive function responses to batch them
         var pendingFunctionResponses: [GeminiPart] = []
@@ -2309,8 +2349,7 @@ struct RemoteChatRequest: Encodable {
                             // Parse data URLs: "data:<mimeType>;base64,<data>"
                             if url.hasPrefix("data:"),
                                 let semicolonIdx = url.firstIndex(of: ";"),
-                                let commaIdx = url.firstIndex(of: ",")
-                            {
+                                let commaIdx = url.firstIndex(of: ",") {
                                 let mimeType = String(url[url.index(url.startIndex, offsetBy: 5) ..< semicolonIdx])
                                 let base64Data = String(url[url.index(after: commaIdx)...])
                                 userParts.append(
@@ -2340,8 +2379,7 @@ struct RemoteChatRequest: Encodable {
                     for toolCall in toolCalls {
                         var args: [String: AnyCodableValue] = [:]
                         if let argsData = toolCall.function.arguments.data(using: .utf8),
-                            let argsDict = try? JSONSerialization.jsonObject(with: argsData) as? [String: Any]
-                        {
+                            let argsDict = try? JSONSerialization.jsonObject(with: argsData) as? [String: Any] {
                             args = argsDict.mapValues { AnyCodableValue($0) }
                         }
                         parts.append(
@@ -2369,8 +2407,7 @@ struct RemoteChatRequest: Encodable {
 
                     // Try to parse the content as JSON first
                     if let data = content.data(using: .utf8),
-                        let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-                    {
+                        let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
                         responseData = json.mapValues { AnyCodableValue($0) }
                     } else {
                         responseData["result"] = AnyCodableValue(content)
@@ -2393,7 +2430,7 @@ struct RemoteChatRequest: Encodable {
         flushFunctionResponses()
 
         // Convert tools
-        var geminiTools: [GeminiTool]? = nil
+        var geminiTools: [GeminiTool]?
         if let tools = tools, !tools.isEmpty {
             let declarations = tools.map { tool in
                 GeminiFunctionDeclaration(
@@ -2406,7 +2443,7 @@ struct RemoteChatRequest: Encodable {
         }
 
         // Convert tool choice
-        var toolConfig: GeminiToolConfig? = nil
+        var toolConfig: GeminiToolConfig?
         if let choice = tool_choice {
             let mode: String
             switch choice {
@@ -2442,10 +2479,9 @@ struct RemoteChatRequest: Encodable {
             return GeminiImageConfig(aspectRatio: effectiveRatio, imageSize: effectiveSize)
         }()
 
-        var generationConfig: GeminiGenerationConfig? = nil
+        var generationConfig: GeminiGenerationConfig?
         if temperature != nil || max_completion_tokens != nil || top_p != nil || stop != nil
-            || responseModalities != nil || imageConfig != nil
-        {
+            || responseModalities != nil || imageConfig != nil {
             generationConfig = GeminiGenerationConfig(
                 temperature: temperature.map { Double($0) },
                 maxOutputTokens: max_completion_tokens,
@@ -2470,7 +2506,7 @@ struct RemoteChatRequest: Encodable {
     /// Convert to Open Responses API request format
     func toOpenResponsesRequest(alwaysUseInputItems: Bool = false) -> OpenResponsesRequest {
         var inputItems: [OpenResponsesInputItem] = []
-        var instructions: String? = nil
+        var instructions: String?
 
         for msg in messages {
             switch msg.role {
@@ -2543,7 +2579,7 @@ struct RemoteChatRequest: Encodable {
         }
 
         // Convert tools
-        var openResponsesTools: [OpenResponsesTool]? = nil
+        var openResponsesTools: [OpenResponsesTool]?
         if let tools = tools {
             openResponsesTools = tools.map { tool in
                 OpenResponsesTool(
@@ -2555,7 +2591,7 @@ struct RemoteChatRequest: Encodable {
         }
 
         // Convert tool choice
-        var openResponsesToolChoice: OpenResponsesToolChoice? = nil
+        var openResponsesToolChoice: OpenResponsesToolChoice?
         if let choice = tool_choice {
             switch choice {
             case .auto:
@@ -2694,8 +2730,7 @@ extension RemoteProviderService {
             if let (data, response) = try? await URLSession.shared.data(for: req),
                 let http = response as? HTTPURLResponse, http.statusCode < 400,
                 let parsed = try? JSONDecoder().decode(ModelsResponse.self, from: data),
-                !parsed.data.isEmpty
-            {
+                !parsed.data.isEmpty {
                 return parsed.data.map { $0.id }
             }
         }
@@ -2778,7 +2813,7 @@ extension RemoteProviderService {
         timeout: TimeInterval = 30
     ) async throws -> [String] {
         var allModels: [String] = []
-        var afterId: String? = nil
+        var afterId: String?
 
         while true {
             guard var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false) else {

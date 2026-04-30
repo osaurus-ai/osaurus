@@ -38,7 +38,7 @@ Example response:
 
 Generate chat completions using the specified model.
 
-> **Tool calling:** `/chat/completions` follows **strict OpenAI semantics** — when the model emits `tool_calls`, the response (or final SSE chunk) returns those calls and the **client is expected to execute them and POST the results back** in the next request. Osaurus deliberately does **not** auto-execute tools on this endpoint so it can serve as a drop-in backend for harnesses that already manage their own tool loop (Cursor, OpenWebUI, Continue, Aider, etc.).
+> **Tool calling:** `/chat/completions` follows **strict OpenAI semantics** — when the model emits `tool_calls`, the response (or final SSE chunk) returns those calls and the **client is expected to execute them and POST the results back** in the next request. Osaurus deliberately does **not** auto-execute tools on this endpoint so it can serve as a drop-in backend for harnesses that already manage their own tool loop.
 >
 > If you want server-side autonomous loops, use `POST /agents/{id}/run` (it executes tools, manages iteration budget, and streams hint/done frames). If you want to expose Osaurus tools to a remote model harness, use the MCP endpoints (`GET /mcp/tools`, `POST /mcp/call`).
 
@@ -257,7 +257,7 @@ When you want Osaurus to execute tools on your behalf (manage the iteration budg
 
 ### Aggregating Osaurus tools through MCP
 
-The Model Context Protocol endpoints let any MCP-aware harness (e.g. Cursor, Claude Desktop with MCP plugins) connect and discover Osaurus tools without committing to the agent endpoint:
+The Model Context Protocol endpoints let any MCP-aware harness connect and discover Osaurus tools without committing to the agent endpoint:
 
 - `GET /mcp/tools` — list registered tools as MCP `Tool` definitions
 - `POST /mcp/call` — invoke a tool by name with structured arguments

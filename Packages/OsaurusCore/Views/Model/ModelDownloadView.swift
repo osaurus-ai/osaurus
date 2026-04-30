@@ -9,8 +9,43 @@ import AppKit
 import Foundation
 import SwiftUI
 
+/// Sort options for the model list.
+enum ModelSortOption: String, CaseIterable, Identifiable {
+    case recommended
+    case downloadsDesc
+    case nameAsc
+    case compatibility
+    case sizeAsc
+    case sizeDesc
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .recommended: return "Recommended"
+        case .downloadsDesc: return "Most Downloaded"
+        case .nameAsc: return "Name (A–Z)"
+        case .compatibility: return "Compatibility"
+        case .sizeAsc: return "Size (Smallest first)"
+        case .sizeDesc: return "Size (Largest first)"
+        }
+    }
+
+    var iconName: String {
+        switch self {
+        case .recommended: return "sparkles"
+        case .downloadsDesc: return "arrow.down.app"
+        case .nameAsc: return "textformat"
+        case .compatibility: return "checkmark.seal"
+        case .sizeAsc: return "arrow.up.circle"
+        case .sizeDesc: return "arrow.down.circle"
+        }
+    }
+}
+
 /// Deep linking is supported via `deeplinkModelId` to open the view with a specific model pre-selected.
 struct ModelDownloadView: View {
+
     // MARK: - State Management
 
     /// Shared model manager for handling downloads and model state
@@ -25,14 +60,21 @@ struct ModelDownloadView: View {
     /// Use computed property to always get the current theme from ThemeManager
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
-    /// Current search query text
+    /// Current search query text  bound directly to the search field so
+    /// keystrokes are reflected immediately in the input.
     @State private var searchText: String = ""
+
+    /// Debounced copy of `searchText` that drives filtering + grid animation
+    @State private var debouncedSearchText: String = ""
 
     /// Currently selected tab (All, Suggested, or Downloaded)
     @State private var selectedTab: ModelListTab = .all
 
-    /// Debounce task to prevent excessive API calls during typing
+    /// Debounce task for the remote Hugging Face fetch.
     @State private var searchDebounceTask: Task<Void, Never>? = nil
+
+    /// Debounce task for the local filter / animation trigger.
+    @State private var localSearchDebounceTask: Task<Void, Never>? = nil
 
     /// Model to show in the detail sheet
     @State private var modelToShowDetails: MLXModel? = nil
@@ -44,6 +86,13 @@ struct ModelDownloadView: View {
     @State private var filterState = ModelManager.ModelFilterState()
     @State private var showFilterPopover = false
 
+    /// Sort option for the model list
+    @State private var sortOption: ModelSortOption = .recommended
+    @State private var showSortPopover = false
+
+    /// Import-from-Hugging-Face sheet state
+    @State private var showImportSheet = false
+
     // MARK: - Deep Link Support
 
     /// Optional model ID for deep linking (e.g., from URL schemes)
@@ -53,14 +102,15 @@ struct ModelDownloadView: View {
     var deeplinkFile: String? = nil
 
     var body: some View {
-        VStack(spacing: 0) {
-            // Header with search and tabs
-            headerView
+        // compute the grid lists once per body pass and thread them down
+        // so derived properties don't re-run multiple times during animation frames
+        let lists = gridLists
+        return VStack(spacing: 0) {
+            headerView(lists: lists)
                 .opacity(hasAppeared ? 1 : 0)
                 .offset(y: hasAppeared ? 0 : -10)
                 .animation(.spring(response: 0.4, dampingFraction: 0.8), value: hasAppeared)
 
-            // System status bar
             SystemStatusBar(
                 totalMemoryGB: systemMonitor.totalMemoryGB,
                 usedMemoryGB: systemMonitor.usedMemoryGB,
@@ -69,8 +119,7 @@ struct ModelDownloadView: View {
             )
             .opacity(hasAppeared ? 1 : 0)
 
-            // Model list
-            modelListView
+            modelListView(lists: lists)
                 .opacity(hasAppeared ? 1 : 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -80,6 +129,7 @@ struct ModelDownloadView: View {
             // If invoked via deeplink, prefill search and ensure the model is visible
             if let modelId = deeplinkModelId, !modelId.isEmpty {
                 searchText = modelId.split(separator: "/").last.map(String.init) ?? modelId
+                debouncedSearchText = searchText
                 _ = modelManager.resolveModel(byRepoId: modelId)
             }
 
@@ -99,7 +149,17 @@ struct ModelDownloadView: View {
             if ModelManager.parseHuggingFaceRepoId(from: newValue) != nil, selectedTab != .all {
                 selectedTab = .all
             }
-            // Debounce remote search to avoid spamming the API
+            // 150ms debounce for the local filter + grid animation: avoids
+            // running the mosaic transition on every keystroke.
+            localSearchDebounceTask?.cancel()
+            localSearchDebounceTask = Task { @MainActor in
+                do { try await Task.sleep(nanoseconds: 150_000_000) } catch { return }
+                if Task.isCancelled { return }
+                withAnimation(GridDiff.spring) {
+                    debouncedSearchText = newValue
+                }
+            }
+            // 300ms debounce for the remote fetch.
             searchDebounceTask?.cancel()
             searchDebounceTask = Task { @MainActor in
                 do { try await Task.sleep(nanoseconds: 300_000_000) } catch { return }
@@ -111,18 +171,28 @@ struct ModelDownloadView: View {
             ModelDetailView(model: model)
                 .environment(\.theme, themeManager.currentTheme)
         }
+        .sheet(isPresented: $showImportSheet) {
+            HuggingFaceImportSheet(
+                onImported: { repoId in
+                    showImportSheet = false
+                    selectedTab = .all
+                    searchText = repoId
+                }
+            )
+            .environment(\.theme, themeManager.currentTheme)
+        }
     }
 
     // MARK: - Header View
 
-    private var headerView: some View {
+    private func headerView(lists: GridLists) -> some View {
         ManagerHeaderWithTabs(
             title: L("Models"),
             subtitle: "\(completedDownloadedModelsCount) downloaded • \(modelManager.totalDownloadedSizeString)"
         ) {
             HStack(spacing: 12) {
-                // Refresh OsaurusAI HF org listing (Recommended tab only)
-                if selectedTab == .suggested {
+                // Refresh OsaurusAI HF org listing (Recommended section lives inside All)
+                if selectedTab == .all {
                     Button {
                         Task { await modelManager.refreshSuggestedModels() }
                     } label: {
@@ -139,6 +209,8 @@ struct ModelDownloadView: View {
                             Text("Refresh", bundle: .module)
                                 .font(.system(size: 13, weight: .medium))
                         }
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 7)
                         .background(
@@ -152,39 +224,28 @@ struct ModelDownloadView: View {
                     .help(L("Refresh OsaurusAI models from Hugging Face"))
                 }
 
-                // Filter button
+                // Import from Hugging Face
                 Button {
-                    showFilterPopover.toggle()
+                    showImportSheet = true
                 } label: {
                     HStack(spacing: 6) {
-                        Image(
-                            systemName: filterState.isActive
-                                ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle"
-                        )
-                        .font(.system(size: 13))
-                        Text("Filter", bundle: .module)
+                        Text("🤗")
+                            .font(.system(size: 13))
+                        Text("Import", bundle: .module)
                             .font(.system(size: 13, weight: .medium))
-                        if filterState.isActive {
-                            Circle()
-                                .fill(theme.accentColor)
-                                .frame(width: 6, height: 6)
-                        }
                     }
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 7)
                     .background(
                         RoundedRectangle(cornerRadius: 6)
-                            .fill(
-                                filterState.isActive
-                                    ? theme.accentColor.opacity(0.12) : theme.tertiaryBackground.opacity(0.5)
-                            )
+                            .fill(theme.tertiaryBackground.opacity(0.5))
                     )
-                    .foregroundColor(filterState.isActive ? theme.accentColor : theme.secondaryText)
+                    .foregroundColor(theme.secondaryText)
                 }
                 .buttonStyle(PlainButtonStyle())
-                .popover(isPresented: $showFilterPopover, arrowEdge: .top) {
-                    filterPopoverView
-                }
+                .help(L("Import an MLX model from Hugging Face"))
 
                 // Download status indicator (shown when downloads are active)
                 if modelManager.activeDownloadsCount > 0 {
@@ -204,9 +265,8 @@ struct ModelDownloadView: View {
             HeaderTabsRow(
                 selection: $selectedTab,
                 counts: [
-                    .all: filteredModels.count,
-                    .suggested: filteredSuggestedModels.count,
-                    .downloaded: completedDownloadedModelsCount,
+                    .all: lists.suggested.count + lists.others.count,
+                    .downloaded: lists.downloaded.count,
                 ],
                 badges: modelManager.activeDownloadsCount > 0
                     ? [.downloaded: modelManager.activeDownloadsCount]
@@ -219,6 +279,88 @@ struct ModelDownloadView: View {
 
     // MARK: - Filter Popover
 
+    /// Wraps filter/sort mutations in the shared grid spring so the
+    /// popover-side animations stay in sync with the grid mosaic. The
+    /// grid diff itself is driven by the implicit `.gridDiffAnimation`.
+    private func mutateFilter(_ change: () -> Void) {
+        withAnimation(GridDiff.spring) { change() }
+    }
+
+    private var sortPopoverView: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Sort by", bundle: .module)
+                .font(.system(size: 10, weight: .bold))
+                .tracking(0.6)
+                .foregroundColor(theme.tertiaryText)
+                .textCase(.uppercase)
+                .padding(.horizontal, 12)
+                .padding(.top, 12)
+                .padding(.bottom, 6)
+
+            ForEach(ModelSortOption.allCases) { option in
+                SortOptionRow(
+                    option: option,
+                    isSelected: sortOption == option
+                ) {
+                    mutateFilter { sortOption = option }
+                    showSortPopover = false
+                }
+            }
+            Spacer(minLength: 8)
+        }
+        .frame(width: 240)
+        .background(theme.primaryBackground)
+        .environment(\.theme, themeManager.currentTheme)
+    }
+
+    private struct SortOptionRow: View {
+        let option: ModelSortOption
+        let isSelected: Bool
+        let action: () -> Void
+        @Environment(\.theme) private var theme
+        @State private var isHovering = false
+
+        var body: some View {
+            Button(action: action) {
+                HStack(spacing: 10) {
+                    Image(systemName: option.iconName)
+                        .font(.system(size: 12, weight: .medium))
+                        .frame(width: 16)
+                        .foregroundColor(isSelected ? theme.accentColor : theme.secondaryText)
+                    Text(option.displayName)
+                        .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
+                        .foregroundColor(isSelected ? theme.accentColor : theme.primaryText)
+                    Spacer(minLength: 0)
+                    if isSelected {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundColor(theme.accentColor)
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(
+                            isSelected
+                                ? theme.accentColor.opacity(0.12)
+                                : (isHovering
+                                    ? theme.tertiaryBackground.opacity(0.7)
+                                    : Color.clear)
+                        )
+                )
+                .padding(.horizontal, 6)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .onHover { hovering in
+                withAnimation(.easeOut(duration: 0.12)) {
+                    isHovering = hovering
+                }
+            }
+        }
+    }
+
     private var filterPopoverView: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
@@ -228,7 +370,7 @@ struct ModelDownloadView: View {
                     Spacer()
                     if filterState.isActive {
                         Button {
-                            filterState.reset()
+                            mutateFilter { filterState.reset() }
                         } label: {
                             HStack(spacing: 4) {
                                 Image(systemName: "arrow.counterclockwise")
@@ -247,10 +389,14 @@ struct ModelDownloadView: View {
                     FilterSection(title: "Model Type") {
                         HStack(spacing: 8) {
                             FilterChip(label: "LLM", isSelected: filterState.typeFilter.isLLM) {
-                                filterState.typeFilter = filterState.typeFilter.isLLM ? .all : .llm
+                                mutateFilter {
+                                    filterState.typeFilter = filterState.typeFilter.isLLM ? .all : .llm
+                                }
                             }
                             FilterChip(label: "VLM", isSelected: filterState.typeFilter.isVLM) {
-                                filterState.typeFilter = filterState.typeFilter.isVLM ? .all : .vlm
+                                mutateFilter {
+                                    filterState.typeFilter = filterState.typeFilter.isVLM ? .all : .vlm
+                                }
                             }
                         }
                     }
@@ -259,7 +405,9 @@ struct ModelDownloadView: View {
                         FlowLayout(spacing: 8) {
                             ForEach(ModelManager.ModelFilterState.SizeCategory.allCases) { cat in
                                 FilterChip(label: cat.rawValue, isSelected: filterState.sizeCategory == cat) {
-                                    filterState.sizeCategory = filterState.sizeCategory == cat ? nil : cat
+                                    mutateFilter {
+                                        filterState.sizeCategory = filterState.sizeCategory == cat ? nil : cat
+                                    }
                                 }
                             }
                         }
@@ -269,25 +417,28 @@ struct ModelDownloadView: View {
                         HStack(spacing: 8) {
                             ForEach(ModelManager.ModelFilterState.ParamCategory.allCases) { cat in
                                 FilterChip(label: cat.rawValue, isSelected: filterState.paramCategory == cat) {
-                                    filterState.paramCategory = filterState.paramCategory == cat ? nil : cat
+                                    mutateFilter {
+                                        filterState.paramCategory = filterState.paramCategory == cat ? nil : cat
+                                    }
                                 }
                             }
                         }
                     }
-                    // The two Performance chips are mutually exclusive —
-                    // picking one clears the other so the filter stays a
-                    // single optional (matches SizeCategory / ParamCategory
-                    // conventions and keeps `isActive` trivially
-                    // `performance != nil`).
+                    // Performance chips are mutually exclusive — picking one
+                    // clears the others so the filter stays a single optional
+                    // (matches SizeCategory / ParamCategory conventions and
+                    // keeps `isActive` trivially `performance != nil`).
                     FilterSection(title: "Performance") {
-                        HStack(spacing: 8) {
+                        FlowLayout(spacing: 8) {
                             ForEach(ModelManager.ModelFilterState.PerformanceFilter.allCases) { opt in
                                 FilterChip(
                                     label: opt.displayName,
                                     isSelected: filterState.performance == opt
                                 ) {
-                                    filterState.performance =
-                                        filterState.performance == opt ? nil : opt
+                                    mutateFilter {
+                                        filterState.performance =
+                                            filterState.performance == opt ? nil : opt
+                                    }
                                 }
                             }
                         }
@@ -302,7 +453,9 @@ struct ModelDownloadView: View {
                             FlowLayout(spacing: 8) {
                                 ForEach(families, id: \.self) { fam in
                                     FilterChip(label: fam, isSelected: filterState.family == fam) {
-                                        filterState.family = filterState.family == fam ? nil : fam
+                                        mutateFilter {
+                                            filterState.family = filterState.family == fam ? nil : fam
+                                        }
                                     }
                                 }
                             }
@@ -329,9 +482,10 @@ struct ModelDownloadView: View {
         }
 
         var body: some View {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 10) {
                 Text(title)
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: 10, weight: .bold))
+                    .tracking(0.6)
                     .foregroundColor(theme.tertiaryText)
                     .textCase(.uppercase)
                 content
@@ -344,59 +498,241 @@ struct ModelDownloadView: View {
         let isSelected: Bool
         let action: () -> Void
         @Environment(\.theme) private var theme
+        @State private var isHovering = false
 
         var body: some View {
             Button(action: action) {
-                Text(label)
-                    .font(.system(size: 12, weight: .medium))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(
-                        RoundedRectangle(cornerRadius: 16)
-                            .fill(isSelected ? theme.accentColor : theme.tertiaryBackground.opacity(0.4))
-                    )
-                    .foregroundColor(isSelected ? .white : theme.secondaryText)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 16)
-                            .stroke(theme.primaryBorder.opacity(isSelected ? 0 : 0.1), lineWidth: 1)
-                    )
+                HStack(spacing: 4) {
+                    if isSelected {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 9, weight: .bold))
+                    }
+                    Text(label)
+                        .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(
+                    RoundedRectangle(cornerRadius: 16)
+                        .fill(
+                            isSelected
+                                ? theme.accentColor.opacity(0.15)
+                                : (isHovering
+                                    ? theme.tertiaryBackground.opacity(0.7)
+                                    : theme.tertiaryBackground.opacity(0.4))
+                        )
+                )
+                .foregroundColor(isSelected ? theme.accentColor : theme.secondaryText)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16)
+                        .stroke(
+                            isSelected
+                                ? theme.accentColor.opacity(0.45)
+                                : theme.primaryBorder.opacity(0.1),
+                            lineWidth: 1
+                        )
+                )
             }
             .buttonStyle(.plain)
+            .onHover { hovering in
+                withAnimation(.easeOut(duration: 0.12)) {
+                    isHovering = hovering
+                }
+            }
         }
     }
 
     // MARK: - Model List View
+    private var gridColumns: [GridItem] {
+        [GridItem(.adaptive(minimum: 260), spacing: 12, alignment: .top)]
+    }
+
+    private func modelGridSection(
+        title: String,
+        models: [MLXModel],
+        isFirst: Bool = false
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(title)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(theme.tertiaryText)
+                .textCase(.uppercase)
+                .padding(.horizontal, 2)
+                .padding(.top, isFirst ? 0 : 16)
+            modelGrid(models: models)
+        }
+    }
+
+    /// Grid of ModelRowView cards. Surviving cells (same `id` before and
+    /// after a filter change) slide to their new grid position; cells
+    /// that drop out scale-fade away; new cells scale-fade in. Driven by
+    /// the shared `gridDiffAnimation(token:)` modifier below.
+    private func modelGrid(models: [MLXModel]) -> some View {
+        LazyVGrid(columns: gridColumns, spacing: 20) {
+            ForEach(models, id: \.id) { model in
+                ModelRowView(
+                    model: model,
+                    downloadState: modelManager.effectiveDownloadState(for: model),
+                    metrics: modelManager.downloadMetrics[model.id],
+                    totalMemoryGB: systemMonitor.totalMemoryGB,
+                    onViewDetails: { modelToShowDetails = model },
+                    onCancel: { modelManager.cancelDownload(model.id) }
+                )
+                .gridDiffCell()
+            }
+        }
+        .gridDiffAnimation(token: gridChangeToken)
+    }
 
     /// Main content area with scrollable model list
-    private var modelListView: some View {
+    private func modelListView(lists: GridLists) -> some View {
         Group {
-            if modelManager.isLoadingModels && displayedModels.isEmpty {
+            if modelManager.isLoadingModels && lists.displayed.isEmpty {
                 loadingState
             } else {
-                ScrollView {
-                    LazyVStack(spacing: 12) {
+                VStack(spacing: 0) {
+                    sortFilterBar
+                        .padding(.horizontal, 24)
+                        .padding(.top, 12)
+                        .padding(.bottom, 4)
+
+                    ScrollView {
+                    VStack(spacing: 12) {
                         if !modelManager.deprecationNotices.isEmpty {
                             deprecationBanner
                         }
 
-                        if displayedModels.isEmpty {
+                        if lists.displayed.isEmpty {
                             emptyState
                         } else {
-                            ForEach(Array(displayedModels.enumerated()), id: \.element.id) { index, model in
-                                ModelRowView(
-                                    model: model,
-                                    downloadState: modelManager.effectiveDownloadState(for: model),
-                                    metrics: modelManager.downloadMetrics[model.id],
-                                    totalMemoryGB: systemMonitor.totalMemoryGB,
-                                    onViewDetails: { modelToShowDetails = model },
-                                    onCancel: { modelManager.cancelDownload(model.id) },
-                                    animationIndex: index
-                                )
+                            switch selectedTab {
+                            case .all:
+                                if !lists.suggested.isEmpty {
+                                    modelGridSection(
+                                        title: L("Recommended"),
+                                        models: lists.suggested,
+                                        isFirst: true
+                                    )
+                                }
+                                if !lists.others.isEmpty {
+                                    modelGridSection(
+                                        title: L("Others"),
+                                        models: lists.others,
+                                        isFirst: lists.suggested.isEmpty
+                                    )
+                                }
+                            case .downloaded:
+                                modelGrid(models: lists.downloaded)
                             }
                         }
                     }
-                    .padding(24)
+                    .padding(.horizontal, 24)
+                    .padding(.bottom, 24)
+                    .padding(.top, 12)
+                    }
+                    .mask(
+                        VStack(spacing: 0) {
+                            LinearGradient(
+                                gradient: Gradient(colors: [.clear, .black]),
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                            .frame(height: 16)
+                            Color.black
+                            LinearGradient(
+                                gradient: Gradient(colors: [.black, .clear]),
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                            .frame(height: 24)
+                        }
+                    )
                 }
+            }
+        }
+    }
+
+    // MARK: - Sort / Filter Bar
+
+    private var sortFilterBar: some View {
+        HStack(spacing: 12) {
+            Spacer()
+
+            // Sort button
+            Button {
+                showSortPopover.toggle()
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "arrow.up.arrow.down")
+                        .font(.system(size: 13))
+                    if sortOption == .recommended {
+                        Text("Sort", bundle: .module)
+                            .font(.system(size: 13, weight: .medium))
+                    } else {
+                        Text("Sort: ", bundle: .module)
+                            .font(.system(size: 13, weight: .medium))
+                        + Text(sortOption.displayName)
+                            .font(.system(size: 13, weight: .semibold))
+                    }
+                }
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(
+                            sortOption != .recommended
+                                ? theme.accentColor.opacity(0.12)
+                                : theme.tertiaryBackground.opacity(0.5)
+                        )
+                )
+                .foregroundColor(
+                    sortOption != .recommended ? theme.accentColor : theme.secondaryText
+                )
+            }
+            .buttonStyle(PlainButtonStyle())
+            .popover(isPresented: $showSortPopover, arrowEdge: .top) {
+                sortPopoverView
+            }
+            .help(L("Sort models"))
+
+            // Filter button
+            Button {
+                showFilterPopover.toggle()
+            } label: {
+                HStack(spacing: 6) {
+                    Image(
+                        systemName: filterState.isActive
+                            ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle"
+                    )
+                    .font(.system(size: 13))
+                    if let active = activeFilterSummary {
+                        Text("Filter: ", bundle: .module)
+                            .font(.system(size: 13, weight: .medium))
+                        + Text(active)
+                            .font(.system(size: 13, weight: .semibold))
+                    } else {
+                        Text("Filter", bundle: .module)
+                            .font(.system(size: 13, weight: .medium))
+                    }
+                }
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(
+                            filterState.isActive
+                                ? theme.accentColor.opacity(0.12) : theme.tertiaryBackground.opacity(0.5)
+                        )
+                )
+                .foregroundColor(filterState.isActive ? theme.accentColor : theme.secondaryText)
+            }
+            .buttonStyle(PlainButtonStyle())
+            .popover(isPresented: $showFilterPopover, arrowEdge: .top) {
+                filterPopoverView
             }
         }
     }
@@ -606,7 +942,7 @@ struct ModelDownloadView: View {
 
     private var emptyStateIcon: String {
         switch selectedTab {
-        case .all, .suggested:
+        case .all:
             return "cube.box"
         case .downloaded:
             return "arrow.down.circle"
@@ -620,8 +956,6 @@ struct ModelDownloadView: View {
         switch selectedTab {
         case .all:
             return L("No models available")
-        case .suggested:
-            return L("No recommended models")
         case .downloaded:
             return L("No downloaded models")
         }
@@ -629,23 +963,86 @@ struct ModelDownloadView: View {
 
     // MARK: - Model Filtering
 
-    private var filteredModels: [MLXModel] {
-        let searched = SearchService.filterModels(modelManager.availableModels, with: searchText)
-        let filtered = filterState.apply(to: searched, totalMemoryGB: systemMonitor.totalMemoryGB)
-        return filtered.sorted { lhs, rhs in
-            lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+    /// Snapshot of every list the grid renders, computed once per body
+    /// pass to avoid running `applySort` / `SearchService.filterModels` /
+    /// `filterState.apply` 4–6 times during animation frames.
+    struct GridLists {
+        let suggested: [MLXModel]
+        let others: [MLXModel]
+        let downloaded: [MLXModel]
+        let displayed: [MLXModel]
+    }
+
+    /// Single token for the implicit grid animation. Driving the implicit
+    /// `.animation(_:value:)` modifier (rather than `withAnimation`) gives
+    /// `LazyVGrid` reliable reorder animations — same path search uses.
+    private var gridChangeToken: String {
+        "\(selectedTab.rawValue)|\(sortOption.rawValue)|\(debouncedSearchText)|\(filterStateToken)"
+    }
+
+    /// Compact label for the active filter selection. `nil` when no
+    /// filters are applied, the chosen value's name when exactly one
+    /// dimension is active;,`"<n> active"` when multiple dimensions are
+    private var activeFilterSummary: String? {
+        var parts: [String] = []
+        switch filterState.typeFilter {
+        case .all: break
+        case .llm: parts.append("LLM")
+        case .vlm: parts.append("VLM")
+        }
+        if let size = filterState.sizeCategory { parts.append(size.displayName) }
+        if let param = filterState.paramCategory { parts.append(param.rawValue) }
+        if let perf = filterState.performance { parts.append(perf.displayName) }
+        if let family = filterState.family { parts.append(family) }
+
+        switch parts.count {
+        case 0: return nil
+        case 1: return parts[0]
+        default: return "\(parts.count) active"
         }
     }
 
-    /// Suggested (curated + auto-fetched) models filtered by current search text and filters.
-    ///
-    /// Sort order (top to bottom):
-    /// 1. Curated entries (pinned across the app) — within curated, Top Picks first.
-    /// 2. Auto-fetched entries from the OsaurusAI HF org listing.
-    /// 3. Within each tier: newer `releasedAt` first, then alphabetical.
-    private var filteredSuggestedModels: [MLXModel] {
-        let searched = SearchService.filterModels(modelManager.suggestedModels, with: searchText)
-        let filtered = filterState.apply(to: searched, totalMemoryGB: systemMonitor.totalMemoryGB)
+    private var filterStateToken: String {
+        let type: String
+        switch filterState.typeFilter {
+        case .all: type = "all"
+        case .llm: type = "llm"
+        case .vlm: type = "vlm"
+        }
+        return
+            "\(type)|\(filterState.sizeCategory?.rawValue ?? "_")|\(filterState.paramCategory?.rawValue ?? "_")|\(filterState.performance?.rawValue ?? "_")|\(filterState.family ?? "_")"
+    }
+
+    /// Consolidates all list computations. Each input pipeline runs once.
+    private var gridLists: GridLists {
+        let mem = systemMonitor.totalMemoryGB
+
+        let availSearched = SearchService.filterModels(modelManager.availableModels, with: debouncedSearchText)
+        let availFiltered = filterState.apply(to: availSearched, totalMemoryGB: mem)
+        let allFiltered = applySort(to: availFiltered)
+
+        let suggSearched = SearchService.filterModels(modelManager.suggestedModels, with: debouncedSearchText)
+        let suggFiltered = filterState.apply(to: suggSearched, totalMemoryGB: mem)
+        let suggested = sortedSuggested(suggFiltered)
+
+        let recommendedIds = Set(suggested.map { $0.id.lowercased() })
+        let others = allFiltered.filter { !recommendedIds.contains($0.id.lowercased()) }
+
+        let downloaded = computeDownloadedList(memory: mem)
+
+        let displayed: [MLXModel]
+        switch selectedTab {
+        case .all: displayed = suggested + others
+        case .downloaded: displayed = downloaded
+        }
+
+        return GridLists(suggested: suggested, others: others, downloaded: downloaded, displayed: displayed)
+    }
+
+    private func sortedSuggested(_ filtered: [MLXModel]) -> [MLXModel] {
+        if sortOption != .recommended {
+            return applySort(to: filtered)
+        }
         let curatedIds = ModelManager.curatedSuggestedIds
         return filtered.sorted { lhs, rhs in
             let lhsCurated = curatedIds.contains(lhs.id.lowercased())
@@ -671,19 +1068,14 @@ struct ModelDownloadView: View {
         }
     }
 
-    /// Downloaded tab contents: include active downloads at the top, then completed ones
-    private var filteredDownloadedModels: [MLXModel] {
+    private func computeDownloadedList(memory mem: Double) -> [MLXModel] {
         let all = modelManager.deduplicatedModels()
-        // Active: in-progress downloads regardless of on-disk completion
-        let active: [MLXModel] = all.filter { m in
-            switch modelManager.downloadStates[m.id] ?? .notStarted {
-            case .downloading: return true
-            default: return false
-            }
+        let isActive: (MLXModel) -> Bool = { m in
+            if case .downloading = (modelManager.downloadStates[m.id] ?? .notStarted) { return true }
+            return false
         }
-        // Completed: on-disk completed models
-        let completed: [MLXModel] = all.filter { $0.isDownloaded }
-        // Merge with active first; de-dupe by lowercase id while preserving order
+        let active = all.filter(isActive)
+        let completed = all.filter { $0.isDownloaded }
         var seen: Set<String> = []
         var merged: [MLXModel] = []
         for m in active + completed {
@@ -693,29 +1085,59 @@ struct ModelDownloadView: View {
                 merged.append(m)
             }
         }
-        // Apply search filter
-        let searched = SearchService.filterModels(merged, with: searchText)
-        let filtered = filterState.apply(to: searched, totalMemoryGB: systemMonitor.totalMemoryGB)
+        let searched = SearchService.filterModels(merged, with: debouncedSearchText)
+        let filtered = filterState.apply(to: searched, totalMemoryGB: mem)
+        let activeGroup = applySort(to: filtered.filter(isActive))
+        let restGroup = applySort(to: filtered.filter { !isActive($0) })
+        return activeGroup + restGroup
+    }
 
-        // Sort: active first, then by name
-        return filtered.sorted { lhs, rhs in
-            let lhsActive: Bool = {
-                if case .downloading = (modelManager.downloadStates[lhs.id] ?? .notStarted) { return true }
-                return false
-            }()
-            let rhsActive: Bool = {
-                if case .downloading = (modelManager.downloadStates[rhs.id] ?? .notStarted) { return true }
-                return false
-            }()
-            if lhsActive != rhsActive { return lhsActive && !rhsActive }
-            return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+    /// Apply the active `sortOption` to a list. `.recommended` falls back to
+    /// alphabetical so the "Others" section in the All tab stays stable.
+    private func applySort(to models: [MLXModel]) -> [MLXModel] {
+        switch sortOption {
+        case .recommended, .nameAsc:
+            return models.sorted { lhs, rhs in
+                lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+            }
+        case .downloadsDesc:
+            // Models without a known HF download count drop to the bottom.
+            return models.sorted { lhs, rhs in
+                let l = lhs.downloads ?? -1
+                let r = rhs.downloads ?? -1
+                if l != r { return l > r }
+                return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+            }
+        case .compatibility:
+            return models.sorted { lhs, rhs in
+                let l = compatibilityRank(lhs)
+                let r = compatibilityRank(rhs)
+                if l != r { return l < r }
+                return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+            }
+        case .sizeAsc, .sizeDesc:
+            return models.sorted { lhs, rhs in
+                let l = lhs.totalSizeEstimateBytes ?? Int64.max
+                let r = rhs.totalSizeEstimateBytes ?? Int64.max
+                if l != r { return sortOption == .sizeAsc ? l < r : l > r }
+                return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+            }
+        }
+    }
+
+    private func compatibilityRank(_ model: MLXModel) -> Int {
+        switch model.compatibility(totalMemoryGB: systemMonitor.totalMemoryGB) {
+        case .compatible: return 0
+        case .tight: return 1
+        case .tooLarge: return 2
+        case .unknown: return 3
         }
     }
 
     /// Count of completed (on-disk) downloaded models respecting current search and filters
     private var completedDownloadedModelsCount: Int {
         let completed = modelManager.deduplicatedModels().filter { $0.isDownloaded }
-        let searched = SearchService.filterModels(Array(completed), with: searchText)
+        let searched = SearchService.filterModels(Array(completed), with: debouncedSearchText)
         let filtered = filterState.apply(to: searched, totalMemoryGB: systemMonitor.totalMemoryGB)
         return filtered.count
     }
@@ -730,20 +1152,6 @@ struct ModelDownloadView: View {
         return activeProgress.reduce(0, +) / Double(activeProgress.count)
     }
 
-    /// Models to display based on the currently selected tab
-    private var displayedModels: [MLXModel] {
-        let baseModels: [MLXModel]
-        switch selectedTab {
-        case .all:
-            baseModels = filteredModels
-        case .suggested:
-            baseModels = filteredSuggestedModels
-        case .downloaded:
-            baseModels = filteredDownloadedModels
-        }
-
-        return baseModels
-    }
 }
 
 // MARK: - Skeleton Loading Card
@@ -931,7 +1339,7 @@ private struct ResourceGauge: View {
                 .font(.system(size: 12, weight: .medium))
                 .foregroundColor(theme.secondaryText)
 
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: 7) {
                 HStack(spacing: 4) {
                     Text(label)
                         .font(.system(size: 11, weight: .medium))
@@ -955,6 +1363,209 @@ private struct ResourceGauge: View {
             }
         }
         .frame(maxWidth: .infinity)
+    }
+}
+
+// MARK: - Hugging Face Import Sheet
+
+/// Modal that lets users paste a Hugging Face URL or repo id and surface
+/// a friendly error when the repo isn't MLX-compatible. On success, the
+/// caller routes the resolved repo id back into the search field, which
+/// triggers the existing `fetchRemoteMLXModels` resolution path
+private struct HuggingFaceImportSheet: View {
+    @Environment(\.theme) private var theme
+    @Environment(\.dismiss) private var dismiss
+
+    let onImported: (String) -> Void
+
+    @State private var inputText: String = ""
+    @State private var errorMessage: String? = nil
+    @State private var isResolving = false
+
+    private var trimmedInput: String {
+        inputText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var canSubmit: Bool {
+        !isResolving && ModelManager.parseHuggingFaceRepoId(from: trimmedInput) != nil
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            header
+            Divider()
+
+            VStack(alignment: .leading, spacing: 16) {
+                explainer
+                inputField
+                if let errorMessage {
+                    errorBanner(errorMessage)
+                }
+            }
+            .padding(20)
+
+            Divider()
+            footer
+        }
+        .frame(width: 460)
+        .background(theme.primaryBackground)
+    }
+
+    private var header: some View {
+        HStack(spacing: 10) {
+            Text("🤗")
+                .font(.system(size: 18))
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Import from Hugging Face", bundle: .module)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+                Text("Paste a model URL or repo id", bundle: .module)
+                    .font(.system(size: 12))
+                    .foregroundColor(theme.secondaryText)
+            }
+            Spacer()
+            Button(action: { dismiss() }) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(theme.tertiaryText)
+                    .frame(width: 22, height: 22)
+                    .background(Circle().fill(theme.tertiaryBackground))
+            }
+            .buttonStyle(PlainButtonStyle())
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 16)
+    }
+
+    private var explainer: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "info.circle")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(theme.accentColor)
+                .padding(.top, 1)
+            Text(
+                "Osaurus only runs MLX models. Try a repo from `OsaurusAI` or `mlx-community`.",
+                bundle: .module
+            )
+            .font(.system(size: 12))
+            .foregroundColor(theme.secondaryText)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(theme.accentColor.opacity(0.08))
+        )
+    }
+
+    private var inputField: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Repository", bundle: .module)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(theme.tertiaryText)
+                .textCase(.uppercase)
+
+            TextField(
+                "OsaurusAI/gemma-4-E2B-it-8bit",
+                text: $inputText,
+                onCommit: submit
+            )
+            .textFieldStyle(.plain)
+            .font(.system(size: 13, design: .monospaced))
+            .padding(10)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(theme.tertiaryBackground.opacity(0.6))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(theme.cardBorder, lineWidth: 1)
+                    )
+            )
+        }
+    }
+
+    private func errorBanner(_ message: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 12))
+                .foregroundColor(.orange)
+                .padding(.top, 1)
+            Text(message)
+                .font(.system(size: 12))
+                .foregroundColor(theme.primaryText)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.orange.opacity(0.1))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.orange.opacity(0.3), lineWidth: 1)
+                )
+        )
+    }
+
+    private var footer: some View {
+        HStack {
+            Spacer()
+            Button(action: { dismiss() }) {
+                Text("Cancel", bundle: .module)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+            }
+            .buttonStyle(PlainButtonStyle())
+            .keyboardShortcut(.cancelAction)
+
+            Button(action: submit) {
+                HStack(spacing: 6) {
+                    if isResolving {
+                        ProgressView()
+                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                            .scaleEffect(0.5)
+                            .frame(width: 12, height: 12)
+                    }
+                    Text("Import", bundle: .module)
+                        .font(.system(size: 13, weight: .semibold))
+                }
+                .foregroundColor(.white)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(canSubmit ? theme.accentColor : theme.accentColor.opacity(0.4))
+                )
+            }
+            .buttonStyle(PlainButtonStyle())
+            .disabled(!canSubmit)
+            .keyboardShortcut(.defaultAction)
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 14)
+    }
+
+    private func submit() {
+        guard let repoId = ModelManager.parseHuggingFaceRepoId(from: trimmedInput) else {
+            errorMessage = L(
+                "That doesn't look like a Hugging Face repo. Use the format org/repo or paste a huggingface.co URL."
+            )
+            return
+        }
+        errorMessage = nil
+        isResolving = true
+        Task { @MainActor in
+            let resolved = await ModelManager.shared.resolveModelIfMLXCompatible(byRepoId: repoId)
+            isResolving = false
+            if resolved != nil {
+                onImported(repoId)
+            } else {
+                errorMessage = L(
+                    "This repo doesn't appear to be MLX-compatible. Try a model from mlx-community or one with “-mlx” in its name."
+                )
+            }
+        }
     }
 }
 

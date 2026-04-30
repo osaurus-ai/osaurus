@@ -393,4 +393,54 @@ struct PreflightCapabilitySearchTests {
         #expect(result.toolSpecs.isEmpty)
         #expect(result.companions.isEmpty)
     }
+
+    // MARK: - Chat-model fallback threading
+    //
+    // Surface contract for the `model:` parameter added in response to
+    // GitHub issue #823. The parameter exists so the production entry
+    // points can pass the active chat model into `CoreModelService`
+    // as `fallbackModel:` — without it, preflight tool selection
+    // silently breaks for users whose configured core model is unset
+    // or unavailable on this Mac. These tests don't try to verify the
+    // CoreModelService routing (covered in `CoreModelServiceFallbackTests`);
+    // they pin that calling the public entry points with `model:` is
+    // a non-throwing surface contract regardless of mode.
+
+    @Test
+    func search_acceptsModelParameter_balancedMode() async {
+        let result = await PreflightCapabilitySearch.search(
+            query: "deploy build test",
+            mode: .balanced,
+            agentId: UUID(),
+            model: "test-chat-model"
+        )
+        // No assertion on contents — the test process may or may not
+        // have any dynamic tools registered. The contract being pinned
+        // is "passing model: doesn't crash and the call returns
+        // normally" so future refactors of the threading don't
+        // accidentally break the production wiring.
+        _ = result
+    }
+
+    @Test
+    func search_acceptsNilModelParameter_preservesLegacyBehaviour() async {
+        let result = await PreflightCapabilitySearch.search(
+            query: "deploy build test",
+            mode: .balanced,
+            agentId: UUID(),
+            model: nil
+        )
+        _ = result
+    }
+
+    @Test
+    func searchWithDiagnostic_acceptsModelParameter() async {
+        let (result, _) = await PreflightCapabilitySearch.searchWithDiagnostic(
+            query: "deploy build test",
+            mode: .balanced,
+            agentId: UUID(),
+            model: "test-chat-model"
+        )
+        _ = result
+    }
 }

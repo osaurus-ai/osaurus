@@ -54,13 +54,16 @@ The watcher starts monitoring immediately. You'll see a "Watching" badge on the 
 
 The responsiveness setting controls how long the watcher waits after detecting changes before triggering the AI task. This debounce window coalesces rapid events into a single trigger.
 
-| Setting    | Debounce Window | Best For                                            |
-| ---------- | --------------- | --------------------------------------------------- |
-| **Fast**   | ~200ms          | Screenshots, single-file drops, quick edits         |
-| **Balanced** | ~1s           | General-purpose monitoring (default)                |
-| **Patient** | ~3s            | Large downloads, batch operations, multi-file drops |
+| Setting      | Debounce Window | Best For                                                       |
+| ------------ | --------------- | -------------------------------------------------------------- |
+| **Fast**     | ~200ms          | Screenshots, single-file drops, quick edits                    |
+| **Balanced** | ~1s             | General-purpose monitoring (default)                           |
+| **Patient**  | ~3s             | Large downloads, batch operations, multi-file drops            |
+| **Relaxed**  | ~1 minute       | Note-taking, wiki edits, other active editing sessions         |
+| **Deferred** | ~5 minutes      | Extended writing sessions, periodic syncs                      |
+| **Extended** | ~10 minutes     | End-of-session checkpoints, long-running activity              |
 
-Choose **Fast** when you want near-instant reactions, **Patient** when files arrive in batches over several seconds, and **Balanced** for most other situations.
+Choose **Fast** when you want near-instant reactions and **Balanced** for most situations. The longer settings (**Relaxed**, **Deferred**, **Extended**) are designed for cases where the folder receives many small changes over a long period and you want a single trigger after the activity has fully settled — for example, an "automatic commit" watcher on an Obsidian wiki that should fire only after you stop editing.
 
 ### Convergence Loop
 
@@ -126,7 +129,7 @@ Each watcher operates as a state machine:
 | **Instructions**  | Yes      | Prompt sent to the AI when changes are detected     |
 | **Agent**       | No       | Agent to use for the triggered task               |
 | **Recursive**     | No       | Monitor subdirectories (default: off)               |
-| **Responsiveness**| No       | Debounce timing: Fast, Balanced, or Patient         |
+| **Responsiveness**| No       | Debounce timing: Fast, Balanced, Patient, Relaxed, Deferred, or Extended |
 
 ### Folder Access
 
@@ -185,6 +188,16 @@ Process shared files that arrive in a synced folder:
 - **Watched Folder:** `~/Dropbox/Shared`
 - **Instructions:** "When new files appear, analyze their contents and create a summary document. For spreadsheets, generate a brief data overview. For documents, create a one-paragraph summary."
 - **Responsiveness:** Balanced
+
+### Obsidian Auto-Commit
+
+Automatically commit your Obsidian wiki to git after you've finished editing:
+
+- **Name:** Wiki Auto-Commit
+- **Watched Folder:** `~/Documents/ObsidianVault`
+- **Recursive:** On
+- **Instructions:** "Stage all changes in the wiki repository and create a single commit. Generate a concise commit message that summarizes what changed (look at the diff). If there is nothing to commit, return without making changes."
+- **Responsiveness:** Relaxed (waits ~1 minute so the wiki "settles" between edits) — pick **Deferred** or **Extended** for even longer settle windows
 
 ---
 

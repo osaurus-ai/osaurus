@@ -109,8 +109,10 @@ struct GenerationEventMapperTests {
             Issue.record("expected completionInfo at end, got \(String(describing: out.last))")
             return
         }
-        #expect(unclosed == true,
-            "vmlx flagged trapped-thinking; mapper must surface it on the runtime event.")
+        #expect(
+            unclosed == true,
+            "vmlx flagged trapped-thinking; mapper must surface it on the runtime event."
+        )
     }
 
     @Test func empty_chunks_are_ignored() async throws {

@@ -191,7 +191,14 @@ public struct SystemPromptComposer: Sendable {
         } else if !effectiveToolsOff && toolMode == .auto && !query.isEmpty {
             let mode = ChatConfigurationStore.load().preflightSearchMode ?? .balanced
             trace?.mark("preflight_search_start")
-            preflight = await PreflightCapabilitySearch.search(query: query, mode: mode, agentId: agentId)
+            // `model` is forwarded as the chat-model fallback for the
+            // preflight LLM call — see GitHub issue #823.
+            preflight = await PreflightCapabilitySearch.search(
+                query: query,
+                mode: mode,
+                agentId: agentId,
+                model: model
+            )
             trace?.mark("preflight_search_done")
             trace?.set("preflightSource", "fresh")
         } else {
@@ -199,8 +206,12 @@ public struct SystemPromptComposer: Sendable {
             trace?.set("preflightSource", "skipped")
         }
 
-        if toolMode == .manual,
-            let section = await SkillManager.shared.manualSkillPromptSection(for: agentId)
+        // Skills inject in BOTH Auto and Manual modes — they're the user's
+        // explicitly-enabled set and aren't part of pre-flight (preflight only
+        // ranks tools). Per-item Enabled toggles in the capability picker are
+        // the single source of truth for what reaches the system prompt.
+        if !effectiveToolsOff,
+            let section = await SkillManager.shared.enabledSkillPromptSection(for: agentId)
         {
             comp.append(.dynamic(id: "skills", label: "Skills", content: section))
         }

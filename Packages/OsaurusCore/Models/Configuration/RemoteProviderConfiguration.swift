@@ -11,8 +11,8 @@ import Foundation
 
 /// Protocol type for remote provider connections
 public enum RemoteProviderProtocol: String, Codable, Sendable, CaseIterable {
-    case http = "http"
-    case https = "https"
+    case http
+    case https
 
     public var defaultPort: Int {
         switch self {
@@ -26,9 +26,9 @@ public enum RemoteProviderProtocol: String, Codable, Sendable, CaseIterable {
 
 /// Authentication type for remote providers
 public enum RemoteProviderAuthType: String, Codable, Sendable, CaseIterable {
-    case none = "none"
-    case apiKey = "apiKey"
-    case openAICodexOAuth = "openAICodexOAuth"
+    case none
+    case apiKey
+    case openAICodexOAuth
 }
 
 // MARK: - Provider Type
@@ -36,6 +36,7 @@ public enum RemoteProviderAuthType: String, Codable, Sendable, CaseIterable {
 /// Type of remote provider (determines API format)
 public enum RemoteProviderType: String, Codable, Sendable, CaseIterable {
     case openaiLegacy = "openai"  // OpenAI-compatible /chat/completions (third-party servers, backward compat)
+    case azureOpenAI = "azureOpenAI"  // Azure OpenAI Foundry /openai/v1 OpenAI-compatible chat completions
     case anthropic = "anthropic"  // Anthropic Messages API
     case openResponses = "openResponses"  // Open Responses API — used for official OpenAI and any compatible provider
     case openAICodex = "openAICodex"  // ChatGPT/Codex OAuth backend
@@ -45,6 +46,7 @@ public enum RemoteProviderType: String, Codable, Sendable, CaseIterable {
     public var displayName: String {
         switch self {
         case .openaiLegacy: return L("OpenAI Compatible")
+        case .azureOpenAI: return L("Azure OpenAI Foundry")
         case .anthropic: return L("Anthropic")
         case .openResponses: return L("Open Responses")
         case .openAICodex: return L("OpenAI Codex")
@@ -55,7 +57,7 @@ public enum RemoteProviderType: String, Codable, Sendable, CaseIterable {
 
     public var chatEndpoint: String {
         switch self {
-        case .openaiLegacy: return "/chat/completions"
+        case .openaiLegacy, .azureOpenAI: return "/chat/completions"
         case .anthropic: return "/messages"
         case .openResponses: return "/responses"
         case .openAICodex: return "/codex/responses"
@@ -86,6 +88,7 @@ public struct RemoteProvider: Codable, Identifiable, Sendable, Equatable {
     public var enabled: Bool
     public var autoConnect: Bool
     public var timeout: TimeInterval
+    public var manualModelIds: [String]
 
     // Keys for headers that should be stored in Keychain (not persisted in config)
     public var secretHeaderKeys: [String]
@@ -100,6 +103,7 @@ public struct RemoteProvider: Codable, Identifiable, Sendable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case id, name, host, providerProtocol, port, basePath
         case customHeaders, authType, providerType, enabled, autoConnect, timeout
+        case manualModelIds
         case secretHeaderKeys, remoteAgentId, remoteAgentAddress
     }
 
@@ -116,6 +120,7 @@ public struct RemoteProvider: Codable, Identifiable, Sendable, Equatable {
         enabled: Bool = true,
         autoConnect: Bool = true,
         timeout: TimeInterval = 60,
+        manualModelIds: [String] = [],
         secretHeaderKeys: [String] = [],
         remoteAgentId: UUID? = nil,
         remoteAgentAddress: String? = nil
@@ -132,6 +137,7 @@ public struct RemoteProvider: Codable, Identifiable, Sendable, Equatable {
         self.enabled = enabled
         self.autoConnect = autoConnect
         self.timeout = timeout
+        self.manualModelIds = manualModelIds
         self.secretHeaderKeys = secretHeaderKeys
         self.remoteAgentId = remoteAgentId
         self.remoteAgentAddress = remoteAgentAddress
@@ -154,6 +160,7 @@ public struct RemoteProvider: Codable, Identifiable, Sendable, Equatable {
         enabled = try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
         autoConnect = try container.decodeIfPresent(Bool.self, forKey: .autoConnect) ?? true
         timeout = try container.decodeIfPresent(TimeInterval.self, forKey: .timeout) ?? 60
+        manualModelIds = try container.decodeIfPresent([String].self, forKey: .manualModelIds) ?? []
         secretHeaderKeys = try container.decodeIfPresent([String].self, forKey: .secretHeaderKeys) ?? []
         remoteAgentId = try container.decodeIfPresent(UUID.self, forKey: .remoteAgentId)
         remoteAgentAddress = try container.decodeIfPresent(String.self, forKey: .remoteAgentAddress)
@@ -181,8 +188,7 @@ public struct RemoteProvider: Codable, Identifiable, Sendable, Equatable {
 
         // Check if host contains a port (e.g., "localhost:8080")
         if let colonIndex = actualHost.lastIndex(of: ":"),
-            let portValue = Int(String(actualHost[actualHost.index(after: colonIndex)...]))
-        {
+            let portValue = Int(String(actualHost[actualHost.index(after: colonIndex)...])) {
             // Extract port from host if not already set
             if port == nil {
                 components.port = portValue
@@ -262,6 +268,10 @@ public struct RemoteProvider: Codable, Identifiable, Sendable, Equatable {
                 if headers["x-goog-api-key"] == nil {
                     headers["x-goog-api-key"] = apiKey
                 }
+            case .azureOpenAI:
+                if headers["api-key"] == nil {
+                    headers["api-key"] = apiKey
+                }
             case .openaiLegacy, .openResponses, .openAICodex, .osaurus:
                 if headers["Authorization"] == nil {
                     headers["Authorization"] = "Bearer \(apiKey)"
@@ -288,6 +298,25 @@ public struct RemoteProvider: Codable, Identifiable, Sendable, Equatable {
 
     public func getOAuthTokens() -> RemoteProviderOAuthTokens? {
         RemoteProviderKeychain.getOAuthTokens(for: id)
+    }
+
+    public func mergedModelIds(discovered: [String]) -> [String] {
+        var seen = Set<String>()
+        var merged: [String] = []
+        let sourceModels = providerType == .azureOpenAI ? manualModelIds : discovered + manualModelIds
+
+        for rawValue in sourceModels {
+            let value = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !value.isEmpty else { continue }
+
+            let key = value.lowercased()
+            guard !seen.contains(key) else { continue }
+
+            seen.insert(key)
+            merged.append(value)
+        }
+
+        return merged
     }
 }
 

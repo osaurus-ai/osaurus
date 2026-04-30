@@ -161,14 +161,15 @@ struct QwenThinkingProfile: ModelProfile {
 
 // MARK: - Auto Thinking Profile (chat-template driven)
 
-/// Fallback profile that activates for any locally-installed model whose
-/// chat template reads an `enable_thinking` kwarg. Registered last so that
-/// explicit family profiles (Qwen, Venice, etc.) still win when they match.
+/// Fallback profile that activates for locally-installed models whose chat
+/// template exposes an `enable_thinking` kwarg and uses thinking markers the
+/// runtime can process. Registered last so that explicit family profiles
+/// (Qwen, Venice, etc.) still win when they match.
 struct AutoThinkingProfile: ModelProfile {
     static let displayName = "Thinking"
 
     static func matches(modelId: String) -> Bool {
-        LocalReasoningCapability.capability(forModelId: modelId).hasEnableThinkingKwarg
+        LocalReasoningCapability.capability(forModelId: modelId).isToggleableThinking
     }
 
     static let options: [ModelOptionDefinition] = [

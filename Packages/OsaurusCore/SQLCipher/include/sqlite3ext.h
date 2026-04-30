@@ -17,22 +17,27 @@
 */
 #ifndef SQLITE3EXT_H
 #define SQLITE3EXT_H
+#include "sqlite3.h"
 
 /*
  * BEGIN OSAURUS LOCAL MODIFICATION (do not remove on SQLCipher
  * version bumps; re-apply after copying a new sqlite3ext.h).
  *
- * The `sqlite3_api_routines` struct collides with the same
- * struct from Apple's system `SQLite3` module when both modules
- * end up imported in the same Swift compilation unit. We hide
- * the entire contents from the Clang importer here (activated
- * by `OSAURUS_OMIT_SQLITE3EXT_HEADERS` in `Package.swift`).
- * `sqlite3.c` includes its own copy of this text so the C
- * compilation is unaffected.
+ * Osaurus imports SQLCipher from Swift for the core SQLite API, not
+ * for compiling SQLite loadable extensions. Apple's system SQLite3
+ * module is also imported by dependencies in the same Swift build,
+ * and modern SDKs may append fields to `sqlite3_api_routines` before
+ * SQLCipher has adopted the same upstream SQLite version. Swift's
+ * Clang importer treats those cross-module struct differences as a
+ * build error.
+ *
+ * The umbrella header defines OSAURUS_OMIT_SQLITE_EXTENSION_API
+ * before including this file so the module stays warning-free without
+ * exporting the loadable-extension API that Osaurus does not use.
+ * The SQLCipher amalgamation is unaffected because sqlite3.c inlines
+ * its own sqlite3ext.h text.
  */
-#ifndef OSAURUS_OMIT_SQLITE3EXT_HEADERS
-
-#include "sqlite3.h"
+#ifndef OSAURUS_OMIT_SQLITE_EXTENSION_API
 
 /*
 ** The following structure holds pointers to all of the SQLite API
@@ -731,6 +736,6 @@ typedef int (*sqlite3_loadext_entry)(
 # define SQLITE_EXTENSION_INIT3     /*no-op*/
 #endif
 
-#endif /* OSAURUS_OMIT_SQLITE3EXT_HEADERS — END OSAURUS LOCAL MODIFICATION */
+#endif /* OSAURUS_OMIT_SQLITE_EXTENSION_API - END OSAURUS LOCAL MODIFICATION */
 
 #endif /* SQLITE3EXT_H */

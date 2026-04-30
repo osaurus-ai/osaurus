@@ -28,6 +28,10 @@ struct MLXModel: Identifiable, Codable {
     /// Used to sort the Recommended tab so newer releases appear near the top.
     let releasedAt: Date?
 
+    /// HF Hub `downloads` count for this repo, when known. Drives the
+    /// "Sort by Downloads" option so the most popular models surface first.
+    let downloads: Int?
+
     // When non-nil, pins the model to a specific directory (used by tests).
     // When nil, `localDirectory` resolves dynamically so that user-selected
     // storage path changes are always respected.
@@ -42,6 +46,7 @@ struct MLXModel: Identifiable, Codable {
         downloadSizeBytes: Int64? = nil,
         modelType: String? = nil,
         releasedAt: Date? = nil,
+        downloads: Int? = nil,
         rootDirectory: URL? = nil
     ) {
         self.id = id
@@ -52,7 +57,46 @@ struct MLXModel: Identifiable, Codable {
         self.downloadSizeBytes = downloadSizeBytes
         self.modelType = modelType
         self.releasedAt = releasedAt
+        self.downloads = downloads
         self.rootDirectory = rootDirectory
+    }
+
+    /// Returns a copy with `downloadSizeBytes` overridden. Used to fold in
+    /// the per-repo `usedStorage` value HF returns from
+    /// `/api/models/<id>?expand[]=usedStorage`, so the size chip renders
+    /// for repo ids whose names don't carry a parseable parameter token.
+    func withDownloadSize(_ bytes: Int64?) -> MLXModel {
+        guard let bytes else { return self }
+        return MLXModel(
+            id: id,
+            name: name,
+            description: description,
+            downloadURL: downloadURL,
+            isTopSuggestion: isTopSuggestion,
+            downloadSizeBytes: bytes,
+            modelType: modelType,
+            releasedAt: releasedAt,
+            downloads: downloads,
+            rootDirectory: rootDirectory
+        )
+    }
+
+    /// Returns a copy with the HF Hub `downloads` count populated. Used to
+    /// fold in stats from the OsaurusAI org listing onto curated entries
+    /// without rewriting their hand-tuned descriptions / Top Pick flags
+    func withDownloads(_ count: Int?) -> MLXModel {
+        MLXModel(
+            id: id,
+            name: name,
+            description: description,
+            downloadURL: downloadURL,
+            isTopSuggestion: isTopSuggestion,
+            downloadSizeBytes: downloadSizeBytes,
+            modelType: modelType,
+            releasedAt: releasedAt,
+            downloads: count,
+            rootDirectory: rootDirectory
+        )
     }
 
     /// Formatted download size string (e.g., "3.9 GB")

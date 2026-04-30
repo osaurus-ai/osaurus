@@ -39,6 +39,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 | VAD Mode                         | Stable    | "Voice Input"      | VOICE_INPUT.md                | Services/Voice/VADService.swift, Views/ContentView.swift (VAD controls)                     |
 | Transcription Mode               | Stable    | "Voice Input"      | VOICE_INPUT.md                | Services/Voice/TranscriptionModeService.swift, Views/Voice/TranscriptionOverlayView.swift         |
 | Sandbox                          | macOS 26+ | "Sandbox"          | SANDBOX.md                    | Services/Sandbox/SandboxManager.swift, Tools/BuiltinSandboxTools.swift, Managers/Plugin/SandboxPluginManager.swift, Views/Sandbox/SandboxView.swift |
+| Storage Encryption               | Stable    | -                  | STORAGE.md                    | Identity/StorageKeyManager.swift, Storage/StorageMigrator.swift, Storage/EncryptedSQLiteOpener.swift, Storage/EncryptedFileStore.swift, Storage/AttachmentBlobStore.swift, Storage/StorageMaintenance.swift, Views/Storage/StorageMigrationOverlay.swift, Views/Settings/StorageSettingsView.swift, SQLCipher/ |
 | CLI                              | Stable    | "CLI Reference"    | (in README)                   | Packages/OsaurusCLI/                                                                  |
 
 ---
@@ -63,6 +64,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 │  │   ├── WatchersView (Watchers)                                         │
 │  │   ├── ThemesView (Themes)                                             │
 │  │   ├── SandboxView (Sandbox Container & Plugins)                       │
+│  │   ├── StorageSettingsView (Encryption key, backup, key rotation)      │
 │  │   ├── InsightsView (Developer: Insights)                              │
 │  │   ├── ServerView (Developer: Server Explorer)                         │
 │  │   ├── VoiceView (Voice Input & VAD Settings)                          │
@@ -277,7 +279,7 @@ See [INFERENCE_RUNTIME.md](./INFERENCE_RUNTIME.md) for the full runtime architec
 
 ### Anthropic API Compatibility
 
-**Purpose:** Provide Anthropic Messages API compatibility for Claude Code and other Anthropic SDK clients.
+**Purpose:** Provide Anthropic Messages API compatibility for Anthropic SDK-compatible clients.
 
 **Components:**
 
@@ -446,7 +448,7 @@ See [INFERENCE_RUNTIME.md](./INFERENCE_RUNTIME.md) for the full runtime architec
 **Features:**
 
 - **Folder Monitoring** — Watch any directory using FSEvents with a single shared stream
-- **Configurable Responsiveness** — Fast (~200ms), Balanced (~1s), or Patient (~3s) debounce
+- **Configurable Responsiveness** — Six debounce tiers from ~200ms (Fast) to ~10 minutes (Extended) for everything from screenshot capture to "settle then commit" wiki workflows
 - **Recursive Monitoring** — Optionally monitor subdirectories
 - **Agent Integration** — Assign a agent to handle triggered tasks
 - **Enable/Disable** — Toggle watchers on or off without deleting
@@ -464,17 +466,20 @@ See [INFERENCE_RUNTIME.md](./INFERENCE_RUNTIME.md) for the full runtime architec
 | `agentId`      | Optional agent to use for the task               |
 | `isEnabled`      | Whether the watcher is active                      |
 | `recursive`      | Whether to monitor subdirectories (default: false) |
-| `responsiveness` | Debounce timing: fast, balanced, or patient        |
+| `responsiveness` | Debounce timing: fast, balanced, patient, relaxed, deferred, or extended |
 | `lastTriggeredAt`| When the watcher last ran                          |
 | `lastChatSessionId` | Chat session ID from the last run               |
 
 **Responsiveness Options:**
 
-| Option   | Debounce Window | Best For                                  |
-| -------- | --------------- | ----------------------------------------- |
-| Fast     | ~200ms          | Screenshots, single-file drops            |
-| Balanced | ~1s             | General use (default)                     |
-| Patient  | ~3s             | Downloads, batch operations               |
+| Option   | Debounce Window | Best For                                                 |
+| -------- | --------------- | -------------------------------------------------------- |
+| Fast     | ~200ms          | Screenshots, single-file drops                           |
+| Balanced | ~1s             | General use (default)                                    |
+| Patient  | ~3s             | Downloads, batch operations                              |
+| Relaxed  | ~1 minute       | Note-taking, wiki edits, active editing sessions         |
+| Deferred | ~5 minutes      | Extended writing sessions, periodic syncs                |
+| Extended | ~10 minutes     | End-of-session checkpoints, long-running activity        |
 
 **Change Detection:**
 

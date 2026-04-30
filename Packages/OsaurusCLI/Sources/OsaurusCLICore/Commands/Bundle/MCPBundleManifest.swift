@@ -3,7 +3,7 @@
 //  osaurus
 //
 //  Model for MCPB (MCP Bundle) manifest.json files.
-//  Supports both standard MCPB format and Claude Desktop integration format.
+//  Supports both standard MCPB format and desktop-client integration format.
 //
 
 import Foundation
@@ -12,7 +12,7 @@ struct MCPBundleManifest: Codable {
     // Standard MCPB format
     let mcpVersion: String?
 
-    // Claude Desktop format
+    // Desktop-client integration format
     let manifestVersion: String?
 
     let name: String
@@ -21,7 +21,7 @@ struct MCPBundleManifest: Codable {
     let description: String?
     let entry: EntryPoint?
 
-    // Claude Desktop format
+    // Desktop-client integration format
     let server: ServerConfig?
     let icon: String?
 
@@ -81,7 +81,7 @@ struct MCPBundleManifest: Codable {
             return (entry.command, entry.args, entry.env)
         }
 
-        // Try Claude Desktop format
+        // Try desktop-client integration format
         if let server = server, let config = server.mcpConfig {
             return (config.command, config.args, config.env)
         }
