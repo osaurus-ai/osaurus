@@ -137,7 +137,7 @@ struct PluginCreatorComposerWiringTests {
 
     @Test
     func composeChatContext_skipsPluginCreatorOutsideSandbox() async {
-        await SandboxTestLock.shared.run {
+        await SandboxTestLock.runWithStoragePaths {
             let agent = Agent(
                 name: "Plugin Creator Non-Sandbox Agent",
                 agentAddress: "test-plugin-creator-\(UUID().uuidString)",

@@ -432,7 +432,8 @@ struct ConfigurationView: View {
                                         label: "Allowed Origins",
                                         text: $tempAllowedOrigins,
                                         placeholder: "https://example.com, https://app.localhost",
-                                        help: "Loopback (127.0.0.1) is always allowed. This list adds extra origins for LAN access. Use * for any."
+                                        help:
+                                            "Loopback (127.0.0.1) is always allowed. This list adds extra origins for LAN access. Use * for any."
                                     )
                                 }
                             }

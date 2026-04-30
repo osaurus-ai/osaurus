@@ -189,13 +189,16 @@ private struct AddProviderFlow: View {
 
             Spacer()
 
-            Button(action: { dismiss() }, label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.secondaryText)
-                    .frame(width: 28, height: 28)
-                    .background(Circle().fill(theme.tertiaryBackground))
-            })
+            Button(
+                action: { dismiss() },
+                label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(theme.secondaryText)
+                        .frame(width: 28, height: 28)
+                        .background(Circle().fill(theme.tertiaryBackground))
+                }
+            )
             .buttonStyle(PlainButtonStyle())
             .keyboardShortcut(.escape, modifiers: [])
         }
@@ -293,7 +296,8 @@ private struct AddProviderFlow: View {
 
                     // Help section
                     if let preset = selectedPreset, preset.isKnown, !preset.consoleURL.isEmpty,
-                        preset != .openai || openAIAuthMode == .platformAPIKey {
+                        preset != .openai || openAIAuthMode == .platformAPIKey
+                    {
                         helpSection(for: preset)
                     }
 
@@ -775,31 +779,34 @@ private struct AddProviderFlow: View {
 
     private var advancedSettingsSection: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Button(action: {
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                    showAdvanced.toggle()
-                }
-            }, label: {
-                HStack(spacing: 8) {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(theme.tertiaryText)
-                        .rotationEffect(.degrees(showAdvanced ? 90 : 0))
+            Button(
+                action: {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                        showAdvanced.toggle()
+                    }
+                },
+                label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(theme.tertiaryText)
+                            .rotationEffect(.degrees(showAdvanced ? 90 : 0))
 
-                    Text(showAdvanced ? "Hide advanced settings" : "Show advanced settings")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
+                        Text(showAdvanced ? "Hide advanced settings" : "Show advanced settings")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(theme.secondaryText)
 
-                    Spacer()
+                        Spacer()
+                    }
+                    .padding(.vertical, 10)
+                    .padding(.horizontal, 14)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(theme.tertiaryBackground.opacity(0.5))
+                    )
+                    .contentShape(Rectangle())
                 }
-                .padding(.vertical, 10)
-                .padding(.horizontal, 14)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(theme.tertiaryBackground.opacity(0.5))
-                )
-                .contentShape(Rectangle())
-            })
+            )
             .buttonStyle(PlainButtonStyle())
 
             if showAdvanced {
@@ -834,15 +841,18 @@ private struct AddProviderFlow: View {
                                 .foregroundColor(theme.tertiaryText)
                                 .tracking(0.5)
                             Spacer()
-                            Button(action: {
-                                customHeaders.append(HeaderEntry(key: "", value: "", isSecret: false))
-                            }, label: {
-                                Image(systemName: "plus")
-                                    .font(.system(size: 10, weight: .semibold))
-                                    .foregroundColor(theme.accentColor)
-                                    .frame(width: 24, height: 24)
-                                    .background(Circle().fill(theme.accentColor.opacity(0.1)))
-                            })
+                            Button(
+                                action: {
+                                    customHeaders.append(HeaderEntry(key: "", value: "", isSecret: false))
+                                },
+                                label: {
+                                    Image(systemName: "plus")
+                                        .font(.system(size: 10, weight: .semibold))
+                                        .foregroundColor(theme.accentColor)
+                                        .frame(width: 24, height: 24)
+                                        .background(Circle().fill(theme.accentColor.opacity(0.1)))
+                                }
+                            )
                             .buttonStyle(PlainButtonStyle())
                         }
 
@@ -1265,13 +1275,16 @@ private struct EditProviderFlow: View {
 
             Spacer()
 
-            Button(action: { dismiss() }, label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.secondaryText)
-                    .frame(width: 28, height: 28)
-                    .background(Circle().fill(theme.tertiaryBackground))
-            })
+            Button(
+                action: { dismiss() },
+                label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(theme.secondaryText)
+                        .frame(width: 28, height: 28)
+                        .background(Circle().fill(theme.tertiaryBackground))
+                }
+            )
             .buttonStyle(PlainButtonStyle())
             .keyboardShortcut(.escape, modifiers: [])
         }
@@ -1517,31 +1530,34 @@ private struct EditProviderFlow: View {
 
     private func advancedSettingsSection(showConnectionDetails: Bool) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            Button(action: {
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                    showAdvanced.toggle()
-                }
-            }, label: {
-                HStack(spacing: 8) {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(theme.tertiaryText)
-                        .rotationEffect(.degrees(showAdvanced ? 90 : 0))
+            Button(
+                action: {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                        showAdvanced.toggle()
+                    }
+                },
+                label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(theme.tertiaryText)
+                            .rotationEffect(.degrees(showAdvanced ? 90 : 0))
 
-                    Text(showAdvanced ? "Hide advanced settings" : "Show advanced settings")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
+                        Text(showAdvanced ? "Hide advanced settings" : "Show advanced settings")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(theme.secondaryText)
 
-                    Spacer()
+                        Spacer()
+                    }
+                    .padding(.vertical, 10)
+                    .padding(.horizontal, 14)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(theme.tertiaryBackground.opacity(0.5))
+                    )
+                    .contentShape(Rectangle())
                 }
-                .padding(.vertical, 10)
-                .padding(.horizontal, 14)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(theme.tertiaryBackground.opacity(0.5))
-                )
-                .contentShape(Rectangle())
-            })
+            )
             .buttonStyle(PlainButtonStyle())
 
             if showAdvanced {
@@ -1591,15 +1607,18 @@ private struct EditProviderFlow: View {
                                 .foregroundColor(theme.tertiaryText)
                                 .tracking(0.5)
                             Spacer()
-                            Button(action: {
-                                customHeaders.append(HeaderEntry(key: "", value: "", isSecret: false))
-                            }, label: {
-                                Image(systemName: "plus")
-                                    .font(.system(size: 10, weight: .semibold))
-                                    .foregroundColor(theme.accentColor)
-                                    .frame(width: 24, height: 24)
-                                    .background(Circle().fill(theme.accentColor.opacity(0.1)))
-                            })
+                            Button(
+                                action: {
+                                    customHeaders.append(HeaderEntry(key: "", value: "", isSecret: false))
+                                },
+                                label: {
+                                    Image(systemName: "plus")
+                                        .font(.system(size: 10, weight: .semibold))
+                                        .foregroundColor(theme.accentColor)
+                                        .frame(width: 24, height: 24)
+                                        .background(Circle().fill(theme.accentColor.opacity(0.1)))
+                                }
+                            )
                             .buttonStyle(PlainButtonStyle())
                         }
 
@@ -1680,35 +1699,38 @@ private struct EditProviderFlow: View {
     @ViewBuilder
     private var testResultBadge: some View {
         // Test button
-        Button(action: {
-            if testResult != nil { testResult = nil } else { testConnection() }
-        }, label: {
-            HStack(spacing: 6) {
-                if isTesting {
-                    ProgressView().scaleEffect(0.5).frame(width: 14, height: 14)
-                } else if let result = testResult {
-                    Image(systemName: result.isSuccess ? "checkmark.circle.fill" : "xmark.circle.fill")
-                        .font(.system(size: 12))
-                } else {
-                    Image(systemName: "bolt.fill")
-                        .font(.system(size: 11))
-                }
+        Button(
+            action: {
+                if testResult != nil { testResult = nil } else { testConnection() }
+            },
+            label: {
+                HStack(spacing: 6) {
+                    if isTesting {
+                        ProgressView().scaleEffect(0.5).frame(width: 14, height: 14)
+                    } else if let result = testResult {
+                        Image(systemName: result.isSuccess ? "checkmark.circle.fill" : "xmark.circle.fill")
+                            .font(.system(size: 12))
+                    } else {
+                        Image(systemName: "bolt.fill")
+                            .font(.system(size: 11))
+                    }
 
-                Text(testButtonLabel)
-                    .font(.system(size: 12, weight: .medium))
-            }
-            .foregroundColor(testButtonColor)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(testButtonBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(testButtonColor.opacity(0.3), lineWidth: 1)
-                    )
+                    Text(testButtonLabel)
+                        .font(.system(size: 12, weight: .medium))
+                }
+                .foregroundColor(testButtonColor)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(testButtonBackground)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(testButtonColor.opacity(0.3), lineWidth: 1)
+                        )
                 )
-        })
+            }
+        )
         .buttonStyle(PlainButtonStyle())
         .disabled(isTesting)
     }
@@ -2052,15 +2074,19 @@ private struct CompactHeaderRow: View {
             )
             .foregroundColor(themeManager.currentTheme.primaryText)
 
-            Button(action: { header.isSecret.toggle() }, label: {
-                Image(systemName: header.isSecret ? "lock.fill" : "lock.open")
-                    .font(.system(size: 10))
-                    .foregroundColor(
-                        header.isSecret ? themeManager.currentTheme.accentColor : themeManager.currentTheme.tertiaryText
-                    )
-                    .frame(width: 26, height: 26)
-                    .background(Circle().fill(themeManager.currentTheme.tertiaryBackground))
-            })
+            Button(
+                action: { header.isSecret.toggle() },
+                label: {
+                    Image(systemName: header.isSecret ? "lock.fill" : "lock.open")
+                        .font(.system(size: 10))
+                        .foregroundColor(
+                            header.isSecret
+                                ? themeManager.currentTheme.accentColor : themeManager.currentTheme.tertiaryText
+                        )
+                        .frame(width: 26, height: 26)
+                        .background(Circle().fill(themeManager.currentTheme.tertiaryBackground))
+                }
+            )
             .buttonStyle(PlainButtonStyle())
             .help(Text(header.isSecret ? L("This value is stored securely") : L("Click to make this a secret value")))
 

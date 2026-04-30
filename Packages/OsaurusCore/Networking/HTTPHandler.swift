@@ -1347,7 +1347,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     /// header must appear in the list verbatim, in which case it's echoed
     /// back with `Vary: Origin`.
     private func computeCORSHeaders(
-        for head: HTTPRequestHead, isPreflight: Bool, isLoopback: Bool
+        for head: HTTPRequestHead,
+        isPreflight: Bool,
+        isLoopback: Bool
     ) -> [(String, String)] {
         let origin = head.headers.first(name: "Origin")
         var headers: [(String, String)] = []

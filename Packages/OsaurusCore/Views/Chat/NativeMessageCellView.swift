@@ -346,7 +346,9 @@ final class NativeAssistantActionsView: NSView {
 
         let size: CGFloat = 28
         let speakLeading = speakButton.leadingAnchor.constraint(
-            equalTo: regenerateButton.trailingAnchor, constant: 4)
+            equalTo: regenerateButton.trailingAnchor,
+            constant: 4
+        )
         let speakWidth = speakButton.widthAnchor.constraint(equalToConstant: size)
         self.speakLeadingConstraint = speakLeading
         self.speakWidthConstraint = speakWidth

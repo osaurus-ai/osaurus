@@ -49,7 +49,7 @@ public enum MarkdownStripper {
         else {
             return text
         }
-        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        let range = NSRange(text.startIndex ..< text.endIndex, in: text)
         return regex.stringByReplacingMatches(
             in: text,
             options: [],

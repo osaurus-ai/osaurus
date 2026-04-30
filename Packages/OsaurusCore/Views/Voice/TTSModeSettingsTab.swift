@@ -311,7 +311,7 @@ struct TTSModeSettingsTab: View {
                         .font(.system(size: 12, design: .monospaced))
                         .foregroundColor(theme.secondaryText)
                 }
-                Slider(value: $config.temperature, in: 0.1...1.2, step: 0.05) { editing in
+                Slider(value: $config.temperature, in: 0.1 ... 1.2, step: 0.05) { editing in
                     if !editing { saveSettings() }
                 }
             }

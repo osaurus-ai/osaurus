@@ -99,7 +99,7 @@ struct SessionPreflightCacheTests {
     private func withSessionPreflightAgent(
         _ body: @MainActor @Sendable (UUID) async -> Void
     ) async {
-        await SandboxTestLock.shared.run {
+        await SandboxTestLock.runWithStoragePaths {
             let manager = AgentManager.shared
             let agent = Agent(
                 name: "SessionPreflightCacheTestAgent-\(UUID().uuidString.prefix(6))",

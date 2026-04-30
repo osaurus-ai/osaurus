@@ -188,7 +188,8 @@ public struct RemoteProvider: Codable, Identifiable, Sendable, Equatable {
 
         // Check if host contains a port (e.g., "localhost:8080")
         if let colonIndex = actualHost.lastIndex(of: ":"),
-            let portValue = Int(String(actualHost[actualHost.index(after: colonIndex)...])) {
+            let portValue = Int(String(actualHost[actualHost.index(after: colonIndex)...]))
+        {
             // Extract port from host if not already set
             if port == nil {
                 components.port = portValue

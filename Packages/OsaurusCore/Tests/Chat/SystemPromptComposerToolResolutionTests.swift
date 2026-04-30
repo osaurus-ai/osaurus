@@ -27,7 +27,7 @@ struct SystemPromptComposerToolResolutionTests {
         manualToolNames: [String]? = nil,
         body: @MainActor @Sendable (UUID) async -> Void
     ) async {
-        await SandboxTestLock.shared.run {
+        await SandboxTestLock.runWithStoragePaths {
             let manager = AgentManager.shared
             let agent: Agent
             if let names = manualToolNames {

@@ -46,7 +46,7 @@ struct ChatViewSandboxTests {
 
     @Test
     func estimatedContextBreakdown_includesSandboxPromptAndToolsWhenEnabled() async {
-        await SandboxTestLock.shared.run {
+        await SandboxTestLock.runWithStoragePaths {
             let manager = AgentManager.shared
             let originalActiveAgentId = manager.activeAgentId
             let inactiveAgent = Agent(
@@ -128,7 +128,7 @@ struct ChatViewSandboxTests {
 
     @Test
     func prepareChatExecutionMode_usesSessionAgentInsteadOfActiveAgent() async {
-        await SandboxTestLock.shared.run {
+        await SandboxTestLock.runWithStoragePaths {
             let manager = AgentManager.shared
             let registrar = SandboxToolRegistrar.shared
             let originalActiveAgentId = manager.activeAgentId

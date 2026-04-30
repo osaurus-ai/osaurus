@@ -597,38 +597,38 @@ struct ModelDownloadView: View {
                         .padding(.bottom, 4)
 
                     ScrollView {
-                    VStack(spacing: 12) {
-                        if !modelManager.deprecationNotices.isEmpty {
-                            deprecationBanner
-                        }
+                        VStack(spacing: 12) {
+                            if !modelManager.deprecationNotices.isEmpty {
+                                deprecationBanner
+                            }
 
-                        if lists.displayed.isEmpty {
-                            emptyState
-                        } else {
-                            switch selectedTab {
-                            case .all:
-                                if !lists.suggested.isEmpty {
-                                    modelGridSection(
-                                        title: L("Recommended"),
-                                        models: lists.suggested,
-                                        isFirst: true
-                                    )
+                            if lists.displayed.isEmpty {
+                                emptyState
+                            } else {
+                                switch selectedTab {
+                                case .all:
+                                    if !lists.suggested.isEmpty {
+                                        modelGridSection(
+                                            title: L("Recommended"),
+                                            models: lists.suggested,
+                                            isFirst: true
+                                        )
+                                    }
+                                    if !lists.others.isEmpty {
+                                        modelGridSection(
+                                            title: L("Others"),
+                                            models: lists.others,
+                                            isFirst: lists.suggested.isEmpty
+                                        )
+                                    }
+                                case .downloaded:
+                                    modelGrid(models: lists.downloaded)
                                 }
-                                if !lists.others.isEmpty {
-                                    modelGridSection(
-                                        title: L("Others"),
-                                        models: lists.others,
-                                        isFirst: lists.suggested.isEmpty
-                                    )
-                                }
-                            case .downloaded:
-                                modelGrid(models: lists.downloaded)
                             }
                         }
-                    }
-                    .padding(.horizontal, 24)
-                    .padding(.bottom, 24)
-                    .padding(.top, 12)
+                        .padding(.horizontal, 24)
+                        .padding(.bottom, 24)
+                        .padding(.top, 12)
                     }
                     .mask(
                         VStack(spacing: 0) {
@@ -671,7 +671,7 @@ struct ModelDownloadView: View {
                     } else {
                         Text("Sort: ", bundle: .module)
                             .font(.system(size: 13, weight: .medium))
-                        + Text(sortOption.displayName)
+                            + Text(sortOption.displayName)
                             .font(.system(size: 13, weight: .semibold))
                     }
                 }
@@ -710,7 +710,7 @@ struct ModelDownloadView: View {
                     if let active = activeFilterSummary {
                         Text("Filter: ", bundle: .module)
                             .font(.system(size: 13, weight: .medium))
-                        + Text(active)
+                            + Text(active)
                             .font(.system(size: 13, weight: .semibold))
                     } else {
                         Text("Filter", bundle: .module)

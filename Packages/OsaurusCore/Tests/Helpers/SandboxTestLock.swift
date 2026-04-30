@@ -48,4 +48,18 @@ actor SandboxTestLock {
             throw error
         }
     }
+
+    /// Acquire `StoragePathsTestLock` and `SandboxTestLock` in the canonical
+    /// (Storage outside, Sandbox inside) order. Required for any test that
+    /// touches `AgentManager.shared`, because `AgentStore.save/loadAll` reads
+    /// `OsaurusPaths.overrideRoot` — a storage-path-rewriting suite can flip
+    /// it between `add(...)`'s save and refresh and silently drop the
+    /// just-added agent from the in-memory `agents` array.
+    static func runWithStoragePaths<T: Sendable>(
+        _ body: @MainActor @Sendable () async throws -> T
+    ) async rethrows -> T {
+        try await StoragePathsTestLock.shared.run {
+            try await Self.shared.run(body)
+        }
+    }
 }
