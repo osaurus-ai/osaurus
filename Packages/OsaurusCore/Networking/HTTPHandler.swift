@@ -86,7 +86,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             stateRef.value.requestStartTime = Date()
             stateRef.value.bodyBytesSeen = 0
             stateRef.value.rejectedTooLarge = false
-            stateRef.value.corsHeaders = computeCORSHeaders(for: head, isPreflight: false)
+            stateRef.value.corsHeaders = computeCORSHeaders(
+                for: head,
+                isPreflight: false,
+                isLoopback: isLoopbackConnection(context)
+            )
             stateRef.value.bodyByteLimit = bodyByteLimit(for: head)
 
             // Reject before allocating the body buffer so a client lying
@@ -159,7 +163,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
             // Handle CORS preflight (OPTIONS)
             if head.method == .OPTIONS {
-                let cors = computeCORSHeaders(for: head, isPreflight: true)
+                let cors = computeCORSHeaders(
+                    for: head,
+                    isPreflight: true,
+                    isLoopback: isLoopbackConnection(context)
+                )
                 sendResponse(
                     context: context,
                     version: head.version,
@@ -178,7 +186,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             // Loopback connections (CLI / local tools) are trusted without a token.
             let publicPaths: Set<String> = ["/", "/health", "/pair", "/pair-invite"]
             let isPluginRoute = path.hasPrefix("/plugins/")
-            let isLoopback = trustLoopback && (context.channel.remoteAddress?.isLoopback ?? false)
+            let isLoopback = isLoopbackConnection(context)
             if !publicPaths.contains(path) && !isPluginRoute && !isLoopback {
                 let authHeader = head.headers.first(name: "Authorization") ?? ""
                 let token =
@@ -1321,14 +1329,30 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     }
 
     // MARK: - CORS
-    private func computeCORSHeaders(for head: HTTPRequestHead, isPreflight: Bool) -> [(
-        String, String
-    )] {
-        guard !configuration.allowedOrigins.isEmpty else { return [] }
+
+    /// Whether the inbound connection is a "trusted local caller" — i.e., a
+    /// process on the user's own machine reaching us via 127.0.0.1 / ::1.
+    /// Both the auth gate and CORS auto-trust use this predicate so the two
+    /// stay in lockstep; flipping `trustLoopback` off (e.g. behind a reverse
+    /// proxy) disables both.
+    private func isLoopbackConnection(_ context: ChannelHandlerContext) -> Bool {
+        trustLoopback && (context.channel.remoteAddress?.isLoopback ?? false)
+    }
+
+    /// Loopback callers always get `Access-Control-Allow-Origin: *` (issue
+    /// #952): a request reaching us via 127.0.0.1 / ::1 is by definition on
+    /// the user's machine, so it gets the same trust the auth gate already
+    /// grants. Non-loopback callers respect `configuration.allowedOrigins`:
+    /// a literal `"*"` matches everything; otherwise the request `Origin`
+    /// header must appear in the list verbatim, in which case it's echoed
+    /// back with `Vary: Origin`.
+    private func computeCORSHeaders(
+        for head: HTTPRequestHead, isPreflight: Bool, isLoopback: Bool
+    ) -> [(String, String)] {
         let origin = head.headers.first(name: "Origin")
         var headers: [(String, String)] = []
 
-        let allowsAny = configuration.allowedOrigins.contains("*")
+        let allowsAny = isLoopback || configuration.allowedOrigins.contains("*")
         if allowsAny {
             headers.append(("Access-Control-Allow-Origin", "*"))
         } else if let origin,
