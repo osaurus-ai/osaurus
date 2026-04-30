@@ -79,6 +79,7 @@ enum ModelProfileRegistry {
         OpenAIReasoningProfile.self,
         QwenThinkingProfile.self,
         NemotronThinkingProfile.self,
+        LagunaThinkingProfile.self,
         Gemini31FlashImageProfile.self,
         GeminiProImageProfile.self,
         GeminiFlashImageProfile.self,
@@ -181,6 +182,44 @@ struct NemotronThinkingProfile: ModelProfile {
     static func matches(modelId: String) -> Bool {
         let lower = modelId.lowercased()
         return lower.contains("nemotron-3") && !lower.contains("coder")
+    }
+
+    static let options: [ModelOptionDefinition] = [
+        ModelOptionDefinition(
+            id: "disableThinking",
+            label: "Disable Thinking",
+            icon: "brain.head.profile",
+            kind: .toggle(default: true)
+        )
+    ]
+
+    static let defaults: [String: ModelOptionValue] = [
+        "disableThinking": .bool(true)
+    ]
+
+    static let thinkingOption: (id: String, inverted: Bool)? = ("disableThinking", true)
+}
+
+// MARK: - Laguna Thinking Profile
+
+/// Poolside Laguna (`model_type=laguna`) — agentic-coding 33B/3B-active MoE
+/// whose chat template (`laguna_glm_thinking_v5/chat_template.jinja`)
+/// reads an `enable_thinking` Jinja kwarg. The shipped template defaults
+/// `enable_thinking=false`, which means by default Laguna emits no
+/// thinking block — straight-to-answer behavior optimal for coding /
+/// agentic flows. The profile mirrors that: `disableThinking: true` by
+/// default, so the in-template default is preserved unless the user
+/// explicitly toggles thinking on (CoT for hard reasoning steps).
+///
+/// Match is `laguna` substring lower-cased; covers any future Laguna
+/// variant (e.g. Laguna-S, Laguna-M) without a registry edit. There is
+/// no `coder` exclusion because Laguna IS the coder family — exclusion
+/// would be a no-op.
+struct LagunaThinkingProfile: ModelProfile {
+    static let displayName = "Laguna Thinking"
+
+    static func matches(modelId: String) -> Bool {
+        return modelId.lowercased().contains("laguna")
     }
 
     static let options: [ModelOptionDefinition] = [

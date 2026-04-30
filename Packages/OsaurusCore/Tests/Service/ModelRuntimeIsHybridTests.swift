@@ -115,4 +115,43 @@ struct ModelRuntimeIsHybridTests {
                 "DSV4 hybrid attention is a different cache topology than the Mamba families this matcher targets: \(id)")
         }
     }
+
+    /// Poolside Laguna (`model_type=laguna`) — its hybrid is sliding-window
+    /// + full attention with per-layer head counts (48 full / 64 SWA),
+    /// handled by `RotatingKVCache` + `KVCacheSimple` per-layer in vmlx.
+    /// That is NOT the Mamba/SSM hybrid that `setHybrid(true)` is for —
+    /// the `setHybrid` flag only controls whether the
+    /// `SSMStateCache` companion is consulted on fetch/store, and Laguna
+    /// has no SSM-state to round-trip. Match must therefore be NEGATIVE.
+    @Test("Laguna (SWA + full attention hybrid) does NOT match (no SSM-state companion)")
+    func laguna_isNotMambaHybrid() {
+        for id in [
+            "OsaurusAI/Laguna-XS.2-mxfp4",
+            "OsaurusAI/Laguna-XS.2-JANGTQ2",
+            "JANGQ-AI/Laguna-XS.2-JANGTQ2",
+            "laguna-xs.2-mxfp4",            // case-folded picker form
+            "OsaurusAI/Laguna-S.3-JANGTQ4", // forward-compat (future variant)
+        ] {
+            #expect(
+                !ModelRuntime.isKnownHybridModel(name: id),
+                "Laguna SWA-hybrid is RotatingKVCache + KVCacheSimple, not Mamba — must NOT eager-flip setHybrid: \(id)")
+        }
+    }
+
+    /// Mistral Medium 3.5 (`model_type=mistral3` outer + `text_config.
+    /// model_type=ministral3` inner). Dense GQA 96/8 with Pixtral vision
+    /// tower. No Mamba layers, no SSM state. Must NOT match.
+    @Test("Mistral Medium 3.5 (dense GQA + Pixtral) does NOT match")
+    func mistralMedium35_isNotMambaHybrid() {
+        for id in [
+            "OsaurusAI/Mistral-Medium-3.5-128B-mxfp4",
+            "OsaurusAI/Mistral-Medium-3.5-128B-JANGTQ2",
+            "JANGQ-AI/Mistral-Medium-3.5-128B-JANGTQ2",
+            "mistral-medium-3.5-128b-mxfp4",
+        ] {
+            #expect(
+                !ModelRuntime.isKnownHybridModel(name: id),
+                "Mistral 3.5 dense GQA + Pixtral has no Mamba layers — must NOT eager-flip setHybrid: \(id)")
+        }
+    }
 }

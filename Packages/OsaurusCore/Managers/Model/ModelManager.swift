@@ -699,6 +699,118 @@ extension ModelManager {
             releasedAt: date("2026-04-28")
         ),
 
+        // MARK: Laguna-XS.2 (preview — vmlx engine support pending)
+        //
+        // Poolside's `model_type=laguna` — agentic-coding 33B/3B-active MoE,
+        // 40 layers, hybrid SWA + full attention with per-layer head counts,
+        // dual RoPE (full=YaRN, swa=default), 256 routed experts top-8 + 1
+        // shared expert, sigmoid routing with per-head gating, q_norm/k_norm
+        // in attention. Text-only. 131K context.
+        //
+        // The hybrid here is SLIDING-WINDOW + full attention (handled by
+        // `RotatingKVCache` + `KVCacheSimple` per-layer in vmlx), NOT the
+        // Mamba/Attn/MoE pattern used by Nemotron-3. So `isKnownHybridModel`
+        // intentionally does NOT match Laguna — `setHybrid(true)` is for
+        // SSM-state companion caches, which Laguna doesn't have.
+        //
+        // The chat template (`laguna_glm_thinking_v5/chat_template.jinja`)
+        // ships an `enable_thinking` Jinja kwarg that defaults to false;
+        // the per-model `LagunaThinkingProfile` in `ModelOptions.swift`
+        // exposes a "Disable Thinking" toggle so reasoning can be flipped
+        // on per request.
+        //
+        // Quant + bundle metadata per `jang_tools/convert_laguna_jangtq.py`
+        // and `jang_tools/convert_laguna_mxfp4.py`. `jang_config.json` v2:
+        //   { "weight_format": "mxtq" | "mxfp4",
+        //     "source_model.architecture": "laguna",
+        //     "has_vision/audio/video": false,
+        //     "mxtq_bits": { attention=8, shared_expert=8,
+        //                    routed_expert=2|4, embed_lm_head=8 } }
+        // The shared `validateJANGTQSidecarIfRequired` preflight catches
+        // mislabeled bundles (sidecar present but `weight_format != "mxtq"`)
+        // for any JANGTQ family — Laguna inherits that protection.
+
+        MLXModel(
+            id: "OsaurusAI/Laguna-XS.2-mxfp4",
+            name: ModelMetadataParser.friendlyName(from: "OsaurusAI/Laguna-XS.2-mxfp4"),
+            description:
+                "Poolside Laguna-XS.2 33B/3B-active agentic-coding MoE. MXFP4 quant — fastest decode. 131K context, 256 experts top-8.",
+            downloadURL:
+                "https://huggingface.co/OsaurusAI/Laguna-XS.2-mxfp4",
+            downloadSizeBytes: 17_500_000_000,
+            modelType: "laguna",
+            releasedAt: date("2026-04-30")
+        ),
+
+        MLXModel(
+            id: "OsaurusAI/Laguna-XS.2-JANGTQ2",
+            name: ModelMetadataParser.friendlyName(from: "OsaurusAI/Laguna-XS.2-JANGTQ2"),
+            description:
+                "Poolside Laguna-XS.2 33B/3B-active agentic-coding MoE, 2-bit TurboQuant routed experts. Smallest footprint (~7 GB). 131K context.",
+            downloadURL:
+                "https://huggingface.co/OsaurusAI/Laguna-XS.2-JANGTQ2",
+            downloadSizeBytes: 7_300_000_000,
+            modelType: "laguna",
+            releasedAt: date("2026-04-30")
+        ),
+
+        // MARK: Mistral-Medium-3.5-128B (preview — vmlx engine support pending)
+        //
+        // `model_type=mistral3` outer wrapper with `text_config.model_type=
+        // ministral3` (88 layers, hidden 12288, 96/8 GQA, head_dim 128, 256K
+        // YaRN). Pixtral vision tower (48 layers, hidden 1664, image_size
+        // 1540, patch 14, spatial_merge 2). Text + image. Source FP8 e4m3
+        // with per-tensor scales; vision tower / projector / lm_head stay
+        // in bf16/fp16.
+        //
+        // vmlx-swift-lm's `mistral3` factory currently branches on
+        // `text_config.model_type == "mistral4"` (older Mistral 3) and
+        // falls through to `Mistral3VLM` for everything else. Loading a
+        // Mistral 3.5 bundle through that fall-through path will fail
+        // because the layer/hidden counts don't match `Mistral3VLM`'s
+        // expectations — the engine needs a `ministral3` text inner
+        // class (mirrors how `mistral4` was added). Tracked as a vmlx
+        // follow-up; the registry entry is here so the picker carries
+        // it across the engine bump and host-side preflight is in place.
+        //
+        // Quant + bundle metadata per `jang_tools/convert_mistral3_jangtq.py`
+        // and `jang_tools/convert_mistral3_mxfp4.py`. `jang_config.json` v2:
+        //   { "weight_format": "mxtq" | "mxfp4",
+        //     "source_model.architecture": "mistral3",
+        //     "has_vision": true, "vision_arch": "pixtral",
+        //     "mxtq_bits": { text_decoder=2|4, embed_tokens=8,
+        //                    vision_tower="passthrough_fp16",
+        //                    multi_modal_projector="passthrough_fp16",
+        //                    lm_head="passthrough_fp16" } }
+        //
+        // Not a Mamba/SSM hybrid — `isKnownHybridModel` does NOT match.
+
+        MLXModel(
+            id: "OsaurusAI/Mistral-Medium-3.5-128B-mxfp4",
+            name: ModelMetadataParser.friendlyName(
+                from: "OsaurusAI/Mistral-Medium-3.5-128B-mxfp4"),
+            description:
+                "Mistral Medium 3.5 128B + Pixtral vision. MXFP4 quant — fastest decode. 256K context, 24-language coverage.",
+            downloadURL:
+                "https://huggingface.co/OsaurusAI/Mistral-Medium-3.5-128B-mxfp4",
+            downloadSizeBytes: 70_400_000_000,
+            modelType: "mistral3",
+            releasedAt: date("2026-04-30")
+        ),
+
+        MLXModel(
+            id: "OsaurusAI/Mistral-Medium-3.5-128B-JANGTQ2",
+            name: ModelMetadataParser.friendlyName(
+                from: "OsaurusAI/Mistral-Medium-3.5-128B-JANGTQ2"),
+            description:
+                "Mistral Medium 3.5 128B + Pixtral vision, 2-bit TurboQuant text decoder. ~36 GB footprint. 256K context, 24-language coverage.",
+            downloadURL:
+                "https://huggingface.co/OsaurusAI/Mistral-Medium-3.5-128B-JANGTQ2",
+            downloadSizeBytes: 36_700_000_000,
+            modelType: "mistral3",
+            releasedAt: date("2026-04-30")
+        ),
+
         // MARK: Large Models
 
         MLXModel(

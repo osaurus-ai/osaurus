@@ -139,4 +139,51 @@ struct ModelProfileRegistryTests {
                 "matcher must be specific to nemotron-3, not generic nemotron")
         }
     }
+
+    /// Laguna bundles (`model_type=laguna`) must match
+    /// `LagunaThinkingProfile` so the chat-input area's reasoning toggle
+    /// drives the `enable_thinking` Jinja kwarg honoured by the shipped
+    /// `laguna_glm_thinking_v5/chat_template.jinja`. Default-OFF mirrors
+    /// the chat template's own default — agentic-coding flows want
+    /// straight-to-answer; the toggle lets the user opt into CoT.
+    @Test("Laguna bundles match LagunaThinkingProfile (default OFF, all quant tiers)")
+    func laguna_matchesLagunaProfile() {
+        for id in [
+            "OsaurusAI/Laguna-XS.2-mxfp4",
+            "OsaurusAI/Laguna-XS.2-JANGTQ2",
+            "JANGQ-AI/Laguna-XS.2-JANGTQ2",
+            "laguna-xs.2-mxfp4",            // case-folded picker form
+            "OsaurusAI/Laguna-S.3-JANGTQ4", // forward-compat (future variant)
+        ] {
+            let profile = ModelProfileRegistry.profile(for: id)
+            #expect(
+                profile?.displayName == LagunaThinkingProfile.displayName,
+                "expected LagunaThinkingProfile for \(id), got \(profile?.displayName ?? "nil")"
+            )
+            let defaultDisable = profile?.defaults["disableThinking"]?.boolValue ?? false
+            #expect(defaultDisable == true,
+                "Laguna must default disableThinking=true to mirror the chat-template default")
+        }
+    }
+
+    /// Mistral Medium 3.5 has no thinking toggle today (no `<think>` block
+    /// in its chat template). Match must NOT shortcut into a thinking
+    /// profile; if it falls through to `AutoThinkingProfile` that's fine
+    /// (only activates if the local-reasoning capability detector says
+    /// thinking is toggleable). The assertion is the negative one: it
+    /// must NOT pick up Nemotron's or Laguna's profile.
+    @Test("Mistral Medium 3.5 does NOT match Nemotron or Laguna thinking profiles")
+    func mistralMedium35_doesNotMatchThinkingFamilies() {
+        for id in [
+            "OsaurusAI/Mistral-Medium-3.5-128B-mxfp4",
+            "OsaurusAI/Mistral-Medium-3.5-128B-JANGTQ2",
+            "mistral-medium-3.5-128b-mxfp4",
+        ] {
+            let profile = ModelProfileRegistry.profile(for: id)
+            #expect(profile?.displayName != NemotronThinkingProfile.displayName,
+                "Mistral 3.5 must NOT shortcut into NemotronThinkingProfile: \(id)")
+            #expect(profile?.displayName != LagunaThinkingProfile.displayName,
+                "Mistral 3.5 must NOT shortcut into LagunaThinkingProfile: \(id)")
+        }
+    }
 }
