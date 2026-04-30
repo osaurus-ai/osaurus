@@ -24,4 +24,12 @@ public enum ChatExecutionContext {
 
     /// The agent ID whose context is active for the current execution.
     @TaskLocal public static var currentAgentId: UUID?
+
+    /// Assistant turn dispatching the current tool call. Used by `speak`
+    /// to bind TTS playback to the right message bubble
+    @TaskLocal public static var currentAssistantTurnId: UUID?
+
+    /// Specific tool invocation id. Used by `speak` so the inline card
+    /// can swap its check for a spinner while its audio plays
+    @TaskLocal public static var currentToolCallId: String?
 }

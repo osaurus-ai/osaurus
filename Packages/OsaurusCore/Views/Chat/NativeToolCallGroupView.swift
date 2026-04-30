@@ -454,6 +454,9 @@ final class NativeToolCallRowView: NSView {
 
     private let headerButton = NSButton()
     private let statusIcon = NSImageView()
+    /// Replaces `statusIcon` while this row's `speak` call is still
+    /// playing audio (matched via `TTSService.activeSpeakCallId`).
+    private let statusSpinner = NSProgressIndicator()
     private let categoryIcon = NSImageView()
     private let categoryBg = NSView()
     private let nameLabel = NSTextField(labelWithString: "")
@@ -487,8 +490,12 @@ final class NativeToolCallRowView: NSView {
     private var isExpanded = false
     private var cachedArgs: String?
     private var currentItemId: String = ""
+    private var currentItem: ToolCallItem?
     private var currentWidth: CGFloat = 0
     private var lastConfiguredTheme: (any ThemeProtocol)?
+    /// `nonisolated(unsafe)` so deinit can read it; only ever set in
+    /// init on the main actor.
+    nonisolated(unsafe) private var ttsObservation: NSObjectProtocol?
 
     // MARK: Callbacks
 
@@ -500,9 +507,24 @@ final class NativeToolCallRowView: NSView {
     override init(frame: NSRect) {
         super.init(frame: frame)
         buildViews()
+        ttsObservation = NotificationCenter.default.addObserver(
+            forName: .ttsPlaybackStateChanged,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.refreshStatusIndicator()
+            }
+        }
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    deinit {
+        if let observation = ttsObservation {
+            NotificationCenter.default.removeObserver(observation)
+        }
+    }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
         let hit = super.hitTest(point)
@@ -543,10 +565,9 @@ final class NativeToolCallRowView: NSView {
 
         let isNew = item.call.id != currentItemId
         currentItemId = item.call.id
+        currentItem = item
 
-        let (statusImg, statusColor) = statusInfo(item: item, theme: theme)
-        statusIcon.image = NSImage(systemSymbolName: statusImg, accessibilityDescription: nil)
-        statusIcon.contentTintColor = statusColor
+        refreshStatusIndicator()
 
         let category = ToolCategory.from(toolName: item.call.function.name)
         categoryIcon.image = NSImage(systemSymbolName: category.icon, accessibilityDescription: nil)
@@ -684,6 +705,13 @@ final class NativeToolCallRowView: NSView {
         statusIcon.imageScaling = .scaleProportionallyUpOrDown
         addSubview(statusIcon)
 
+        statusSpinner.translatesAutoresizingMaskIntoConstraints = false
+        statusSpinner.style = .spinning
+        statusSpinner.controlSize = .small
+        statusSpinner.isIndeterminate = true
+        statusSpinner.isDisplayedWhenStopped = false
+        addSubview(statusSpinner)
+
         categoryBg.translatesAutoresizingMaskIntoConstraints = false
         categoryBg.wantsLayer = true
         categoryBg.layer?.cornerRadius = 6
@@ -773,6 +801,9 @@ final class NativeToolCallRowView: NSView {
             statusIcon.centerYAnchor.constraint(equalTo: topAnchor, constant: rowH / 2),
             statusIcon.widthAnchor.constraint(equalToConstant: 14),
             statusIcon.heightAnchor.constraint(equalToConstant: 14),
+
+            statusSpinner.centerXAnchor.constraint(equalTo: statusIcon.centerXAnchor),
+            statusSpinner.centerYAnchor.constraint(equalTo: statusIcon.centerYAnchor),
 
             categoryBg.leadingAnchor.constraint(equalTo: statusIcon.trailingAnchor, constant: 8),
             categoryBg.centerYAnchor.constraint(equalTo: statusIcon.centerYAnchor),
@@ -948,6 +979,29 @@ final class NativeToolCallRowView: NSView {
             return ("xmark.circle.fill", NSColor(theme.errorColor))
         }
         return ("checkmark.circle.fill", NSColor(theme.successColor))
+    }
+
+    /// Spinner if this is a `speak` call still playing; otherwise the
+    /// static dotted/check/xmark icon.
+    private func refreshStatusIndicator() {
+        guard let item = currentItem, let theme = lastConfiguredTheme else {
+            statusSpinner.stopAnimation(nil)
+            statusIcon.isHidden = false
+            return
+        }
+        let isSpeakInFlight =
+            item.call.function.name == "speak"
+            && TTSService.shared.activeSpeakCallId == item.call.id
+        if isSpeakInFlight {
+            statusIcon.isHidden = true
+            statusSpinner.startAnimation(nil)
+        } else {
+            statusSpinner.stopAnimation(nil)
+            statusIcon.isHidden = false
+            let (statusImg, statusColor) = statusInfo(item: item, theme: theme)
+            statusIcon.image = NSImage(systemSymbolName: statusImg, accessibilityDescription: nil)
+            statusIcon.contentTintColor = statusColor
+        }
     }
 
     private func updateChevron(expanded: Bool, animated: Bool) {

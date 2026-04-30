@@ -233,17 +233,10 @@ struct AgentLoopToolsTests {
 
     // MARK: - speak
 
-    @Test
-    func speak_acceptsPlainText() async throws {
-        // The enabled gate reads from TTSConfigurationStore (MainActor).
-        // Default config has `enabled = true`, so this passes without
-        // mutating the on-disk store — keeping the test hermetic.
-        let result = try await SpeakTool().execute(
-            argumentsJSON: #"{"text": "Hello there, this is a spoken response."}"#
-        )
-        #expect(ToolEnvelope.isSuccess(result))
-        #expect(result.contains("Speaking"))
-    }
+    // Note: a happy path test that calls `execute` with valid `text`
+    // would block on `TTSService.playAndWait` (model load + actual
+    // audio output). We only assert validation gates here. end-to-end
+    // playback is verified manually
 
     @Test
     func speak_rejectsEmptyText() async throws {

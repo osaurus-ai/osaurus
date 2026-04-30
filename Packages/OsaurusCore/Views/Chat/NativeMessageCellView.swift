@@ -375,6 +375,7 @@ final class NativeAssistantActionsView: NSView {
             queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated {
+                self?.applyTTSVisibility()
                 self?.refreshSpeakIcon()
             }
         }
@@ -451,9 +452,12 @@ final class NativeAssistantActionsView: NSView {
 
     private func applyTTSVisibility() {
         let enabled = TTSConfigurationStore.load().enabled
-        speakButton.isHidden = !enabled
-        speakWidthConstraint?.constant = enabled ? 28 : 0
-        speakLeadingConstraint?.constant = enabled ? 4 : 0
+        let isThisTurnPlaying = TTSService.shared.playingMessageId == turnId
+        // Hide on the bubble that's currently being spoken
+        let visible = enabled && !isThisTurnPlaying
+        speakButton.isHidden = !visible
+        speakWidthConstraint?.constant = visible ? 28 : 0
+        speakLeadingConstraint?.constant = visible ? 4 : 0
     }
 }
 

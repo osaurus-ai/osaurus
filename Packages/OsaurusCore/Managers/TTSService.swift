@@ -11,6 +11,11 @@ import Combine
 @preconcurrency import FluidAudio
 import Foundation
 
+/// Errors mapped onto tool error envelopes by the `speak` tool.
+public enum TTSPlaybackError: Error {
+    case modelNotReady
+}
+
 /// Model-readiness state for PocketTTS.
 public enum TTSModelState: Equatable {
     case notReady
@@ -31,6 +36,9 @@ public final class TTSService: ObservableObject {
     @Published public private(set) var playingMessageId: UUID? {
         didSet {
             if oldValue != playingMessageId {
+                // Clear the tool-call binding when playback ends so
+                // the row's spinner stops alongside the audio.
+                if playingMessageId == nil { activeSpeakCallId = nil }
                 NotificationCenter.default.post(name: .ttsPlaybackStateChanged, object: nil)
             }
         }
@@ -38,6 +46,17 @@ public final class TTSService: ObservableObject {
 
     /// Tracks whether the PocketTTS model is initialized and usable.
     @Published public private(set) var modelState: TTSModelState = .notReady
+
+    /// Tool-call id driving the current playback (`nil` for the manual
+    /// speaker button or when idle). The inline tool card watches this
+    /// to swap its check for a spinner while audio is still playing.
+    @Published public private(set) var activeSpeakCallId: String? {
+        didSet {
+            if oldValue != activeSpeakCallId {
+                NotificationCenter.default.post(name: .ttsPlaybackStateChanged, object: nil)
+            }
+        }
+    }
 
     // MARK: - Private state
 
@@ -93,6 +112,26 @@ public final class TTSService: ObservableObject {
 
         stop()
         playingMessageId = messageId
+        startPlayback(text: plain, messageId: messageId)
+    }
+
+    /// Fire-and-forget playback for the `speak` tool. Sets
+    /// `activeSpeakCallId` so the row spinner runs until audio drains
+    public func startToolPlayback(text: String, messageId: UUID, callId: String) throws {
+        guard isModelReady else {
+            if Self.pocketTtsModelsExistOnDisk() {
+                ensureModelLoaded()
+            } else {
+                NotificationCenter.default.post(name: .openTTSSettingsRequested, object: nil)
+            }
+            throw TTSPlaybackError.modelNotReady
+        }
+        let plain = MarkdownStripper.plainText(from: text)
+        guard !plain.isEmpty else { return }
+
+        stop()
+        playingMessageId = messageId
+        activeSpeakCallId = callId
         startPlayback(text: plain, messageId: messageId)
     }
 
@@ -215,13 +254,13 @@ public final class TTSService: ObservableObject {
                 )
                 for try await frame in stream {
                     if Task.isCancelled { break }
-                    await self?.schedule(samples: frame.samples)
+                    self?.schedule(samples: frame.samples)
                 }
-                await self?.markStreamFinished(for: messageId)
+                self?.markStreamFinished(for: messageId)
             } catch is CancellationError {
                 // stop() already cleared state
             } catch {
-                await self?.handleStreamError(error, for: messageId)
+                self?.handleStreamError(error, for: messageId)
             }
         }
     }
