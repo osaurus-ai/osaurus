@@ -1070,6 +1070,7 @@ public actor ModelRuntime {
         // Header looks like `audio/wav;base64` or `video/mp4`. Take the part
         // after the slash, before any `;`.
         var ext = defaultExtension
+        let isAudioMime = header.lowercased().hasPrefix("audio/")
         if let slash = header.firstIndex(of: "/") {
             let afterSlash = header[header.index(after: slash)...]
             if let semi = afterSlash.firstIndex(of: ";") {
@@ -1077,13 +1078,18 @@ public actor ModelRuntime {
             } else {
                 ext = String(afterSlash).lowercased()
             }
-            // Some clients send `audio/x-wav` or `audio/mpeg` — coerce to the
-            // canonical extensions vmlx's AVAudioConverter recognizes.
-            switch ext {
-            case "x-wav", "wave": ext = "wav"
-            case "mpeg", "mp3", "x-mpeg": ext = "mp3"
-            case "x-m4a", "mp4": ext = "m4a"
-            default: break
+            // Coerce audio mediatypes to the canonical extensions vmlx's
+            // AVAudioConverter recognizes. Guarded on `audio/` mime so a
+            // `data:video/mp4` URL keeps `.mp4` and isn't downgraded to the
+            // audio-only `.m4a` extension that the previous unconditional
+            // table produced.
+            if isAudioMime {
+                switch ext {
+                case "x-wav", "wave": ext = "wav"
+                case "mpeg", "mp3", "x-mpeg": ext = "mp3"
+                case "x-m4a", "mp4": ext = "m4a"
+                default: break
+                }
             }
         }
 

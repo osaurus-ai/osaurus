@@ -193,6 +193,61 @@ struct MultimodalContentPartTests {
         try? FileManager.default.removeItem(at: u)
     }
 
+    /// Locks in the fix for a shared-helper bug where the audio mediatype
+    /// canonicalization table (`mp4 → m4a`) ran unconditionally in
+    /// `materializeMediaDataUrl` — meaning a `data:video/mp4;base64,...`
+    /// URL got written to a temp file with `.m4a` extension. AVAsset on
+    /// macOS *can* still extract video tracks from a misnamed `.m4a`
+    /// container, so the bug wasn't visible in the e2e mapping test that
+    /// uses `https:` URLs, but downstream tools that key off `pathExtension`
+    /// (vmlx's `nemotronOmniExtractVideoFrames` and any future codec
+    /// dispatcher) would misroute. Fix is to guard the audio table on
+    /// `header.hasPrefix("audio/")`.
+    @Test("video data URL keeps .mp4 extension, audio data URL coerces to canonical")
+    func mapping_videoMp4DataUrlPreservesExtension() throws {
+        let videoBytes = Data([0x00, 0x01, 0x02, 0x03])
+        let audioBytes = Data([0x10, 0x11, 0x12, 0x13])
+        let videoB64 = videoBytes.base64EncodedString()
+        let audioB64 = audioBytes.base64EncodedString()
+        let json = """
+        [{
+          "role": "user",
+          "content": [
+            {"type": "video_url", "video_url": {"url": "data:video/mp4;base64,\(videoB64)"}},
+            {"type": "input_audio", "input_audio": {"data": "\(audioB64)", "format": "mp4"}}
+          ]
+        }]
+        """.data(using: .utf8)!
+
+        let msgs = try JSONDecoder().decode([ChatMessage].self, from: json)
+        let mapped = ModelRuntime.mapOpenAIChatToMLX(msgs)
+        #expect(mapped.count == 1)
+        #expect(mapped[0].videos.count == 1)
+        #expect(mapped[0].audios.count == 1)
+
+        guard case .url(let videoURL) = mapped[0].videos[0] else {
+            Issue.record("video should materialize to .url(...)")
+            return
+        }
+        // The bug: previously this would be "m4a" because the audio
+        // canonicalization table ran for video mediatypes too.
+        #expect(videoURL.pathExtension == "mp4",
+            "video/mp4 data URL must keep .mp4 extension, not be downgraded to .m4a")
+
+        guard case .url(let audioURL) = mapped[0].audios[0] else {
+            Issue.record("audio should materialize to .url(...)")
+            return
+        }
+        // Audio path: client said format=mp4 (an MP4 audio container), so
+        // synthetic `data:audio/mp4;base64,...` URL goes through the audio
+        // table — `mp4 → m4a` fires here as intended.
+        #expect(audioURL.pathExtension == "m4a",
+            "audio with format=mp4 should canonicalize to .m4a for AVAudioConverter")
+
+        try? FileManager.default.removeItem(at: videoURL)
+        try? FileManager.default.removeItem(at: audioURL)
+    }
+
     @Test("mapping handles all four roles with audio + video together")
     func mapping_allRoles_carryAudioAndVideo() throws {
         // System messages don't carry audio in real OpenAI requests, but

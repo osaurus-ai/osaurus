@@ -652,9 +652,14 @@ extension ModelManager {
         // jang_config.capabilities or model-type heuristic.
         // Cache: hybrid — `MambaCache(size=2)` for the 23 M layers,
         // `KVCacheSimple` for the 6 * layers, nil for E layers. vmlx's
-        // `CacheCoordinator.isHybrid` auto-flips on first slot admission;
-        // osaurus does NOT call `setHybrid` manually (per
-        // OSAURUS-INTEGRATION.md).
+        // `CacheCoordinator.isHybrid` auto-flips on first slot admission
+        // via `BatchEngine.admitPendingRequests`; osaurus *also* calls
+        // `setHybrid(true)` eagerly in `ModelRuntime.installCacheCoordinator`
+        // for any name matching `isKnownHybridModel(name:)` — Nemotron-3
+        // matches via the `nemotron-3` substring. The eager set is harmless
+        // (per OMNI-OSAURUS-HOOKUP.md §5.1) and avoids a one-frame stale-flag
+        // window if a request lands via the single-slot Evaluate path before
+        // BatchEngine has flipped the flag.
         // Sampling recipe per `research/NEMOTRON-OMNI-RUNTIME-2026-04-28.md`:
         // T=0.6 top_p=0.95 (DeepSeek-style). Bundles ship those defaults
         // in `generation_config.json`; `LocalGenerationDefaults` reads them.
