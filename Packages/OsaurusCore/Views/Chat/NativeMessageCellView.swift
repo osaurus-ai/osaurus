@@ -452,9 +452,12 @@ final class NativeAssistantActionsView: NSView {
 
     private func applyTTSVisibility() {
         let enabled = TTSConfigurationStore.load().enabled
-        let isThisTurnPlaying = TTSService.shared.playingMessageId == turnId
-        // Hide on the bubble that's currently being spoken
-        let visible = enabled && !isThisTurnPlaying
+        // Hide only when the `speak` tool drove playback. manual
+        // taps keep the button so the stop swap stays available.
+        let toolDriven =
+            TTSService.shared.playingMessageId == turnId
+            && TTSService.shared.activeSpeakCallId != nil
+        let visible = enabled && !toolDriven
         speakButton.isHidden = !visible
         speakWidthConstraint?.constant = visible ? 28 : 0
         speakLeadingConstraint?.constant = visible ? 4 : 0
