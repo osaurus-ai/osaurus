@@ -377,3 +377,88 @@ public final class ClarifyTool: OsaurusTool, @unchecked Sendable {
         )
     }
 }
+
+// MARK: - speak
+
+/// Speak text aloud through the local PocketTTS engine. The chat layer
+/// intercepts a successful call and routes the text to `TTSService`;
+/// the loop continues so the model can keep working (or call
+/// `complete` next). Only fires when the user explicitly asks to hear
+/// something — model should not call this unprompted.
+public final class SpeakTool: OsaurusTool, @unchecked Sendable {
+    public let name = "speak"
+    public let description =
+        "Read text aloud using the local text-to-speech engine. Use ONLY when the user explicitly "
+        + "asks to hear the response (`read this aloud`, `dictate this`, `speak`). Pass the exact "
+        + "prose to vocalize as plain text — no markdown, no code fences, no tool noise. Playback "
+        + "is non-blocking; continue the task and call `complete` afterwards as usual."
+
+    public let parameters: JSONValue? = .object([
+        "type": .string("object"),
+        "additionalProperties": .bool(false),
+        "properties": .object([
+            "text": .object([
+                "type": .string("string"),
+                "description": .string(
+                    "Plain prose to speak aloud. Strip markdown/code; keep it conversational."
+                ),
+            ])
+        ]),
+        "required": .array([.string("text")]),
+    ])
+
+    public init() {}
+
+    public func execute(argumentsJSON: String) async throws -> String {
+        let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
+        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
+
+        let textReq = requireString(
+            args,
+            "text",
+            expected: "non-empty plain prose to speak",
+            tool: name
+        )
+        guard case .value(let raw) = textReq else { return textReq.failureEnvelope ?? "" }
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message: "`text` must be a non-empty string.",
+                field: "text",
+                expected: "non-empty plain prose",
+                tool: name
+            )
+        }
+
+        // Honour the master TTS toggle: if the user disabled TTS in
+        // settings, don't fight them — return a clear unavailable
+        // envelope so the model can fall back to a text response.
+        let enabled = await MainActor.run { TTSConfigurationStore.load().enabled }
+        guard enabled else {
+            return ToolEnvelope.failure(
+                kind: .unavailable,
+                message:
+                    "Text-to-speech is disabled in settings. Tell the user to enable it under "
+                    + "Settings → Voice if they want spoken responses.",
+                tool: name,
+                retryable: false
+            )
+        }
+
+        return ToolEnvelope.success(tool: name, text: "Speaking…")
+    }
+
+    /// Extract the trimmed `text` field from a `speak` call's JSON
+    /// arguments. Returns nil when `text` is missing or empty so the
+    /// chat intercept can skip the side effect; the tool's own
+    /// validation already returned an error envelope to the model.
+    public static func parse(argumentsJSON: String) -> String? {
+        guard let data = argumentsJSON.data(using: .utf8),
+            let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let raw = dict["text"] as? String
+        else { return nil }
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+}

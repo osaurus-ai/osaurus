@@ -1680,6 +1680,28 @@ final class ChatSession: ObservableObject {
                                 // failure envelope and try again with a
                                 // proper summary.
                             }
+                            // `speak`: route the validated text to the
+                            // local TTS service. Bind to the in-progress
+                            // assistant turn's id so the speaker icon on
+                            // that bubble reflects play/stop state and
+                            // the user can cancel via the existing
+                            // tap-to-stop affordance. Fire-and-forget —
+                            // do NOT break the loop; the model continues
+                            // and calls `complete` as usual.
+                            if inv.toolName == "speak" {
+                                if !ToolEnvelope.isError(resultText),
+                                    let text = SpeakTool.parse(argumentsJSON: inv.jsonArguments)
+                                {
+                                    TTSService.shared.toggleSpeak(
+                                        text: text,
+                                        messageId: assistantTurn.id
+                                    )
+                                }
+                                // Fall through either way so the tool
+                                // result is recorded as a regular tool
+                                // turn below and the loop continues.
+                            }
+
                             if inv.toolName == "clarify" {
                                 if !ToolEnvelope.isError(resultText),
                                     let payload = Self.parseClarifyPayload(from: inv.jsonArguments)

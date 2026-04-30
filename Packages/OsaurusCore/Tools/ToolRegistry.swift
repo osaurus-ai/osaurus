@@ -94,6 +94,10 @@ final class ToolRegistry: ObservableObject {
             TodoTool(),
             CompleteTool(),
             ClarifyTool(),
+            // Voice output: model calls this when the user explicitly
+            // asks to hear the response. ChatView intercepts the
+            // successful call and routes through TTSService.
+            SpeakTool(),
             // Only sanctioned path for surfacing files / inline blobs to
             // the user (file_write / sandbox writes do not show in chat).
             ShareArtifactTool(),

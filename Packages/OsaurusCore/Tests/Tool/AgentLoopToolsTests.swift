@@ -230,4 +230,48 @@ struct AgentLoopToolsTests {
         #expect(parsed?.allowMultiple == true)
         #expect(parsed?.options == ["iOS", "Android"])
     }
+
+    // MARK: - speak
+
+    @Test
+    func speak_acceptsPlainText() async throws {
+        // The enabled gate reads from TTSConfigurationStore (MainActor).
+        // Default config has `enabled = true`, so this passes without
+        // mutating the on-disk store — keeping the test hermetic.
+        let result = try await SpeakTool().execute(
+            argumentsJSON: #"{"text": "Hello there, this is a spoken response."}"#
+        )
+        #expect(ToolEnvelope.isSuccess(result))
+        #expect(result.contains("Speaking"))
+    }
+
+    @Test
+    func speak_rejectsEmptyText() async throws {
+        let result = try await SpeakTool().execute(argumentsJSON: #"{"text": "   "}"#)
+        #expect(ToolEnvelope.isError(result))
+        #expect(result.contains("non-empty"))
+    }
+
+    @Test
+    func speak_rejectsMissingText() async throws {
+        let result = try await SpeakTool().execute(argumentsJSON: #"{}"#)
+        #expect(ToolEnvelope.isError(result))
+    }
+
+    @Test
+    func speak_rejectsMalformedArgs() async throws {
+        let result = try await SpeakTool().execute(argumentsJSON: "not json")
+        #expect(ToolEnvelope.isError(result))
+    }
+
+    @Test
+    func speak_parseExtractsTrimmedText() {
+        #expect(
+            SpeakTool.parse(argumentsJSON: #"{"text": "  hi  "}"#) == "hi"
+        )
+        #expect(SpeakTool.parse(argumentsJSON: #"{"text": ""}"#) == nil)
+        #expect(SpeakTool.parse(argumentsJSON: #"{"text": "   "}"#) == nil)
+        #expect(SpeakTool.parse(argumentsJSON: #"{}"#) == nil)
+        #expect(SpeakTool.parse(argumentsJSON: "garbage") == nil)
+    }
 }
