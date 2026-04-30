@@ -136,6 +136,7 @@ final class ChatWindowState: ObservableObject {
     }
 
     func switchAgent(to newAgentId: UUID) {
+        TTSService.shared.stop()
         if !session.turns.isEmpty { session.save() }
         agentId = newAgentId
         removeEphemeralProviderIfNeeded()
@@ -150,6 +151,7 @@ final class ChatWindowState: ObservableObject {
     }
 
     func startNewChat() {
+        TTSService.shared.stop()
         if !session.turns.isEmpty { session.save() }
         flushCurrentSession()
         session.reset(for: agentId)
@@ -158,6 +160,7 @@ final class ChatWindowState: ObservableObject {
 
     func loadSession(_ sessionData: ChatSessionData) {
         guard sessionData.id != session.sessionId else { return }
+        TTSService.shared.stop()
         if !session.turns.isEmpty { session.save() }
         flushCurrentSession()
 
