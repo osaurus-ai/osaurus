@@ -149,7 +149,8 @@ private struct TopStatusHeader: View {
                 .antialiased(true)
                 .scaledToFit()
                 .frame(width: 40, height: 40)
-                .contentShape(Rectangle())
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .onTapGesture {
                     AppDelegate.shared?.showManagementWindow(initialTab: .server)
                 }
