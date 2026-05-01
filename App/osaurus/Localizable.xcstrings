@@ -228,7 +228,7 @@
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Управлять расписаниями…"
+            "value": "Управление расписаниями…"
           }
         }
       }
@@ -338,7 +338,7 @@
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Новый Наблюдатель…"
+            "value": "Новый наблюдатель…"
           }
         }
       }

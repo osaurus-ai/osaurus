@@ -498,7 +498,7 @@
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Добавлять"
+            "value": "Добавить"
           }
         }
       }
@@ -866,7 +866,7 @@
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Позволять"
+            "value": "Разрешить"
           }
         }
       }
@@ -1154,7 +1154,7 @@
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "антропный"
+            "value": "Anthropic"
           }
         }
       }
@@ -1186,7 +1186,27 @@
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Apple Intelligence встроена в macOS и работает конфиденциально на вашем устройстве. Он готов к использованию немедленно.\n\nЛокальные модели работают на вашем Mac с использованием вашего оборудования. Они конфиденциальны и бесплатны для использования, но требуют загрузки.\n\nОблачные поставщики, такие как Claude и ChatGPT, более мощные, но требуют учетной записи и оплаты за использование.\n\nНе уверен? Apple Intelligence рекомендуется большинству пользователей."
+            "value": "Apple Intelligence встроена в macOS и работает конфиденциально на вашем устройстве. Она доступна сразу.\n\nЛокальные модели работают на вашем Mac, используя его ресурсы. Они конфиденциальны и бесплатны, но требуют загрузки.\n\nОблачные провайдеры, такие как Claude и ChatGPT, мощнее, но требуют учетной записи и оплаты за использование.\n\nСомневаетесь? Apple Intelligence рекомендуется большинству пользователей."
+          }
+        }
+      }
+    },
+    "Apple Intelligence runs on-device · Local models stay on your Mac · Providers use the cloud": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Apple Intelligence работает на устройстве · локальные модели остаются на вашем Mac · провайдеры работают в облаке"
+          }
+        }
+      }
+    },
+    "Local models stay on your Mac · Providers use the cloud": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Локальные модели остаются на вашем Mac · провайдеры работают в облаке"
           }
         }
       }
@@ -1330,7 +1350,7 @@
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Просить"
+            "value": "Спрашивать"
           }
         }
       }
@@ -1346,7 +1366,7 @@
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Спросите ИИ"
+            "value": "Спросить ИИ"
           }
         }
       }
@@ -1794,7 +1814,7 @@
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Доступные конечные точки на вашем сервере Osaurus. Разверните, чтобы протестировать напрямую."
+            "value": "Доступные конечные точки на сервере Osaurus. Разверните, чтобы проверить их напрямую."
           }
         }
       }
@@ -2002,7 +2022,7 @@
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Просматривать"
+            "value": "Обзор"
           }
         }
       }
@@ -2130,7 +2150,7 @@
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Встроен в macOS. Частный, быстрый и готовый к использованию."
+            "value": "Встроено в macOS. Конфиденциально, быстро и сразу готово к использованию."
           }
         }
       }
@@ -2386,7 +2406,7 @@
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Не может быть получен Озавром"
+            "value": "Osaurus не сможет его восстановить"
           }
         }
       }
@@ -2610,7 +2630,7 @@
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Выберите местную модель"
+            "value": "Выберите локальную модель"
           }
         }
       }
@@ -2674,7 +2694,7 @@
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Прозрачный"
+            "value": "Очистить"
           }
         }
       }
@@ -2834,7 +2854,7 @@
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Закрывать"
+            "value": "Закрыть"
           }
         }
       }
@@ -3063,6 +3083,16 @@
         }
       }
     },
+    "Secrets are stored securely in Keychain.": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Секреты надежно хранятся в Связке ключей."
+          }
+        }
+      }
+    },
     "Configure how chat mode generates responses.": {
       "localizations": {
         "de": {
@@ -3250,7 +3280,7 @@
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Подключить провайдера"
+            "value": "Подключите провайдера"
           }
         }
       }
@@ -3266,7 +3296,7 @@
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Подключите поставщика для доступа к удаленным моделям."
+            "value": "Подключите провайдера, чтобы получить доступ к удаленным моделям."
           }
         }
       }
@@ -3970,7 +4000,7 @@
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Создайте свою индивидуальность"
+            "value": "Создайте свою идентичность"
           }
         }
       }
@@ -3986,7 +4016,7 @@
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Создайте свою индивидуальность Озавра"
+            "value": "Создайте свою идентичность в Osaurus"
           }
         }
       }
@@ -4610,7 +4640,7 @@
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Отрицать"
+            "value": "Отклонить"
           }
         }
       }
@@ -4738,7 +4768,7 @@
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Неполноценный"
+            "value": "Отключено"
           }
         }
       }
@@ -4802,7 +4832,7 @@
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Увольнять"
+            "value": "Скрыть"
           }
         }
       }
@@ -4866,7 +4896,7 @@
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Сделанный"
+            "value": "Готово"
           }
         }
       }
@@ -6162,7 +6192,7 @@
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Создать личность"
+            "value": "Создать идентичность"
           }
         }
       }
@@ -6690,7 +6720,7 @@
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Как вы хотите питать Озавра?"
+            "value": "Как вы хотите использовать Osaurus?"
           }
         }
       }
@@ -6754,7 +6784,7 @@
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Личность"
+            "value": "Идентичность"
           }
         }
       }
@@ -6770,7 +6800,7 @@
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Айдентика →"
+            "value": "Идентичность →"
           }
         }
       }
@@ -8962,7 +8992,7 @@
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Новый Наблюдатель…"
+            "value": "Новый наблюдатель…"
           }
         }
       }
@@ -9346,7 +9376,7 @@
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Личность не установлена"
+            "value": "Идентичность не настроена"
           }
         }
       }
@@ -9586,7 +9616,7 @@
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Профиль еще не создан. Пообщайтесь с Озаурусом, и система памяти автоматически создаст ваш профиль."
+            "value": "Профиль еще не создан. Пообщайтесь с Osaurus, и система памяти автоматически создаст ваш профиль."
           }
         }
       }
@@ -10466,7 +10496,7 @@
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Сервер Осаурус"
+            "value": "Сервер Osaurus"
           }
         }
       }
@@ -12290,7 +12320,7 @@
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Сброс Озавра"
+            "value": "Сброс приложения Osaurus"
           }
         }
       }
@@ -12706,7 +12736,7 @@
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Полностью работает на вашем Mac. Никакой учетной записи не требуется."
+            "value": "Полностью работает на вашем Mac. Учетная запись не нужна."
           }
         }
       }
@@ -12722,7 +12752,7 @@
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Полностью работает на вашем Mac. Никакие данные не покидают ваш компьютер."
+            "value": "Полностью работает на вашем Mac. Данные не покидают ваш компьютер."
           }
         }
       }
@@ -13378,7 +13408,7 @@
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Посмотрите, на что способен Озавр"
+            "value": "Посмотрите, что умеет Osaurus"
           }
         }
       }
@@ -13858,7 +13888,7 @@
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Настройте свою личность Озавра"
+            "value": "Настройте свою идентичность в Osaurus"
           }
         }
       }
@@ -14530,7 +14560,7 @@
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Начните использовать Озавра"
+            "value": "Начните пользоваться Osaurus"
           }
         }
       }
@@ -16498,7 +16528,7 @@
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Используйте Apple Intelligence"
+            "value": "Использовать Apple Intelligence"
           }
         }
       }
