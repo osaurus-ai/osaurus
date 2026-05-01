@@ -759,7 +759,7 @@ extension ModelManager {
             releasedAt: date("2026-04-30")
         ),
 
-        // MARK: Mistral-Medium-3.5-128B (preview — vmlx engine support pending)
+        // MARK: Mistral-Medium-3.5-128B (preview — architecturally supported, end-to-end load unverified)
         //
         // `model_type=mistral3` outer wrapper with `text_config.model_type=
         // ministral3` (88 layers, hidden 12288, 96/8 GQA, head_dim 128, 256K
@@ -768,15 +768,17 @@ extension ModelManager {
         // with per-tensor scales; vision tower / projector / lm_head stay
         // in bf16/fp16.
         //
-        // vmlx-swift-lm's `mistral3` factory currently branches on
-        // `text_config.model_type == "mistral4"` (older Mistral 3) and
-        // falls through to `Mistral3VLM` for everything else. Loading a
-        // Mistral 3.5 bundle through that fall-through path will fail
-        // because the layer/hidden counts don't match `Mistral3VLM`'s
-        // expectations — the engine needs a `ministral3` text inner
-        // class (mirrors how `mistral4` was added). Tracked as a vmlx
-        // follow-up; the registry entry is here so the picker carries
-        // it across the engine bump and host-side preflight is in place.
+        // vmlx-swift-lm's `mistral3` factory branches on
+        // `text_config.model_type == "mistral4"` and falls through to
+        // `Mistral3VLM` otherwise. `Mistral3VLM.LanguageModel`
+        // (Libraries/MLXVLM/Models/Mistral3.swift:516) is explicitly
+        // documented to handle BOTH `ministral3` (sliding + llama4 scaling)
+        // AND vanilla `mistral` model_types via `Ministral3ModelInner`.
+        // Vision shapes (image_size, num_layers, spatial_merge) are
+        // config-parametric. So Mistral 3.5 should load through the
+        // existing factory dispatch — but no end-to-end smoke test has
+        // been run on real 3.5 weights yet, hence "preview". Marked top
+        // suggestion only after a real load + decode pass on bundle.
         //
         // Quant + bundle metadata per `jang_tools/convert_mistral3_jangtq.py`
         // and `jang_tools/convert_mistral3_mxfp4.py`. `jang_config.json` v2:
