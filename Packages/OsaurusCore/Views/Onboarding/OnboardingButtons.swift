@@ -62,7 +62,7 @@ struct OnboardingStatefulButton: View {
 
     private var fillColor: Color {
         switch state {
-        case .idle, .loading: return shouldDisable ? theme.tertiaryText : theme.buttonBackground
+        case .idle, .loading: return shouldDisable ? theme.tertiaryText : theme.primaryText
         case .success: return theme.successColor
         case .error: return theme.errorColor
         }
@@ -70,7 +70,7 @@ struct OnboardingStatefulButton: View {
 
     private var labelColor: Color {
         switch state {
-        case .idle, .loading: return theme.isDark ? Color(hex: "#0e1120") : .white
+        case .idle, .loading: return theme.primaryBackground
         case .success, .error: return .white
         }
     }
@@ -187,8 +187,8 @@ struct OnboardingBrandButton: View {
     @State private var isHovered = false
     @State private var shimmerPhase: CGFloat = -0.4
 
-    private var fillColor: Color { isEnabled ? theme.buttonBackground : theme.tertiaryText }
-    private var labelColor: Color { theme.isDark ? Color(hex: "#0e1120") : Color.white }
+    private var fillColor: Color { isEnabled ? theme.primaryText : theme.tertiaryText }
+    private var labelColor: Color { theme.primaryBackground }
 
     var body: some View {
         Button(action: action) {
