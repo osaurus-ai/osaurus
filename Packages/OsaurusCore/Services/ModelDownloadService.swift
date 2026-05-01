@@ -375,7 +375,7 @@ final class ModelDownloadService: ObservableObject {
         lastKnownSpeed[modelId] = nil
     }
 
-    static func resolveURL(repoId: String, path: String) -> URL? {
+    nonisolated static func resolveURL(repoId: String, path: String) -> URL? {
         let encoded = path.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? path
         return URL(string: "https://huggingface.co/\(repoId)/resolve/main/\(encoded)")
     }

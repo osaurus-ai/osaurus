@@ -112,6 +112,17 @@ public enum ModelMediaCapabilities {
         if regexMatches(lower, pattern: #"qwen3\.[5-6].*[-_]vl|holo3.*[-_]vl"#) {
             return .imageVideo
         }
+        // Holo3 base bundles (no `-vl` suffix) — these still ship a
+        // vision_config under the hood (the bundle's outer model_type is
+        // `qwen3_5_moe` with vision_config + pixtral-style image
+        // preprocessor). Recognise the family by name so the picker
+        // advertises image+video pre-load. Post-load, the directory-
+        // based detector confirms via vision_config. Without this, drag-
+        // drop UI rejects images for Holo3-35B-A3B-mxfp4 even though the
+        // engine is fully wired for them.
+        if regexMatches(lower, pattern: #"^(.+/)?holo3"#) {
+            return .imageVideo
+        }
 
         // SmolVLM 2 — image + video with adaptive fps.
         if lower.contains("smolvlm") || lower.contains("smol-vlm") {

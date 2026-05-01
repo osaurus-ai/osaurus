@@ -202,7 +202,10 @@ struct ModelMediaCapabilitiesMCDCTests {
             "kimi/Kimi-K2-Instruct",
             "OsaurusAI/MiniMax-M2.7-JANGTQ",  // hybrid SSM but text-only
             "nemotron-cascade-2-30b-a3b-jang_4m",  // hybrid SSM but text-only
-            "JANGQ-AI/Holo3-35B-A3B-JANGTQ",  // text-only Holo3 (no -vl)
+            // Holo3 base bundles ARE image+video (no -vl suffix needed) —
+            // see commit 0a14145 + the imageVideo branch in
+            // ModelMediaCapabilities.from(modelId:). Keep them out of the
+            // dense-LLM/text-only master-FALSE set.
             "foundation",
             "",  // empty edge case
         ]

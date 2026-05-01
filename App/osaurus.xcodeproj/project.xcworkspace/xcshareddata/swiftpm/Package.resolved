@@ -1,5 +1,5 @@
 {
-  "originHash" : "c5dba7ce3f4e5aa8a0d89ec42071945678e8f45ce1f3d8fcfeee68e807318cd1",
+  "originHash" : "6056c3b44ab626333c0cfc6309a741873b326463e7a3ef33197a98d06fca9ea1",
   "pins" : [
     {
       "identity" : "aachartkit-swift",
@@ -237,10 +237,9 @@
     {
       "identity" : "swift-jinja",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/huggingface/swift-jinja.git",
+      "location" : "https://github.com/osaurus-ai/swift-jinja",
       "state" : {
-        "revision" : "0aeefadec459ce8e11a333769950fb86183aca43",
-        "version" : "2.3.5"
+        "revision" : "58d21aa5b69fdd9eb7e23ce2c3730f47db8e0c9d"
       }
     },
     {
@@ -418,7 +417,7 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/osaurus-ai/vmlx-swift-lm",
       "state" : {
-        "revision" : "a196800715302e3903283aeaf6ec978eb1b1ac92"
+        "revision" : "89f8114c927e25c2a6740fb15bce9cf113a2acfe"
       }
     },
     {

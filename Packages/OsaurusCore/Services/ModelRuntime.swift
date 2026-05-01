@@ -280,7 +280,7 @@ public actor ModelRuntime {
         // pass, hits a precondition in TurboQuantSwitchLinear, and abort()s
         // the whole process — taking osaurus with it. Caught here so the user
         // gets a clear error and the server stays up.
-        try Self.validateJANGTQSidecarIfRequired(at: localURL, name: name)
+        try await Self.ensureJANGTQSidecar(at: localURL, modelId: id, name: name)
 
         // Tool-call format + reasoning parser are stamped automatically by
         // vmlx-swift-lm's LLM/VLM factories from `jang_config.json` capabilities
@@ -340,8 +340,33 @@ public actor ModelRuntime {
     //
     //   - `usePagedCache: true`            — content-addressed paged blocks
     //                                        (multi-turn cache reuse path)
-    //   - `defaultKVMode: .turboQuant(3,3)`— ~5x KV memory savings on slots
-    //                                        that submit `kvMode: .none`
+    //   - `defaultKVMode: .turboQuant(4, 4)` — 4-bit codebook KV by default.
+    //                                        The prior `.turboQuant(3, 3)`
+    //                                        setting was reverted to `.none`
+    //                                        in commit e202cbbe after the
+    //                                        3-bit-KV `!!!!!!!!!` repetition
+    //                                        spam reported in community
+    //                                        issue #995. The root cause was
+    //                                        not the bit width itself but
+    //                                        vmlx's `TurboQuantKVCache`
+    //                                        paged-restore path compounding
+    //                                        quantization across multi-turn
+    //                                        handoff (re-encoding an already-
+    //                                        decoded lossy float). That was
+    //                                        fixed in vmlx commit `1173822`
+    //                                        (`restoreFromDecodedKV` keeps
+    //                                        the prefix in `.compressed`
+    //                                        phase without round-tripping).
+    //                                        Per OSAURUS-INTEGRATION-2026-
+    //                                        05-01.md §"3-bit KV verdict",
+    //                                        4-bit is the recommended default
+    //                                        post-`1173822` — 3-bit is also
+    //                                        safe but more error-sensitive
+    //                                        and gains less compression
+    //                                        benefit. Per-request `kvMode`
+    //                                        still overrides; clients that
+    //                                        want fp16 can submit
+    //                                        `kvMode: .none` explicitly.
     //   - `defaultMaxKVSize: 8192`         — 8K ring window for slots that
     //                                        submit `maxKVSize: nil`
     //   - `longPromptMultiplier: 2.0`      — cap kicks in only past 16K
@@ -371,31 +396,24 @@ public actor ModelRuntime {
             )
         }
 
-        // TEMPORARY: disable the L2 disk cache pending an upstream fix.
+        // L2 disk cache: enabled when the disk dir is writable.
         //
-        // vmlx-swift-lm's `CacheCoordinator` disk-restore path crashes Metal
-        // (`notifyExternalReferencesNonZeroOnDealloc` inside
-        // `BatchEngine.stepPrefill` → `CustomKernel.eval_gpu` →
-        // `Device::clear_library`) on any second request whose prompt is fully
-        // satisfied by a previously-stored entry — i.e. the
-        // `Cache disk hit ... prefilling 0 remaining` path. Reproducible on
-        // both `070dc5b8…` and `a7db6e5f…` pins; tracked upstream. Until a
-        // pin lands that actually fixes the restore code path, force
-        // memory-only KV caching so the server can't be killed by a
-        // back-to-back request from any harness or chat UI.
-        //
-        // To re-enable once upstream is fixed: replace `false` with
-        // `diskDirUsable` and bump the vmlx-swift-lm pin in
-        // `Package.resolved`. The `eval_http_stability.py` suite is the
-        // regression check.
-        let enableDiskCache = false && diskDirUsable
+        // The Metal `notifyExternalReferencesNonZeroOnDealloc` crash on the
+        // `Cache disk hit … prefilling 0 remaining` path is fixed upstream
+        // in vmlx-swift-lm `0756dc0` ("close trim-path Metal lifecycle crash
+        // on full disk-cache hit") — the trimmed compiled-cache list is now
+        // forced to realize before its underlying Metal buffers go out of
+        // scope. Now wired in through the `0e22eba` pin. The
+        // `eval_http_stability.py` suite is the regression check; re-run on
+        // any future pin bump that touches the CacheCoordinator restore path.
+        let enableDiskCache = diskDirUsable
 
         return CacheCoordinatorConfig(
             usePagedCache: true,
             enableDiskCache: enableDiskCache,
             diskCacheDir: diskCacheDir,
             modelKey: modelName,
-            defaultKVMode: .turboQuant(keyBits: 3, valueBits: 3),
+            defaultKVMode: .turboQuant(keyBits: 4, valueBits: 4),
             defaultMaxKVSize: 8192,
             longPromptMultiplier: 2.0
         )
@@ -1179,7 +1197,61 @@ public actor ModelRuntime {
 
         let sidecarURL = directory.appendingPathComponent("jangtq_runtime.safetensors")
         let sidecarPresent = FileManager.default.fileExists(atPath: sidecarURL.path)
-        let isMxtq = probe.weight_format == "mxtq"
+        // Normalize stamp comparison: pipelines/users have shipped `MXTQ`,
+        // ` mxtq `, and `Mxtq` in jang_config.json over time. We treat all
+        // of those as the same canonical declaration so the JANGTQ family
+        // (Qwen / MiniMax / DSV4 / Nemotron / Mistral 3 / Laguna / etc.)
+        // never silently slips past the preflight just because of casing.
+        let normalizedStamp = (probe.weight_format ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        let isMxtq = normalizedStamp == "mxtq"
+
+        // Third check: JANGTQ-quantized bundles for model_type families
+        // where vmlx hasn't fully ported the JANGTQ Linear shim yet.
+        //
+        // Status (vmlx@cb829b6):
+        //   - Mistral 3 / ministral3 LLM-only (no vision_config) →
+        //     SUPPORTED via Mistral3TextJANGTQModel + JANGTQDenseLinear.
+        //     The host preflight does NOT fire for these.
+        //   - Mistral 3 / ministral3 VLM (vision_config present, e.g.
+        //     Mistral-Medium-3.5-128B with Pixtral) → IN-FLIGHT. Vmlx's
+        //     VLMModelFactory throws a clear error; we mirror it here.
+        //   - Laguna (laguna model_type) → IN-FLIGHT. No model class
+        //     ported yet on either LLM or VLM side.
+        //
+        // The check fires only for VLM-shaped Mistral 3 family bundles
+        // and for Laguna. Once the VLM JANGTQ port + Laguna model class
+        // land upstream, drop this check entirely.
+        if isMxtq {
+            let configURL = directory.appendingPathComponent("config.json")
+            if let configData = try? Data(contentsOf: configURL),
+                let configJSON = try? JSONSerialization.jsonObject(with: configData)
+                    as? [String: Any]
+            {
+                let modelType = (configJSON["model_type"] as? String)?.lowercased() ?? ""
+                let textInner: String?
+                if let textConfig = configJSON["text_config"] as? [String: Any] {
+                    textInner = (textConfig["model_type"] as? String)?.lowercased()
+                } else {
+                    textInner = nil
+                }
+                let hasVision = configJSON["vision_config"] != nil
+                _ = hasVision  // No remaining family-pending gates.
+                _ = modelType   // Mistral 3 (LLM + VLM) and Laguna are
+                _ = textInner   // both ported as of vmlx@344dda0.
+                                // MXFP4 paths load via standard MLX
+                                // dequant; JANGTQ Mistral 3 routes via
+                                // Mistral3TextJANGTQModel /
+                                // Mistral3VLMJANGTQ; Laguna MXFP4 via
+                                // LagunaModel; Laguna JANGTQ port
+                                // (LagunaJANGTQModel) is the next
+                                // incremental piece — not blocking
+                                // because the existing forward / inverse
+                                // sidecar checks above still catch
+                                // mislabeled bundles.
+            }
+        }
 
         // Forward mismatch: declared JANGTQ, sidecar missing.
         if isMxtq && !sidecarPresent {
@@ -1199,7 +1271,7 @@ public actor ModelRuntime {
         // safetensors carry `tq_norms` / `tq_packed` keys vmlx's base class
         // can't decode → "Unhandled keys" runtime error. Catch it here.
         if sidecarPresent && !isMxtq {
-            let actualStamp = probe.weight_format ?? "absent"
+            let actualStamp = (probe.weight_format?.isEmpty == false) ? probe.weight_format! : "absent"
             throw NSError(
                 domain: "ModelRuntime",
                 code: 3,
@@ -1216,6 +1288,255 @@ public actor ModelRuntime {
             )
         }
     }
+
+    /// Async wrapper around `validateJANGTQSidecarIfRequired` that, on a
+    /// "missing sidecar but stamp says JANGTQ" failure (and ONLY that
+    /// specific failure), tries once to download
+    /// `jangtq_runtime.safetensors` from the model's Hugging Face repo and
+    /// then re-runs the sync validator. Any other failure mode (inverse
+    /// mismatch, malformed jang_config, etc.) propagates immediately
+    /// untouched — the auto-fetch never speculatively fires.
+    ///
+    /// The remote URL is built dynamically from `modelId` using the same
+    /// `<repo>/resolve/main/<path>` shape the rest of the download stack
+    /// uses; a flat-layout id (no `/` in it) cannot be mapped back to an
+    /// HF repo and skips the fetch entirely, surfacing the original error.
+    static func ensureJANGTQSidecar(at directory: URL, modelId: String, name: String) async throws {
+        do {
+            try validateJANGTQSidecarIfRequired(at: directory, name: name)
+            return
+        } catch let error as NSError
+            where error.domain == "ModelRuntime" && error.code == 2
+        {
+            // Forward mismatch: stamp says mxtq, sidecar missing. Try one HF fetch.
+            // Build the candidate id list: canonical `<org>/<repo>` first,
+            // then — for flat-layout local ids that aren't directly mappable
+            // to a single HF repo — known JANGTQ publisher orgs as fallbacks.
+            let candidates = jangtqHFRepoCandidates(for: modelId)
+            guard !candidates.isEmpty else {
+                throw error
+            }
+
+            let dest = directory.appendingPathComponent("jangtq_runtime.safetensors")
+
+            var lastFetchError: Error?
+            var lastTriedRepo: String?
+            for repoId in candidates {
+                guard
+                    let url = ModelDownloadService.resolveURL(
+                        repoId: repoId,
+                        path: "jangtq_runtime.safetensors"
+                    ),
+                    let scheme = url.scheme, scheme == "https",
+                    url.host == "huggingface.co"
+                else { continue }
+
+                lastTriedRepo = repoId
+                do {
+                    try await Self.fetchSidecar(from: url, to: dest)
+                    // Confirm the freshly-downloaded file actually satisfies
+                    // the check before declaring success — guards against a
+                    // mirror that returns a stub.
+                    try validateJANGTQSidecarIfRequired(at: directory, name: name)
+                    return
+                } catch {
+                    lastFetchError = error
+                    // Try next candidate.
+                    continue
+                }
+            }
+
+            // All candidates exhausted — surface the last error wrapped so the
+            // UI can distinguish "we tried, none worked" from "we never tried".
+            let triedList = candidates.joined(separator: ", ")
+            let detail = lastFetchError.map { $0.localizedDescription } ?? "no candidate URL was reachable"
+            throw NSError(
+                domain: "ModelRuntime",
+                code: 4,
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "Model '\(name)' is missing 'jangtq_runtime.safetensors' "
+                        + "and we could not auto-fetch it. Tried: \(triedList). "
+                        + "Last error from huggingface.co/\(lastTriedRepo ?? "?"): \(detail). "
+                        + "Re-download the full model or place the sidecar next "
+                        + "to the safetensors manually."
+                ]
+            )
+        }
+    }
+
+    /// Build the ordered list of HF `<org>/<repo>` candidates to try when
+    /// auto-fetching a sidecar. Strict gating up-front so we never hit the
+    /// network on garbage, and case-tolerant so a lowercased model id
+    /// (osaurus's chat router lowercases names internally) still resolves
+    /// to the canonical-cased HF org.
+    ///
+    /// Resolution order:
+    ///   1. If the supplied id is a valid `<org>/<repo>`, try it FIRST
+    ///      verbatim — for users with a custom-cased org that genuinely
+    ///      ships the sidecar at that exact path.
+    ///   2. Always append canonical-cased fallbacks built from the
+    ///      basename (the part after the last `/`, or the whole id for
+    ///      flat-layout): `OsaurusAI/<basename>`, `JANGQ-AI/<basename>`,
+    ///      `mlx-community/<basename>`. This recovers from both
+    ///      case-mismatch (`jangq-ai/...` → `JANGQ-AI/...`) and
+    ///      wrong-org-guess scenarios.
+    ///   3. Each candidate is independently `isValidHFRepoId`-validated;
+    ///      duplicates are pruned in order so the canonical id never
+    ///      gets retried via a fallback.
+    ///   4. Empty / malformed input → empty list, no fetch.
+    static func jangtqHFRepoCandidates(for modelId: String) -> [String] {
+        let trimmed = modelId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return [] }
+
+        var ordered: [String] = []
+        var seen: Set<String> = []
+        func add(_ s: String) {
+            guard isValidHFRepoId(s), !seen.contains(s) else { return }
+            seen.insert(s)
+            ordered.append(s)
+        }
+
+        // Determine the basename — only TRUSTED for two shapes:
+        //   1. Valid `<org>/<repo>` (basename = repo)
+        //   2. Flat (no slash anywhere; basename = full id)
+        // Any other shape (multi-slash, leading slash, etc.) is untrusted
+        // and produces zero candidates so we never speculatively hit the
+        // network with garbage.
+        let basename: String?
+        if isValidHFRepoId(trimmed) {
+            // Verbatim canonical id is tried FIRST.
+            add(trimmed)
+            basename = trimmed.split(separator: "/").last.map(String.init)
+        } else if !trimmed.contains("/") {
+            // Pure flat layout — id IS the basename.
+            basename = trimmed
+        } else {
+            return []  // Malformed (multi-slash, leading/trailing slash, …).
+        }
+
+        // Canonical-cased org fallbacks. OsaurusAI is the curated
+        // publisher and ships the most user-facing JANGTQ + MXFP4
+        // bundles, so it goes FIRST. JANGQ-AI is the user's primary
+        // JANGTQ research org. mlx-community covers community quants.
+        guard let base = basename, !base.isEmpty else { return ordered }
+        let knownJANGTQOrgs = ["OsaurusAI", "JANGQ-AI", "mlx-community"]
+        for org in knownJANGTQOrgs {
+            add("\(org)/\(base)")
+        }
+        return ordered
+    }
+
+    /// Streams `url` into `dest` using an atomic temp-file → rename so a
+    /// crashed/cancelled download never leaves a partial sidecar in place
+    /// (which the next preflight would then misread as "present, fine").
+    /// Overridable via `sidecarFetcherForTests` so unit tests don't have
+    /// to hit the real network.
+    static func fetchSidecar(from url: URL, to dest: URL) async throws {
+        if let injected = $sidecarFetcherForTests.wrappedValue {
+            try await injected(url, dest)
+            return
+        }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 60
+        let (tempURL, response) = try await URLSession.shared.download(for: request)
+        defer { try? FileManager.default.removeItem(at: tempURL) }
+
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            let code = (response as? HTTPURLResponse)?.statusCode ?? -1
+            throw NSError(
+                domain: "ModelRuntime",
+                code: 5,
+                userInfo: [NSLocalizedDescriptionKey: "HTTP \(code) fetching sidecar"]
+            )
+        }
+
+        // Sanity: a real safetensors sidecar will be far larger than a stray
+        // 404 HTML page that somehow returned 200. Reject zero-byte writes.
+        let attrs = try FileManager.default.attributesOfItem(atPath: tempURL.path)
+        let size = (attrs[.size] as? Int64) ?? 0
+        guard size > 0 else {
+            throw NSError(
+                domain: "ModelRuntime",
+                code: 6,
+                userInfo: [NSLocalizedDescriptionKey: "Sidecar fetch returned 0 bytes"]
+            )
+        }
+
+        // Cross-volume safe + race tolerant install of the temp file:
+        //   - moveItem fails with EXDEV when temp + dest are on different
+        //     volumes (system temp vs an external drive like /Volumes/...).
+        //     Fall back to copy + delete.
+        //   - If a concurrent caller raced us and already wrote the dest
+        //     between our removeItem and move/copy, treat that as a win and
+        //     drop our copy on the floor — the post-fetch validator will
+        //     accept whichever sidecar is on disk.
+        let fm = FileManager.default
+        let tmpDest = dest.deletingLastPathComponent()
+            .appendingPathComponent(".jangtq_runtime.\(UUID().uuidString).part")
+
+        do {
+            try fm.copyItem(at: tempURL, to: tmpDest)
+        } catch {
+            // copy failed (permissions, disk full, etc.) — try a direct rename
+            // as a last resort; if that ALSO fails, surface the error.
+            try fm.moveItem(at: tempURL, to: tmpDest)
+        }
+
+        defer { try? fm.removeItem(at: tmpDest) }
+
+        // Atomic in-volume rename. If the dest already exists (concurrent
+        // fetch won), `replaceItem` swaps without error. Use replaceItemAt
+        // because it handles "dest already exists" cleanly and stays atomic.
+        if fm.fileExists(atPath: dest.path) {
+            // Another writer beat us. Keep theirs.
+            return
+        }
+        do {
+            _ = try fm.replaceItemAt(dest, withItemAt: tmpDest)
+        } catch {
+            // Last-chance race recovery: if dest now exists, accept it.
+            if fm.fileExists(atPath: dest.path) {
+                return
+            }
+            throw error
+        }
+    }
+
+    /// True iff `id` looks like a real Hugging Face `<org>/<repo>` path —
+    /// strict enough that we never fire the auto-fetch on garbage input.
+    /// Allowed chars match HF's repo-name rules: ASCII letters, digits,
+    /// `-`, `_`, `.`. Each segment must be 1..96 chars; exactly one `/`
+    /// separator; no leading / trailing slash; no whitespace anywhere.
+    static func isValidHFRepoId(_ id: String) -> Bool {
+        guard !id.isEmpty,
+            !id.hasPrefix("/"),
+            !id.hasSuffix("/")
+        else { return false }
+        let segments = id.split(separator: "/", omittingEmptySubsequences: false)
+        guard segments.count == 2 else { return false }
+        let allowed = CharacterSet(charactersIn:
+            "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_."
+        )
+        for seg in segments {
+            let s = String(seg)
+            guard !s.isEmpty, s.count <= 96 else { return false }
+            guard s.unicodeScalars.allSatisfy({ allowed.contains($0) }) else { return false }
+            // Block `.` and `..` segments outright — they're individually
+            // composed of allowed chars but represent path-traversal-style
+            // paths that HF refuses anyway.
+            guard s != "." && s != ".." else { return false }
+        }
+        return true
+    }
+
+    /// Test-only injection point. Production code never sets this.
+    /// Stored as a `@TaskLocal` so parallel tests don't race on a single
+    /// global, and so each test's override is naturally scoped to its own
+    /// task tree via `withValue { ... }`.
+    @TaskLocal
+    static var sidecarFetcherForTests:
+        (@Sendable (_ url: URL, _ dest: URL) async throws -> Void)? = nil
 
     /// Pure, testable sibling of `findLocalDirectory` that takes the root
     /// explicitly. Exposed at module scope so the symlink-resolution

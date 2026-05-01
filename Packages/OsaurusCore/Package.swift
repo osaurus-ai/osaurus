@@ -111,7 +111,25 @@ let package = Package(
         // this pin via `ae49c7c` + `3b78db4`.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift-lm",
-            revision: "a196800715302e3903283aeaf6ec978eb1b1ac92"
+            revision: "89f8114c927e25c2a6740fb15bce9cf113a2acfe"
+        ),
+        // swift-jinja: pinned to osaurus-ai fork at 58d21aa5 — same fork
+        // vmlx-swift-lm pins. Must also be declared HERE (root level) so
+        // the app's xcodeproj resolution picks up the fork instead of
+        // resolving the upstream `huggingface/swift-jinja` transitively
+        // via swift-transformers. SwiftPM resolves the root package's
+        // declared deps, so without this line the app silently uses
+        // upstream and Mistral 3.5 / Mistral-Medium-3.5-128B-JANGTQ
+        // chat templates throw "Expected '%}' after for loop.. Got plus
+        // instead" on the `loop_messages + [{'role': '__sentinel__'}]`
+        // construct (line 72 of Mistral 3.5's chat_template.jinja). Fork
+        // adds for-loop iterable expression support via parseFilter →
+        // parseOr in Sources/Jinja/Parser.swift:186. All 756 swift-jinja
+        // tests pass + 2 new regression tests (forLoopIterableAccepts-
+        // BinaryPlus + mistral3RealNativeTemplateParses).
+        .package(
+            url: "https://github.com/osaurus-ai/swift-jinja",
+            revision: "58d21aa5b69fdd9eb7e23ce2c3730f47db8e0c9d"
         ),
         .package(url: "https://github.com/huggingface/swift-transformers", from: "1.1.6"),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS

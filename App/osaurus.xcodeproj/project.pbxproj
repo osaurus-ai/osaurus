@@ -233,6 +233,7 @@
 				F0F4E2992ED1209200BEFA4D /* XCLocalSwiftPackageReference "../Packages/OsaurusRepository" */,
 				F0AA7F342ED20D2E00672B07 /* XCLocalSwiftPackageReference "../Packages/OsaurusCLI" */,
 				F0AA7F3B2ED20DA700672B07 /* XCLocalSwiftPackageReference "../Packages/OsaurusCore" */,
+				F09A115258D21AA500672B07 /* XCRemoteSwiftPackageReference "swift-jinja" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = F0BB3C272E51FBCC00895593 /* Products */;
@@ -685,6 +686,17 @@
 			relativePath = ../Packages/OsaurusRepository;
 		};
 /* End XCLocalSwiftPackageReference section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		F09A115258D21AA500672B07 /* XCRemoteSwiftPackageReference "swift-jinja" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/osaurus-ai/swift-jinja";
+			requirement = {
+				kind = revision;
+				revision = 58d21aa5b69fdd9eb7e23ce2c3730f47db8e0c9d;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
 		05576F742F72E7D800EF3CD3 /* OsaurusCore */ = {
