@@ -111,6 +111,12 @@ public final class SandboxAgentProvisioner {
         let removedMapping = SandboxAgentMap.unregister(agentId: agentId)
         let removedPluginState = SandboxPluginManager.shared.removeAgentState(for: agentId)
         let removedHostWorkspace = removeHostWorkspace(at: hostWorkspace)
+        // Drop any tracked background-job pids — `removeAgentUser`
+        // pkill's the user's processes a few lines below, so the pids
+        // we still hold in memory are immediately invalid. Clearing
+        // them keeps `sandbox_process` honest and prevents stale
+        // entries from accumulating across re-provisions.
+        await SandboxBackgroundJobs.shared.clear(agentName: agentName)
 
         var removedContainerUser = false
         var skippedContainerUserCleanup = false

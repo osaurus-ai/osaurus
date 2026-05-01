@@ -199,7 +199,7 @@ public enum ToolEnvelope {
 
     /// True when `result` looks like a failure envelope (new shape) OR a
     /// legacy `ToolErrorEnvelope` JSON OR a legacy `[REJECTED]` /
-    /// `[TIMEOUT]` prefix string. Used by UI / batch / accounting code that
+    /// `[TIMEOUT]` prefix string. Used by UI / accounting code that
     /// needs to count failures without a full parse.
     public static func isError(_ result: String) -> Bool {
         let trimmed = result.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -229,8 +229,9 @@ public enum ToolEnvelope {
 
     /// Attempt to extract the `result` payload from a success envelope.
     /// Returns nil if the input is not a success envelope or cannot be
-    /// parsed. Used by `BatchTool` to fold structured per-op results into
-    /// its summary instead of treating every result as opaque text.
+    /// parsed. Used by the chat layer / tests to fold structured per-op
+    /// results into a richer summary instead of treating every result as
+    /// opaque text.
     public static func successPayload(_ result: String) -> Any? {
         guard isSuccess(result),
             let data = result.data(using: .utf8),

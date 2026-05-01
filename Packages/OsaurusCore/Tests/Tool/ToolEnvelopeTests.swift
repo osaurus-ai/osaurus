@@ -5,8 +5,8 @@
 //  Contract tests for `ToolEnvelope` — the canonical success/failure
 //  shapes every tool emits. Pins down the on-the-wire JSON keys and the
 //  detection helpers (`isError`, `isSuccess`, `successPayload`,
-//  `failureMessage`) that BatchTool / ChatView / HTTPHandler rely on to
-//  distinguish outcomes.
+//  `failureMessage`) that ChatView / HTTPHandler rely on to distinguish
+//  outcomes.
 //
 
 import Foundation

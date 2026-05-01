@@ -1915,17 +1915,19 @@ private struct AgentSettingsSection: View {
     @Binding var workMaxIterations: String
 
     // (name, display, desc, destructive, defaultPolicy)
+    //
+    // The dedicated `file_move` / `file_copy` / `file_delete` /
+    // `dir_create` / `batch` rows were dropped when those tools were
+    // folded into `shell_run` (`mv` / `cp` / `rm` / `mkdir`). Settings
+    // for those names will still load from the persisted config (the
+    // tool registry just won't have anything to dispatch them to), so
+    // existing user preferences keep working.
     private static let folderTools:
         [(name: String, display: String, desc: String, destructive: Bool, defaultPolicy: ToolPermissionPolicy)] = [
             ("file_write", "Write Files", "Create and modify files", false, .auto),
-            ("file_move", "Move Files", "Move files and directories", false, .auto),
-            ("file_copy", "Copy Files", "Copy files and directories", false, .auto),
-            ("file_delete", "Delete Files", "Delete files and directories", true, .ask),
-            ("dir_create", "Create Directories", "Create new directories", false, .auto),
             ("file_edit", "Edit Files", "Edit file content with search/replace", false, .auto),
             ("shell_run", "Run Shell Commands", "Execute shell commands in the folder", true, .ask),
             ("git_commit", "Git Commit", "Commit changes to git repository", true, .ask),
-            ("batch", "Batch Operations", "Execute multiple tool operations in sequence", false, .ask),
         ]
 
     var body: some View {

@@ -1569,7 +1569,7 @@ const char* response = host->complete(request);
 - **Temperature** — used when `temperature` is not set
 - **Max tokens** — used when `max_tokens` is not set
 - **Tools** — available when `"tools": true` is set in the request
-- **Sandbox tools** — when the agent has autonomous execution enabled, sandbox tools (`sandbox_exec`, `sandbox_read_file`, `sandbox_write_file`, `sandbox_list_directory`, `sandbox_search_files`, `sandbox_install`, etc.) are automatically included in the tool set. Sandbox environment instructions are also injected into the system prompt.
+- **Sandbox tools** — when the agent has autonomous execution enabled, sandbox tools (`sandbox_exec`, `sandbox_process`, `sandbox_execute_code`, `sandbox_read_file`, `sandbox_write_file`, `sandbox_edit_file`, `sandbox_search_files`, `sandbox_install`, `sandbox_pip_install`, `sandbox_npm_install`) are automatically included in the tool set. Sandbox environment instructions are also injected into the system prompt.
 - **Plugin instructions** — if the plugin manifest includes an `instructions` field, its content is automatically appended to the system prompt after all host-managed sections (agent prompt, sandbox section, memory) but before any preflight context. This is injected for both `complete` and `complete_stream` calls, even when no `agent_address` is provided. Use this to declare behavioral constraints, output formatting rules, or tool-calling patterns. Users can customize the instructions per-agent in the agent detail view under the Configure tab; the manifest value serves as the default and per-agent overrides take precedence when set.
 
 **Model resolution order:**

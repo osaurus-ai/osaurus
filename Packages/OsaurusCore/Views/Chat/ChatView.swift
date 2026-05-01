@@ -807,29 +807,119 @@ final class ChatSession: ObservableObject {
             markerText = toolResult
         }
 
-        guard
-            let processed = SharedArtifact.processToolResult(
-                markerText,
-                contextId: sessionId.uuidString,
-                contextType: .chat,
-                executionMode: executionMode,
-                sandboxAgentName: agentName
+        let outcome = SharedArtifact.processToolResultDetailed(
+            markerText,
+            contextId: sessionId.uuidString,
+            contextType: .chat,
+            executionMode: executionMode,
+            sandboxAgentName: agentName
+        )
+        switch outcome {
+        case .success(let processed):
+            return ToolEnvelope.success(tool: "share_artifact", text: processed.enrichedToolResult)
+
+        case .failure(let reason):
+            // Surface a model-readable error per failure mode. Without
+            // this differentiation the model just retries the same path
+            // (the previous "could not resolve or copy" string was the
+            // same envelope for "path rejected", "file missing", and
+            // "copy failed" — three very different fixes).
+            return Self.shareArtifactFailureEnvelope(
+                reason: reason,
+                executionMode: executionMode
             )
-        else {
-            // Surface the failure so the model knows the artifact did NOT
-            // make it into chat. Without this, sharing a non-existent path
-            // looked like success — model moved on assuming the user could
-            // see the file.
-            return ToolEnvelope.failure(
-                kind: .executionError,
-                message:
-                    "share_artifact failed: could not resolve or copy the artifact source. "
-                    + "Check the `path` is correct and readable, then retry.",
-                tool: "share_artifact",
+        }
+    }
+
+    /// Translate a `SharedArtifact.ResolutionFailure` into a
+    /// `ToolEnvelope.failure` whose `message` tells the model exactly
+    /// what went wrong AND what to try next. The "next" hint is keyed on
+    /// `executionMode` so sandbox agents get a `sandbox_search_files`
+    /// suggestion while folder agents get `file_tree`/`file_search`.
+    private static func shareArtifactFailureEnvelope(
+        reason: SharedArtifact.ResolutionFailure,
+        executionMode: ExecutionMode
+    ) -> String {
+        let toolName = "share_artifact"
+        let listingHint: String
+        switch executionMode {
+        case .sandbox:
+            listingHint =
+                "Verify the file with `sandbox_search_files(target=\"files\", pattern=\"<name>\")`, "
+                + "or pass `content`+`filename` for inline data."
+        case .hostFolder:
+            listingHint =
+                "Verify the file with `file_tree`/`file_search`, or pass `content`+`filename` "
+                + "for inline data."
+        case .none:
+            listingHint =
+                "Pass `content`+`filename` for inline data, or attach a working folder/sandbox first."
+        }
+
+        // Local helpers prefix every message with `share_artifact failed: `
+        // and fill in the always-the-same `tool` / `retryable` fields, so
+        // the per-case branches read at the level of the actual diagnostic.
+        func fail(
+            _ kind: ToolEnvelope.Kind,
+            _ message: String,
+            field: String? = nil,
+            expected: String? = nil
+        ) -> String {
+            ToolEnvelope.failure(
+                kind: kind,
+                message: "share_artifact failed: \(message)",
+                field: field,
+                expected: expected,
+                tool: toolName,
                 retryable: true
             )
         }
-        return ToolEnvelope.success(tool: "share_artifact", text: processed.enrichedToolResult)
+
+        switch reason {
+        case .markersMissing:
+            return fail(
+                .executionError,
+                "marker block missing from tool result. This is a tool-runtime bug — "
+                    + "retry once; if it persists, share the content inline."
+            )
+        case .noContentOrPath:
+            return fail(
+                .invalidArgs,
+                "neither `path` nor `content` was provided. Pass an existing file path, "
+                    + "or `content`+`filename` for inline text."
+            )
+        case .destinationRejected(let filename):
+            return fail(
+                .invalidArgs,
+                "filename `\(filename)` was rejected (would escape the artifacts directory). "
+                    + "Pass a plain basename like `report.md`.",
+                field: "filename",
+                expected: "single-segment filename without `..` or absolute path"
+            )
+        case .pathRejected(let path):
+            return fail(
+                .invalidArgs,
+                "path `\(path)` was rejected (escapes the trusted root, is an unrelated absolute "
+                    + "path, or contains traversal). \(listingHint)",
+                field: "path",
+                expected: "path under the agent home / working folder"
+            )
+        case .fileNotFound(let path, let searchedLocations):
+            let searchedSummary =
+                searchedLocations.isEmpty
+                ? "(no candidates resolved)"
+                : searchedLocations.joined(separator: ", ")
+            return fail(
+                .executionError,
+                "file not found for `\(path)`. Searched: \(searchedSummary). \(listingHint)"
+            )
+        case .copyFailed(let source, let detail):
+            return fail(
+                .executionError,
+                "copy from `\(source)` to artifacts dir threw: \(detail). "
+                    + "Retry once; if it persists, share the content inline."
+            )
+        }
     }
 
     private struct RunContext {

@@ -512,7 +512,6 @@ See [INFERENCE_RUNTIME.md](./INFERENCE_RUNTIME.md) for the full runtime architec
 - `Folder/FolderContext.swift` — Project type, file tree, manifest, git status, optional `AGENTS.md`/`CLAUDE.md`/`.cursorrules`
 - `Folder/FolderContextService.swift` — `NSOpenPanel`, security-scoped bookmark persistence, MainActor service
 - `Folder/FolderTools.swift` — File/coding/git tool implementations + `FolderToolFactory`
-- `Folder/BatchTool.swift` — Generic `batch` tool that fans out up to 30 registered ops in one call
 - `Folder/ChatExecutionContext.swift` — TaskLocal session/agent/batch IDs read by tools at execution time
 - `Folder/ExecutionMode.swift` — First-class `.hostFolder | .sandbox | .none` enum
 - `Folder/FileOperation.swift`, `Folder/FileOperationLog.swift` — Per-op log used for undo
@@ -527,7 +526,6 @@ See [INFERENCE_RUNTIME.md](./INFERENCE_RUNTIME.md) for the full runtime architec
 - **Working folder picker** — Per-chat folder via `FolderContextService`, with security-scoped bookmark persistence
 - **Project-aware tools** — File/coding/git tools registered automatically when a folder is selected; tool kit varies by project type and git status
 - **Sandbox toggle** — Mutually exclusive with the working-folder backend; selecting a folder disables sandbox autonomous exec and vice versa
-- **`batch` tool** — Up to 30 ops per call, continues on error, denies `shell_run` / `git_commit` / nested `batch`
 - **`share_artifact`** — Only path for the user to see files the agent produced
 **Loop Tools (engine-intercepted):**
 
@@ -546,15 +544,12 @@ See [INFERENCE_RUNTIME.md](./INFERENCE_RUNTIME.md) for the full runtime architec
 | `file_write`      | Core     | Create or overwrite                                               |
 | `file_edit`       | Coding   | Surgical exact-string replacement                                 |
 | `file_search`     | Coding   | ripgrep-style search                                              |
-| `file_move`       | Core     | Move or rename                                                    |
-| `file_copy`       | Core     | Duplicate                                                         |
-| `file_delete`     | Core     | Remove                                                            |
-| `dir_create`      | Core     | Create directories                                                |
-| `batch`           | Core     | Run up to 30 ops in sequence; reports per-op results              |
-| `shell_run`       | Coding   | Run a shell command (requires approval). Registered when project type detected. |
+| `shell_run`       | Coding   | Run a shell command (requires approval). Registered when project type detected. Use for `mv`/`cp`/`rm`/`mkdir`. |
 | `git_status`      | Git      | Repository status. Registered when `.git` present.                |
 | `git_diff`        | Git      | Show diffs                                                        |
 | `git_commit`      | Git      | Stage + commit (requires approval)                                |
+
+The previously-discrete `file_move`, `file_copy`, `file_delete`, `dir_create`, and `batch` tools were dropped — the same operations go through `shell_run` (`mv`, `cp`, `rm`, `mkdir`) so the model has fewer near-identical tool names to differentiate.
 
 **Workflow:**
 
@@ -624,23 +619,21 @@ See [AGENT_LOOP.md](AGENT_LOOP.md) for the full guide.
 
 | Tool | Category | Description |
 |------|----------|-------------|
-| `sandbox_read_file` | Read-only | Read file contents (supports line ranges and log tails) |
-| `sandbox_list_directory` | Read-only | List files and directories |
-| `sandbox_search_files` | Read-only | Search file contents with ripgrep (regex, context lines, case-insensitive) |
-| `sandbox_find_files` | Read-only | Find files by name glob pattern (e.g. `*.py`, `test_*`) |
-| `sandbox_write_file` | Write | Write content to a file (creates parent directories) |
-| `sandbox_edit_file` | Write | Edit a file by exact string replacement (old_string/new_string) |
-| `sandbox_move` | Write | Move or rename |
-| `sandbox_delete` | Write | Delete files or directories |
-| `sandbox_exec` | Exec | Run shell command (timeout, rate limited) |
-| `sandbox_exec_background` | Exec | Start background process |
+| `sandbox_read_file` | Read-only | Read file contents (supports line ranges and log tails). Use instead of `cat`/`head`/`tail`. |
+| `sandbox_search_files` | Read-only | Search file contents (`target="content"`, ripgrep) **or** find files by name (`target="files"`, glob). Replaces the old `sandbox_search_files` + `sandbox_find_files` + `sandbox_list_directory` trio. |
+| `sandbox_write_file` | Write | Write content to a file (creates parent directories). Use instead of `echo`/`cat` heredoc. |
+| `sandbox_edit_file` | Write | Edit a file by exact string replacement (old_string/new_string). Use instead of `sed`/`awk`. |
+| `sandbox_exec` | Exec | Run shell command. Foreground (default) or `background:true` for servers/long jobs. |
+| `sandbox_process` | Exec | Manage background jobs from `sandbox_exec(background:true)` — `poll` / `wait` / `kill`. |
+| `sandbox_execute_code` | Exec | Run a Python script that imports sandbox tools as helpers (`from osaurus_tools import …`). Use for ≥3 tool calls with logic between them. |
 | `sandbox_install` | Package | Install via apk (root) |
 | `sandbox_pip_install` | Package | Install via pip |
 | `sandbox_npm_install` | Package | Install via npm |
-| `sandbox_run_script` | Exec | Run a script file (Python, Node, Bash, etc.) |
 | `sandbox_secret_check` | Secret | Check whether a secret exists (never reveals value) |
 | `sandbox_secret_set` | Secret | Store a secret directly or prompt the user |
 | `sandbox_plugin_register` | Plugin | Register an agent-created plugin (requires `pluginCreate`) |
+
+The previously-discrete `sandbox_list_directory`, `sandbox_find_files`, `sandbox_move`, `sandbox_delete`, `sandbox_exec_background`, and `sandbox_run_script` tools were dropped. Their behaviour now comes from a flag (`background:true` on `sandbox_exec`, `target` on `sandbox_search_files`) or a direct shell invocation (`mv` / `rm` in `sandbox_exec`). `sandbox_run_script`'s use case — multi-step Python orchestration — moved to `sandbox_execute_code`.
 
 `share_artifact` is a global built-in (registered in `ToolRegistry`, available in plain chat / folder / sandbox alike) so it does not appear in this sandbox-specific table.
 

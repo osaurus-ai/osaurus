@@ -124,14 +124,24 @@ Changes require a container restart to take effect.
 
 When the container is running, sandbox tools are automatically registered for the active agent. Read-only tools are always available. Write and execution tools require `autonomous_exec` to be enabled on the agent.
 
+### Anti-confusion cheat sheet (always prefer the dedicated tool)
+
+| Don't                                | Do                                                                                                              |
+|--------------------------------------|------------------------------------------------------------------------------------------------------------------|
+| `cat` / `head` / `tail` in `sandbox_exec` | `sandbox_read_file`                                                                                              |
+| `grep` / `rg` / `find` / `ls` in `sandbox_exec` | `sandbox_search_files` — `target="content"` (rg) or `target="files"` (find).                                     |
+| `sed` / `awk`                        | `sandbox_edit_file` (`old_string` → `new_string`)                                                                 |
+| `echo` / `cat` heredoc to create files | `sandbox_write_file`                                                                                             |
+| `&` / `nohup` / `disown` for backgrounding | `sandbox_exec(background:true)` — pid + log_file ride back, manage with `sandbox_process` (poll/wait/kill)        |
+
+Reserve `sandbox_exec` for builds, installs, git, processes, network calls, package managers, and any work that doesn't have a dedicated tool above. For ≥3 tool calls with logic between them, `sandbox_execute_code` lets you write a Python script that imports the same tools as helper functions.
+
 ### Always Available (Read-Only)
 
 | Tool | Description |
 |------|-------------|
 | `sandbox_read_file` | Read a file's contents from the sandbox (supports line ranges, tail, char cap) |
-| `sandbox_list_directory` | List files and directories (supports recursive listing via `tree`) |
-| `sandbox_search_files` | Search file contents with ripgrep (regex, glob filters, context lines, case-insensitive) |
-| `sandbox_find_files` | Find files by name glob pattern (e.g. `*.py`, `test_*`) |
+| `sandbox_search_files` | Search file contents (`target="content"`, ripgrep) **or** find files by name (`target="files"`, glob). Folded the previously-separate `sandbox_find_files` and `sandbox_list_directory` here. |
 
 ### Requires Autonomous Exec
 
@@ -139,17 +149,17 @@ When the container is running, sandbox tools are automatically registered for th
 |------|-------------|
 | `sandbox_write_file` | Write content to a file (creates parent directories) |
 | `sandbox_edit_file` | Edit a file by exact string replacement — `old_string` must match exactly once |
-| `sandbox_move` | Move or rename files and directories |
-| `sandbox_delete` | Delete files or directories |
-| `sandbox_exec` | Run a shell command (configurable timeout, max 300s) |
-| `sandbox_exec_background` | Start a background process with log file output |
+| `sandbox_exec` | Run a shell command. Foreground (default, max 300s) **or** `background:true` for servers/long tasks (the spawn shim returns immediately with `pid` + `log_file`). Pair the background form with `sandbox_process`. |
+| `sandbox_process` | Manage background jobs: `action="poll"` (alive + log tail), `"wait"` (block until exit, capped by `timeout`), `"kill"` (`force:true` for SIGKILL). |
+| `sandbox_execute_code` | Run a Python script that imports `read_file` / `write_file` / `edit_file` / `search_files` / `terminal` / `share_artifact` from `osaurus_tools`. Use for ≥3 tool calls with logic between them. 5-min timeout, 50KB stdout cap, 50 tool calls per script. |
 | `sandbox_install` | Install system packages via `apk` (runs as root) |
 | `sandbox_pip_install` | Install Python packages via `pip install --user` |
 | `sandbox_npm_install` | Install Node.js packages via `npm install` |
-| `sandbox_run_script` | Run a script file (auto-detects Python, Node, Bash, etc.) |
 | `sandbox_secret_check` | Check whether a secret exists for this agent (never reveals the value) |
 | `sandbox_secret_set` | Store a secret securely — pass `value` directly or omit to prompt the user |
 | `sandbox_plugin_register` | Register an agent-created plugin (requires `pluginCreate` permission) |
+
+The previously-discrete `sandbox_list_directory`, `sandbox_find_files`, `sandbox_move`, `sandbox_delete`, `sandbox_exec_background`, and `sandbox_run_script` tools were dropped. Their behaviour now comes from a flag (`background:true` on `sandbox_exec`, `target` on `sandbox_search_files`) or a direct shell invocation (`mv` / `rm` in `sandbox_exec`). `sandbox_run_script`'s use case — multi-step Python orchestration — moved to `sandbox_execute_code`.
 
 `share_artifact` is a global built-in (registered in `ToolRegistry`) and is the only way for sandbox-generated content to reach the chat thread. It's not in this sandbox-specific list because it's available everywhere, not just in sandbox mode.
 
@@ -159,10 +169,12 @@ All file paths are validated on the host side before container execution by `San
 
 Every sandbox tool returns a [ToolEnvelope](TOOL_CONTRACT.md) JSON string. Success payloads in `result`:
 
-- Read/inspect: `{path, content, size}` (+ optional `start_line`/`line_count`/`tail_lines`/`max_chars`)
-- Exec family: `{stdout, stderr, exit_code, cwd}` — `sandbox_run_script` adds `combined: stdout+stderr` and `language`.
+- Read/inspect: `{path, content, size}` (+ optional `start_line`/`line_count`/`tail_lines`/`max_chars`).
+- Search: `{pattern, target, path, matches}` — `target` is `"content"` or `"files"`.
+- Exec foreground: `{stdout, stderr, exit_code, cwd}`. Background (`background:true`): `{pid, log_file, cwd, background:true}`.
+- Process management: `{pid, alive|exited|killed, log_file, log_tail, ...}`.
+- `sandbox_execute_code`: `{stdout, stderr, exit_code, tool_calls, cwd}`.
 - Install family: `{installed, exit_code, output}` on success; `execution_error` envelope on non-zero exit.
-- Mutations: `{path, ...}` / `{source, destination}` / `{deleted, recursive}`.
 
 Failures use `kind: invalid_args` with `field` pointing at the offending argument (`path`, `cwd`, `content`, etc.) so the model can self-correct on the next turn.
 

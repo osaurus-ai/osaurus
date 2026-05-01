@@ -245,8 +245,8 @@ struct RenderChartTool: OsaurusTool {
         let jsonData = try encoder.encode(spec)
         let jsonString = String(data: jsonData, encoding: .utf8)!
         // Marker block is parsed by `parseChartSpecFromResult` downstream.
-        // Wrapped in the success envelope's `text` so `BatchTool` and the
-        // tool-call card can detect success without parsing markers first.
+        // Wrapped in the success envelope's `text` so the tool-call card
+        // can detect success without parsing markers first.
         let marker = "---CHART_START---\n\(jsonString)\n---CHART_END---"
         return ToolEnvelope.success(tool: name, text: marker)
     }

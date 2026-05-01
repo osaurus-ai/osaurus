@@ -275,11 +275,11 @@ struct MethodDatabaseTests {
 
     @Test func toolsUsedPersistsAsJSON() throws {
         let db = try makeTempDB()
-        let method = sampleMethod(toolsUsed: ["terminal", "web_fetch", "sandbox_run_script"])
+        let method = sampleMethod(toolsUsed: ["terminal", "web_fetch", "sandbox_execute_code"])
         try db.insertMethod(method)
 
         let loaded = try db.loadMethod(id: method.id)
-        #expect(loaded?.toolsUsed == ["terminal", "web_fetch", "sandbox_run_script"])
+        #expect(loaded?.toolsUsed == ["terminal", "web_fetch", "sandbox_execute_code"])
     }
 
     @Test func emptyToolsUsedPersists() throws {

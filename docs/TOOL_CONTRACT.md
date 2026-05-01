@@ -156,3 +156,33 @@ is tightly coupled to those parsers. The markers ride inside the
 envelope's `result.text` string — downstream parsers extract `text` from
 the envelope first, then scan for markers. Prefer not to add new
 marker-based flows; treat them as legacy.
+
+### `share_artifact` failure envelopes
+
+The chat-layer wrapper differentiates four failure modes for
+`share_artifact` so the model can self-correct on the next turn instead
+of retrying the same path. Each maps to a specific `ToolEnvelope.failure`
+shape:
+
+- **Path rejected** (`pathRejected`) → `kind: invalid_args`, `field: "path"`,
+  message names the trusted root and suggests `sandbox_search_files`.
+- **File not found** (`fileNotFound`) → `kind: execution_error`, message
+  enumerates every candidate path the resolver tried (e.g. `<home>/foo.png`,
+  `<home>/output/foo.png`, `<home>/dist/foo.png`, …) so the model knows
+  exactly where to look next.
+- **Copy failed** (`copyFailed`) → `kind: execution_error`, message carries
+  the FS error string (disk full, perms) plus the source path.
+- **Filename rejected** (`destinationRejected`) → `kind: invalid_args`,
+  `field: "filename"`, asks for a plain basename.
+
+Empty-string filler in optional fields (`content: ""`, `filename: ""`) is
+treated as absent on entry — many models pass empty placeholders for
+unused fields, and rejecting that as `invalid_args` was a footgun.
+
+### `sandbox_exec` background flag
+
+Foreground (default): returns `{stdout, stderr, exit_code, cwd}` when the
+command finishes (capped by `timeout`, max 300s). Pass `background:true`
+to spawn a detached process — the tool returns `{pid, log_file, cwd,
+background:true}` as soon as the spawn shim returns. Manage the resulting
+job through `sandbox_process` (poll/wait/kill).

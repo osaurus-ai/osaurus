@@ -104,22 +104,19 @@ Built by [`FolderToolFactory`](../Packages/OsaurusCore/Folder/FolderTools.swift)
 
 | Tool            | Description                                                  |
 | --------------- | ------------------------------------------------------------ |
-| `file_tree`     | List directory structure with project-aware ignore patterns  |
-| `file_read`     | Read file contents (supports line ranges and tail-only mode) |
-| `file_write`    | Create or overwrite files                                    |
-| `file_edit`     | Surgical exact-string replacement                            |
-| `file_search`   | ripgrep-style search across the folder                       |
-| `file_move`     | Move or rename                                               |
-| `file_copy`     | Duplicate                                                    |
-| `file_delete`   | Remove files                                                 |
-| `dir_create`    | Create directories                                           |
-| `batch`         | Execute up to 30 registered tool ops in sequence (continues on error, reports per-op status). `shell_run`, `git_commit`, and nested `batch` are denied. |
+| `file_tree`     | List directory structure with project-aware ignore patterns. Use this instead of `ls`/`tree` in `shell_run`. |
+| `file_read`     | Read file contents (supports line ranges and tail-only mode). Use this instead of `cat`/`head`/`tail`. |
+| `file_write`    | Create or overwrite files. Use this instead of `echo`/`cat` heredoc. |
+| `file_edit`     | Surgical exact-string replacement. Use this instead of `sed`/`awk`. |
+| `file_search`   | ripgrep-style search across the folder. Use this instead of `grep`/`rg`/`find`. |
+
+The previously-discrete `file_move`, `file_copy`, `file_delete`, `dir_create`, and `batch` tools were dropped — `mv`, `cp`, `rm`, and `mkdir` go through `shell_run` so the model picks "shell command" once instead of differentiating four near-identical tool names. Multi-step orchestration goes through `shell_run` chains.
 
 **Coding (registered when project type is detected):**
 
 | Tool        | Description                                |
 | ----------- | ------------------------------------------ |
-| `shell_run` | Execute a shell command (requires approval) |
+| `shell_run` | Execute a shell command (requires approval). Reserve for `mv`/`cp`/`rm`/`mkdir`, builds, installs, and any work that can't be expressed via the dedicated `file_*` tools. |
 
 **Git (registered when the folder is a git repo):**
 
@@ -157,12 +154,32 @@ public enum ExecutionMode: Sendable {
 
 | Field         | Type   | Description                                                                                       |
 | ------------- | ------ | ------------------------------------------------------------------------------------------------- |
-| `path`        | string | Relative path inside the working folder. Optional if `content` is provided.                       |
-| `content`     | string | Inline text/markdown to share without writing a file first. Optional if `path` is provided.       |
-| `filename`    | string | Required with `content`. Defaults to the basename of `path` otherwise.                            |
+| `path`        | string | Path to an existing file/dir. **The file must exist before the call — `share_artifact` does not create files.** Sandbox: relative to the agent home (e.g. `report.pdf`, `output/chart.svg`) or `/workspace/...` absolute. Folder: relative to the working folder. Optional if `content` is provided. |
+| `content`     | string | Inline text/markdown to share without writing a file first. Optional if `path` is provided. Omit entirely (do **not** pass an empty string) when using `path`. |
+| `filename`    | string | Required with `content`. Defaults to the basename of `path` otherwise. Omit entirely when not used. |
 | `description` | string | Brief human-readable description.                                                                 |
 
 Artifacts are persisted under `~/.osaurus/artifacts/<sessionId>/` and rendered inline in the chat thread. See [`SharedArtifact.swift`](../Packages/OsaurusCore/Models/Chat/SharedArtifact.swift).
+
+#### `share_artifact` and `sandbox_execute_code`
+
+`share_artifact` is **NOT** exposed to the `osaurus_tools` Python helper module. Calling it from inside a `sandbox_execute_code` script would create the marker envelope but the chat-layer post-processor that turns it into a real artifact card only fires for top-level tool calls — so an in-script `share_artifact` would silently no-op the chat UI even though the script "succeeds". The bridge endpoint enforces the same rule by hard-coding its allow-list to the file/exec helpers only.
+
+The right pattern is two top-level tool calls:
+
+1. `sandbox_execute_code({"code": "…write julia.png…"})` — script does the work, prints the resulting path to stdout.
+2. `share_artifact({"path": "julia.png", "description": "…"})` — model surfaces the file as a chat card.
+
+#### Failure modes
+
+The chat-layer wrapper surfaces a differentiated error envelope per failure mode so the model can self-correct on the next turn:
+
+| Failure                                         | What the model sees                                                                                                                     |
+| ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| Path rejected by the sanitizer (traversal, etc.) | `invalid_args` envelope on `path` with the trusted root mentioned and a `sandbox_search_files(target="files", …)` hint.                 |
+| File doesn't exist where the resolver looked    | `execution_error` listing every candidate path (`<home>/foo.png`, `<home>/output/foo.png`, `…/dist/foo.png`, …) so the model can `sandbox_search_files` for the real location. |
+| File existed but the host-side copy threw       | `execution_error` carrying the FS error (disk full, perms) and the source path. |
+| `path` and `content` both empty / missing       | `invalid_args` reminding the model to pass at least one. Empty-string filler in optional fields is treated as absent on entry. |
 
 ---
 

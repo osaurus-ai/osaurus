@@ -172,6 +172,43 @@ extension SharedArtifact {
         let enrichedToolResult: String
     }
 
+    /// Differentiated failure mode for `processToolResult`. Lets the
+    /// chat-layer wrapper turn each kind into a model-readable error
+    /// envelope that says exactly what went wrong — the previous nil
+    /// return had no signal for "path was rejected" vs "file doesn't
+    /// exist" vs "copy failed", so the model couldn't self-correct.
+    /// Conforms to `Error` so it can ride a `Result<_, _>`.
+    ///
+    /// Mode-fire reference (which kinds fire under which `ExecutionMode`):
+    ///   - `.markersMissing`, `.noContentOrPath`, `.destinationRejected`,
+    ///     `.copyFailed` — mode-agnostic; surface the same way regardless
+    ///     of sandbox / folder / none.
+    ///   - `.pathRejected` — primarily folder-mode (e.g. `../outside.txt`
+    ///     traversal). In sandbox mode the path resolver always produces
+    ///     a candidate URL by anchoring at the agent home, so almost
+    ///     every "wrong path" case lands in `.fileNotFound` instead.
+    ///     The exception is unrelated absolute paths (`/etc/passwd`)
+    ///     which still surface as `.pathRejected` in sandbox mode.
+    ///   - `.fileNotFound` — primarily sandbox mode (the agent wrote the
+    ///     file somewhere the resolver doesn't search, e.g. `/tmp/`).
+    ///     Also fires in folder mode for typo'd relative paths.
+    enum ResolutionFailure: Sendable, Error {
+        case markersMissing
+        case noContentOrPath
+        case destinationRejected(filename: String)
+        /// `path` was rejected by the security sanitizer (escapes the
+        /// agent root, contains traversal, points at an unrelated
+        /// absolute path, etc.).
+        case pathRejected(path: String)
+        /// `path` resolved to a candidate URL but no file exists there.
+        /// `searchedLocations` lists every place the resolver looked so
+        /// the model can either fix its path or list a real one.
+        case fileNotFound(path: String, searchedLocations: [String])
+        /// Source file existed but `FileManager.copyItem` threw — disk
+        /// full, permission denied, etc.
+        case copyFailed(source: String, reason: String)
+    }
+
     /// Extracts marker-delimited metadata and content lines from a tool result string.
     static func parseMarkers(from toolResult: String) -> ParsedMarkers? {
         guard let startRange = toolResult.range(of: startMarker),
@@ -208,9 +245,29 @@ extension SharedArtifact {
         executionMode: ExecutionMode,
         sandboxAgentName: String? = nil
     ) -> ProcessingResult? {
+        try? processToolResultDetailed(
+            toolResult,
+            contextId: contextId,
+            contextType: contextType,
+            executionMode: executionMode,
+            sandboxAgentName: sandboxAgentName
+        ).get()
+    }
+
+    /// Differentiated variant: the chat-layer wrapper uses this so it can
+    /// turn each failure mode into a model-readable error envelope. The
+    /// older nil-returning `processToolResult` delegates here to keep
+    /// existing callers compiling.
+    static func processToolResultDetailed(
+        _ toolResult: String,
+        contextId: String,
+        contextType: ArtifactContextType,
+        executionMode: ExecutionMode,
+        sandboxAgentName: String? = nil
+    ) -> Result<ProcessingResult, ResolutionFailure> {
         guard var parsed = parseMarkers(from: toolResult) else {
             NSLog("[SharedArtifact] parseMarkers failed – markers not found in tool result")
-            return nil
+            return .failure(.markersMissing)
         }
 
         let mimeType = parsed.metadata["mime_type"] as? String ?? "application/octet-stream"
@@ -235,7 +292,7 @@ extension SharedArtifact {
         OsaurusPaths.ensureExistsSilent(contextDir)
         guard let destPath = resolveDestinationPath(filename: parsed.filename, contextDir: contextDir) else {
             NSLog("[SharedArtifact] Refused destination path for filename '%@'", parsed.filename)
-            return nil
+            return .failure(.destinationRejected(filename: parsed.filename))
         }
 
         let artifact: SharedArtifact
@@ -259,64 +316,70 @@ extension SharedArtifact {
             contentLines = parsed.contentLines
 
         } else if let path {
-            guard
-                let source = resolveSourcePath(
-                    path,
-                    executionMode: executionMode,
-                    sandboxAgentName: sandboxAgentName
-                )
-            else {
-                NSLog(
-                    "[SharedArtifact] Could not resolve '%@' (mode=%@, agent=%@)",
-                    path,
-                    String(describing: executionMode),
-                    sandboxAgentName ?? "nil"
-                )
-                return nil
-            }
-
-            let fm = FileManager.default
-            var isDir: ObjCBool = false
-            guard fm.fileExists(atPath: source.path, isDirectory: &isDir) else {
-                NSLog("[SharedArtifact] File not found: %@", source.path)
-                return nil
-            }
-            let isDirectory = isDir.boolValue
-
-            if fm.fileExists(atPath: destPath.path) { try? fm.removeItem(at: destPath) }
-            do { try fm.copyItem(at: source, to: destPath) } catch {
-                NSLog(
-                    "[SharedArtifact] Copy failed %@ → %@: %@",
-                    source.path,
-                    destPath.path,
-                    error.localizedDescription
-                )
-                return nil
-            }
-
-            let fileSize =
-                isDirectory
-                ? OsaurusPaths.directorySize(at: destPath)
-                : (try? fm.attributesOfItem(atPath: destPath.path)[.size] as? Int) ?? 0
-            let resolvedMime = isDirectory ? "inode/directory" : mimeType
-
-            artifact = SharedArtifact(
-                contextId: contextId,
-                contextType: contextType,
-                filename: parsed.filename,
-                mimeType: resolvedMime,
-                fileSize: fileSize,
-                hostPath: destPath.path,
-                isDirectory: isDirectory,
-                description: description,
-                isFinalResult: false
+            let resolution = resolveSourcePathDetailed(
+                path,
+                executionMode: executionMode,
+                sandboxAgentName: sandboxAgentName
             )
-            if isDirectory { parsed.metadata["is_directory"] = true; parsed.metadata["mime_type"] = resolvedMime }
-            contentLines = []
+            switch resolution {
+            case .rejected:
+                NSLog("[SharedArtifact] Path rejected (security): %@", path)
+                return .failure(.pathRejected(path: path))
+            case .candidate(let url, let attempted):
+                let fm = FileManager.default
+                var isDir: ObjCBool = false
+                guard fm.fileExists(atPath: url.path, isDirectory: &isDir) else {
+                    NSLog(
+                        "[SharedArtifact] File not found at '%@' (tried %@)",
+                        url.path,
+                        attempted.joined(separator: ", ")
+                    )
+                    return .failure(
+                        .fileNotFound(path: path, searchedLocations: attempted)
+                    )
+                }
+                let isDirectory = isDir.boolValue
+
+                if fm.fileExists(atPath: destPath.path) { try? fm.removeItem(at: destPath) }
+                do { try fm.copyItem(at: url, to: destPath) } catch {
+                    NSLog(
+                        "[SharedArtifact] Copy failed %@ → %@: %@",
+                        url.path,
+                        destPath.path,
+                        error.localizedDescription
+                    )
+                    return .failure(
+                        .copyFailed(source: url.path, reason: error.localizedDescription)
+                    )
+                }
+
+                let fileSize =
+                    isDirectory
+                    ? OsaurusPaths.directorySize(at: destPath)
+                    : (try? fm.attributesOfItem(atPath: destPath.path)[.size] as? Int) ?? 0
+                let resolvedMime = isDirectory ? "inode/directory" : mimeType
+
+                artifact = SharedArtifact(
+                    contextId: contextId,
+                    contextType: contextType,
+                    filename: parsed.filename,
+                    mimeType: resolvedMime,
+                    fileSize: fileSize,
+                    hostPath: destPath.path,
+                    isDirectory: isDirectory,
+                    description: description,
+                    isFinalResult: false
+                )
+                if isDirectory {
+                    parsed.metadata["is_directory"] = true
+                    parsed.metadata["mime_type"] = resolvedMime
+                }
+                contentLines = []
+            }
 
         } else {
             NSLog("[SharedArtifact] No content and no path in metadata for '\(parsed.filename)'")
-            return nil
+            return .failure(.noContentOrPath)
         }
 
         parsed.metadata["host_path"] = artifact.hostPath
@@ -324,7 +387,7 @@ extension SharedArtifact {
         parsed.metadata["context_type"] = contextType.rawValue
         parsed.metadata["file_size"] = artifact.fileSize
         let enriched = rebuildToolResult(toolResult, parsed: parsed, contentLines: contentLines)
-        return ProcessingResult(artifact: artifact, enrichedToolResult: enriched)
+        return .success(ProcessingResult(artifact: artifact, enrichedToolResult: enriched))
     }
 
     /// Reconstructs a SharedArtifact from an enriched tool result string (for display).
@@ -400,16 +463,26 @@ extension SharedArtifact {
 
     // MARK: - Private Helpers
 
+    /// Internal resolution result that distinguishes a security
+    /// rejection (the path can't be resolved into the trusted root at
+    /// all) from a candidate URL plus the attempted fallback locations.
+    /// `attempted` is what the chat-layer wrapper surfaces to the model
+    /// on `fileNotFound` so it can correct the path next turn.
+    fileprivate enum SourceResolution {
+        case rejected
+        case candidate(URL, attempted: [String])
+    }
+
     /// Maps an agent-provided path to the host-side URL, normalizing absolute
     /// in-container paths, `./` prefixes, and falling back to a basename search.
     /// Every returned URL is canonicalized and verified to live inside the
     /// caller's trusted root — a crafted `../` path cannot escape the sandbox
     /// agent dir, the container workspace, or the user-picked host folder.
-    private static func resolveSourcePath(
+    fileprivate static func resolveSourcePathDetailed(
         _ path: String,
         executionMode: ExecutionMode,
         sandboxAgentName: String?
-    ) -> URL? {
+    ) -> SourceResolution {
         switch executionMode {
         case .sandbox:
             let agent = sandboxAgentName ?? "default"
@@ -421,7 +494,10 @@ extension SharedArtifact {
                 relativePath = String(relativePath.dropFirst(containerHome.count + 1))
             } else if relativePath.hasPrefix("/workspace/") {
                 let stripped = String(relativePath.dropFirst("/workspace/".count))
-                return resolveContainedPath(stripped, within: OsaurusPaths.containerWorkspace())
+                if let resolved = resolveContainedPath(stripped, within: OsaurusPaths.containerWorkspace()) {
+                    return .candidate(resolved, attempted: [resolved.path])
+                }
+                return .rejected
             }
             if relativePath.hasPrefix("./") {
                 relativePath = String(relativePath.dropFirst(2))
@@ -429,26 +505,50 @@ extension SharedArtifact {
             // After the container-absolute prefixes above are stripped, any
             // remaining leading `/` means the agent handed us an unrelated
             // absolute path — refuse rather than let basename-fallback guess.
-            guard !relativePath.hasPrefix("/") else { return nil }
+            guard !relativePath.hasPrefix("/") else { return .rejected }
+
+            // Build the candidate list eagerly so we can hand the model
+            // every place we looked even when nothing matched. The first
+            // candidate that exists wins; otherwise the first candidate
+            // is returned and the existence check upstream emits
+            // `.fileNotFound` with the full attempted list.
+            var attempted: [String] = []
+            var firstCandidate: URL?
 
             if let primary = resolveContainedPath(relativePath, within: agentDir) {
-                return primary
+                attempted.append(primary.path)
+                if firstCandidate == nil { firstCandidate = primary }
+                if FileManager.default.fileExists(atPath: primary.path) {
+                    return .candidate(primary, attempted: attempted)
+                }
             }
 
             // Basename fallback in common output subdirectories, still contained.
-            guard let basename = extractPathComponent(path) else { return nil }
-            for sub in ["output", "out", "build", "dist"] {
-                if let attempt = resolveContainedPath("\(sub)/\(basename)", within: agentDir) {
-                    return attempt
+            if let basename = extractPathComponent(path) {
+                for sub in ["output", "out", "build", "dist"] {
+                    if let attempt = resolveContainedPath("\(sub)/\(basename)", within: agentDir) {
+                        attempted.append(attempt.path)
+                        if firstCandidate == nil { firstCandidate = attempt }
+                        if FileManager.default.fileExists(atPath: attempt.path) {
+                            return .candidate(attempt, attempted: attempted)
+                        }
+                    }
                 }
             }
-            return nil
+
+            if let candidate = firstCandidate {
+                return .candidate(candidate, attempted: attempted)
+            }
+            return .rejected
 
         case .hostFolder(let ctx):
-            return resolveContainedPath(path, within: ctx.rootPath)
+            if let resolved = resolveContainedPath(path, within: ctx.rootPath) {
+                return .candidate(resolved, attempted: [resolved.path])
+            }
+            return .rejected
 
         case .none:
-            return nil
+            return .rejected
         }
     }
 

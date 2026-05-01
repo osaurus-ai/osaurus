@@ -168,6 +168,10 @@ private final class HostAPIBridgeHandler: ChannelInboundHandler, RemovableChanne
         // sandboxed code claim any agent.
         let bearerToken = Self.extractBearerToken(headers: head.headers)
         let pluginName = head.headers["X-Osaurus-Plugin"].first
+        // `sandbox_execute_code` scripts identify themselves with this
+        // header so the host can scope the per-script tool-call budget
+        // and re-apply the chat-engine task locals.
+        let scriptId = head.headers["X-Osaurus-Script-Id"].first
         let path = head.uri.split(separator: "?").first.map(String.init) ?? head.uri
         let version = head.version
         let method = head.method
@@ -184,7 +188,8 @@ private final class HostAPIBridgeHandler: ChannelInboundHandler, RemovableChanne
                     path: path,
                     body: body,
                     identity: identity,
-                    pluginName: pluginName
+                    pluginName: pluginName,
+                    scriptId: scriptId
                 )
             } else {
                 // Fail closed: no token, or token does not resolve to any
@@ -250,7 +255,8 @@ private final class HostAPIBridgeHandler: ChannelInboundHandler, RemovableChanne
         path: String,
         body: String,
         identity: SandboxBridgeTokenStore.Identity,
-        pluginName: String?
+        pluginName: String?,
+        scriptId: String? = nil
     ) async -> BridgeResponse {
         let components = path.split(separator: "/").map(String.init)
         // Expected: ["api", <service>, ...]
@@ -288,6 +294,14 @@ private final class HostAPIBridgeHandler: ChannelInboundHandler, RemovableChanne
             return await handlePlugin(method: method, remaining: remaining, body: body, identity: identity)
         case "log":
             return handleLog(method: method, body: body, identity: identity)
+        case "sandbox-tool":
+            return await handleSandboxToolCall(
+                method: method,
+                remaining: remaining,
+                body: body,
+                identity: identity,
+                scriptId: scriptId
+            )
         default:
             return .error(404, "Unknown service: \(service)")
         }
@@ -676,6 +690,110 @@ private final class HostAPIBridgeHandler: ChannelInboundHandler, RemovableChanne
         return .ok()
     }
 
+    /// Dispatches a tool call from inside a `sandbox_execute_code` Python
+    /// script. The script supplies an `X-Osaurus-Script-Id` header that
+    /// scopes the per-script tool-call budget AND carries the chat-engine
+    /// task locals captured when the script started — so dispatched tools
+    /// resolve to the same session as a direct top-level call would have.
+    ///
+    /// Only the names in `BuiltinSandboxTools.executeCodeBridgeAllowedTools`
+    /// are accepted here (file/exec/install helpers — explicitly NOT
+    /// `share_artifact`, the launcher itself, or any chat-layer-intercepted
+    /// tool whose post-execute UI hook only fires for top-level calls).
+    /// We deliberately do NOT route plugin / MCP / folder tools through
+    /// this path — that would let a Python script invoke any plugin the
+    /// host has installed, even ones the active agent never authorised.
+    private func handleSandboxToolCall(
+        method: HTTPMethod,
+        remaining: [String],
+        body: String,
+        identity: SandboxBridgeTokenStore.Identity,
+        scriptId: String?
+    ) async -> BridgeResponse {
+        guard method == .POST else {
+            return .error(405, "POST /api/sandbox-tool/{name} expected")
+        }
+        guard let toolName = remaining.first, !toolName.isEmpty else {
+            return .error(400, "Tool name segment required")
+        }
+        guard let scriptId, !scriptId.isEmpty else {
+            return .error(
+                400,
+                "X-Osaurus-Script-Id header required — sandbox-tool calls must "
+                    + "originate from inside a sandbox_execute_code invocation"
+            )
+        }
+
+        // The allow-list is hard-coded by `BuiltinSandboxTools` — adding
+        // a new sandbox built-in must require an explicit opt-in there.
+        // Read the doc-comment on `executeCodeBridgeAllowedTools` for why
+        // chat-layer-intercepted tools and the launcher itself are excluded.
+        guard BuiltinSandboxTools.executeCodeBridgeAllowedTools.contains(toolName) else {
+            let allowed = BuiltinSandboxTools.executeCodeBridgeAllowedTools.sorted()
+                .joined(separator: ", ")
+            return .error(
+                403,
+                "Tool `\(toolName)` is not exposed to sandbox_execute_code helpers. "
+                    + "Allowed: \(allowed)"
+            )
+        }
+
+        // Per-script tool-call budget. `tryIncrement` returns false
+        // when the script id isn't tracked (script already finished or
+        // was never started here) OR the cap is exceeded — both cases
+        // collapse into one rejection so the agent fixes its loop.
+        guard await SandboxExecuteCodeBudget.shared.tryIncrement(scriptId: scriptId) else {
+            return .error(
+                429,
+                "sandbox_execute_code per-script tool-call budget exceeded "
+                    + "(\(SandboxExecuteCodeBudget.maxCallsPerScript) calls). Refactor your script "
+                    + "to do less work per call, or call `sandbox_execute_code` again from the model."
+            )
+        }
+
+        // Pull the chat-engine context that was captured when the script
+        // started so dispatched tools see the same session/agent as the
+        // launching call. Missing context -> session-aware tools surface
+        // their existing "no active session" envelope, which is the
+        // right signal for an unanchored bridge call.
+        let context = await SandboxExecuteCodeBudget.shared.context(scriptId: scriptId)
+
+        // The helper module wraps args as `{"arguments": {...}}`; ad-hoc
+        // curl callers typically send `{...}` directly. Accept both —
+        // unwrapping the outer envelope when present, otherwise passing
+        // the body through. Empty body becomes `{}` so downstream
+        // `requireArgumentsDictionary` parses it as a no-op rather than
+        // an `invalid_args` failure.
+        let argumentsJSON = unwrapArgumentsBody(body) ?? (body.isEmpty ? "{}" : body)
+
+        // Re-apply the chat-engine task locals so dispatched tools see
+        // the same session/agent as a direct top-level call would.
+        // ToolRegistry is `@MainActor`, so the actual `execute` call hops
+        // to MainActor automatically — no explicit `MainActor.run` here.
+        let result: String
+        do {
+            result = try await ChatExecutionContext.$currentAgentId.withValue(context?.agentId ?? identity.agentId) {
+                try await ChatExecutionContext.$currentSessionId.withValue(context?.sessionId) {
+                    try await ChatExecutionContext.$currentAssistantTurnId.withValue(context?.assistantTurnId) {
+                        try await ChatExecutionContext.$currentBatchId.withValue(context?.batchId) {
+                            try await ToolRegistry.shared.execute(
+                                name: toolName,
+                                argumentsJSON: argumentsJSON
+                            )
+                        }
+                    }
+                }
+            }
+        } catch {
+            return .error(500, "Tool dispatch threw: \(error.localizedDescription)")
+        }
+
+        // The tool result is already a JSON-serialised envelope — pass
+        // it back verbatim. The helper will `json.loads` it and return
+        // the dict to the caller.
+        return BridgeResponse(statusCode: 200, body: result)
+    }
+
     // MARK: - Helpers
 
     private func parseJSON(_ string: String) -> [String: Any]? {
@@ -683,6 +801,19 @@ private final class HostAPIBridgeHandler: ChannelInboundHandler, RemovableChanne
             let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return nil }
         return dict
+    }
+
+    /// If `body` parses as `{"arguments": {...}}`, return the inner
+    /// arguments object re-encoded as JSON. Returns `nil` when the body
+    /// isn't JSON, doesn't have an `arguments` key, or that key isn't
+    /// an object — caller falls back to passing the body through verbatim.
+    private func unwrapArgumentsBody(_ body: String) -> String? {
+        guard let parsed = parseJSON(body),
+            let inner = parsed["arguments"] as? [String: Any],
+            let data = try? JSONSerialization.data(withJSONObject: inner),
+            let str = String(data: data, encoding: .utf8)
+        else { return nil }
+        return str
     }
 
     private func jsonEscape(_ string: String) -> String {

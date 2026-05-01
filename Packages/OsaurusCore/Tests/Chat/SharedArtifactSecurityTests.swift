@@ -130,6 +130,85 @@ struct SharedArtifactSecurityTests {
         }
     }
 
+    // MARK: - Differentiated failure modes
+
+    /// `.fileNotFound` should ride a candidate-paths list so the model
+    /// knows where the resolver looked. Without this list the agent
+    /// can't tell the difference between "wrong path" and "wrong
+    /// directory" — the gpt-5.2 julia_fractal regression.
+    @Test func processToolResultDetailed_fileNotFound_carriesAttempted() async throws {
+        try await Self.runLocked { tmp in
+            let projectRoot = tmp.appendingPathComponent("project", isDirectory: true)
+            try FileManager.default.createDirectory(at: projectRoot, withIntermediateDirectories: true)
+            let folderCtx = FolderContext(
+                rootPath: projectRoot,
+                projectType: .unknown,
+                tree: "",
+                manifest: nil,
+                gitStatus: nil,
+                isGitRepo: false
+            )
+            let payload = Self.makeFilePathArtifactTool(
+                filename: "missing.png",
+                path: "missing.png"
+            )
+
+            let outcome = SharedArtifact.processToolResultDetailed(
+                payload,
+                contextId: UUID().uuidString,
+                contextType: .chat,
+                executionMode: .hostFolder(folderCtx)
+            )
+
+            switch outcome {
+            case .failure(.fileNotFound(let path, let attempted)):
+                #expect(path == "missing.png")
+                #expect(!attempted.isEmpty)
+                #expect(attempted.first?.contains("missing.png") == true)
+            default:
+                Issue.record("expected fileNotFound, got \(outcome)")
+            }
+        }
+    }
+
+    /// Host-folder traversal should surface as `.pathRejected`, not
+    /// `.fileNotFound` — the model needs to know the path itself was
+    /// the problem, not the existence check.
+    @Test func processToolResultDetailed_pathRejected_onTraversal() async throws {
+        try await Self.runLocked { tmp in
+            let projectRoot = tmp.appendingPathComponent("project", isDirectory: true)
+            try FileManager.default.createDirectory(at: projectRoot, withIntermediateDirectories: true)
+            let outsideFile = tmp.appendingPathComponent("outside.txt")
+            try "secret".write(to: outsideFile, atomically: true, encoding: .utf8)
+
+            let folderCtx = FolderContext(
+                rootPath: projectRoot,
+                projectType: .unknown,
+                tree: "",
+                manifest: nil,
+                gitStatus: nil,
+                isGitRepo: false
+            )
+            let payload = Self.makeFilePathArtifactTool(
+                filename: "sibling.txt",
+                path: "../outside.txt"
+            )
+
+            let outcome = SharedArtifact.processToolResultDetailed(
+                payload,
+                contextId: UUID().uuidString,
+                contextType: .chat,
+                executionMode: .hostFolder(folderCtx)
+            )
+            switch outcome {
+            case .failure(.pathRejected(let path)):
+                #expect(path == "../outside.txt")
+            default:
+                Issue.record("expected pathRejected, got \(outcome)")
+            }
+        }
+    }
+
     // MARK: - Helpers
 
     private static func makeInlineArtifactTool(filename: String, body: String) -> String {

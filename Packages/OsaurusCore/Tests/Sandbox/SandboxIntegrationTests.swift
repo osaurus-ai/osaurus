@@ -94,11 +94,19 @@ struct SandboxIntegrationTests {
             )
             #expect(pipPayload["exit_code"] as? Int == 0)
 
+            // Old `sandbox_run_script` is gone — stage the scenario as
+            // a script under the agent home and invoke it through the
+            // unified `sandbox_exec`. Same end state, fewer tool names.
             let script = pythonFlaskScenarioScript()
+            let writePayload = try await executeSandboxTool(
+                "sandbox_write_file",
+                arguments: ["path": "scenario.py", "content": script]
+            )
+            #expect(writePayload["size"] as? Int == script.utf8.count)
 
             let scriptPayload = try await executeSandboxTool(
-                "sandbox_run_script",
-                arguments: ["language": "python", "script": script]
+                "sandbox_exec",
+                arguments: ["command": "python3 scenario.py"]
             )
             #expect(scriptPayload["exit_code"] as? Int == 0)
 
@@ -123,10 +131,15 @@ struct SandboxIntegrationTests {
             #expect(installPayload["exit_code"] as? Int == 0)
 
             let script = nodeScenarioScript()
+            let writePayload = try await executeSandboxTool(
+                "sandbox_write_file",
+                arguments: ["path": "scenario.js", "content": script]
+            )
+            #expect(writePayload["size"] as? Int == script.utf8.count)
 
             let scriptPayload = try await executeSandboxTool(
-                "sandbox_run_script",
-                arguments: ["language": "node", "script": script]
+                "sandbox_exec",
+                arguments: ["command": "node scenario.js"]
             )
             #expect(scriptPayload["exit_code"] as? Int == 0)
 
@@ -151,10 +164,15 @@ struct SandboxIntegrationTests {
             #expect(installPayload["exit_code"] as? Int == 0)
 
             let script = goScenarioScript()
+            let writePayload = try await executeSandboxTool(
+                "sandbox_write_file",
+                arguments: ["path": "scenario.sh", "content": script]
+            )
+            #expect(writePayload["size"] as? Int == script.utf8.count)
 
             let scriptPayload = try await executeSandboxTool(
-                "sandbox_run_script",
-                arguments: ["language": "bash", "script": script]
+                "sandbox_exec",
+                arguments: ["command": "bash scenario.sh"]
             )
             #expect(scriptPayload["exit_code"] as? Int == 0)
 

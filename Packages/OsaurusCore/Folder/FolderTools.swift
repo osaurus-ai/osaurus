@@ -165,7 +165,9 @@ enum FolderToolHelpers {
 struct FileTreeTool: OsaurusTool {
     let name = "file_tree"
     let description =
-        "List the directory structure of the working directory or a subdirectory. Returns a tree view of files and folders. Skips hidden files and truncates at 300 files."
+        "List the directory structure of the working directory or a subdirectory. **Use this instead "
+        + "of `ls` / `tree` in `shell_run`.** Returns a tree view of files and folders. Skips hidden "
+        + "files and truncates at 300 files."
     let parameters: JSONValue? = .object([
         "type": .string("object"),
         "additionalProperties": .bool(false),
@@ -268,7 +270,9 @@ struct FileTreeTool: OsaurusTool {
 struct FileReadTool: OsaurusTool {
     let name = "file_read"
     let description =
-        "Read the contents of a text file. Cannot read binary files (PDFs, images, etc.). Optionally specify start_line and end_line for partial reads. Line numbers are 1-indexed."
+        "Read the contents of a text file. **Use this instead of `cat` / `head` / `tail` in "
+        + "`shell_run`.** Cannot read binary files (PDFs, images, etc.). Optionally specify start_line "
+        + "and end_line for partial reads. Line numbers are 1-indexed."
     let parameters: JSONValue? = .object([
         "type": .string("object"),
         "additionalProperties": .bool(false),
@@ -354,7 +358,9 @@ struct FileReadTool: OsaurusTool {
 struct FileWriteTool: OsaurusTool, PermissionedTool {
     let name = "file_write"
     let description =
-        "Create a new file or overwrite an existing file with the provided content. Parent directories will be created if they don't exist. You MUST provide the file contents in the `content` parameter."
+        "Create a new file or overwrite an existing file with the provided content. **Use this "
+        + "instead of `echo` / `cat` heredoc in `shell_run`.** Parent directories will be created "
+        + "if they don't exist. You MUST provide the file contents in the `content` parameter."
     let parameters: JSONValue? = .object([
         "type": .string("object"),
         "additionalProperties": .bool(false),
@@ -431,311 +437,22 @@ struct FileWriteTool: OsaurusTool, PermissionedTool {
     }
 }
 
-// MARK: File Move Tool
-
-struct FileMoveTool: OsaurusTool, PermissionedTool {
-    let name = "file_move"
-    let description = "Move or rename a file or directory."
-    let parameters: JSONValue? = .object([
-        "type": .string("object"),
-        "additionalProperties": .bool(false),
-        "properties": .object([
-            "source": .object([
-                "type": .string("string"),
-                "description": .string("Relative path of the source file or directory"),
-            ]),
-            "destination": .object([
-                "type": .string("string"),
-                "description": .string("Relative path of the destination"),
-            ]),
-        ]),
-        "required": .array([.string("source"), .string("destination")]),
-    ])
-
-    var requirements: [String] { [] }
-    var defaultPermissionPolicy: ToolPermissionPolicy { .auto }
-
-    private let rootPath: URL
-
-    init(rootPath: URL) {
-        self.rootPath = rootPath
-    }
-
-    func execute(argumentsJSON: String) async throws -> String {
-        let args = try FolderToolHelpers.parseArguments(argumentsJSON)
-
-        guard let sourcePath = args["source"] as? String else {
-            throw FolderToolError.invalidArguments("Missing required parameter: source")
-        }
-        guard let destPath = args["destination"] as? String else {
-            throw FolderToolError.invalidArguments("Missing required parameter: destination")
-        }
-
-        let sourceURL = try FolderToolHelpers.resolvePath(sourcePath, rootPath: rootPath)
-        let destURL = try FolderToolHelpers.resolvePath(destPath, rootPath: rootPath)
-
-        guard FileManager.default.fileExists(atPath: sourceURL.path) else {
-            throw FolderToolError.fileNotFound(sourcePath)
-        }
-
-        // Log operation before executing
-        if let sessionId = ChatExecutionContext.currentSessionId {
-            await FileOperationLog.shared.log(
-                FileOperation(
-                    type: .move,
-                    path: sourcePath,
-                    destinationPath: destPath,
-                    sessionId: sessionId,
-                    batchId: ChatExecutionContext.currentBatchId
-                )
-            )
-        }
-
-        // Create parent directories if needed
-        let parentDir = destURL.deletingLastPathComponent()
-        try FileManager.default.createDirectory(
-            at: parentDir,
-            withIntermediateDirectories: true,
-            attributes: nil
-        )
-
-        try FileManager.default.moveItem(at: sourceURL, to: destURL)
-
-        return ToolEnvelope.success(
-            tool: name,
-            text: "Moved \(sourcePath) to \(destPath)"
-        )
-    }
-}
-
-// MARK: File Copy Tool
-
-struct FileCopyTool: OsaurusTool, PermissionedTool {
-    let name = "file_copy"
-    let description = "Copy a file or directory to a new location."
-    let parameters: JSONValue? = .object([
-        "type": .string("object"),
-        "additionalProperties": .bool(false),
-        "properties": .object([
-            "source": .object([
-                "type": .string("string"),
-                "description": .string("Relative path of the source file or directory"),
-            ]),
-            "destination": .object([
-                "type": .string("string"),
-                "description": .string("Relative path of the destination"),
-            ]),
-        ]),
-        "required": .array([.string("source"), .string("destination")]),
-    ])
-
-    var requirements: [String] { [] }
-    var defaultPermissionPolicy: ToolPermissionPolicy { .auto }
-
-    private let rootPath: URL
-
-    init(rootPath: URL) {
-        self.rootPath = rootPath
-    }
-
-    func execute(argumentsJSON: String) async throws -> String {
-        let args = try FolderToolHelpers.parseArguments(argumentsJSON)
-
-        guard let sourcePath = args["source"] as? String else {
-            throw FolderToolError.invalidArguments("Missing required parameter: source")
-        }
-        guard let destPath = args["destination"] as? String else {
-            throw FolderToolError.invalidArguments("Missing required parameter: destination")
-        }
-
-        let sourceURL = try FolderToolHelpers.resolvePath(sourcePath, rootPath: rootPath)
-        let destURL = try FolderToolHelpers.resolvePath(destPath, rootPath: rootPath)
-
-        guard FileManager.default.fileExists(atPath: sourceURL.path) else {
-            throw FolderToolError.fileNotFound(sourcePath)
-        }
-
-        // Log operation before executing
-        if let sessionId = ChatExecutionContext.currentSessionId {
-            await FileOperationLog.shared.log(
-                FileOperation(
-                    type: .copy,
-                    path: sourcePath,
-                    destinationPath: destPath,
-                    sessionId: sessionId,
-                    batchId: ChatExecutionContext.currentBatchId
-                )
-            )
-        }
-
-        // Create parent directories if needed
-        let parentDir = destURL.deletingLastPathComponent()
-        try FileManager.default.createDirectory(
-            at: parentDir,
-            withIntermediateDirectories: true,
-            attributes: nil
-        )
-
-        try FileManager.default.copyItem(at: sourceURL, to: destURL)
-
-        return ToolEnvelope.success(
-            tool: name,
-            text: "Copied \(sourcePath) to \(destPath)"
-        )
-    }
-}
-
-// MARK: File Delete Tool
-
-struct FileDeleteTool: OsaurusTool, PermissionedTool {
-    let name = "file_delete"
-    let description = "Delete a file or directory. This action requires approval."
-    let parameters: JSONValue? = .object([
-        "type": .string("object"),
-        "additionalProperties": .bool(false),
-        "properties": .object([
-            "path": .object([
-                "type": .string("string"),
-                "description": .string("Relative path of the file or directory to delete"),
-            ])
-        ]),
-        "required": .array([.string("path")]),
-    ])
-
-    var requirements: [String] { ["permission:folder_delete"] }
-    var defaultPermissionPolicy: ToolPermissionPolicy { .ask }
-
-    private let rootPath: URL
-
-    init(rootPath: URL) {
-        self.rootPath = rootPath
-    }
-
-    func execute(argumentsJSON: String) async throws -> String {
-        let args = try FolderToolHelpers.parseArguments(argumentsJSON)
-
-        guard let relativePath = args["path"] as? String else {
-            throw FolderToolError.invalidArguments("Missing required parameter: path")
-        }
-
-        let fileURL = try FolderToolHelpers.resolvePath(relativePath, rootPath: rootPath)
-
-        guard FileManager.default.fileExists(atPath: fileURL.path) else {
-            throw FolderToolError.fileNotFound(relativePath)
-        }
-
-        var isDirectory: ObjCBool = false
-        FileManager.default.fileExists(atPath: fileURL.path, isDirectory: &isDirectory)
-
-        // Capture previous content for undo (text files only)
-        var previousContent: String?
-        if !isDirectory.boolValue {
-            previousContent = try? String(contentsOf: fileURL, encoding: .utf8)
-        }
-
-        // Log operation before executing
-        if let sessionId = ChatExecutionContext.currentSessionId {
-            await FileOperationLog.shared.log(
-                FileOperation(
-                    type: .delete,
-                    path: relativePath,
-                    previousContent: previousContent,
-                    sessionId: sessionId,
-                    batchId: ChatExecutionContext.currentBatchId
-                )
-            )
-        }
-
-        // Binary/large files can't be undone, so move to Trash for recovery
-        let useTrash = !isDirectory.boolValue && previousContent == nil
-        if useTrash {
-            try FileManager.default.trashItem(at: fileURL, resultingItemURL: nil)
-        } else {
-            try FileManager.default.removeItem(at: fileURL)
-        }
-
-        let itemType = isDirectory.boolValue ? "directory" : "file"
-        let suffix = useTrash ? " (moved to Trash)" : ""
-        return ToolEnvelope.success(
-            tool: name,
-            text: "Deleted \(itemType): \(relativePath)\(suffix)"
-        )
-    }
-}
-
-// MARK: Directory Create Tool
-
-struct DirCreateTool: OsaurusTool, PermissionedTool {
-    let name = "dir_create"
-    let description =
-        "Create a new directory. Parent directories will be created if they don't exist."
-    let parameters: JSONValue? = .object([
-        "type": .string("object"),
-        "additionalProperties": .bool(false),
-        "properties": .object([
-            "path": .object([
-                "type": .string("string"),
-                "description": .string("Relative path of the directory to create"),
-            ])
-        ]),
-        "required": .array([.string("path")]),
-    ])
-
-    var requirements: [String] { [] }
-    var defaultPermissionPolicy: ToolPermissionPolicy { .auto }
-
-    private let rootPath: URL
-
-    init(rootPath: URL) {
-        self.rootPath = rootPath
-    }
-
-    func execute(argumentsJSON: String) async throws -> String {
-        let args = try FolderToolHelpers.parseArguments(argumentsJSON)
-
-        guard let relativePath = args["path"] as? String else {
-            throw FolderToolError.invalidArguments("Missing required parameter: path")
-        }
-
-        let dirURL = try FolderToolHelpers.resolvePath(relativePath, rootPath: rootPath)
-
-        if FileManager.default.fileExists(atPath: dirURL.path) {
-            return "Directory already exists: \(relativePath)"
-        }
-
-        // Log operation before executing
-        if let sessionId = ChatExecutionContext.currentSessionId {
-            await FileOperationLog.shared.log(
-                FileOperation(
-                    type: .dirCreate,
-                    path: relativePath,
-                    sessionId: sessionId,
-                    batchId: ChatExecutionContext.currentBatchId
-                )
-            )
-        }
-
-        try FileManager.default.createDirectory(
-            at: dirURL,
-            withIntermediateDirectories: true,
-            attributes: nil
-        )
-
-        return ToolEnvelope.success(
-            tool: name,
-            text: "Created directory: \(relativePath)"
-        )
-    }
-}
-
 // MARK: - Coding Tools
+//
+// `file_move`, `file_copy`, `file_delete`, `dir_create` were dropped in
+// favour of `shell_run` (`mv`, `cp`, `rm`, `mkdir`) so the model has one
+// tool to learn for filesystem mutations rather than four. Removal also
+// trims the schema by ~1KB tokens per turn.
 
 // MARK: File Edit Tool
 
 struct FileEditTool: OsaurusTool, PermissionedTool {
     let name = "file_edit"
     let description =
-        "Edit a file by replacing specific text. old_string must uniquely match exactly one location in the file — include surrounding context lines if needed to ensure uniqueness. The tool will fail if old_string is not found or matches multiple locations. You MUST provide the strings in the parameters."
+        "Edit a file by replacing specific text. **Use this instead of `sed` / `awk` in "
+        + "`shell_run`.** `old_string` must uniquely match exactly one location in the file — "
+        + "include surrounding context lines if needed to ensure uniqueness. Fails if `old_string` "
+        + "is not found or matches multiple locations. You MUST provide the strings in the parameters."
     let parameters: JSONValue? = .object([
         "type": .string("object"),
         "additionalProperties": .bool(false),
@@ -843,7 +560,8 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
 struct FileSearchTool: OsaurusTool {
     let name = "file_search"
     let description =
-        "Search for text in files using case-insensitive substring matching. Returns matching lines with file paths and line numbers."
+        "Search for text in files using case-insensitive substring matching. **Use this instead of "
+        + "`grep` / `rg` / `find` in `shell_run`.** Returns matching lines with file paths and line numbers."
     let parameters: JSONValue? = .object([
         "type": .string("object"),
         "additionalProperties": .bool(false),
@@ -1283,6 +1001,14 @@ enum FolderToolFactory {
     /// Build all core file tools. `share_artifact` is NOT here — it's a
     /// global built-in (registered in `ToolRegistry.registerBuiltInTools`)
     /// so it works in plain chat / folder / sandbox alike.
+    ///
+    /// Lean by design: filesystem mutations (`mv`, `cp`, `rm`, `mkdir`)
+    /// go through `shell_run` rather than discrete `file_move` /
+    /// `file_copy` / `file_delete` / `dir_create` tools so the model
+    /// picks "shell command" once instead of differentiating four
+    /// near-identical tool names. Multi-step orchestration goes through
+    /// `shell_run` chains or — when the chat is sandbox-mode —
+    /// `sandbox_execute_code`.
     static func buildCoreTools(rootPath: URL) -> [OsaurusTool] {
         return [
             FileTreeTool(rootPath: rootPath),
@@ -1290,11 +1016,6 @@ enum FolderToolFactory {
             FileWriteTool(rootPath: rootPath),
             FileEditTool(rootPath: rootPath),
             FileSearchTool(rootPath: rootPath),
-            FileMoveTool(rootPath: rootPath),
-            FileCopyTool(rootPath: rootPath),
-            FileDeleteTool(rootPath: rootPath),
-            DirCreateTool(rootPath: rootPath),
-            BatchTool(rootPath: rootPath),
         ]
     }
 

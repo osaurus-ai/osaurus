@@ -104,39 +104,216 @@ struct BuiltinSandboxToolsTests {
     }
 
     @Test @MainActor
-    func sandboxRunScript_pythonUsesPythonInterpreter() async throws {
+    func sandboxExecuteCode_writesHelpersAndRunsPython() async throws {
         let runner = MockSandboxToolCommandRunner(
             rootResults: [],
             agentResults: [],
-            execResults: [.init(stdout: "ok", stderr: "", exitCode: 0)]
+            execResults: [.init(stdout: "{\"ok\": true}", stderr: "", exitCode: 0)]
         )
 
         let output = try await withRegisteredSandboxTools(runner: runner) {
             try await ToolRegistry.shared.execute(
-                name: "sandbox_run_script",
-                argumentsJSON: #"{"language":"python","script":"print('hi')"}"#
+                name: "sandbox_execute_code",
+                argumentsJSON: #"{"code":"from osaurus_tools import read_file\nprint(read_file('foo.txt'))"}"#
             )
         }
 
         let payload = try successPayload(output)
         #expect(payload["exit_code"] as? Int == 0)
-        // run_script now emits stdout/stderr split (matching sandbox_exec)
-        // plus a `combined` field for callers that prefer the merged form.
         #expect((payload["stdout"] as? String)?.contains("ok") == true)
-        #expect(payload["stderr"] as? String == "")
-        #expect((payload["combined"] as? String)?.contains("ok") == true)
-        #expect(payload["language"] as? String == "python")
+        #expect(payload["tool_calls"] != nil)
 
+        // The exec command should stage osaurus_tools.py + the script,
+        // then invoke python3 with the helpers dir on PYTHONPATH.
         let calls = await runner.calls
-        guard case .exec(let user, let command, let env) = try #require(calls.first) else {
+        guard case .exec(_, let command, let env) = try #require(calls.first) else {
             Issue.record("Expected exec call")
             return
         }
-        #expect(user == "agent-test-agent")
+        #expect(command.contains(".osaurus/osaurus_tools.py"))
+        #expect(command.contains(".tmp/exec_"))
+        #expect(command.contains("OSAURUS_SCRIPT_ID="))
+        #expect(command.contains("PYTHONPATH="))
         #expect(command.contains("python3"))
-        #expect(command.contains(".tmp/script_"))
         #expect(env["VIRTUAL_ENV"]?.contains(".venv") == true)
         #expect(env["PATH"]?.contains(".venv/bin") == true)
+    }
+
+    @Test @MainActor
+    func sandboxExec_backgroundReturnsPidAndLogFile() async throws {
+        // Background mode collapses the old `sandbox_exec_background`
+        // into a flag on `sandbox_exec`. Pid + log_file ride back in
+        // the success envelope; sandbox_process can poll/wait/kill.
+        let runner = MockSandboxToolCommandRunner(
+            rootResults: [],
+            agentResults: [],
+            execResults: [.init(stdout: "12345\n", stderr: "", exitCode: 0)]
+        )
+
+        let output = try await withRegisteredSandboxTools(runner: runner) {
+            try await ToolRegistry.shared.execute(
+                name: "sandbox_exec",
+                argumentsJSON: #"{"command":"python3 server.py","background":true}"#
+            )
+        }
+
+        let payload = try successPayload(output)
+        #expect(payload["pid"] as? String == "12345")
+        #expect(payload["background"] as? Bool == true)
+        #expect((payload["log_file"] as? String)?.contains("/bg-") == true)
+
+        let calls = await runner.calls
+        guard case .exec(_, let command, _) = try #require(calls.first) else {
+            Issue.record("Expected exec call")
+            return
+        }
+        #expect(command.contains("nohup python3 server.py"))
+        #expect(command.contains("echo $!"))
+    }
+
+    @Test @MainActor
+    func sandboxProcess_pollReportsAlive() async throws {
+        // Probe `kill -0 <pid>` returns "alive" → tool surfaces alive=true.
+        let runner = MockSandboxToolCommandRunner(
+            rootResults: [],
+            agentResults: [
+                .init(stdout: "alive\n", stderr: "", exitCode: 0)
+            ]
+        )
+
+        let output = try await withRegisteredSandboxTools(runner: runner) {
+            try await ToolRegistry.shared.execute(
+                name: "sandbox_process",
+                argumentsJSON: #"{"action":"poll","pid":"42","tail_lines":0}"#
+            )
+        }
+
+        let payload = try successPayload(output)
+        #expect(payload["pid"] as? String == "42")
+        #expect(payload["alive"] as? Bool == true)
+        // No tracked job → log_tail empty (poll skips the tail call).
+        #expect(payload["log_tail"] as? String == "")
+
+        let calls = await runner.calls
+        #expect(calls.count == 1)
+        guard case .agent(_, let command) = try #require(calls.first) else {
+            Issue.record("Expected agent call")
+            return
+        }
+        #expect(command.contains("kill -0 42"))
+    }
+
+    @Test @MainActor
+    func sandboxProcess_waitTimesOutWhenProcessKeepsRunning() async throws {
+        // The wait loop returns "timeout" if the pid is still alive at
+        // every probe — the tool surfaces exited=false, timed_out=true.
+        let runner = MockSandboxToolCommandRunner(
+            rootResults: [],
+            agentResults: [
+                .init(stdout: "timeout\n", stderr: "", exitCode: 0)
+            ]
+        )
+
+        let output = try await withRegisteredSandboxTools(runner: runner) {
+            try await ToolRegistry.shared.execute(
+                name: "sandbox_process",
+                argumentsJSON: #"{"action":"wait","pid":"42","timeout":1,"tail_lines":0}"#
+            )
+        }
+
+        let payload = try successPayload(output)
+        #expect(payload["exited"] as? Bool == false)
+        #expect(payload["timed_out"] as? Bool == true)
+
+        let calls = await runner.calls
+        guard case .agent(_, let command) = try #require(calls.first) else {
+            Issue.record("Expected agent call")
+            return
+        }
+        #expect(command.contains("for i in $(seq 1 1)"))
+        #expect(command.contains("kill -0 42"))
+    }
+
+    @Test @MainActor
+    func sandboxProcess_killForceUsesSigkill() async throws {
+        // `force:true` selects SIGKILL (-9) instead of the SIGTERM default.
+        let runner = MockSandboxToolCommandRunner(
+            rootResults: [],
+            agentResults: [
+                .init(stdout: "dead\n", stderr: "", exitCode: 0)
+            ]
+        )
+
+        let output = try await withRegisteredSandboxTools(runner: runner) {
+            try await ToolRegistry.shared.execute(
+                name: "sandbox_process",
+                argumentsJSON: #"{"action":"kill","pid":"42","force":true}"#
+            )
+        }
+
+        let payload = try successPayload(output)
+        #expect(payload["killed"] as? Bool == true)
+        #expect(payload["signal"] as? String == "SIGKILL")
+
+        let calls = await runner.calls
+        guard case .agent(_, let command) = try #require(calls.first) else {
+            Issue.record("Expected agent call")
+            return
+        }
+        #expect(command.contains("kill -9 42"))
+    }
+
+    @Test @MainActor
+    func sandboxProcess_rejectsNonNumericPid() async throws {
+        // Agents have been observed passing job names ("server") instead
+        // of the numeric pid. We reject early with a clear envelope so
+        // the model fixes the call instead of running `kill server`.
+        let runner = MockSandboxToolCommandRunner(rootResults: [], agentResults: [])
+
+        let output = try await withRegisteredSandboxTools(runner: runner) {
+            try await ToolRegistry.shared.execute(
+                name: "sandbox_process",
+                argumentsJSON: #"{"action":"poll","pid":"server"}"#
+            )
+        }
+
+        #expect(ToolEnvelope.isError(output))
+        let payload = try failurePayload(output)
+        #expect(payload["kind"] as? String == "invalid_args")
+        #expect(payload["field"] as? String == "pid")
+
+        let calls = await runner.calls
+        #expect(calls.isEmpty, "rejected calls must not exec")
+    }
+
+    @Test @MainActor
+    func sandboxSearchFiles_targetFilesUsesFind() async throws {
+        // `sandbox_find_files` is gone — same behaviour now comes from
+        // `sandbox_search_files(target:"files")`. This pins the find
+        // command + the unified `matches` result key.
+        let runner = MockSandboxToolCommandRunner(
+            rootResults: [],
+            agentResults: [.init(stdout: "/workspace/agents/test-agent/foo.py", stderr: "", exitCode: 0)]
+        )
+
+        let output = try await withRegisteredSandboxTools(runner: runner) {
+            try await ToolRegistry.shared.execute(
+                name: "sandbox_search_files",
+                argumentsJSON: #"{"pattern":"*.py","target":"files"}"#
+            )
+        }
+
+        let payload = try successPayload(output)
+        #expect(payload["target"] as? String == "files")
+        #expect((payload["matches"] as? String)?.contains("foo.py") == true)
+
+        let calls = await runner.calls
+        guard case .agent(_, let command) = try #require(calls.first) else {
+            Issue.record("Expected agent call")
+            return
+        }
+        #expect(command.contains("find "))
+        #expect(command.contains("-type f -name '*.py'"))
     }
 
     @Test @MainActor

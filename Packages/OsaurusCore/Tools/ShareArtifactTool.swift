@@ -21,8 +21,11 @@ public struct ShareArtifactTool: OsaurusTool {
         "Surface an artifact to the user in the chat thread. The chat does NOT show files you wrote to disk or "
         + "to the sandbox unless you also call this tool — it is the only path that creates an artifact card the "
         + "user can click. Use for generated images, charts, websites, reports, code blobs, and any deliverable. "
-        + "Pass `path` to share an existing file (folder/sandbox path), or `content` + `filename` to share inline "
-        + "text/markdown without writing to disk first. Required: at least one of `path` or `content`."
+        + "**The file must already exist before this call — `share_artifact` does NOT create files.** "
+        + "Pass `path` to share an existing file (under your working folder, or under your sandbox home / "
+        + "`/workspace/...`), or `content` + `filename` to share inline text/markdown without writing to disk first. "
+        + "If unsure where you wrote a file, list it first with `sandbox_search_files(target=\"files\", pattern=\"<name>\")` "
+        + "(sandbox) or `file_tree`/`file_search` (folder mode). Required: at least one of `path` or `content`."
 
     public let parameters: JSONValue? = .object([
         "type": .string("object"),
@@ -31,19 +34,24 @@ public struct ShareArtifactTool: OsaurusTool {
             "path": .object([
                 "type": .string("string"),
                 "description": .string(
-                    "Relative path to a file or directory to share. Resolved relative to your working directory."
+                    "Path to an existing file or directory. In sandbox mode: relative to the agent home "
+                        + "(e.g. `report.pdf`, `output/chart.svg`) or `/workspace/...` absolute. In folder mode: "
+                        + "relative to the working folder. The file MUST exist — this tool does not create files."
                 ),
             ]),
             "content": .object([
                 "type": .string("string"),
                 "description": .string(
-                    "Inline text or markdown content to share directly. Use this when you want to share generated text without writing to a file first."
+                    "Inline text or markdown content to share directly. Use this when you want to share "
+                        + "generated text without writing to a file first. Omit entirely when using `path` — do "
+                        + "NOT pass an empty string."
                 ),
             ]),
             "filename": .object([
                 "type": .string("string"),
                 "description": .string(
-                    "Filename for the artifact. Required when using `content`. Optional with `path` (defaults to the file/directory basename)."
+                    "Filename for the artifact. Required when using `content`. Optional with `path` (defaults "
+                        + "to the file/directory basename). Omit entirely when not used — do NOT pass an empty string."
                 ),
             ]),
             "description": .object([
@@ -60,23 +68,33 @@ public struct ShareArtifactTool: OsaurusTool {
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
         guard case .value(let json) = argsReq else { return argsReq.failureEnvelope ?? "" }
 
-        let path = json["path"] as? String
-        let rawContent = json["content"] as? String
-        let filename = json["filename"] as? String
-        let description = json["description"] as? String
+        // Empty-string filler bug: many models pass `content: ""` and
+        // `filename: ""` as placeholders for unused optional fields when
+        // they only mean to share a path. Treat empty / whitespace-only
+        // strings as absent so the path-mode validator doesn't trip.
+        func nonEmpty(_ value: Any?) -> String? {
+            guard let s = value as? String else { return nil }
+            let trimmed = s.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : s
+        }
+
+        let path = nonEmpty(json["path"])
+        let rawContent = nonEmpty(json["content"])
+        let filename = nonEmpty(json["filename"])
+        let description = nonEmpty(json["description"])
 
         guard path != nil || rawContent != nil else {
             return ToolEnvelope.failure(
                 kind: .invalidArgs,
                 message:
-                    "At least one of `path` or `content` must be provided. "
+                    "At least one of `path` or `content` must be provided (and non-empty). "
                     + "Pass `path` to share an existing file, or `content` + `filename` for inline text.",
                 tool: name
             )
         }
 
         if rawContent != nil {
-            guard let fn = filename, !fn.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            guard filename != nil else {
                 return ToolEnvelope.failure(
                     kind: .invalidArgs,
                     message: "`filename` is required when using `content` mode.",

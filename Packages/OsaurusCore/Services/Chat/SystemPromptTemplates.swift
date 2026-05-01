@@ -60,7 +60,7 @@ public enum SystemPromptTemplates {
         - `todo(markdown)` — write or replace the user-visible task list. Use it when the request has 3+ obvious steps; skip for trivial work. Each call replaces the whole list, so to mark items done re-send the full list with the new boxes.
         - `complete(summary)` — call once at the very end (never alongside other tools) with WHAT you did + HOW you verified it. Vague placeholders ("done", "looks good") are rejected; partial work should be reported honestly.
         - `clarify(question)` — pause and ask exactly one concrete question only when guessing wrong would change the result. For minor preferences pick a sensible default and proceed.
-        - `share_artifact(...)` — the only way the user sees a generated image, chart, report, code blob, or any file. Writing to disk or returning content in the chat does not surface an artifact card.
+        - `share_artifact(...)` — the only way the user sees a generated image, chart, report, code blob, or any file. **The file MUST exist before this call.** Sandbox: save under your home dir (default cwd) — files in `/tmp` won't be findable. If unsure where you wrote it, verify with `sandbox_search_files(target="files", pattern="<name>")` first. For inline text/markdown, use `content`+`filename` mode and skip the file write entirely. **When using `sandbox_execute_code`, call `share_artifact` from the model layer AFTER the script returns — the helper module does not expose it because in-script calls would silently fail to render the artifact card.**
         """
 
     // MARK: - Capability Discovery Nudge
@@ -159,23 +159,29 @@ public enum SystemPromptTemplates {
         """
 
     private static let sandboxToolGuide = """
-        Tool usage:
+        Tool usage — pick the dedicated tool, not its shell equivalent:
+        - **Do NOT use `cat`/`head`/`tail` to read files** — use `sandbox_read_file`.
+        - **Do NOT use `grep`/`rg`/`find`/`ls` to search** — use `sandbox_search_files`. \
+          `target="content"` (default) searches inside files; `target="files"` finds by name.
+        - **Do NOT use `sed`/`awk` to edit files** — use `sandbox_edit_file` (old_string -> new_string).
+        - **Do NOT use `echo`/`cat` heredoc to create files** — use `sandbox_write_file`.
         - Read before edit: `sandbox_read_file` first; never modify code you have not inspected.
-        - Edit with `sandbox_edit_file` (old_string -> new_string); prefer it over rewriting whole files.
-        - `sandbox_write_file` is for new files or complete rewrites only.
-        - Find files by name pattern with `sandbox_find_files` (e.g. `*.py`); search file contents with `sandbox_search_files` (ripgrep regex).
-        - `sandbox_list_directory` with `recursive: true` for a project-structure overview.
-        - For commands: `sandbox_run_script` for multi-line python/bash/node, `sandbox_exec` for single shell commands, `sandbox_exec_background` for servers and watchers.
-        - Set `timeout` for long operations (default 60s scripts, 30s exec, max 300s).
-        - Always use the dedicated tools instead of shell equivalents: `sandbox_read_file` not `cat`, `sandbox_edit_file` not `sed`, `sandbox_find_files` not `find`.
+        - `sandbox_write_file` is for new files or complete rewrites only — `sandbox_edit_file` is the right tool for targeted in-place edits.
+        - **Reserve `sandbox_exec` for builds, installs, git, processes, network calls, and anything else that needs a shell.** Pass `background:true` for servers / long-running tasks; track them with `sandbox_process` (poll/wait/kill).
+        - Use `sandbox_execute_code` when you need 3+ tool calls with logic between them (filter/loop/branch). The Python helpers (`from osaurus_tools import read_file, write_file, edit_file, search_files, terminal, share_artifact`) mirror the same tools as Python functions.
+        - Set `timeout` for long operations (default 30s exec, 300s execute_code, max 300s).
         - Issue independent tool calls in parallel.
         - Anything you generate inside the sandbox stays in the sandbox unless you also call `share_artifact` — that's the only path to the chat thread.
         """
 
     private static let sandboxToolGuideCompact = """
-        Tools: `sandbox_read_file` before editing. `sandbox_edit_file` for targeted edits (old_string/new_string) — prefer over full rewrites. `sandbox_write_file` for new files. \
-        `sandbox_find_files` for name patterns, `sandbox_search_files` for content. `sandbox_list_directory` for layout. \
-        `sandbox_run_script` for multi-line scripts; `sandbox_exec` for single commands; `sandbox_exec_background` for servers. \
+        Tools — prefer dedicated tools over shell equivalents. \
+        `sandbox_read_file` instead of cat/head/tail. \
+        `sandbox_search_files(target="content"|"files")` instead of grep/rg/find/ls. \
+        `sandbox_edit_file` (old_string/new_string) instead of sed/awk. \
+        `sandbox_write_file` instead of echo/cat heredoc. \
+        `sandbox_exec` for shell commands (chain with && when steps depend on each other; pass `background:true` for servers, then `sandbox_process` to poll/wait/kill). \
+        `sandbox_execute_code` for Python orchestration (≥3 tool calls with logic between them). \
         Use `share_artifact` to surface anything to the user (the chat does not show sandbox files directly).
         """
 
@@ -243,11 +249,11 @@ public enum SystemPromptTemplates {
             \(gitBlock)
             **Path arguments are relative to the Working Directory** — pass `README.md`, `src/app.py`, `docs/intro.md`. Absolute paths are rejected as a security boundary, even ones that point inside the directory. The path above is for orientation when you describe the project to the user, not for tool calls.
 
-            Tool recipe:
-            - Layout: `file_tree` for the directory structure (skips hidden + truncates at 300 entries).
-            - Discovery: `file_search` for content (ripgrep), or read individual files with `file_read`.
-            - Edits: `file_edit` for targeted (old_string -> new_string) changes; `file_write` for new files or full rewrites; always read a file before editing it.
-            - Mutations: `file_move` / `file_copy` / `file_delete` / `dir_create` for filesystem changes. All write/exec operations are logged and undoable.
+            Tool recipe — prefer dedicated tools over their shell equivalents:
+            - Layout: `file_tree` for the directory structure (skips hidden + truncates at 300 entries) — **not** `ls`/`tree` in `shell_run`.
+            - Discovery: `file_search` for content (ripgrep) — **not** `grep`/`rg`/`find`. Read individual files with `file_read` — **not** `cat`/`head`/`tail`.
+            - Edits: `file_edit` for targeted (old_string -> new_string) changes — **not** `sed`/`awk`. `file_write` for new files or full rewrites — **not** `echo`/`cat` heredoc. Always read a file before editing it.
+            - Mutations: use `shell_run` for `mv` / `cp` / `rm` / `mkdir` (write/exec ops are logged and undoable).
             - Multi-step work: take the next concrete action each turn — read, write, run. Don't narrate intent; just do the thing.
 
             **Files land in the working folder, not in chat.** When you create or edit a file with `file_write` / `file_edit`, the user can see it on disk and in the operations log. If the user needs the deliverable to appear in the chat thread (an image, chart, generated text, report, code blob), additionally call `share_artifact` — it's the only thing that surfaces an artifact card.

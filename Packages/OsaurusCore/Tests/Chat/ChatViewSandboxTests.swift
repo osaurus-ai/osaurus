@@ -41,7 +41,10 @@ struct ChatViewSandboxTests {
 
         #expect(standardPrompt.contains(SystemPromptTemplates.sandboxSectionHeading) == false)
         #expect(sandboxPrompt.contains(SystemPromptTemplates.sandboxSectionHeading))
-        #expect(sandboxPrompt.contains("sandbox_run_script"))
+        // Pinning a tool name keeps the sandbox section honest. Switched
+        // from `sandbox_run_script` (deleted) to `sandbox_execute_code`
+        // which is now the canonical Python power tool.
+        #expect(sandboxPrompt.contains("sandbox_execute_code"))
     }
 
     @Test

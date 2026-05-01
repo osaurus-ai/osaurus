@@ -14,6 +14,24 @@ import Foundation
 enum BuiltinSandboxTools {
     /// Register sandbox tools for the given agent into the ToolRegistry.
     /// Respects autonomous_exec config to gate write/exec tools.
+    ///
+    /// The schema is deliberately lean so the model can keep the whole
+    /// tool surface in working memory:
+    ///   - reads/searches: `sandbox_read_file`, `sandbox_search_files`
+    ///   - writes/edits: `sandbox_write_file`, `sandbox_edit_file`
+    ///   - exec: `sandbox_exec` (foreground OR background via flag),
+    ///     `sandbox_process` (poll/wait/kill background jobs)
+    ///   - power tool: `sandbox_execute_code` (Python orchestration)
+    ///   - installs: `sandbox_install` / `sandbox_pip_install` /
+    ///     `sandbox_npm_install`
+    ///
+    /// Removed-by-design (use the consolidated alternative):
+    ///   - `sandbox_list_directory` → `sandbox_search_files(target:"files")`
+    ///   - `sandbox_find_files` → `sandbox_search_files(target:"files")`
+    ///   - `sandbox_move` / `sandbox_delete` → `sandbox_exec("mv …" / "rm …")`
+    ///   - `sandbox_exec_background` → `sandbox_exec(background:true)`
+    ///   - `sandbox_run_script` → `sandbox_execute_code` for Python, or
+    ///     `sandbox_exec` with a heredoc for short bash/node snippets.
     @MainActor
     static func register(agentId: String, agentName: String, config: AutonomousExecConfig?) {
         let registry = ToolRegistry.shared
@@ -25,15 +43,7 @@ enum BuiltinSandboxTools {
             runtimeManaged: true
         )
         registry.registerSandboxTool(
-            SandboxListDirectoryTool(agentName: agentName, home: home),
-            runtimeManaged: true
-        )
-        registry.registerSandboxTool(
             SandboxSearchFilesTool(agentName: agentName, home: home),
-            runtimeManaged: true
-        )
-        registry.registerSandboxTool(
-            SandboxFindFilesTool(agentName: agentName, home: home),
             runtimeManaged: true
         )
 
@@ -50,11 +60,6 @@ enum BuiltinSandboxTools {
             SandboxEditFileTool(agentName: agentName, home: home),
             runtimeManaged: true
         )
-        registry.registerSandboxTool(SandboxMoveTool(agentName: agentName, home: home), runtimeManaged: true)
-        registry.registerSandboxTool(
-            SandboxDeleteTool(agentName: agentName, home: home),
-            runtimeManaged: true
-        )
         registry.registerSandboxTool(
             SandboxExecTool(
                 agentId: agentId,
@@ -66,7 +71,11 @@ enum BuiltinSandboxTools {
             runtimeManaged: true
         )
         registry.registerSandboxTool(
-            SandboxExecBackgroundTool(
+            SandboxProcessTool(agentId: agentId, agentName: agentName, home: home),
+            runtimeManaged: true
+        )
+        registry.registerSandboxTool(
+            SandboxExecuteCodeTool(
                 agentId: agentId,
                 agentName: agentName,
                 home: home,
@@ -81,16 +90,6 @@ enum BuiltinSandboxTools {
         )
         registry.registerSandboxTool(
             SandboxNpmInstallTool(agentId: agentId, agentName: agentName, home: home),
-            runtimeManaged: true
-        )
-        registry.registerSandboxTool(
-            SandboxRunScriptTool(
-                agentId: agentId,
-                agentName: agentName,
-                home: home,
-                maxTimeout: config.commandTimeout,
-                maxCommandsPerTurn: maxCmdsPerTurn
-            ),
             runtimeManaged: true
         )
 
@@ -142,6 +141,34 @@ extension BuiltinSandboxTools {
     /// provisions. Exposed so the prompt composer can suppress it from
     /// snapshots / schemas without duplicating the literal.
     public static let initPendingToolName = "sandbox_init_pending"
+
+    /// Tool names a `sandbox_execute_code` Python script is allowed to
+    /// dispatch via the host bridge. Hard-coded (not derived from the
+    /// live registry) so adding a new sandbox built-in can't silently
+    /// expose it to in-script callers — opt-in by adding a name here.
+    ///
+    /// Deliberately excluded:
+    ///   - `sandbox_execute_code` itself (no recursive launches).
+    ///   - `sandbox_init_pending` (placeholder only registered while the
+    ///     container is booting; calling it from a script is meaningless).
+    ///   - `share_artifact` and the chat-layer-intercepted tools (`todo`,
+    ///     `complete`, `clarify`, `speak`, `sandbox_secret_set`,
+    ///     `sandbox_plugin_register`). Their post-execute UI hooks only
+    ///     fire for top-level tool calls; calling them from inside a
+    ///     script would silently no-op the chat surfacing. The model
+    ///     should call them at the model layer instead.
+    public static let executeCodeBridgeAllowedTools: Set<String> = [
+        "sandbox_read_file",
+        "sandbox_write_file",
+        "sandbox_edit_file",
+        "sandbox_search_files",
+        "sandbox_exec",
+        "sandbox_process",
+        "sandbox_install",
+        "sandbox_pip_install",
+        "sandbox_npm_install",
+        "sandbox_secret_check",
+    ]
 }
 
 /// Placeholder tool registered when sandbox is enabled but the container
@@ -470,10 +497,10 @@ private func installResultEnvelope(
 private struct SandboxReadFileTool: OsaurusTool, @unchecked Sendable {
     let name = "sandbox_read_file"
     let description =
-        "Read a file's contents from the sandbox. Supports line ranges (`start_line` + `line_count`), "
-        + "log-style tails (`tail_lines`), and a per-call character cap (`max_chars`). "
-        + "Pass either a path under the agent home (e.g. `notes.txt`) or an absolute path inside "
-        + "the sandbox (e.g. `/workspace/shared/data.csv`). Surfaces stderr on failure."
+        "Read a file's contents from the sandbox. **Use this instead of `cat`/`head`/`tail` in `sandbox_exec`.** "
+        + "Supports line ranges (`start_line` + `line_count`), log-style tails (`tail_lines`), and a per-call "
+        + "character cap (`max_chars`). Pass either a path under the agent home (e.g. `notes.txt`) or an "
+        + "absolute path inside the sandbox (e.g. `/workspace/shared/data.csv`). Surfaces stderr on failure."
     let agentName: String
     let home: String
 
@@ -581,70 +608,20 @@ private struct SandboxReadFileTool: OsaurusTool, @unchecked Sendable {
     }
 }
 
-// MARK: - sandbox_list_directory
-
-private struct SandboxListDirectoryTool: OsaurusTool, @unchecked Sendable {
-    let name = "sandbox_list_directory"
-    let description =
-        "List files and directories in the sandbox. Default lists agent home with `ls -la`. "
-        + "Pass `recursive: true` for a `tree -L 3` overview (capped at 200 lines)."
-    let agentName: String
-    let home: String
-
-    var parameters: JSONValue? {
-        .object([
-            "type": .string("object"),
-            "additionalProperties": .bool(false),
-            "properties": .object([
-                "path": .object([
-                    "type": .string("string"),
-                    "description": .string("Directory path (default: agent home)"),
-                    "default": .string("."),
-                ]),
-                "recursive": .object([
-                    "type": .string("boolean"),
-                    "description": .string("Include subdirectories"),
-                    "default": .bool(false),
-                ]),
-            ]),
-        ])
-    }
-
-    func execute(argumentsJSON: String) async throws -> String {
-        // No required args — `path` defaults to ".".
-        let args = parseArguments(argumentsJSON) ?? [:]
-        let path = args["path"] as? String ?? "."
-        let recursive = coerceBool(args["recursive"]) ?? false
-
-        let resolvedReq = requirePath(path, home: home, tool: name)
-        guard case .value(let resolved) = resolvedReq else {
-            return resolvedReq.failureEnvelope ?? ""
-        }
-
-        let cmd =
-            recursive
-            ? "tree -L 3 --dirsfirst '\(resolved)' 2>/dev/null | head -200"
-            : "ls -la '\(resolved)' 2>/dev/null"
-
-        let result = try await SandboxToolCommandRunnerRegistry.shared.execAsAgent(
-            agentName,
-            command: cmd
-        )
-        return sandboxSuccess(
-            tool: name,
-            result: ["path": resolved, "entries": result.stdout]
-        )
-    }
-}
-
 // MARK: - sandbox_search_files
+//
+// One tool, two targets: content (ripgrep) and filenames (find). Folded
+// from the previously-separate `sandbox_search_files` + `sandbox_find_files`
+// + `sandbox_list_directory` so the model has fewer tool names to pick
+// between — less chance of "I called search_files when I wanted find_files".
 
 private struct SandboxSearchFilesTool: OsaurusTool, @unchecked Sendable {
     let name = "sandbox_search_files"
     let description =
-        "Search file contents with ripgrep. Returns matching lines with file paths and line numbers. "
-        + "Searches inside file bodies — for filename matches use `sandbox_find_files`. "
-        + "`pattern` is a regex; cap output with `max_results` (default 100, max 500)."
+        "Search file contents OR find files by name. **Use this instead of `grep`/`rg`/`find`/`ls` "
+        + "in `sandbox_exec`.** Pass `target=\"content\"` (default) for a regex search inside file "
+        + "bodies, or `target=\"files\"` for a filename glob (e.g. `*.py`, `test_*`). Cap output "
+        + "with `max_results` (default 100, max 500). Returns `{matches: \"...\"}` for both targets."
     let agentName: String
     let home: String
 
@@ -655,7 +632,19 @@ private struct SandboxSearchFilesTool: OsaurusTool, @unchecked Sendable {
             "properties": .object([
                 "pattern": .object([
                     "type": .string("string"),
-                    "description": .string("Regex pattern to search for, e.g. `TODO|FIXME`."),
+                    "description": .string(
+                        "When `target=\"content\"`: ripgrep regex (e.g. `TODO|FIXME`). "
+                            + "When `target=\"files\"`: filename glob (e.g. `*.py`, `test_*`)."
+                    ),
+                ]),
+                "target": .object([
+                    "type": .string("string"),
+                    "enum": .array([.string("content"), .string("files")]),
+                    "description": .string(
+                        "`content` searches inside file bodies (rg); `files` finds files by "
+                            + "name (find). Default: `content`."
+                    ),
+                    "default": .string("content"),
                 ]),
                 "path": .object([
                     "type": .string("string"),
@@ -664,15 +653,20 @@ private struct SandboxSearchFilesTool: OsaurusTool, @unchecked Sendable {
                 ]),
                 "include": .object([
                     "type": .string("string"),
-                    "description": .string("File glob filter (e.g. `*.py`)"),
+                    "description": .string(
+                        "File glob filter for content searches (e.g. `*.py`). Ignored when "
+                            + "`target=\"files\"` — use `pattern` directly."
+                    ),
                 ]),
                 "context_lines": .object([
                     "type": .string("integer"),
-                    "description": .string("Lines of context before/after each match (max 10)."),
+                    "description": .string(
+                        "Lines of context before/after each match (max 10). Content target only."
+                    ),
                 ]),
                 "case_insensitive": .object([
                     "type": .string("boolean"),
-                    "description": .string("Enable case-insensitive search"),
+                    "description": .string("Enable case-insensitive search. Content target only."),
                     "default": .bool(false),
                 ]),
                 "max_results": .object([
@@ -689,46 +683,85 @@ private struct SandboxSearchFilesTool: OsaurusTool, @unchecked Sendable {
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
         guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
 
-        let patternReq = requireString(
-            args,
-            "pattern",
-            expected: "ripgrep regex (e.g. `TODO|FIXME`)",
-            tool: name
-        )
+        let target = (args["target"] as? String)?.lowercased() ?? "content"
+        let expectedPattern =
+            target == "files"
+            ? "filename glob (e.g. `*.py`, `test_*`)"
+            : "ripgrep regex (e.g. `TODO|FIXME`)"
+
+        let patternReq = requireString(args, "pattern", expected: expectedPattern, tool: name)
         guard case .value(let pattern) = patternReq else { return patternReq.failureEnvelope ?? "" }
 
         let path = args["path"] as? String ?? "."
         let resolvedReq = requirePath(path, home: home, tool: name)
         guard case .value(let resolved) = resolvedReq else { return resolvedReq.failureEnvelope ?? "" }
 
-        var cmd = "rg -n --no-heading"
-        if coerceBool(args["case_insensitive"]) == true {
-            cmd += " -i"
-        }
-        if let contextLines = coerceInt(args["context_lines"]), contextLines > 0 {
-            cmd += " -C \(min(contextLines, 10))"
-        }
-        if let include = args["include"] as? String {
-            cmd += " --glob '\(shellEscapeSingleQuoted(include))'"
-        }
         let maxResults = coerceInt(args["max_results"]) ?? 100
         let cappedMax = max(1, min(maxResults, 500))
-        // Single-quote-escape the pattern before shell interpolation.
-        // Without this the model could pass `'; rm -rf $HOME; '` and
-        // break out of the quotes (the path sanitizer doesn't apply
-        // to free-form regex).
-        cmd +=
-            " '\(shellEscapeSingleQuoted(pattern))' '\(resolved)'"
-            + " 2>/dev/null | head -\(cappedMax)"
 
-        let result = try await SandboxToolCommandRunnerRegistry.shared.execAsAgent(
-            agentName,
-            command: cmd
-        )
-        return sandboxSuccess(
-            tool: name,
-            result: ["pattern": pattern, "path": resolved, "matches": result.stdout]
-        )
+        switch target {
+        case "files":
+            let escapedPattern = shellEscapeSingleQuoted(pattern)
+            let cmd =
+                "find '\(resolved)' -type f -name '\(escapedPattern)' 2>/dev/null | head -\(cappedMax)"
+            let result = try await SandboxToolCommandRunnerRegistry.shared.execAsAgent(
+                agentName,
+                command: cmd
+            )
+            return sandboxSuccess(
+                tool: name,
+                result: [
+                    "pattern": pattern,
+                    "target": "files",
+                    "path": resolved,
+                    "matches": result.stdout,
+                ]
+            )
+
+        case "content":
+            var cmd = "rg -n --no-heading"
+            if coerceBool(args["case_insensitive"]) == true {
+                cmd += " -i"
+            }
+            if let contextLines = coerceInt(args["context_lines"]), contextLines > 0 {
+                cmd += " -C \(min(contextLines, 10))"
+            }
+            if let include = args["include"] as? String {
+                cmd += " --glob '\(shellEscapeSingleQuoted(include))'"
+            }
+            // Single-quote-escape the pattern before shell interpolation.
+            // Without this the model could pass `'; rm -rf $HOME; '` and
+            // break out of the quotes (the path sanitizer doesn't apply
+            // to free-form regex).
+            cmd +=
+                " '\(shellEscapeSingleQuoted(pattern))' '\(resolved)'"
+                + " 2>/dev/null | head -\(cappedMax)"
+
+            let result = try await SandboxToolCommandRunnerRegistry.shared.execAsAgent(
+                agentName,
+                command: cmd
+            )
+            return sandboxSuccess(
+                tool: name,
+                result: [
+                    "pattern": pattern,
+                    "target": "content",
+                    "path": resolved,
+                    "matches": result.stdout,
+                ]
+            )
+
+        default:
+            return ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message:
+                    "Unsupported `target`: `\(target)`. Use `content` (search file bodies with rg) "
+                    + "or `files` (find files by name).",
+                field: "target",
+                expected: "one of `content`, `files`",
+                tool: name
+            )
+        }
     }
 }
 
@@ -740,74 +773,15 @@ private func shellEscapeSingleQuoted(_ s: String) -> String {
     s.replacingOccurrences(of: "'", with: "'\\''")
 }
 
-// MARK: - sandbox_find_files
-
-private struct SandboxFindFilesTool: OsaurusTool, @unchecked Sendable {
-    let name = "sandbox_find_files"
-    let description =
-        "Find files by name pattern. Use a glob like `*.py`, `test_*`, `*.ts`. Matches file names only "
-        + "— for content search use `sandbox_search_files`. Output capped at 200 lines."
-    let agentName: String
-    let home: String
-
-    var parameters: JSONValue? {
-        .object([
-            "type": .string("object"),
-            "additionalProperties": .bool(false),
-            "properties": .object([
-                "pattern": .object([
-                    "type": .string("string"),
-                    "description": .string("File name glob pattern (e.g. `*.py`, `test_*`, `*.ts`)."),
-                ]),
-                "path": .object([
-                    "type": .string("string"),
-                    "description": .string("Directory to search (default: agent home)"),
-                    "default": .string("."),
-                ]),
-            ]),
-            "required": .array([.string("pattern")]),
-        ])
-    }
-
-    func execute(argumentsJSON: String) async throws -> String {
-        let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
-        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
-
-        let patternReq = requireString(
-            args,
-            "pattern",
-            expected: "filename glob (e.g. `*.py`, `test_*`, `*.ts`)",
-            tool: name
-        )
-        guard case .value(let pattern) = patternReq else { return patternReq.failureEnvelope ?? "" }
-
-        let path = args["path"] as? String ?? "."
-        let resolvedReq = requirePath(path, home: home, tool: name)
-        guard case .value(let resolved) = resolvedReq else { return resolvedReq.failureEnvelope ?? "" }
-
-        let escapedPattern = shellEscapeSingleQuoted(pattern)
-        let cmd =
-            "find '\(resolved)' -type f -name '\(escapedPattern)' 2>/dev/null | head -200"
-
-        let result = try await SandboxToolCommandRunnerRegistry.shared.execAsAgent(
-            agentName,
-            command: cmd
-        )
-        return sandboxSuccess(
-            tool: name,
-            result: ["pattern": pattern, "path": resolved, "files": result.stdout]
-        )
-    }
-}
-
 // MARK: - sandbox_write_file
 
 private struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
     let name = "sandbox_write_file"
     let description =
-        "Write `content` to `path` in the sandbox, replacing any existing file. Creates parent "
-        + "directories as needed. Both arguments are required — passing only `path` returns an "
-        + "`invalid_args` failure pointing at the missing field."
+        "Write `content` to `path` in the sandbox, replacing any existing file. **Use this instead "
+        + "of `echo`/`cat` heredoc in `sandbox_exec`.** Creates parent directories as needed. Both "
+        + "arguments are required — passing only `path` returns an `invalid_args` failure pointing "
+        + "at the missing field."
     let agentName: String
     let home: String
 
@@ -889,9 +863,10 @@ private struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
 private struct SandboxEditFileTool: OsaurusTool, @unchecked Sendable {
     let name = "sandbox_edit_file"
     let description =
-        "Edit a file by replacing an exact string match. `old_string` must uniquely match one location "
-        + "— include surrounding context lines if needed. Fails if `old_string` is not found or "
-        + "matches multiple locations. Prefer this over `sandbox_write_file` for targeted in-place edits."
+        "Edit a file by replacing an exact string match. **Use this instead of `sed`/`awk` in "
+        + "`sandbox_exec`.** `old_string` must uniquely match one location — include surrounding "
+        + "context lines if needed. Fails if `old_string` is not found or matches multiple "
+        + "locations. Prefer this over `sandbox_write_file` for targeted in-place edits."
     let agentName: String
     let home: String
 
@@ -1026,172 +1001,41 @@ private struct SandboxEditFileTool: OsaurusTool, @unchecked Sendable {
     }
 }
 
-// MARK: - sandbox_move
-
-private struct SandboxMoveTool: OsaurusTool, @unchecked Sendable {
-    let name = "sandbox_move"
-    let description =
-        "Move or rename a file/directory in the sandbox. Both `source` and `destination` are paths "
-        + "under the agent home or absolute under allowed roots. Fails if source does not exist."
-    let agentName: String
-    let home: String
-
-    var parameters: JSONValue? {
-        .object([
-            "type": .string("object"),
-            "additionalProperties": .bool(false),
-            "properties": .object([
-                "source": .object(["type": .string("string"), "description": .string("Source path")]),
-                "destination": .object(["type": .string("string"), "description": .string("Destination path")]),
-            ]),
-            "required": .array([.string("source"), .string("destination")]),
-        ])
-    }
-
-    func execute(argumentsJSON: String) async throws -> String {
-        let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
-        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
-
-        let srcReq = requireString(
-            args,
-            "source",
-            expected: "source path",
-            tool: name
-        )
-        guard case .value(let source) = srcReq else { return srcReq.failureEnvelope ?? "" }
-
-        let dstReq = requireString(
-            args,
-            "destination",
-            expected: "destination path",
-            tool: name
-        )
-        guard case .value(let dest) = dstReq else { return dstReq.failureEnvelope ?? "" }
-
-        let srcResolvedReq = requirePath(source, home: home, field: "source", tool: name)
-        guard case .value(let resolvedSrc) = srcResolvedReq else {
-            return srcResolvedReq.failureEnvelope ?? ""
-        }
-        let dstResolvedReq = requirePath(dest, home: home, field: "destination", tool: name)
-        guard case .value(let resolvedDst) = dstResolvedReq else {
-            return dstResolvedReq.failureEnvelope ?? ""
-        }
-
-        let result = try await SandboxToolCommandRunnerRegistry.shared.execAsAgent(
-            agentName,
-            command: "mv '\(resolvedSrc)' '\(resolvedDst)'"
-        )
-        guard result.succeeded else {
-            return sandboxExecutionFailure(
-                tool: name,
-                message: result.stderr.trimmingCharacters(in: .whitespacesAndNewlines),
-                retryable: false
-            )
-        }
-        return sandboxSuccess(
-            tool: name,
-            result: ["source": resolvedSrc, "destination": resolvedDst]
-        )
-    }
-}
-
-// MARK: - sandbox_delete
-
-private struct SandboxDeleteTool: OsaurusTool, @unchecked Sendable {
-    let name = "sandbox_delete"
-    let description =
-        "Delete a file or directory in the sandbox. Pass `recursive: true` for directories — "
-        + "without it, deleting a non-empty directory fails with a clear error."
-    let agentName: String
-    let home: String
-
-    var parameters: JSONValue? {
-        .object([
-            "type": .string("object"),
-            "additionalProperties": .bool(false),
-            "properties": .object([
-                "path": .object(["type": .string("string"), "description": .string("Path to delete")]),
-                "recursive": .object([
-                    "type": .string("boolean"),
-                    "description": .string("Required true for directories. Defaults to false."),
-                    "default": .bool(false),
-                ]),
-            ]),
-            "required": .array([.string("path")]),
-        ])
-    }
-
-    func execute(argumentsJSON: String) async throws -> String {
-        let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
-        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
-
-        let pathReq = requireString(
-            args,
-            "path",
-            expected: "file or directory path under the agent home or absolute under allowed roots",
-            tool: name
-        )
-        guard case .value(let path) = pathReq else { return pathReq.failureEnvelope ?? "" }
-
-        let resolvedReq = requirePath(path, home: home, tool: name)
-        guard case .value(let resolved) = resolvedReq else { return resolvedReq.failureEnvelope ?? "" }
-
-        let recursive = coerceBool(args["recursive"]) ?? false
-        let cmd = recursive ? "rm -rf '\(resolved)'" : "rm -f '\(resolved)'"
-        let result = try await SandboxToolCommandRunnerRegistry.shared.execAsAgent(
-            agentName,
-            command: cmd
-        )
-        guard result.succeeded else {
-            return sandboxExecutionFailure(
-                tool: name,
-                message: result.stderr.trimmingCharacters(in: .whitespacesAndNewlines),
-                retryable: false
-            )
-        }
-        return sandboxSuccess(
-            tool: name,
-            result: ["deleted": resolved, "recursive": recursive]
-        )
-    }
-}
-
 // MARK: - sandbox_exec
+//
+// One shell tool, foreground OR background via the `background` flag.
+// Folded the previously-separate `sandbox_exec_background` in here so
+// the model picks "run a command" and toggles a flag, rather than
+// picking between two near-identical tool names.
 
 private struct SandboxExecTool: OsaurusTool, @unchecked Sendable {
     let name = "sandbox_exec"
     let description = """
-        Run a shell command (bash) in the agent's sandbox. This is your \
-        most powerful tool — `bash` is a programming language. Prefer ONE \
-        rich invocation over many round-trips.
+        Run a shell command (bash) in the agent's sandbox. **Reserve this for \
+        builds, installs, git, processes, network calls, package managers, \
+        and anything else that needs a shell.**
 
-        WHEN TO USE:
-        - Three or more shell operations that depend on each other — chain \
-          them with `&&`, `;`, or pipes in a single call instead of N tool \
-          calls.
-        - Batch file work — `for f in src/*.swift; do wc -l "$f"; done`.
-        - Output you'll want to filter before reading — `grep`, `awk`, `head`, \
-          `tail`, `jq`, `sed` keep the result small enough to reason over.
-        - Conditional logic — `if [ -f config.json ]; then ...; else ...; fi`.
-        - One-off processing — `python3 -c '...'` or `node -e '...'` inline \
-          for parsing, JSON manipulation, math.
-        - Network calls (`curl`, `wget`) when you need data the model doesn't have.
+        Do NOT use `cat` / `head` / `tail` to read files — use `sandbox_read_file`. \
+        Do NOT use `grep` / `rg` / `find` / `ls` to search — use `sandbox_search_files`. \
+        Do NOT use `sed` / `awk` to edit files — use `sandbox_edit_file`. \
+        Do NOT use `echo` / `cat` heredoc to create files — use `sandbox_write_file`.
 
-        WHEN NOT TO USE:
-        - You need to reason over a result and only THEN decide what to run \
-          next — make the smaller call, look at the result, then continue.
-        - You need user input or interactive prompts (none are available).
+        Foreground (default): returns INSTANTLY when the command finishes, \
+        even if you set a high `timeout`. Prefer ONE rich invocation \
+        (chained with `&&` / `;` / pipes) over many round-trips.
 
-        LIMITS:
-        - Default timeout 30s, max 300s (set via `timeout`).
-        - Stdout is truncated at ~50KB (40% head + 60% tail). If you expect \
-          a lot of output, pipe through `head`, `tail`, `grep`, or `wc` to \
-          keep what matters.
-        - Per-turn command count is capped — chain inside one call rather \
-          than burning the cap on N small ones.
+        Background (`background:true`): returns a `pid` + `log_file` \
+        immediately; spawn-side timeout is fixed at 10s. Use for servers, \
+        watchers, test runs, long builds. Then call `sandbox_process` to \
+        poll/wait/kill. Do NOT shell-background yourself with `&` / `nohup` \
+        / `disown` — pass `background:true` so the runtime can track it.
 
-        Pass the command as a single string in `command`. Use `cwd` to run \
-        in a different directory; default is the agent home.
+        For multi-step Python orchestration (≥3 tool calls with logic \
+        between them, output filtering, looping), prefer `sandbox_execute_code`.
+
+        LIMITS: foreground default timeout 30s, max 300s. Stdout truncated \
+        at ~50KB (40% head + 60% tail). Per-turn command count is capped — \
+        chain inside one call instead of burning the cap on N small ones.
         """
     let agentId: String
     let agentName: String
@@ -1216,8 +1060,20 @@ private struct SandboxExecTool: OsaurusTool, @unchecked Sendable {
                 ]),
                 "timeout": .object([
                     "type": .string("integer"),
-                    "description": .string("Timeout in seconds (default 30, max 300)."),
+                    "description": .string(
+                        "Foreground timeout in seconds (default 30, max 300). Ignored when `background:true`."
+                    ),
                     "default": .number(30),
+                ]),
+                "background": .object([
+                    "type": .string("boolean"),
+                    "description": .string(
+                        "When true, the command runs detached with stdout+stderr redirected to "
+                            + "a per-job log under the agent home; the tool returns the pid + log "
+                            + "path immediately. Use for long-lived processes (servers, watchers) "
+                            + "and tasks that exceed the foreground timeout. Pair with `sandbox_process`."
+                    ),
+                    "default": .bool(false),
                 ]),
             ]),
             "required": .array([.string("command")]),
@@ -1265,6 +1121,44 @@ private struct SandboxExecTool: OsaurusTool, @unchecked Sendable {
             cwd = home
         }
 
+        let background = coerceBool(args["background"]) ?? false
+
+        if background {
+            // Detached job: start it, return pid + log path right away. The
+            // 10s timeout here is just for the spawn shim — the spawned
+            // process itself can run as long as it likes.
+            let logFile = "\(home)/bg-\(UUID().uuidString.prefix(8)).log"
+            let fullCmd = "cd '\(cwd)' && nohup \(command) > \(logFile) 2>&1 & echo $!"
+
+            let result = try await SandboxToolCommandRunnerRegistry.shared.exec(
+                user: "agent-\(agentName)",
+                command: fullCmd,
+                env: agentShellEnvironment(agentId: agentId, home: home, cwd: cwd),
+                cwd: cwd,
+                timeout: 10,
+                streamToLogs: true,
+                logSource: agentName
+            )
+            let pid = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !pid.isEmpty {
+                await SandboxBackgroundJobs.shared.register(
+                    agentName: agentName,
+                    pid: pid,
+                    logFile: logFile,
+                    command: command
+                )
+            }
+            return sandboxSuccess(
+                tool: name,
+                result: [
+                    "pid": pid,
+                    "log_file": logFile,
+                    "cwd": cwd,
+                    "background": true,
+                ]
+            )
+        }
+
         let timeout = min(
             coerceInt(args["timeout"]) ?? 30,
             min(maxTimeout, 300)
@@ -1292,93 +1186,232 @@ private struct SandboxExecTool: OsaurusTool, @unchecked Sendable {
     }
 }
 
-// MARK: - sandbox_exec_background
+// MARK: - sandbox_process
+//
+// Manage background jobs spawned via `sandbox_exec(background:true)`.
+// `poll` returns whether the process is still alive plus a tail of the
+// log; `wait` blocks until exit (capped at the supplied timeout); `kill`
+// sends SIGTERM (and SIGKILL on `force:true`).
 
-private struct SandboxExecBackgroundTool: OsaurusTool, @unchecked Sendable {
-    let name = "sandbox_exec_background"
+private struct SandboxProcessTool: OsaurusTool, @unchecked Sendable {
+    let name = "sandbox_process"
     let description =
-        "Start a background process in the sandbox. Stdout+stderr stream to a log file in the agent "
-        + "home; the tool returns the PID and log path immediately. Use for servers, watchers, or "
-        + "any long-running process. Spawn-side timeout is fixed at 10s — the spawned process itself "
-        + "runs for as long as it likes."
+        "Manage background jobs started by `sandbox_exec(background:true)`. `action=\"poll\"` "
+        + "returns whether the pid is still alive plus a tail of the log; `\"wait\"` blocks "
+        + "until exit (or `timeout` seconds); `\"kill\"` sends SIGTERM (`force:true` for SIGKILL). "
+        + "Pass the `pid` returned by the launching `sandbox_exec` call."
     let agentId: String
     let agentName: String
     let home: String
-    let maxCommandsPerTurn: Int
 
     var parameters: JSONValue? {
         .object([
             "type": .string("object"),
             "additionalProperties": .bool(false),
             "properties": .object([
-                "command": .object([
+                "action": .object([
                     "type": .string("string"),
-                    "description": .string("Command to start (e.g. `python3 server.py`)."),
+                    "enum": .array([.string("poll"), .string("wait"), .string("kill")]),
+                    "description": .string("`poll`, `wait`, or `kill`."),
                 ]),
-                "cwd": .object([
+                "pid": .object([
                     "type": .string("string"),
-                    "description": .string(
-                        "Working directory (default: agent home). Rejected if outside allowed roots."
-                    ),
+                    "description": .string("Process id returned by `sandbox_exec(background:true)`."),
+                ]),
+                "timeout": .object([
+                    "type": .string("integer"),
+                    "description": .string("Seconds to block on `wait` (default 60, max 300)."),
+                    "default": .number(60),
+                ]),
+                "tail_lines": .object([
+                    "type": .string("integer"),
+                    "description": .string("Lines of the job log to include in the result (default 40, max 200)."),
+                    "default": .number(40),
+                ]),
+                "force": .object([
+                    "type": .string("boolean"),
+                    "description": .string("Send SIGKILL instead of SIGTERM on `kill`."),
+                    "default": .bool(false),
                 ]),
             ]),
-            "required": .array([.string("command")]),
+            "required": .array([.string("action"), .string("pid")]),
         ])
     }
 
     func execute(argumentsJSON: String) async throws -> String {
-        guard
-            SandboxExecLimiter.shared.checkAndIncrement(
-                agentName: agentName,
-                limit: maxCommandsPerTurn
-            )
-        else {
-            return ToolEnvelope.failure(
-                kind: .rejected,
-                message:
-                    "Per-turn command limit reached (\(maxCommandsPerTurn) commands). "
-                    + "Wait until the next turn.",
-                tool: name,
-                retryable: false
-            )
-        }
-
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
         guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
 
-        let cmdReq = requireString(
+        let actionReq = requireString(
             args,
-            "command",
-            expected: "shell command to start (e.g. `python3 server.py`)",
+            "action",
+            expected: "one of `poll`, `wait`, `kill`",
             tool: name
         )
-        guard case .value(let command) = cmdReq else { return cmdReq.failureEnvelope ?? "" }
+        guard case .value(let action) = actionReq else { return actionReq.failureEnvelope ?? "" }
 
-        let cwd: String
-        if let cwdArg = args["cwd"] as? String, !cwdArg.isEmpty {
-            let cwdReq = requirePath(cwdArg, home: home, field: "cwd", tool: name)
-            guard case .value(let resolvedCwd) = cwdReq else { return cwdReq.failureEnvelope ?? "" }
-            cwd = resolvedCwd
-        } else {
-            cwd = home
+        let pidReq = requireString(
+            args,
+            "pid",
+            expected: "process id returned by `sandbox_exec(background:true)`",
+            tool: name
+        )
+        guard case .value(let pid) = pidReq else { return pidReq.failureEnvelope ?? "" }
+
+        // Reject non-numeric pids early — agents have been observed passing
+        // job names ("server") or descriptions when a numeric pid was wanted.
+        guard Int(pid) != nil else {
+            return ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message:
+                    "`pid` must be the numeric pid string returned by `sandbox_exec(background:true)`. Got `\(pid)`.",
+                field: "pid",
+                expected: "numeric pid string",
+                tool: name
+            )
         }
 
-        let logFile = "\(home)/bg-\(UUID().uuidString.prefix(8)).log"
-        let fullCmd = "cd '\(cwd)' && nohup \(command) > \(logFile) 2>&1 & echo $!"
+        let job = await SandboxBackgroundJobs.shared.lookup(agentName: agentName, pid: pid)
+        let tailLines = min(max(coerceInt(args["tail_lines"]) ?? 40, 0), 200)
 
-        let result = try await SandboxToolCommandRunnerRegistry.shared.exec(
-            user: "agent-\(agentName)",
-            command: fullCmd,
-            env: agentShellEnvironment(agentId: agentId, home: home, cwd: cwd),
-            timeout: 10,
-            streamToLogs: true,
-            logSource: agentName
+        switch action {
+        case "poll":
+            let aliveResult = try await SandboxToolCommandRunnerRegistry.shared.execAsAgent(
+                agentName,
+                command: "kill -0 \(pid) 2>/dev/null && echo alive || echo dead"
+            )
+            let alive = aliveResult.stdout.trimmingCharacters(in: .whitespacesAndNewlines) == "alive"
+            let tail = await tailIfTracked(job: job, lines: tailLines)
+            if !alive {
+                await SandboxBackgroundJobs.shared.unregister(agentName: agentName, pid: pid)
+            }
+            return sandboxSuccess(
+                tool: name,
+                result: [
+                    "pid": pid,
+                    "alive": alive,
+                    "log_file": job?.logFile ?? "",
+                    "log_tail": tail,
+                ]
+            )
+
+        case "wait":
+            let timeoutSec = min(max(coerceInt(args["timeout"]) ?? 60, 1), 300)
+            // Tight poll loop inside the container — cheaper than rebuilding
+            // an ssh round-trip every second.
+            let cmd =
+                "for i in $(seq 1 \(timeoutSec)); do "
+                + "kill -0 \(pid) 2>/dev/null || { echo exited; exit 0; }; "
+                + "sleep 1; "
+                + "done; echo timeout"
+            let waitResult = try await SandboxToolCommandRunnerRegistry.shared.execAsAgent(
+                agentName,
+                command: cmd,
+                pluginName: nil,
+                env: agentShellEnvironment(agentId: agentId, home: home),
+                timeout: TimeInterval(timeoutSec + 5)
+            )
+            let exited = waitResult.stdout.trimmingCharacters(in: .whitespacesAndNewlines) == "exited"
+            let tail = await tailIfTracked(job: job, lines: tailLines)
+            if exited {
+                await SandboxBackgroundJobs.shared.unregister(agentName: agentName, pid: pid)
+            }
+            return sandboxSuccess(
+                tool: name,
+                result: [
+                    "pid": pid,
+                    "exited": exited,
+                    "timed_out": !exited,
+                    "log_file": job?.logFile ?? "",
+                    "log_tail": tail,
+                ]
+            )
+
+        case "kill":
+            let force = coerceBool(args["force"]) ?? false
+            let signal = force ? "-9" : "-15"
+            let killResult = try await SandboxToolCommandRunnerRegistry.shared.execAsAgent(
+                agentName,
+                command: "kill \(signal) \(pid) 2>&1; sleep 0.2; kill -0 \(pid) 2>/dev/null && echo alive || echo dead"
+            )
+            let dead = killResult.stdout.contains("dead")
+            if dead {
+                await SandboxBackgroundJobs.shared.unregister(agentName: agentName, pid: pid)
+            }
+            return sandboxSuccess(
+                tool: name,
+                result: [
+                    "pid": pid,
+                    "killed": dead,
+                    "signal": force ? "SIGKILL" : "SIGTERM",
+                ]
+            )
+
+        default:
+            return ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message: "Unsupported `action`: `\(action)`. Use `poll`, `wait`, or `kill`.",
+                field: "action",
+                expected: "one of `poll`, `wait`, `kill`",
+                tool: name
+            )
+        }
+    }
+
+    /// Read up to `lines` from the job's log file. Returns `""` when
+    /// either we don't have a tracked job (host restarted between the
+    /// launch and this poll, or `pid` was never registered) or the
+    /// caller asked for zero lines. Errors are swallowed — a missing
+    /// log file is not worth bubbling up to the model.
+    private func tailIfTracked(
+        job: SandboxBackgroundJobs.Job?,
+        lines: Int
+    ) async -> String {
+        guard let job, lines > 0 else { return "" }
+        let result = try? await SandboxToolCommandRunnerRegistry.shared.execAsAgent(
+            agentName,
+            command: "tail -n \(lines) '\(job.logFile)' 2>/dev/null"
         )
-        let pid = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-        return sandboxSuccess(
-            tool: name,
-            result: ["pid": pid, "log_file": logFile, "cwd": cwd]
-        )
+        return result?.stdout ?? ""
+    }
+}
+
+/// Tracks pid → log-file mappings for background jobs spawned by
+/// `sandbox_exec(background:true)`, keyed by agent name. Pure in-memory;
+/// agents that lose this mapping (e.g. across an app restart) can still
+/// poll using the log path the launching call returned. Cleared
+/// automatically when `sandbox_process` confirms a job has exited.
+actor SandboxBackgroundJobs {
+    static let shared = SandboxBackgroundJobs()
+
+    struct Job: Sendable {
+        let pid: String
+        let logFile: String
+        let command: String
+        let startedAt: Date
+    }
+
+    private var jobs: [String: [String: Job]] = [:]  // agentName -> pid -> Job
+
+    func register(agentName: String, pid: String, logFile: String, command: String) {
+        var perAgent = jobs[agentName] ?? [:]
+        perAgent[pid] = Job(pid: pid, logFile: logFile, command: command, startedAt: Date())
+        jobs[agentName] = perAgent
+    }
+
+    func lookup(agentName: String, pid: String) -> Job? {
+        jobs[agentName]?[pid]
+    }
+
+    func unregister(agentName: String, pid: String) {
+        jobs[agentName]?.removeValue(forKey: pid)
+        if jobs[agentName]?.isEmpty == true {
+            jobs.removeValue(forKey: agentName)
+        }
+    }
+
+    func clear(agentName: String) {
+        jobs.removeValue(forKey: agentName)
     }
 }
 
@@ -1559,64 +1592,79 @@ private struct SandboxNpmInstallTool: OsaurusTool, @unchecked Sendable {
     }
 }
 
-// MARK: - sandbox_run_script
+// MARK: - sandbox_execute_code
+//
+// Python orchestration: write a Python script that imports the same
+// sandbox tools as Python helpers (`from osaurus_tools import …`) and
+// runs them in-process. Use when the model needs ≥3 tool calls with
+// logic between them, output filtering before it lands in context,
+// conditional branching, or looping. The helpers RPC back to the host
+// via the bridge socket so the tools run with the same authority and
+// accounting as direct calls.
 
-private struct SandboxRunScriptTool: OsaurusTool, @unchecked Sendable {
-    let name = "sandbox_run_script"
+private struct SandboxExecuteCodeTool: OsaurusTool, @unchecked Sendable {
+    let name = "sandbox_execute_code"
     let description = """
-        Write a multi-line script to a temp file in the sandbox and run it. \
-        Use this when the program is long enough that an inline `bash -c '...'` \
-        gets unwieldy — multi-screen scripts, anything with non-trivial \
-        quoting, anything you want isolated in its own file.
+        Run a Python script that can call sandbox tools as Python functions. \
+        Use this when:
+        - You need ≥3 tool calls with processing logic between them.
+        - You need to filter / reduce a large tool output before it enters \
+          your context (e.g. read 5 logs, return the top 10 errors).
+        - You need conditional branching or loops (fetch N pages, retry \
+          on failure, walk a directory tree).
 
-        WHEN TO USE:
-        - Bulk file analysis or transformation that needs more than a one-liner.
-        - Data processing with proper data structures (use `python` and pandas/json).
-        - Build orchestration where exit-code semantics matter.
+        Available helpers (no install needed):
+            from osaurus_tools import read_file, write_file, edit_file, \
+                search_files, terminal
+
+        Each helper mirrors the equivalent sandbox tool 1:1. They return \
+        Python dicts (the same JSON envelope you would see from a direct \
+        call). Print your final result to stdout.
+
+        Surfacing artifacts: `share_artifact` is NOT exposed to the script \
+        — call it AFTER `sandbox_execute_code` returns, as a separate \
+        top-level tool call against the file path your script wrote. \
+        Surfacing from inside the script would silently no-op the chat \
+        artifact card.
+
+        Installing packages: call `sandbox_pip_install` / `sandbox_install` \
+        BEFORE `sandbox_execute_code` (they live at the model layer), or \
+        run `terminal("pip install …")` from inside the script for a \
+        one-shot install.
 
         WHEN NOT TO USE:
-        - The work fits in a single shell invocation — use the smaller \
-          shell-exec tool with chained commands instead.
-        - You only need a single file written — use the file-write tool.
+        - You need to look at one tool result before deciding the next \
+          step — make a normal tool call instead.
+        - You only need ONE tool call — call it directly.
 
         LIMITS:
-        - Default timeout 60s, max 300s.
-        - Combined stdout+stderr is truncated at ~50KB (40% head + 60% tail).
-        - Per-turn command count is shared with other shell-exec calls.
-
-        `language` is one of `python`, `bash`, `node`. Pass the full script in \
-        `script`. Use `cwd` to run in a different directory.
+        - 5-minute hard timeout, 50KB stdout cap (40% head + 60% tail).
+        - At most 50 tool calls per script.
+        - Per-turn command count is shared with other `sandbox_exec` calls.
         """
     let agentId: String
     let agentName: String
     let home: String
-    let maxTimeout: Int
     let maxCommandsPerTurn: Int
-
-    private static let languageConfig: [String: (ext: String, interpreter: String)] = [
-        "python": (".py", "python3"),
-        "bash": (".sh", "bash"),
-        "node": (".js", "node"),
-    ]
 
     var parameters: JSONValue? {
         .object([
             "type": .string("object"),
             "additionalProperties": .bool(false),
             "properties": .object([
-                "language": .object([
+                "code": .object([
                     "type": .string("string"),
-                    "description": .string("Script language: `python`, `bash`, or `node`."),
-                    "enum": .array([.string("python"), .string("bash"), .string("node")]),
-                ]),
-                "script": .object([
-                    "type": .string("string"),
-                    "description": .string("Full script source to execute."),
+                    "description": .string(
+                        "Python source. Import helpers via `from osaurus_tools import "
+                            + "read_file, write_file, edit_file, search_files, terminal`. "
+                            + "Print the final result to stdout. (`share_artifact` is "
+                            + "intentionally not exposed — call it AFTER this tool returns.)"
+                    ),
                 ]),
                 "timeout": .object([
                     "type": .string("integer"),
-                    "description": .string("Timeout in seconds (default 60, max 300)."),
-                    "default": .number(60),
+                    "description": .string("Timeout in seconds (default 300, max 300)."),
+                    "default": .number(300),
                 ]),
                 "cwd": .object([
                     "type": .string("string"),
@@ -1625,7 +1673,7 @@ private struct SandboxRunScriptTool: OsaurusTool, @unchecked Sendable {
                     ),
                 ]),
             ]),
-            "required": .array([.string("language"), .string("script")]),
+            "required": .array([.string("code")]),
         ])
     }
 
@@ -1640,7 +1688,7 @@ private struct SandboxRunScriptTool: OsaurusTool, @unchecked Sendable {
                 kind: .rejected,
                 message:
                     "Per-turn command limit reached (\(maxCommandsPerTurn) commands). "
-                    + "Wait until the next turn or chain steps inside one `sandbox_exec` call.",
+                    + "Wait until the next turn or chain more steps inside one `sandbox_execute_code` call.",
                 tool: name,
                 retryable: false
             )
@@ -1649,34 +1697,14 @@ private struct SandboxRunScriptTool: OsaurusTool, @unchecked Sendable {
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
         guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
 
-        let langReq = requireString(
+        let codeReq = requireString(
             args,
-            "language",
-            expected: "one of `python`, `bash`, `node`",
+            "code",
+            expected: "non-empty Python source",
             tool: name
         )
-        guard case .value(let language) = langReq else { return langReq.failureEnvelope ?? "" }
+        guard case .value(let code) = codeReq else { return codeReq.failureEnvelope ?? "" }
 
-        guard let config = Self.languageConfig[language] else {
-            return ToolEnvelope.failure(
-                kind: .invalidArgs,
-                message: "Unsupported `language`: `\(language)`. Use one of: python, bash, node.",
-                field: "language",
-                expected: "one of `python`, `bash`, `node`",
-                tool: name
-            )
-        }
-
-        let scriptReq = requireString(
-            args,
-            "script",
-            expected: "non-empty script source",
-            tool: name
-        )
-        guard case .value(let script) = scriptReq else { return scriptReq.failureEnvelope ?? "" }
-
-        // Strict cwd resolution — silent fallback to home was a footgun
-        // (script ran in the wrong directory and looked like missing files).
         let cwd: String
         if let cwdArg = args["cwd"] as? String, !cwdArg.isEmpty {
             let cwdReq = requirePath(cwdArg, home: home, field: "cwd", tool: name)
@@ -1686,39 +1714,302 @@ private struct SandboxRunScriptTool: OsaurusTool, @unchecked Sendable {
             cwd = home
         }
 
-        let timeout = min(coerceInt(args["timeout"]) ?? 60, min(maxTimeout, 300))
-        let scriptPath = "\(home)/.tmp/script_\(UUID().uuidString.prefix(8))\(config.ext)"
-        let escaped = shellEscapeSingleQuoted(script)
+        // 5min hard cap; the per-turn SandboxExecLimiter still applies
+        // on top so the model can't burn its turn budget on one script.
+        let timeout = min(max(coerceInt(args["timeout"]) ?? 300, 1), 300)
 
-        var command = "mkdir -p '\(home)/.tmp' && printf '%s' '\(escaped)' > '\(scriptPath)'"
-        if language == "bash" { command += " && chmod +x '\(scriptPath)'" }
-        // Note: no `2>&1` here — let stdout / stderr stay split so the
-        // result envelope matches `sandbox_exec`. Callers that want them
-        // merged read the `combined` field.
-        command += " && cd '\(cwd)' && \(config.interpreter) '\(scriptPath)'"
+        // Script id scopes the tool-call counter on the host bridge so
+        // one runaway script can't exceed its 50-call budget by reusing
+        // an old id. We snapshot the task-local chat context here so the
+        // bridge handler can re-establish it for each dispatched tool —
+        // without that, session-aware tools (`sandbox_secret_check`,
+        // anything plugin-namespaced if the allow-list is widened later)
+        // would resolve to "no active session" from inside the script.
+        let scriptId = UUID().uuidString
+        let context = SandboxExecuteCodeBudget.ScriptContext(
+            agentId: ChatExecutionContext.currentAgentId,
+            sessionId: ChatExecutionContext.currentSessionId,
+            assistantTurnId: ChatExecutionContext.currentAssistantTurnId,
+            batchId: ChatExecutionContext.currentBatchId
+        )
+        await SandboxExecuteCodeBudget.shared.start(scriptId: scriptId, context: context)
+        defer { Task { await SandboxExecuteCodeBudget.shared.finish(scriptId: scriptId) } }
+
+        let helpersDir = "\(home)/.osaurus"
+        let helpersPath = "\(helpersDir)/osaurus_tools.py"
+        let scriptPath = "\(home)/.tmp/exec_\(UUID().uuidString.prefix(8)).py"
+
+        // Stage the helper module + the user's code under the agent home,
+        // run it, then clean up. The helper module RPCs to the host via
+        // the Unix socket at `/tmp/osaurus-bridge.sock`, reading the
+        // per-user bearer token from `/run/osaurus/$USER.token` (mode
+        // 0600, owned by the agent user — set up by
+        // `SandboxManager.provisionBridgeToken`).
+        let escapedHelpers = shellEscapeSingleQuoted(SandboxExecuteCodeHelpers.pythonSource)
+        let escapedCode = shellEscapeSingleQuoted(code)
+        let writeHelpers =
+            "mkdir -p '\(helpersDir)' '\(home)/.tmp' && "
+            + "printf '%s' '\(escapedHelpers)' > '\(helpersPath)'"
+        let writeCode = "printf '%s' '\(escapedCode)' > '\(scriptPath)'"
+
+        var command = writeHelpers + " && " + writeCode
+        command += " && cd '\(cwd)' && OSAURUS_SCRIPT_ID='\(scriptId)' "
+        command += "PYTHONPATH='\(helpersDir)':$PYTHONPATH "
+        command += "python3 '\(scriptPath)'"
         command += "; EXIT=$?; rm -f '\(scriptPath)'; exit $EXIT"
 
         let result = try await SandboxToolCommandRunnerRegistry.shared.exec(
             user: "agent-\(agentName)",
             command: command,
             env: agentShellEnvironment(agentId: agentId, home: home, cwd: cwd),
+            cwd: cwd,
             timeout: TimeInterval(timeout),
             streamToLogs: true,
             logSource: agentName
         )
 
-        let stdoutTrunc = truncateForModel(result.stdout)
-        let stderrTrunc = truncateForModel(result.stderr, maxChars: 10_000)
+        let toolCalls = await SandboxExecuteCodeBudget.shared.callCount(scriptId: scriptId)
         return sandboxSuccess(
             tool: name,
             result: [
-                "stdout": stdoutTrunc,
-                "stderr": stderrTrunc,
-                "combined": truncateForModel(result.stdout + result.stderr),
+                "stdout": truncateForModel(result.stdout),
+                "stderr": truncateForModel(result.stderr, maxChars: 10_000),
                 "exit_code": Int(result.exitCode),
-                "language": language,
+                "tool_calls": toolCalls,
                 "cwd": cwd,
             ]
         )
     }
+}
+
+/// Tracks the number of bridge tool calls each `sandbox_execute_code`
+/// script makes plus the chat execution context that should be re-applied
+/// to dispatched tools. The per-script cap (50) is
+/// enforced inside `HostAPIBridgeServer.handleSandboxToolCall` by
+/// reading this counter via the `OSAURUS_SCRIPT_ID` request header.
+public actor SandboxExecuteCodeBudget {
+    public static let shared = SandboxExecuteCodeBudget()
+
+    /// Capped at 50 so a runaway loop can't burn the whole turn's
+    /// compute. Configurable per-script from the host side if we ever
+    /// need to lift it.
+    public static let maxCallsPerScript = 50
+
+    /// Snapshot of the chat-engine task locals at the moment a script
+    /// started. The bridge dispatcher re-applies them with
+    /// `ChatExecutionContext.$… .withValue` so dispatched tools resolve
+    /// to the same session as a direct top-level call would have.
+    public struct ScriptContext: Sendable {
+        public let agentId: UUID?
+        public let sessionId: String?
+        public let assistantTurnId: UUID?
+        public let batchId: UUID?
+    }
+
+    private struct Entry {
+        var calls: Int
+        let context: ScriptContext
+    }
+
+    private var entries: [String: Entry] = [:]
+
+    /// Begin tracking a `sandbox_execute_code` script. `context` carries
+    /// the chat-engine task locals captured at script-start time so the
+    /// bridge handler can re-apply them around each dispatched tool.
+    func start(scriptId: String, context: ScriptContext) {
+        entries[scriptId] = Entry(calls: 0, context: context)
+    }
+
+    func finish(scriptId: String) {
+        entries.removeValue(forKey: scriptId)
+    }
+
+    /// Try to charge one tool-call against this script's budget.
+    /// Returns `true` when the script is tracked AND the cap hasn't been
+    /// reached, `false` otherwise — a `false` return is the host's
+    /// signal to reject the bridge call. The actual call count for the
+    /// result envelope comes from `callCount(scriptId:)`.
+    public func tryIncrement(scriptId: String) -> Bool {
+        guard var entry = entries[scriptId], entry.calls < Self.maxCallsPerScript
+        else { return false }
+        entry.calls += 1
+        entries[scriptId] = entry
+        return true
+    }
+
+    public func callCount(scriptId: String) -> Int {
+        entries[scriptId]?.calls ?? 0
+    }
+
+    /// Returns the chat-engine context snapshot for a tracked script id.
+    /// Returns nil if the id isn't known — the bridge handler treats that
+    /// as a rejected call.
+    public func context(scriptId: String) -> ScriptContext? {
+        entries[scriptId]?.context
+    }
+}
+
+/// Source of the Python helper module that gets staged under each agent's
+/// home on every `sandbox_execute_code` call. Talks to the host bridge via
+/// the Unix socket already used by `osaurus-host`. Each helper returns a
+/// dict (the parsed envelope) so callers can branch on `ok`/`kind` etc.
+enum SandboxExecuteCodeHelpers {
+    static let pythonSource: String = #"""
+        # osaurus_tools -- sandbox helpers for sandbox_execute_code scripts.
+        #
+        # Each helper mirrors the same-named built-in sandbox tool. They make a
+        # JSON POST to the host bridge at /api/sandbox-tool/{name} over the Unix
+        # socket mounted at /tmp/osaurus-bridge.sock. The bearer token is read
+        # from /run/osaurus/$USER.token (mode 0600, owned by the agent user).
+        # The decoded JSON response is returned as a dict.
+        #
+        # `share_artifact` is intentionally NOT exposed here -- calling it from
+        # inside a script would create the marker envelope but the chat-layer
+        # post-processor that turns it into a real artifact card only fires for
+        # top-level tool calls. Surface artifacts by calling `share_artifact`
+        # from the model layer, AFTER `sandbox_execute_code` returns.
+
+        import getpass
+        import json
+        import os
+        import socket
+
+        _BRIDGE_SOCKET_PATH = "/tmp/osaurus-bridge.sock"
+        _TOKEN_PATH_TEMPLATE = "/run/osaurus/{user}.token"
+        _SCRIPT_ID_HEADER = "X-Osaurus-Script-Id"
+
+
+        class SandboxToolError(RuntimeError):
+            """Raised when the bridge round-trip itself fails (transport-level)."""
+
+
+        def _read_token() -> str:
+            user = os.environ.get("USER") or getpass.getuser()
+            path = _TOKEN_PATH_TEMPLATE.format(user=user)
+            try:
+                with open(path, "r", encoding="utf-8") as fh:
+                    token = fh.read().strip()
+            except OSError as exc:
+                raise SandboxToolError(
+                    f"could not read bridge token at {path}: {exc}. "
+                    f"sandbox_execute_code helpers must run inside a provisioned sandbox agent."
+                ) from exc
+            if not token:
+                raise SandboxToolError(f"bridge token at {path} is empty")
+            return token
+
+
+        def _send_http(method: str, path: str, headers: dict, body: bytes, timeout: float = 300.0) -> tuple:
+            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            sock.settimeout(timeout)
+            try:
+                sock.connect(_BRIDGE_SOCKET_PATH)
+            except OSError as exc:
+                sock.close()
+                raise SandboxToolError(
+                    f"could not connect to host bridge at {_BRIDGE_SOCKET_PATH}: {exc}"
+                ) from exc
+
+            request_line = f"{method} {path} HTTP/1.1\r\n"
+            full_headers = {"Host": "osaurus", "Connection": "close"}
+            full_headers.update(headers)
+            full_headers["Content-Length"] = str(len(body))
+            if body and "Content-Type" not in full_headers:
+                full_headers["Content-Type"] = "application/json"
+
+            try:
+                sock.sendall(request_line.encode("utf-8"))
+                for name, value in full_headers.items():
+                    sock.sendall(f"{name}: {value}\r\n".encode("utf-8"))
+                sock.sendall(b"\r\n")
+                if body:
+                    sock.sendall(body)
+
+                chunks = []
+                while True:
+                    data = sock.recv(65536)
+                    if not data:
+                        break
+                    chunks.append(data)
+            finally:
+                sock.close()
+
+            raw = b"".join(chunks)
+            head, _, response_body = raw.partition(b"\r\n\r\n")
+            status_line = head.split(b"\r\n", 1)[0].decode("latin-1") if head else ""
+            parts = status_line.split(" ", 2)
+            status = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 500
+            return status, response_body
+
+
+        def _call(tool_name: str, args: dict) -> dict:
+            body = json.dumps({"arguments": args}).encode("utf-8")
+            headers = {"Authorization": f"Bearer {_read_token()}"}
+            script_id = os.environ.get("OSAURUS_SCRIPT_ID", "")
+            if script_id:
+                headers[_SCRIPT_ID_HEADER] = script_id
+            status, raw = _send_http(
+                "POST",
+                f"/api/sandbox-tool/{tool_name}",
+                headers=headers,
+                body=body,
+            )
+            text = raw.decode("utf-8", errors="replace")
+            if not text:
+                return {"ok": False, "kind": "execution_error", "message": "empty bridge response"}
+            try:
+                parsed = json.loads(text)
+            except json.JSONDecodeError as exc:
+                raise SandboxToolError(f"bridge returned non-JSON ({status}): {text[:200]}") from exc
+            if status >= 400 and isinstance(parsed, dict) and "ok" not in parsed:
+                # Wrap raw {"error": "..."} responses in the standard envelope shape
+                # so user code can branch on `result["ok"]` uniformly.
+                return {
+                    "ok": False,
+                    "kind": "execution_error",
+                    "message": parsed.get("error", text),
+                    "tool": tool_name,
+                }
+            return parsed
+
+
+        def read_file(path: str, **kwargs) -> dict:
+            """Read a file from the sandbox. See `sandbox_read_file` for arg shapes."""
+            return _call("sandbox_read_file", {"path": path, **kwargs})
+
+
+        def write_file(path: str, content: str) -> dict:
+            """Write content to a file in the sandbox. See `sandbox_write_file`."""
+            return _call("sandbox_write_file", {"path": path, "content": content})
+
+
+        def edit_file(path: str, old_string: str, new_string: str) -> dict:
+            """Targeted exact-string replacement. See `sandbox_edit_file`."""
+            return _call(
+                "sandbox_edit_file",
+                {"path": path, "old_string": old_string, "new_string": new_string},
+            )
+
+
+        def search_files(pattern: str, target: str = "content", **kwargs) -> dict:
+            """Search file contents (rg) or names (find). See `sandbox_search_files`."""
+            payload = {"pattern": pattern, "target": target}
+            payload.update(kwargs)
+            return _call("sandbox_search_files", payload)
+
+
+        def terminal(command: str, **kwargs) -> dict:
+            """Run a shell command. Foreground or background via `background=True`. See `sandbox_exec`."""
+            return _call("sandbox_exec", {"command": command, **kwargs})
+
+
+        __all__ = [
+            "read_file",
+            "write_file",
+            "edit_file",
+            "search_files",
+            "terminal",
+            "SandboxToolError",
+        ]
+        """#
 }
