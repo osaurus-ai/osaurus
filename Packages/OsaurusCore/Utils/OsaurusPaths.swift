@@ -140,6 +140,62 @@ public enum OsaurusPaths {
         return directorySize(at: url)
     }
 
+    // MARK: - Volume free-space query
+    //
+    // ⚠️ Use the URL-keyed `.volumeAvailableCapacityForImportantUsageKey`
+    //    rather than the legacy `attributesOfFileSystem(.systemFreeSize)`.
+    //    On modern macOS (≥ 11) inside a sandboxed container the legacy
+    //    API can return 0 because it reports raw bytes excluding the
+    //    OS's "purgeable" allowance — which is exactly what users see
+    //    in Finder. `.systemFreeSize` was the historical default and
+    //    `SystemMonitorService` shipped with it for a long time, surfacing
+    //    bug #964 (the dashboard reports `Available: 0 GB` even when the
+    //    user clearly has free space). The URL-keyed query is what
+    //    `ModelDownloadService.freeBytesOnVolume` already used; this
+    //    helper consolidates both call-sites onto the same logic so the
+    //    answer can never silently drift again.
+
+    /// Returns the free-for-important-usage byte count on the volume that
+    /// hosts `path`. Falls back to the legacy
+    /// `attributesOfFileSystem(.systemFreeSize)` only when the modern
+    /// query is unavailable. Returns `nil` if both queries fail —
+    /// callers should treat `nil` as "unknown, render 'unknown'" rather
+    /// than coercing to zero.
+    public static func volumeFreeBytes(forPath path: String) -> Int64? {
+        let url = URL(fileURLWithPath: path)
+        let keys: Set<URLResourceKey> = [.volumeAvailableCapacityForImportantUsageKey]
+        if let values = try? url.resourceValues(forKeys: keys),
+            let capacity = values.volumeAvailableCapacityForImportantUsage
+        {
+            return capacity
+        }
+        if let attrs = try? FileManager.default.attributesOfFileSystem(forPath: path),
+            let free = (attrs[.systemFreeSize] as? NSNumber)?.int64Value
+        {
+            return free
+        }
+        return nil
+    }
+
+    /// Returns total volume capacity in bytes for the volume that hosts
+    /// `path`. Uses `.volumeTotalCapacityKey` first, legacy `.systemSize`
+    /// as fallback. Returns `nil` on full failure.
+    public static func volumeTotalBytes(forPath path: String) -> Int64? {
+        let url = URL(fileURLWithPath: path)
+        let keys: Set<URLResourceKey> = [.volumeTotalCapacityKey]
+        if let values = try? url.resourceValues(forKeys: keys),
+            let capacity = values.volumeTotalCapacity
+        {
+            return Int64(capacity)
+        }
+        if let attrs = try? FileManager.default.attributesOfFileSystem(forPath: path),
+            let total = (attrs[.systemSize] as? NSNumber)?.int64Value
+        {
+            return total
+        }
+        return nil
+    }
+
     /// Deletes every file under the disk KV cache directory. The directory
     /// itself is left in place (re-created on next model load via
     /// `ensureExistsSilent`). Safe to call while models are loaded — the

@@ -408,24 +408,15 @@ final class ModelDownloadService: ObservableObject {
     }
 
     /// Returns the free-for-important-usage byte count on the volume that
-    /// hosts `url`. Falls back to the older `.systemFreeSize` query if the
-    /// modern `.volumeAvailableCapacityForImportantUsageKey` is unavailable.
+    /// hosts `url`. Delegates to `OsaurusPaths.volumeFreeBytes(forPath:)`
+    /// so this service and `SystemMonitorService` share one query path —
+    /// preventing the kind of drift that produced bug #964 (the system
+    /// monitor reported 0 GB free while the downloader correctly saw
+    /// tens of GB free, because the two used different APIs).
     /// Returns `nil` if both queries fail — callers should treat `nil` as
     /// "unknown, proceed" rather than "zero, block".
     static func freeBytesOnVolume(containing url: URL) -> Int64? {
-        let probe = url
-        let keys: Set<URLResourceKey> = [.volumeAvailableCapacityForImportantUsageKey]
-        if let values = try? probe.resourceValues(forKeys: keys),
-            let capacity = values.volumeAvailableCapacityForImportantUsage
-        {
-            return capacity
-        }
-        if let attrs = try? FileManager.default.attributesOfFileSystem(forPath: probe.path),
-            let free = (attrs[.systemFreeSize] as? NSNumber)?.int64Value
-        {
-            return free
-        }
-        return nil
+        OsaurusPaths.volumeFreeBytes(forPath: url.path)
     }
 
     private func updateDownloadProgress(

@@ -13,36 +13,112 @@ let package = Package(
         .package(url: "https://github.com/modelcontextprotocol/swift-sdk.git", from: "0.12.0"),
         .package(url: "https://github.com/orlandos-nl/IkigaJSON", from: "2.3.2"),
         .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.7.0"),
-        .package(url: "https://github.com/osaurus-ai/mlx-swift", branch: "osaurus-0.31.3"),
+        // mlx-swift pinned by revision (was `branch: "osaurus-0.31.3"`) so
+        // the runtime can't change under us if the branch tip moves. The
+        // revision below is the merge point on `osaurus-0.31.3` that
+        // (a) refreshes the submodule URL to the host-side `osaurus-ai/mlx`
+        // fork and (b) advances the submodule pointer to a commit
+        // (`f58e52da` on the fork's `fix/clear-library-no-release`) that
+        // contains the Bug-1 fix for the deterministic Metal validation
+        // crash class `notifyExternalReferencesNonZeroOnDealloc` that
+        // fired on warm-disk-cache 2nd-request flows on Apple M4 Pro
+        // Debug builds. Revert by setting `MLX_CLEAR_LIBRARY_RELEASE=1`
+        // at runtime if needed for A/B testing.
+        .package(
+            url: "https://github.com/osaurus-ai/mlx-swift",
+            revision: "0a56f9041d56b4b8161f67a6cbd540ae66efc9fd"
+        ),
         // Pinned by commit (was `branch: "main"`) so the runtime can't change
         // under us between identical osaurus source revisions. Bump
         // intentionally when validating a new upstream commit.
         //
-        // a7db6e5 closes the deterministic Metal-assertion crash class
-        // `notifyExternalReferencesNonZeroOnDealloc` inside
-        // `BatchEngine.stepPrefill` after `Cache disk hit`. Two upstream
-        // commits land that fix together:
-        //   - 98289d9 forces `MLX.asyncEval(slot.cache)` after disk
-        //     restore so lazy-restore graph ops don't extend into the
-        //     next request's command buffer.
-        //   - a7db6e5 sets `continuation.onTermination` on
-        //     `BatchEngine.generate`'s outStream so orphan slots get
-        //     reaped via `engine.cancel(requestId)` whenever a consumer
-        //     breaks early.
-        // Net effect: the `Task.isCancelled` break in MLXBatchAdapter
-        // line 209-222 is safe, and no `enableDiskCache: false` workaround
-        // is needed.
+        // `13abe40` collects every relevant runtime + docs fix accrued
+        // since `a7db6e5` (the prior osaurus pin). PR #967's host-side
+        // additions (Nemotron-3 omni registry entries, broader hybrid
+        // family setHybrid path, audio/video content-part wiring) all
+        // want these:
         //
-        // Also includes c992df9's `GenerateCompletionInfo.unclosedReasoning`,
-        // which the chat UI consumes to surface a "thinking didn't close"
-        // chip when reasoning-trained models trap themselves on validation
-        // prompts.
+        // Stability fix carried in this pin:
+        //   - cf8c525 fix(repetition): treat `repetition_penalty: 1.0`
+        //     as a no-op at `Evaluate.swift:279`. Closes the
+        //     `Index out of range` Swift array-bounds panic that fired
+        //     on Nemotron-3 first decode (Nemotron's
+        //     `generation_config.json` ships `repetition_penalty: 1.0`,
+        //     the HuggingFace idiom for "no penalty"). 15-case
+        //     coverage in `Tests/MLXLMTests/SampleTests.swift`.
+        //
+        // Carries forward (commits already included before this PR):
+        //   - 98289d9 fix(disk-cache): eager `MLX.evaluate(slot.cache)`
+        //     after `restoreFromDiskArrays` at `BatchEngine.swift:748`
+        //     so the disk-restored cache materialises in its own
+        //     command buffer before prefill encoding starts. The full
+        //     fix for the `notifyExternalReferencesNonZeroOnDealloc`
+        //     class lands in the mlx submodule via the mlx-swift pin
+        //     block above.
+        //   - a7db6e5 fix(BatchEngine): reap slots when consumer stops
+        //     iterating — sets `continuation.onTermination` on
+        //     `BatchEngine.generate`'s outStream so orphan slots get
+        //     reaped via `engine.cancel(requestId)` whenever a
+        //     consumer breaks early.
+        //   - c992df9 feat(reasoning): `GenerateCompletionInfo.
+        //     unclosedReasoning` flag for trapped-thinking detection;
+        //     the host chat UI surfaces this as a "thinking didn't
+        //     close" chip when reasoning-trained models trap themselves.
+        //
+        // Runtime fixes between a7db6e5 and 13abe40 (selected):
+        //   - ae526a3 fix(jang): authoritative blockSize + omni quant
+        //     plumbing — closes the `rms_norm` trap class that killed
+        //     Cascade-2 JANG_4M and Nemotron-Omni MXFP4 first-prefill
+        //     under the bits=4 / 164-override JANG path. Pairs with
+        //     the host-side `MLXErrorRecovery.installGlobalHandler()`.
+        //   - 537e386 feat(omni): `NemotronHJANGTQ` — closes
+        //     `Unhandled keys ["experts"]` on omni JANGTQ bundles by
+        //     stacking per-expert TQ-packed tensors and swapping in
+        //     `TurboQuantSwitchLinear` for the routed-expert switch.
+        //   - ae49c7c feat(omni): full audio `LMInput` integration —
+        //     STT + voice I/O. Closes the prior "audio open seam" in
+        //     `OMNI-OSAURUS-HOOKUP.md` §3.
+        //   - 3b78db4 feat(omni): close audio + video gaps. Together
+        //     with `ae49c7c` makes the audio/video HTTP-API surface in
+        //     this PR's `feat(api)` commit round-trip end-to-end.
+        //   - d020e76 docs+fix(omni): voice integration guide +
+        //     `BatchEngine` text-only `.logits` return so a
+        //     `[concatenate] dims 3 vs 4` trap doesn't cascade into
+        //     Mamba2 conv state merge.
+        //
+        // Foundational omni stack (already in 1c62d21, kept by 13abe40):
+        //   - b4eec09 native Swift port of Nemotron-3-Nano-Omni — first
+        //     time the host runs Parakeet/RADIO without a torch dep.
+        //   - 08994b0 `OMNI-OSAURUS-HOOKUP.md` spec — cited by
+        //     `ModelRuntime.installCacheCoordinator` (§5.1) and the
+        //     Nemotron-3 registry comments (§12.5).
+        //   - 75549cb @ModuleInfo single-segment fix for omni weight
+        //     loading.
+        //   - 1c62d21 `OMNI-OSAURUS-HOOKUP.md` §10 correction: prior
+        //     "BatchEngine omni B=1 empty stream" claim was a bench
+        //     methodology artifact — the bench counted only `.chunk`
+        //     events and missed `.reasoning(_)` events that
+        //     reasoning-on-by-default omni emits during `<think>...</think>`.
+        //     The host-side `GenerationEventMapper` correctly forwards
+        //     `.reasoning(_)` (`PluginHostAPI.swift:1139` emits
+        //     `delta.reasoning_content`), so streaming clients see the
+        //     full output. No host-side workaround needed.
+        //
+        // The audio + video HTTP-API surface
+        // (`MessageContentPart.audioInput` / `.videoUrl` →
+        // `UserInput.audios` / `.videos`) is part of this PR (the
+        // `feat(api)` commit on tip). vmlx-side wiring is in place at
+        // this pin via `ae49c7c` + `3b78db4`.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift-lm",
-            revision: "a7db6e5fdde525c43f72ba48df8ba12a07451ee9"
+            revision: "a196800715302e3903283aeaf6ec978eb1b1ac92"
         ),
         .package(url: "https://github.com/huggingface/swift-transformers", from: "1.1.6"),
-        .package(url: "https://github.com/FluidInference/FluidAudio.git", from: "0.14.0"),
+        // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
+        // calls that osaurus's `TTSService` doesn't pass. Pinning to the
+        // last working version until osaurus catches up. Bumping requires
+        // a paired osaurus-side TTSService update.
+        .package(url: "https://github.com/FluidInference/FluidAudio.git", "0.14.0" ..< "0.14.2"),
         // Pinned by commit (was `branch: "main"`) — same reasoning as
         // vmlx-swift-lm above.
         .package(

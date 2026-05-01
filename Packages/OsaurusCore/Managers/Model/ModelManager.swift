@@ -639,6 +639,185 @@ extension ModelManager {
             releasedAt: date("2026-04-17")
         ),
 
+        // MARK: Nemotron-3 Nano Omni Reasoning (hybrid Mamba-2 SSM + Attn + MoE)
+        //
+        // 30B total / ~3B active. 52-layer hybrid: 23 Mamba-2 SSM layers,
+        // 23 MoE layers (128 routed × 6 active + 1 shared, ReLU² activation),
+        // 6 attention layers (GQA 32q × 2kv, NO RoPE — position info from
+        // Mamba). 262K native context. Reasoning ON by default — chat
+        // template emits `<think>...</think>` segments parsed by vmlx's
+        // think_xml stamp (auto-resolved from `model_type=nemotron_h`).
+        //
+        // Tool format: `nemotron` (NeMo-style) — auto-resolved by vmlx via
+        // jang_config.capabilities or model-type heuristic.
+        // Cache: hybrid — `MambaCache(size=2)` for the 23 M layers,
+        // `KVCacheSimple` for the 6 * layers, nil for E layers. vmlx's
+        // `CacheCoordinator.isHybrid` auto-flips on first slot admission
+        // via `BatchEngine.admitPendingRequests`; osaurus *also* calls
+        // `setHybrid(true)` eagerly in `ModelRuntime.installCacheCoordinator`
+        // for any name matching `isKnownHybridModel(name:)` — Nemotron-3
+        // matches via the `nemotron-3` substring. The eager set is harmless
+        // (per OMNI-OSAURUS-HOOKUP.md §5.1) and avoids a one-frame stale-flag
+        // window if a request lands via the single-slot Evaluate path before
+        // BatchEngine has flipped the flag.
+        // Sampling recipe per `research/NEMOTRON-OMNI-RUNTIME-2026-04-28.md`:
+        // T=0.6 top_p=0.95 (DeepSeek-style). Bundles ship those defaults
+        // in `generation_config.json`; `LocalGenerationDefaults` reads them.
+
+        MLXModel(
+            id: "OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-MXFP4",
+            name: ModelMetadataParser.friendlyName(
+                from: "OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-MXFP4"),
+            description:
+                "NVIDIA Nemotron-3 30B Reasoning hybrid (Mamba-2 + MoE). MXFP4 quantization — fastest decode path. 262K context.",
+            downloadURL:
+                "https://huggingface.co/OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-MXFP4",
+            isTopSuggestion: true,
+            downloadSizeBytes: 18_002_117_870,
+            modelType: "nemotron_h",
+            releasedAt: date("2026-04-28")
+        ),
+
+        MLXModel(
+            id: "OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-JANGTQ4",
+            name: ModelMetadataParser.friendlyName(
+                from: "OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-JANGTQ4"),
+            description:
+                "Nemotron-3 30B Reasoning hybrid, 4-bit TurboQuant routed experts. Near-bf16 quality at ~16 GB. 262K context.",
+            downloadURL:
+                "https://huggingface.co/OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-JANGTQ4",
+            downloadSizeBytes: 16_009_341_440,
+            modelType: "nemotron_h",
+            releasedAt: date("2026-04-28")
+        ),
+
+        MLXModel(
+            id: "OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-JANGTQ",
+            name: ModelMetadataParser.friendlyName(
+                from: "OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-JANGTQ"),
+            description:
+                "Nemotron-3 30B Reasoning hybrid, 2-bit TurboQuant routed experts. Smallest footprint (~9 GB). 262K context.",
+            downloadURL:
+                "https://huggingface.co/OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-JANGTQ",
+            downloadSizeBytes: 9_136_488_448,
+            modelType: "nemotron_h",
+            releasedAt: date("2026-04-28")
+        ),
+
+        // MARK: Laguna-XS.2 (preview — vmlx engine support pending)
+        //
+        // Poolside's `model_type=laguna` — agentic-coding 33B/3B-active MoE,
+        // 40 layers, hybrid SWA + full attention with per-layer head counts,
+        // dual RoPE (full=YaRN, swa=default), 256 routed experts top-8 + 1
+        // shared expert, sigmoid routing with per-head gating, q_norm/k_norm
+        // in attention. Text-only. 131K context.
+        //
+        // The hybrid here is SLIDING-WINDOW + full attention (handled by
+        // `RotatingKVCache` + `KVCacheSimple` per-layer in vmlx), NOT the
+        // Mamba/Attn/MoE pattern used by Nemotron-3. So `isKnownHybridModel`
+        // intentionally does NOT match Laguna — `setHybrid(true)` is for
+        // SSM-state companion caches, which Laguna doesn't have.
+        //
+        // The chat template (`laguna_glm_thinking_v5/chat_template.jinja`)
+        // ships an `enable_thinking` Jinja kwarg that defaults to false;
+        // the per-model `LagunaThinkingProfile` in `ModelOptions.swift`
+        // exposes a "Disable Thinking" toggle so reasoning can be flipped
+        // on per request.
+        //
+        // Quant + bundle metadata per `jang_tools/convert_laguna_jangtq.py`
+        // and `jang_tools/convert_laguna_mxfp4.py`. `jang_config.json` v2:
+        //   { "weight_format": "mxtq" | "mxfp4",
+        //     "source_model.architecture": "laguna",
+        //     "has_vision/audio/video": false,
+        //     "mxtq_bits": { attention=8, shared_expert=8,
+        //                    routed_expert=2|4, embed_lm_head=8 } }
+        // The shared `validateJANGTQSidecarIfRequired` preflight catches
+        // mislabeled bundles (sidecar present but `weight_format != "mxtq"`)
+        // for any JANGTQ family — Laguna inherits that protection.
+
+        MLXModel(
+            id: "OsaurusAI/Laguna-XS.2-mxfp4",
+            name: ModelMetadataParser.friendlyName(from: "OsaurusAI/Laguna-XS.2-mxfp4"),
+            description:
+                "Poolside Laguna-XS.2 33B/3B-active agentic-coding MoE. MXFP4 quant — fastest decode. 131K context, 256 experts top-8.",
+            downloadURL:
+                "https://huggingface.co/OsaurusAI/Laguna-XS.2-mxfp4",
+            downloadSizeBytes: 17_500_000_000,
+            modelType: "laguna",
+            releasedAt: date("2026-04-30")
+        ),
+
+        MLXModel(
+            id: "OsaurusAI/Laguna-XS.2-JANGTQ2",
+            name: ModelMetadataParser.friendlyName(from: "OsaurusAI/Laguna-XS.2-JANGTQ2"),
+            description:
+                "Poolside Laguna-XS.2 33B/3B-active agentic-coding MoE, 2-bit TurboQuant routed experts. Smallest footprint (~7 GB). 131K context.",
+            downloadURL:
+                "https://huggingface.co/OsaurusAI/Laguna-XS.2-JANGTQ2",
+            downloadSizeBytes: 7_300_000_000,
+            modelType: "laguna",
+            releasedAt: date("2026-04-30")
+        ),
+
+        // MARK: Mistral-Medium-3.5-128B (preview — architecturally supported, end-to-end load unverified)
+        //
+        // `model_type=mistral3` outer wrapper with `text_config.model_type=
+        // ministral3` (88 layers, hidden 12288, 96/8 GQA, head_dim 128, 256K
+        // YaRN). Pixtral vision tower (48 layers, hidden 1664, image_size
+        // 1540, patch 14, spatial_merge 2). Text + image. Source FP8 e4m3
+        // with per-tensor scales; vision tower / projector / lm_head stay
+        // in bf16/fp16.
+        //
+        // vmlx-swift-lm's `mistral3` factory branches on
+        // `text_config.model_type == "mistral4"` and falls through to
+        // `Mistral3VLM` otherwise. `Mistral3VLM.LanguageModel`
+        // (Libraries/MLXVLM/Models/Mistral3.swift:516) is explicitly
+        // documented to handle BOTH `ministral3` (sliding + llama4 scaling)
+        // AND vanilla `mistral` model_types via `Ministral3ModelInner`.
+        // Vision shapes (image_size, num_layers, spatial_merge) are
+        // config-parametric. So Mistral 3.5 should load through the
+        // existing factory dispatch — but no end-to-end smoke test has
+        // been run on real 3.5 weights yet, hence "preview". Marked top
+        // suggestion only after a real load + decode pass on bundle.
+        //
+        // Quant + bundle metadata per `jang_tools/convert_mistral3_jangtq.py`
+        // and `jang_tools/convert_mistral3_mxfp4.py`. `jang_config.json` v2:
+        //   { "weight_format": "mxtq" | "mxfp4",
+        //     "source_model.architecture": "mistral3",
+        //     "has_vision": true, "vision_arch": "pixtral",
+        //     "mxtq_bits": { text_decoder=2|4, embed_tokens=8,
+        //                    vision_tower="passthrough_fp16",
+        //                    multi_modal_projector="passthrough_fp16",
+        //                    lm_head="passthrough_fp16" } }
+        //
+        // Not a Mamba/SSM hybrid — `isKnownHybridModel` does NOT match.
+
+        MLXModel(
+            id: "OsaurusAI/Mistral-Medium-3.5-128B-mxfp4",
+            name: ModelMetadataParser.friendlyName(
+                from: "OsaurusAI/Mistral-Medium-3.5-128B-mxfp4"),
+            description:
+                "Mistral Medium 3.5 128B + Pixtral vision. MXFP4 quant — fastest decode. 256K context, 24-language coverage.",
+            downloadURL:
+                "https://huggingface.co/OsaurusAI/Mistral-Medium-3.5-128B-mxfp4",
+            downloadSizeBytes: 70_400_000_000,
+            modelType: "mistral3",
+            releasedAt: date("2026-04-30")
+        ),
+
+        MLXModel(
+            id: "OsaurusAI/Mistral-Medium-3.5-128B-JANGTQ2",
+            name: ModelMetadataParser.friendlyName(
+                from: "OsaurusAI/Mistral-Medium-3.5-128B-JANGTQ2"),
+            description:
+                "Mistral Medium 3.5 128B + Pixtral vision, 2-bit TurboQuant text decoder. ~36 GB footprint. 256K context, 24-language coverage.",
+            downloadURL:
+                "https://huggingface.co/OsaurusAI/Mistral-Medium-3.5-128B-JANGTQ2",
+            downloadSizeBytes: 36_700_000_000,
+            modelType: "mistral3",
+            releasedAt: date("2026-04-30")
+        ),
+
         // MARK: Large Models
 
         MLXModel(

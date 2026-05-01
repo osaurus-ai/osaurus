@@ -26,6 +26,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
     public func applicationDidFinishLaunching(_ notification: Notification) {
         AppDelegate.shared = self
 
+        // Make MLX C++ errors recoverable instead of process-fatal. Must run
+        // before any model load can call into MLX so the first forward pass
+        // is already protected. See `MLXErrorRecovery` for the rationale and
+        // the specific crash class this prevents.
+        MLXErrorRecovery.installGlobalHandler()
+
         // Detect repeated startup crashes and enter safe mode if needed
         LaunchGuard.checkOnLaunch()
 

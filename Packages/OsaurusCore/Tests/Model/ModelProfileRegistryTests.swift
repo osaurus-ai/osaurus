@@ -90,4 +90,100 @@ struct ModelProfileRegistryTests {
         // developer's locally installed model directory.
         #expect(profile?.thinkingOption == nil)
     }
+
+    /// Nemotron-3 Reasoning bundles (model_type=nemotron_h, hybrid Mamba+Attn+MoE)
+    /// must match `NemotronThinkingProfile`, NOT the generic
+    /// `AutoThinkingProfile`. The two have different `disableThinking`
+    /// defaults — Nemotron defaults to thinking-OFF (defensive, mirroring
+    /// `QwenThinkingProfile`) because the SKU's training extends `<think>`
+    /// blocks through arbitrary self-verification on validation prompts
+    /// (the trapped-thinking pattern documented in
+    /// `jang/research/NEMOTRON-OMNI-RUNTIME-2026-04-28.md` §9). Auto would
+    /// default ON and surface the loop as visible UX regression.
+    @Test("Nemotron-3 reasoning bundles match NemotronThinkingProfile (default OFF)")
+    func nemotron3_matchesNemotronProfile() {
+        for id in [
+            "OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-MXFP4",
+            "OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-JANGTQ4",
+            "OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-JANGTQ",
+            "nemotron-3-nano-omni-30b-a3b-mxfp4",  // case-folded picker form
+        ] {
+            let profile = ModelProfileRegistry.profile(for: id)
+            #expect(
+                profile?.displayName == NemotronThinkingProfile.displayName,
+                "expected NemotronThinkingProfile for \(id), got \(profile?.displayName ?? "nil")"
+            )
+            // Default-OFF guards against the trapped-thinking pattern.
+            let defaultDisable = profile?.defaults["disableThinking"]?.boolValue ?? false
+            #expect(defaultDisable == true,
+                "Nemotron must default disableThinking=true to avoid trapped-thinking loops")
+        }
+    }
+
+    /// Older "Nemotron-Cascade-2" / "Nemotron-Hyper" bundles use a different
+    /// model-type lineage (deprecated NeMo style) and shouldn't accidentally
+    /// pick up the new profile. Locks the matcher specificity to `nemotron-3`.
+    @Test("Older Nemotron lineages do NOT match NemotronThinkingProfile")
+    func olderNemotron_doesNotMatch() {
+        for id in [
+            "JANGQ-AI/Nemotron-Cascade-2-30B-A3B-JANG_4M",
+            "dealignai/Nemotron-3-Super-120B-A12B-JANG_2L-CRACK",
+        ] {
+            let profile = ModelProfileRegistry.profile(for: id)
+            // Cascade-2 / Super may still match `AutoThinkingProfile` if their
+            // chat template reads `enable_thinking` — the assertion is just
+            // that they don't shortcut into the new Nemotron-3-specific
+            // profile.
+            let isNemotron3 = profile?.displayName == NemotronThinkingProfile.displayName
+            #expect(!isNemotron3 || id.lowercased().contains("nemotron-3"),
+                "matcher must be specific to nemotron-3, not generic nemotron")
+        }
+    }
+
+    /// Laguna bundles (`model_type=laguna`) must match
+    /// `LagunaThinkingProfile` so the chat-input area's reasoning toggle
+    /// drives the `enable_thinking` Jinja kwarg honoured by the shipped
+    /// `laguna_glm_thinking_v5/chat_template.jinja`. Default-OFF mirrors
+    /// the chat template's own default — agentic-coding flows want
+    /// straight-to-answer; the toggle lets the user opt into CoT.
+    @Test("Laguna bundles match LagunaThinkingProfile (default OFF, all quant tiers)")
+    func laguna_matchesLagunaProfile() {
+        for id in [
+            "OsaurusAI/Laguna-XS.2-mxfp4",
+            "OsaurusAI/Laguna-XS.2-JANGTQ2",
+            "JANGQ-AI/Laguna-XS.2-JANGTQ2",
+            "laguna-xs.2-mxfp4",            // case-folded picker form
+            "OsaurusAI/Laguna-S.3-JANGTQ4", // forward-compat (future variant)
+        ] {
+            let profile = ModelProfileRegistry.profile(for: id)
+            #expect(
+                profile?.displayName == LagunaThinkingProfile.displayName,
+                "expected LagunaThinkingProfile for \(id), got \(profile?.displayName ?? "nil")"
+            )
+            let defaultDisable = profile?.defaults["disableThinking"]?.boolValue ?? false
+            #expect(defaultDisable == true,
+                "Laguna must default disableThinking=true to mirror the chat-template default")
+        }
+    }
+
+    /// Mistral Medium 3.5 has no thinking toggle today (no `<think>` block
+    /// in its chat template). Match must NOT shortcut into a thinking
+    /// profile; if it falls through to `AutoThinkingProfile` that's fine
+    /// (only activates if the local-reasoning capability detector says
+    /// thinking is toggleable). The assertion is the negative one: it
+    /// must NOT pick up Nemotron's or Laguna's profile.
+    @Test("Mistral Medium 3.5 does NOT match Nemotron or Laguna thinking profiles")
+    func mistralMedium35_doesNotMatchThinkingFamilies() {
+        for id in [
+            "OsaurusAI/Mistral-Medium-3.5-128B-mxfp4",
+            "OsaurusAI/Mistral-Medium-3.5-128B-JANGTQ2",
+            "mistral-medium-3.5-128b-mxfp4",
+        ] {
+            let profile = ModelProfileRegistry.profile(for: id)
+            #expect(profile?.displayName != NemotronThinkingProfile.displayName,
+                "Mistral 3.5 must NOT shortcut into NemotronThinkingProfile: \(id)")
+            #expect(profile?.displayName != LagunaThinkingProfile.displayName,
+                "Mistral 3.5 must NOT shortcut into LagunaThinkingProfile: \(id)")
+        }
+    }
 }

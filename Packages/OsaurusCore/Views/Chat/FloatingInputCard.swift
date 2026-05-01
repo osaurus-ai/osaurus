@@ -313,7 +313,7 @@ struct FloatingInputCard: View {
                     inputCard
                         .padding(.horizontal, 20)
                         .padding(.bottom, 20)
-                        .onDrop(of: [UTType.image, UTType.fileURL], isTargeted: $isDragOver) { providers in
+                        .onDrop(of: dropAcceptedTypes, isTargeted: $isDragOver) { providers in
                             handleFileDrop(providers)
                         }
                 }
@@ -1059,6 +1059,17 @@ extension FloatingInputCard {
                             )
                         }
                     case .document, .documentRef:
+                        DocumentChip(attachment: attachment) {
+                            withAnimation(theme.springAnimation()) {
+                                _ = pendingAttachments.remove(at: index)
+                            }
+                        }
+                    case .audio, .audioRef, .video, .videoRef:
+                        // Audio/video attachments display as a labeled chip
+                        // with a media-type icon. Inline-bytes are kept on
+                        // the pending queue (pre-spillover); refs may also
+                        // round-trip through chat history. Same on-remove
+                        // semantics as image/document chips.
                         DocumentChip(attachment: attachment) {
                             withAnimation(theme.springAnimation()) {
                                 _ = pendingAttachments.remove(at: index)
@@ -2082,34 +2093,193 @@ extension FloatingInputCard {
         }
     }
 
+    /// Capability-gated UTType allowlist for both the file picker and
+    /// the drop zone. Resolves from `selectedModel`; non-multimodal
+    /// models stay at images + documents only. Audio appears only for
+    /// Nemotron-3-Nano-Omni; video appears for Qwen-VL family +
+    /// SmolVLM 2 + Nemotron-Omni.
+    ///
+    /// See `Models/Configuration/ModelMediaCapabilities.swift` for the
+    /// substring/regex matcher; tests pin the boundary at
+    /// `ModelMediaCapabilitiesMCDCTests`.
+    private var mediaCapabilities: ModelMediaCapabilities.Capabilities {
+        guard let modelId = selectedModel else { return .imageOnly }
+        return ModelMediaCapabilities.from(modelId: modelId)
+    }
+
+    /// UTTypes the drop zone advertises. Image + fileURL always — image
+    /// is universally supported across multimodal models, fileURL covers
+    /// document parsing. Audio + movie/video are conditional on the
+    /// loaded model's capabilities so users can't drop a wav onto a
+    /// dense LLM and have it silently ignored.
+    private var dropAcceptedTypes: [UTType] {
+        var types: [UTType] = [UTType.image, UTType.fileURL]
+        let cap = mediaCapabilities
+        if cap.supportsAudio {
+            types.append(.audio)
+            // explicit common audio formats so HEIF-style "any audio"
+            // type negotiation doesn't miss specific containers
+            types.append(.mp3)
+            types.append(.wav)
+            types.append(.mpeg4Audio)
+        }
+        if cap.supportsVideo {
+            types.append(.movie)
+            types.append(.video)
+            types.append(.quickTimeMovie)
+            types.append(.mpeg4Movie)
+        }
+        return types
+    }
+
+    /// File-picker `allowedContentTypes`. Same gating as `dropAcceptedTypes`
+    /// but flattened (no fileURL parent — picker accepts concrete types
+    /// only). Picker shows audio/video formats only when the loaded
+    /// model can actually consume them.
+    private var pickerAllowedTypes: [UTType] {
+        var types: [UTType] = [UTType.image]
+        types.append(contentsOf: DocumentParser.supportedDocumentTypes)
+        let cap = mediaCapabilities
+        if cap.supportsAudio {
+            types.append(.audio)
+            types.append(.mp3)
+            types.append(.wav)
+            types.append(.mpeg4Audio)
+        }
+        if cap.supportsVideo {
+            types.append(.movie)
+            types.append(.video)
+            types.append(.quickTimeMovie)
+            types.append(.mpeg4Movie)
+        }
+        return types
+    }
+
     private func pickAttachment() {
         let panel = NSOpenPanel()
-        var allowedTypes: [UTType] = [UTType.image]
-        allowedTypes.append(contentsOf: DocumentParser.supportedDocumentTypes)
-        panel.allowedContentTypes = allowedTypes
+        panel.allowedContentTypes = pickerAllowedTypes
         panel.allowsMultipleSelection = true
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
-        panel.message = "Select files to attach"
+        panel.message = mediaCapabilities.anyMedia
+            ? "Select files to attach (\(mediaCapabilities.summary) supported)"
+            : "Select files to attach"
 
         if panel.runModal() == .OK {
             for url in panel.urls {
-                if DocumentParser.isImageFile(url: url) {
-                    if let data = try? Data(contentsOf: url), data.count <= maxImageSize,
-                        let nsImage = NSImage(data: data),
-                        let pngData = nsImage.pngData()
-                    {
-                        appendAttachment(.image(pngData))
-                    }
-                } else if DocumentParser.canParse(url: url) {
-                    parseAndAttach(url: url)
-                }
+                attachIfAllowed(url: url)
             }
         }
     }
 
+    /// Routes a file URL to the right attachment kind based on its
+    /// extension + the loaded model's capabilities. Drops files that
+    /// the current model can't consume rather than silently attaching
+    /// them as opaque documents.
+    private func attachIfAllowed(url: URL) {
+        let ext = url.pathExtension.lowercased()
+        let cap = mediaCapabilities
+
+        // Image fast path — universally supported among VLMs.
+        if DocumentParser.isImageFile(url: url) {
+            if let data = try? Data(contentsOf: url), data.count <= maxImageSize,
+                let nsImage = NSImage(data: data),
+                let pngData = nsImage.pngData()
+            {
+                appendAttachment(.image(pngData))
+            }
+            return
+        }
+
+        // Audio path — only for omni models.
+        if cap.supportsAudio, audioExtensions.contains(ext) {
+            attachAudio(url: url, ext: ext)
+            return
+        }
+
+        // Video path — Qwen-VL family + SmolVLM 2 + Nemotron-Omni.
+        if cap.supportsVideo, videoExtensions.contains(ext) {
+            attachVideo(url: url)
+            return
+        }
+
+        // Document fallback — markdown, PDF, etc.
+        if DocumentParser.canParse(url: url) {
+            parseAndAttach(url: url)
+            return
+        }
+
+        // Reject otherwise — surface a toast so the user knows why.
+        ToastManager.shared.error(
+            "Cannot attach \(url.lastPathComponent)",
+            message:
+                cap.anyMedia
+                ? "The current model supports \(cap.summary) only."
+                : "The current model is text-only."
+        )
+    }
+
+    private static let audioExtensions: Set<String> = [
+        "wav", "mp3", "m4a", "flac", "ogg", "opus", "aac", "wma",
+    ]
+
+    private static let videoExtensions: Set<String> = [
+        "mp4", "mov", "m4v", "qt", "webm", "mkv", "avi",
+    ]
+
+    private var audioExtensions: Set<String> { Self.audioExtensions }
+    private var videoExtensions: Set<String> { Self.videoExtensions }
+
+    /// Attach audio bytes from a file URL. Reads inline; spillover to
+    /// the encrypted blob store is handled later in the chat-history
+    /// persistence layer (`AttachmentBlobStore.spillIfNeeded`) when
+    /// the turn is committed. Format string is the lowercased file
+    /// extension and flows directly into
+    /// `MessageContentPart.audioInput.format`.
+    private func attachAudio(url: URL, ext: String) {
+        guard let data = try? Data(contentsOf: url) else {
+            ToastManager.shared.error(
+                "Could not read \(url.lastPathComponent)",
+                message: "File may be unreadable or too large to attach."
+            )
+            return
+        }
+        // Cap inline audio at 50 MB — beyond that the user is sending
+        // multi-minute clips that should go through a streaming API.
+        guard data.count <= 50 * 1024 * 1024 else {
+            ToastManager.shared.error(
+                "Audio file too large",
+                message: "Files larger than 50 MB are not supported in chat attachments."
+            )
+            return
+        }
+        appendAttachment(.audio(data, format: ext, filename: url.lastPathComponent))
+    }
+
+    /// Attach video bytes from a file URL. Same lifecycle as audio,
+    /// but with a tighter inline cap (30 MB) since video is bigger
+    /// per-second and the runtime extracts only 8 frames anyway.
+    private func attachVideo(url: URL) {
+        guard let data = try? Data(contentsOf: url) else {
+            ToastManager.shared.error(
+                "Could not read \(url.lastPathComponent)",
+                message: "File may be unreadable or too large to attach."
+            )
+            return
+        }
+        guard data.count <= 100 * 1024 * 1024 else {
+            ToastManager.shared.error(
+                "Video file too large",
+                message: "Files larger than 100 MB are not supported. Trim before attaching."
+            )
+            return
+        }
+        appendAttachment(.video(data, filename: url.lastPathComponent))
+    }
+
     private func handleFileDrop(_ providers: [NSItemProvider]) -> Bool {
         var handled = false
+        let cap = mediaCapabilities
 
         for provider in providers {
             if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
@@ -2124,15 +2294,43 @@ extension FloatingInputCard {
                         }
                     }
                 }
+            } else if cap.supportsAudio,
+                provider.hasItemConformingToTypeIdentifier(UTType.audio.identifier)
+            {
+                handled = true
+                // Audio path — load via fileURL so we get the extension,
+                // not raw data identifier.
+                provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier) { item, _ in
+                    guard let urlData = item as? Data,
+                        let url = URL(dataRepresentation: urlData, relativeTo: nil)
+                    else { return }
+                    DispatchQueue.main.async {
+                        self.attachIfAllowed(url: url)
+                    }
+                }
+            } else if cap.supportsVideo,
+                provider.hasItemConformingToTypeIdentifier(UTType.movie.identifier)
+                    || provider.hasItemConformingToTypeIdentifier(UTType.video.identifier)
+            {
+                handled = true
+                provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier) { item, _ in
+                    guard let urlData = item as? Data,
+                        let url = URL(dataRepresentation: urlData, relativeTo: nil)
+                    else { return }
+                    DispatchQueue.main.async {
+                        self.attachIfAllowed(url: url)
+                    }
+                }
             } else if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
                 handled = true
                 provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier) { item, error in
                     guard let data = item as? Data,
-                        let url = URL(dataRepresentation: data, relativeTo: nil),
-                        DocumentParser.canParse(url: url)
+                        let url = URL(dataRepresentation: data, relativeTo: nil)
                     else { return }
                     DispatchQueue.main.async {
-                        self.parseAndAttach(url: url)
+                        // attachIfAllowed handles audio/video/image/doc routing
+                        // + capability rejection in one place.
+                        self.attachIfAllowed(url: url)
                     }
                 }
             }

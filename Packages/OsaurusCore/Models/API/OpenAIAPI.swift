@@ -145,21 +145,47 @@ struct ModelsResponse: Codable, Sendable {
 
 // MARK: - Multimodal Content Parts
 
-/// OpenAI-compatible content part for multimodal messages
+/// OpenAI-compatible content part for multimodal messages.
+///
+/// Supports four shapes:
+///   - `text` / `input_text` — plain text
+///   - `image_url` — `{url, detail?}`. URL may be `data:image/...;base64,...` or `https://...`
+///   - `input_audio` — `{data: <base64>, format: "wav"|"mp3"|"flac"|...}`. Mirrors the
+///     OpenAI Realtime / GPT-4o audio shape; the audio bytes are written to a temp
+///     file and handed to vmlx as `UserInput.Audio.url(...)` so vmlx's
+///     `nemotronOmniLoadAudioFile` (AVAudioConverter → 16 kHz mono Float32) handles
+///     all decoding. Format strings are passed through to vmlx unchanged — vmlx
+///     uses the file extension, so the format hint becomes the file extension.
+///   - `video_url` — `{url}`. Mirrors the convention adopted by LM Studio / Ollama
+///     for video inputs since OpenAI hasn't published a canonical chat-completions
+///     video shape. URL may be `data:video/...;base64,...` or `https://...`.
 enum MessageContentPart: Codable, Sendable {
     case text(String)
     case imageUrl(url: String, detail: String?)
+    case audioInput(data: String, format: String)
+    case videoUrl(url: String)
 
     private enum CodingKeys: String, CodingKey {
         case type
         case text
         case input_text
         case image_url
+        case input_audio
+        case video_url
     }
 
     private struct ImageUrlContent: Codable {
         let url: String
         let detail: String?
+    }
+
+    private struct InputAudioContent: Codable {
+        let data: String
+        let format: String
+    }
+
+    private struct VideoUrlContent: Codable {
+        let url: String
     }
 
     init(from decoder: Decoder) throws {
@@ -178,6 +204,12 @@ enum MessageContentPart: Codable, Sendable {
         case "image_url":
             let imageUrl = try container.decode(ImageUrlContent.self, forKey: .image_url)
             self = .imageUrl(url: imageUrl.url, detail: imageUrl.detail)
+        case "input_audio":
+            let audio = try container.decode(InputAudioContent.self, forKey: .input_audio)
+            self = .audioInput(data: audio.data, format: audio.format)
+        case "video_url":
+            let video = try container.decode(VideoUrlContent.self, forKey: .video_url)
+            self = .videoUrl(url: video.url)
         default:
             // Fallback to text for unknown types
             if let text = try? container.decode(String.self, forKey: .text) {
@@ -197,6 +229,12 @@ enum MessageContentPart: Codable, Sendable {
         case .imageUrl(let url, let detail):
             try container.encode("image_url", forKey: .type)
             try container.encode(ImageUrlContent(url: url, detail: detail), forKey: .image_url)
+        case .audioInput(let data, let format):
+            try container.encode("input_audio", forKey: .type)
+            try container.encode(InputAudioContent(data: data, format: format), forKey: .input_audio)
+        case .videoUrl(let url):
+            try container.encode("video_url", forKey: .type)
+            try container.encode(VideoUrlContent(url: url), forKey: .video_url)
         }
     }
 }
@@ -231,6 +269,32 @@ struct ChatMessage: Codable, Sendable {
             guard let commaIndex = url.firstIndex(of: ",") else { return nil }
             let base64String = String(url[url.index(after: commaIndex)...])
             return Data(base64Encoded: base64String)
+        }
+    }
+
+    /// Extract `(base64, format)` pairs from `input_audio` content parts.
+    /// `format` is whatever the client sent (e.g. `"wav"`, `"mp3"`); we pass
+    /// it through to the file extension when materializing the temp file
+    /// because vmlx's `nemotronOmniLoadAudioFile` keys decoder selection on
+    /// the URL extension via AVAudioConverter.
+    var audioInputs: [(data: String, format: String)] {
+        guard let parts = contentParts else { return [] }
+        return parts.compactMap { part in
+            if case .audioInput(let data, let format) = part {
+                return (data, format)
+            }
+            return nil
+        }
+    }
+
+    /// Extract video URLs (data: or http(s):) from `video_url` content parts.
+    var videoUrls: [String] {
+        guard let parts = contentParts else { return [] }
+        return parts.compactMap { part in
+            if case .videoUrl(let url) = part {
+                return url
+            }
+            return nil
         }
     }
 }
@@ -273,11 +337,16 @@ extension ChatMessage {
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(role, forKey: .role)
-        // If we have content parts with images, encode as array; otherwise as string
+        // If we have content parts with any non-text media, encode as array;
+        // otherwise as string. Round-trip preserves audio/video/image parts
+        // so a request that came in with `input_audio` or `video_url` is
+        // re-serialized in the same shape.
         if let parts = contentParts,
             parts.contains(where: {
-                if case .imageUrl = $0 { return true }
-                return false
+                switch $0 {
+                case .imageUrl, .audioInput, .videoUrl: return true
+                case .text: return false
+                }
             })
         {
             try container.encode(parts, forKey: .content)
@@ -324,6 +393,57 @@ extension ChatMessage {
             let base64 = data.base64EncodedString()
             let dataUrl = "data:image/png;base64,\(base64)"
             parts.append(.imageUrl(url: dataUrl, detail: nil))
+        }
+
+        self.contentParts = parts.isEmpty ? nil : parts
+        self.content = text.isEmpty ? nil : text
+        self.tool_calls = nil
+        self.tool_call_id = nil
+    }
+
+    /// Multimodal init covering image + audio + video. Used by the
+    /// chat composer when the loaded model's capabilities advertise the
+    /// modality. Audio bytes encode as `input_audio` with explicit
+    /// format hint; video bytes encode as `video_url` with
+    /// `data:video/<container>` URL. All three flow into the
+    /// OpenAI-compatible JSON shape that vmlx's
+    /// `mapOpenAIChatToMLX` materializes through
+    /// `extractAudioSources` / `extractVideoSources`.
+    init(
+        role: String,
+        text: String,
+        imageData: [Data],
+        audios: [(data: Data, format: String)],
+        videos: [(data: Data, mimeSubtype: String)]
+    ) {
+        self.role = role
+        var parts: [MessageContentPart] = []
+
+        if !text.isEmpty {
+            parts.append(.text(text))
+        }
+
+        for data in imageData {
+            let base64 = data.base64EncodedString()
+            parts.append(.imageUrl(url: "data:image/png;base64,\(base64)", detail: nil))
+        }
+
+        for (data, format) in audios {
+            // OpenAI audio shape: bare base64 string + format hint.
+            // The format string round-trips to vmlx's
+            // `materializeMediaDataUrl` audio canonicalization (mp4 → m4a
+            // for audio mime, NOT for video — audit fix locked in
+            // `MaterializeMediaDataUrlMCDCTests`).
+            parts.append(.audioInput(data: data.base64EncodedString(), format: format))
+        }
+
+        for (data, mimeSubtype) in videos {
+            // Video data URL with the container subtype (`mp4` / `mov` /
+            // `webm` / `quicktime`) so the materializer keeps the right
+            // file extension (NOT downgraded to .m4a — see audit fix).
+            let base64 = data.base64EncodedString()
+            parts.append(
+                .videoUrl(url: "data:video/\(mimeSubtype);base64,\(base64)"))
         }
 
         self.contentParts = parts.isEmpty ? nil : parts
