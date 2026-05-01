@@ -50,7 +50,9 @@ struct EnsureJANGTQSidecarTests {
 
         try await ModelRuntime.$sidecarFetcherForTests.withValue(fetcher) {
             try await ModelRuntime.ensureJANGTQSidecar(
-                at: dir, modelId: "OsaurusAI/Foo", name: "Foo"
+                at: dir,
+                modelId: "OsaurusAI/Foo",
+                name: "Foo"
             )
         }
         let count = await tracker.count
@@ -69,7 +71,9 @@ struct EnsureJANGTQSidecarTests {
 
         try await ModelRuntime.$sidecarFetcherForTests.withValue(fetcher) {
             try await ModelRuntime.ensureJANGTQSidecar(
-                at: dir, modelId: "OsaurusAI/Foo", name: "Foo"
+                at: dir,
+                modelId: "OsaurusAI/Foo",
+                name: "Foo"
             )
         }
         let count = await tracker.count
@@ -88,7 +92,9 @@ struct EnsureJANGTQSidecarTests {
 
         try await ModelRuntime.$sidecarFetcherForTests.withValue(fetcher) {
             try await ModelRuntime.ensureJANGTQSidecar(
-                at: dir, modelId: "OsaurusAI/Foo", name: "Foo"
+                at: dir,
+                modelId: "OsaurusAI/Foo",
+                name: "Foo"
             )
         }
         let count = await tracker.count
@@ -110,7 +116,9 @@ struct EnsureJANGTQSidecarTests {
         do {
             try await ModelRuntime.$sidecarFetcherForTests.withValue(fetcher) {
                 try await ModelRuntime.ensureJANGTQSidecar(
-                    at: dir, modelId: "OsaurusAI/Foo", name: "Foo"
+                    at: dir,
+                    modelId: "OsaurusAI/Foo",
+                    name: "Foo"
                 )
             }
         } catch let e as NSError {
@@ -132,15 +140,20 @@ struct EnsureJANGTQSidecarTests {
         let fetcher: @Sendable (URL, URL) async throws -> Void = { url, dest in
             await tracker.record(url, dest)
             // Every candidate "404s" — sidecar never written.
-            throw NSError(domain: "ModelRuntime", code: 5,
-                userInfo: [NSLocalizedDescriptionKey: "HTTP 404"])
+            throw NSError(
+                domain: "ModelRuntime",
+                code: 5,
+                userInfo: [NSLocalizedDescriptionKey: "HTTP 404"]
+            )
         }
 
         var threw: NSError?
         do {
             try await ModelRuntime.$sidecarFetcherForTests.withValue(fetcher) {
                 try await ModelRuntime.ensureJANGTQSidecar(
-                    at: dir, modelId: "Some-Flat-Model", name: "Flat"
+                    at: dir,
+                    modelId: "Some-Flat-Model",
+                    name: "Flat"
                 )
             }
         } catch let e as NSError {
@@ -166,7 +179,9 @@ struct EnsureJANGTQSidecarTests {
 
         try await ModelRuntime.$sidecarFetcherForTests.withValue(fetcher) {
             try await ModelRuntime.ensureJANGTQSidecar(
-                at: dir, modelId: modelId, name: "Laguna"
+                at: dir,
+                modelId: modelId,
+                name: "Laguna"
             )
         }
 
@@ -202,7 +217,9 @@ struct EnsureJANGTQSidecarTests {
         do {
             try await ModelRuntime.$sidecarFetcherForTests.withValue(fetcher) {
                 try await ModelRuntime.ensureJANGTQSidecar(
-                    at: dir, modelId: "OsaurusAI/Foo", name: "Foo"
+                    at: dir,
+                    modelId: "OsaurusAI/Foo",
+                    name: "Foo"
                 )
             }
         } catch let e as NSError {

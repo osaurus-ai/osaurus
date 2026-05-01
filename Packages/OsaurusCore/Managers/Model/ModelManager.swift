@@ -1398,7 +1398,8 @@ extension ModelManager {
                 let entries = try? fm.contentsOfDirectory(
                     at: root,
                     includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
-                    options: [.skipsHiddenFiles])
+                    options: [.skipsHiddenFiles]
+                )
             else { return }
             for entry in entries {
                 guard let resolved = resolvedDirectory(entry) else { continue }

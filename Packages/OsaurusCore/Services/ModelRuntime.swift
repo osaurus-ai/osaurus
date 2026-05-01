@@ -1238,18 +1238,18 @@ public actor ModelRuntime {
                 }
                 let hasVision = configJSON["vision_config"] != nil
                 _ = hasVision  // No remaining family-pending gates.
-                _ = modelType   // Mistral 3 (LLM + VLM) and Laguna are
-                _ = textInner   // both ported as of vmlx@344dda0.
-                                // MXFP4 paths load via standard MLX
-                                // dequant; JANGTQ Mistral 3 routes via
-                                // Mistral3TextJANGTQModel /
-                                // Mistral3VLMJANGTQ; Laguna MXFP4 via
-                                // LagunaModel; Laguna JANGTQ port
-                                // (LagunaJANGTQModel) is the next
-                                // incremental piece — not blocking
-                                // because the existing forward / inverse
-                                // sidecar checks above still catch
-                                // mislabeled bundles.
+                _ = modelType  // Mistral 3 (LLM + VLM) and Laguna are
+                _ = textInner  // both ported as of vmlx@344dda0.
+                // MXFP4 paths load via standard MLX
+                // dequant; JANGTQ Mistral 3 routes via
+                // Mistral3TextJANGTQModel /
+                // Mistral3VLMJANGTQ; Laguna MXFP4 via
+                // LagunaModel; Laguna JANGTQ port
+                // (LagunaJANGTQModel) is the next
+                // incremental piece — not blocking
+                // because the existing forward / inverse
+                // sidecar checks above still catch
+                // mislabeled bundles.
             }
         }
 
@@ -1442,7 +1442,7 @@ public actor ModelRuntime {
         let (tempURL, response) = try await URLSession.shared.download(for: request)
         defer { try? FileManager.default.removeItem(at: tempURL) }
 
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+        guard let http = response as? HTTPURLResponse, (200 ..< 300).contains(http.statusCode) else {
             let code = (response as? HTTPURLResponse)?.statusCode ?? -1
             throw NSError(
                 domain: "ModelRuntime",
@@ -1515,8 +1515,9 @@ public actor ModelRuntime {
         else { return false }
         let segments = id.split(separator: "/", omittingEmptySubsequences: false)
         guard segments.count == 2 else { return false }
-        let allowed = CharacterSet(charactersIn:
-            "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_."
+        let allowed = CharacterSet(
+            charactersIn:
+                "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_."
         )
         for seg in segments {
             let s = String(seg)
@@ -1535,8 +1536,7 @@ public actor ModelRuntime {
     /// global, and so each test's override is naturally scoped to its own
     /// task tree via `withValue { ... }`.
     @TaskLocal
-    static var sidecarFetcherForTests:
-        (@Sendable (_ url: URL, _ dest: URL) async throws -> Void)? = nil
+    static var sidecarFetcherForTests: (@Sendable (_ url: URL, _ dest: URL) async throws -> Void)? = nil
 
     /// Pure, testable sibling of `findLocalDirectory` that takes the root
     /// explicitly. Exposed at module scope so the symlink-resolution

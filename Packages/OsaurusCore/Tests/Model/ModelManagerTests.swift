@@ -104,10 +104,12 @@ struct ModelManagerTests {
         // 3-level under jangq-ai (HF-style: <root>/jangq-ai/<org>/<repo>)
         try makeBundle(
             jangqai.appendingPathComponent("JANGQ-AI")
-                .appendingPathComponent("Laguna-XS.2-JANGTQ"))
+                .appendingPathComponent("Laguna-XS.2-JANGTQ")
+        )
         try makeBundle(
             jangqai.appendingPathComponent("OsaurusAI")
-                .appendingPathComponent("Mistral-Medium-3.5-128B-mxfp4"))
+                .appendingPathComponent("Mistral-Medium-3.5-128B-mxfp4")
+        )
 
         let detected = ModelManager.scanLocalModels(at: root)
         let ids = Set(detected.map { $0.id })

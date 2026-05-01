@@ -149,7 +149,9 @@ private func makeBundle(weightFormatRaw: String?) throws -> URL {
 
         try await ModelRuntime.$sidecarFetcherForTests.withValue(fetcher) {
             try await ModelRuntime.ensureJANGTQSidecar(
-                at: dir, modelId: "OsaurusAI/Foo", name: "Foo"
+                at: dir,
+                modelId: "OsaurusAI/Foo",
+                name: "Foo"
             )
         }
 
@@ -178,7 +180,9 @@ private func makeBundle(weightFormatRaw: String?) throws -> URL {
 
         try await ModelRuntime.$sidecarFetcherForTests.withValue(fetcher) {
             try await ModelRuntime.ensureJANGTQSidecar(
-                at: dir, modelId: "OsaurusAI/Foo", name: "Foo"
+                at: dir,
+                modelId: "OsaurusAI/Foo",
+                name: "Foo"
             )
         }
 
@@ -197,7 +201,7 @@ struct HFRepoCandidatesTests {
         #expect(
             ModelRuntime.jangtqHFRepoCandidates(for: "OsaurusAI/Foo")
                 == [
-                    "OsaurusAI/Foo",            // verbatim
+                    "OsaurusAI/Foo",  // verbatim
                     "JANGQ-AI/Foo",
                     "mlx-community/Foo",
                 ]
@@ -222,12 +226,14 @@ struct HFRepoCandidatesTests {
         )
         // Verbatim (lowercased) attempt first, then canonical-cased
         // fallbacks for the basename.
-        #expect(cands == [
-            "jangq-ai/MiniMax-M2.7-Small-JANGTQ",         // verbatim — may 401
-            "OsaurusAI/MiniMax-M2.7-Small-JANGTQ",        // recovers!
-            "JANGQ-AI/MiniMax-M2.7-Small-JANGTQ",
-            "mlx-community/MiniMax-M2.7-Small-JANGTQ",
-        ])
+        #expect(
+            cands == [
+                "jangq-ai/MiniMax-M2.7-Small-JANGTQ",  // verbatim — may 401
+                "OsaurusAI/MiniMax-M2.7-Small-JANGTQ",  // recovers!
+                "JANGQ-AI/MiniMax-M2.7-Small-JANGTQ",
+                "mlx-community/MiniMax-M2.7-Small-JANGTQ",
+            ]
+        )
     }
 
     /// Flat-layout dir name → no verbatim try (no slash); fallbacks only.
@@ -235,11 +241,13 @@ struct HFRepoCandidatesTests {
         let cands = ModelRuntime.jangtqHFRepoCandidates(for: "MiniMax-M2.7-Small-JANGTQ")
         // OsaurusAI first (curated, most likely hit), then JANGQ-AI,
         // then mlx-community.
-        #expect(cands == [
-            "OsaurusAI/MiniMax-M2.7-Small-JANGTQ",
-            "JANGQ-AI/MiniMax-M2.7-Small-JANGTQ",
-            "mlx-community/MiniMax-M2.7-Small-JANGTQ",
-        ])
+        #expect(
+            cands == [
+                "OsaurusAI/MiniMax-M2.7-Small-JANGTQ",
+                "JANGQ-AI/MiniMax-M2.7-Small-JANGTQ",
+                "mlx-community/MiniMax-M2.7-Small-JANGTQ",
+            ]
+        )
     }
 
     /// Real bundle names that ship under OsaurusAI must round-trip through
@@ -263,17 +271,25 @@ struct HFRepoCandidatesTests {
     ])
     func realBundleNamesProduceOsaurusAICandidate(_ flatName: String) {
         let cands = ModelRuntime.jangtqHFRepoCandidates(for: flatName)
-        #expect(cands.contains("OsaurusAI/\(flatName)"),
-            "OsaurusAI/\(flatName) must be in the fallback list")
-        #expect(cands.contains("JANGQ-AI/\(flatName)"),
-            "JANGQ-AI/\(flatName) must be in the fallback list")
-        #expect(cands.contains("mlx-community/\(flatName)"),
-            "mlx-community/\(flatName) must be in the fallback list")
+        #expect(
+            cands.contains("OsaurusAI/\(flatName)"),
+            "OsaurusAI/\(flatName) must be in the fallback list"
+        )
+        #expect(
+            cands.contains("JANGQ-AI/\(flatName)"),
+            "JANGQ-AI/\(flatName) must be in the fallback list"
+        )
+        #expect(
+            cands.contains("mlx-community/\(flatName)"),
+            "mlx-community/\(flatName) must be in the fallback list"
+        )
         // All candidates must independently pass the strict id gate so
         // the URL builder produces a clean huggingface.co URL.
         for c in cands {
-            #expect(ModelRuntime.isValidHFRepoId(c),
-                "\(c) must satisfy isValidHFRepoId")
+            #expect(
+                ModelRuntime.isValidHFRepoId(c),
+                "\(c) must satisfy isValidHFRepoId"
+            )
         }
     }
 
@@ -331,13 +347,18 @@ struct OsaurusOrgAutoFetchTests {
                 try Data("real-osaurus-ai-sidecar".utf8).write(to: dest)
                 return
             }
-            throw NSError(domain: "ModelRuntime", code: 5,
-                userInfo: [NSLocalizedDescriptionKey: "HTTP 404"])
+            throw NSError(
+                domain: "ModelRuntime",
+                code: 5,
+                userInfo: [NSLocalizedDescriptionKey: "HTTP 404"]
+            )
         }
 
         try await ModelRuntime.$sidecarFetcherForTests.withValue(fetcher) {
             try await ModelRuntime.ensureJANGTQSidecar(
-                at: dir, modelId: "Nemotron-3-Nano-Omni-30B-A3B-JANGTQ4", name: "Nemotron"
+                at: dir,
+                modelId: "Nemotron-3-Nano-Omni-30B-A3B-JANGTQ4",
+                name: "Nemotron"
             )
         }
 
@@ -371,7 +392,8 @@ struct OsaurusOrgAutoFetchTests {
 
         try await ModelRuntime.$sidecarFetcherForTests.withValue(fetcher) {
             try await ModelRuntime.ensureJANGTQSidecar(
-                at: dir, modelId: "OsaurusAI/Holo3-35B-A3B-JANGTQ",
+                at: dir,
+                modelId: "OsaurusAI/Holo3-35B-A3B-JANGTQ",
                 name: "Holo3"
             )
         }
@@ -391,15 +413,20 @@ struct OsaurusOrgAutoFetchTests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let fetcher: @Sendable (URL, URL) async throws -> Void = { _, _ in
-            throw NSError(domain: "ModelRuntime", code: 5,
-                userInfo: [NSLocalizedDescriptionKey: "HTTP 404"])
+            throw NSError(
+                domain: "ModelRuntime",
+                code: 5,
+                userInfo: [NSLocalizedDescriptionKey: "HTTP 404"]
+            )
         }
 
         var threw: NSError?
         do {
             try await ModelRuntime.$sidecarFetcherForTests.withValue(fetcher) {
                 try await ModelRuntime.ensureJANGTQSidecar(
-                    at: dir, modelId: "Some-Lost-Bundle", name: "Lost"
+                    at: dir,
+                    modelId: "Some-Lost-Bundle",
+                    name: "Lost"
                 )
             }
         } catch let e as NSError {
@@ -425,20 +452,20 @@ struct OsaurusOrgAutoFetchTests {
     /// through the org fallback list — that path is covered separately
     /// in `OsaurusOrgAutoFetchTests`.)
     @Test(arguments: [
-        "",            // empty
-        "/",           // bare slash
-        "/foo",        // leading slash, not flat
-        "foo/",        // trailing slash, not flat
-        "a/b/c",       // too many slashes
-        "a//b",        // empty middle segment
-        "a b/c",       // whitespace
+        "",  // empty
+        "/",  // bare slash
+        "/foo",  // leading slash, not flat
+        "foo/",  // trailing slash, not flat
+        "a/b/c",  // too many slashes
+        "a//b",  // empty middle segment
+        "a b/c",  // whitespace
         "a/b?evil=1",  // URL meta
-        "a/b#frag",    // fragment
-        "a/../b",      // path traversal
-        "ä/b",         // non-ASCII (slash-form)
-        "Bad Name",    // flat with whitespace
-        "name?evil",   // flat with URL meta
-        "ä-name",      // flat with non-ASCII
+        "a/b#frag",  // fragment
+        "a/../b",  // path traversal
+        "ä/b",  // non-ASCII (slash-form)
+        "Bad Name",  // flat with whitespace
+        "name?evil",  // flat with URL meta
+        "ä-name",  // flat with non-ASCII
     ])
     func malformedIdsDoNotTriggerFetcher(_ id: String) async throws {
         let dir = try makeMxtqBundle()
@@ -458,7 +485,9 @@ struct OsaurusOrgAutoFetchTests {
         do {
             try await ModelRuntime.$sidecarFetcherForTests.withValue(fetcher) {
                 try await ModelRuntime.ensureJANGTQSidecar(
-                    at: dir, modelId: id, name: "Foo"
+                    at: dir,
+                    modelId: id,
+                    name: "Foo"
                 )
             }
         } catch let e as NSError {
@@ -486,7 +515,9 @@ struct OsaurusOrgAutoFetchTests {
 
         try await ModelRuntime.$sidecarFetcherForTests.withValue(fetcher) {
             try await ModelRuntime.ensureJANGTQSidecar(
-                at: dir, modelId: "OsaurusAI/Foo", name: "Foo"
+                at: dir,
+                modelId: "OsaurusAI/Foo",
+                name: "Foo"
             )
         }
 

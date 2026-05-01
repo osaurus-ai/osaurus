@@ -31,13 +31,13 @@ struct GenerationDefaultsMultiTurnTests {
     /// sampling settings turn-to-turn.
     @Test func sameModelMultiTurnReturnsIdenticalDefaults() {
         let json = #"""
-        {
-          "temperature": 0.6,
-          "top_p": 0.9,
-          "top_k": 40,
-          "repetition_penalty": 1.05
-        }
-        """#
+            {
+              "temperature": 0.6,
+              "top_p": 0.9,
+              "top_k": 40,
+              "repetition_penalty": 1.05
+            }
+            """#
         let data = json.data(using: .utf8)!
 
         let r1 = LocalGenerationDefaults.parse(data: data)
@@ -55,32 +55,36 @@ struct GenerationDefaultsMultiTurnTests {
     /// must be stable across N invocations (multi-turn safety).
     @Test func jangPrimaryHFFallbackMergeStableAcrossTurns() {
         let jangData = #"""
-        {
-          "chat": {
-            "sampling_defaults": {
-              "temperature": 0.6
+            {
+              "chat": {
+                "sampling_defaults": {
+                  "temperature": 0.6
+                }
+              }
             }
-          }
-        }
-        """#.data(using: .utf8)!
+            """#.data(using: .utf8)!
         let hfData = #"""
-        {
-          "temperature": 1.0,
-          "top_p": 0.95,
-          "top_k": 50
-        }
-        """#.data(using: .utf8)!
+            {
+              "temperature": 1.0,
+              "top_p": 0.95,
+              "top_k": 50
+            }
+            """#.data(using: .utf8)!
 
-        for i in 1...5 {
+        for i in 1 ... 5 {
             let jang = LocalGenerationDefaults.parseJangConfig(data: jangData)
             let hf = LocalGenerationDefaults.parse(data: hfData)
             let merged = LocalGenerationDefaults.merge(primary: jang, fallback: hf)
-            #expect(merged.temperature == 0.6,
-                "turn \(i): jang primary temp must win over HF fallback")
+            #expect(
+                merged.temperature == 0.6,
+                "turn \(i): jang primary temp must win over HF fallback"
+            )
             #expect(merged.topP == 0.95, "turn \(i): topP fills from HF")
             #expect(merged.topK == 50, "turn \(i): topK fills from HF")
-            #expect(merged.repetitionPenalty == nil,
-                "turn \(i): unset field stays nil, no synthetic value")
+            #expect(
+                merged.repetitionPenalty == nil,
+                "turn \(i): unset field stays nil, no synthetic value"
+            )
         }
     }
 
@@ -91,8 +95,8 @@ struct GenerationDefaultsMultiTurnTests {
     /// so the model's sampling is deterministic for identical prompts.
     @Test func repetitionPenaltyExactlyOneIsRecognised() {
         let data = #"""
-        { "temperature": 0.6, "repetition_penalty": 1.0 }
-        """#.data(using: .utf8)!
+            { "temperature": 0.6, "repetition_penalty": 1.0 }
+            """#.data(using: .utf8)!
         let r = LocalGenerationDefaults.parse(data: data)
         #expect(r.repetitionPenalty == 1.0)
         // NOTE: the engine treats penalty=1.0 as no-op (cf8c525 in vmlx).
@@ -105,11 +109,11 @@ struct GenerationDefaultsMultiTurnTests {
     /// same model, parse results must be deterministic.
     @Test func concurrentParseIsDeterministic() async {
         let data = #"""
-        { "temperature": 0.7, "top_p": 0.95, "top_k": 64 }
-        """#.data(using: .utf8)!
+            { "temperature": 0.7, "top_p": 0.95, "top_k": 64 }
+            """#.data(using: .utf8)!
 
         await withTaskGroup(of: LocalGenerationDefaults.Defaults.self) { group in
-            for _ in 0..<32 {
+            for _ in 0 ..< 32 {
                 group.addTask {
                     LocalGenerationDefaults.parse(data: data)
                 }
@@ -118,8 +122,10 @@ struct GenerationDefaultsMultiTurnTests {
             for await r in group {
                 seen.insert("\(r.temperature ?? -1)/\(r.topP ?? -1)/\(r.topK ?? -1)")
             }
-            #expect(seen.count == 1,
-                "32 concurrent parses must yield identical results, got \(seen.count) variants")
+            #expect(
+                seen.count == 1,
+                "32 concurrent parses must yield identical results, got \(seen.count) variants"
+            )
         }
     }
 }
@@ -145,10 +151,14 @@ struct MultiTurnHistoryToolSkillFilterTests {
 
         #expect(history.count == 2)
         let prompt = history.compactMap { $0.content }.joined(separator: "\n")
-        #expect(!prompt.contains("web_search"),
-            "pending tool name from aborted turn must not leak into prompt")
-        #expect(!prompt.contains("partial args"),
-            "buffered tool args from aborted turn must not leak")
+        #expect(
+            !prompt.contains("web_search"),
+            "pending tool name from aborted turn must not leak into prompt"
+        )
+        #expect(
+            !prompt.contains("partial args"),
+            "buffered tool args from aborted turn must not leak"
+        )
     }
 
     /// Completed tool exchange (assistant → tool → assistant) — the entire
@@ -160,10 +170,13 @@ struct MultiTurnHistoryToolSkillFilterTests {
         let q1 = ChatTurn(role: .user, content: "what time is it in Tokyo")
         let assistant1 = ChatTurn(role: .assistant, content: "")
         let toolCall = ToolCall(
-            id: "call_abc", type: "function",
+            id: "call_abc",
+            type: "function",
             function: ToolCallFunction(
                 name: "get_time",
-                arguments: #"{"city":"Tokyo"}"#))
+                arguments: #"{"city":"Tokyo"}"#
+            )
+        )
         assistant1.toolCalls = [toolCall]
         let toolResult = ChatTurn(role: .tool, content: "14:23 JST")
         toolResult.toolCallId = "call_abc"
@@ -192,8 +205,10 @@ struct MultiTurnHistoryToolSkillFilterTests {
         let q1 = ChatTurn(role: .user, content: "weather in NYC")
         let assistant1 = ChatTurn(role: .assistant, content: "")
         let call = ToolCall(
-            id: "c1", type: "function",
-            function: ToolCallFunction(name: "weather", arguments: #"{"city":"NYC"}"#))
+            id: "c1",
+            type: "function",
+            function: ToolCallFunction(name: "weather", arguments: #"{"city":"NYC"}"#)
+        )
         assistant1.toolCalls = [call]
         let toolResult = ChatTurn(role: .tool, content: "72°F sunny")
         toolResult.toolCallId = "c1"
@@ -202,7 +217,7 @@ struct MultiTurnHistoryToolSkillFilterTests {
         let q2 = ChatTurn(role: .user, content: "what about humidity?")
 
         let history: [ChatMessage] = [
-            q1, assistant1, toolResult, assistant2_partial, q2
+            q1, assistant1, toolResult, assistant2_partial, q2,
         ].compactMap { t in
             guard t.role == .user, !t.contentIsEmpty else { return nil }
             return ChatMessage(role: "user", content: t.content)
@@ -212,13 +227,17 @@ struct MultiTurnHistoryToolSkillFilterTests {
         #expect(history[0].content == "weather in NYC")
         #expect(history[1].content == "what about humidity?")
         let prompt = history.compactMap { $0.content }.joined(separator: "\n")
-        #expect(!prompt.contains("72°"),
-            "partial post-tool content from aborted turn must not leak")
+        #expect(
+            !prompt.contains("72°"),
+            "partial post-tool content from aborted turn must not leak"
+        )
         // The token "weather" naturally appears in the user's own
         // question — that's expected. What we're verifying is that the
         // assistant's tool-call name / tool result text never appears.
-        #expect(!prompt.contains("It's currently"),
-            "partial post-tool answer text must not leak")
+        #expect(
+            !prompt.contains("It's currently"),
+            "partial post-tool answer text must not leak"
+        )
     }
 
     /// Multi-turn skill-toggle: user enables a skill on turn 1, asks Q1,

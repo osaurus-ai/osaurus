@@ -42,7 +42,8 @@ struct ValidateJANGTQUnsupportedFamilyTests {
         if let weightFormat {
             let jc = ["weight_format": weightFormat]
             try JSONSerialization.data(withJSONObject: jc).write(
-                to: dir.appendingPathComponent("jang_config.json"))
+                to: dir.appendingPathComponent("jang_config.json")
+            )
         }
         if let modelType {
             var c: [String: Any] = ["model_type": modelType]
@@ -53,11 +54,13 @@ struct ValidateJANGTQUnsupportedFamilyTests {
                 c["vision_config"] = ["model_type": "pixtral"] as [String: Any]
             }
             try JSONSerialization.data(withJSONObject: c).write(
-                to: dir.appendingPathComponent("config.json"))
+                to: dir.appendingPathComponent("config.json")
+            )
         }
         if sidecarPresent {
             try Data([0x00, 0x01]).write(
-                to: dir.appendingPathComponent("jangtq_runtime.safetensors"))
+                to: dir.appendingPathComponent("jangtq_runtime.safetensors")
+            )
         }
         return dir
     }
@@ -71,7 +74,10 @@ struct ValidateJANGTQUnsupportedFamilyTests {
     @Test("D1 F: no jang_config → preflight returns silently")
     func d1_noJangConfig_silent() throws {
         let dir = try makeBundle(
-            weightFormat: nil, modelType: "mistral3", sidecarPresent: false)
+            weightFormat: nil,
+            modelType: "mistral3",
+            sidecarPresent: false
+        )
         defer { cleanup(dir) }
         // No throw expected — non-JANG bundles bypass all checks.
         try ModelRuntime.validateJANGTQSidecarIfRequired(at: dir, name: "test")
@@ -83,7 +89,10 @@ struct ValidateJANGTQUnsupportedFamilyTests {
         // gate because weight_format is "mxfp4", not "mxtq". MXFP4 path
         // works via standard mlx_lm dequant for Mistral 3 family.
         let dir = try makeBundle(
-            weightFormat: "mxfp4", modelType: "mistral3", sidecarPresent: false)
+            weightFormat: "mxfp4",
+            modelType: "mistral3",
+            sidecarPresent: false
+        )
         defer { cleanup(dir) }
         try ModelRuntime.validateJANGTQSidecarIfRequired(at: dir, name: "test")
     }
@@ -96,11 +105,16 @@ struct ValidateJANGTQUnsupportedFamilyTests {
     @Test("D3.mistral3 outer JANGTQ + no vision → PASSES (LLM port complete)")
     func d3_mistral3OuterNoVision_passes() throws {
         let dir = try makeBundle(
-            weightFormat: "mxtq", modelType: "mistral3", sidecarPresent: true)
+            weightFormat: "mxtq",
+            modelType: "mistral3",
+            sidecarPresent: true
+        )
         defer { cleanup(dir) }
         // No throw expected — Mistral 3 LLM JANGTQ now supported.
         try ModelRuntime.validateJANGTQSidecarIfRequired(
-            at: dir, name: "Mistral-7B-JANGTQ2")
+            at: dir,
+            name: "Mistral-7B-JANGTQ2"
+        )
     }
 
     /// Post vmlx@7fa4940 (Mistral 3 family VLM JANGTQ port complete):
@@ -112,10 +126,13 @@ struct ValidateJANGTQUnsupportedFamilyTests {
             weightFormat: "mxtq",
             modelType: "mistral3",
             sidecarPresent: true,
-            visionConfigPresent: true)
+            visionConfigPresent: true
+        )
         defer { cleanup(dir) }
         try ModelRuntime.validateJANGTQSidecarIfRequired(
-            at: dir, name: "Mistral-Medium-3.5-128B-JANGTQ2")
+            at: dir,
+            name: "Mistral-Medium-3.5-128B-JANGTQ2"
+        )
     }
 
     @Test("D3.ministral3 inner LLM-only → PASSES (LLM port complete)")
@@ -124,11 +141,14 @@ struct ValidateJANGTQUnsupportedFamilyTests {
             weightFormat: "mxtq",
             modelType: "mistral3",
             textInner: "ministral3",
-            sidecarPresent: true)
+            sidecarPresent: true
+        )
         defer { cleanup(dir) }
         // No vision_config → LLM path → JANGTQ supported.
         try ModelRuntime.validateJANGTQSidecarIfRequired(
-            at: dir, name: "Ministral-3-Inner-LLM-JANGTQ2")
+            at: dir,
+            name: "Ministral-3-Inner-LLM-JANGTQ2"
+        )
     }
 
     @Test("D3.ministral3 inner + vision_config → PASSES (VLM port complete)")
@@ -138,10 +158,13 @@ struct ValidateJANGTQUnsupportedFamilyTests {
             modelType: "mistral3",
             textInner: "ministral3",
             sidecarPresent: true,
-            visionConfigPresent: true)
+            visionConfigPresent: true
+        )
         defer { cleanup(dir) }
         try ModelRuntime.validateJANGTQSidecarIfRequired(
-            at: dir, name: "Mistral-Medium-3.5-128B-JANGTQ2")
+            at: dir,
+            name: "Mistral-Medium-3.5-128B-JANGTQ2"
+        )
     }
 
     /// Post vmlx@344dda0 (Laguna LLM engine class shipped):
@@ -154,11 +177,16 @@ struct ValidateJANGTQUnsupportedFamilyTests {
     @Test("D3.laguna outer JANGTQ → no longer family-gated (engine class shipped)")
     func d3_laguna_unblocked() throws {
         let dir = try makeBundle(
-            weightFormat: "mxtq", modelType: "laguna", sidecarPresent: true)
+            weightFormat: "mxtq",
+            modelType: "laguna",
+            sidecarPresent: true
+        )
         defer { cleanup(dir) }
         // No throw expected — gate dropped.
         try ModelRuntime.validateJANGTQSidecarIfRequired(
-            at: dir, name: "Laguna-XS.2-JANGTQ2")
+            at: dir,
+            name: "Laguna-XS.2-JANGTQ2"
+        )
     }
 
     // MARK: - Boundary: supported JANGTQ families must NOT trigger the new check
@@ -168,29 +196,44 @@ struct ValidateJANGTQUnsupportedFamilyTests {
         // NemotronHJANGTQModel exists; this must NOT throw the new code-4 error.
         // Sidecar IS present, weight_format IS mxtq, but model_type is supported.
         let dir = try makeBundle(
-            weightFormat: "mxtq", modelType: "nemotron_h", sidecarPresent: true)
+            weightFormat: "mxtq",
+            modelType: "nemotron_h",
+            sidecarPresent: true
+        )
         defer { cleanup(dir) }
         // No throw expected — preflight passes through to vmlx loader.
         try ModelRuntime.validateJANGTQSidecarIfRequired(
-            at: dir, name: "Nemotron-3-Nano-Omni-30B-A3B-JANGTQ4")
+            at: dir,
+            name: "Nemotron-3-Nano-Omni-30B-A3B-JANGTQ4"
+        )
     }
 
     @Test("qwen3_5_moe JANGTQ does NOT trigger pending-family error")
     func boundary_qwen35moe_passes() throws {
         let dir = try makeBundle(
-            weightFormat: "mxtq", modelType: "qwen3_5_moe", sidecarPresent: true)
+            weightFormat: "mxtq",
+            modelType: "qwen3_5_moe",
+            sidecarPresent: true
+        )
         defer { cleanup(dir) }
         try ModelRuntime.validateJANGTQSidecarIfRequired(
-            at: dir, name: "Qwen3.6-35B-A3B-JANGTQ")
+            at: dir,
+            name: "Qwen3.6-35B-A3B-JANGTQ"
+        )
     }
 
     @Test("minimax_m2 JANGTQ does NOT trigger pending-family error")
     func boundary_minimax_passes() throws {
         let dir = try makeBundle(
-            weightFormat: "mxtq", modelType: "minimax_m2", sidecarPresent: true)
+            weightFormat: "mxtq",
+            modelType: "minimax_m2",
+            sidecarPresent: true
+        )
         defer { cleanup(dir) }
         try ModelRuntime.validateJANGTQSidecarIfRequired(
-            at: dir, name: "MiniMax-M2.7-JANGTQ")
+            at: dir,
+            name: "MiniMax-M2.7-JANGTQ"
+        )
     }
 
     @Test("Mistral 3 family MXFP4 does NOT trigger (only mxtq fires the new check)")
@@ -198,9 +241,14 @@ struct ValidateJANGTQUnsupportedFamilyTests {
         // The friendly path for Mistral 3 family — load via MXFP4 instead of
         // JANGTQ. Must pass cleanly.
         let dir = try makeBundle(
-            weightFormat: "mxfp4", modelType: "mistral3", sidecarPresent: false)
+            weightFormat: "mxfp4",
+            modelType: "mistral3",
+            sidecarPresent: false
+        )
         defer { cleanup(dir) }
         try ModelRuntime.validateJANGTQSidecarIfRequired(
-            at: dir, name: "Mistral-Medium-3.5-128B-mxfp4")
+            at: dir,
+            name: "Mistral-Medium-3.5-128B-mxfp4"
+        )
     }
 }

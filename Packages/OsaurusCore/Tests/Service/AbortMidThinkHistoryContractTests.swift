@@ -54,12 +54,18 @@ struct AbortMidThinkHistoryContractTests {
         #expect(history.allSatisfy { $0.role == "user" }, "no assistant turn in history")
 
         let combined = history.map { $0.content ?? "" }.joined(separator: "\n")
-        #expect(!combined.contains("<think>"),
-            "no <think> opener may leak into the prompt")
-        #expect(!combined.contains("</think>"),
-            "no </think> closer may leak into the prompt")
-        #expect(!combined.contains(t1Assistant.thinking),
-            "the partial thinking text must not appear in the prompt at all")
+        #expect(
+            !combined.contains("<think>"),
+            "no <think> opener may leak into the prompt"
+        )
+        #expect(
+            !combined.contains("</think>"),
+            "no </think> closer may leak into the prompt"
+        )
+        #expect(
+            !combined.contains(t1Assistant.thinking),
+            "the partial thinking text must not appear in the prompt at all"
+        )
     }
 
     /// Aborted in CONTENT mode (not reasoning) — content has visible
@@ -73,8 +79,10 @@ struct AbortMidThinkHistoryContractTests {
         let history = buildPriorUserMessages([t1User, t1Assistant, t2User])
         #expect(history.count == 2)
         let combined = history.map { $0.content ?? "" }.joined(separator: "\n")
-        #expect(!combined.contains("first fact"),
-            "partial assistant content must not leak as user content")
+        #expect(
+            !combined.contains("first fact"),
+            "partial assistant content must not leak as user content"
+        )
     }
 
     /// Multiple back-to-back aborts: T1, T2, T3 user; T1 assistant aborted
@@ -131,7 +139,8 @@ struct AbortMidThinkHistoryContractTests {
     @Test func minimaxStopMidThinkContinueScenario() {
         let q1 = ChatTurn(
             role: .user,
-            content: "Explain how MoE routing works step by step.")
+            content: "Explain how MoE routing works step by step."
+        )
         let aborted = ChatTurn(role: .assistant, content: "")
         // Simulate ~200 chars of buffered reasoning when stop hit.
         aborted.thinking = String(repeating: "Routing in MoE means... ", count: 12)

@@ -114,8 +114,8 @@ struct CapabilityFromModelIdTests {
         "JANGQ-AI/DeepSeek-V4-Flash-JANGTQ2",
         "JANGQ-AI/Kimi-K2.6-Med-JANGTQ",
         "JANGQ-AI/Kimi-K2.6-Small-JANGTQ",
-        "JANGQ-AI/Qwen3.5-35B-A3B-JANG_4K",        // text-only Qwen3.5 (no `vl`)
-        "JANGQ-AI/Qwen3.6-35B-A3B-JANGTQ4",        // text-only Qwen3.6
+        "JANGQ-AI/Qwen3.5-35B-A3B-JANG_4K",  // text-only Qwen3.5 (no `vl`)
+        "JANGQ-AI/Qwen3.6-35B-A3B-JANGTQ4",  // text-only Qwen3.6
         // NOTE: Mistral 3 / 3.5 LLM-only bundles can't be disambiguated
         // from VLM bundles by id alone (both ship with `mistral-medium-3.5`
         // in the name); the `from(directory:modelId:)` post-load path
@@ -181,7 +181,8 @@ struct CapabilityFromDirectoryTests {
         let dir = try makeBundle(
             modelType: "nemotron_h",  // base text type
             hasVisionConfig: false,
-            hasOmniSidecar: true)
+            hasOmniSidecar: true
+        )
         defer { try? FileManager.default.removeItem(at: dir) }
         let cap = ModelMediaCapabilities.from(directory: dir, modelId: "Nemotron-Whatever")
         #expect(cap == .omni, "config_omni.json must resolve to omni")
@@ -216,8 +217,10 @@ struct CapabilityFromDirectoryTests {
         // smolvlm2 isn't in the explicit allowlist for imageVideo, only
         // bare "smolvlm" is. Document that explicitly.
         if modelType == "smolvlm2" {
-            #expect(cap == .imageOnly,
-                "smolvlm2 has vision_config but not in video allowlist → imageOnly")
+            #expect(
+                cap == .imageOnly,
+                "smolvlm2 has vision_config but not in video allowlist → imageOnly"
+            )
         } else {
             #expect(cap == .imageOnly, "[\(modelType)] should resolve to imageOnly")
         }
@@ -246,7 +249,8 @@ struct CapabilityFromDirectoryTests {
         // No config.json present.
         let cap = ModelMediaCapabilities.from(
             directory: dir,
-            modelId: "OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-MXFP4")
+            modelId: "OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-MXFP4"
+        )
         #expect(cap == .omni, "missing config.json must fall back to model_id matcher")
     }
 }
@@ -264,18 +268,20 @@ struct MultiTurnModelSwitchTests {
     @Test func threeTurnAlternatingModelSwitch() {
         let ids = [
             "OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-MXFP4",  // omni
-            "JANGQ-AI/Laguna-XS.2-JANGTQ",                   // text-only
-            "Qwen/Qwen3-VL-8B",                              // imageVideo
-            "JANGQ-AI/MiniMax-M2.7-Small-JANGTQ",            // text-only
-            "OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-JANGTQ4", // omni again
+            "JANGQ-AI/Laguna-XS.2-JANGTQ",  // text-only
+            "Qwen/Qwen3-VL-8B",  // imageVideo
+            "JANGQ-AI/MiniMax-M2.7-Small-JANGTQ",  // text-only
+            "OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-JANGTQ4",  // omni again
         ]
         let expected: [ModelMediaCapabilities.Capabilities] = [
             .omni, .textOnly, .imageVideo, .textOnly, .omni,
         ]
         for (i, id) in ids.enumerated() {
             let cap = ModelMediaCapabilities.from(modelId: id)
-            #expect(cap == expected[i],
-                "turn \(i): [\(id)] expected \(expected[i].summary), got \(cap.summary)")
+            #expect(
+                cap == expected[i],
+                "turn \(i): [\(id)] expected \(expected[i].summary), got \(cap.summary)"
+            )
         }
     }
 
@@ -322,14 +328,17 @@ struct DragDropAcceptMatrixTests {
         let cap = ModelMediaCapabilities.from(modelId: "Qwen/Qwen3-VL-8B")
         #expect(cap.supportsImage)
         #expect(cap.supportsVideo)
-        #expect(!cap.supportsAudio,
-            "Qwen 3 VL has no audio path — audio drop must be rejected")
+        #expect(
+            !cap.supportsAudio,
+            "Qwen 3 VL has no audio path — audio drop must be rejected"
+        )
     }
 
     /// Omni model → all three modalities accepted.
     @Test func omniAcceptsAll() {
         let cap = ModelMediaCapabilities.from(
-            modelId: "OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-MXFP4")
+            modelId: "OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-MXFP4"
+        )
         #expect(cap.supportsImage)
         #expect(cap.supportsVideo)
         #expect(cap.supportsAudio)
@@ -343,26 +352,47 @@ struct DragDropAcceptMatrixTests {
         struct Turn { let modelId: String; let attempted: String; let shouldAccept: Bool }
         let turns: [Turn] = [
             // Turn 1: omni model + audio attachment → accept
-            .init(modelId: "OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-MXFP4",
-                  attempted: "audio", shouldAccept: true),
+            .init(
+                modelId: "OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-MXFP4",
+                attempted: "audio",
+                shouldAccept: true
+            ),
             // Turn 2: switch to Mistral 3 image-only + image → accept
-            .init(modelId: "OsaurusAI/Mistral-Medium-3.5-128B-mxfp4",
-                  attempted: "image", shouldAccept: true),
+            .init(
+                modelId: "OsaurusAI/Mistral-Medium-3.5-128B-mxfp4",
+                attempted: "image",
+                shouldAccept: true
+            ),
             // Turn 3: switch back to omni + video → accept
-            .init(modelId: "OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-JANGTQ4",
-                  attempted: "video", shouldAccept: true),
+            .init(
+                modelId: "OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-JANGTQ4",
+                attempted: "video",
+                shouldAccept: true
+            ),
             // Turn 4: switch to text-only Laguna + image → REJECT
-            .init(modelId: "JANGQ-AI/Laguna-XS.2-JANGTQ",
-                  attempted: "image", shouldAccept: false),
+            .init(
+                modelId: "JANGQ-AI/Laguna-XS.2-JANGTQ",
+                attempted: "image",
+                shouldAccept: false
+            ),
             // Turn 5: same Laguna + audio → REJECT
-            .init(modelId: "JANGQ-AI/Laguna-XS.2-JANGTQ",
-                  attempted: "audio", shouldAccept: false),
+            .init(
+                modelId: "JANGQ-AI/Laguna-XS.2-JANGTQ",
+                attempted: "audio",
+                shouldAccept: false
+            ),
             // Turn 6: switch to Mistral 3 + video → REJECT (image-only)
-            .init(modelId: "OsaurusAI/Mistral-Medium-3.5-128B-mxfp4",
-                  attempted: "video", shouldAccept: false),
+            .init(
+                modelId: "OsaurusAI/Mistral-Medium-3.5-128B-mxfp4",
+                attempted: "video",
+                shouldAccept: false
+            ),
             // Turn 7: switch to Mistral 3 + audio → REJECT
-            .init(modelId: "OsaurusAI/Mistral-Medium-3.5-128B-mxfp4",
-                  attempted: "audio", shouldAccept: false),
+            .init(
+                modelId: "OsaurusAI/Mistral-Medium-3.5-128B-mxfp4",
+                attempted: "audio",
+                shouldAccept: false
+            ),
         ]
         for (i, t) in turns.enumerated() {
             let cap = ModelMediaCapabilities.from(modelId: t.modelId)
@@ -374,8 +404,10 @@ struct DragDropAcceptMatrixTests {
                 default: return false
                 }
             }()
-            #expect(actual == t.shouldAccept,
-                "turn \(i): [\(t.modelId)] dropping \(t.attempted) — expected accept=\(t.shouldAccept), got accept=\(actual)")
+            #expect(
+                actual == t.shouldAccept,
+                "turn \(i): [\(t.modelId)] dropping \(t.attempted) — expected accept=\(t.shouldAccept), got accept=\(actual)"
+            )
         }
     }
 }
@@ -410,7 +442,7 @@ struct EndToEndComposerAcceptSetTests {
         ("HuggingFaceM4/Idefics3-8B", "audio", false),
         ("apple/FastVLM-7B", "image", true),
         ("mistral-community/pixtral-12b", "image", true),
-        ("OsaurusAI/Holo3-35B-A3B-mxfp4", "image", true),   // Holo3 has vision_config
+        ("OsaurusAI/Holo3-35B-A3B-mxfp4", "image", true),  // Holo3 has vision_config
         ("OsaurusAI/Holo3-35B-A3B-mxfp4", "video", true),
         ("OsaurusAI/Holo3-35B-A3B-mxfp4", "audio", false),  // image+video, no audio
         ("JANGQ-AI/Laguna-XS.2-JANGTQ", "image", false),
@@ -433,7 +465,9 @@ struct EndToEndComposerAcceptSetTests {
             default: return false
             }
         }()
-        #expect(actual == shouldAccept,
-            "[\(id)] \(modality): expected \(shouldAccept), got \(actual)")
+        #expect(
+            actual == shouldAccept,
+            "[\(id)] \(modality): expected \(shouldAccept), got \(actual)"
+        )
     }
 }
