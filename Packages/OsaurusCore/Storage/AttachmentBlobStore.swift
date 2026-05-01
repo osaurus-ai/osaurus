@@ -157,7 +157,45 @@ public enum AttachmentBlobStore {
                 return attachment
             }
 
-        case .imageRef, .documentRef:
+        case .audio(let data, let format, let filename):
+            // Audio uses its own threshold (256 KB) so chat-history JSON
+            // doesn't bloat with raw PCM. A 30 s wav at 16 kHz mono is
+            // ~960 KB → always spills. Tiny clips < 256 KB stay inline.
+            guard data.count >= Attachment.audioSpillThresholdBytes else { return attachment }
+            do {
+                let hash = try write(data)
+                return Attachment(
+                    id: attachment.id,
+                    kind: .audioRef(
+                        hash: hash, byteCount: data.count, format: format, filename: filename)
+                )
+            } catch {
+                log.warning(
+                    "audio spill failed; keeping inline (size=\(data.count)): \(error.localizedDescription)"
+                )
+                return attachment
+            }
+
+        case .video(let data, let filename):
+            // Video uses an aggressive 64 KB threshold — virtually all
+            // real attachments spill. Inline path only for in-memory
+            // request lifetime; persistence always goes through here.
+            guard data.count >= Attachment.videoSpillThresholdBytes else { return attachment }
+            do {
+                let hash = try write(data)
+                return Attachment(
+                    id: attachment.id,
+                    kind: .videoRef(
+                        hash: hash, byteCount: data.count, filename: filename)
+                )
+            } catch {
+                log.warning(
+                    "video spill failed; keeping inline (size=\(data.count)): \(error.localizedDescription)"
+                )
+                return attachment
+            }
+
+        case .imageRef, .documentRef, .audioRef, .videoRef:
             return attachment
         }
     }
@@ -172,7 +210,10 @@ public enum AttachmentBlobStore {
         for turn in turns {
             for attachment in turn.attachments {
                 switch attachment.kind {
-                case .imageRef(let hash, _), .documentRef(_, let hash, _):
+                case .imageRef(let hash, _),
+                     .documentRef(_, let hash, _),
+                     .audioRef(let hash, _, _, _),
+                     .videoRef(let hash, _, _):
                     refs.insert(hash)
                 default:
                     continue

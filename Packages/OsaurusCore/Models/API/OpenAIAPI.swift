@@ -400,6 +400,57 @@ extension ChatMessage {
         self.tool_calls = nil
         self.tool_call_id = nil
     }
+
+    /// Multimodal init covering image + audio + video. Used by the
+    /// chat composer when the loaded model's capabilities advertise the
+    /// modality. Audio bytes encode as `input_audio` with explicit
+    /// format hint; video bytes encode as `video_url` with
+    /// `data:video/<container>` URL. All three flow into the
+    /// OpenAI-compatible JSON shape that vmlx's
+    /// `mapOpenAIChatToMLX` materializes through
+    /// `extractAudioSources` / `extractVideoSources`.
+    init(
+        role: String,
+        text: String,
+        imageData: [Data],
+        audios: [(data: Data, format: String)],
+        videos: [(data: Data, mimeSubtype: String)]
+    ) {
+        self.role = role
+        var parts: [MessageContentPart] = []
+
+        if !text.isEmpty {
+            parts.append(.text(text))
+        }
+
+        for data in imageData {
+            let base64 = data.base64EncodedString()
+            parts.append(.imageUrl(url: "data:image/png;base64,\(base64)", detail: nil))
+        }
+
+        for (data, format) in audios {
+            // OpenAI audio shape: bare base64 string + format hint.
+            // The format string round-trips to vmlx's
+            // `materializeMediaDataUrl` audio canonicalization (mp4 → m4a
+            // for audio mime, NOT for video — audit fix locked in
+            // `MaterializeMediaDataUrlMCDCTests`).
+            parts.append(.audioInput(data: data.base64EncodedString(), format: format))
+        }
+
+        for (data, mimeSubtype) in videos {
+            // Video data URL with the container subtype (`mp4` / `mov` /
+            // `webm` / `quicktime`) so the materializer keeps the right
+            // file extension (NOT downgraded to .m4a — see audit fix).
+            let base64 = data.base64EncodedString()
+            parts.append(
+                .videoUrl(url: "data:video/\(mimeSubtype);base64,\(base64)"))
+        }
+
+        self.contentParts = parts.isEmpty ? nil : parts
+        self.content = text.isEmpty ? nil : text
+        self.tool_calls = nil
+        self.tool_call_id = nil
+    }
 }
 
 /// Chat completion request
