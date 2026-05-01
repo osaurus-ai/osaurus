@@ -26,7 +26,7 @@ let package = Package(
         // at runtime if needed for A/B testing.
         .package(
             url: "https://github.com/osaurus-ai/mlx-swift",
-            revision: "e0b61113f0190e3503ad9123bf4d4508248cd316"
+            revision: "0a56f9041d56b4b8161f67a6cbd540ae66efc9fd"
         ),
         // Pinned by commit (was `branch: "main"`) so the runtime can't change
         // under us between identical osaurus source revisions. Bump
@@ -111,10 +111,14 @@ let package = Package(
         // this pin via `ae49c7c` + `3b78db4`.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift-lm",
-            revision: "03b4441885e3aea9eea7bb1515ce43ef44e117ef"
+            revision: "de521c7c9ded41f033877aff06781981af06cd58"
         ),
         .package(url: "https://github.com/huggingface/swift-transformers", from: "1.1.6"),
-        .package(url: "https://github.com/FluidInference/FluidAudio.git", from: "0.14.0"),
+        // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
+        // calls that osaurus's `TTSService` doesn't pass. Pinning to the
+        // last working version until osaurus catches up. Bumping requires
+        // a paired osaurus-side TTSService update.
+        .package(url: "https://github.com/FluidInference/FluidAudio.git", "0.14.0" ..< "0.14.2"),
         // Pinned by commit (was `branch: "main"`) — same reasoning as
         // vmlx-swift-lm above.
         .package(
