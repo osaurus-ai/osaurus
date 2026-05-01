@@ -2739,6 +2739,31 @@ private struct ContextBreakdownPopover: View {
 
     private var budgetCap: Int { maxTokens ?? breakdown.total }
 
+    /// One-line italic notice rendered above the entry list when the
+    /// composer auto-disabled features for a small-context model.
+    /// `nil` collapses the row entirely so normal-sized models render
+    /// the same popover they always did.
+    private var autoDisableNotice: String? {
+        guard let info = breakdown.disable,
+            info.disabledTools || info.disabledMemory
+        else { return nil }
+        let modelLabel =
+            info.modelId.flatMap { id in
+                id.caseInsensitiveCompare("foundation") == .orderedSame
+                    || id.caseInsensitiveCompare("default") == .orderedSame
+                    ? "Foundation" : id
+            } ?? "this model"
+        let ctxBlurb = info.contextLength.map { "(~\(formatTokenCount($0)) ctx)" } ?? ""
+        let what: String
+        switch (info.disabledTools, info.disabledMemory) {
+        case (true, true): what = "Tools and memory"
+        case (true, false): what = "Tools"
+        case (false, true): what = "Memory"
+        case (false, false): return nil
+        }
+        return "\(what) auto-disabled — \(modelLabel) \(ctxBlurb) is too small."
+    }
+
     private func color(for tint: ContextBreakdown.Tint) -> Color {
         switch tint {
         case .purple: return theme.isDark ? Color(red: 0.68, green: 0.52, blue: 1.0) : .purple
@@ -2773,6 +2798,15 @@ private struct ContextBreakdownPopover: View {
             barChart
                 .padding(.horizontal, 12)
                 .padding(.bottom, 10)
+
+            if let notice = autoDisableNotice {
+                Text(notice)
+                    .font(.system(size: 10).italic())
+                    .foregroundColor(theme.tertiaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 10)
+            }
 
             if !breakdown.context.isEmpty {
                 divider

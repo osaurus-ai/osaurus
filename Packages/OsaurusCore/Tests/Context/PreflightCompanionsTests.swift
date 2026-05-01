@@ -236,4 +236,152 @@ struct PreflightCompanionsTests {
         #expect(renderedTool.contains("- `tool/y_alpha`"))
         #expect(renderedTool.contains("- `skill/") == false)
     }
+
+    // MARK: - rankSkillSuggestions
+
+    /// Helper: build a `SkillSearchResult` from a name + score, with
+    /// a default description and optional `pluginId` to mark the
+    /// skill as plugin-bundled.
+    private static func makeHit(
+        _ name: String,
+        score: Float,
+        pluginId: String? = nil
+    ) -> SkillSearchResult {
+        let skill = Skill(
+            id: UUID(),
+            name: name,
+            description: "desc for \(name)",
+            instructions: "body",
+            pluginId: pluginId
+        )
+        return SkillSearchResult(skill: skill, searchScore: score)
+    }
+
+    @Test func rankSkillSuggestionsCapsAtThree() {
+        // The whole point of this section is "compact preview" — five
+        // ranked hits must surface only the top 3. The cap is policy
+        // (`maxSkillSuggestions`), so we test the contract not the
+        // literal number.
+        let hits = (0 ..< 5).map { Self.makeHit("skill_\($0)", score: Float(10 - $0) / 10) }
+        let teasers = PreflightCompanions.rankSkillSuggestions(
+            from: hits,
+            alreadyLoadedSkillNames: []
+        )
+        #expect(teasers.count == PreflightCompanions.maxSkillSuggestions)
+        // Top 3 by descending score = skill_0..skill_2.
+        #expect(teasers.map(\.name) == ["skill_0", "skill_1", "skill_2"])
+    }
+
+    @Test func rankSkillSuggestionsExcludesPluginBundledSkills() {
+        // Plugin-bundled skills are surfaced via `derive(...)` when
+        // one of their plugin's tools is picked. Showing them twice
+        // (once as a companion, once as a suggestion) is noise; the
+        // post-search filter must drop them.
+        let hits = [
+            Self.makeHit("standalone-1", score: 0.9),
+            Self.makeHit("plugin-skill", score: 0.85, pluginId: "osaurus.browser"),
+            Self.makeHit("standalone-2", score: 0.8),
+        ]
+        let teasers = PreflightCompanions.rankSkillSuggestions(
+            from: hits,
+            alreadyLoadedSkillNames: []
+        )
+        #expect(teasers.map(\.name) == ["standalone-1", "standalone-2"])
+    }
+
+    @Test func rankSkillSuggestionsExcludesAlreadyLoadedSkills() {
+        // After the model calls `capabilities_load("skill/X")`, X
+        // shouldn't keep showing up as a fresh suggestion every turn —
+        // the loader already injected its full body. Callers thread
+        // the loaded names in via `alreadyLoadedSkillNames`.
+        let hits = [
+            Self.makeHit("alpha", score: 0.9),
+            Self.makeHit("beta", score: 0.8),
+            Self.makeHit("gamma", score: 0.7),
+        ]
+        let teasers = PreflightCompanions.rankSkillSuggestions(
+            from: hits,
+            alreadyLoadedSkillNames: ["beta"]
+        )
+        #expect(teasers.map(\.name) == ["alpha", "gamma"])
+    }
+
+    @Test func rankSkillSuggestionsTieBreaksAlphabetically() {
+        // KV-cache stability: when two skills tie on score the
+        // rendered prompt bytes must be identical across runs. The
+        // search service doesn't promise a tie-break order, so the
+        // rank step does it explicitly. Three skills on the same
+        // score must come back in name order.
+        let hits = [
+            Self.makeHit("zulu", score: 0.5),
+            Self.makeHit("alpha", score: 0.5),
+            Self.makeHit("mike", score: 0.5),
+        ]
+        let teasers = PreflightCompanions.rankSkillSuggestions(
+            from: hits,
+            alreadyLoadedSkillNames: []
+        )
+        #expect(teasers.map(\.name) == ["alpha", "mike", "zulu"])
+    }
+
+    @Test func rankSkillSuggestionsReturnsEmptyWhenNoStandaloneHits() {
+        // Pure plugin-bundled hit set -> nothing to suggest. Tests the
+        // guard that returns `[]` rather than rendering an empty section.
+        let hits = [
+            Self.makeHit("p1", score: 0.9, pluginId: "x"),
+            Self.makeHit("p2", score: 0.8, pluginId: "y"),
+        ]
+        let teasers = PreflightCompanions.rankSkillSuggestions(
+            from: hits,
+            alreadyLoadedSkillNames: []
+        )
+        #expect(teasers.isEmpty)
+    }
+
+    // MARK: - deriveSkillSuggestions short-circuits
+
+    @Test func deriveSkillSuggestionsReturnsEmptyForBlankQuery() async {
+        // No query -> no point hitting the search service. The
+        // composer wires this gate around preflight too; this test
+        // pins the same short-circuit at the function level so a
+        // future caller bypassing the gate doesn't fire a useless
+        // (and async) search call.
+        #expect(await PreflightCompanions.deriveSkillSuggestions(query: "").isEmpty)
+        #expect(await PreflightCompanions.deriveSkillSuggestions(query: "   \n\t  ").isEmpty)
+    }
+
+    // MARK: - renderSkillSuggestions
+
+    @Test func renderSkillSuggestionsReturnsNilForEmptyTeasers() {
+        // Empty teasers -> no section -> caller skips append. Same
+        // contract as `render([])` for `pluginCompanions`.
+        #expect(PreflightCompanions.renderSkillSuggestions([]) == nil)
+    }
+
+    @Test func renderSkillSuggestionsIncludesNameDescriptionAndLoaderNudge() {
+        let teasers = [
+            SkillTeaser(name: "data-viz", description: "Render charts inline"),
+            SkillTeaser(name: "code-review", description: "Catch obvious smells"),
+        ]
+        let rendered = PreflightCompanions.renderSkillSuggestions(teasers) ?? ""
+        // Name + description are surfaced in bullet rows so the model
+        // can decide whether the skill is worth loading.
+        #expect(rendered.contains("- `skill/data-viz`"))
+        #expect(rendered.contains("Render charts inline"))
+        #expect(rendered.contains("- `skill/code-review`"))
+        // Loader story is identical to plugin companions so the model
+        // doesn't see two different "how to load" sets.
+        #expect(rendered.contains("capabilities_load"))
+        #expect(rendered.lowercased().contains("one-shot"))
+    }
+
+    @Test func renderSkillSuggestionsHandlesEmptyDescriptionGracefully() {
+        // Some skills (especially user-imports) ship without a
+        // description. The teaser must still render with a stable
+        // placeholder rather than a dangling `— ` after the name.
+        let teasers = [SkillTeaser(name: "no-desc", description: "")]
+        let rendered = PreflightCompanions.renderSkillSuggestions(teasers) ?? ""
+        #expect(rendered.contains("- `skill/no-desc`"))
+        #expect(rendered.contains("(no description)"))
+    }
 }

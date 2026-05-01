@@ -158,4 +158,9 @@ struct ComposedContext: Sendable {
     /// The prefix cache should be built from this content (not the full prompt)
     /// so the cached KV exactly matches the reusable portion across requests.
     let staticPrefix: String
+    /// Auto-disable summary when the selected model's context window is
+    /// too small for the full feature set. `nil` means "no override
+    /// fired" (normal-class model). Callers surface this through
+    /// `ContextBreakdown.disable` so the popover can render a notice.
+    let contextDisable: ContextDisableInfo?
 }

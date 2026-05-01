@@ -255,4 +255,97 @@ enum PreflightCompanions {
         - One-shot: a successful `capabilities_load` adds the tool/skill to your schema for the rest of the conversation. Do NOT call `capabilities_load` again for an id you've already loaded.
         - Use: after loading, call the tool directly by its name (e.g. `browser_open_login(...)`) just like any tool you already had — there is no separate "activate" step.
         """
+
+    // MARK: - Skill Suggestions
+
+    /// Hard cap on standalone skill teasers per turn. Three keeps the
+    /// section visually compact and matches what `CapabilitiesSearchTool`
+    /// already returns for `topK.skills` in its hit shape.
+    static let maxSkillSuggestions: Int = 3
+
+    /// Embedding-search candidate pool. We over-fetch so post-filtering
+    /// (plugin-bundled, already-loaded) can still surface the top
+    /// `maxSkillSuggestions` standalone skills.
+    private static let skillSearchCandidatePool: Int = 12
+
+    /// Build a compact list of standalone skill teasers that semantically
+    /// match `query`. "Standalone" means **not bundled with a plugin** —
+    /// plugin skills are surfaced via the existing `derive(...)` path
+    /// when one of their plugin's tools is picked, and showing them
+    /// twice (once as a companion, once as a suggestion) is noise.
+    ///
+    /// Skills that already appear in `alreadyLoadedSkillNames` are
+    /// filtered out so re-loading prompts disappear after the first
+    /// `capabilities_load`.
+    ///
+    /// Returns at most `maxSkillSuggestions` teasers ordered by search
+    /// score, with alphabetical tie-break so prompt rendering is byte
+    /// stable when two skills tie.
+    static func deriveSkillSuggestions(
+        query: String,
+        alreadyLoadedSkillNames: Set<String> = []
+    ) async -> [SkillTeaser] {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return [] }
+
+        let hits = await SkillSearchService.shared.search(
+            query: trimmed,
+            topK: skillSearchCandidatePool
+        )
+        return rankSkillSuggestions(
+            from: hits,
+            alreadyLoadedSkillNames: alreadyLoadedSkillNames
+        )
+    }
+
+    /// Pure post-search filter + sort + cap. Pulled out of
+    /// `deriveSkillSuggestions` so the ordering rules (plugin
+    /// exclusion, already-loaded suppression, score desc with
+    /// alphabetical tie-break, max-3 cap) can be unit-tested without
+    /// spinning up VecturaKit.
+    static func rankSkillSuggestions(
+        from hits: [SkillSearchResult],
+        alreadyLoadedSkillNames: Set<String>
+    ) -> [SkillTeaser] {
+        let standalone = hits.filter { hit in
+            hit.skill.pluginId == nil
+                && !alreadyLoadedSkillNames.contains(hit.skill.name)
+        }
+        guard !standalone.isEmpty else { return [] }
+
+        // Sort by score desc, alphabetical on ties. The search service
+        // already orders by score but does not break ties deterministically.
+        let ordered = standalone.sorted { lhs, rhs in
+            if lhs.searchScore != rhs.searchScore {
+                return lhs.searchScore > rhs.searchScore
+            }
+            return lhs.skill.name < rhs.skill.name
+        }
+
+        return Array(ordered.prefix(maxSkillSuggestions))
+            .map { SkillTeaser(name: $0.skill.name, description: $0.skill.description) }
+    }
+
+    /// Render the `## Skill Suggestions` prompt section. Returns `nil`
+    /// when `teasers` is empty so callers can skip appending an empty
+    /// block. Reuses `usageNudge` so the loader story the model reads
+    /// is identical across companions and suggestions.
+    static func renderSkillSuggestions(_ teasers: [SkillTeaser]) -> String? {
+        guard !teasers.isEmpty else { return nil }
+        var lines: [String] = [
+            "These skills semantically match the user's request. They are NOT in your schema — pull only what you'll actually use:"
+        ]
+        for skill in teasers {
+            let desc = skill.description.isEmpty ? "(no description)" : skill.description
+            lines.append("- `skill/\(skill.name)` — \(desc)")
+        }
+        let body = lines.joined(separator: "\n")
+        return """
+            ## Skill Suggestions
+
+            \(body)
+
+            \(usageNudge)
+            """
+    }
 }

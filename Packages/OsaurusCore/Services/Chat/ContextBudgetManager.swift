@@ -29,6 +29,10 @@ public struct ContextBreakdown: Equatable, Sendable {
     public var context: [Entry]
     /// Conversation + input + output
     public var messages: [Entry]
+    /// When non-nil, the popover renders an italic notice explaining
+    /// which knobs the size-class auto-disable turned off and why.
+    /// Threaded from `ComposedContext.contextDisable`.
+    public var disable: ContextDisableInfo?
 
     public var total: Int {
         context.reduce(0) { $0 + $1.tokens } + messages.reduce(0) { $0 + $1.tokens }
@@ -36,7 +40,7 @@ public struct ContextBreakdown: Equatable, Sendable {
 
     public var allEntries: [Entry] { context + messages }
 
-    public static let zero = ContextBreakdown(context: [], messages: [])
+    public static let zero = ContextBreakdown(context: [], messages: [], disable: nil)
 
     /// Tint for a given prompt section ID.
     static func tint(for sectionId: String) -> Tint {
@@ -61,7 +65,7 @@ public struct ContextBreakdown: Equatable, Sendable {
         outputTokens: Int = 0
     ) -> ContextBreakdown {
         let memoryTokens = composed.memorySection.map { estimateTokens(for: $0) } ?? 0
-        return .from(
+        var breakdown = ContextBreakdown.from(
             manifest: composed.manifest,
             toolTokens: composed.toolTokens,
             memoryTokens: memoryTokens,
@@ -69,6 +73,8 @@ public struct ContextBreakdown: Equatable, Sendable {
             inputTokens: inputTokens,
             outputTokens: outputTokens
         )
+        breakdown.disable = composed.contextDisable
+        return breakdown
     }
 
     /// Build a breakdown from a manifest + tool tokens. `memoryTokens` is
@@ -100,7 +106,7 @@ public struct ContextBreakdown: Equatable, Sendable {
         if inputTokens > 0 { msgs.append(Entry(id: "input", label: "Input", tokens: inputTokens, tint: .cyan)) }
         if outputTokens > 0 { msgs.append(Entry(id: "output", label: "Output", tokens: outputTokens, tint: .green)) }
 
-        return ContextBreakdown(context: ctx, messages: msgs)
+        return ContextBreakdown(context: ctx, messages: msgs, disable: nil)
     }
 
     private static func estimateTokens(for text: String) -> Int {

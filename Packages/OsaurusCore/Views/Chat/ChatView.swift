@@ -93,11 +93,6 @@ final class ChatSession: ObservableObject {
     /// so the Context Budget popover shows a "Memory" line even before the
     /// first send (when `cachedContext` is still nil).
     private var cachedMemoryTokens: Int = 0
-    /// Skill prompt section the agent will inject at send time. Resolved
-    /// asynchronously by `refreshSkillsSection` so the welcome-screen
-    /// preview composer (sync) can include the `Skills` row before the
-    /// first send. Mirrors the lifecycle of `cachedMemoryTokens`.
-    private var cachedSkillsSection: String?
     private let budgetTracker = ContextBudgetTracker()
 
     /// Per-session preflight + capabilities_load tool kit lives in the
@@ -467,8 +462,7 @@ final class ChatSession: ObservableObject {
         let preview = SystemPromptComposer.composePreviewContext(
             agentId: effectiveId,
             executionMode: executionMode,
-            model: selectedModel,
-            cachedSkillsSection: cachedSkillsSection
+            model: selectedModel
         )
         return .from(
             manifest: preview.manifest,
@@ -611,11 +605,6 @@ final class ChatSession: ObservableObject {
     func invalidateTokenCache() {
         cachedContext = nil
         budgetTracker.clear()
-        // Skills toggle through `invalidateTokenCache` (see
-        // `ChatWindowState.refreshAgentConfig`), so re-resolve the
-        // pre-loaded section so the welcome-screen preview reflects the
-        // new selection on the next render.
-        Task { [weak self] in await self?.refreshSkillsSection() }
         objectWillChange.send()
     }
 
@@ -734,30 +723,13 @@ final class ChatSession: ObservableObject {
         objectWillChange.send()
     }
 
-    /// Pre-resolve the agent's enabled-skills prompt section so the
-    /// synchronous welcome-screen preview composer can price the `Skills`
-    /// row before the first send. Mirrors `refreshMemoryTokens`: skips
-    /// when tools are disabled (skills aren't injected then), and only
-    /// emits a change signal when the section actually shifts.
-    private func refreshSkillsSection() async {
-        let effectiveAgentId = agentId ?? Agent.defaultId
-        let toolsOff = AgentManager.shared.effectiveToolsDisabled(for: effectiveAgentId)
-        let newSection: String? =
-            toolsOff
-            ? nil
-            : await SkillManager.shared.enabledSkillPromptSection(for: effectiveAgentId)
-        guard newSection != cachedSkillsSection else { return }
-        cachedSkillsSection = newSection
-        objectWillChange.send()
-    }
-
     /// Re-resolve every async input the welcome-screen preview composer
-    /// needs (memory tokens + skills section). One entry point so the
-    /// trigger sites — agent change, session reset, session load — stay
-    /// in lock-step instead of forgetting to kick one of the two.
+    /// needs. Currently only memory tokens, but kept as a single entry
+    /// point so future async preview inputs land in one place instead of
+    /// being scattered across the trigger sites (agent change, session
+    /// reset, session load, capability config update).
     private func refreshContextEstimates() async {
         await refreshMemoryTokens()
-        await refreshSkillsSection()
     }
 
     /// Edit a user message and regenerate from that point

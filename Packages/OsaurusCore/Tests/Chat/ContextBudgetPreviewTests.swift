@@ -181,58 +181,37 @@ struct ContextBudgetPreviewTests {
         }
     }
 
-    // MARK: - Skills caching
+    // MARK: - Skills are load-on-demand only
 
-    /// Skills are async-loaded by ChatSession; the preview composer
-    /// takes the pre-resolved section as a parameter so the popover
-    /// can include the row without going async on every keystroke.
-    /// This test bypasses ChatSession and feeds the section directly
-    /// to lock the input contract.
-    @Test("preview: cachedSkillsSection injects a Skills row when tools on")
-    func toolsOn_withCachedSkillsSection_includesSkillsRow() async {
+    /// Regression for the 55k-token Skills bloat: skills MUST be
+    /// discovered via `capabilities_search` and pulled in via
+    /// `capabilities_load`, never auto-injected into the system prompt
+    /// at compose time. Both compose paths must omit the `skills`
+    /// section regardless of the agent's enabled-skills allowlist.
+    @Test("compose: no `skills` section, even when the agent has skills enabled")
+    func bagOfSkills_neverInjected() async {
         await withAgent(toolSelectionMode: .auto) { agentId in
-            let preview = SystemPromptComposer.composePreviewContext(
-                agentId: agentId,
-                executionMode: .none,
-                cachedSkillsSection: "## Skill: Test\n\nDo the thing."
+            // Simulate the "all skills enabled" allowlist that the
+            // capability seeder used to write — exactly the state that
+            // produced the 55k Skills row in the original screenshot.
+            AgentManager.shared.updateEnabledSkillNames(
+                SkillManager.shared.skills.map(\.name),
+                for: agentId
             )
-            let ids = sectionIds(preview)
-            #expect(ids.contains("skills"))
-            // Tokens are derived from char count / 4, so the section
-            // contributing > 0 confirms the prose is being priced.
-            let skillSection = preview.manifest.section("skills")
-            #expect(skillSection?.estimatedTokens ?? 0 > 0)
-        }
-    }
 
-    /// Tools-off agents shouldn't see Skills even if the section is
-    /// non-nil — same gate as the real send path. Matches the
-    /// `effectiveToolsOff` short-circuit in `appendGatedSections`.
-    @Test("preview: cachedSkillsSection is suppressed when tools off")
-    func toolsOff_withCachedSkillsSection_suppressesSkillsRow() async {
-        await withAgent(toolsDisabled: true) { agentId in
             let preview = SystemPromptComposer.composePreviewContext(
                 agentId: agentId,
-                executionMode: .none,
-                cachedSkillsSection: "## Skill: Test\n\nDo the thing."
+                executionMode: .none
             )
-            #expect(sectionIds(preview).contains("skills") == false)
-        }
-    }
+            let real = await SystemPromptComposer.composeChatContext(
+                agentId: agentId,
+                executionMode: .none,
+                query: "",
+                cachedPreflight: .empty
+            )
 
-    /// Empty / whitespace cached sections must not produce an empty
-    /// `Skills` row that confuses the budget popover (zero-token
-    /// entries are filtered out at render time, but this avoids
-    /// even surfacing them in the manifest).
-    @Test("preview: empty cachedSkillsSection does not insert a Skills row")
-    func toolsOn_emptyCachedSkillsSection_skipsSkillsRow() async {
-        await withAgent(toolSelectionMode: .auto) { agentId in
-            let preview = SystemPromptComposer.composePreviewContext(
-                agentId: agentId,
-                executionMode: .none,
-                cachedSkillsSection: "   \n\t  "
-            )
             #expect(sectionIds(preview).contains("skills") == false)
+            #expect(real.manifest.sections.map(\.id).contains("skills") == false)
         }
     }
 
@@ -300,6 +279,99 @@ struct ContextBudgetPreviewTests {
 
             #expect(sectionIds(preview) == ["base"])
             #expect(real.manifest.sections.map(\.id) == ["base"])
+        }
+    }
+
+    // MARK: - Small-context auto-disable
+
+    /// The original screenshot regression: Foundation (~4k context)
+    /// got the full feature set and blew past its budget. The
+    /// resolver-driven auto-disable must collapse tools to zero and
+    /// flag the popover with `.tiny` so the user sees why.
+    @Test("preview: foundation model auto-disables tools + memory and emits disable info")
+    func tinyModel_disablesToolsAndMemory_andEmitsDisableInfo() async {
+        await withAgent(toolSelectionMode: .auto) { agentId in
+            let preview = SystemPromptComposer.composePreviewContext(
+                agentId: agentId,
+                executionMode: .none,
+                model: "foundation"
+            )
+            // Tools are gone — tools-off cascades to all the gated
+            // sections too, so only `base` survives.
+            #expect(preview.tools.isEmpty)
+            #expect(preview.toolTokens == 0)
+            #expect(sectionIds(preview) == ["base"])
+
+            // Disable info is populated and reports both axes.
+            guard let info = preview.contextDisable else {
+                Issue.record("contextDisable missing for foundation model")
+                return
+            }
+            #expect(info.sizeClass == .tiny)
+            #expect(info.modelId == "foundation")
+            #expect(info.disabledTools)
+            #expect(info.disabledMemory)
+        }
+    }
+
+    /// `.normal`-class models must NOT carry a disable info — that's
+    /// what suppresses the popover notice for the common case. A
+    /// regression here would dim every chat with a misleading "auto-
+    /// disabled" line.
+    @Test("preview: normal-context model has no disable info")
+    func normalModel_noOverride() async {
+        await withAgent(toolSelectionMode: .auto) { agentId in
+            let preview = SystemPromptComposer.composePreviewContext(
+                agentId: agentId,
+                executionMode: .none,
+                model: "gpt-5"
+            )
+            #expect(preview.contextDisable == nil)
+        }
+    }
+
+    /// When the agent itself already disabled tools, the auto-disable
+    /// must not double-report: `disabledTools = false` means "I would
+    /// have done it but the agent already did". Keeps the popover
+    /// notice honest for users who disabled tools deliberately.
+    @Test("preview: tiny model + agent-tools-off marks tools-disable as caused by agent")
+    func tinyModel_withAgentToolsOff_doesNotDoubleClaim() async {
+        await withAgent(toolsDisabled: true) { agentId in
+            let preview = SystemPromptComposer.composePreviewContext(
+                agentId: agentId,
+                executionMode: .none,
+                model: "foundation"
+            )
+            // Disable info still fires (memory got auto-disabled), but
+            // tools is reported as agent-driven, not size-class-driven.
+            guard let info = preview.contextDisable else {
+                Issue.record("contextDisable missing for foundation model")
+                return
+            }
+            #expect(info.sizeClass == .tiny)
+            #expect(info.disabledTools == false)
+        }
+    }
+
+    /// Parity extension: the disable info matches across preview and
+    /// send paths so the popover never lies about what the next send
+    /// will actually do.
+    @Test("parity: disable info matches between preview and composeChatContext")
+    func parity_disableInfoMatches() async {
+        await withAgent(toolSelectionMode: .auto) { agentId in
+            let preview = SystemPromptComposer.composePreviewContext(
+                agentId: agentId,
+                executionMode: .none,
+                model: "foundation"
+            )
+            let real = await SystemPromptComposer.composeChatContext(
+                agentId: agentId,
+                executionMode: .none,
+                model: "foundation",
+                query: "",
+                cachedPreflight: .empty
+            )
+            #expect(preview.contextDisable == real.contextDisable)
         }
     }
 }
