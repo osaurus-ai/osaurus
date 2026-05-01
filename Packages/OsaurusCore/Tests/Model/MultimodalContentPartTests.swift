@@ -29,11 +29,11 @@ struct MultimodalContentPartTests {
     @Test("input_audio content part decodes data + format")
     func decode_inputAudio() throws {
         let json = """
-        {
-          "type": "input_audio",
-          "input_audio": {"data": "AAA=", "format": "wav"}
-        }
-        """.data(using: .utf8)!
+            {
+              "type": "input_audio",
+              "input_audio": {"data": "AAA=", "format": "wav"}
+            }
+            """.data(using: .utf8)!
 
         let part = try JSONDecoder().decode(MessageContentPart.self, from: json)
         guard case .audioInput(let data, let format) = part else {
@@ -47,11 +47,11 @@ struct MultimodalContentPartTests {
     @Test("video_url content part decodes url")
     func decode_videoUrl() throws {
         let json = """
-        {
-          "type": "video_url",
-          "video_url": {"url": "https://example.com/clip.mp4"}
-        }
-        """.data(using: .utf8)!
+            {
+              "type": "video_url",
+              "video_url": {"url": "https://example.com/clip.mp4"}
+            }
+            """.data(using: .utf8)!
 
         let part = try JSONDecoder().decode(MessageContentPart.self, from: json)
         guard case .videoUrl(let url) = part else {
@@ -93,15 +93,15 @@ struct MultimodalContentPartTests {
     @Test("ChatMessage.audioInputs returns (data, format) tuples")
     func chatMessage_audioInputs() throws {
         let json = """
-        {
-          "role": "user",
-          "content": [
-            {"type": "text", "text": "transcribe"},
-            {"type": "input_audio", "input_audio": {"data": "AAAA", "format": "wav"}},
-            {"type": "input_audio", "input_audio": {"data": "BBBB", "format": "mp3"}}
-          ]
-        }
-        """.data(using: .utf8)!
+            {
+              "role": "user",
+              "content": [
+                {"type": "text", "text": "transcribe"},
+                {"type": "input_audio", "input_audio": {"data": "AAAA", "format": "wav"}},
+                {"type": "input_audio", "input_audio": {"data": "BBBB", "format": "mp3"}}
+              ]
+            }
+            """.data(using: .utf8)!
 
         let msg = try JSONDecoder().decode(ChatMessage.self, from: json)
         let inputs = msg.audioInputs
@@ -115,15 +115,15 @@ struct MultimodalContentPartTests {
     @Test("ChatMessage.videoUrls returns urls in order")
     func chatMessage_videoUrls() throws {
         let json = """
-        {
-          "role": "user",
-          "content": [
-            {"type": "video_url", "video_url": {"url": "https://a/1.mp4"}},
-            {"type": "text", "text": "and:"},
-            {"type": "video_url", "video_url": {"url": "https://a/2.mp4"}}
-          ]
-        }
-        """.data(using: .utf8)!
+            {
+              "role": "user",
+              "content": [
+                {"type": "video_url", "video_url": {"url": "https://a/1.mp4"}},
+                {"type": "text", "text": "and:"},
+                {"type": "video_url", "video_url": {"url": "https://a/2.mp4"}}
+              ]
+            }
+            """.data(using: .utf8)!
 
         let msg = try JSONDecoder().decode(ChatMessage.self, from: json)
         let urls = msg.videoUrls
@@ -135,14 +135,14 @@ struct MultimodalContentPartTests {
     @Test("mapOpenAIChatToMLX forwards videos to Chat.Message.videos")
     func mapping_forwardsVideos() throws {
         let json = """
-        [{
-          "role": "user",
-          "content": [
-            {"type": "text", "text": "what's in this clip"},
-            {"type": "video_url", "video_url": {"url": "https://example.com/clip.mp4"}}
-          ]
-        }]
-        """.data(using: .utf8)!
+            [{
+              "role": "user",
+              "content": [
+                {"type": "text", "text": "what's in this clip"},
+                {"type": "video_url", "video_url": {"url": "https://example.com/clip.mp4"}}
+              ]
+            }]
+            """.data(using: .utf8)!
 
         let msgs = try JSONDecoder().decode([ChatMessage].self, from: json)
         let mapped = ModelRuntime.mapOpenAIChatToMLX(msgs)
@@ -167,13 +167,13 @@ struct MultimodalContentPartTests {
         let payload = Data([0x00, 0x01, 0x02, 0x03])
         let b64 = payload.base64EncodedString()
         let json = """
-        [{
-          "role": "user",
-          "content": [
-            {"type": "input_audio", "input_audio": {"data": "\(b64)", "format": "wav"}}
-          ]
-        }]
-        """.data(using: .utf8)!
+            [{
+              "role": "user",
+              "content": [
+                {"type": "input_audio", "input_audio": {"data": "\(b64)", "format": "wav"}}
+              ]
+            }]
+            """.data(using: .utf8)!
 
         let msgs = try JSONDecoder().decode([ChatMessage].self, from: json)
         let mapped = ModelRuntime.mapOpenAIChatToMLX(msgs)
@@ -210,14 +210,14 @@ struct MultimodalContentPartTests {
         let videoB64 = videoBytes.base64EncodedString()
         let audioB64 = audioBytes.base64EncodedString()
         let json = """
-        [{
-          "role": "user",
-          "content": [
-            {"type": "video_url", "video_url": {"url": "data:video/mp4;base64,\(videoB64)"}},
-            {"type": "input_audio", "input_audio": {"data": "\(audioB64)", "format": "mp4"}}
-          ]
-        }]
-        """.data(using: .utf8)!
+            [{
+              "role": "user",
+              "content": [
+                {"type": "video_url", "video_url": {"url": "data:video/mp4;base64,\(videoB64)"}},
+                {"type": "input_audio", "input_audio": {"data": "\(audioB64)", "format": "mp4"}}
+              ]
+            }]
+            """.data(using: .utf8)!
 
         let msgs = try JSONDecoder().decode([ChatMessage].self, from: json)
         let mapped = ModelRuntime.mapOpenAIChatToMLX(msgs)
@@ -231,8 +231,10 @@ struct MultimodalContentPartTests {
         }
         // The bug: previously this would be "m4a" because the audio
         // canonicalization table ran for video mediatypes too.
-        #expect(videoURL.pathExtension == "mp4",
-            "video/mp4 data URL must keep .mp4 extension, not be downgraded to .m4a")
+        #expect(
+            videoURL.pathExtension == "mp4",
+            "video/mp4 data URL must keep .mp4 extension, not be downgraded to .m4a"
+        )
 
         guard case .url(let audioURL) = mapped[0].audios[0] else {
             Issue.record("audio should materialize to .url(...)")
@@ -241,8 +243,10 @@ struct MultimodalContentPartTests {
         // Audio path: client said format=mp4 (an MP4 audio container), so
         // synthetic `data:audio/mp4;base64,...` URL goes through the audio
         // table — `mp4 → m4a` fires here as intended.
-        #expect(audioURL.pathExtension == "m4a",
-            "audio with format=mp4 should canonicalize to .m4a for AVAudioConverter")
+        #expect(
+            audioURL.pathExtension == "m4a",
+            "audio with format=mp4 should canonicalize to .m4a for AVAudioConverter"
+        )
 
         try? FileManager.default.removeItem(at: videoURL)
         try? FileManager.default.removeItem(at: audioURL)
@@ -255,16 +259,16 @@ struct MultimodalContentPartTests {
         // catches a regression where a refactor handles only `user` and
         // forgets the other branches.
         let json = """
-        [
-          {"role": "system", "content": "you are helpful"},
-          {"role": "user", "content": [
-              {"type": "text", "text": "hi"},
-              {"type": "input_audio", "input_audio": {"data": "AAAA", "format": "wav"}}
-          ]},
-          {"role": "assistant", "content": "hello"},
-          {"role": "tool", "content": "result", "tool_call_id": "abc"}
-        ]
-        """.data(using: .utf8)!
+            [
+              {"role": "system", "content": "you are helpful"},
+              {"role": "user", "content": [
+                  {"type": "text", "text": "hi"},
+                  {"type": "input_audio", "input_audio": {"data": "AAAA", "format": "wav"}}
+              ]},
+              {"role": "assistant", "content": "hello"},
+              {"role": "tool", "content": "result", "tool_call_id": "abc"}
+            ]
+            """.data(using: .utf8)!
 
         let msgs = try JSONDecoder().decode([ChatMessage].self, from: json)
         let mapped = ModelRuntime.mapOpenAIChatToMLX(msgs)

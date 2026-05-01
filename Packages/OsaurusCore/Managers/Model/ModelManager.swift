@@ -667,7 +667,8 @@ extension ModelManager {
         MLXModel(
             id: "OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-MXFP4",
             name: ModelMetadataParser.friendlyName(
-                from: "OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-MXFP4"),
+                from: "OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-MXFP4"
+            ),
             description:
                 "NVIDIA Nemotron-3 30B Reasoning hybrid (Mamba-2 + MoE). MXFP4 quantization — fastest decode path. 262K context.",
             downloadURL:
@@ -681,7 +682,8 @@ extension ModelManager {
         MLXModel(
             id: "OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-JANGTQ4",
             name: ModelMetadataParser.friendlyName(
-                from: "OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-JANGTQ4"),
+                from: "OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-JANGTQ4"
+            ),
             description:
                 "Nemotron-3 30B Reasoning hybrid, 4-bit TurboQuant routed experts. Near-bf16 quality at ~16 GB. 262K context.",
             downloadURL:
@@ -694,7 +696,8 @@ extension ModelManager {
         MLXModel(
             id: "OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-JANGTQ",
             name: ModelMetadataParser.friendlyName(
-                from: "OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-JANGTQ"),
+                from: "OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-JANGTQ"
+            ),
             description:
                 "Nemotron-3 30B Reasoning hybrid, 2-bit TurboQuant routed experts. Smallest footprint (~9 GB). 262K context.",
             downloadURL:
@@ -795,7 +798,8 @@ extension ModelManager {
         MLXModel(
             id: "OsaurusAI/Mistral-Medium-3.5-128B-mxfp4",
             name: ModelMetadataParser.friendlyName(
-                from: "OsaurusAI/Mistral-Medium-3.5-128B-mxfp4"),
+                from: "OsaurusAI/Mistral-Medium-3.5-128B-mxfp4"
+            ),
             description:
                 "Mistral Medium 3.5 128B + Pixtral vision. MXFP4 quant — fastest decode. 256K context, 24-language coverage.",
             downloadURL:
@@ -808,7 +812,8 @@ extension ModelManager {
         MLXModel(
             id: "OsaurusAI/Mistral-Medium-3.5-128B-JANGTQ2",
             name: ModelMetadataParser.friendlyName(
-                from: "OsaurusAI/Mistral-Medium-3.5-128B-JANGTQ2"),
+                from: "OsaurusAI/Mistral-Medium-3.5-128B-JANGTQ2"
+            ),
             description:
                 "Mistral Medium 3.5 128B + Pixtral vision, 2-bit TurboQuant text decoder. ~36 GB footprint. 256K context, 24-language coverage.",
             downloadURL:

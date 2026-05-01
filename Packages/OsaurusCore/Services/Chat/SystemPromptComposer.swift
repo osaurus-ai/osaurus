@@ -167,23 +167,6 @@ public struct SystemPromptComposer: Sendable {
             : await assembleMemorySection(agentId: agentId.uuidString)
         trace?.mark("memory_done")
 
-        // Surface a "sandbox unavailable" notice when the agent wants
-        // sandbox tools but registration couldn't provide them — otherwise
-        // the model hallucinates sandbox calls that never get a result.
-        if !executionMode.usesSandboxTools,
-            autonomousEnabled,
-            let reason = SandboxToolRegistrar.shared.unavailabilityReason(for: agentId)
-        {
-            comp.append(
-                .dynamic(
-                    id: "sandboxUnavailable",
-                    label: "Sandbox Unavailable",
-                    content: Self.sandboxUnavailableNotice(reason: reason)
-                )
-            )
-            trace?.set("sandboxUnavailable", reason.kind.rawValue)
-        }
-
         let preflight: PreflightResult
         if let cachedPreflight {
             preflight = cachedPreflight
@@ -210,11 +193,12 @@ public struct SystemPromptComposer: Sendable {
         // explicitly-enabled set and aren't part of pre-flight (preflight only
         // ranks tools). Per-item Enabled toggles in the capability picker are
         // the single source of truth for what reaches the system prompt.
-        if !effectiveToolsOff,
-            let section = await SkillManager.shared.enabledSkillPromptSection(for: agentId)
-        {
-            comp.append(.dynamic(id: "skills", label: "Skills", content: section))
-        }
+        // Awaited here so `appendGatedSections` can stay synchronous and be
+        // shared with the preview composer.
+        let skillSection: String? =
+            effectiveToolsOff
+            ? nil
+            : await SkillManager.shared.enabledSkillPromptSection(for: agentId)
 
         trace?.mark("resolve_tools_start")
         let tools = resolveTools(
@@ -226,22 +210,107 @@ public struct SystemPromptComposer: Sendable {
             frozenAlwaysLoadedNames: frozenAlwaysLoadedNames
         )
         trace?.mark("resolve_tools_done")
-        // Capture the always-loaded names present in this turn's schema so
-        // callers can stash the snapshot for the next turn. When a snapshot
-        // was supplied, just echo it; otherwise compute fresh from the
-        // registry. The transient `sandbox_init_pending` placeholder is
-        // dropped from a fresh snapshot so it doesn't pin into future turns
-        // — see the `filterFrozen` carve-outs in `resolveTools` for why.
-        let alwaysLoadedNames: Set<String>
-        if let frozenAlwaysLoadedNames {
-            alwaysLoadedNames = frozenAlwaysLoadedNames
-        } else {
-            let live = ToolRegistry.shared.alwaysLoadedSpecs(mode: executionMode)
-                .map { $0.function.name }
-            let resolved = Set(tools.map { $0.function.name })
-            alwaysLoadedNames = Set(live)
-                .intersection(resolved)
-                .subtracting([BuiltinSandboxTools.initPendingToolName])
+        let alwaysLoadedNames = resolveAlwaysLoadedNames(
+            tools: tools,
+            executionMode: executionMode,
+            frozenAlwaysLoadedNames: frozenAlwaysLoadedNames
+        )
+
+        appendGatedSections(
+            composer: &comp,
+            agentId: agentId,
+            executionMode: executionMode,
+            model: model,
+            tools: tools,
+            preflight: preflight,
+            effectiveToolsOff: effectiveToolsOff,
+            autonomousEnabled: autonomousEnabled,
+            canCreatePlugins: canCreatePlugins,
+            toolMode: toolMode,
+            skillSection: skillSection,
+            trace: trace
+        )
+
+        let manifest = comp.manifest()
+        let toolNames = tools.map { $0.function.name }
+        debugLog("[Context] \(manifest.debugDescription)")
+        emitToolDiagnostics(
+            tools: tools,
+            toolMode: toolMode,
+            preflight: preflight,
+            executionMode: executionMode,
+            autonomousEnabled: autonomousEnabled,
+            effectiveToolsOff: effectiveToolsOff,
+            frozenAlwaysLoadedNames: frozenAlwaysLoadedNames,
+            additionalToolNames: additionalToolNames,
+            trace: trace
+        )
+
+        let rendered = comp.render()
+        trace?.set("systemPromptChars", rendered.count)
+        trace?.set("toolCount", tools.count)
+        trace?.set("preflightItems", preflight.items.count)
+
+        return ComposedContext(
+            prompt: rendered,
+            manifest: manifest,
+            tools: tools,
+            toolTokens: ToolRegistry.shared.totalEstimatedTokens(for: tools),
+            preflightItems: preflight.items,
+            preflight: preflight,
+            memorySection: memorySection,
+            alwaysLoadedNames: alwaysLoadedNames,
+            cacheHint: manifest.staticPrefixHash(toolNames: toolNames),
+            staticPrefix: manifest.staticPrefixContent
+        )
+    }
+
+    /// Append every gated "deterministic" prompt section (sandbox notice,
+    /// skills, plugin companions, agent loop, capability nudge, model
+    /// family, plugin creator) given the resolved tool set + preflight.
+    ///
+    /// Shared between the real send path (`finalizeContext`) and the sync
+    /// preview path (`composePreviewContext`) so the welcome-screen budget
+    /// popover lists the same sections the next send will produce, modulo
+    /// the two query-dependent ones (preflight tools + plugin companions).
+    /// `skillSection` is awaited by the caller — keeping this body sync is
+    /// what lets the preview composer reuse it without going async.
+    @MainActor
+    private static func appendGatedSections(
+        composer: inout SystemPromptComposer,
+        agentId: UUID,
+        executionMode: ExecutionMode,
+        model: String?,
+        tools: [Tool],
+        preflight: PreflightResult,
+        effectiveToolsOff: Bool,
+        autonomousEnabled: Bool,
+        canCreatePlugins: Bool,
+        toolMode: ToolSelectionMode,
+        skillSection: String?,
+        trace: TTFTTrace? = nil
+    ) {
+        // Surface a "sandbox unavailable" notice when the agent wants
+        // sandbox tools but registration couldn't provide them — otherwise
+        // the model hallucinates sandbox calls that never get a result.
+        if !executionMode.usesSandboxTools,
+            autonomousEnabled,
+            let reason = SandboxToolRegistrar.shared.unavailabilityReason(for: agentId)
+        {
+            composer.append(
+                .dynamic(
+                    id: "sandboxUnavailable",
+                    label: "Sandbox Unavailable",
+                    content: Self.sandboxUnavailableNotice(reason: reason)
+                )
+            )
+            trace?.set("sandboxUnavailable", reason.kind.rawValue)
+        }
+
+        // `composer.append` no-ops on whitespace-only content via
+        // `PromptSection.isEmpty`, so we don't need a separate trim guard.
+        if !effectiveToolsOff, let section = skillSection {
+            composer.append(.dynamic(id: "skills", label: "Skills", content: section))
         }
 
         // Plugin Companions: when preflight picked a tool from a plugin,
@@ -259,7 +328,7 @@ public struct SystemPromptComposer: Sendable {
             tools.contains(where: { $0.function.name == "capabilities_load" }),
             let companionsSection = PreflightCompanions.render(preflight.companions)
         {
-            comp.append(
+            composer.append(
                 .dynamic(
                     id: "pluginCompanions",
                     label: "Plugin Companions",
@@ -279,7 +348,7 @@ public struct SystemPromptComposer: Sendable {
             let resolvedNames = Set(tools.map { $0.function.name })
             let loopNames: Set<String> = ["todo", "complete", "clarify", "share_artifact"]
             if !resolvedNames.isDisjoint(with: loopNames) {
-                comp.append(
+                composer.append(
                     .static(
                         id: "agentLoopGuidance",
                         label: "Agent Loop",
@@ -298,7 +367,7 @@ public struct SystemPromptComposer: Sendable {
             !effectiveToolsOff,
             tools.contains(where: { $0.function.name == "capabilities_search" })
         {
-            comp.append(
+            composer.append(
                 .static(
                     id: "capabilityNudge",
                     label: "Capability Discovery",
@@ -315,7 +384,7 @@ public struct SystemPromptComposer: Sendable {
         if !effectiveToolsOff,
             let familyGuidance = ModelFamilyGuidance.guidance(forModelId: model)
         {
-            comp.append(
+            composer.append(
                 .static(
                     id: "modelFamilyGuidance",
                     label: "Model Family Guidance",
@@ -351,7 +420,7 @@ public struct SystemPromptComposer: Sendable {
             skillEnabled: pluginCreatorSkill?.enabled ?? false
         )
         if PluginCreatorGate.shouldInject(gateInputs), let skill = pluginCreatorSkill {
-            comp.append(
+            composer.append(
                 .dynamic(
                     id: "pluginCreator",
                     label: "Plugin Creator",
@@ -363,35 +432,100 @@ public struct SystemPromptComposer: Sendable {
             )
             trace?.set("pluginCreatorInjected", "1")
         }
+    }
 
-        let manifest = comp.manifest()
-        let toolNames = tools.map { $0.function.name }
-        debugLog("[Context] \(manifest.debugDescription)")
-        emitToolDiagnostics(
-            tools: tools,
-            toolMode: toolMode,
-            preflight: preflight,
+    /// Capture the always-loaded names present in this turn's schema so
+    /// callers can stash the snapshot for the next turn. When a snapshot
+    /// was supplied, just echo it; otherwise compute fresh from the
+    /// registry. The transient `sandbox_init_pending` placeholder is
+    /// dropped from a fresh snapshot so it doesn't pin into future turns
+    /// — see the `filterFrozen` carve-outs in `resolveTools` for why.
+    /// Shared between `finalizeContext` and `composePreviewContext` so
+    /// both paths produce the same `ComposedContext.alwaysLoadedNames`.
+    @MainActor
+    private static func resolveAlwaysLoadedNames(
+        tools: [Tool],
+        executionMode: ExecutionMode,
+        frozenAlwaysLoadedNames: Set<String>?
+    ) -> Set<String> {
+        if let frozenAlwaysLoadedNames {
+            return frozenAlwaysLoadedNames
+        }
+        let live = ToolRegistry.shared.alwaysLoadedSpecs(mode: executionMode)
+            .map { $0.function.name }
+        let resolved = Set(tools.map { $0.function.name })
+        return Set(live)
+            .intersection(resolved)
+            .subtracting([BuiltinSandboxTools.initPendingToolName])
+    }
+
+    /// Synchronous preview compose for the welcome-screen Context Budget
+    /// popover. Mirrors `composeChatContext` so the popover lists the same
+    /// sections the next send will emit, with two intentional gaps:
+    ///
+    /// - **preflight tool delta**: needs a non-empty user query and an
+    ///   LLM call, so auto-mode `Tools` under-counts on turn 1.
+    /// - **`pluginCompanions`**: derived from preflight, always empty here.
+    ///
+    /// Memory is also out of scope (it's prepended to the user message,
+    /// not the system prompt) — callers feed the per-turn estimate to
+    /// `ContextBreakdown.from` separately, which surfaces the `Memory` row.
+    ///
+    /// `cachedSkillsSection` is the skill prompt section the chat session
+    /// pre-loaded asynchronously; `nil` collapses the `Skills` row.
+    @MainActor
+    static func composePreviewContext(
+        agentId: UUID,
+        executionMode: ExecutionMode,
+        model: String? = nil,
+        cachedSkillsSection: String? = nil
+    ) -> ComposedContext {
+        var composer = forChat(agentId: agentId, executionMode: executionMode, model: model)
+
+        let effectiveToolsOff = AgentManager.shared.effectiveToolsDisabled(for: agentId)
+        let autonomousConfig = AgentManager.shared.effectiveAutonomousExec(for: agentId)
+        let autonomousEnabled = autonomousConfig?.enabled == true
+        let canCreatePlugins = autonomousConfig.map { $0.enabled && $0.pluginCreate } ?? false
+        let toolMode = AgentManager.shared.effectiveToolSelectionMode(for: agentId)
+
+        let tools = resolveTools(
+            agentId: agentId,
             executionMode: executionMode,
-            autonomousEnabled: autonomousEnabled,
-            effectiveToolsOff: effectiveToolsOff,
-            frozenAlwaysLoadedNames: frozenAlwaysLoadedNames,
-            additionalToolNames: additionalToolNames,
-            trace: trace
+            toolsDisabled: effectiveToolsOff
         )
 
-        let rendered = comp.render()
-        trace?.set("systemPromptChars", rendered.count)
-        trace?.set("toolCount", tools.count)
-        trace?.set("preflightItems", preflight.items.count)
+        appendGatedSections(
+            composer: &composer,
+            agentId: agentId,
+            executionMode: executionMode,
+            model: model,
+            tools: tools,
+            preflight: .empty,
+            effectiveToolsOff: effectiveToolsOff,
+            autonomousEnabled: autonomousEnabled,
+            canCreatePlugins: canCreatePlugins,
+            toolMode: toolMode,
+            skillSection: cachedSkillsSection
+        )
+
+        let alwaysLoadedNames = resolveAlwaysLoadedNames(
+            tools: tools,
+            executionMode: executionMode,
+            frozenAlwaysLoadedNames: nil
+        )
+
+        let manifest = composer.manifest()
+        let toolNames = tools.map { $0.function.name }
+        let rendered = composer.render()
 
         return ComposedContext(
             prompt: rendered,
             manifest: manifest,
             tools: tools,
             toolTokens: ToolRegistry.shared.totalEstimatedTokens(for: tools),
-            preflightItems: preflight.items,
-            preflight: preflight,
-            memorySection: memorySection,
+            preflightItems: [],
+            preflight: .empty,
+            memorySection: nil,
             alwaysLoadedNames: alwaysLoadedNames,
             cacheHint: manifest.staticPrefixHash(toolNames: toolNames),
             staticPrefix: manifest.staticPrefixContent

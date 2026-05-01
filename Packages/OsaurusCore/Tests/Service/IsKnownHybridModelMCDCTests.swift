@@ -131,17 +131,19 @@ struct IsKnownHybridModelMCDCTests {
             "OsaurusAI/Gemma-4-31B-it-JANG_4M",
             "OsaurusAI/gemma-4-26B-A4B-it-4bit",
             "gemma-4-e2b-it-4bit-osaurus",
-            "JANGQ-AI/DeepSeekV4-Flash-JANG_2L",   // dense bf16 here
+            "JANGQ-AI/DeepSeekV4-Flash-JANG_2L",  // dense bf16 here
             "dealignai/Mistral-Small-4-119B-JANG_2L-CRACK",
-            "OsaurusAI/Laguna-XS.2-mxfp4",         // SWA hybrid, NOT Mamba
-            "OsaurusAI/Mistral-Medium-3.5-128B-mxfp4", // dense GQA
-            "foundation",                          // Apple's built-in
-            "deepseekv4-flash-jangtq",             // DSV4 has its own cache topology
-            "",                                    // empty string edge case
+            "OsaurusAI/Laguna-XS.2-mxfp4",  // SWA hybrid, NOT Mamba
+            "OsaurusAI/Mistral-Medium-3.5-128B-mxfp4",  // dense GQA
+            "foundation",  // Apple's built-in
+            "deepseekv4-flash-jangtq",  // DSV4 has its own cache topology
+            "",  // empty string edge case
         ]
         for name in denseFamilies {
-            #expect(!ModelRuntime.isKnownHybridModel(name: name),
-                "must NOT match: \(name)")
+            #expect(
+                !ModelRuntime.isKnownHybridModel(name: name),
+                "must NOT match: \(name)"
+            )
         }
     }
 

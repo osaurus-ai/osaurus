@@ -2161,7 +2161,8 @@ extension FloatingInputCard {
         panel.allowsMultipleSelection = true
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
-        panel.message = mediaCapabilities.anyMedia
+        panel.message =
+            mediaCapabilities.anyMedia
             ? "Select files to attach (\(mediaCapabilities.summary) supported)"
             : "Select files to attach"
 

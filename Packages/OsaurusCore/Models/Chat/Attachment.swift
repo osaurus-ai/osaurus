@@ -211,7 +211,7 @@ public struct Attachment: Codable, Sendable, Equatable, Identifiable {
         case .document(let name, _, _), .documentRef(let name, _, _):
             return name
         case .audio(_, _, let name), .audioRef(_, _, _, let name),
-             .video(_, let name), .videoRef(_, _, let name):
+            .video(_, let name), .videoRef(_, _, let name):
             return name
         default:
             return nil

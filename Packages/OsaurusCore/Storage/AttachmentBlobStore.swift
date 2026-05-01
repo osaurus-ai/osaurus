@@ -167,7 +167,11 @@ public enum AttachmentBlobStore {
                 return Attachment(
                     id: attachment.id,
                     kind: .audioRef(
-                        hash: hash, byteCount: data.count, format: format, filename: filename)
+                        hash: hash,
+                        byteCount: data.count,
+                        format: format,
+                        filename: filename
+                    )
                 )
             } catch {
                 log.warning(
@@ -186,7 +190,10 @@ public enum AttachmentBlobStore {
                 return Attachment(
                     id: attachment.id,
                     kind: .videoRef(
-                        hash: hash, byteCount: data.count, filename: filename)
+                        hash: hash,
+                        byteCount: data.count,
+                        filename: filename
+                    )
                 )
             } catch {
                 log.warning(
@@ -211,9 +218,9 @@ public enum AttachmentBlobStore {
             for attachment in turn.attachments {
                 switch attachment.kind {
                 case .imageRef(let hash, _),
-                     .documentRef(_, let hash, _),
-                     .audioRef(let hash, _, _, _),
-                     .videoRef(let hash, _, _):
+                    .documentRef(_, let hash, _),
+                    .audioRef(let hash, _, _, _),
+                    .videoRef(let hash, _, _):
                     refs.insert(hash)
                 default:
                     continue

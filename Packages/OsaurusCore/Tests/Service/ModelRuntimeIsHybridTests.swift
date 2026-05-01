@@ -29,12 +29,13 @@ struct ModelRuntimeIsHybridTests {
             "OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-MXFP4",
             "OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-JANGTQ4",
             "OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-JANGTQ",
-            "nemotron-3-nano-omni-30b-a3b-mxfp4",            // case-folded picker form
+            "nemotron-3-nano-omni-30b-a3b-mxfp4",  // case-folded picker form
             "JANGQ-AI/Nemotron-3-Reasoning-Future-Variant",  // forward-compat
         ] {
             #expect(
                 ModelRuntime.isKnownHybridModel(name: id),
-                "Nemotron-3 family must flip setHybrid eagerly: \(id)")
+                "Nemotron-3 family must flip setHybrid eagerly: \(id)"
+            )
         }
     }
 
@@ -59,7 +60,8 @@ struct ModelRuntimeIsHybridTests {
         ] {
             #expect(
                 ModelRuntime.isKnownHybridModel(name: id),
-                "Qwen 3.5/3.6 MoE family + Holo3 must flip setHybrid: \(id)")
+                "Qwen 3.5/3.6 MoE family + Holo3 must flip setHybrid: \(id)"
+            )
         }
     }
 
@@ -88,13 +90,14 @@ struct ModelRuntimeIsHybridTests {
             "OsaurusAI/Gemma-4-31B-it-JANG_4M",
             "OsaurusAI/gemma-4-26B-A4B-it-4bit",
             "gemma-4-e2b-it-4bit-osaurus",
-            "JANGQ-AI/DeepSeekV4-Flash-JANG_2L",   // dense bf16, not Mamba
+            "JANGQ-AI/DeepSeekV4-Flash-JANG_2L",  // dense bf16, not Mamba
             "dealignai/Mistral-Small-4-119B-JANG_2L-CRACK",
-            "foundation",                          // Apple's built-in
+            "foundation",  // Apple's built-in
         ] {
             #expect(
                 !ModelRuntime.isKnownHybridModel(name: id),
-                "dense family must NOT flip setHybrid: \(id)")
+                "dense family must NOT flip setHybrid: \(id)"
+            )
         }
     }
 
@@ -112,7 +115,8 @@ struct ModelRuntimeIsHybridTests {
         ] {
             #expect(
                 !ModelRuntime.isKnownHybridModel(name: id),
-                "DSV4 hybrid attention is a different cache topology than the Mamba families this matcher targets: \(id)")
+                "DSV4 hybrid attention is a different cache topology than the Mamba families this matcher targets: \(id)"
+            )
         }
     }
 
@@ -129,12 +133,13 @@ struct ModelRuntimeIsHybridTests {
             "OsaurusAI/Laguna-XS.2-mxfp4",
             "OsaurusAI/Laguna-XS.2-JANGTQ2",
             "JANGQ-AI/Laguna-XS.2-JANGTQ2",
-            "laguna-xs.2-mxfp4",            // case-folded picker form
-            "OsaurusAI/Laguna-S.3-JANGTQ4", // forward-compat (future variant)
+            "laguna-xs.2-mxfp4",  // case-folded picker form
+            "OsaurusAI/Laguna-S.3-JANGTQ4",  // forward-compat (future variant)
         ] {
             #expect(
                 !ModelRuntime.isKnownHybridModel(name: id),
-                "Laguna SWA-hybrid is RotatingKVCache + KVCacheSimple, not Mamba — must NOT eager-flip setHybrid: \(id)")
+                "Laguna SWA-hybrid is RotatingKVCache + KVCacheSimple, not Mamba — must NOT eager-flip setHybrid: \(id)"
+            )
         }
     }
 
@@ -151,7 +156,8 @@ struct ModelRuntimeIsHybridTests {
         ] {
             #expect(
                 !ModelRuntime.isKnownHybridModel(name: id),
-                "Mistral 3.5 dense GQA + Pixtral has no Mamba layers — must NOT eager-flip setHybrid: \(id)")
+                "Mistral 3.5 dense GQA + Pixtral has no Mamba layers — must NOT eager-flip setHybrid: \(id)"
+            )
         }
     }
 }

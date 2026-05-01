@@ -29,7 +29,8 @@ struct ModelMediaCapabilitiesMCDCTests {
     @Test("D1: Nemotron-3-Nano-Omni HF id → .omni")
     func d1_nemotronOmniHF() {
         let cap = ModelMediaCapabilities.from(
-            modelId: "OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-MXFP4")
+            modelId: "OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-MXFP4"
+        )
         #expect(cap == .omni)
         #expect(cap.supportsAudio)
         #expect(cap.supportsVideo)
@@ -50,8 +51,10 @@ struct ModelMediaCapabilitiesMCDCTests {
     func d1_bareNemotron3_notOmni() {
         // Critical: `nemotron-3` text-only bundles must NOT advertise audio.
         let cap = ModelMediaCapabilities.from(modelId: "OsaurusAI/Nemotron-3-30B-Text-MXFP4")
-        #expect(!cap.supportsAudio,
-            "bare nemotron-3 (no -nano-omni) must NOT advertise audio support")
+        #expect(
+            !cap.supportsAudio,
+            "bare nemotron-3 (no -nano-omni) must NOT advertise audio support"
+        )
     }
 
     // MARK: - D2: Qwen 2/2.5/3 VL (image + video)
@@ -66,7 +69,8 @@ struct ModelMediaCapabilitiesMCDCTests {
     @Test("D2: Qwen2.5-VL with dot variant → .imageVideo")
     func d2_qwen25VL_dot() {
         #expect(
-            ModelMediaCapabilities.from(modelId: "Qwen/Qwen2.5-VL-7B-MLX") == .imageVideo)
+            ModelMediaCapabilities.from(modelId: "Qwen/Qwen2.5-VL-7B-MLX") == .imageVideo
+        )
     }
 
     @Test("D2: qwen2_vl underscore variant → .imageVideo")
@@ -84,13 +88,15 @@ struct ModelMediaCapabilitiesMCDCTests {
     @Test("D3: Qwen3.5-VL → .imageVideo")
     func d3_qwen35VL() {
         #expect(
-            ModelMediaCapabilities.from(modelId: "OsaurusAI/Qwen3.5-VL-9B-8bit") == .imageVideo)
+            ModelMediaCapabilities.from(modelId: "OsaurusAI/Qwen3.5-VL-9B-8bit") == .imageVideo
+        )
     }
 
     @Test("D3: Qwen3.6-VL → .imageVideo")
     func d3_qwen36VL() {
         #expect(
-            ModelMediaCapabilities.from(modelId: "OsaurusAI/Qwen3.6-VL-30B-A3B-MXFP4") == .imageVideo)
+            ModelMediaCapabilities.from(modelId: "OsaurusAI/Qwen3.6-VL-30B-A3B-MXFP4") == .imageVideo
+        )
     }
 
     @Test("D3 boundary: Qwen3.5/3.6 text-only (no -vl) → .textOnly")
@@ -159,7 +165,8 @@ struct ModelMediaCapabilitiesMCDCTests {
         #expect(ModelMediaCapabilities.from(modelId: "mistralai/Mistral-3-Small-24B") == .imageOnly)
         #expect(
             ModelMediaCapabilities.from(modelId: "OsaurusAI/Mistral-Medium-3.5-128B-mxfp4")
-                == .imageOnly)
+                == .imageOnly
+        )
     }
 
     @Test("D6 boundary: bare 'mistral-7b' (no 3 or medium-3) → .textOnly")
@@ -172,14 +179,16 @@ struct ModelMediaCapabilitiesMCDCTests {
     @Test("D7: Mistral 4 VL → .imageOnly")
     func d7_mistral4VL() {
         #expect(
-            ModelMediaCapabilities.from(modelId: "OsaurusAI/Mistral-4-VL-Future") == .imageOnly)
+            ModelMediaCapabilities.from(modelId: "OsaurusAI/Mistral-4-VL-Future") == .imageOnly
+        )
     }
 
     @Test("D7 boundary: Mistral 4 dense (no -vl) → .textOnly")
     func d7_mistral4Dense_notImage() {
         #expect(
             ModelMediaCapabilities.from(modelId: "mistralai/Mistral-4-Small-24B-Instruct")
-                == .textOnly)
+                == .textOnly
+        )
     }
 
     // MARK: - Master FALSE: dense LLM families
@@ -199,8 +208,10 @@ struct ModelMediaCapabilitiesMCDCTests {
         ]
         for id in denseFamilies {
             let cap = ModelMediaCapabilities.from(modelId: id)
-            #expect(cap == .textOnly,
-                "\(id) must resolve to text-only (got: \(cap.summary))")
+            #expect(
+                cap == .textOnly,
+                "\(id) must resolve to text-only (got: \(cap.summary))"
+            )
             #expect(!cap.anyMedia, "\(id) anyMedia must be false")
         }
     }

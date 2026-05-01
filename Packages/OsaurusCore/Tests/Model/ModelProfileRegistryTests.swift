@@ -115,8 +115,10 @@ struct ModelProfileRegistryTests {
             )
             // Default-OFF guards against the trapped-thinking pattern.
             let defaultDisable = profile?.defaults["disableThinking"]?.boolValue ?? false
-            #expect(defaultDisable == true,
-                "Nemotron must default disableThinking=true to avoid trapped-thinking loops")
+            #expect(
+                defaultDisable == true,
+                "Nemotron must default disableThinking=true to avoid trapped-thinking loops"
+            )
         }
     }
 
@@ -135,8 +137,10 @@ struct ModelProfileRegistryTests {
             // that they don't shortcut into the new Nemotron-3-specific
             // profile.
             let isNemotron3 = profile?.displayName == NemotronThinkingProfile.displayName
-            #expect(!isNemotron3 || id.lowercased().contains("nemotron-3"),
-                "matcher must be specific to nemotron-3, not generic nemotron")
+            #expect(
+                !isNemotron3 || id.lowercased().contains("nemotron-3"),
+                "matcher must be specific to nemotron-3, not generic nemotron"
+            )
         }
     }
 
@@ -152,8 +156,8 @@ struct ModelProfileRegistryTests {
             "OsaurusAI/Laguna-XS.2-mxfp4",
             "OsaurusAI/Laguna-XS.2-JANGTQ2",
             "JANGQ-AI/Laguna-XS.2-JANGTQ2",
-            "laguna-xs.2-mxfp4",            // case-folded picker form
-            "OsaurusAI/Laguna-S.3-JANGTQ4", // forward-compat (future variant)
+            "laguna-xs.2-mxfp4",  // case-folded picker form
+            "OsaurusAI/Laguna-S.3-JANGTQ4",  // forward-compat (future variant)
         ] {
             let profile = ModelProfileRegistry.profile(for: id)
             #expect(
@@ -161,8 +165,10 @@ struct ModelProfileRegistryTests {
                 "expected LagunaThinkingProfile for \(id), got \(profile?.displayName ?? "nil")"
             )
             let defaultDisable = profile?.defaults["disableThinking"]?.boolValue ?? false
-            #expect(defaultDisable == true,
-                "Laguna must default disableThinking=true to mirror the chat-template default")
+            #expect(
+                defaultDisable == true,
+                "Laguna must default disableThinking=true to mirror the chat-template default"
+            )
         }
     }
 
@@ -180,10 +186,14 @@ struct ModelProfileRegistryTests {
             "mistral-medium-3.5-128b-mxfp4",
         ] {
             let profile = ModelProfileRegistry.profile(for: id)
-            #expect(profile?.displayName != NemotronThinkingProfile.displayName,
-                "Mistral 3.5 must NOT shortcut into NemotronThinkingProfile: \(id)")
-            #expect(profile?.displayName != LagunaThinkingProfile.displayName,
-                "Mistral 3.5 must NOT shortcut into LagunaThinkingProfile: \(id)")
+            #expect(
+                profile?.displayName != NemotronThinkingProfile.displayName,
+                "Mistral 3.5 must NOT shortcut into NemotronThinkingProfile: \(id)"
+            )
+            #expect(
+                profile?.displayName != LagunaThinkingProfile.displayName,
+                "Mistral 3.5 must NOT shortcut into LagunaThinkingProfile: \(id)"
+            )
         }
     }
 }

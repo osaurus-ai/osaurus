@@ -39,27 +39,29 @@ struct MaterializeMediaDataUrlMCDCTests {
 
     private func mappedURL(forVideoDataURL urlString: String) -> URL? {
         let json = """
-        [{"role": "user", "content": [
-          {"type": "video_url", "video_url": {"url": "\(urlString)"}}
-        ]}]
-        """.data(using: .utf8)!
+            [{"role": "user", "content": [
+              {"type": "video_url", "video_url": {"url": "\(urlString)"}}
+            ]}]
+            """.data(using: .utf8)!
         let msgs = try! JSONDecoder().decode([ChatMessage].self, from: json)
         let mapped = ModelRuntime.mapOpenAIChatToMLX(msgs)
         guard let video = mapped.first?.videos.first,
-              case .url(let u) = video else { return nil }
+            case .url(let u) = video
+        else { return nil }
         return u
     }
 
     private func mappedURL(forAudioFormat format: String, base64: String) -> URL? {
         let json = """
-        [{"role": "user", "content": [
-          {"type": "input_audio", "input_audio": {"data": "\(base64)", "format": "\(format)"}}
-        ]}]
-        """.data(using: .utf8)!
+            [{"role": "user", "content": [
+              {"type": "input_audio", "input_audio": {"data": "\(base64)", "format": "\(format)"}}
+            ]}]
+            """.data(using: .utf8)!
         let msgs = try! JSONDecoder().decode([ChatMessage].self, from: json)
         let mapped = ModelRuntime.mapOpenAIChatToMLX(msgs)
         guard let audio = mapped.first?.audios.first,
-              case .url(let u) = audio else { return nil }
+            case .url(let u) = audio
+        else { return nil }
         return u
     }
 
@@ -119,8 +121,10 @@ struct MaterializeMediaDataUrlMCDCTests {
         let payload = Data(repeating: 0xAB, count: 16)
         let b64 = payload.base64EncodedString()
         let url = mappedURL(forVideoDataURL: "data:video/mp4;base64,\(b64)")
-        #expect(url?.pathExtension == "mp4",
-            "video/mp4 must keep .mp4 — was incorrectly .m4a before audit fix")
+        #expect(
+            url?.pathExtension == "mp4",
+            "video/mp4 must keep .mp4 — was incorrectly .m4a before audit fix"
+        )
         if let url { try? FileManager.default.removeItem(at: url) }
     }
 
@@ -131,8 +135,10 @@ struct MaterializeMediaDataUrlMCDCTests {
         let payload = Data(repeating: 0xCD, count: 16)
         let b64 = payload.base64EncodedString()
         let url = mappedURL(forAudioFormat: "mp4", base64: b64)
-        #expect(url?.pathExtension == "m4a",
-            "audio with format=mp4 must canonicalize to .m4a for AVAudioConverter")
+        #expect(
+            url?.pathExtension == "m4a",
+            "audio with format=mp4 must canonicalize to .m4a for AVAudioConverter"
+        )
         if let url { try? FileManager.default.removeItem(at: url) }
     }
 

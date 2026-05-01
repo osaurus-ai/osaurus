@@ -443,7 +443,8 @@ extension ChatMessage {
             // file extension (NOT downgraded to .m4a — see audit fix).
             let base64 = data.base64EncodedString()
             parts.append(
-                .videoUrl(url: "data:video/\(mimeSubtype);base64,\(base64)"))
+                .videoUrl(url: "data:video/\(mimeSubtype);base64,\(base64)")
+            )
         }
 
         self.contentParts = parts.isEmpty ? nil : parts

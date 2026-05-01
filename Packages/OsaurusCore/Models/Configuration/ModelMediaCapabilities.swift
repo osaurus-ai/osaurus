@@ -38,16 +38,28 @@ public enum ModelMediaCapabilities {
         public let supportsAudio: Bool
 
         public static let textOnly = Capabilities(
-            supportsImage: false, supportsVideo: false, supportsAudio: false)
+            supportsImage: false,
+            supportsVideo: false,
+            supportsAudio: false
+        )
 
         public static let imageOnly = Capabilities(
-            supportsImage: true, supportsVideo: false, supportsAudio: false)
+            supportsImage: true,
+            supportsVideo: false,
+            supportsAudio: false
+        )
 
         public static let imageVideo = Capabilities(
-            supportsImage: true, supportsVideo: true, supportsAudio: false)
+            supportsImage: true,
+            supportsVideo: true,
+            supportsAudio: false
+        )
 
         public static let omni = Capabilities(
-            supportsImage: true, supportsVideo: true, supportsAudio: true)
+            supportsImage: true,
+            supportsVideo: true,
+            supportsAudio: true
+        )
 
         public var anyMedia: Bool {
             supportsImage || supportsVideo || supportsAudio

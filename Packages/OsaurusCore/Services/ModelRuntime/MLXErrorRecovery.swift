@@ -65,17 +65,17 @@ public enum MLXErrorRecovery {
         }
 
         // C-convention closure: no captures (must match `@convention(c)`).
-        let handler:
-            @convention(c) (UnsafePointer<CChar>?, UnsafeMutableRawPointer?) -> Void = {
-                cMessage, _ in
-                let message = cMessage.map { String(cString: $0) } ?? "<nil>"
-                MLXErrorRecovery.lock.withLock {
-                    MLXErrorRecovery._lastError = message
-                }
-                // `os_log` from the C-convention thunk is allowed (no async
-                // hops, no captures of Swift state).
-                recoveryLog.error("MLX error: \(message, privacy: .public)")
+        let handler: @convention(c) (UnsafePointer<CChar>?, UnsafeMutableRawPointer?) -> Void = {
+            cMessage,
+            _ in
+            let message = cMessage.map { String(cString: $0) } ?? "<nil>"
+            MLXErrorRecovery.lock.withLock {
+                MLXErrorRecovery._lastError = message
             }
+            // `os_log` from the C-convention thunk is allowed (no async
+            // hops, no captures of Swift state).
+            recoveryLog.error("MLX error: \(message, privacy: .public)")
+        }
 
         // `setErrorHandler` is marked deprecated in mlx-swift; see the file
         // header for why the global form is the correct shape here.
