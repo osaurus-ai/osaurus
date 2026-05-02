@@ -111,7 +111,7 @@ let package = Package(
         // this pin via `ae49c7c` + `3b78db4`.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift-lm",
-            revision: "89f8114c927e25c2a6740fb15bce9cf113a2acfe"
+            revision: "ddea3842df38b0b99c0a66a8dbc691d97c85732b"
         ),
         // swift-jinja: pinned to osaurus-ai fork at 58d21aa5 — same fork
         // vmlx-swift-lm pins. Must also be declared HERE (root level) so

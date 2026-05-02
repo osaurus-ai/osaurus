@@ -422,11 +422,34 @@ public actor ModelRuntime {
         // any future pin bump that touches the CacheCoordinator restore path.
         let enableDiskCache = diskDirUsable
 
+        // L2 disk-cache modelKey fingerprint includes the KV mode tag so a
+        // mid-session change to `defaultKVMode` (or to a per-request override
+        // via the OpenAI extension) cannot serve stale entries that were
+        // encoded under a different mode. Without this, a user who switches
+        // from `.none` (fp16) to `.turboQuant(4,4)` would hit a `.miss` on
+        // disk for fresh entries but a `.hit` on the OLD fp16 entries —
+        // attention would receive the wrong KV layout for the codebook
+        // encoder state and produce undefined behavior. The fingerprint is
+        // a string (stable across processes) and is appended to the model
+        // name so the L1 paged cache (per-model isolation) is unaffected.
+        let kvModeTag = "fp16"  // matches `defaultKVMode: .none` below
+        let scopedKey = "\(modelName)|kv=\(kvModeTag)"
+
         return CacheCoordinatorConfig(
             usePagedCache: true,
             enableDiskCache: enableDiskCache,
             diskCacheDir: diskCacheDir,
-            modelKey: modelName,
+            modelKey: scopedKey,
+            // `defaultKVMode: .none` (fp16) — see file-level comment for the
+            // 3-bit and 4-bit codebook KV degenerate-repetition trail.
+            // Vmlx's `OSAURUS-PRODUCTION-REFERENCE-2026-05-01.md` §6 shows a
+            // recommended `defaultKVMode: .turboQuant(3, 3)` example, but the
+            // bench coverage referenced (BENCH_STABILITY S8) does NOT include
+            // long thinking-mode preambles — the failure mode that drives
+            // `idea idea idea` repetition on Gemma 4 31B JANG_4M and the
+            // `!!!!!!!!!` spam on Qwen 3.6 27B MXFP4. Until vmlx's compile-
+            // path 7% per-step drift (`CompilableTurboQuantKVCache.swift`
+            // iter-10 measurement) is closed, fp16 is the only safe default.
             defaultKVMode: .none,
             defaultMaxKVSize: 8192,
             longPromptMultiplier: 2.0
