@@ -52,13 +52,28 @@ public enum ToolEnvelope {
     /// Build a failure envelope as a JSON string ready to return from a tool
     /// body. `field` and `expected` are recommended for `.invalidArgs`.
     /// `retryable` defaults to a kind-appropriate value when unspecified.
+    /// `metadata` is merged in at the top level — used by tools that need
+    /// to surface extra structured context the standard fields don't
+    /// cover (e.g. `retried: true` on the install-tool retry-then-fail
+    /// path so callers can branch on it without parsing prose).
+    /// Reserved keys (`ok`, `kind`, `message`, `retryable`, `field`,
+    /// `expected`, `tool`) are NOT overwritten by metadata so a sloppy
+    /// caller can't reshape the contract.
+    /// Top-level keys the failure envelope reserves. `metadata` callers
+    /// can't shadow these — a sloppy `metadata: ["kind": "explosion"]`
+    /// would otherwise silently rewrite the envelope's contract.
+    private static let reservedFailureKeys: Set<String> = [
+        "ok", "kind", "message", "retryable", "field", "expected", "tool",
+    ]
+
     public static func failure(
         kind: Kind,
         message: String,
         field: String? = nil,
         expected: String? = nil,
         tool: String? = nil,
-        retryable: Bool? = nil
+        retryable: Bool? = nil,
+        metadata: [String: Any]? = nil
     ) -> String {
         var dict: [String: Any] = [
             "ok": false,
@@ -69,6 +84,11 @@ public enum ToolEnvelope {
         if let field { dict["field"] = field }
         if let expected { dict["expected"] = expected }
         if let tool { dict["tool"] = tool }
+        if let metadata {
+            for (key, value) in metadata where !reservedFailureKeys.contains(key) {
+                dict[key] = value
+            }
+        }
         return encodeOrFallbackFailure(dict, kind: kind, message: message)
     }
 
