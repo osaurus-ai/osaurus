@@ -18,7 +18,11 @@ import SwiftUI
 // MARK: - Source Grouping
 
 /// Logical bucket for the picker. Each maps to one or more `CapabilityRow.groupHeader`s.
-private enum CapabilitySource: Hashable {
+///
+/// Module-internal (not file-private) so `OsaurusCoreTests` can verify the
+/// classifier helpers on `CapabilityRowBuilder` stay in lockstep with the
+/// inline bucketing in `CapabilityRowBuilder.build`.
+enum CapabilitySource: Hashable {
     /// Built-in tools — always loaded by the runtime, shown for transparency.
     case builtIn
     /// One per native dylib plugin (its tools and skills together).
@@ -72,7 +76,7 @@ private enum CapabilitySource: Hashable {
 
 // MARK: - Filter Chip
 
-private enum CapabilityFilter: String, CaseIterable, Identifiable {
+enum CapabilityFilter: String, CaseIterable, Identifiable {
     case all
     case enabled
     case toolsOnly
@@ -95,8 +99,14 @@ private enum CapabilityFilter: String, CaseIterable, Identifiable {
 /// Pure transform from snapshots of the live registries + agent state into the
 /// `[CapabilityRow]` array consumed by `CapabilitiesTableRepresentable`. Kept
 /// pure so it can be diffed cheaply on every state change.
+///
+/// Module-internal (not file-private) so `OsaurusCoreTests` can drive
+/// `build(_:)` and the `source(forTool:)` / `source(forSkill:)` classifiers
+/// directly. The "render rows from a controlled `Input`" surface is the
+/// regression seam for #1003 — the picker bug was caused by `childrenOf`
+/// disagreeing with `build`'s bucketing.
 @MainActor
-private enum CapabilityRowBuilder {
+enum CapabilityRowBuilder {
 
     struct Input {
         let visibleTools: [ToolRegistry.ToolEntry]
@@ -115,7 +125,7 @@ private enum CapabilityRowBuilder {
             .lowercased()
         let hasSearch = !normalized.isEmpty
 
-        // Bucket tools into their source.
+        // Bucket tools and skills into their source group.
         struct Bucket {
             var tools: [ToolRegistry.ToolEntry] = []
             var skills: [Skill] = []
@@ -139,59 +149,27 @@ private enum CapabilityRowBuilder {
             }
         )
 
-        let registry = ToolRegistry.shared
-        let builtInNames = registry.builtInToolNames
-        let runtimeNames = registry.runtimeManagedToolNames
-
+        // Bucket every tool / skill via the same classifier `childrenOf`
+        // uses. Routing both call sites through one helper is what keeps
+        // bulk-toggle and the rendered rows in sync (#1003) — if a future
+        // tool source is ever added, only `source(forTool:)` needs to grow.
         for tool in input.visibleTools {
-            // Built-in / runtime-managed tools are informational.
-            if builtInNames.contains(tool.name) || runtimeNames.contains(tool.name) {
-                ensureSource(.builtIn)
-                buckets[CapabilitySource.builtIn.groupId]?.tools.append(tool)
-                continue
-            }
-            if registry.isMCPTool(tool.name), let provider = registry.groupName(for: tool.name) {
-                let src: CapabilitySource = .mcpProvider(name: provider)
-                ensureSource(src)
-                buckets[src.groupId]?.tools.append(tool)
-                continue
-            }
-            if registry.isSandboxTool(tool.name), let pid = registry.groupName(for: tool.name) {
-                let src: CapabilitySource = .sandboxPlugin(pluginId: pid)
-                ensureSource(src)
-                buckets[src.groupId]?.tools.append(tool)
-                continue
-            }
-            if registry.isPluginTool(tool.name), let pid = registry.groupName(for: tool.name) {
-                let src: CapabilitySource = .plugin(
-                    pluginId: pid,
-                    displayName: pluginNameById[pid] ?? pid
-                )
-                ensureSource(src)
-                buckets[src.groupId]?.tools.append(tool)
-                continue
-            }
-            // Fallback: treat unclassified tools as built-in / always-loaded.
-            ensureSource(.builtIn)
-            buckets[CapabilitySource.builtIn.groupId]?.tools.append(tool)
+            let src = source(forTool: tool, pluginNameById: pluginNameById)
+            ensureSource(src)
+            buckets[src.groupId]?.tools.append(tool)
         }
 
         for skill in input.visibleSkills {
-            if let pid = skill.pluginId {
-                let src: CapabilitySource = .plugin(
-                    pluginId: pid,
-                    displayName: pluginNameById[pid] ?? pid
-                )
-                ensureSource(src)
-                buckets[src.groupId]?.skills.append(skill)
-            } else {
-                ensureSource(.standaloneSkills)
-                buckets[CapabilitySource.standaloneSkills.groupId]?.skills.append(skill)
-            }
+            let src = source(forSkill: skill, pluginNameById: pluginNameById)
+            ensureSource(src)
+            buckets[src.groupId]?.skills.append(skill)
         }
 
-        // Stable order: Built-in first, then plugins (alpha by display name), then
-        // MCP providers (alpha), then sandbox plugins (alpha), then standalone skills.
+        // Stable order by `sortRank` (plugins, then MCP providers, then
+        // sandbox plugins, then standalone skills), tied broken alpha by
+        // display name. The built-in bucket may be present in `sources`
+        // but gets filtered out at row emission below — its sort rank
+        // doesn't matter.
         sourceOrder.sort { lhs, rhs in
             guard let l = sources[lhs], let r = sources[rhs] else { return lhs < rhs }
             return sortRank(l) < sortRank(r)
@@ -203,6 +181,13 @@ private enum CapabilityRowBuilder {
         var rows: [CapabilityRow] = []
         for groupId in sourceOrder {
             guard let source = sources[groupId], let bucket = buckets[groupId] else { continue }
+
+            // Informational sources (built-in / runtime-managed tools)
+            // can't be toggled per-row and are skipped by `childrenOf` in
+            // bulk operations, so showing them only adds confusion — the
+            // master checkbox renders as "checked" but no click is
+            // actionable. Hide the entire group from the picker.
+            if source.isInformational { continue }
 
             let tools = bucket.tools
             let skills = bucket.skills
@@ -251,18 +236,12 @@ private enum CapabilityRowBuilder {
                 continue
             }
 
-            let totalToolEnabled = toolsForRows.reduce(0) { acc, t in
-                acc + (input.enabledToolNames.contains(t.name) ? 1 : 0)
-            }
-            let totalSkillEnabled = skillsForRows.reduce(0) { acc, s in
-                acc + (input.enabledSkillNames.contains(s.name) ? 1 : 0)
-            }
-
-            // Built-in group is informational — count every item as "enabled" for display.
+            // Informational groups were already dropped above, so every
+            // remaining group has real per-row toggles and the count
+            // reflects the agent's actual allowlist intersection.
             let enabledCount =
-                source.isInformational
-                ? toolsForRows.count + skillsForRows.count
-                : totalToolEnabled + totalSkillEnabled
+                toolsForRows.reduce(0) { $0 + (input.enabledToolNames.contains($1.name) ? 1 : 0) }
+                + skillsForRows.reduce(0) { $0 + (input.enabledSkillNames.contains($1.name) ? 1 : 0) }
             let totalCount = toolsForRows.count + skillsForRows.count
 
             // Auto-expand groups when actively searching so matches are visible at a glance.
@@ -290,8 +269,10 @@ private enum CapabilityRowBuilder {
                         id: "\(groupId)::tool::\(tool.name)",
                         name: tool.name,
                         description: tool.description,
-                        enabled: source.isInformational ? true : input.enabledToolNames.contains(tool.name),
-                        isAgentRestricted: source.isInformational,
+                        enabled: input.enabledToolNames.contains(tool.name),
+                        // Informational sources were filtered above; every
+                        // tool that reaches this point is freely toggleable.
+                        isAgentRestricted: false,
                         catalogTokens: tool.estimatedTokens,
                         estimatedTokens: tool.estimatedTokens
                     )
@@ -338,6 +319,42 @@ private enum CapabilityRowBuilder {
         let parts = rowId.components(separatedBy: "::")
         guard parts.count == 3 else { return nil }
         return (parts[0], parts[1], parts[2])
+    }
+
+    /// Single source of truth for which `CapabilitySource` a tool belongs
+    /// to. Used by both `build(_:)` (to bucket rendered rows) and
+    /// `AgentCapabilityManagerView.childrenOf(groupId:)` (to resolve
+    /// bulk-toggle targets without depending on which rows are currently
+    /// rendered). Routing both call sites through one helper is what
+    /// prevents the picker bug fixed in #1003 from reappearing — if these
+    /// two ever disagreed, collapsed-group bulk toggles would silently
+    /// drop capabilities.
+    static func source(forTool tool: ToolRegistry.ToolEntry, pluginNameById: [String: String]) -> CapabilitySource {
+        let registry = ToolRegistry.shared
+        if registry.builtInToolNames.contains(tool.name) || registry.runtimeManagedToolNames.contains(tool.name) {
+            return .builtIn
+        }
+        if registry.isMCPTool(tool.name), let provider = registry.groupName(for: tool.name) {
+            return .mcpProvider(name: provider)
+        }
+        if registry.isSandboxTool(tool.name), let pid = registry.groupName(for: tool.name) {
+            return .sandboxPlugin(pluginId: pid)
+        }
+        if registry.isPluginTool(tool.name), let pid = registry.groupName(for: tool.name) {
+            return .plugin(pluginId: pid, displayName: pluginNameById[pid] ?? pid)
+        }
+        // Unclassified tools fall back to the built-in / always-loaded
+        // group so they're still surfaced for transparency.
+        return .builtIn
+    }
+
+    /// Companion to `source(forTool:)` for skills. See that doc for the
+    /// "single source of truth" rationale.
+    static func source(forSkill skill: Skill, pluginNameById: [String: String]) -> CapabilitySource {
+        if let pid = skill.pluginId {
+            return .plugin(pluginId: pid, displayName: pluginNameById[pid] ?? pid)
+        }
+        return .standaloneSkills
     }
 }
 
@@ -692,9 +709,11 @@ struct AgentCapabilityManagerView: View {
     // MARK: - Loading
 
     private func loadFromRegistries() {
-        // Built-in / runtime-managed tools are intentionally surfaced in the picker
-        // for transparency (the `.builtIn` group renders them as informational rows
-        // with a disabled toggle). We don't filter them out here.
+        // We pass every enabled tool through to the row builder; built-in /
+        // runtime-managed entries get classified into the informational
+        // `.builtIn` source and then dropped at row-emission time so the
+        // picker only surfaces actionable groups. See
+        // `CapabilityRowBuilder.build` for the filter.
         visibleTools = ToolRegistry.shared.listTools().filter { $0.enabled }
         visibleSkills = SkillManager.shared.skills.filter { $0.enabled || !$0.isBuiltIn }
         plugins = PluginManager.shared.plugins
@@ -788,18 +807,35 @@ struct AgentCapabilityManagerView: View {
         commit(nextTools: enabledToolNames, nextSkills: next)
     }
 
+    /// Collect every (non-restricted) child of a group directly from the live
+    /// registry snapshots. Intentionally does NOT walk `rows` — collapsed
+    /// groups omit their children from the rendered list, so a row-based
+    /// implementation would silently no-op the master checkbox until the
+    /// section was expanded (#1003).
+    ///
+    /// `pluginNameById` is intentionally empty: the classifier's display
+    /// names matter for the rendered group header, but `groupId` only
+    /// derives from the structural identity (`pluginId` / provider / etc.),
+    /// so we don't need to materialize the lookup just to compare.
     private func childrenOf(groupId: String) -> (tools: Set<String>, skills: Set<String>) {
         var tools: Set<String> = []
         var skills: Set<String> = []
-        for row in rows {
-            switch row {
-            case .tool(let id, let name, _, _, let restricted, _, _) where !restricted:
-                if id.hasPrefix("\(groupId)::tool::") { tools.insert(name) }
-            case .skill(let id, let name, _, _, _, _, _):
-                if id.hasPrefix("\(groupId)::skill::") { skills.insert(name) }
-            default: break
-            }
+
+        for tool in visibleTools {
+            let source = CapabilityRowBuilder.source(forTool: tool, pluginNameById: [:])
+            // Built-in / runtime-managed tools are surfaced for transparency
+            // only; their toggles are disabled at the row level
+            // (`isAgentRestricted`) so bulk operations must skip them too.
+            guard !source.isInformational, source.groupId == groupId else { continue }
+            tools.insert(tool.name)
         }
+
+        for skill in visibleSkills {
+            let source = CapabilityRowBuilder.source(forSkill: skill, pluginNameById: [:])
+            guard source.groupId == groupId else { continue }
+            skills.insert(skill.name)
+        }
+
         return (tools, skills)
     }
 

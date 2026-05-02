@@ -270,11 +270,22 @@ extension CapabilitiesTableRepresentable {
         }
 
         private func reconfigureVisibleCells() {
-            guard let tableView else { return }
-            let range = tableView.rows(in: tableView.visibleRect)
-            for row in range.location ..< (range.location + range.length) {
+            for row in visibleRowIndices() {
                 reconfigureCell(at: row)
             }
+        }
+
+        /// Indices of rows currently inside the visible rect, clamped to
+        /// `rowIds`. Returns an empty range if the table isn't installed
+        /// or the visible rect doesn't intersect any rows yet (initial
+        /// layout / detached state).
+        private func visibleRowIndices() -> Range<Int> {
+            guard let tableView else { return 0 ..< 0 }
+            let range = tableView.rows(in: tableView.visibleRect)
+            let upperBound = min(range.location + range.length, rowIds.count)
+            let lowerBound = max(range.location, 0)
+            guard lowerBound < upperBound else { return 0 ..< 0 }
+            return lowerBound ..< upperBound
         }
 
         private func setHoveredRow(_ newId: String?) {
@@ -321,6 +332,12 @@ extension CapabilitiesTableRepresentable {
             newIds: [String],
             newLookup: [String: CapabilityRow]
         ) {
+            // Capture the on-screen ids BEFORE we swap the row state so we
+            // can tell which cells were already visible (and therefore
+            // retained by the diff) versus freshly inserted by the data
+            // source.
+            let previouslyVisibleIds = Set(visibleRowIndices().map { rowIds[$0] })
+
             rowLookup = newLookup
             rowIds = newIds
 
@@ -329,6 +346,17 @@ extension CapabilitiesTableRepresentable {
             snapshot.appendItems(newIds, toSection: .main)
 
             dataSource?.apply(snapshot, animatingDifferences: false)
+
+            // `NSTableViewDiffableDataSource.apply` only invokes the cell
+            // provider for inserted items. Items whose id is unchanged but
+            // whose payload changed (e.g. a group header that just flipped
+            // `isExpanded`, or a row whose enabled count shifted) are left
+            // alone, which is what produced the stale chevron / count badge
+            // in #1003. Reconfigure any rows that were on-screen before the
+            // diff so their cached payload matches `newLookup`.
+            for row in visibleRowIndices() where previouslyVisibleIds.contains(rowIds[row]) {
+                reconfigureCell(at: row)
+            }
         }
 
         // MARK: - Reuse Identifiers
