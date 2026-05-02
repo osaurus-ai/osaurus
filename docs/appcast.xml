@@ -3,6 +3,32 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.18.4</title>
+            <pubDate>Fri, 01 May 2026 23:14:25 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.18.4</sparkle:version>
+            <sparkle:shortVersionString>0.18.4</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.18.4/Osaurus-0.18.4.dmg" length="39610018" type="application/octet-stream" sparkle:edSignature="1lFGr2aDASm77zRIWz7D3B9xvaQUtsjSrRH8PDwcEbCtW9r8FJPL721ZvxUg4BbWzLELBuyiA4b8V7XvPzOiAQ=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- agent mascots in popup (#994) by @RaajeevChandran
+
+## 🐛 Bug Fixes
+
+- fix(preflight): reject JANGTQ Mistral 3 / Laguna before vmlx loads (#993) by @jjang-ai
+- fixed budget preview related issues, smaller context model management (#996) by @tpae
+
+## 🧰 Maintenance
+
+- sandbox + files tools simplification for better functionality (#997) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.18.3...0.18.4
+]]></description>
+        </item>
+        <item>
             <title>0.18.3</title>
             <pubDate>Fri, 01 May 2026 14:52:32 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
