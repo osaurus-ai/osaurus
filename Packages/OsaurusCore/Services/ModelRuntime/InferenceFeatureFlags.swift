@@ -22,15 +22,33 @@ public enum InferenceFeatureFlags {
     /// model. Higher values increase total throughput but also wired-memory
     /// footprint and per-token latency for any single request.
     ///
-    /// Defaults to 4 (BatchEngine's own default is 8, but on a typical 32 GB
-    /// machine 8 active slots of an MoE model will exhaust the wired cache
-    /// budget; 4 is a conservative starting point we can tune up via
-    /// `defaults write` without rebuilding).
+    /// Defaults to **1** so the vmlx compile path engages on Mistral 3 / 4,
+    /// Qwen 3.5/3.6, MiniMax, NemotronH, and DSV4 (all the families where
+    /// `CompilableKVCache` / `CompilableTurboQuantKVCache` /
+    /// `CompilableRotatingKVCache` Stage 1B.3 / Stage 2 / Stage 3 promotion
+    /// is shipped). Per vmlx's `OSAURUS-PRODUCTION-REFERENCE-2026-05-01.md`
+    /// §8 + §15 invariant 13: compile only engages when `maxBatchSize == 1`
+    /// (Stage 1B.4 — per-bucket shared `[B, H, maxLen, D]` buffers — is
+    /// pending). With `maxBatchSize > 1` every promotion gate fails and the
+    /// model runs the uncompiled decode loop, losing the documented 9× TTFT
+    /// speedup vmlx measured on `BENCH_VL_BATCH_CHAT` Mistral 3.5 (24.8s
+    /// → 2.7s).
     ///
-    /// Override with:
+    /// Osaurus's primary use case is single-user chat through the macOS app,
+    /// where only one slot is active at a time anyway. For server-style
+    /// deployments serving multiple concurrent users, override:
+    ///
     ///   `defaults write ai.osaurus ai.osaurus.scheduler.mlxBatchEngineMaxBatchSize -int 8`
+    ///
+    /// — at the cost of compile being permanently disabled for that
+    /// process. The rate-display rolling tok/s ramp + tooltip alert
+    /// surfaces this trade-off in the chat UI when a non-default value is
+    /// detected.
+    ///
+    /// Capped at 32 to match BatchEngine's documented per-engine slot
+    /// ceiling. Values <=0 fall back to the compile-friendly 1.
     public static var mlxBatchEngineMaxBatchSize: Int {
         let raw = UserDefaults.standard.integer(forKey: Keys.mlxBatchEngineMaxSize)
-        return raw > 0 ? min(raw, 32) : 4
+        return raw > 0 ? min(raw, 32) : 1
     }
 }
