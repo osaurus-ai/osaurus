@@ -16,15 +16,24 @@ import Testing
 @Suite(.serialized)
 struct MLXBatchAdapterTests {
 
-    @Test func maxBatchSize_defaultsToFour() {
+    /// The default flipped from 4 → 1 so the vmlx compile path engages
+    /// (Stage 1B.3 promotion gates require `maxBatchSize == 1`). See the
+    /// `mlxBatchEngineMaxBatchSize` doc comment in InferenceFeatureFlags
+    /// for the full rationale + the pending Stage 1B.4 work that would
+    /// lift the constraint. If you change the default again, update both
+    /// this test AND the doc comment so they stay aligned.
+    @Test func maxBatchSize_defaultsToOne_forCompileEngagement() {
         UserDefaults.standard.removeObject(forKey: "ai.osaurus.scheduler.mlxBatchEngineMaxBatchSize")
-        #expect(InferenceFeatureFlags.mlxBatchEngineMaxBatchSize == 4)
+        #expect(InferenceFeatureFlags.mlxBatchEngineMaxBatchSize == 1)
     }
 
     @Test func maxBatchSize_respectsUserDefaults() {
         let key = "ai.osaurus.scheduler.mlxBatchEngineMaxBatchSize"
         UserDefaults.standard.set(8, forKey: key)
         defer { UserDefaults.standard.removeObject(forKey: key) }
+        // Server deployments override to multi-slot at the cost of the
+        // compile path — same value the test pinned before; only the
+        // default changed.
         #expect(InferenceFeatureFlags.mlxBatchEngineMaxBatchSize == 8)
     }
 
@@ -36,11 +45,13 @@ struct MLXBatchAdapterTests {
         #expect(InferenceFeatureFlags.mlxBatchEngineMaxBatchSize == 32)
     }
 
-    @Test func maxBatchSize_zeroFallsBackToDefault() {
+    @Test func maxBatchSize_zeroFallsBackToDefault_one() {
         let key = "ai.osaurus.scheduler.mlxBatchEngineMaxBatchSize"
         UserDefaults.standard.set(0, forKey: key)
         defer { UserDefaults.standard.removeObject(forKey: key) }
-        #expect(InferenceFeatureFlags.mlxBatchEngineMaxBatchSize == 4)
+        // Zero is treated as "unset" — falls back to the compile-friendly
+        // default of 1 (was 4 prior to fa694e9e).
+        #expect(InferenceFeatureFlags.mlxBatchEngineMaxBatchSize == 1)
     }
 
     @Test func registry_shutdownNonexistentIsNoop() async {

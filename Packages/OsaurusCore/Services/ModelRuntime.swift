@@ -1244,53 +1244,6 @@ public actor ModelRuntime {
             .lowercased()
         let isMxtq = normalizedStamp == "mxtq"
 
-        // Third check: Laguna `mxfp4` bundles fail with "Unhandled keys
-        // [biases, scales, weight] in layers.N.mlp.experts.down_proj" at
-        // load time because vmlx's `LagunaMoE.experts` (Laguna.swift:425)
-        // is hardcoded to `TurboQuantSwitchGLU` — its inner
-        // `TurboQuantSwitchLinear` only knows the codebook keys
-        // (`tq_packed` / `tq_norms` / `tq_bits`), not the standard
-        // mxfp4 affine keys the bundle ships. The vmlx production
-        // reference doc §13 item #2 names this as a known issue with
-        // owner `vmlx-swift` (Laguna mxfp4 expert format mismatch —
-        // either ship JANGTQ-only or add affine MoE class). Until vmlx
-        // makes `LagunaMoE.experts` polymorphic on `weight_format`,
-        // detect at preflight and surface a clear remediation message
-        // pointing the user at the JANGTQ Laguna bundle which IS
-        // working. Repro confirmed 2026-05-02 on real bundle
-        // `OsaurusAI/Laguna-XS.2-mxfp4` (model_type=laguna,
-        // jang_config.weight_format=mxfp4, quantization.bits=4) by
-        // tracing `layers.1.mlp.experts.down_proj.{weight,scales,biases}`
-        // against the model's expected `tq_*` keys.
-        let isMxfp4 = normalizedStamp == "mxfp4"
-        if isMxfp4 {
-            let configURL = directory.appendingPathComponent("config.json")
-            if let configData = try? Data(contentsOf: configURL),
-                let configJSON = try? JSONSerialization.jsonObject(with: configData)
-                    as? [String: Any]
-            {
-                let modelType = (configJSON["model_type"] as? String)?.lowercased() ?? ""
-                if modelType == "laguna" {
-                    throw NSError(
-                        domain: "ModelRuntime",
-                        code: 5,
-                        userInfo: [
-                            NSLocalizedDescriptionKey:
-                                "Model '\(name)' is a Laguna mxfp4 bundle, which vmlx-swift-lm "
-                                + "does not yet support — the LagunaMoE expert path is hardcoded to "
-                                + "the TurboQuant codebook switch (`TurboQuantSwitchGLU`) and rejects "
-                                + "the standard mxfp4 affine keys (`weight` / `scales` / `biases`) "
-                                + "with an 'Unhandled keys' error at parameter-load time. Use the "
-                                + "Laguna XS.2 JANGTQ bundle (jang_config.weight_format = \"mxtq\") "
-                                + "instead — that path is verified-coherent. Tracked as vmlx "
-                                + "production-reference §13 item #2 (owner: vmlx-swift; resolution: "
-                                + "either ship JANGTQ-only or add an affine MoE class)."
-                        ]
-                    )
-                }
-            }
-        }
-
         // Forward mismatch: declared JANGTQ, sidecar missing.
         if isMxtq && !sidecarPresent {
             throw NSError(
