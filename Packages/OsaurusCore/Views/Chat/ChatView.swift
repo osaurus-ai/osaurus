@@ -933,6 +933,33 @@ final class ChatSession: ObservableObject {
         activeRunId == runId && !Task.isCancelled
     }
 
+    /// Push the rolling-rate's current value onto the live `ChatTurn` field
+    /// at ~5Hz so the UI tok/s display ramps smoothly during streaming.
+    /// Throttled because text streams can produce 100+ deltas/sec — every
+    /// SwiftUI re-render of the stats cell costs an animation tick, and at
+    /// full rate that swamps the MainActor on smaller responses. The
+    /// chosen 0.18s cadence (~5.5Hz) matches the existing tool-arg rebuild
+    /// throttle (line ~1199) for visual consistency. Skips the update when
+    /// the rolling rate is still in warm-up (`currentRate` returns nil) so
+    /// the cell shows nothing until the steady-state read is meaningful —
+    /// avoids the prior "shows 12 tok/s for the first half-second then
+    /// jumps to 60 tok/s" jitter users complained about.
+    private func refreshLiveRate(
+        rolling: inout RollingTokenRate,
+        lastRefreshAt: inout Date,
+        now: Date,
+        turn: ChatTurn
+    ) {
+        guard now.timeIntervalSince(lastRefreshAt) >= 0.18 else { return }
+        guard let rate = rolling.currentRate(at: now) else { return }
+        lastRefreshAt = now
+        turn.generationTokensPerSecond = rate
+        // Don't bump generationTokenCount here — vmlx's authoritative count
+        // arrives in the StreamingStatsHint sentinel and would be overwritten
+        // by an estimate. Final stamp uses rolling.totalTokens only as a
+        // last-resort fallback when the sentinel never fires.
+    }
+
     private func trimTrailingEmptyAssistantTurn() {
         if let lastTurn = turns.last,
             lastTurn.role == .assistant,
@@ -1125,17 +1152,34 @@ final class ChatSession: ObservableObject {
         var currentTurn = assistantTurn
         var uiDeltaCount = 0
         var firstDeltaTime: Date?
-        // Track the wall-clock time of the last non-empty delta so
-        // the fallback tok/s calculation uses the actual last-token
-        // moment as the denominator, not the stream's close time
-        // (which is after cancellation / teardown).
-        var lastDeltaTime: Date?
         // Throttle key for streaming tool-call argument rebuilds.
         var lastToolArgRebuildAt: Date = .distantPast
         // Throttle key to ensure the MainActor runloop gets a turn
         // to render SwiftUI updates even if the AsyncStream buffer
         // is saturated by a fast producer.
         var lastRunloopYieldAt: Date = .distantPast
+
+        // Rolling tok/s estimator. Replaces the previous "single-final-
+        // average" pattern that produced two visible artefacts:
+        //
+        //   1. Short responses appeared slow because the average included
+        //      first-token latency + reasoning-parser stamp resolution
+        //      (model warmup costs amortised over only ~100 tokens).
+        //   2. Reasoning ON vs reasoning OFF on the same model showed
+        //      noticeably different numbers — same decode rate, but the
+        //      reasoning preamble's higher token count diluted setup costs
+        //      so the AVERAGE looked higher with thinking on.
+        //
+        // The rolling rate skips a brief warm-up window then reports the
+        // sliding-window decode rate (steady-state). It counts content,
+        // reasoning, and tool-arg tokens uniformly so the visible value is
+        // invariant across {thinking on/off, tools yes/no, local/remote}.
+        // See `RollingTokenRate` doc for the window-choice rationale.
+        var rollingRate = RollingTokenRate()
+        // Throttle UI updates of the live rolling rate. The stream may
+        // produce 100+ deltas/sec; clamping rate refreshes to ~5Hz keeps
+        // SwiftUI repaints cheap without losing visible smoothness.
+        var lastRateRefreshAt: Date = .distantPast
 
         // Reasoning text arrives as `StreamingReasoningHint` sentinel deltas
         // emitted by `GenerationEventMapper` (local MLX) or
@@ -1201,14 +1245,36 @@ final class ChatSession: ObservableObject {
                         rebuildVisibleBlocks()
                     }
                 } else if let stats = StreamingStatsHint.decode(delta) {
+                    // Final stats from vmlx — captured for the post-loop
+                    // stamp. We DELIBERATELY do NOT overwrite the rolling
+                    // rate here: vmlx's `tokensPerSecond` is the full-
+                    // generation average, which has the same first-token-
+                    // amortisation problem the rolling rate was added to
+                    // fix. The rolling rate's steady-state value is used
+                    // for the visible bubble after the stream ends; vmlx's
+                    // tokenCount is preserved as the authoritative count.
                     currentTurn.generationTokenCount = stats.tokenCount
-                    currentTurn.generationTokensPerSecond = stats.tokensPerSecond
                     // Vmlx tells us the model never closed `</think>` before
                     // EOS / max_tokens. Persist on the turn so the bubble
                     // renderer can surface a one-line banner suggesting
                     // the user toggle Disable Thinking for this prompt class.
                     currentTurn.unclosedReasoning = stats.unclosedReasoning
                 } else if let reasoning = StreamingReasoningHint.decode(delta) {
+                    let now = Date()
+                    if firstDeltaTime == nil {
+                        firstDeltaTime = now
+                        ttftTrace?.mark("first_text_delta")
+                        ttftTrace?.set("model", selectedModel ?? "unknown")
+                        ttftTrace?.emit()
+                    }
+                    // Reasoning tokens count toward the rolling rate so
+                    // thinking-ON and thinking-OFF show the same decode
+                    // rate at steady state. See RollingTokenRate doc.
+                    let tokens = ContextBudgetManager.estimateTokens(for: reasoning)
+                    rollingRate.observe(tokens: tokens, at: now)
+                    refreshLiveRate(
+                        rolling: &rollingRate, lastRefreshAt: &lastRateRefreshAt,
+                        now: now, turn: currentTurn)
                     processor.receiveReasoning(reasoning)
                 } else if !delta.isEmpty {
                     let now = Date()
@@ -1218,8 +1284,13 @@ final class ChatSession: ObservableObject {
                         ttftTrace?.set("model", selectedModel ?? "unknown")
                         ttftTrace?.emit()
                     }
-                    lastDeltaTime = now
                     uiDeltaCount += 1
+                    // Content delta — counted uniformly with reasoning.
+                    let tokens = ContextBudgetManager.estimateTokens(for: delta)
+                    rollingRate.observe(tokens: tokens, at: now)
+                    refreshLiveRate(
+                        rolling: &rollingRate, lastRefreshAt: &lastRateRefreshAt,
+                        now: now, turn: currentTurn)
                     processor.receiveDelta(delta)
                 }
 
@@ -1247,28 +1318,19 @@ final class ChatSession: ObservableObject {
 
         if let first = firstDeltaTime {
             currentTurn.timeToFirstToken = first.timeIntervalSince(streamStartTime)
-            // Fall back to estimated tok/s when MLX stats weren't propagated (remote APIs).
-            // Use the codebase's chars/4 heuristic to approximate tokens from generated text
-            // rather than raw delta count, which doesn't map 1:1 to tokens for most providers.
-            if currentTurn.generationTokensPerSecond == nil,
-                !currentTurn.contentIsEmpty || !currentTurn.thinkingIsEmpty
-            {
-                let endTime = lastDeltaTime ?? Date()
-                let genTime = endTime.timeIntervalSince(first)
-                // Reasoning tokens are generated on the same clock as the
-                // answer; leaving them out of the numerator while keeping
-                // them in the denominator under-reports throughput on
-                // thinking models. Count both.
-                let answerTokens = ContextBudgetManager.estimateTokens(for: currentTurn.content)
-                let reasoningTokens =
-                    currentTurn.thinkingIsEmpty
-                    ? 0
-                    : ContextBudgetManager.estimateTokens(for: currentTurn.thinking)
-                let estimatedTokens = answerTokens + reasoningTokens
-                if genTime > 0 && estimatedTokens > 0 {
-                    currentTurn.generationTokenCount = estimatedTokens
-                    currentTurn.generationTokensPerSecond = Double(estimatedTokens) / genTime
-                }
+            // Stamp the steady-state tok/s. Single source of truth across
+            // local-MLX, remote-API, with-tools, and thinking-on/off paths
+            // — the rolling rate observed every text-bearing delta during
+            // the loop above. Falls back to full-generation average if the
+            // response was too short for the warm-up to elapse (see
+            // `RollingTokenRate.finalRate`).
+            currentTurn.generationTokensPerSecond = rollingRate.finalRate()
+            // Token count: prefer vmlx's authoritative count (already
+            // assigned in the stats sentinel branch above) — only fall back
+            // to our chars/4 estimate if the stats sentinel never fired
+            // (remote provider paths that don't surface vmlx stats).
+            if currentTurn.generationTokenCount == nil, rollingRate.totalTokens > 0 {
+                currentTurn.generationTokenCount = rollingRate.totalTokens
             }
         }
 
