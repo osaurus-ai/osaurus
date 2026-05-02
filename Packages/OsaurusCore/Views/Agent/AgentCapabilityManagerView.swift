@@ -125,7 +125,7 @@ enum CapabilityRowBuilder {
             .lowercased()
         let hasSearch = !normalized.isEmpty
 
-        // Bucket tools into their source.
+        // Bucket tools and skills into their source group.
         struct Bucket {
             var tools: [ToolRegistry.ToolEntry] = []
             var skills: [Skill] = []
@@ -165,8 +165,11 @@ enum CapabilityRowBuilder {
             buckets[src.groupId]?.skills.append(skill)
         }
 
-        // Stable order: Built-in first, then plugins (alpha by display name), then
-        // MCP providers (alpha), then sandbox plugins (alpha), then standalone skills.
+        // Stable order by `sortRank` (plugins, then MCP providers, then
+        // sandbox plugins, then standalone skills), tied broken alpha by
+        // display name. The built-in bucket may be present in `sources`
+        // but gets filtered out at row emission below — its sort rank
+        // doesn't matter.
         sourceOrder.sort { lhs, rhs in
             guard let l = sources[lhs], let r = sources[rhs] else { return lhs < rhs }
             return sortRank(l) < sortRank(r)
@@ -233,18 +236,12 @@ enum CapabilityRowBuilder {
                 continue
             }
 
-            let totalToolEnabled = toolsForRows.reduce(0) { acc, t in
-                acc + (input.enabledToolNames.contains(t.name) ? 1 : 0)
-            }
-            let totalSkillEnabled = skillsForRows.reduce(0) { acc, s in
-                acc + (input.enabledSkillNames.contains(s.name) ? 1 : 0)
-            }
-
-            // Built-in group is informational — count every item as "enabled" for display.
+            // Informational groups were already dropped above, so every
+            // remaining group has real per-row toggles and the count
+            // reflects the agent's actual allowlist intersection.
             let enabledCount =
-                source.isInformational
-                ? toolsForRows.count + skillsForRows.count
-                : totalToolEnabled + totalSkillEnabled
+                toolsForRows.reduce(0) { $0 + (input.enabledToolNames.contains($1.name) ? 1 : 0) }
+                + skillsForRows.reduce(0) { $0 + (input.enabledSkillNames.contains($1.name) ? 1 : 0) }
             let totalCount = toolsForRows.count + skillsForRows.count
 
             // Auto-expand groups when actively searching so matches are visible at a glance.
@@ -272,8 +269,10 @@ enum CapabilityRowBuilder {
                         id: "\(groupId)::tool::\(tool.name)",
                         name: tool.name,
                         description: tool.description,
-                        enabled: source.isInformational ? true : input.enabledToolNames.contains(tool.name),
-                        isAgentRestricted: source.isInformational,
+                        enabled: input.enabledToolNames.contains(tool.name),
+                        // Informational sources were filtered above; every
+                        // tool that reaches this point is freely toggleable.
+                        isAgentRestricted: false,
                         catalogTokens: tool.estimatedTokens,
                         estimatedTokens: tool.estimatedTokens
                     )

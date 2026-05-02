@@ -123,31 +123,28 @@ struct AgentCapabilityRowBuilderTests {
         // For every emitted child row, the prefix in its row id must match
         // what `source(forSkill:)` would return for the same skill. This
         // is exactly the invariant `childrenOf(groupId:)` now relies on.
+        // Row id encoding is `"<groupId>::skill::<uuid>"` — mirrors the
+        // production decode in `CapabilityRowBuilder.decode(rowId:)`.
         for row in rows {
-            switch row {
-            case .skill(let id, _, _, _, _, _, _):
-                let groupIdFromRow = parseGroupId(fromChildRowPayload: id)
-                // Decode the row id back to the originating skill via UUID
-                // payload — matches the production decode in
-                // `CapabilityRowBuilder.decode(rowId:)`.
-                let parts = id.components(separatedBy: "::")
-                #expect(parts.count == 3, "Malformed skill row id: \(id)")
-                guard parts.count == 3, let uuid = UUID(uuidString: parts[2]) else { continue }
-                let skill = [standaloneSkill, pluginSkill].first { $0.id == uuid }
-                #expect(skill != nil, "Row \(id) references unknown skill UUID \(uuid)")
-                guard let skill else { continue }
-                let classified = CapabilityRowBuilder.source(
-                    forSkill: skill,
-                    pluginNameById: pluginNameById
-                )
-                #expect(
-                    groupIdFromRow == classified.groupId,
-                    "build() emitted skill \(skill.name) under \(groupIdFromRow ?? "<nil>") but source(forSkill:) classifies it as \(classified.groupId)"
-                )
+            guard case .skill(let id, _, _, _, _, _, _) = row else { continue }
 
-            case .tool, .groupHeader:
-                continue
-            }
+            let parts = id.components(separatedBy: "::")
+            #expect(parts.count == 3, "Malformed skill row id: \(id)")
+            guard parts.count == 3, let uuid = UUID(uuidString: parts[2]) else { continue }
+
+            let groupIdFromRow = parts[0]
+            let skill = [standaloneSkill, pluginSkill].first { $0.id == uuid }
+            #expect(skill != nil, "Row \(id) references unknown skill UUID \(uuid)")
+            guard let skill else { continue }
+
+            let classified = CapabilityRowBuilder.source(
+                forSkill: skill,
+                pluginNameById: pluginNameById
+            )
+            #expect(
+                groupIdFromRow == classified.groupId,
+                "build() emitted skill \(skill.name) under \(groupIdFromRow) but source(forSkill:) classifies it as \(classified.groupId)"
+            )
         }
     }
 
@@ -255,16 +252,5 @@ struct AgentCapabilityRowBuilderTests {
             enabled: true,
             parameters: nil
         )
-    }
-
-    /// Reverse the row-id encoding used by `CapabilityRowBuilder.build` so
-    /// we can read back which group a child row was emitted under. The
-    /// payload pattern-matched out of `case .tool(let id, ...)` /
-    /// `case .skill(let id, ...)` is the raw `"<groupId>::<kind>::<name>"`
-    /// string — the `tool-` / `skill-` prefix is only applied by
-    /// `CapabilityRow.id`. Mirrors the production decode in
-    /// `CapabilityRowBuilder.decode(rowId:)`.
-    private func parseGroupId(fromChildRowPayload payload: String) -> String? {
-        payload.components(separatedBy: "::").first
     }
 }
