@@ -1244,49 +1244,50 @@ public actor ModelRuntime {
             .lowercased()
         let isMxtq = normalizedStamp == "mxtq"
 
-        // Third check: JANGTQ-quantized bundles for model_type families
-        // where vmlx hasn't fully ported the JANGTQ Linear shim yet.
-        //
-        // Status (vmlx@cb829b6):
-        //   - Mistral 3 / ministral3 LLM-only (no vision_config) →
-        //     SUPPORTED via Mistral3TextJANGTQModel + JANGTQDenseLinear.
-        //     The host preflight does NOT fire for these.
-        //   - Mistral 3 / ministral3 VLM (vision_config present, e.g.
-        //     Mistral-Medium-3.5-128B with Pixtral) → IN-FLIGHT. Vmlx's
-        //     VLMModelFactory throws a clear error; we mirror it here.
-        //   - Laguna (laguna model_type) → IN-FLIGHT. No model class
-        //     ported yet on either LLM or VLM side.
-        //
-        // The check fires only for VLM-shaped Mistral 3 family bundles
-        // and for Laguna. Once the VLM JANGTQ port + Laguna model class
-        // land upstream, drop this check entirely.
-        if isMxtq {
+        // Third check: Laguna `mxfp4` bundles fail with "Unhandled keys
+        // [biases, scales, weight] in layers.N.mlp.experts.down_proj" at
+        // load time because vmlx's `LagunaMoE.experts` (Laguna.swift:425)
+        // is hardcoded to `TurboQuantSwitchGLU` — its inner
+        // `TurboQuantSwitchLinear` only knows the codebook keys
+        // (`tq_packed` / `tq_norms` / `tq_bits`), not the standard
+        // mxfp4 affine keys the bundle ships. The vmlx production
+        // reference doc §13 item #2 names this as a known issue with
+        // owner `vmlx-swift` (Laguna mxfp4 expert format mismatch —
+        // either ship JANGTQ-only or add affine MoE class). Until vmlx
+        // makes `LagunaMoE.experts` polymorphic on `weight_format`,
+        // detect at preflight and surface a clear remediation message
+        // pointing the user at the JANGTQ Laguna bundle which IS
+        // working. Repro confirmed 2026-05-02 on real bundle
+        // `OsaurusAI/Laguna-XS.2-mxfp4` (model_type=laguna,
+        // jang_config.weight_format=mxfp4, quantization.bits=4) by
+        // tracing `layers.1.mlp.experts.down_proj.{weight,scales,biases}`
+        // against the model's expected `tq_*` keys.
+        let isMxfp4 = normalizedStamp == "mxfp4"
+        if isMxfp4 {
             let configURL = directory.appendingPathComponent("config.json")
             if let configData = try? Data(contentsOf: configURL),
                 let configJSON = try? JSONSerialization.jsonObject(with: configData)
                     as? [String: Any]
             {
                 let modelType = (configJSON["model_type"] as? String)?.lowercased() ?? ""
-                let textInner: String?
-                if let textConfig = configJSON["text_config"] as? [String: Any] {
-                    textInner = (textConfig["model_type"] as? String)?.lowercased()
-                } else {
-                    textInner = nil
+                if modelType == "laguna" {
+                    throw NSError(
+                        domain: "ModelRuntime",
+                        code: 5,
+                        userInfo: [
+                            NSLocalizedDescriptionKey:
+                                "Model '\(name)' is a Laguna mxfp4 bundle, which vmlx-swift-lm "
+                                + "does not yet support — the LagunaMoE expert path is hardcoded to "
+                                + "the TurboQuant codebook switch (`TurboQuantSwitchGLU`) and rejects "
+                                + "the standard mxfp4 affine keys (`weight` / `scales` / `biases`) "
+                                + "with an 'Unhandled keys' error at parameter-load time. Use the "
+                                + "Laguna XS.2 JANGTQ bundle (jang_config.weight_format = \"mxtq\") "
+                                + "instead — that path is verified-coherent. Tracked as vmlx "
+                                + "production-reference §13 item #2 (owner: vmlx-swift; resolution: "
+                                + "either ship JANGTQ-only or add an affine MoE class)."
+                        ]
+                    )
                 }
-                let hasVision = configJSON["vision_config"] != nil
-                _ = hasVision  // No remaining family-pending gates.
-                _ = modelType  // Mistral 3 (LLM + VLM) and Laguna are
-                _ = textInner  // both ported as of vmlx@344dda0.
-                // MXFP4 paths load via standard MLX
-                // dequant; JANGTQ Mistral 3 routes via
-                // Mistral3TextJANGTQModel /
-                // Mistral3VLMJANGTQ; Laguna MXFP4 via
-                // LagunaModel; Laguna JANGTQ port
-                // (LagunaJANGTQModel) is the next
-                // incremental piece — not blocking
-                // because the existing forward / inverse
-                // sidecar checks above still catch
-                // mislabeled bundles.
             }
         }
 

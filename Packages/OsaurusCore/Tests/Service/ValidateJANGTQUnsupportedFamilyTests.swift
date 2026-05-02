@@ -251,4 +251,57 @@ struct ValidateJANGTQUnsupportedFamilyTests {
             name: "Mistral-Medium-3.5-128B-mxfp4"
         )
     }
+
+    // MARK: - Laguna mxfp4 (vmlx LagunaMoE.experts hardcoded to TurboQuant)
+
+    /// Repro: `OsaurusAI/Laguna-XS.2-mxfp4` ships standard mxfp4 affine
+    /// experts (`weight` / `scales` / `biases`) but vmlx's `LagunaMoE.experts`
+    /// is `TurboQuantSwitchGLU` (Laguna.swift:425) which only knows the
+    /// codebook keys (`tq_packed` / `tq_norms` / `tq_bits`). Result:
+    /// "Unhandled keys" error during parameter load, with no actionable
+    /// message for the user. The preflight catches this before vmlx tries.
+    /// Once vmlx ships a polymorphic `LagunaMoE.experts` (production
+    /// reference §13 item #2), drop this test.
+    @Test("Laguna mxfp4 → throws code 5 with remediation pointing to JANGTQ alternative")
+    func laguna_mxfp4_blocked() throws {
+        let dir = try makeBundle(
+            weightFormat: "mxfp4",
+            modelType: "laguna",
+            sidecarPresent: false
+        )
+        defer { cleanup(dir) }
+        do {
+            try ModelRuntime.validateJANGTQSidecarIfRequired(
+                at: dir,
+                name: "Laguna-XS.2-mxfp4"
+            )
+            Issue.record(
+                "Laguna mxfp4 bundle should have been rejected by preflight"
+            )
+        } catch let error as NSError {
+            #expect(error.domain == "ModelRuntime")
+            #expect(error.code == 5)
+            let msg = (error.userInfo[NSLocalizedDescriptionKey] as? String) ?? ""
+            #expect(msg.contains("Laguna mxfp4"))
+            #expect(msg.contains("JANGTQ"))
+            #expect(msg.contains("TurboQuantSwitchGLU"))
+        }
+    }
+
+    /// Boundary: Laguna JANGTQ (the working path) must pass through cleanly.
+    /// The `mxfp4` block above checks `weight_format == "mxfp4"` — `mxtq`
+    /// must not trip it.
+    @Test("Laguna JANGTQ (mxtq) passes preflight — codebook path is supported")
+    func laguna_jangtq_passes() throws {
+        let dir = try makeBundle(
+            weightFormat: "mxtq",
+            modelType: "laguna",
+            sidecarPresent: true
+        )
+        defer { cleanup(dir) }
+        try ModelRuntime.validateJANGTQSidecarIfRequired(
+            at: dir,
+            name: "Laguna-XS.2-JANGTQ"
+        )
+    }
 }
