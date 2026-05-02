@@ -381,12 +381,31 @@ public actor ModelRuntime {
     //                                        submit `kvMode:
     //                                        .turboQuant(...)` explicitly
     //                                        per request.
-    //   - `defaultMaxKVSize: 8192`         — 8K ring window for slots that
-    //                                        submit `maxKVSize: nil`
-    //   - `longPromptMultiplier: 2.0`      — cap kicks in only past 16K
-    //                                        (8192 * 2.0) prompt tokens,
-    //                                        so short prompts keep full
-    //                                        attention.
+    //   - `defaultMaxKVSize: 65536`        — 64K ring window for slots that
+    //                                        submit `maxKVSize: nil`. Matches
+    //                                        the vmlx OSAURUS-PRODUCTION-
+    //                                        REFERENCE-2026-05-01.md §6
+    //                                        example. The prior 8192 value
+    //                                        silently truncated long-context
+    //                                        prompts (50K-token PDFs lost
+    //                                        ~84% of attention context) past
+    //                                        the 16K trigger. Worst-case
+    //                                        wired memory at 65K × 88 layers
+    //                                        × 8 KV-heads × 128 head_dim ×
+    //                                        2 bytes (fp16) × 2 (K+V) ≈
+    //                                        2.4 GB per slot on Mistral 3.5
+    //                                        (largest layer count we ship);
+    //                                        on .turboQuant(4,4) steady
+    //                                        state ~26× smaller (~95 MB).
+    //                                        With `defaultKVMode: .none` the
+    //                                        cold path is fp16 but the
+    //                                        rotating cap only kicks in for
+    //                                        prompts past 131K (65536 × 2.0)
+    //                                        — small chats unaffected.
+    //   - `longPromptMultiplier: 2.0`      — cap kicks in only past 131K
+    //                                        (65536 * 2.0) prompt tokens,
+    //                                        so short and medium prompts
+    //                                        keep full attention.
     //
     // Per-request explicit values still override these. We continue to
     // pass `modelKey` (per-model isolation) and `diskCacheDir` /
@@ -451,7 +470,7 @@ public actor ModelRuntime {
             // path 7% per-step drift (`CompilableTurboQuantKVCache.swift`
             // iter-10 measurement) is closed, fp16 is the only safe default.
             defaultKVMode: .none,
-            defaultMaxKVSize: 8192,
+            defaultMaxKVSize: 65536,
             longPromptMultiplier: 2.0
         )
     }
