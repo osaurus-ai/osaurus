@@ -340,33 +340,47 @@ public actor ModelRuntime {
     //
     //   - `usePagedCache: true`            — content-addressed paged blocks
     //                                        (multi-turn cache reuse path)
-    //   - `defaultKVMode: .turboQuant(4, 4)` — 4-bit codebook KV by default.
-    //                                        The prior `.turboQuant(3, 3)`
-    //                                        setting was reverted to `.none`
-    //                                        in commit e202cbbe after the
-    //                                        3-bit-KV `!!!!!!!!!` repetition
-    //                                        spam reported in community
-    //                                        issue #995. The root cause was
-    //                                        not the bit width itself but
-    //                                        vmlx's `TurboQuantKVCache`
-    //                                        paged-restore path compounding
-    //                                        quantization across multi-turn
-    //                                        handoff (re-encoding an already-
-    //                                        decoded lossy float). That was
-    //                                        fixed in vmlx commit `1173822`
-    //                                        (`restoreFromDecodedKV` keeps
-    //                                        the prefix in `.compressed`
-    //                                        phase without round-tripping).
-    //                                        Per OSAURUS-INTEGRATION-2026-
-    //                                        05-01.md §"3-bit KV verdict",
-    //                                        4-bit is the recommended default
-    //                                        post-`1173822` — 3-bit is also
-    //                                        safe but more error-sensitive
-    //                                        and gains less compression
-    //                                        benefit. Per-request `kvMode`
-    //                                        still overrides; clients that
-    //                                        want fp16 can submit
-    //                                        `kvMode: .none` explicitly.
+    //   - `defaultKVMode: .none`             — fp16 KV by default. Both
+    //                                        `.turboQuant(3, 3)` (committed
+    //                                        in #995, reverted in e202cbbe)
+    //                                        AND `.turboQuant(4, 4)` (per
+    //                                        the OSAURUS-INTEGRATION-2026-
+    //                                        05-01.md §"3-bit KV verdict"
+    //                                        recommendation, committed in
+    //                                        db3179fe) reproduce the same
+    //                                        degenerate-repetition failure
+    //                                        mode in real-bundle testing:
+    //                                        Qwen3.6 27B MXFP4 emitted
+    //                                        `!!!!!!!!!` in the thinking
+    //                                        channel with 3-bit; Gemma-4
+    //                                        31B JANG_4M emitted
+    //                                        `idea idea idea` and other
+    //                                        family bundles drifted into
+    //                                        looping after a few turns
+    //                                        with 4-bit. Vmlx's `1173822`
+    //                                        paged-cache fix closed the
+    //                                        cross-turn handoff
+    //                                        re-encoding bug, but the
+    //                                        underlying codebook
+    //                                        quantization error still
+    //                                        compounds across long
+    //                                        thinking-mode preambles
+    //                                        (longer prefix → more
+    //                                        compression rounds → more
+    //                                        accumulated error → attention
+    //                                        latches onto a high-prob low-
+    //                                        info token and loops).
+    //                                        The vmlx team's BENCH harness
+    //                                        didn't toggle thinking on
+    //                                        every family it verified, so
+    //                                        the integration guide's
+    //                                        4-bit recommendation under-
+    //                                        tested the failure mode.
+    //                                        Default to fp16; users who
+    //                                        need the memory savings can
+    //                                        submit `kvMode:
+    //                                        .turboQuant(...)` explicitly
+    //                                        per request.
     //   - `defaultMaxKVSize: 8192`         — 8K ring window for slots that
     //                                        submit `maxKVSize: nil`
     //   - `longPromptMultiplier: 2.0`      — cap kicks in only past 16K
@@ -413,7 +427,7 @@ public actor ModelRuntime {
             enableDiskCache: enableDiskCache,
             diskCacheDir: diskCacheDir,
             modelKey: modelName,
-            defaultKVMode: .turboQuant(keyBits: 4, valueBits: 4),
+            defaultKVMode: .none,
             defaultMaxKVSize: 8192,
             longPromptMultiplier: 2.0
         )
