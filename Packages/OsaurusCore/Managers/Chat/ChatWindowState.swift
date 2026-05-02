@@ -51,6 +51,7 @@ final class ChatWindowState: ObservableObject {
     private nonisolated(unsafe) var notificationObservers: [NSObjectProtocol] = []
     private var sessionRefreshWorkItem: DispatchWorkItem?
     private var bonjourCancellable: AnyCancellable?
+    private var agentsCancellable: AnyCancellable?
 
     // MARK: - Initialization
 
@@ -68,7 +69,7 @@ final class ChatWindowState: ObservableObject {
         // Pre-compute view values
         self.cachedSystemPrompt = AgentManager.shared.effectiveSystemPrompt(for: agentId)
         self.cachedActiveAgent = agents.first { $0.id == agentId } ?? .default
-        self.cachedAgentDisplayName = cachedActiveAgent.isBuiltIn ? L("Assistant") : cachedActiveAgent.name
+        self.cachedAgentDisplayName = Self.displayName(for: cachedActiveAgent)
         decodeBackgroundImageAsync(themeConfig: theme.customThemeConfig)
 
         // Configure session
@@ -84,6 +85,7 @@ final class ChatWindowState: ObservableObject {
 
         setupNotificationObservers()
         observeBonjourBrowser()
+        observeAgentManager()
         refreshPairedRelayAgents()
     }
 
@@ -100,7 +102,7 @@ final class ChatWindowState: ObservableObject {
         self.filteredSessions = ChatSessionsManager.shared.sessions(for: context.agentId)
         self.cachedSystemPrompt = AgentManager.shared.effectiveSystemPrompt(for: context.agentId)
         self.cachedActiveAgent = agents.first { $0.id == context.agentId } ?? .default
-        self.cachedAgentDisplayName = cachedActiveAgent.isBuiltIn ? L("Assistant") : cachedActiveAgent.name
+        self.cachedAgentDisplayName = Self.displayName(for: cachedActiveAgent)
         decodeBackgroundImageAsync(themeConfig: theme.customThemeConfig)
 
         self.session.onSessionChanged = { [weak self] in
@@ -109,6 +111,7 @@ final class ChatWindowState: ObservableObject {
 
         setupNotificationObservers()
         observeBonjourBrowser()
+        observeAgentManager()
         refreshPairedRelayAgents()
     }
 
@@ -192,7 +195,7 @@ final class ChatWindowState: ObservableObject {
     func refreshAgents() {
         agents = AgentManager.shared.agents
         cachedActiveAgent = agents.first { $0.id == agentId } ?? .default
-        cachedAgentDisplayName = cachedActiveAgent.isBuiltIn ? L("Assistant") : cachedActiveAgent.name
+        cachedAgentDisplayName = Self.displayName(for: cachedActiveAgent)
     }
 
     func refreshSessions() {
@@ -229,7 +232,7 @@ final class ChatWindowState: ObservableObject {
     func refreshAgentConfig() {
         cachedSystemPrompt = AgentManager.shared.effectiveSystemPrompt(for: agentId)
         cachedActiveAgent = agents.first { $0.id == agentId } ?? .default
-        cachedAgentDisplayName = cachedActiveAgent.isBuiltIn ? L("Assistant") : cachedActiveAgent.name
+        cachedAgentDisplayName = Self.displayName(for: cachedActiveAgent)
         session.invalidateTokenCache()
     }
 
@@ -257,6 +260,69 @@ final class ChatWindowState: ObservableObject {
                 }
                 self?.refreshPairedRelayAgents(discoveredAgents: agents)
             }
+    }
+
+    /// Mirror `AgentManager.shared.$agents` into this window so the picker,
+    /// `cachedActiveAgent`, and `cachedAgentDisplayName` stay live across
+    /// mutations from anywhere (AgentsView, onboarding, plugins, other
+    /// windows). The publisher is already `@MainActor`-bound, so we skip
+    /// `.receive(on:)` to avoid an unnecessary RunLoop hop.
+    ///
+    /// `@Published` replays its current value on subscribe; since the
+    /// initializers populate the cached fields with the same source-of-
+    /// truth values just before calling this, that first replay no-ops in
+    /// the `oldActive == newActive` gate of `applyAgentsUpdate`.
+    private func observeAgentManager() {
+        agentsCancellable = AgentManager.shared.$agents
+            .sink { [weak self] latest in
+                self?.applyAgentsUpdate(latest)
+            }
+    }
+
+    /// Reconcile our snapshot with a fresh emission from `AgentManager.$agents`.
+    ///
+    /// - Active agent missing → fall back to Default via `switchAgent`.
+    /// - Otherwise always update the dropdown-facing snapshot (cheap path
+    ///   that handles non-active mutations).
+    /// - Only when the active agent's `Agent` value changed do we touch the
+    ///   token cache, system-prompt cache, and theme — same gating the
+    ///   removed `.agentUpdated` observer used to do, now driven by the
+    ///   source-of-truth array's `Equatable` diff.
+    ///
+    /// IMPORTANT: do not read from `AgentManager.shared.agents` (or
+    /// `effectiveSystemPrompt`, which routes through it) inside this
+    /// method. Combine's `@Published` emits in `willSet`, so during the
+    /// sink callback the singleton's storage still holds the OLD array;
+    /// only `latest` and the resolved `newActive` are guaranteed fresh.
+    private func applyAgentsUpdate(_ latest: [Agent]) {
+        let oldActive = cachedActiveAgent
+        agents = latest
+
+        guard let newActive = latest.first(where: { $0.id == agentId }) else {
+            // `switchAgent` updates theme/sessions/config and persists the
+            // selection. `agents` was just swapped above, so any re-read
+            // inside `switchAgent` sees the fresh list.
+            switchAgent(to: Agent.defaultId)
+            return
+        }
+
+        cachedActiveAgent = newActive
+        cachedAgentDisplayName = Self.displayName(for: newActive)
+
+        guard newActive != oldActive else { return }
+
+        // The Default agent's mutable settings live in `ChatConfiguration`
+        // and are kept fresh by the `.appConfigurationChanged` observer;
+        // here we only refresh the cache for the custom-agent case (using
+        // the fresh `newActive`, not the stale singleton).
+        if !newActive.isBuiltIn {
+            cachedSystemPrompt = newActive.systemPrompt
+        }
+        session.invalidateTokenCache()
+
+        if newActive.themeId != oldActive.themeId {
+            refreshTheme()
+        }
     }
 
     func refreshPairedRelayAgents(discoveredAgents: [DiscoveredAgent]? = nil) {
@@ -295,6 +361,13 @@ final class ChatWindowState: ObservableObject {
         return ThemeManager.shared.currentTheme
     }
 
+    /// Built-in (Default) agent always renders as the localized "Assistant"
+    /// label so the chat header doesn't expose the internal `"Default"` name;
+    /// custom agents render their stored name verbatim.
+    private static func displayName(for agent: Agent) -> String {
+        agent.isBuiltIn ? L("Assistant") : agent.name
+    }
+
     private func decodeBackgroundImageAsync(themeConfig: CustomTheme?) {
         Task { [weak self] in
             let decoded = themeConfig?.background.decodedImage()
@@ -331,23 +404,14 @@ final class ChatWindowState: ObservableObject {
                 }
             }
         )
-        // Refresh theme and config (system prompt, token cache) when current agent is updated
-        notificationObservers.append(
-            NotificationCenter.default.addObserver(
-                forName: .agentUpdated,
-                object: nil,
-                queue: .main
-            ) { [weak self] notification in
-                let updatedId = notification.object as? UUID
-                Task { @MainActor in
-                    if let self, updatedId == self.agentId {
-                        self.refreshTheme()
-                        self.refreshAgentConfig()
-                    }
-                }
-            }
-        )
-        // Clear selected paired/relay agent pill when its provider is removed from settings
+        // Note: `.agentUpdated` is intentionally not observed here.
+        // `observeAgentManager()` covers active-custom-agent updates by
+        // diffing the published `agents` array, and the
+        // `.appConfigurationChanged` observer above covers Default-agent
+        // updates (whose settings live in `ChatConfiguration`).
+
+        // Clear the selected paired/relay agent pill when its provider is
+        // removed from settings.
         notificationObservers.append(
             NotificationCenter.default.addObserver(
                 forName: .remoteProviderStatusChanged,

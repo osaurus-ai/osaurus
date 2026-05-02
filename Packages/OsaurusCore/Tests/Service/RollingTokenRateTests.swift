@@ -63,7 +63,7 @@ struct RollingTokenRateTests {
         var r = RollingTokenRate()
         let t0 = Date()
         // Emit 1 token every 1/60s for 2 seconds.
-        for i in 0..<120 {
+        for i in 0 ..< 120 {
             let t = t0.addingTimeInterval(Double(i) / 60.0)
             r.observe(tokens: 1, at: t)
         }
@@ -88,7 +88,7 @@ struct RollingTokenRateTests {
         var asReasoning = RollingTokenRate()
         var asContent = RollingTokenRate()
         let t0 = Date()
-        for i in 0..<100 {
+        for i in 0 ..< 100 {
             let t = t0.addingTimeInterval(Double(i) * 0.02)  // 50 tok/s
             asReasoning.observe(tokens: 1, at: t)
             asContent.observe(tokens: 1, at: t)
@@ -112,12 +112,14 @@ struct RollingTokenRateTests {
         //   t=1.5..3.0 — sustained at 30 tok/s (45 tokens)
         // At t=3.0 the window covers [1.5, 3.0] — the 100 fast tokens
         // should be FULLY EVICTED, leaving only the 30 tok/s phase.
-        for i in 0..<100 {
+        for i in 0 ..< 100 {
             r.observe(tokens: 1, at: t0.addingTimeInterval(Double(i) * 0.01))
         }
-        for i in 0..<45 {
+        for i in 0 ..< 45 {
             r.observe(
-                tokens: 1, at: t0.addingTimeInterval(1.5 + Double(i) * (1.5 / 45.0)))
+                tokens: 1,
+                at: t0.addingTimeInterval(1.5 + Double(i) * (1.5 / 45.0))
+            )
         }
         let endT = t0.addingTimeInterval(3.0)
         guard let rate = r.currentRate(at: endT) else {
@@ -154,7 +156,7 @@ struct RollingTokenRateTests {
         var r = RollingTokenRate()
         let t0 = Date()
         // 100 tokens at 50 tok/s (2s).
-        for i in 0..<100 {
+        for i in 0 ..< 100 {
             r.observe(tokens: 1, at: t0.addingTimeInterval(Double(i) * 0.02))
         }
         // currentRate IS defined — warm-up cleared.
@@ -177,7 +179,7 @@ struct RollingTokenRateTests {
         // Full-generation average over 2.1s = 100/2.1 ≈ 47.6 tok/s.
         // Rolling steady-state at end ≈ 50 tok/s.
         // The visible value should converge to 50, not be dragged by TTFT.
-        for i in 0..<100 {
+        for i in 0 ..< 100 {
             r.observe(tokens: 1, at: t0.addingTimeInterval(0.1 + Double(i) * 0.02))
         }
         guard let final = r.finalRate() else {
@@ -204,7 +206,7 @@ struct RollingTokenRateTests {
         var r = RollingTokenRate()
         let t0 = Date()
         // Real tokens.
-        for i in 0..<10 {
+        for i in 0 ..< 10 {
             r.observe(tokens: 1, at: t0.addingTimeInterval(Double(i) * 0.05))
         }
         let priorTotal = r.totalTokens
@@ -217,7 +219,7 @@ struct RollingTokenRateTests {
     func totalTokens_lifetime() {
         var r = RollingTokenRate()
         let t0 = Date()
-        for i in 0..<500 {
+        for i in 0 ..< 500 {
             r.observe(tokens: 1, at: t0.addingTimeInterval(Double(i) * 0.01))
         }
         // At t=5s, only the last 1.5s of tokens are in the window — but

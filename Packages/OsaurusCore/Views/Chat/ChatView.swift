@@ -1273,8 +1273,11 @@ final class ChatSession: ObservableObject {
                     let tokens = ContextBudgetManager.estimateTokens(for: reasoning)
                     rollingRate.observe(tokens: tokens, at: now)
                     refreshLiveRate(
-                        rolling: &rollingRate, lastRefreshAt: &lastRateRefreshAt,
-                        now: now, turn: currentTurn)
+                        rolling: &rollingRate,
+                        lastRefreshAt: &lastRateRefreshAt,
+                        now: now,
+                        turn: currentTurn
+                    )
                     processor.receiveReasoning(reasoning)
                 } else if !delta.isEmpty {
                     let now = Date()
@@ -1289,8 +1292,11 @@ final class ChatSession: ObservableObject {
                     let tokens = ContextBudgetManager.estimateTokens(for: delta)
                     rollingRate.observe(tokens: tokens, at: now)
                     refreshLiveRate(
-                        rolling: &rollingRate, lastRefreshAt: &lastRateRefreshAt,
-                        now: now, turn: currentTurn)
+                        rolling: &rollingRate,
+                        lastRefreshAt: &lastRateRefreshAt,
+                        now: now,
+                        turn: currentTurn
+                    )
                     processor.receiveDelta(delta)
                 }
 
