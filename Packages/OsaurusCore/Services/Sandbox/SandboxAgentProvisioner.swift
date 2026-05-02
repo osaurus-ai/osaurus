@@ -117,6 +117,9 @@ public final class SandboxAgentProvisioner {
         // them keeps `sandbox_process` honest and prevents stale
         // entries from accumulating across re-provisions.
         await SandboxBackgroundJobs.shared.clear(agentName: agentName)
+        // Same hygiene for the install-lock queue — entries are tiny
+        // but accumulate across long sessions if we don't clear them.
+        await SandboxInstallLock.shared.clear(agentName: agentName)
 
         var removedContainerUser = false
         var skippedContainerUserCleanup = false

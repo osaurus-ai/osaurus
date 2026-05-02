@@ -265,16 +265,31 @@ private func agentVenvPath(home: String) -> String {
     "\(home)/.venv"
 }
 
+/// Per-agent npm project workspace. `sandbox_npm_install` bootstraps a
+/// `package.json` here and installs into `<workdir>/node_modules/`.
+/// Isolating npm state under our namespace prevents leftover artefacts
+/// from cross-contaminating the agent home and stops the well-known
+/// "Tracker idealTree already exists" error that fires when `npm install`
+/// runs over a stale `node_modules/.package-lock.json`.
+private func agentNodeWorkdir(home: String) -> String {
+    "\(home)/.osaurus/node_workspace"
+}
+
 private func agentShellEnvironment(agentId: String, home: String, cwd: String? = nil) -> [String: String] {
     var env: [String: String] = [:]
     if let uuid = UUID(uuidString: agentId) {
         env = AgentSecretsKeychain.getFilteredSecrets(agentId: uuid)
     }
     let venvPath = agentVenvPath(home: home)
+    let nodeWorkdir = agentNodeWorkdir(home: home)
     var pathEntries: [String] = []
     if let cwd, !cwd.isEmpty {
         pathEntries.append("\(cwd)/node_modules/.bin")
     }
+    // The npm workdir's `node_modules/.bin` is always on PATH so installed
+    // CLIs are reachable from any `sandbox_exec` cwd, mirroring how the
+    // venv's `bin/` is unconditionally included below.
+    pathEntries.append("\(nodeWorkdir)/node_modules/.bin")
     pathEntries.append("\(venvPath)/bin")
     pathEntries.append(sandboxDefaultPATH)
     env["VIRTUAL_ENV"] = venvPath
@@ -466,30 +481,151 @@ actor SandboxToolCommandRunnerRegistry {
 /// Build the standard envelope for an install-style tool. Success and
 /// failure both carry the requested package list and the truncated combined
 /// output — only the envelope kind differs so the model can branch cleanly.
+/// `retried` is `true` when the recovery harness ran a cleanup + second
+/// attempt; surfaced on BOTH the success and failure paths so the model
+/// (or downstream tooling) can branch on retry status without parsing
+/// prose. On the failure path it also rides the `metadata` bag.
 private func installResultEnvelope(
     tool: String,
     packages: [String],
-    result: ContainerExecResult
+    result: ContainerExecResult,
+    retried: Bool = false
 ) -> String {
     let combined = truncateForModel(result.stdout + result.stderr, maxChars: 20_000)
     if result.succeeded {
-        return ToolEnvelope.success(
-            tool: tool,
-            result: [
-                "installed": packages,
-                "exit_code": Int(result.exitCode),
-                "output": combined,
-            ]
-        )
+        var payload: [String: Any] = [
+            "installed": packages,
+            "exit_code": Int(result.exitCode),
+            "output": combined,
+        ]
+        if retried { payload["retried"] = true }
+        return ToolEnvelope.success(tool: tool, result: payload)
     }
+    let stage = retried ? "after retry" : ""
+    let header =
+        stage.isEmpty
+        ? "Install failed (exit \(result.exitCode))"
+        : "Install failed \(stage) (exit \(result.exitCode))"
     return ToolEnvelope.failure(
         kind: .executionError,
         message:
-            "Install failed (exit \(result.exitCode)). Combined output: "
+            "\(header). Combined output: "
             + combined.trimmingCharacters(in: .whitespacesAndNewlines),
         tool: tool,
-        retryable: true
+        retryable: true,
+        metadata: retried ? ["retried": true] : nil
     )
+}
+
+/// Build a failure envelope for the rare case where the recovery
+/// harness's own cleanup step threw. Carries both the original
+/// install output and the cleanup error so the model has the full
+/// "first attempt failed AND recovery couldn't even run" picture
+/// instead of a generic `execution_error` from `ToolEnvelope.fromError`.
+private func installCleanupFailureEnvelope(
+    tool: String,
+    packages: [String],
+    firstAttempt: ContainerExecResult,
+    cleanupError: Error
+) -> String {
+    let firstCombined = truncateForModel(
+        firstAttempt.stdout + firstAttempt.stderr,
+        maxChars: 10_000
+    )
+    return ToolEnvelope.failure(
+        kind: .executionError,
+        message:
+            "Install failed (exit \(firstAttempt.exitCode)) and recovery cleanup also "
+            + "failed: \(cleanupError.localizedDescription). First attempt output: "
+            + firstCombined.trimmingCharacters(in: .whitespacesAndNewlines),
+        tool: tool,
+        retryable: true,
+        metadata: ["retried": false, "cleanup_failed": true, "packages": packages]
+    )
+}
+
+/// Run an install operation; if its first failure matches a known
+/// stale-state signature, run a tool-specific cleanup and retry once.
+///
+/// Centralised here so npm / pip / apk all get the same retry semantics
+/// and the same `retried`-flag surface in their result envelope. The
+/// caller supplies the signature predicate AND the cleanup body — both
+/// run in the same exec context as the install (agent for npm/pip,
+/// root for apk) so the cleanup can drop lockfiles or refresh caches
+/// without escalating privilege.
+///
+/// If the cleanup body itself throws (rare — our cleanups all `|| true`
+/// or run defensively), we wrap that as a structured failure envelope
+/// rather than letting the throw propagate to a generic
+/// `ToolEnvelope.fromError(...)`. That keeps the install context
+/// (packages list, first-attempt output) reachable for the model.
+///
+/// Closure parameters are `@Sendable` so the helper can be invoked
+/// from within a `@Sendable` context (which is what the install tools
+/// do when wrapping themselves in `SandboxInstallLock.serialize`).
+private func runInstallWithRecovery(
+    tool: String,
+    packages: [String],
+    attempt: @Sendable () async throws -> ContainerExecResult,
+    isRecoverable: @Sendable (ContainerExecResult) -> Bool,
+    cleanup: @Sendable () async throws -> Void
+) async throws -> String {
+    let first = try await attempt()
+    if first.succeeded || !isRecoverable(first) {
+        return installResultEnvelope(tool: tool, packages: packages, result: first, retried: false)
+    }
+    do {
+        try await cleanup()
+    } catch {
+        return installCleanupFailureEnvelope(
+            tool: tool,
+            packages: packages,
+            firstAttempt: first,
+            cleanupError: error
+        )
+    }
+    let second = try await attempt()
+    return installResultEnvelope(tool: tool, packages: packages, result: second, retried: true)
+}
+
+/// Substring matchers for each installer's well-known stale-state errors.
+/// Substrings (not regex) so the test surface stays readable; if a model
+/// hits a third variant we widen the array rather than adding a new branch.
+private enum InstallRecoverableErrors {
+    static let npm: [String] = [
+        // npm 9+ arborist tracker bug — fires when a previous install
+        // left `node_modules/.package-lock.json` half-written.
+        "Tracker \"idealTree\" already exists",
+        "Tracker \"idealTree\" doesn't exist",
+        // Filesystem layer signs of a previous interrupted install.
+        "EEXIST: file already exists",
+        "ENOTEMPTY",
+        "ELOCKED",
+    ]
+
+    static let pip: [String] = [
+        "Could not install packages due to an OSError",
+        "ReadTimeoutError",
+        // distutils-shaped legacy installs that pip refuses to remove
+        // without `--ignore-installed`. Cleanup just clears cache so a
+        // fresh download retries. Pinned to the full distutils marker
+        // (not the looser `"Cannot uninstall"` prefix) so unrelated
+        // pip errors that mention "Cannot uninstall" don't trigger an
+        // unnecessary cache purge + retry.
+        "distutils installed project",
+    ]
+
+    static let apk: [String] = [
+        "temporary error (try again later)",
+        "unable to lock database",
+    ]
+
+    /// True when `result`'s combined stdout+stderr contains any of the
+    /// supplied known-recoverable signatures.
+    static func contains(_ result: ContainerExecResult, anyOf needles: [String]) -> Bool {
+        let haystack = result.stdout + result.stderr
+        return needles.contains { haystack.contains($0) }
+    }
 }
 
 // MARK: - sandbox_read_file
@@ -1415,13 +1551,69 @@ actor SandboxBackgroundJobs {
     }
 }
 
+/// Per-agent serialization for install operations (`sandbox_npm_install`,
+/// `sandbox_pip_install`, `sandbox_install`). Two concurrent installs on
+/// the same agent collide on the same `node_modules/` / venv / apk db,
+/// which is exactly the kind of race that produces npm's "Tracker
+/// idealTree already exists" error. This actor queues each new call
+/// behind the previous one for the same `agentName`; calls on different
+/// agents still run concurrently.
+///
+/// `apk` is global to the container, so all sandbox_install calls share
+/// the synthetic key `__sandbox_apk__`.
+actor SandboxInstallLock {
+    static let shared = SandboxInstallLock()
+
+    /// Synthetic agent key for `sandbox_install` (apk). All apk calls
+    /// across every agent serialize through this same slot.
+    static let apkSerializationKey = "__sandbox_apk__"
+
+    /// The tail of each agent's queue. New callers chain themselves
+    /// after this Task and replace it as the new tail before running.
+    private var tail: [String: Task<Void, Never>] = [:]
+
+    /// Run `body` such that any other `serialize(agentName:)` call with
+    /// the same key has finished first. Concurrent calls on different
+    /// keys do not block each other.
+    ///
+    /// The new task waits on `tail[agentName]` (if any) before running
+    /// `body`, then publishes a Void-shaped view of itself as the new
+    /// tail — that's how heterogeneous `T`'s compose into a single
+    /// `Task<Void, Never>` queue. Errors and successes both release the
+    /// lock so a thrown body can't wedge subsequent callers.
+    func serialize<T: Sendable>(
+        agentName: String,
+        _ body: @Sendable @escaping () async throws -> T
+    ) async throws -> T {
+        let previous = tail[agentName]
+        let task = Task<T, Error> {
+            await previous?.value
+            return try await body()
+        }
+        tail[agentName] = Task { _ = try? await task.value }
+        return try await task.value
+    }
+
+    /// Drop the queue tail for `agentName` so a re-provisioned agent
+    /// starts with a clean slate. Mirrors `SandboxBackgroundJobs.clear`
+    /// — called from `SandboxAgentProvisioner.unprovision` so the
+    /// in-memory map can't grow unbounded across long-lived sessions.
+    /// Calling on an unknown key is a no-op.
+    func clear(agentName: String) {
+        tail.removeValue(forKey: agentName)
+    }
+}
+
 // MARK: - sandbox_install
 
 private struct SandboxInstallTool: OsaurusTool, @unchecked Sendable {
     let name = "sandbox_install"
     let description =
-        "Install system packages via `apk` (runs as root). Example: `{\"packages\": [\"ffmpeg\"]}`. "
-        + "For Python or Node packages prefer `sandbox_pip_install` / `sandbox_npm_install`."
+        "Install system packages via `apk` (runs as root) — available globally inside the container. "
+        + "**Use this instead of `sandbox_exec(\"apk add …\")`** so the auto-refresh + retry "
+        + "harness runs and concurrent installs don't collide on apk's lock. Example: "
+        + "`{\"packages\": [\"ffmpeg\"]}`. For Python or Node packages prefer "
+        + "`sandbox_pip_install` / `sandbox_npm_install`."
     let agentName: String
 
     var parameters: JSONValue? {
@@ -1452,13 +1644,46 @@ private struct SandboxInstallTool: OsaurusTool, @unchecked Sendable {
         guard case .value(let packages) = pkgsReq else { return pkgsReq.failureEnvelope ?? "" }
 
         let pkgList = packages.joined(separator: " ")
-        let result = try await SandboxToolCommandRunnerRegistry.shared.execAsRoot(
-            command: "apk add --no-cache \(pkgList)",
-            timeout: 120,
-            streamToLogs: true,
-            logSource: "apk"
-        )
-        return installResultEnvelope(tool: name, packages: packages, result: result)
+        // `apk update` first refreshes the package index — cheap when the
+        // cache is fresh, and eliminates "no such package" errors caused
+        // by a stale index. `|| true` so a transient network blip on the
+        // index refresh doesn't poison the install. Recovery harness
+        // catches the rest.
+        let installCmd = "apk update --quiet || true; apk add --no-cache \(pkgList)"
+
+        let toolName = self.name
+        // apk is global to the container — every agent's install hits
+        // the same package database and apk's own lockfile. Serialize
+        // through a single synthetic key so cross-agent calls don't
+        // race each other.
+        return try await SandboxInstallLock.shared.serialize(
+            agentName: SandboxInstallLock.apkSerializationKey
+        ) {
+            @Sendable func runAsRoot(_ cmd: String, timeout: TimeInterval) async throws
+                -> ContainerExecResult
+            {
+                try await SandboxToolCommandRunnerRegistry.shared.execAsRoot(
+                    command: cmd,
+                    timeout: timeout,
+                    streamToLogs: true,
+                    logSource: "apk"
+                )
+            }
+
+            return try await runInstallWithRecovery(
+                tool: toolName,
+                packages: packages,
+                attempt: { try await runAsRoot(installCmd, timeout: 120) },
+                isRecoverable: { result in
+                    InstallRecoverableErrors.contains(result, anyOf: InstallRecoverableErrors.apk)
+                },
+                cleanup: {
+                    // Force-refresh the index — the most common apk recovery
+                    // signal is a stale cache or transient lock.
+                    _ = try await runAsRoot("apk update", timeout: 60)
+                }
+            )
+        }
     }
 }
 
@@ -1467,8 +1692,12 @@ private struct SandboxInstallTool: OsaurusTool, @unchecked Sendable {
 private struct SandboxPipInstallTool: OsaurusTool, @unchecked Sendable {
     let name = "sandbox_pip_install"
     let description =
-        "Install Python packages via pip into the agent's venv. Auto-creates the venv on first use. "
-        + "Example: `{\"packages\": [\"numpy\", \"flask\"]}`."
+        "Install Python packages via pip into the agent's venv at `~/.venv/`. **Use this instead "
+        + "of `sandbox_exec(\"pip install …\")`** so the venv bootstrap, retry harness, and "
+        + "per-agent serialization apply. Auto-creates the venv on first use. The venv's "
+        + "`python3` and installed scripts are on your PATH — call them from any `sandbox_exec` "
+        + "cwd. 240s timeout (covers cold-cache installs of large packages). Example: "
+        + "`{\"packages\": [\"numpy\", \"flask\"]}`."
     let agentId: String
     let agentName: String
     let home: String
@@ -1515,16 +1744,54 @@ private struct SandboxPipInstallTool: OsaurusTool, @unchecked Sendable {
         }
 
         let pkgList = packages.joined(separator: " ")
-        let result = try await SandboxToolCommandRunnerRegistry.shared.execAsAgent(
-            agentName,
-            command:
-                "test -x '\(venvPath)/bin/python3' || /usr/bin/python3 -m venv '\(venvPath)' && '\(venvPath)/bin/python3' -m pip install \(pkgList)",
-            env: agentShellEnvironment(agentId: agentId, home: home),
-            timeout: 120,
-            streamToLogs: true,
-            logSource: "pip"
-        )
-        return installResultEnvelope(tool: name, packages: packages, result: result)
+        // `--disable-pip-version-check` cuts a stdout warning that
+        // confuses small models; `--no-input` prevents pip from blocking
+        // on a credential prompt for private indexes.
+        let installCmd =
+            "test -x '\(venvPath)/bin/python3'"
+            + " || /usr/bin/python3 -m venv '\(venvPath)'"
+            + " && '\(venvPath)/bin/python3' -m pip install"
+            + " --disable-pip-version-check --no-input \(pkgList)"
+
+        // Local snapshots so the @Sendable closures don't capture `self`.
+        let id = agentId, name = self.name, agent = agentName, root = home
+        return try await SandboxInstallLock.shared.serialize(agentName: agentName) {
+            @Sendable func runAsAgent(_ cmd: String, timeout: TimeInterval) async throws
+                -> ContainerExecResult
+            {
+                try await SandboxToolCommandRunnerRegistry.shared.execAsAgent(
+                    agent,
+                    command: cmd,
+                    env: agentShellEnvironment(agentId: id, home: root),
+                    timeout: timeout,
+                    streamToLogs: true,
+                    logSource: "pip"
+                )
+            }
+
+            return try await runInstallWithRecovery(
+                tool: name,
+                packages: packages,
+                // 240s covers cold-cache installs of large packages (torch,
+                // pandas, transformers) that routinely cross 60s on first install.
+                attempt: { try await runAsAgent(installCmd, timeout: 240) },
+                isRecoverable: { result in
+                    InstallRecoverableErrors.contains(result, anyOf: InstallRecoverableErrors.pip)
+                },
+                cleanup: {
+                    // Guard the purge on the venv actually existing — a
+                    // first-attempt failure that died before `python3 -m venv`
+                    // finished would leave us with no `pip` binary to invoke.
+                    // The `[ -x ]` test makes the cleanup a no-op in that
+                    // case so the retry can re-create the venv from scratch.
+                    let cleanupCmd =
+                        "[ -x '\(venvPath)/bin/pip' ]"
+                        + " && '\(venvPath)/bin/pip' cache purge >/dev/null 2>&1"
+                        + " || true"
+                    _ = try await runAsAgent(cleanupCmd, timeout: 30)
+                }
+            )
+        }
     }
 }
 
@@ -1533,7 +1800,13 @@ private struct SandboxPipInstallTool: OsaurusTool, @unchecked Sendable {
 private struct SandboxNpmInstallTool: OsaurusTool, @unchecked Sendable {
     let name = "sandbox_npm_install"
     let description =
-        "Install Node packages via `npm install` in the agent home. Example: "
+        "Install Node packages via `npm install` into a per-agent project workspace at "
+        + "`~/.osaurus/node_workspace/`. **Use this instead of `sandbox_exec(\"npm install …\")`** "
+        + "so the workdir bootstrap, recovery harness, and per-agent serialization apply — bare "
+        + "`npm install` in the agent home is what produced the original `Tracker idealTree "
+        + "already exists` failures. Bootstraps a `package.json` on first use; subsequent calls "
+        + "accumulate into the same workspace. Installed CLI binaries are on your PATH "
+        + "automatically — call them from any `sandbox_exec` cwd. 240s timeout. Example: "
         + "`{\"packages\": [\"express\", \"lodash\"]}`."
     let agentId: String
     let agentName: String
@@ -1579,16 +1852,66 @@ private struct SandboxNpmInstallTool: OsaurusTool, @unchecked Sendable {
             )
         }
 
+        let nodeWorkdir = agentNodeWorkdir(home: home)
         let pkgList = packages.joined(separator: " ")
-        let result = try await SandboxToolCommandRunnerRegistry.shared.execAsAgent(
-            agentName,
-            command: "npm install \(pkgList)",
-            env: agentShellEnvironment(agentId: agentId, home: home, cwd: home),
-            timeout: 120,
-            streamToLogs: true,
-            logSource: "npm"
-        )
-        return installResultEnvelope(tool: name, packages: packages, result: result)
+        // Bootstrap an isolated npm workspace under our namespace and
+        // ensure a `package.json` exists before running install. The
+        // `[ -f package.json ] || npm init -y` step is idempotent — once
+        // a manifest exists it short-circuits — and gives npm a stable
+        // anchor so `npm install <pkg>` doesn't synth a new manifest on
+        // every call (which is what produced the "Tracker idealTree
+        // already exists" error when a previous synth was interrupted).
+        // `--no-audit --no-fund --no-update-notifier` keeps the install
+        // narrow on network use and stdout noise.
+        let installCmd =
+            "mkdir -p '\(nodeWorkdir)'"
+            + " && cd '\(nodeWorkdir)'"
+            + " && [ -f package.json ] || npm init -y --silent"
+            + " && npm install --no-audit --no-fund --no-update-notifier \(pkgList)"
+
+        // Local snapshots so the @Sendable closures don't capture `self`.
+        let id = agentId, name = self.name, agent = agentName, root = home
+
+        // `cwd: nil` is deliberate — `SandboxManager.exec` prepends
+        // `cd '<cwd>' && …` when its `cwd` arg is non-nil, which would
+        // run before our own `mkdir -p` and fail on a first-install
+        // case. The command itself owns its `mkdir -p && cd` sequence.
+        // (Pinned by `sandboxNpmInstall_bootstrapsPackageJsonAndUsesWorkdir`.)
+        return try await SandboxInstallLock.shared.serialize(agentName: agentName) {
+            @Sendable func runAsAgent(_ cmd: String, timeout: TimeInterval) async throws
+                -> ContainerExecResult
+            {
+                try await SandboxToolCommandRunnerRegistry.shared.exec(
+                    user: "agent-\(agent)",
+                    command: cmd,
+                    env: agentShellEnvironment(agentId: id, home: root, cwd: nodeWorkdir),
+                    cwd: nil,
+                    timeout: timeout,
+                    streamToLogs: true,
+                    logSource: "npm"
+                )
+            }
+
+            return try await runInstallWithRecovery(
+                tool: name,
+                packages: packages,
+                attempt: { try await runAsAgent(installCmd, timeout: 240) },
+                isRecoverable: { result in
+                    InstallRecoverableErrors.contains(result, anyOf: InstallRecoverableErrors.npm)
+                },
+                cleanup: {
+                    // Drop the half-written lockfile + clear the npm cache.
+                    // `mkdir -p` first so a first-attempt failure that died
+                    // before `mkdir` succeeded doesn't trip up `cd`.
+                    let cleanupCmd =
+                        "mkdir -p '\(nodeWorkdir)'"
+                        + " && cd '\(nodeWorkdir)'"
+                        + " && rm -rf node_modules/.package-lock.json .package-lock.json"
+                        + " && npm cache clean --force >/dev/null 2>&1 || true"
+                    _ = try await runAsAgent(cleanupCmd, timeout: 60)
+                }
+            )
+        }
     }
 }
 

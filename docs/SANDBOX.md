@@ -152,9 +152,9 @@ Reserve `sandbox_exec` for builds, installs, git, processes, network calls, pack
 | `sandbox_exec` | Run a shell command. Foreground (default, max 300s) **or** `background:true` for servers/long tasks (the spawn shim returns immediately with `pid` + `log_file`). Pair the background form with `sandbox_process`. |
 | `sandbox_process` | Manage background jobs: `action="poll"` (alive + log tail), `"wait"` (block until exit, capped by `timeout`), `"kill"` (`force:true` for SIGKILL). |
 | `sandbox_execute_code` | Run a Python script that imports `read_file` / `write_file` / `edit_file` / `search_files` / `terminal` / `share_artifact` from `osaurus_tools`. Use for ≥3 tool calls with logic between them. 5-min timeout, 50KB stdout cap, 50 tool calls per script. |
-| `sandbox_install` | Install system packages via `apk` (runs as root) |
-| `sandbox_pip_install` | Install Python packages via `pip install --user` |
-| `sandbox_npm_install` | Install Node.js packages via `npm install` |
+| `sandbox_install` | Install system packages via `apk` (runs as root). Auto-refreshes the package index before install; serializes across all agents on a single apk lock. |
+| `sandbox_pip_install` | Install Python packages into the agent's venv at `~/.venv/`. Auto-creates the venv on first use; the venv's `python3` and installed scripts are on PATH from any `sandbox_exec` cwd. 240s timeout, runs with `--disable-pip-version-check --no-input`. |
+| `sandbox_npm_install` | Install Node packages into a per-agent project workspace at `~/.osaurus/node_workspace/`. Bootstraps `package.json` on first use; installed CLI binaries are on PATH from any `sandbox_exec` cwd. 240s timeout, runs with `--no-audit --no-fund --no-update-notifier`. |
 | `sandbox_secret_check` | Check whether a secret exists for this agent (never reveals the value) |
 | `sandbox_secret_set` | Store a secret securely — pass `value` directly or omit to prompt the user |
 | `sandbox_plugin_register` | Register an agent-created plugin (requires `pluginCreate` permission) |
@@ -165,6 +165,19 @@ The previously-discrete `sandbox_list_directory`, `sandbox_find_files`, `sandbox
 
 All file paths are validated on the host side before container execution by `SandboxPathSanitizer`, which now returns structured rejection reasons (empty, traversal, null byte, dangerous character, outside allowed roots). Tools surface the reason to the model in an `invalid_args` envelope so the next call self-corrects instead of retrying with the same bad path.
 
+### Install hardening
+
+The three install tools (`sandbox_install`, `sandbox_pip_install`, `sandbox_npm_install`) share a hardening pipeline:
+
+| Layer | Behaviour |
+|---|---|
+| **Per-agent serialization** | `SandboxInstallLock` queues install operations behind each other per agent so two concurrent calls can't race on `node_modules/` / venv / apk db. **apk's lock is container-wide**, so `sandbox_install` calls serialize *globally across every agent* under a synthetic key — a slow `apk add` on agent A briefly blocks agent B's `apk add`. npm/pip installs are isolated per-agent and run concurrently across agents. |
+| **Auto-recovery** | If the first attempt fails AND its output matches a known stale-state signature (`Tracker "idealTree" already exists`, `EEXIST`, `ELOCKED` for npm; `Could not install packages due to an OSError`, `ReadTimeoutError` for pip; `temporary error`, `unable to lock database` for apk), the tool runs a tool-specific cleanup and retries once. The result envelope includes `retried: true` so the model can see the recovery happened. |
+| **Cleanup actions** | npm: `rm -rf node_modules/.package-lock.json && npm cache clean --force`. pip: `pip cache purge`. apk: `apk update`. All run in the same exec context (agent for npm/pip, root for apk) as the install attempt. |
+| **Workspace isolation** | npm installs into `~/.osaurus/node_workspace/` (bootstraps `package.json` on first use). pip installs into the agent's venv at `~/.venv/`. Both have their `bin/` on PATH from any `sandbox_exec` cwd. |
+| **Stable flags** | npm: `--no-audit --no-fund --no-update-notifier`. pip: `--disable-pip-version-check --no-input`. apk: `--no-cache` plus a leading `apk update --quiet`. |
+| **Timeouts** | npm/pip: 240s (covers cold-cache installs of large packages like torch / pandas / scoped npm packages). apk: 120s. |
+
 ### Result shape
 
 Every sandbox tool returns a [ToolEnvelope](TOOL_CONTRACT.md) JSON string. Success payloads in `result`:
@@ -174,7 +187,7 @@ Every sandbox tool returns a [ToolEnvelope](TOOL_CONTRACT.md) JSON string. Succe
 - Exec foreground: `{stdout, stderr, exit_code, cwd}`. Background (`background:true`): `{pid, log_file, cwd, background:true}`.
 - Process management: `{pid, alive|exited|killed, log_file, log_tail, ...}`.
 - `sandbox_execute_code`: `{stdout, stderr, exit_code, tool_calls, cwd}`.
-- Install family: `{installed, exit_code, output}` on success; `execution_error` envelope on non-zero exit.
+- Install family: `{installed, exit_code, output}` on success; `execution_error` envelope on non-zero exit. Both shapes carry `retried: true` when the auto-recovery harness ran a cleanup + second attempt. Failure envelopes additionally carry `cleanup_failed: true` if the cleanup step itself threw — that signals to the model that it should not retry the same operation right away.
 
 Failures use `kind: invalid_args` with `field` pointing at the offending argument (`path`, `cwd`, `content`, etc.) so the model can self-correct on the next turn.
 

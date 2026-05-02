@@ -38,6 +38,8 @@ struct BuiltinSandboxToolsTests {
         #expect(installed == ["flask", "pytest"])
         #expect(payload["requested"] == nil)
         #expect(payload["exit_code"] as? Int == 0)
+        // First-attempt success — no recovery retry happened.
+        #expect(payload["retried"] == nil)
 
         let calls = await runner.calls
         #expect(calls.count == 2)
@@ -48,7 +50,103 @@ struct BuiltinSandboxToolsTests {
         }
         #expect(command.contains("/usr/bin/python3 -m venv"))
         #expect(command.contains(".venv/bin/python3"))
-        #expect(command.contains("-m pip install flask pytest"))
+        #expect(command.contains("-m pip install"))
+        // Hardening flags: silence pip's version warning and refuse to
+        // block on a credential prompt for private indexes.
+        #expect(command.contains("--disable-pip-version-check"))
+        #expect(command.contains("--no-input"))
+        #expect(command.contains("flask pytest"))
+    }
+
+    @Test @MainActor
+    func sandboxPipInstall_recoversFromOSError() async throws {
+        // First attempt fails with an OSError (recoverable). The harness
+        // runs `pip cache purge` and retries. Second attempt succeeds.
+        // Result envelope carries `retried: true`.
+        let runner = MockSandboxToolCommandRunner(
+            rootResults: [.init(stdout: "", stderr: "", exitCode: 0)],
+            agentResults: [
+                // Attempt 1 — fails with the recoverable OSError signature.
+                .init(
+                    stdout: "",
+                    stderr: "ERROR: Could not install packages due to an OSError: [Errno 28] No space left on device",
+                    exitCode: 1
+                ),
+                // Cleanup — pip cache purge returns success.
+                .init(stdout: "", stderr: "", exitCode: 0),
+                // Attempt 2 — succeeds after cleanup.
+                .init(stdout: "Successfully installed flask-3.0.0", stderr: "", exitCode: 0),
+            ]
+        )
+
+        let output = try await withRegisteredSandboxTools(runner: runner) {
+            try await ToolRegistry.shared.execute(
+                name: "sandbox_pip_install",
+                argumentsJSON: #"{"packages":["flask"]}"#
+            )
+        }
+
+        let payload = try successPayload(output)
+        #expect(payload["retried"] as? Bool == true)
+        #expect(payload["exit_code"] as? Int == 0)
+
+        let calls = await runner.calls
+        #expect(calls.count == 4, "expected: root probe + install + cache purge + retry")
+        // Cleanup call is the third one (index 2): `pip cache purge`.
+        guard case .agent(_, let cleanupCmd) = calls[2] else {
+            Issue.record("Expected agent cleanup call")
+            return
+        }
+        #expect(cleanupCmd.contains("pip"))
+        #expect(cleanupCmd.contains("cache purge"))
+    }
+
+    /// Cleanup-throws path: the install fails recoverably, but the
+    /// recovery harness's own cleanup throws. The tool surfaces a
+    /// structured failure envelope (with the `cleanup_failed` flag and
+    /// the original first-attempt output) instead of letting the throw
+    /// propagate and become a generic `execution_error` envelope.
+    @Test @MainActor
+    func sandboxPipInstall_surfacesCleanupErrorAsStructuredFailure() async throws {
+        let runner = MockSandboxToolCommandRunner(
+            rootResults: [.init(stdout: "", stderr: "", exitCode: 0)],
+            agentResults: [
+                // Attempt 1 — recoverable failure.
+                .init(
+                    stdout: "",
+                    stderr: "ERROR: Could not install packages due to an OSError",
+                    exitCode: 1
+                )
+                // (No second result needed — cleanup throws before
+                //  attempt 2 fires.)
+            ],
+            // Throw on the second agent call (index 1) — that's the
+            // cleanup `pip cache purge`. Index 0 is the install attempt.
+            throwOnAgentCallIndex: 1
+        )
+
+        let output = try await withRegisteredSandboxTools(runner: runner) {
+            try await ToolRegistry.shared.execute(
+                name: "sandbox_pip_install",
+                argumentsJSON: #"{"packages":["flask"]}"#
+            )
+        }
+
+        #expect(ToolEnvelope.isError(output))
+        let payload = try failurePayload(output)
+        #expect(payload["kind"] as? String == "execution_error")
+        // Critical: the structured `cleanup_failed` metadata flag rides
+        // the failure envelope so callers can branch on it.
+        #expect(payload["cleanup_failed"] as? Bool == true)
+        #expect(payload["retried"] as? Bool == false)
+
+        let message = payload["message"] as? String ?? ""
+        #expect(message.contains("recovery cleanup also failed"))
+        #expect(message.contains("First attempt output"))
+
+        let calls = await runner.calls
+        // root probe + attempt 1 + (throw) cleanup = 3 calls; no retry.
+        #expect(calls.count == 3)
     }
 
     @Test @MainActor
@@ -77,9 +175,14 @@ struct BuiltinSandboxToolsTests {
 
     @Test @MainActor
     func sandboxNpmInstall_returnsFailureEnvelopeOnBadExit() async throws {
+        // Non-recoverable failure (no idealTree / EEXIST signature) →
+        // surface the failure verbatim, no retry. The npm tool now uses
+        // `exec` (not `execAsAgent`) so the install result rides in
+        // `execResults` rather than `agentResults`.
         let runner = MockSandboxToolCommandRunner(
             rootResults: [.init(stdout: "", stderr: "", exitCode: 0)],
-            agentResults: [.init(stdout: "", stderr: "npm: not found", exitCode: 127)]
+            agentResults: [],
+            execResults: [.init(stdout: "", stderr: "npm: not found", exitCode: 127)]
         )
 
         let output = try await withRegisteredSandboxTools(runner: runner) {
@@ -99,8 +202,175 @@ struct BuiltinSandboxToolsTests {
         #expect(message.contains("npm: not found"))
 
         let calls = await runner.calls
+        // Just the root probe + one install attempt — no retry because
+        // "npm: not found" isn't in the recoverable signature list.
         #expect(calls.count == 2)
         #expect(calls[0] == .root("test -x /usr/bin/node && test -x /usr/bin/npm"))
+    }
+
+    @Test @MainActor
+    func sandboxNpmInstall_bootstrapsPackageJsonAndUsesWorkdir() async throws {
+        let runner = MockSandboxToolCommandRunner(
+            rootResults: [.init(stdout: "", stderr: "", exitCode: 0)],
+            agentResults: [],
+            execResults: [.init(stdout: "added 1 package", stderr: "", exitCode: 0)]
+        )
+
+        let output = try await withRegisteredSandboxTools(runner: runner) {
+            try await ToolRegistry.shared.execute(
+                name: "sandbox_npm_install",
+                argumentsJSON: #"{"packages":["express"]}"#
+            )
+        }
+
+        let payload = try successPayload(output)
+        #expect(payload["exit_code"] as? Int == 0)
+        #expect(payload["retried"] == nil)
+
+        let calls = await runner.calls
+        // root probe + one install attempt.
+        #expect(calls.count == 2)
+        guard case .exec(let user, let command, _) = calls[1] else {
+            Issue.record("expected install call to use exec (not execAsAgent)")
+            return
+        }
+        #expect(user == "agent-test-agent")
+        // Workdir, idempotent package.json bootstrap, no-network flags.
+        #expect(command.contains(".osaurus/node_workspace"))
+        #expect(command.contains("mkdir -p"))
+        #expect(command.contains("[ -f package.json ] || npm init -y"))
+        #expect(command.contains("npm install"))
+        #expect(command.contains("--no-audit"))
+        #expect(command.contains("--no-fund"))
+        #expect(command.contains("--no-update-notifier"))
+        #expect(command.contains("express"))
+        // Regression guard: the install command must NOT start with an
+        // outer `cd '<workdir>' && …` prepend. `SandboxManager.exec`
+        // adds that prefix when its `cwd:` arg is non-nil, and on a
+        // fresh agent home the workdir doesn't exist yet — so an outer
+        // `cd` runs before our `mkdir -p` and the whole command fails
+        // with `bash: line 1: cd: …: No such file or directory`. Our
+        // mock mirrors that prepend (see `MockSandboxToolCommandRunner.exec`),
+        // so this assertion catches the bug at unit-test time.
+        #expect(
+            !command.hasPrefix("cd "),
+            "install command must own its own mkdir + cd; outer cd would run before mkdir on a fresh agent home"
+        )
+    }
+
+    @Test @MainActor
+    func sandboxNpmInstall_recoversFromIdealTreeError() async throws {
+        // First attempt fails with the well-known "Tracker idealTree
+        // already exists" message → harness wipes the lockfile + clears
+        // npm cache, retries, succeeds. Result carries `retried: true`.
+        let runner = MockSandboxToolCommandRunner(
+            rootResults: [.init(stdout: "", stderr: "", exitCode: 0)],
+            agentResults: [],
+            execResults: [
+                // Attempt 1 — recoverable failure.
+                .init(
+                    stdout: "",
+                    stderr: "npm error Tracker \"idealTree\" already exists\n",
+                    exitCode: 1
+                ),
+                // Cleanup — wipe lockfile + cache clean.
+                .init(stdout: "", stderr: "", exitCode: 0),
+                // Attempt 2 — succeeds after cleanup.
+                .init(stdout: "added 5 packages", stderr: "", exitCode: 0),
+            ]
+        )
+
+        let output = try await withRegisteredSandboxTools(runner: runner) {
+            try await ToolRegistry.shared.execute(
+                name: "sandbox_npm_install",
+                argumentsJSON: #"{"packages":["@stripe/link-cli"]}"#
+            )
+        }
+
+        let payload = try successPayload(output)
+        #expect(payload["retried"] as? Bool == true)
+        #expect(payload["exit_code"] as? Int == 0)
+
+        let calls = await runner.calls
+        // root probe + attempt 1 + cleanup + attempt 2 = 4.
+        #expect(calls.count == 4)
+        // Cleanup is the third call (index 2).
+        guard case .exec(_, let cleanupCmd, _) = calls[2] else {
+            Issue.record("expected cleanup to use exec")
+            return
+        }
+        #expect(cleanupCmd.contains("rm -rf node_modules/.package-lock.json"))
+        #expect(cleanupCmd.contains("npm cache clean"))
+    }
+
+    @Test @MainActor
+    func sandboxNpmInstall_givesUpAfterOneRetry() async throws {
+        // Both attempts fail with the same recoverable signature →
+        // retry runs once, then we surface the second failure verbatim.
+        // No third attempt fires.
+        let trackerError = "npm error Tracker \"idealTree\" already exists\n"
+        let runner = MockSandboxToolCommandRunner(
+            rootResults: [.init(stdout: "", stderr: "", exitCode: 0)],
+            agentResults: [],
+            execResults: [
+                // Attempt 1
+                .init(stdout: "", stderr: trackerError, exitCode: 1),
+                // Cleanup
+                .init(stdout: "", stderr: "", exitCode: 0),
+                // Attempt 2 — same failure
+                .init(stdout: "", stderr: trackerError, exitCode: 1),
+            ]
+        )
+
+        let output = try await withRegisteredSandboxTools(runner: runner) {
+            try await ToolRegistry.shared.execute(
+                name: "sandbox_npm_install",
+                argumentsJSON: #"{"packages":["express"]}"#
+            )
+        }
+
+        #expect(ToolEnvelope.isError(output))
+        let payload = try failurePayload(output)
+        let message = payload["message"] as? String ?? ""
+        #expect(message.contains("after retry"))
+        #expect(message.contains("idealTree"))
+        // The `retried: true` metadata flag rides the failure envelope
+        // too (not just the success envelope) so a programmatic caller
+        // can branch on retry status without parsing prose.
+        #expect(payload["retried"] as? Bool == true)
+
+        let calls = await runner.calls
+        // root probe + attempt 1 + cleanup + attempt 2 = 4 (no third attempt).
+        #expect(calls.count == 4)
+    }
+
+    @Test @MainActor
+    func sandboxApkInstall_runsUpdateBeforeAdd() async throws {
+        let runner = MockSandboxToolCommandRunner(
+            rootResults: [.init(stdout: "", stderr: "", exitCode: 0)],
+            agentResults: []
+        )
+
+        let output = try await withRegisteredSandboxTools(runner: runner) {
+            try await ToolRegistry.shared.execute(
+                name: "sandbox_install",
+                argumentsJSON: #"{"packages":["ffmpeg"]}"#
+            )
+        }
+
+        let payload = try successPayload(output)
+        #expect(payload["exit_code"] as? Int == 0)
+
+        let calls = await runner.calls
+        #expect(calls.count == 1)
+        guard case .root(let command) = calls[0] else {
+            Issue.record("expected apk install via execAsRoot")
+            return
+        }
+        // Refresh the index first so a stale apk db can't poison `add`.
+        #expect(command.contains("apk update --quiet"))
+        #expect(command.contains("apk add --no-cache"))
+        #expect(command.contains("ffmpeg"))
     }
 
     @Test @MainActor
@@ -337,7 +607,10 @@ struct BuiltinSandboxToolsTests {
             return
         }
         #expect(user == "agent-test-agent")
-        #expect(command == "pytest test_app.py -v")
+        // `sandbox_exec` defaults `cwd` to the agent home, and the mock
+        // mirrors `SandboxManager.exec`'s `cd '<cwd>' && …` prepend so
+        // we see exactly what bash would run inside the container.
+        #expect(command == "cd /workspace/agents/test-agent && pytest test_app.py -v")
         #expect(env["VIRTUAL_ENV"]?.contains(".venv") == true)
         #expect(env["PATH"]?.contains(".venv/bin") == true)
     }
@@ -440,6 +713,19 @@ struct BuiltinSandboxToolsTests {
     }
 }
 
+/// In-memory fake of `SandboxToolCommandRunning` for the sandbox tool
+/// suite. Each variant of `exec` / `execAsRoot` / `execAsAgent` consumes
+/// one entry from its respective queue (defaulting to a benign success
+/// result when the queue is exhausted) and records the call so tests can
+/// assert on what the tool actually issued.
+///
+/// `throwOnAgentCallIndex` is a fault-injection knob: when set, the
+/// Nth `execAsAgent` invocation (0-indexed) throws
+/// `MockSandboxRunnerError.injectedFailure` instead of returning a
+/// result. Used by the cleanup-throws regression test to exercise the
+/// install tools' "transport layer died mid-recovery" branch directly.
+/// Calls before / after the throw still consume from `agentResults` as
+/// usual.
 private actor MockSandboxToolCommandRunner: SandboxToolCommandRunning {
     enum Call: Equatable {
         case exec(String?, String, [String: String])
@@ -452,26 +738,39 @@ private actor MockSandboxToolCommandRunner: SandboxToolCommandRunning {
     private var rootResults: [ContainerExecResult]
     private var agentResults: [ContainerExecResult]
 
+    private let throwOnAgentCallIndex: Int?
+    private var agentCallCount: Int = 0
+
     init(
         rootResults: [ContainerExecResult],
         agentResults: [ContainerExecResult],
-        execResults: [ContainerExecResult] = []
+        execResults: [ContainerExecResult] = [],
+        throwOnAgentCallIndex: Int? = nil
     ) {
         self.rootResults = rootResults
         self.agentResults = agentResults
         self.execResults = execResults
+        self.throwOnAgentCallIndex = throwOnAgentCallIndex
     }
 
     func exec(
         user: String?,
         command: String,
         env: [String: String],
-        cwd _: String?,
+        cwd: String?,
         timeout _: TimeInterval,
         streamToLogs _: Bool,
         logSource _: String?
     ) async throws -> ContainerExecResult {
-        calls.append(.exec(user, command, env))
+        // Mirror `SandboxManager.exec`'s wire-level shell composition so
+        // tests that inspect the recorded command see exactly what the
+        // container would actually run — including the outer `cd '<cwd>'
+        // && …` prepend when `cwd` is non-nil. Without this the
+        // double-`cd` regression that produced `bash: line 1: cd: …: No
+        // such file or directory` on a fresh agent home would slip past
+        // the unit tests.
+        let recorded = cwd.map { "cd \($0) && \(command)" } ?? command
+        calls.append(.exec(user, recorded, env))
         return execResults.isEmpty ? .init(stdout: "", stderr: "", exitCode: 0) : execResults.removeFirst()
     }
 
@@ -495,8 +794,20 @@ private actor MockSandboxToolCommandRunner: SandboxToolCommandRunning {
         logSource _: String?
     ) async throws -> ContainerExecResult {
         calls.append(.agent(agentName, command))
+        let index = agentCallCount
+        agentCallCount += 1
+        if let throwAt = throwOnAgentCallIndex, index == throwAt {
+            throw MockSandboxRunnerError.injectedFailure
+        }
         return agentResults.isEmpty ? .init(stdout: "", stderr: "", exitCode: 0) : agentResults.removeFirst()
     }
+}
+
+/// Sentinel error the mock throws when a caller asks it to simulate a
+/// transport-layer failure on a specific agent call.
+private enum MockSandboxRunnerError: Error, LocalizedError {
+    case injectedFailure
+    var errorDescription: String? { "injected sandbox runner failure" }
 }
 
 @MainActor
