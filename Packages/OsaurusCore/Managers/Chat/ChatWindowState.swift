@@ -141,16 +141,9 @@ final class ChatWindowState: ObservableObject {
     func switchAgent(to newAgentId: UUID) {
         TTSService.shared.stop()
         if !session.turns.isEmpty { session.save() }
-        agentId = newAgentId
-        removeEphemeralProviderIfNeeded()
-        selectedDiscoveredAgent = nil
-        selectedDiscoveredAgentProviderId = nil
-        selectedRelayAgent = nil
+        adoptAgent(newAgentId)
         session.reset(for: newAgentId)
-        refreshTheme()
         refreshSessions()
-        refreshAgentConfig()
-        AgentManager.shared.setActiveAgent(newAgentId)
     }
 
     func startNewChat() {
@@ -167,18 +160,37 @@ final class ChatWindowState: ObservableObject {
         if !session.turns.isEmpty { session.save() }
         flushCurrentSession()
 
-        if let freshData = ChatSessionStore.load(id: sessionData.id) {
-            session.load(from: freshData)
-        } else {
-            session.load(from: sessionData)
+        let resolvedData = ChatSessionStore.load(id: sessionData.id) ?? sessionData
+        let targetAgentId = resolvedData.agentId ?? Agent.defaultId
+
+        // Sync the window's active agent with the loaded session so the
+        // chat header, theme, dropdown, sidebar filter, and downstream
+        // save()/reset() calls all reflect the conversation's true agent
+        // (#1005). Without this, clicking "New Chat" afterwards silently
+        // re-tags the conversation to the previously-selected agent.
+        if targetAgentId != agentId {
+            adoptAgent(targetAgentId)
         }
 
-        // Update theme if session has different agent
-        let sessionAgentId = sessionData.agentId ?? Agent.defaultId
-        if sessionAgentId != agentId {
-            theme = Self.loadTheme(for: sessionAgentId)
-            decodeBackgroundImageAsync(themeConfig: theme.customThemeConfig)
-        }
+        session.load(from: resolvedData)
+        refreshSessions()
+    }
+
+    /// Switch every per-agent piece of window state (`agentId`,
+    /// discovered/relay-agent pills, theme, system-prompt cache, global
+    /// active-agent pointer) to `newAgentId` WITHOUT touching the
+    /// session's content. `switchAgent` calls this before resetting the
+    /// session for a brand-new chat; `loadSession` calls it before
+    /// loading turns from disk.
+    private func adoptAgent(_ newAgentId: UUID) {
+        removeEphemeralProviderIfNeeded()
+        selectedDiscoveredAgent = nil
+        selectedDiscoveredAgentProviderId = nil
+        selectedRelayAgent = nil
+        agentId = newAgentId
+        refreshTheme()
+        refreshAgentConfig()
+        AgentManager.shared.setActiveAgent(newAgentId)
     }
 
     private func flushCurrentSession() {

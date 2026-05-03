@@ -262,6 +262,129 @@ struct ChatWindowStateAgentSyncTests {
 
     // MARK: - 5. AgentManager publisher contract
 
+    // MARK: - 6. Issue #1005 end-to-end repro
+
+    /// End-to-end pin for https://github.com/osaurus-ai/osaurus/issues/1005.
+    ///
+    /// Reproduces the user's exact sequence:
+    ///   1. Window opens on Default agent.
+    ///   2. A conversation already exists on disk under custom agent X
+    ///      (we seed it directly via the in-memory session model).
+    ///   3. The user clicks that conversation in the sidebar
+    ///      (`windowState.loadSession`).
+    ///   4. The user clicks "New Chat" (`windowState.startNewChat`).
+    ///
+    /// Pre-fix bugs hit two places at once:
+    ///   - `loadSession` did not update `window.agentId`, leaving the
+    ///     chat header / dropdown / sidebar filter stuck on Default
+    ///     while the loaded conversation belonged to X.
+    ///   - `startNewChat` then called `session.reset(for: window.agentId
+    ///     /* = default */)`, which (via `stop()` →
+    ///     `completeRunCleanup()` → `save()`) re-tagged the original
+    ///     session's row to Default.
+    ///
+    /// Post-fix we expect:
+    ///   - `loadSession` sets `window.agentId = X`, refreshes
+    ///     `cachedActiveAgent`, and re-filters the sidebar to X.
+    ///   - Any save fired during `startNewChat` STILL targets X (the
+    ///     `ChatSession.reset(for:)` re-order keeps the old agent in
+    ///     scope while `stop()` runs).
+    @Test("issue #1005: loadSession + startNewChat preserves conversation's agent")
+    func issue1005_loadSession_thenNewChat_preservesAgent() async {
+        await SandboxTestLock.runWithStoragePaths {
+            let custom = makeCustomAgent(name: "Issue1005")
+            AgentManager.shared.add(custom)
+            defer {
+                Task { _ = await AgentManager.shared.delete(id: custom.id) }
+            }
+
+            // Window opens on Default — mirrors the user being in the
+            // Default agent at the time they click on a custom-agent
+            // conversation in the sidebar.
+            let window = makeWindow(for: Agent.defaultId)
+            #expect(window.agentId == Agent.defaultId)
+
+            // Seed an existing conversation under custom agent X. We
+            // hand-build a `ChatSessionData` with non-empty turns so the
+            // subsequent `session.save()` in `startNewChat`'s reset
+            // chain has something to persist (the bug only fires when
+            // turns are non-empty).
+            let originalSessionId = UUID()
+            let seededSession = ChatSessionData(
+                id: originalSessionId,
+                title: "Seeded under X",
+                createdAt: Date(),
+                updatedAt: Date(),
+                selectedModel: nil,
+                turns: [
+                    ChatTurnData(role: .user, content: "Hello X"),
+                    ChatTurnData(role: .assistant, content: "Hi from X"),
+                ],
+                agentId: custom.id
+            )
+
+            // Capture every (sessionId, agentId) pair that `save()`
+            // sees during the entire #1005 sequence. With the fix in
+            // place, ALL such snapshots for `originalSessionId` must
+            // carry `custom.id` — never `Agent.defaultId`.
+            var saveSnapshots: [(sessionId: UUID?, agentId: UUID?)] = []
+            window.session.onSessionChanged = {
+                saveSnapshots.append(
+                    (window.session.sessionId, window.session.agentId)
+                )
+            }
+
+            // Step 4: user clicks the seeded conversation in the sidebar.
+            window.loadSession(seededSession)
+
+            // Post-loadSession: the window's active agent should now
+            // match the conversation's. Pre-fix, `window.agentId` would
+            // still be `Agent.defaultId` here, which is what set up the
+            // disk corruption in the next step.
+            #expect(
+                window.agentId == custom.id,
+                "loadSession must adopt the conversation's agent (#1005)"
+            )
+            #expect(window.cachedActiveAgent.id == custom.id)
+            #expect(window.session.agentId == custom.id)
+            #expect(window.session.sessionId == originalSessionId)
+
+            // Sidebar filter follows the window's agent. After the fix,
+            // any in-memory session not belonging to X must be filtered
+            // out — pre-fix the window stayed on Default and would still
+            // surface every session.
+            for filtered in window.filteredSessions {
+                #expect(
+                    (filtered.agentId ?? Agent.defaultId) == custom.id,
+                    "sidebar surfaced session for agent \(filtered.agentId?.uuidString ?? "default") while window adopted \(custom.id) (#1005)"
+                )
+            }
+
+            // Step 5: user clicks "New Chat".
+            window.startNewChat()
+
+            // Every save that fired for the original session id must
+            // have preserved the custom agent. A snapshot with
+            // `agentId == Agent.defaultId` is the on-disk corruption
+            // signature.
+            for snapshot in saveSnapshots where snapshot.sessionId == originalSessionId {
+                #expect(
+                    snapshot.agentId == custom.id,
+                    "save during loadSession+startNewChat re-tagged session \(originalSessionId) to \(snapshot.agentId?.uuidString ?? "nil") (#1005)"
+                )
+            }
+
+            // Final state: the new empty chat sits under the same custom
+            // agent the conversation was loaded into, NOT back on Default.
+            #expect(window.agentId == custom.id)
+            #expect(window.session.agentId == custom.id)
+            #expect(window.session.sessionId == nil)
+            #expect(window.session.turns.isEmpty)
+        }
+    }
+
+    // MARK: - 7. AgentManager publisher contract
+
     /// Pin the publisher contract `ChatWindowState.observeAgentManager`
     /// now relies on. A future refactor that stops mutating
     /// `AgentManager.agents` on add/delete (e.g. switching to a

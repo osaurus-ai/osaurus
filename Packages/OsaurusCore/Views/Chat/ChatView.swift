@@ -286,6 +286,16 @@ final class ChatSession: ObservableObject {
     /// Apply initial model selection after agentId is set (for cached picker items)
     func applyInitialModelSelection() {
         guard selectedModel == nil, !pickerItems.isEmpty else { return }
+        applyEffectiveModel(for: agentId)
+        Task { [weak self] in await self?.refreshContextEstimates() }
+    }
+
+    /// Pick the picker item that best matches the agent's preferred model
+    /// (falling back to the first chat-capable item). Wrapped in
+    /// `isLoadingModel = true` so the auto-persist sink in `init()` does
+    /// not write the selection back to the agent's settings as if the
+    /// user had manually changed it.
+    private func applyEffectiveModel(for agentId: UUID?) {
         isLoadingModel = true
         let effectiveModel = AgentManager.shared.effectiveModel(for: agentId ?? Agent.defaultId)
         if let model = effectiveModel, pickerItems.contains(where: { $0.id == model }) {
@@ -294,7 +304,6 @@ final class ChatSession: ObservableObject {
             selectedModel = pickerItems.firstChatCapable?.id
         }
         isLoadingModel = false
-        Task { [weak self] in await self?.refreshContextEstimates() }
     }
 
     func refreshPickerItems() async {
@@ -579,25 +588,20 @@ final class ChatSession: ObservableObject {
         visibleBlocksStore.blocks = []
         visibleBlocksStore.groupHeaderMap = [:]
 
-        // Apply model from agent or global config (don't auto-persist, it's already saved)
-        isLoadingModel = true
-        let effectiveModel = AgentManager.shared.effectiveModel(for: agentId ?? Agent.defaultId)
-        if let defaultModel = effectiveModel,
-            pickerItems.contains(where: { $0.id == defaultModel })
-        {
-            selectedModel = defaultModel
-        } else {
-            selectedModel = pickerItems.firstChatCapable?.id
-        }
-        isLoadingModel = false
-
+        applyEffectiveModel(for: agentId)
         rebuildVisibleBlocks()
     }
 
     /// Reset for a specific agent
     func reset(for newAgentId: UUID?) {
-        agentId = newAgentId
+        // Reset under the OLD agentId so any save() triggered inside
+        // stop() → completeRunCleanup() preserves the current session's
+        // identity instead of stamping the new agent on it. See #1005.
         reset()
+        agentId = newAgentId
+        // reset() picked a model for the OLD agent; re-resolve for the
+        // new one now that turns/sessionId are cleared.
+        applyEffectiveModel(for: newAgentId)
         Task { [weak self] in await self?.refreshContextEstimates() }
     }
 
@@ -670,25 +674,19 @@ final class ChatSession: ObservableObject {
         externalSessionKey = data.externalSessionKey
         dispatchTaskId = data.dispatchTaskId
 
-        // Restore saved model if available, otherwise use configured default
-        // Don't auto-persist when loading - this is restoring existing state
-        isLoadingModel = true
+        // Restore the persisted model when it's still valid; otherwise
+        // fall back to the agent's preferred model. `isLoadingModel`
+        // suppresses the auto-persist sink so a load doesn't look like
+        // the user just picked a model.
         if let savedModel = data.selectedModel,
             pickerItems.contains(where: { $0.id == savedModel })
         {
+            isLoadingModel = true
             selectedModel = savedModel
+            isLoadingModel = false
         } else {
-            // Fall back to agent's model, then global config, then first available
-            let effectiveModel = AgentManager.shared.effectiveModel(for: data.agentId ?? Agent.defaultId)
-            if let defaultModel = effectiveModel,
-                pickerItems.contains(where: { $0.id == defaultModel })
-            {
-                selectedModel = defaultModel
-            } else {
-                selectedModel = pickerItems.firstChatCapable?.id
-            }
+            applyEffectiveModel(for: data.agentId)
         }
-        isLoadingModel = false
 
         turns = data.turns.map { ChatTurn(from: $0) }
         voiceInputState = .idle
@@ -2172,6 +2170,7 @@ struct ChatView: View {
                     if windowState.showSidebar {
                         ChatSessionSidebar(
                             sessions: windowState.filteredSessions,
+                            agentId: windowState.agentId,
                             currentSessionId: session.sessionId,
                             onSelect: { data in
                                 windowState.loadSession(data)

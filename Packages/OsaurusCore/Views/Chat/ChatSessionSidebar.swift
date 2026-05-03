@@ -10,6 +10,12 @@ import SwiftUI
 struct ChatSessionSidebar: View {
     /// Sessions to display (already filtered by agent if needed)
     let sessions: [ChatSessionData]
+    /// The window's currently-active agent. Tracked so the sidebar can
+    /// reset its filter / search state when the user switches agents
+    /// (or adopts a new one via `loadSession`); without this, a filter
+    /// applied in agent A would persist into agent B and surface a
+    /// confusing "no results" empty state.
+    let agentId: UUID
     let currentSessionId: UUID?
     let onSelect: (ChatSessionData) -> Void
     let onNewChat: () -> Void
@@ -24,6 +30,7 @@ struct ChatSessionSidebar: View {
     @State private var editingTitle: String = ""
     @State private var searchQuery: String = ""
     @State private var sourceFilter: SourceFilter = .all
+    @State private var hoveredFilter: SourceFilter?
     @FocusState private var isSearchFocused: Bool
 
     // MARK: - Source Filter
@@ -98,10 +105,12 @@ struct ChatSessionSidebar: View {
             .padding(.horizontal, 12)
             .padding(.bottom, 6)
 
-            // Source filter chips — only show when there's mixed content;
-            // a single-source list (typical default-agent / chat-only) hides
-            // the rail entirely to avoid visual clutter.
-            if visibleSourceFilters.count > 2 {
+            // Source filter chips — always visible while the agent has
+            // any session, so the user can never "lose" the rail just
+            // by selecting a filter (or by drilling into a single-source
+            // agent via loadSession). The chip set itself still hides
+            // sources the agent has never used.
+            if !sessions.isEmpty {
                 sourceFilterRail
                     .padding(.horizontal, 12)
                     .padding(.bottom, 6)
@@ -124,13 +133,22 @@ struct ChatSessionSidebar: View {
                 sessionList
             }
         }
+        // Adopting a new agent (via the dropdown's switchAgent or the
+        // sidebar's loadSession) is a context change — wipe per-window
+        // filter state so the new agent starts on "All" with an empty
+        // search instead of inheriting the previous agent's lens.
+        .onChange(of: agentId) { _, _ in
+            sourceFilter = .all
+            searchQuery = ""
+            hoveredFilter = nil
+        }
     }
 
     // MARK: - Source Filter Rail
 
     private var sourceFilterRail: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 4) {
+            HStack(spacing: 6) {
                 ForEach(visibleSourceFilters, id: \.self) { filter in
                     sourceFilterChip(filter)
                 }
@@ -138,37 +156,59 @@ struct ChatSessionSidebar: View {
         }
     }
 
+    /// Capsule pill chip styled to match `AgentPill` in the chat header:
+    /// ghost (transparent) when unselected, accent-tinted when selected,
+    /// with a subtle hover fill to telegraph clickability. Source chips
+    /// also surface their `SessionSource.iconName` so the rail is
+    /// glanceable in the same way the per-row source badge is.
     private func sourceFilterChip(_ filter: SourceFilter) -> some View {
         let isSelected = sourceFilter == filter
+        let isHovered = hoveredFilter == filter
+        let shape = Capsule(style: .continuous)
         return Button {
             withAnimation(theme.animationQuick()) {
                 sourceFilter = filter
             }
         } label: {
-            Text(LocalizedStringKey(filter.label), bundle: .module)
-                .font(.system(size: 10.5, weight: .medium))
-                .foregroundColor(isSelected ? theme.primaryText : theme.secondaryText.opacity(0.85))
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(
-                            isSelected
-                                ? theme.accentColorLight.opacity(theme.isDark ? 0.22 : 0.16)
-                                : theme.secondaryBackground.opacity(0.5)
-                        )
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .strokeBorder(
-                            isSelected
-                                ? theme.accentColorLight.opacity(0.45)
-                                : theme.primaryBorder.opacity(0.18),
-                            lineWidth: 1
-                        )
-                )
+            chipLabel(filter, isSelected: isSelected)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(shape.fill(chipFill(isSelected: isSelected, isHovered: isHovered)))
+                .contentShape(shape)
         }
         .buttonStyle(.plain)
+        .onHover { hovering in
+            if hovering {
+                hoveredFilter = filter
+            } else if hoveredFilter == filter {
+                // Guard prevents a stale `false` callback (after the cursor
+                // already moved onto another chip and set `hoveredFilter`
+                // to that one) from clearing the new hover.
+                hoveredFilter = nil
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func chipLabel(_ filter: SourceFilter, isSelected: Bool) -> some View {
+        HStack(spacing: 4) {
+            if case .source(let s) = filter {
+                Image(systemName: s.iconName)
+                    .font(.system(size: 9.5, weight: .semibold))
+            }
+            Text(LocalizedStringKey(filter.label), bundle: .module)
+                .font(.system(size: 11, weight: isSelected ? .semibold : .medium))
+        }
+        .foregroundColor(isSelected ? theme.accentColor : theme.secondaryText)
+    }
+
+    /// Fill semantics for `sourceFilterChip` in one place so the design
+    /// rule (selected wins over hovered, both win over the ghost default)
+    /// stays obvious.
+    private func chipFill(isSelected: Bool, isHovered: Bool) -> Color {
+        if isSelected { return theme.accentColor.opacity(theme.isDark ? 0.28 : 0.18) }
+        if isHovered { return theme.secondaryBackground.opacity(0.5) }
+        return .clear
     }
 
     private func dismissEditing() {
@@ -520,6 +560,7 @@ private struct SessionRow: View {
         static var previews: some View {
             ChatSessionSidebar(
                 sessions: [],
+                agentId: Agent.defaultId,
                 currentSessionId: nil,
                 onSelect: { _ in },
                 onNewChat: {},
