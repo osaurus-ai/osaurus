@@ -1531,12 +1531,18 @@ final class ChatSession: ObservableObject {
                         }
 
                         let content: String? = t.contentIsEmpty ? nil : t.content
+                        // DeepSeek's thinking mode requires echoing the
+                        // previous `reasoning_content` on follow-ups
+                        // (issue #959). `RemoteProviderService` strips it
+                        // again for providers that don't need it.
+                        let reasoning: String? = t.thinkingIsEmpty ? nil : t.thinking
 
                         return ChatMessage(
                             role: "assistant",
                             content: content,
                             tool_calls: t.toolCalls,
-                            tool_call_id: nil
+                            tool_call_id: nil,
+                            reasoning_content: reasoning
                         )
                     case .tool:
                         return ChatMessage(

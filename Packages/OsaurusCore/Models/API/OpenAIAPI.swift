@@ -249,6 +249,11 @@ struct ChatMessage: Codable, Sendable {
     let tool_calls: [ToolCall]?
     /// Required for role=="tool" messages to associate with a prior tool call
     let tool_call_id: String?
+    /// Reasoning/thinking text from thinking-capable OpenAI-compat providers
+    /// (DeepSeek thinking mode, Qwen, vLLM, …). Echoed back on follow-ups
+    /// for providers that require it (issue #959); `RemoteProviderService`
+    /// strips it on the wire for everyone else.
+    let reasoning_content: String?
 
     /// Extract image URLs from content parts (supports both data URLs and http URLs)
     var imageUrls: [String] {
@@ -306,6 +311,7 @@ extension ChatMessage {
         case content
         case tool_calls
         case tool_call_id
+        case reasoning_content
     }
 
     public init(from decoder: Decoder) throws {
@@ -313,6 +319,7 @@ extension ChatMessage {
         self.role = try container.decode(String.self, forKey: .role)
         self.tool_calls = try? container.decode([ToolCall].self, forKey: .tool_calls)
         self.tool_call_id = try? container.decode(String.self, forKey: .tool_call_id)
+        self.reasoning_content = try? container.decode(String.self, forKey: .reasoning_content)
 
         if let stringContent = try? container.decode(String.self, forKey: .content) {
             self.content = stringContent
@@ -357,6 +364,8 @@ extension ChatMessage {
         // Note: content is intentionally omitted when nil (e.g., assistant messages with tool_calls)
         try container.encodeIfPresent(tool_calls, forKey: .tool_calls)
         try container.encodeIfPresent(tool_call_id, forKey: .tool_call_id)
+        // Stripped at the transport layer for providers that don't need it.
+        try container.encodeIfPresent(reasoning_content, forKey: .reasoning_content)
     }
 }
 
@@ -367,15 +376,25 @@ extension ChatMessage {
         self.contentParts = nil
         self.tool_calls = nil
         self.tool_call_id = nil
+        self.reasoning_content = nil
     }
 
-    /// Initialize with optional tool calls and tool call id
-    init(role: String, content: String?, tool_calls: [ToolCall]?, tool_call_id: String?) {
+    /// Initialize with optional tool calls, tool call id, and reasoning content.
+    /// `reasoning_content` is echoed back to thinking-capable providers
+    /// (e.g. DeepSeek) on multi-turn follow-ups.
+    init(
+        role: String,
+        content: String?,
+        tool_calls: [ToolCall]?,
+        tool_call_id: String?,
+        reasoning_content: String? = nil
+    ) {
         self.role = role
         self.content = content
         self.contentParts = nil
         self.tool_calls = tool_calls
         self.tool_call_id = tool_call_id
+        self.reasoning_content = reasoning_content
     }
 
     /// Initialize with multimodal content (text and images)
@@ -399,6 +418,7 @@ extension ChatMessage {
         self.content = text.isEmpty ? nil : text
         self.tool_calls = nil
         self.tool_call_id = nil
+        self.reasoning_content = nil
     }
 
     /// Multimodal init covering image + audio + video. Used by the
@@ -451,6 +471,7 @@ extension ChatMessage {
         self.content = text.isEmpty ? nil : text
         self.tool_calls = nil
         self.tool_call_id = nil
+        self.reasoning_content = nil
     }
 }
 

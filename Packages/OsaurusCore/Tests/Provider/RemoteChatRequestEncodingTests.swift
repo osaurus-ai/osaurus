@@ -230,6 +230,114 @@ struct RemoteChatRequestEncodingTests {
         #expect(provider.mergedModelIds(discovered: ["gpt-4.1", "gpt-5.5"]) == ["prod-chat", "gpt-5.5"])
     }
 
+    // MARK: - `reasoning_content` echo (issue #959)
+
+    @Test func chatMessage_encode_includesReasoningContentWhenPresent() throws {
+        let message = ChatMessage(
+            role: "assistant",
+            content: "hi",
+            tool_calls: nil,
+            tool_call_id: nil,
+            reasoning_content: "let me think..."
+        )
+
+        let data = try JSONEncoder().encode(message)
+        let obj = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+
+        #expect(obj["reasoning_content"] as? String == "let me think...")
+    }
+
+    @Test func chatMessage_encode_omitsReasoningContentWhenNil() throws {
+        let message = ChatMessage(role: "assistant", content: "hi", tool_calls: nil, tool_call_id: nil)
+
+        let data = try JSONEncoder().encode(message)
+        let obj = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+
+        #expect(obj["reasoning_content"] == nil)
+    }
+
+    @Test func chatMessage_decode_roundTripsReasoningContent() throws {
+        let json = """
+            {"role":"assistant","content":"hi","reasoning_content":"thinking..."}
+            """
+
+        let message = try JSONDecoder().decode(ChatMessage.self, from: Data(json.utf8))
+
+        #expect(message.reasoning_content == "thinking...")
+        #expect(message.content == "hi")
+    }
+
+    @Test func echoesReasoningContent_trueForDeepSeekHost() throws {
+        #expect(
+            RemoteProviderService.echoesReasoningContent(
+                providerType: .openaiLegacy,
+                host: "api.deepseek.com"
+            ) == true
+        )
+    }
+
+    @Test func echoesReasoningContent_falseForOtherOpenAICompatHosts() throws {
+        for host in ["api.x.ai", "api.venice.ai", "openrouter.ai", "api.openai.com", "api.together.xyz"] {
+            #expect(
+                RemoteProviderService.echoesReasoningContent(
+                    providerType: .openaiLegacy,
+                    host: host
+                ) == false
+            )
+        }
+    }
+
+    @Test func echoesReasoningContent_falseForNonOpenAICompatProviders() throws {
+        for providerType: RemoteProviderType in [.anthropic, .openResponses, .openAICodex, .gemini, .osaurus] {
+            #expect(
+                RemoteProviderService.echoesReasoningContent(
+                    providerType: providerType,
+                    host: "api.deepseek.com"
+                ) == false
+            )
+        }
+    }
+
+    @Test func strippingReasoningContent_clearsAssistantReasoningPreservingOtherFields() throws {
+        let toolCall = ToolCall(
+            id: "c1",
+            type: "function",
+            function: ToolCallFunction(name: "lookup", arguments: "{}")
+        )
+        let messages: [ChatMessage] = [
+            ChatMessage(role: "user", content: "q"),
+            ChatMessage(
+                role: "assistant",
+                content: "answer",
+                tool_calls: [toolCall],
+                tool_call_id: nil,
+                reasoning_content: "private thought"
+            ),
+            ChatMessage(role: "tool", content: "result", tool_calls: nil, tool_call_id: "c1"),
+        ]
+
+        let stripped = RemoteProviderService.strippingReasoningContent(from: messages)
+
+        #expect(stripped.count == 3)
+        #expect(stripped[1].reasoning_content == nil)
+        #expect(stripped[1].content == "answer")
+        #expect(stripped[1].tool_calls?.first?.id == "c1")
+        #expect(stripped[2].tool_call_id == "c1")
+    }
+
+    @Test func strippingReasoningContent_returnsMessagesUnchangedWhenNoneHaveReasoning() throws {
+        let messages: [ChatMessage] = [
+            ChatMessage(role: "user", content: "hi"),
+            ChatMessage(role: "assistant", content: "hello", tool_calls: nil, tool_call_id: nil),
+        ]
+
+        let stripped = RemoteProviderService.strippingReasoningContent(from: messages)
+
+        #expect(stripped.count == 2)
+        #expect(stripped[0].reasoning_content == nil)
+        #expect(stripped[1].reasoning_content == nil)
+    }
+
     // MARK: - Fixtures
 
     private static func makeRequest(

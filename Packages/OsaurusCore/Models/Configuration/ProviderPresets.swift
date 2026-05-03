@@ -16,6 +16,7 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
     case openai
     case google
     case xai
+    case deepseek
     case venice
     case openrouter
     case custom
@@ -30,6 +31,7 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
         case .openai: return "OpenAI"
         case .google: return "Google"
         case .xai: return "xAI"
+        case .deepseek: return "DeepSeek"
         case .venice: return "Venice AI"
         case .openrouter: return "OpenRouter"
         case .custom: return "Custom"
@@ -44,6 +46,7 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
         case .openai: return "ChatGPT/Codex or Platform API"
         case .google: return "Gemini models"
         case .xai: return "Grok models"
+        case .deepseek: return "deepseek-v4-pro / v4-flash"
         case .venice: return "Privacy-first AI"
         case .openrouter: return "Multi-provider"
         case .custom: return "Custom endpoint"
@@ -58,6 +61,7 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
         case .openai: return "sparkles"
         case .google: return "globe"
         case .xai: return "bolt.fill"
+        case .deepseek: return "cpu"
         case .venice: return "lock.shield.fill"
         case .openrouter: return "arrow.triangle.branch"
         case .custom: return "slider.horizontal.3"
@@ -72,6 +76,7 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
         case .openai: return [Color(red: 0.0, green: 0.65, blue: 0.52), Color(red: 0.0, green: 0.5, blue: 0.4)]
         case .google: return [Color(red: 0.26, green: 0.52, blue: 0.96), Color(red: 0.18, green: 0.38, blue: 0.85)]
         case .xai: return [Color(red: 0.1, green: 0.1, blue: 0.1), Color(red: 0.2, green: 0.2, blue: 0.2)]
+        case .deepseek: return [Color(red: 0.18, green: 0.36, blue: 0.95), Color(red: 0.34, green: 0.52, blue: 0.98)]
         case .venice: return [Color(red: 0.83, green: 0.66, blue: 0.33), Color(red: 0.72, green: 0.53, blue: 0.17)]
         case .openrouter: return [Color(red: 0.95, green: 0.55, blue: 0.25), Color(red: 0.85, green: 0.4, blue: 0.2)]
         case .custom: return [Color(red: 0.55, green: 0.55, blue: 0.6), Color(red: 0.4, green: 0.4, blue: 0.45)]
@@ -86,6 +91,7 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
         case .openai: return "https://platform.openai.com/api-keys"
         case .google: return "https://aistudio.google.com/apikey"
         case .xai: return "https://console.x.ai/"
+        case .deepseek: return "https://platform.deepseek.com/api_keys"
         case .venice: return "https://venice.ai/settings/api"
         case .openrouter: return "https://openrouter.ai/keys"
         case .custom: return ""
@@ -105,6 +111,7 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
     var documentationURL: String? {
         switch self {
         case .azureOpenAI: return "https://learn.microsoft.com/azure/ai-foundry/openai/"
+        case .deepseek: return "https://api-docs.deepseek.com/"
         case .venice: return "https://docs.venice.ai"
         default: return nil
         }
@@ -141,6 +148,13 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
                 "Go to Venice AI settings page",
                 "Sign in or create an account",
                 "Generate a new API key",
+                "Copy and paste it here",
+            ]
+        case .deepseek:
+            return [
+                "Go to the DeepSeek Platform API keys page",
+                "Sign in or create an account",
+                "Create a new API key",
                 "Copy and paste it here",
             ]
         default:
@@ -210,6 +224,16 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
             return ProviderPresetConfiguration(
                 name: "xAI",
                 host: "api.x.ai",
+                providerProtocol: .https,
+                port: nil,
+                basePath: "/v1",
+                authType: .apiKey,
+                providerType: .openaiLegacy
+            )
+        case .deepseek:
+            return ProviderPresetConfiguration(
+                name: "DeepSeek",
+                host: "api.deepseek.com",
                 providerProtocol: .https,
                 port: nil,
                 basePath: "/v1",

@@ -88,6 +88,22 @@ public actor RemoteProviderService: ToolCapableService {
         }
     }
 
+    /// Whether the target provider requires `reasoning_content` to be echoed
+    /// back on assistant messages in multi-round conversations. DeepSeek's
+    /// thinking mode 400s otherwise (issue #959). Other OpenAI-compat hosts
+    /// get the field stripped to avoid unknown-field rejections.
+    static func echoesReasoningContent(
+        providerType: RemoteProviderType,
+        host: String
+    ) -> Bool {
+        switch providerType {
+        case .openaiLegacy, .azureOpenAI:
+            return host.lowercased().contains("deepseek")
+        case .anthropic, .openResponses, .openAICodex, .gemini, .osaurus:
+            return false
+        }
+    }
+
     static func effectiveRequestProviderType(
         configuredProviderType: RemoteProviderType,
         request: RemoteChatRequest
@@ -1852,11 +1868,36 @@ public actor RemoteProviderService: ToolCapableService {
             let geminiRequest = request.toGeminiRequest()
             bodyData = try encoder.encode(geminiRequest)
         case .openaiLegacy, .azureOpenAI, .osaurus:
-            // These providers consume the unmodified OpenAI-compatible body.
-            bodyData = try encoder.encode(request)
+            // OpenAI-compat wire format. Strip `reasoning_content` unless
+            // the target needs it echoed back (DeepSeek — see #959).
+            var outbound = request
+            if !Self.echoesReasoningContent(
+                providerType: requestProviderType,
+                host: provider.host
+            ) {
+                outbound.messages = Self.strippingReasoningContent(from: outbound.messages)
+            }
+            bodyData = try encoder.encode(outbound)
         }
         urlRequest.httpBody = bodyData
         return urlRequest
+    }
+
+    /// Returns a copy of `messages` with `reasoning_content` cleared.
+    /// Unchanged messages are returned as-is to avoid needless allocations.
+    static func strippingReasoningContent(
+        from messages: [ChatMessage]
+    ) -> [ChatMessage] {
+        messages.map { msg in
+            guard msg.reasoning_content != nil else { return msg }
+            return ChatMessage(
+                role: msg.role,
+                content: msg.content,
+                tool_calls: msg.tool_calls,
+                tool_call_id: msg.tool_call_id,
+                reasoning_content: nil
+            )
+        }
     }
 
     /// Parse response based on provider type
@@ -2102,7 +2143,10 @@ struct VeniceParameters: Encodable {
 /// Chat request structure for remote providers (matches OpenAI format)
 struct RemoteChatRequest: Encodable {
     let model: String
-    let messages: [ChatMessage]
+    /// `var` so the transport layer can strip `reasoning_content` from
+    /// assistant messages for providers that don't expect it (see
+    /// `echoesReasoningContent`).
+    var messages: [ChatMessage]
     let temperature: Float?
     /// Canonical token-cap field. Named after OpenAI's newer parameter; the
     /// on-the-wire key is chosen in `encode(to:)` based on the model — see

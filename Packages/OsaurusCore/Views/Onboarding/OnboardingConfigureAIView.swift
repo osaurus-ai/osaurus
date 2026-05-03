@@ -104,7 +104,7 @@ struct CustomProviderForm {
 @MainActor
 final class ConfigureAIState: ObservableObject {
     static let onboardingPresets: [ProviderPreset] = [
-        .anthropic, .google, .openai, .venice, .xai, .custom,
+        .anthropic, .deepseek, .google, .openai, .venice, .xai, .custom,
     ]
 
     let foundationAvailable: Bool
