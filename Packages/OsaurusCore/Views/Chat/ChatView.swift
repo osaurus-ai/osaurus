@@ -2134,18 +2134,16 @@ struct ChatView: View {
     var body: some View {
         let _ = ChatPerfTrace.shared.count("body.ChatView")
         chatModeContent
+            .themedAlert(
+                "Do you want Osaurus to auto speak every reply in this chat?",
+                isPresented: $showAutoSpeakPrompt,
+                message: "This only applies to this chat.",
+                primaryButton: .primary("Yes") { session.autoSpeakAssistant = true },
+                secondaryButton: .cancel("No")
+            )
             .themedAlertScope(.chat(windowState.windowId))
             .overlay(ThemedAlertHost(scope: .chat(windowState.windowId)))
             .overlay { promptOverlayLayer }
-            .alert(
-                "Do you want Osaurus to auto speak every reply in this chat?",
-                isPresented: $showAutoSpeakPrompt
-            ) {
-                Button("Yes") { session.autoSpeakAssistant = true }
-                Button("No", role: .cancel) {}
-            } message: {
-                Text("This is only per-session.")
-            }
             .onChange(of: session.lastCompletedAssistantTurnId) { _, newValue in
                 handleAssistantTurnCompleted(turnId: newValue)
             }
