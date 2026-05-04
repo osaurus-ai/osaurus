@@ -27,6 +27,7 @@ final class ModelPickerItemCache: ObservableObject {
     /// rather than each spawning their own concurrent build that could race to
     /// assign `items` last.
     private var rebuildTask: Task<[ModelPickerItem], Never>?
+    private var remoteRefreshTask: Task<Void, Never>?
 
     /// Set to `true` while a rebuild is in flight to indicate that another
     /// rebuild should run as soon as the current one completes. This coalesces
@@ -104,6 +105,16 @@ final class ModelPickerItemCache: ObservableObject {
         await buildModelPickerItems()
     }
 
+    /// Refresh connected remote-provider model lists, then rebuild the picker
+    /// items from the updated provider state. Concurrent picker opens join the
+    /// same provider refresh so custom endpoints are not hammered by parallel
+    /// `/models` requests.
+    @discardableResult
+    func refreshRemoteProvidersAndBuildModelPickerItems() async -> [ModelPickerItem] {
+        await refreshRemoteProviderModels()
+        return await buildModelPickerItems()
+    }
+
     /// Hard reset of the cache. This DOES blank `items` and is intended only
     /// for explicit invalidation paths (e.g. completing onboarding) where the
     /// caller will immediately trigger a rebuild.
@@ -113,6 +124,20 @@ final class ModelPickerItemCache: ObservableObject {
     }
 
     // MARK: - Private
+
+    private func refreshRemoteProviderModels() async {
+        if let existing = remoteRefreshTask {
+            await existing.value
+            return
+        }
+
+        let task = Task<Void, Never> { @MainActor in
+            await RemoteProviderManager.shared.refreshConnectedProviderModels(notifyOnChange: false)
+        }
+        remoteRefreshTask = task
+        await task.value
+        remoteRefreshTask = nil
+    }
 
     /// Computes a fresh list of picker items by combining the foundation model
     /// (if available), discovered local MLX models, and currently connected

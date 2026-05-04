@@ -1264,7 +1264,8 @@ extension FloatingInputCard {
                 options: cachedPickerItems,
                 selectedModel: $selectedModel,
                 agentId: agentId,
-                onDismiss: dismissModelPicker
+                onDismiss: dismissModelPicker,
+                refreshRemoteProvidersOnAppear: !isStreaming
             )
         }
         .onChange(of: showModelPicker) { _, isShowing in

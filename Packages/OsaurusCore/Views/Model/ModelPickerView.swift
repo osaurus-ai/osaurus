@@ -12,13 +12,17 @@ struct ModelPickerView: View {
     @Binding var selectedModel: String?
     let agentId: UUID?
     let onDismiss: () -> Void
+    var refreshRemoteProvidersOnAppear: Bool = true
 
     @State private var searchText = ""
     @State private var searchDebounceTask: Task<Void, Never>?
+    @State private var remoteRefreshTask: Task<Void, Never>?
+    @State private var liveOptions: [ModelPickerItem] = []
     @State private var collapsedGroups: Set<String> = []
     @State private var cachedGroupedOptions: [(source: ModelPickerItem.Source, models: [ModelPickerItem])] = []
     @State private var cachedFlattenedRows: [ModelPickerRow] = []
     @State private var cachedGroupRows: [String: [ModelPickerRow]] = [:]
+    @ObservedObject private var modelCache = ModelPickerItemCache.shared
     @Environment(\.theme) private var theme
 
     // MARK: - Test Mode
@@ -30,13 +34,31 @@ struct ModelPickerView: View {
         }
 
         private var displayOptions: [ModelPickerItem] {
-            useMockData ? ModelPickerItem.generateMockModels(count: 500) : options
+            useMockData ? ModelPickerItem.generateMockModels(count: 500) : liveOptions
         }
     #else
-        private var displayOptions: [ModelPickerItem] { options }
+        private var displayOptions: [ModelPickerItem] { liveOptions }
     #endif
 
     // MARK: - Data
+
+    private var displayOptionIDs: [String] {
+        displayOptions.map(\.id)
+    }
+
+    private var sourceOptionIDs: [String] {
+        options.map(\.id)
+    }
+
+    private var cacheOptionIDs: [String] {
+        modelCache.items.map(\.id)
+    }
+
+    private func applyDisplayedOptions() {
+        cachedGroupedOptions = displayOptions.groupedBySource()
+        cachedGroupRows = [:]
+        recomputeRows()
+    }
 
     private func recomputeRows() {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -110,6 +132,21 @@ struct ModelPickerView: View {
         cachedFlattenedRows = rows
     }
 
+    private func refreshRemoteProvidersOnOpen() {
+        guard refreshRemoteProvidersOnAppear else { return }
+        #if DEBUG
+            guard !useMockData else { return }
+        #endif
+
+        remoteRefreshTask?.cancel()
+        remoteRefreshTask = Task { @MainActor in
+            let refreshed = await modelCache.refreshRemoteProvidersAndBuildModelPickerItems()
+            guard !Task.isCancelled else { return }
+            liveOptions = refreshed
+            applyDisplayedOptions()
+        }
+    }
+
     private func toggleGroup(_ source: ModelPickerItem.Source) {
         let key = source.uniqueKey
         if collapsedGroups.contains(key) {
@@ -149,15 +186,25 @@ struct ModelPickerView: View {
         .overlay(popoverBorder)
         .shadow(color: theme.shadowColor.opacity(0.15), radius: 12, x: 0, y: 6)
         .onAppear {
-            cachedGroupedOptions = displayOptions.groupedBySource()
-            recomputeRows()
+            liveOptions = options
+            applyDisplayedOptions()
+            refreshRemoteProvidersOnOpen()
         }
         .onDisappear {
             searchDebounceTask?.cancel()
+            remoteRefreshTask?.cancel()
         }
-        .onChange(of: displayOptions.count) { _, _ in
-            cachedGroupedOptions = displayOptions.groupedBySource()
-            recomputeRows()
+        .onChange(of: sourceOptionIDs) { _, _ in
+            liveOptions = options
+            applyDisplayedOptions()
+        }
+        .onChange(of: cacheOptionIDs) { _, _ in
+            guard modelCache.isLoaded else { return }
+            liveOptions = modelCache.items
+            applyDisplayedOptions()
+        }
+        .onChange(of: displayOptionIDs) { _, _ in
+            applyDisplayedOptions()
         }
         .onChange(of: searchText) { _, newValue in
             searchDebounceTask?.cancel()

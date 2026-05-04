@@ -57,6 +57,10 @@ public final class RemoteProviderManager: ObservableObject {
     /// Provider IDs created from Bonjour discovery — not persisted to disk
     private var ephemeralProviderIds: Set<UUID> = []
 
+    #if DEBUG
+        private var modelFetchOverride: (@MainActor (RemoteProvider) async throws -> [String])?
+    #endif
+
     private static let openaiNativeMigratedKey = "remoteProvider.openaiNativeMigrated"
 
     private init() {
@@ -238,17 +242,7 @@ public final class RemoteProviderManager: ObservableObject {
             }
 
             // Fetch models from the provider and merge any manually configured deployment IDs.
-            let discoveredModels: [String]
-            do {
-                discoveredModels = try await RemoteProviderService.fetchModels(from: provider)
-            } catch {
-                if provider.providerType == .azureOpenAI && !provider.manualModelIds.isEmpty {
-                    discoveredModels = []
-                } else {
-                    throw error
-                }
-            }
-            let models = provider.mergedModelIds(discovered: discoveredModels)
+            let models = try await fetchMergedModels(for: provider)
 
             // Create service instance – resolve headers eagerly on @MainActor
             // so the service actor never reads from Keychain off the main thread.
@@ -319,6 +313,57 @@ public final class RemoteProviderManager: ObservableObject {
     public func reconnect(providerId: UUID) async throws {
         disconnect(providerId: providerId)
         try await connect(providerId: providerId)
+    }
+
+    /// Refresh model lists for providers that are already connected without
+    /// tearing down their service instances. Used by the model picker so
+    /// custom OpenAI-compatible endpoints that add/remove models after launch
+    /// are reflected without requiring an app restart or a manual Settings
+    /// test.
+    public func refreshConnectedProviderModels(notifyOnChange: Bool = true) async {
+        var didChangeModels = false
+        var didChangeStatus = false
+
+        for provider in configuration.providers {
+            guard provider.enabled else { continue }
+            guard var state = providerStates[provider.id], state.isConnected else { continue }
+
+            do {
+                let models = try await fetchMergedModels(for: provider)
+
+                if state.discoveredModels != models {
+                    didChangeModels = true
+                }
+                if state.lastError != nil {
+                    didChangeStatus = true
+                }
+
+                state.discoveredModels = models
+                state.lastConnectedAt = Date()
+                state.lastError = nil
+                providerStates[provider.id] = state
+
+                if let service = services[provider.id] {
+                    await service.updateModels(models)
+                }
+            } catch {
+                let message = error.localizedDescription
+                if state.lastError != message {
+                    didChangeStatus = true
+                }
+                state.lastError = message
+                providerStates[provider.id] = state
+
+                print("[Osaurus] Remote Provider '\(provider.name)': Model refresh failed - \(error)")
+            }
+        }
+
+        if notifyOnChange, didChangeStatus {
+            notifyStatusChanged()
+        }
+        if notifyOnChange, didChangeModels {
+            notifyModelsChanged()
+        }
     }
 
     /// Connect to all enabled providers on app launch
@@ -582,6 +627,30 @@ public final class RemoteProviderManager: ObservableObject {
 
     // MARK: - Private Helpers
 
+    private func fetchMergedModels(for provider: RemoteProvider) async throws -> [String] {
+        let discoveredModels: [String]
+        do {
+            discoveredModels = try await fetchModels(for: provider)
+        } catch {
+            if provider.providerType == .azureOpenAI && !provider.manualModelIds.isEmpty {
+                discoveredModels = []
+            } else {
+                throw error
+            }
+        }
+        return provider.mergedModelIds(discovered: discoveredModels)
+    }
+
+    private func fetchModels(for provider: RemoteProvider) async throws -> [String] {
+        #if DEBUG
+            if let modelFetchOverride {
+                return try await modelFetchOverride(provider)
+            }
+        #endif
+
+        return try await RemoteProviderService.fetchModels(from: provider)
+    }
+
     private func notifyStatusChanged() {
         NotificationCenter.default.post(name: .remoteProviderStatusChanged, object: nil)
     }
@@ -590,6 +659,51 @@ public final class RemoteProviderManager: ObservableObject {
         NotificationCenter.default.post(name: .remoteProviderModelsChanged, object: nil)
     }
 }
+
+#if DEBUG
+    extension RemoteProviderManager {
+        func _setModelFetchOverrideForTesting(
+            _ override: (@MainActor (RemoteProvider) async throws -> [String])?
+        ) {
+            modelFetchOverride = override
+        }
+
+        func _resetForTesting(configuration: RemoteProviderConfiguration = RemoteProviderConfiguration()) async {
+            for service in services.values {
+                await service.invalidateSession()
+            }
+            services = [:]
+            ephemeralProviderIds = []
+            self.configuration = configuration
+            providerStates = Dictionary(
+                uniqueKeysWithValues: configuration.providers.map {
+                    ($0.id, RemoteProviderState(providerId: $0.id))
+                }
+            )
+            modelFetchOverride = nil
+        }
+
+        @discardableResult
+        func _seedConnectedProviderForTesting(_ provider: RemoteProvider, models: [String]) -> RemoteProviderService {
+            let service = RemoteProviderService(
+                provider: provider,
+                models: models,
+                resolvedHeaders: provider.resolvedHeaders()
+            )
+            services[provider.id] = service
+
+            var state = providerStates[provider.id] ?? RemoteProviderState(providerId: provider.id)
+            state.isConnected = true
+            state.isConnecting = false
+            state.discoveredModels = models
+            state.lastConnectedAt = Date()
+            state.lastError = nil
+            providerStates[provider.id] = state
+
+            return service
+        }
+    }
+#endif
 
 // MARK: - OpenAI Models Integration
 

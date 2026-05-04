@@ -33,6 +33,12 @@ struct ModelPickerItemCacheTests {
     /// order, so callers could disagree about whether remote models were
     /// present.
     @Test func concurrentCallers_returnIdenticalResults() async throws {
+        try await SandboxTestLock.shared.run {
+            try await concurrentCallers_returnIdenticalResultsLocked()
+        }
+    }
+
+    private func concurrentCallers_returnIdenticalResultsLocked() async throws {
         // Establish a baseline so we know what to compare against, and so
         // any work needed to populate the cache (e.g. local model
         // discovery) doesn't perturb the concurrent run below.
@@ -70,6 +76,12 @@ struct ModelPickerItemCacheTests {
     /// asserts the invariant that, once populated, `items` never goes
     /// empty across rebuilds.
     @Test func notificationBurst_doesNotTransientlyEmptyItems() async throws {
+        try await SandboxTestLock.shared.run {
+            try await notificationBurst_doesNotTransientlyEmptyItemsLocked()
+        }
+    }
+
+    private func notificationBurst_doesNotTransientlyEmptyItemsLocked() async throws {
         let cache = ModelPickerItemCache.shared
 
         // Make sure we start populated. If this machine has no foundation
