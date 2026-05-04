@@ -83,9 +83,11 @@ jobs:
 
       - name: Restore DerivedData cache
         id: dd-cache
-        # Always restore so `cache-primary-key` is populated for the save
-        # step at the bottom (the wipe step below handles forced cold
-        # builds without preventing main from repopulating the cache).
+        # Restore only on main pushes / manual maintainer runs. Pull requests
+        # intentionally cold-build DerivedData: restore-key hits have produced
+        # stale Swift modules whose C-module dependencies are missing when
+        # Xcode later compiles EventSource.
+        if: ${{ github.event_name != 'pull_request' }}
         uses: actions/cache/restore@v5
         with:
           path: ~/Library/Developer/Xcode/DerivedData
@@ -97,13 +99,15 @@ jobs:
           restore-keys: |
             dd-${{ runner.os }}-${{ env.CACHE_SALT }}-xcode${{ env.XCODE_VERSION }}-
 
-      # Make "clear the build cache" a one-click operation. Two triggers:
-      #   1. `github.run_attempt != '1'` — i.e. a re-run. The default
+      # Make "clear the build cache" a one-click operation. Three triggers:
+      #   1. Pull requests — always cold-build DerivedData so PRs never trust
+      #      a cached Xcode build product from another ref.
+      #   2. `github.run_attempt != '1'` — i.e. a re-run. The default
       #      "Re-run failed jobs" button is the natural place for someone
       #      who just saw a build failure to land, so we make that the
       #      intuitive escape hatch for cache poison: the first attempt
       #      uses the cache (fast); any re-run forces a cold compile.
-      #   2. `workflow_dispatch.clear_cache=true` — manual force-cold on
+      #   3. `workflow_dispatch.clear_cache=true` — manual force-cold on
       #      a fresh run (e.g. validating a CACHE_SALT bump before PRs
       #      start hitting it).
       #
@@ -116,18 +120,18 @@ jobs:
       # every re-run cost ~2 min in PR #951 run 24937664669 — wasted
       # budget that contributed to the 30-min cold-build cancellation.
       #
-      # We wipe AFTER the restore step (rather than skipping the restore)
-      # so `steps.dd-cache.outputs.cache-primary-key` stays populated and
-      # the `Save DerivedData cache` step at the bottom can still
-      # repopulate the cache on a successful `main` run.
-      - name: Wipe restored DerivedData (re-run or workflow_dispatch clear_cache)
-        if: ${{ github.run_attempt != '1' || (github.event_name == 'workflow_dispatch' && inputs.clear_cache) }}
+      # On main/manual runs we wipe AFTER the restore step (rather than
+      # skipping the restore) so `steps.dd-cache.outputs.cache-primary-key`
+      # stays populated and the `Save DerivedData cache` step at the bottom
+      # can still repopulate the cache on a successful `main` run.
+      - name: Wipe restored DerivedData (PR, re-run, or workflow_dispatch clear_cache)
+        if: ${{ github.event_name == 'pull_request' || github.run_attempt != '1' || (github.event_name == 'workflow_dispatch' && inputs.clear_cache) }}
         run: |
-          REASON="run_attempt=${{ github.run_attempt }}"
+          REASON="event=${{ github.event_name }}, run_attempt=${{ github.run_attempt }}"
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.clear_cache }}" = "true" ]; then
             REASON="$REASON, workflow_dispatch clear_cache=true"
           fi
-          echo "::notice title=Cold build forced::Wiping restored DerivedData before build ($REASON). SPM cache preserved (it's source-only and pinned by Package.resolved). To re-run with the warm cache instead, push a new commit or trigger a fresh run."
+          echo "::notice title=Cold build forced::Wiping DerivedData before build ($REASON). SPM cache preserved (it's source-only and pinned by Package.resolved)."
           rm -rf "$HOME/Library/Developer/Xcode/DerivedData"
 
       - name: Resolve dependencies
@@ -248,7 +252,7 @@ jobs:
                 echo
                 echo "**\`run_attempt > 1\` AND \`cache-hit: false\`?** That's the deliberate cold-rebuild path triggered by **Re-run failed jobs** — see the \`Wipe restored DerivedData\` step in this job. If the cold build is exhausting the 45-min budget on every re-run, the codebase has outgrown the budget; bump \`timeout-minutes\` and update its comment block, OR move warm-cache priming to a nightly \`main\` job so PRs always warm-start."
                 echo
-                echo "**Suspect cache poisoning on a fresh attempt?** Click **Re-run failed jobs** — re-runs automatically wipe DerivedData (the SPM cache is preserved because it's pinned by \`Package.resolved\` and can't be poisoned)."
+                echo "**Suspect cache poisoning on a fresh attempt?** Pull requests already cold-build DerivedData; main/manual re-runs wipe DerivedData automatically while preserving the pinned SPM source cache."
               } >> "$GITHUB_STEP_SUMMARY"
             else
               # Mode B.

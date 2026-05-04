@@ -90,6 +90,7 @@ struct HTTPBodySizeLimitTests {
 private struct BodyLimitTestServer {
     let group: MultiThreadedEventLoopGroup
     let channel: Channel
+    let lease: HTTPServerTestLease
     let host: String
     let port: Int
 
@@ -98,34 +99,44 @@ private struct BodyLimitTestServer {
         await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
             group.shutdownGracefully { _ in cont.resume() }
         }
+        await lease.release()
     }
 }
 
 private func startBodyLimitServer(config: ServerConfiguration) async throws -> BodyLimitTestServer {
+    let lease = await HTTPServerTestLock.shared.acquire()
     let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-    let bootstrap = ServerBootstrap(group: group)
-        .serverChannelOption(ChannelOptions.backlog, value: 256)
-        .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
-        .childChannelInitializer { channel in
-            channel.pipeline.configureHTTPServerPipeline().flatMap {
-                channel.pipeline.addHandler(
-                    HTTPHandler(
-                        configuration: config,
-                        apiKeyValidator: .empty,
-                        eventLoop: channel.eventLoop,
-                        // trustLoopback false so the auth gate would normally
-                        // run — proves the size guard fires *before* it.
-                        trustLoopback: false
+    do {
+        let bootstrap = ServerBootstrap(group: group)
+            .serverChannelOption(ChannelOptions.backlog, value: 256)
+            .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
+            .childChannelInitializer { channel in
+                channel.pipeline.configureHTTPServerPipeline().flatMap {
+                    channel.pipeline.addHandler(
+                        HTTPHandler(
+                            configuration: config,
+                            apiKeyValidator: .empty,
+                            eventLoop: channel.eventLoop,
+                            // trustLoopback false so the auth gate would normally
+                            // run — proves the size guard fires *before* it.
+                            trustLoopback: false
+                        )
                     )
-                )
+                }
             }
-        }
-        .childChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
-        .childChannelOption(ChannelOptions.socketOption(.tcp_nodelay), value: 1)
-        .childChannelOption(ChannelOptions.maxMessagesPerRead, value: 16)
-        .childChannelOption(ChannelOptions.recvAllocator, value: AdaptiveRecvByteBufferAllocator())
+            .childChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
+            .childChannelOption(ChannelOptions.socketOption(.tcp_nodelay), value: 1)
+            .childChannelOption(ChannelOptions.maxMessagesPerRead, value: 16)
+            .childChannelOption(ChannelOptions.recvAllocator, value: AdaptiveRecvByteBufferAllocator())
 
-    let ch = try await bootstrap.bind(host: "127.0.0.1", port: 0).get()
-    let port = ch.localAddress?.port ?? 0
-    return BodyLimitTestServer(group: group, channel: ch, host: "127.0.0.1", port: port)
+        let ch = try await bootstrap.bind(host: "127.0.0.1", port: 0).get()
+        let port = ch.localAddress?.port ?? 0
+        return BodyLimitTestServer(group: group, channel: ch, lease: lease, host: "127.0.0.1", port: port)
+    } catch {
+        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+            group.shutdownGracefully { _ in cont.resume() }
+        }
+        await lease.release()
+        throw error
+    }
 }

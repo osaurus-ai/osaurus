@@ -7,35 +7,39 @@ import Testing
 @MainActor
 struct ChatSessionStopTests {
     @Test
-    func stop_trimsTrailingEmptyAssistantPlaceholder() {
-        let session = ChatSession()
-        session.turns = [
-            ChatTurn(role: .user, content: "Hello"),
-            ChatTurn(role: .assistant, content: ""),
-        ]
+    func stop_trimsTrailingEmptyAssistantPlaceholder() async throws {
+        try await ChatHistoryTestStorage.run {
+            let session = ChatSession()
+            session.turns = [
+                ChatTurn(role: .user, content: "Hello"),
+                ChatTurn(role: .assistant, content: ""),
+            ]
 
-        session.stop()
+            session.stop()
 
-        #expect(session.turns.count == 1)
-        #expect(session.turns.last?.role == .user)
+            #expect(session.turns.count == 1)
+            #expect(session.turns.last?.role == .user)
+        }
     }
 
     @Test
     func stop_ignoresLateResultsWhenEngineSetupIgnoresCancellation() async throws {
-        let session = ChatSession()
-        session.chatEngineFactory = { IgnoringCancellationChatEngine() }
+        try await ChatHistoryTestStorage.run {
+            let session = ChatSession()
+            session.chatEngineFactory = { IgnoringCancellationChatEngine() }
 
-        session.send("Hello")
-        try await Task.sleep(for: .milliseconds(20))
-        session.stop()
+            session.send("Hello")
+            try await Task.sleep(for: .milliseconds(20))
+            session.stop()
 
-        #expect(session.isStreaming == false)
+            #expect(session.isStreaming == false)
 
-        try await Task.sleep(for: .milliseconds(250))
+            try await Task.sleep(for: .milliseconds(250))
 
-        #expect(session.turns.count == 1)
-        #expect(session.turns.first?.role == .user)
-        #expect(session.turns.first?.content == "Hello")
+            #expect(session.turns.count == 1)
+            #expect(session.turns.first?.role == .user)
+            #expect(session.turns.first?.content == "Hello")
+        }
     }
 }
 

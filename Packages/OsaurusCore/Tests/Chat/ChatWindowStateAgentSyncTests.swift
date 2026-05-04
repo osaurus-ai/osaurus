@@ -20,9 +20,8 @@
 //     which covers the Default agent whose mutable settings live in
 //     `ChatConfiguration` rather than the `Agent` struct.
 //
-//  Tests reuse the `SandboxTestLock.runWithStoragePaths` helper to
-//  serialize access to `AgentManager.shared`, mirroring the pattern in
-//  `ContextBudgetPreviewTests`.
+//  Tests reuse the `ChatHistoryTestStorage` helper to isolate chat history
+//  and agent persistence while serializing access to `AgentManager.shared`.
 //
 
 import Combine
@@ -80,8 +79,8 @@ struct ChatWindowStateAgentSyncTests {
     /// agent dropdown while the chat window is open should reflect agents
     /// added afterwards (from AgentsView, onboarding, plugins, …).
     @Test("add → new agent appears in windowState.agents synchronously")
-    func add_propagatesToWindowAgents() async {
-        await SandboxTestLock.runWithStoragePaths {
+    func add_propagatesToWindowAgents() async throws {
+        try await ChatHistoryTestStorage.run {
             let window = makeWindow(for: Agent.defaultId)
             let countBefore = window.agents.count
 
@@ -98,8 +97,8 @@ struct ChatWindowStateAgentSyncTests {
     // MARK: - 2. Active agent updates flow through the Combine sink
 
     @Test("rename active custom agent → cachedAgentDisplayName + cachedActiveAgent update")
-    func renameActive_updatesCachesSynchronously() async {
-        await SandboxTestLock.runWithStoragePaths {
+    func renameActive_updatesCachesSynchronously() async throws {
+        try await ChatHistoryTestStorage.run {
             let custom = makeCustomAgent(name: "RenameActive")
             AgentManager.shared.add(custom)
 
@@ -121,8 +120,8 @@ struct ChatWindowStateAgentSyncTests {
     }
 
     @Test("active custom agent system prompt change → cachedSystemPrompt updates")
-    func activeCustomAgentSystemPromptChange_updatesCachedSystemPrompt() async {
-        await SandboxTestLock.runWithStoragePaths {
+    func activeCustomAgentSystemPromptChange_updatesCachedSystemPrompt() async throws {
+        try await ChatHistoryTestStorage.run {
             let custom = makeCustomAgent(name: "PromptTest", systemPrompt: "before")
             AgentManager.shared.add(custom)
 
@@ -140,8 +139,8 @@ struct ChatWindowStateAgentSyncTests {
     }
 
     @Test("active custom agent tool selection change → cachedActiveAgent reflects new mode/allowlist")
-    func activeCustomAgentToolSelectionChange_updatesCachedActiveAgent() async {
-        await SandboxTestLock.runWithStoragePaths {
+    func activeCustomAgentToolSelectionChange_updatesCachedActiveAgent() async throws {
+        try await ChatHistoryTestStorage.run {
             let custom = makeCustomAgent(name: "ToolSelTest", toolSelectionMode: .auto)
             AgentManager.shared.add(custom)
 
@@ -165,8 +164,8 @@ struct ChatWindowStateAgentSyncTests {
     /// settings live in `ChatConfiguration`, not the `Agent` struct, so
     /// they never trigger a `$agents` emission.
     @Test("Default agent system prompt change → cachedSystemPrompt updates via .appConfigurationChanged")
-    func defaultAgentSystemPromptChange_updatesCachedSystemPrompt() async {
-        await SandboxTestLock.runWithStoragePaths {
+    func defaultAgentSystemPromptChange_updatesCachedSystemPrompt() async throws {
+        try await ChatHistoryTestStorage.run {
             let window = makeWindow(for: Agent.defaultId)
             let originalConfig = ChatConfigurationStore.load()
             defer { ChatConfigurationStore.save(originalConfig) }
@@ -190,8 +189,8 @@ struct ChatWindowStateAgentSyncTests {
     /// heavy `refreshAgentConfig()` path that invalidates the session
     /// token cache).
     @Test("rename non-active agent → list updates, active untouched")
-    func renameNonActive_updatesListButLeavesActiveUntouched() async {
-        await SandboxTestLock.runWithStoragePaths {
+    func renameNonActive_updatesListButLeavesActiveUntouched() async throws {
+        try await ChatHistoryTestStorage.run {
             let agentA = makeCustomAgent(name: "ActiveA")
             let agentB = makeCustomAgent(name: "OtherB")
             AgentManager.shared.add(agentA)
@@ -219,8 +218,8 @@ struct ChatWindowStateAgentSyncTests {
     // MARK: - 4. Delete propagates
 
     @Test("delete non-active agent → disappears from windowState.agents")
-    func deleteNonActive_removesFromWindowAgents() async {
-        await SandboxTestLock.runWithStoragePaths {
+    func deleteNonActive_removesFromWindowAgents() async throws {
+        try await ChatHistoryTestStorage.run {
             let agentA = makeCustomAgent(name: "KeepA")
             let agentB = makeCustomAgent(name: "DeleteB")
             AgentManager.shared.add(agentA)
@@ -243,8 +242,8 @@ struct ChatWindowStateAgentSyncTests {
     /// the window pointing at a dangling id. `applyAgentsUpdate` detects
     /// the missing agent and falls back to the Default agent.
     @Test("delete active agent → falls back to Default")
-    func deleteActive_fallsBackToDefault() async {
-        await SandboxTestLock.runWithStoragePaths {
+    func deleteActive_fallsBackToDefault() async throws {
+        try await ChatHistoryTestStorage.run {
             let custom = makeCustomAgent(name: "ToDeleteActive")
             AgentManager.shared.add(custom)
 
@@ -290,13 +289,10 @@ struct ChatWindowStateAgentSyncTests {
     ///     `ChatSession.reset(for:)` re-order keeps the old agent in
     ///     scope while `stop()` runs).
     @Test("issue #1005: loadSession + startNewChat preserves conversation's agent")
-    func issue1005_loadSession_thenNewChat_preservesAgent() async {
-        await SandboxTestLock.runWithStoragePaths {
+    func issue1005_loadSession_thenNewChat_preservesAgent() async throws {
+        try await ChatHistoryTestStorage.run {
             let custom = makeCustomAgent(name: "Issue1005")
             AgentManager.shared.add(custom)
-            defer {
-                Task { _ = await AgentManager.shared.delete(id: custom.id) }
-            }
 
             // Window opens on Default — mirrors the user being in the
             // Default agent at the time they click on a custom-agent
@@ -380,6 +376,8 @@ struct ChatWindowStateAgentSyncTests {
             #expect(window.session.agentId == custom.id)
             #expect(window.session.sessionId == nil)
             #expect(window.session.turns.isEmpty)
+
+            _ = await AgentManager.shared.delete(id: custom.id)
         }
     }
 
@@ -391,8 +389,8 @@ struct ChatWindowStateAgentSyncTests {
     /// notification-only model) would silently re-break the picker
     /// without this test.
     @Test("AgentManager.$agents emits on add and delete")
-    func agentManagerPublisher_emitsOnAddAndDelete() async {
-        await SandboxTestLock.runWithStoragePaths {
+    func agentManagerPublisher_emitsOnAddAndDelete() async throws {
+        try await ChatHistoryTestStorage.run {
             var emissionCount = 0
             let cancellable = AgentManager.shared.$agents.sink { _ in
                 emissionCount += 1

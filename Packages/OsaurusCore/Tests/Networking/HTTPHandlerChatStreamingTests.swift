@@ -11,6 +11,12 @@ import Testing
 
 @testable import OsaurusCore
 
+fileprivate extension URLRequest {
+    mutating func disablePersistenceForTests() {
+        setValue("false", forHTTPHeaderField: "X-Persist")
+    }
+}
+
 struct HTTPHandlerChatStreamingTests {
 
     @Test func sse_path_writes_role_content_finish_done() async throws {
@@ -26,6 +32,7 @@ struct HTTPHandlerChatStreamingTests {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
         request.authenticate()
+        request.disablePersistenceForTests()
         let reqBody = ChatCompletionRequest(
             model: "fake",
             messages: [ChatMessage(role: "user", content: "hi")],
@@ -64,6 +71,7 @@ struct HTTPHandlerChatStreamingTests {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.authenticate()
+        request.disablePersistenceForTests()
         let reqBody = ChatCompletionRequest(
             model: "fake",
             messages: [ChatMessage(role: "user", content: "hi")],
@@ -118,6 +126,7 @@ struct HTTPHandlerChatStreamingTests {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
         request.authenticate()
+        request.disablePersistenceForTests()
         let reqBody = ChatCompletionRequest(
             model: "fake",
             messages: [ChatMessage(role: "user", content: "hi")],
@@ -182,6 +191,7 @@ struct HTTPHandlerChatStreamingTests {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
         request.authenticate()
+        request.disablePersistenceForTests()
         let reqBody = ChatCompletionRequest(
             model: "fake",
             messages: [ChatMessage(role: "user", content: "hi")],
@@ -253,6 +263,7 @@ struct HTTPHandlerChatStreamingTests {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
         request.authenticate()
+        request.disablePersistenceForTests()
         let reqBody = ChatCompletionRequest(
             model: "fake",
             messages: [ChatMessage(role: "user", content: "hi")],
@@ -327,6 +338,7 @@ struct HTTPHandlerChatStreamingTests {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
         request.authenticate()
+        request.disablePersistenceForTests()
         let bodyJSON = #"""
             {"model":"fake","max_tokens":16,"stream":true,"messages":[{"role":"user","content":"hi"}]}
             """#
@@ -377,6 +389,7 @@ struct HTTPHandlerChatStreamingTests {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
         request.authenticate()
+        request.disablePersistenceForTests()
         let bodyJSON = #"""
             {"model":"fake","max_tokens":16,"stream":true,"messages":[{"role":"user","content":"hi"}]}
             """#
@@ -418,6 +431,7 @@ struct HTTPHandlerChatStreamingTests {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
         request.authenticate()
+        request.disablePersistenceForTests()
         let bodyJSON = #"""
             {"model":"fake","stream":true,"input":"hi"}
             """#
@@ -458,6 +472,7 @@ struct HTTPHandlerChatStreamingTests {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
         request.authenticate()
+        request.disablePersistenceForTests()
         let bodyJSON = #"""
             {"model":"fake","stream":true,"input":"hi"}
             """#
@@ -508,6 +523,7 @@ struct HTTPHandlerChatStreamingTests {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
         request.authenticate()
+        request.disablePersistenceForTests()
         let bodyJSON = #"""
             {"model":"fake","stream":true,"input":"hi"}
             """#
@@ -553,6 +569,7 @@ struct HTTPHandlerChatStreamingTests {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
         request.authenticate()
+        request.disablePersistenceForTests()
         let reqBody = ChatCompletionRequest(
             model: "fake",
             messages: [ChatMessage(role: "user", content: "hi")],
@@ -587,6 +604,7 @@ struct HTTPHandlerChatStreamingTests {
 private struct TestServer {
     let group: MultiThreadedEventLoopGroup
     let channel: Channel
+    let lease: HTTPServerTestLease
     let host: String
     let port: Int
 
@@ -595,35 +613,45 @@ private struct TestServer {
         await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
             group.shutdownGracefully { _ in cont.resume() }
         }
+        await lease.release()
     }
 }
 
 @discardableResult
 private func startTestServer(with engine: ChatEngineProtocol) async throws -> TestServer {
+    let lease = await HTTPServerTestLock.shared.acquire()
     let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-    let bootstrap = ServerBootstrap(group: group)
-        .serverChannelOption(ChannelOptions.backlog, value: 256)
-        .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
-        .childChannelInitializer { channel in
-            channel.pipeline.configureHTTPServerPipeline().flatMap {
-                channel.pipeline.addHandler(
-                    HTTPHandler(
-                        configuration: .default,
-                        apiKeyValidator: TestAuth.validator,
-                        eventLoop: channel.eventLoop,
-                        chatEngine: engine,
-                        trustLoopback: false
+    do {
+        let bootstrap = ServerBootstrap(group: group)
+            .serverChannelOption(ChannelOptions.backlog, value: 256)
+            .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
+            .childChannelInitializer { channel in
+                channel.pipeline.configureHTTPServerPipeline().flatMap {
+                    channel.pipeline.addHandler(
+                        HTTPHandler(
+                            configuration: .default,
+                            apiKeyValidator: TestAuth.validator,
+                            eventLoop: channel.eventLoop,
+                            chatEngine: engine,
+                            trustLoopback: false
+                        )
                     )
-                )
+                }
             }
-        }
-        .childChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
-        .childChannelOption(ChannelOptions.socketOption(.tcp_nodelay), value: 1)
-        .childChannelOption(ChannelOptions.maxMessagesPerRead, value: 16)
-        .childChannelOption(ChannelOptions.recvAllocator, value: AdaptiveRecvByteBufferAllocator())
+            .childChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
+            .childChannelOption(ChannelOptions.socketOption(.tcp_nodelay), value: 1)
+            .childChannelOption(ChannelOptions.maxMessagesPerRead, value: 16)
+            .childChannelOption(ChannelOptions.recvAllocator, value: AdaptiveRecvByteBufferAllocator())
 
-    let ch = try await bootstrap.bind(host: "127.0.0.1", port: 0).get()
-    let addr = ch.localAddress
-    let port = addr?.port ?? 0
-    return TestServer(group: group, channel: ch, host: "127.0.0.1", port: port)
+        let ch = try await bootstrap.bind(host: "127.0.0.1", port: 0).get()
+        let addr = ch.localAddress
+        let port = addr?.port ?? 0
+        return TestServer(group: group, channel: ch, lease: lease, host: "127.0.0.1", port: port)
+    } catch {
+        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+            group.shutdownGracefully { _ in cont.resume() }
+        }
+        await lease.release()
+        throw error
+    }
 }

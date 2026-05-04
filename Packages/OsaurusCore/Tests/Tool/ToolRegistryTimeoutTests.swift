@@ -21,12 +21,17 @@ struct ToolRegistryTimeoutTests {
     /// success envelope only if it somehow completes — that branch is
     /// the failure signal for the test.
     private struct SlowSleepTool: OsaurusTool {
+        static let sleepSeconds: TimeInterval = 8
+        static let timeoutSeconds: TimeInterval = 0.5
+        static let minimumTimeoutLeadSeconds: TimeInterval = 1
+        private static let sleepNanoseconds = UInt64(sleepSeconds * 1_000_000_000)
+
         let name: String = "test_slow_sleep"
-        let description: String = "Test fixture: sleeps 5 seconds, exceeding the test timeout."
+        let description: String = "Test fixture: sleeps 8 seconds, exceeding the test timeout."
         let parameters: JSONValue? = .object(["type": .string("object")])
 
         func execute(argumentsJSON: String) async throws -> String {
-            try await Task.sleep(nanoseconds: 5_000_000_000)
+            try await Task.sleep(nanoseconds: Self.sleepNanoseconds)
             return ToolEnvelope.success(tool: name, text: "did not time out")
         }
     }
@@ -51,7 +56,7 @@ struct ToolRegistryTimeoutTests {
         let result = try await ToolRegistry.runToolBody(
             tool,
             argumentsJSON: "{}",
-            timeoutSeconds: 0.5
+            timeoutSeconds: SlowSleepTool.timeoutSeconds
         )
         let elapsed = Date().timeIntervalSince(started)
 
@@ -64,15 +69,17 @@ struct ToolRegistryTimeoutTests {
         #expect(parsed?["kind"] as? String == "timeout")
         #expect(parsed?["tool"] as? String == tool.name)
         #expect(parsed?["retryable"] as? Bool == true)
-        // Wall-clock budget: body sleeps 5s, so anything under 4s
-        // proves cancellation actually fired and we didn't accidentally
-        // wait for the body to finish. Looser than the previous <1s
-        // because xctest's parallel scheduler + Swift Concurrency
-        // cooperative pool can add seconds of latency under load —
-        // observed at ~3s under Xcode test runner vs ~0.2s on
-        // `swift test`. The race is the same; only the wake-up
-        // latency differs.
-        #expect(elapsed < 4.0, "took \(elapsed)s — expected <4s if timeout race fired")
+
+        // Wall-clock budget: the envelope shape above proves the timeout
+        // branch won. Keep the elapsed assertion tied to the fixture's
+        // slow-body duration so loaded CI has room for scheduler latency,
+        // while still proving we returned materially before the slow tool
+        // could succeed.
+        let latestAcceptableTimeout = SlowSleepTool.sleepSeconds - SlowSleepTool.minimumTimeoutLeadSeconds
+        #expect(
+            elapsed < latestAcceptableTimeout,
+            "took \(elapsed)s — expected timeout at least \(SlowSleepTool.minimumTimeoutLeadSeconds)s before slow tool could finish"
+        )
     }
 
     @Test

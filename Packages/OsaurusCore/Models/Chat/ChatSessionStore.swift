@@ -74,4 +74,11 @@ enum ChatSessionStore {
         }
         LegacySessionImporter.runIfNeeded()
     }
+
+    #if DEBUG
+        static func _resetForTesting() {
+            didOpen = false
+            ChatHistoryDatabase.shared.close()
+        }
+    #endif
 }
