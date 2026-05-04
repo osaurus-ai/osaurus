@@ -43,6 +43,9 @@ struct FloatingInputCard: View {
     var onSkillSelected: ((UUID) -> Void)? = nil
     /// Binding to the session's pending one-off skill. Non-nil shows a dismissable skill chip.
     @Binding var pendingSkillId: UUID?
+    /// Binding to the session's auto-speak preference. When true, a chip is shown
+    /// so the user can disable it without waiting to be re-prompted.
+    @Binding var autoSpeakAssistant: Bool
 
     init(
         text: Binding<String>,
@@ -65,7 +68,8 @@ struct FloatingInputCard: View {
         isCompact: Bool = false,
         onClearChat: (() -> Void)? = nil,
         onSkillSelected: ((UUID) -> Void)? = nil,
-        pendingSkillId: Binding<UUID?> = .constant(nil)
+        pendingSkillId: Binding<UUID?> = .constant(nil),
+        autoSpeakAssistant: Binding<Bool> = .constant(false)
     ) {
         self._text = text
         self._selectedModel = selectedModel
@@ -88,6 +92,7 @@ struct FloatingInputCard: View {
         self.onClearChat = onClearChat
         self.onSkillSelected = onSkillSelected
         self._pendingSkillId = pendingSkillId
+        self._autoSpeakAssistant = autoSpeakAssistant
     }
 
     // Observe managers for reactive updates
@@ -1102,6 +1107,10 @@ extension FloatingInputCard {
 
             thinkingToggleChip
 
+            if autoSpeakAssistant {
+                autoSpeakToggleChip
+            }
+
             if hasNonThinkingOptions {
                 modelOptionsSelectorChip
             }
@@ -1307,6 +1316,29 @@ extension FloatingInputCard {
             }
             .help(Text("Toggle model reasoning mode", bundle: .module))
         }
+    }
+
+    // MARK: - Auto-Speak Toggle
+
+    @ViewBuilder
+    private var autoSpeakToggleChip: some View {
+        SelectorChip(isActive: autoSpeakAssistant) {
+            withAnimation(.spring(response: 0.2, dampingFraction: 0.7)) {
+                autoSpeakAssistant.toggle()
+            }
+        } content: {
+            HStack(spacing: 5) {
+                Image(systemName: autoSpeakAssistant ? "checkmark.square.fill" : "square")
+                    .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .semibold))
+                    .foregroundColor(autoSpeakAssistant ? theme.accentColor : theme.tertiaryText)
+                    .contentTransition(.symbolEffect(.replace))
+
+                Text("Auto-speak", bundle: .module)
+                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                    .foregroundColor(autoSpeakAssistant ? theme.secondaryText : theme.tertiaryText)
+            }
+        }
+        .help(Text("Auto-speak every reply in this chat", bundle: .module))
     }
 
     private func toggleThinking(id: String) {

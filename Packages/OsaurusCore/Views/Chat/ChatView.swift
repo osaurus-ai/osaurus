@@ -2330,7 +2330,8 @@ struct ChatView: View {
                                 onSkillSelected: { skillId in
                                     observedSession.pendingOneOffSkillId = skillId
                                 },
-                                pendingSkillId: $observedSession.pendingOneOffSkillId
+                                pendingSkillId: $observedSession.pendingOneOffSkillId,
+                                autoSpeakAssistant: $observedSession.autoSpeakAssistant
                             )
                             .frame(maxWidth: 1100)
                             .frame(maxWidth: .infinity)
