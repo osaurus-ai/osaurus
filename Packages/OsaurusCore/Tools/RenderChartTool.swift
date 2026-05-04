@@ -195,9 +195,29 @@ struct RenderChartTool: OsaurusTool {
             note = "Downsampled from \(rows.count) to \(Self.maxRows) rows for rendering"
         }
 
-        // Build categories from xColumn
+        // Build categories from xColumn. if the model omitted xColumn (common with
+        // small/quantized models on inline placeholder data), fall back to the first
+        // non-series header whose values are non-numeric because that's almost always the
+        // label column. without this the categories ends up nil and bar/line/pie all
+        // lose their labels.
+        var resolvedXColumn: String? = xColumn
+        if resolvedXColumn == nil {
+            let seriesSet = Set(seriesCols)
+            for header in headers where !seriesSet.contains(header) {
+                guard let idx = headers.firstIndex(of: header) else { continue }
+                let sample = dataRows.prefix(10).compactMap { row in
+                    idx < row.count ? row[idx].trimmingCharacters(in: .whitespaces) : nil
+                }.filter { !$0.isEmpty }
+                guard !sample.isEmpty else { continue }
+                let numericCount = sample.filter { Double($0) != nil }.count
+                if numericCount * 2 < sample.count {  // mostly non-numeric → labels
+                    resolvedXColumn = header
+                    break
+                }
+            }
+        }
         var categories: [String]? = nil
-        if let xCol = xColumn, let xIdx = headers.firstIndex(of: xCol) {
+        if let xCol = resolvedXColumn, let xIdx = headers.firstIndex(of: xCol) {
             categories = dataRows.map { row in xIdx < row.count ? row[xIdx] : "" }
         }
 
