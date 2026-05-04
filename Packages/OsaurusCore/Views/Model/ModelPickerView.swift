@@ -152,6 +152,11 @@ struct ModelPickerView: View {
             cachedGroupedOptions = displayOptions.groupedBySource()
             recomputeRows()
         }
+        .task {
+            // refresh remote model lists on open so newly-added/removed
+            // models surface
+            await RemoteProviderManager.shared.refreshConnectedProviders()
+        }
         .onDisappear {
             searchDebounceTask?.cancel()
         }

@@ -1273,6 +1273,12 @@ extension FloatingInputCard {
                 cachedPickerItems = pickerItems
             }
         }
+        .onChange(of: pickerItems) { _, newItems in
+            // mirror upstream changes while open so picker triggered refreshes are visible
+            if showModelPicker {
+                cachedPickerItems = newItems
+            }
+        }
     }
 
     // MARK: - Thinking Toggle

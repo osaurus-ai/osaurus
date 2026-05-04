@@ -332,6 +332,73 @@ public final class RemoteProviderManager: ObservableObject {
         }
     }
 
+    private var refreshConnectedTask: Task<Void, Never>?
+
+    /// Last successful refetch per provider for throttling
+    private var lastModelRefetchAt: [UUID: Date] = [:]
+
+    static let modelRefetchThrottle: TimeInterval = 10
+
+    /// Test seam: when set, used in place of `RemoteProviderService.fetchModels`.
+    var testFetchModelsOverride: ((RemoteProvider) async throws -> [String])?
+
+    /// Re-query `/models` for one connected provider without tearing down its
+    /// service, flipping `isConnecting`, or refreshing OAuth.
+    public func refetchModels(providerId: UUID) async {
+        guard let provider = configuration.provider(id: providerId),
+            provider.enabled,
+            var state = providerStates[providerId],
+            state.isConnected
+        else { return }
+
+        let discovered: [String]
+        do {
+            if let override = testFetchModelsOverride {
+                discovered = try await override(provider)
+            } else {
+                discovered = try await RemoteProviderService.fetchModels(from: provider)
+            }
+        } catch {
+            return
+        }
+
+        let merged = provider.mergedModelIds(discovered: discovered)
+        lastModelRefetchAt[providerId] = Date()
+        guard merged != state.discoveredModels else { return }
+
+        state.discoveredModels = merged
+        providerStates[providerId] = state
+        notifyModelsChanged()
+    }
+
+    /// Refresh every enabled provider's model list, coalesced and throttled.
+    /// Called from the picker-open path.
+    public func refreshConnectedProviders() async {
+        if let existing = refreshConnectedTask {
+            await existing.value
+            return
+        }
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            let now = Date()
+            let throttle = Self.modelRefetchThrottle
+            let dueIds: [UUID] = self.configuration.enabledProviders.compactMap { provider in
+                if let last = self.lastModelRefetchAt[provider.id],
+                    now.timeIntervalSince(last) < throttle
+                {
+                    return nil
+                }
+                return provider.id
+            }
+            for id in dueIds {
+                await self.refetchModels(providerId: id)
+            }
+        }
+        refreshConnectedTask = task
+        await task.value
+        refreshConnectedTask = nil
+    }
+
     /// Disconnect from all providers
     public func disconnectAll() {
         for providerId in services.keys {
@@ -588,6 +655,33 @@ public final class RemoteProviderManager: ObservableObject {
 
     private func notifyModelsChanged() {
         NotificationCenter.default.post(name: .remoteProviderModelsChanged, object: nil)
+    }
+
+    // MARK: - Test Helpers
+
+    /// Insert a fake connected provider directly into state, bypassing the
+    /// real `connect()` (no network, no service instance). Test-only.
+    func _testInstallConnectedProvider(_ provider: RemoteProvider, discoveredModels: [String]) {
+        configuration.add(provider)
+        ephemeralProviderIds.insert(provider.id)
+        var state = RemoteProviderState(providerId: provider.id)
+        state.isConnected = true
+        state.discoveredModels = discoveredModels
+        state.lastConnectedAt = Date()
+        providerStates[provider.id] = state
+    }
+
+    /// Tear down test state added by `_testInstallConnectedProvider` and
+    /// reset throttle / in-flight task so each test starts clean.
+    func _testRemoveProviders(ids: [UUID]) {
+        for id in ids {
+            configuration.remove(id: id)
+            ephemeralProviderIds.remove(id)
+            providerStates.removeValue(forKey: id)
+            lastModelRefetchAt.removeValue(forKey: id)
+        }
+        refreshConnectedTask = nil
+        testFetchModelsOverride = nil
     }
 }
 
