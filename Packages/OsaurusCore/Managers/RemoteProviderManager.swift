@@ -340,7 +340,7 @@ public final class RemoteProviderManager: ObservableObject {
     static let modelRefetchThrottle: TimeInterval = 10
 
     /// Test seam: when set, used in place of `RemoteProviderService.fetchModels`.
-    var testFetchModelsOverride: ((RemoteProvider) async throws -> [String])?
+    var testFetchModelsOverride: (@MainActor (RemoteProvider) async throws -> [String])?
 
     /// Re-query `/models` for one connected provider without tearing down its
     /// service, flipping `isConnecting`, or refreshing OAuth.
@@ -669,6 +669,11 @@ public final class RemoteProviderManager: ObservableObject {
         state.discoveredModels = discoveredModels
         state.lastConnectedAt = Date()
         providerStates[provider.id] = state
+    }
+
+    /// Mutate a test-installed provider's state. Test-only.
+    func _testSetState(_ state: RemoteProviderState, for id: UUID) {
+        providerStates[id] = state
     }
 
     /// Tear down test state added by `_testInstallConnectedProvider` and
