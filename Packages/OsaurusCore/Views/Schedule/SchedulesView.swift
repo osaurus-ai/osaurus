@@ -624,6 +624,9 @@ private struct ScheduleTimePicker: View {
                     isFocused = focused || minuteFocused
                     if !focused { validateHour() }
                 }
+                .onChange(of: hourText) { _, _ in
+                    if hourFocused { commitHourLive() }
+                }
 
             Text(":")
                 .font(.system(size: 13, weight: .medium))
@@ -648,6 +651,9 @@ private struct ScheduleTimePicker: View {
                 .onChange(of: minuteFocused) { _, focused in
                     isFocused = hourFocused || focused
                     if !focused { validateMinute() }
+                }
+                .onChange(of: minuteText) { _, _ in
+                    if minuteFocused { commitMinuteLive() }
                 }
 
             Button(action: togglePeriod) {
@@ -692,11 +698,28 @@ private struct ScheduleTimePicker: View {
         hourText = "\(displayHour)"
     }
 
+    /// Same clamp/AM-PM math as `validateHour`, but never rewrites
+    /// `hourText` — leaves the user's in-progress edit alone.
+    private func commitHourLive() {
+        guard let value = Int(hourText), value >= 1, value <= 12 else { return }
+        let isPM = hour >= 12
+        if value == 12 {
+            hour = isPM ? 12 : 0
+        } else {
+            hour = isPM ? value + 12 : value
+        }
+    }
+
     private func validateMinute() {
         if let value = Int(minuteText), value >= 0, value <= 59 {
             minute = value
         }
         minuteText = String(format: "%02d", minute)
+    }
+
+    private func commitMinuteLive() {
+        guard let value = Int(minuteText), value >= 0, value <= 59 else { return }
+        minute = value
     }
 
     private func togglePeriod() {
@@ -749,6 +772,12 @@ private struct HourlyMinutePicker: View {
                     isFocused = focused
                     if !focused { validateMinute() }
                 }
+                // See `ScheduleTimePicker` — commit live so previews and
+                // an immediate Save reflect the typed value without
+                // requiring focus loss first.
+                .onChange(of: minuteText) { _, _ in
+                    if textFieldFocused { commitMinuteLive() }
+                }
 
             VStack(spacing: 0) {
                 Button(action: { incrementMinute() }) {
@@ -790,6 +819,11 @@ private struct HourlyMinutePicker: View {
             minute = value
         }
         minuteText = String(format: "%02d", minute)
+    }
+
+    private func commitMinuteLive() {
+        guard let value = Int(minuteText), value >= 0, value <= 59 else { return }
+        minute = value
     }
 
     private func incrementMinute() {
@@ -1001,6 +1035,9 @@ private struct OnceTimePicker: View {
                     isFocused = focused || minuteFocused
                     if !focused { validateHour() }
                 }
+                .onChange(of: hourText) { _, _ in
+                    if hourFocused { commitHourLive() }
+                }
 
             Text(":")
                 .font(.system(size: 13, weight: .medium))
@@ -1025,6 +1062,9 @@ private struct OnceTimePicker: View {
                 .onChange(of: minuteFocused) { _, focused in
                     isFocused = hourFocused || focused
                     if !focused { validateMinute() }
+                }
+                .onChange(of: minuteText) { _, _ in
+                    if minuteFocused { commitMinuteLive() }
                 }
 
             Button(action: togglePeriod) {
@@ -1069,11 +1109,26 @@ private struct OnceTimePicker: View {
         hourText = "\(displayHour)"
     }
 
+    private func commitHourLive() {
+        guard let value = Int(hourText), value >= 1, value <= 12 else { return }
+        let isPM = hour >= 12
+        if value == 12 {
+            updateHour(isPM ? 12 : 0)
+        } else {
+            updateHour(isPM ? value + 12 : value)
+        }
+    }
+
     private func validateMinute() {
         if let value = Int(minuteText), value >= 0, value <= 59 {
             updateMinute(value)
         }
         minuteText = String(format: "%02d", minute)
+    }
+
+    private func commitMinuteLive() {
+        guard let value = Int(minuteText), value >= 0, value <= 59 else { return }
+        updateMinute(value)
     }
 
     private func togglePeriod() {
