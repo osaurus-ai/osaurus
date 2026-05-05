@@ -229,10 +229,7 @@ public enum SystemPromptTemplates {
     /// (AGENTS.md / CLAUDE.md / .hermes.md / .cursorrules) loaded at
     /// folder-mount time. Returns `""` when no folder is mounted so the
     /// composer can append unconditionally.
-    public static func folderContext(
-        from folderContext: FolderContext?,
-        toolMode: ToolSelectionMode = .manual
-    ) -> String {
+    public static func folderContext(from folderContext: FolderContext?) -> String {
         guard let folder = folderContext else { return "" }
 
         let topLevel = buildTopLevelSummary(from: folder.tree)
@@ -243,32 +240,6 @@ public enum SystemPromptTemplates {
                 return "\n**Git status (uncommitted changes):**\n```\n\(trimmed)\n```\n"
             } ?? ""
 
-        // Tool recipe names concrete tool ids (`file_read`, `shell_run`, …).
-        // In auto-selection mode those tools aren't in the schema until the
-        // model loads them via `capabilities_load`, so naming them here makes
-        // the model try (and fail) to call them directly. In auto mode we
-        // emit a brief pointer at the capability flow instead.
-        let toolGuidance: String
-        switch toolMode {
-        case .manual:
-            toolGuidance = """
-                Tool recipe — prefer dedicated tools over their shell equivalents:
-                - Layout: `file_tree` for the directory structure (skips hidden + truncates at 300 entries) — **not** `ls`/`tree` in `shell_run`.
-                - Discovery: `file_search` for content (ripgrep) — **not** `grep`/`rg`/`find`. Read individual files with `file_read` — **not** `cat`/`head`/`tail`.
-                - Edits: `file_edit` for targeted (old_string -> new_string) changes — **not** `sed`/`awk`. `file_write` for new files or full rewrites — **not** `echo`/`cat` heredoc. Always read a file before editing it.
-                - Mutations: use `shell_run` for `mv` / `cp` / `rm` / `mkdir` (write/exec ops are logged and undoable).
-                - Multi-step work: take the next concrete action each turn — read, write, run. Don't narrate intent; just do the thing.
-
-                **Files land in the working folder, not in chat.** When you create or edit a file, the user can see it on disk and in the operations log. If the user needs the deliverable to appear in the chat thread (an image, chart, generated text, report, code blob), additionally call `share_artifact` — it's the only thing that surfaces an artifact card.
-                """
-        case .auto:
-            toolGuidance = """
-                To inspect, edit, or run things in this folder, discover the right tool with `capabilities_search` and load it with `capabilities_load` before calling it. Take the next concrete action each turn — don't narrate intent.
-
-                **Files land in the working folder, not in chat.** Edits show up on disk and in the operations log. If the user needs the deliverable to appear in the chat thread (image, chart, text, report, code), additionally call `share_artifact` — it's the only thing that surfaces an artifact card.
-                """
-        }
-
         var section = """
 
             ## Working Directory
@@ -278,7 +249,14 @@ public enum SystemPromptTemplates {
             \(gitBlock)
             **Path arguments are relative to the Working Directory** — pass `README.md`, `src/app.py`, `docs/intro.md`. Absolute paths are rejected as a security boundary, even ones that point inside the directory. The path above is for orientation when you describe the project to the user, not for tool calls.
 
-            \(toolGuidance)
+            Tool recipe — prefer dedicated tools over their shell equivalents:
+            - Layout: `file_tree` for the directory structure (skips hidden + truncates at 300 entries) — **not** `ls`/`tree` in `shell_run`.
+            - Discovery: `file_search` for content (ripgrep) — **not** `grep`/`rg`/`find`. Read individual files with `file_read` — **not** `cat`/`head`/`tail`.
+            - Edits: `file_edit` for targeted (old_string -> new_string) changes — **not** `sed`/`awk`. `file_write` for new files or full rewrites — **not** `echo`/`cat` heredoc. Always read a file before editing it.
+            - Mutations: use `shell_run` for `mv` / `cp` / `rm` / `mkdir` (write/exec ops are logged and undoable).
+            - Multi-step work: take the next concrete action each turn — read, write, run. Don't narrate intent; just do the thing.
+
+            **Files land in the working folder, not in chat.** When you create or edit a file with `file_write` / `file_edit`, the user can see it on disk and in the operations log. If the user needs the deliverable to appear in the chat thread (an image, chart, generated text, report, code blob), additionally call `share_artifact` — it's the only thing that surfaces an artifact card.
 
             """
 

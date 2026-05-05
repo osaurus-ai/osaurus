@@ -986,12 +986,11 @@ public struct SystemPromptComposer: Sendable {
             // model gets folder tools in its schema but no prose anchor for
             // WHERE it is, which leads to generic exploration + "I'll do X"
             // stalls. Static so it joins the cached prefix.
-            let toolMode = AgentManager.shared.effectiveToolSelectionMode(for: agentId)
             composer.append(
                 .static(
                     id: "folderContext",
                     label: "Working Directory",
-                    content: SystemPromptTemplates.folderContext(from: folder, toolMode: toolMode)
+                    content: SystemPromptTemplates.folderContext(from: folder)
                 )
             )
         }
