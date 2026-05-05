@@ -18,35 +18,46 @@ struct InsightsView: View {
     @State private var selectedLogId: UUID?
     @State private var showClearConfirmation = false
 
+    /// Resolved log for the current selection. Recomputed on every render so
+    /// the pushed detail view stays in sync with the live ring buffer
+    /// (selection is not invalidated when new entries arrive — IDs are
+    /// stable). When the log disappears (cleared or filtered out) this
+    /// returns nil and `body` pops back to the list.
+    private var selectedLog: RequestLog? {
+        guard let id = selectedLogId else { return nil }
+        return insightsService.logs.first(where: { $0.id == id })
+    }
+
     var body: some View {
         VStack(spacing: 0) {
-            // Header
             headerView
                 .opacity(hasAppeared ? 1 : 0)
                 .offset(y: hasAppeared ? 0 : -10)
                 .animation(.spring(response: 0.4, dampingFraction: 0.8), value: hasAppeared)
 
-            // Filter bar
-            filterBar
-                .padding(.horizontal, 24)
-                .padding(.top, 16)
-                .opacity(hasAppeared ? 1 : 0)
-
-            // Stats summary
-            statsBar
-                .padding(.horizontal, 24)
-                .padding(.top, 16)
-                .opacity(hasAppeared ? 1 : 0)
-
-            // Request logs
-            if insightsService.filteredLogs.isEmpty {
-                emptyStateView
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .opacity(hasAppeared ? 1 : 0)
-            } else {
-                logTableView
-                    .opacity(hasAppeared ? 1 : 0)
+            ZStack {
+                if let selected = selectedLog {
+                    InsightsDetailPane(log: selected, onBack: pop)
+                        .transition(
+                            .asymmetric(
+                                insertion: .move(edge: .trailing),
+                                removal: .move(edge: .trailing)
+                            )
+                        )
+                } else {
+                    listContent
+                        .transition(
+                            .asymmetric(
+                                insertion: .move(edge: .leading),
+                                removal: .move(edge: .leading)
+                            )
+                        )
+                }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .clipped()
+            .animation(.easeInOut(duration: 0.25), value: selectedLogId == nil)
+            .opacity(hasAppeared ? 1 : 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(theme.primaryBackground)
@@ -63,6 +74,39 @@ struct InsightsView: View {
             primaryButton: .destructive("Clear") { insightsService.clear() },
             secondaryButton: .cancel("Cancel")
         )
+    }
+
+    // MARK: - List content (filters + stats + table)
+
+    private var listContent: some View {
+        VStack(spacing: 0) {
+            filterBar
+                .padding(.horizontal, 24)
+                .padding(.top, 16)
+
+            statsBar
+                .padding(.horizontal, 24)
+                .padding(.top, 16)
+
+            if insightsService.filteredLogs.isEmpty {
+                emptyStateView
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                logTableView
+            }
+        }
+    }
+
+    private func pop() {
+        withAnimation(.easeInOut(duration: 0.25)) {
+            selectedLogId = nil
+        }
+    }
+
+    private func push(_ id: UUID) {
+        withAnimation(.easeInOut(duration: 0.25)) {
+            selectedLogId = id
+        }
     }
 
     // MARK: - Header View
@@ -84,51 +128,64 @@ struct InsightsView: View {
 
     private var filterBar: some View {
         HStack(spacing: 12) {
-            // Search field
-            HStack(spacing: 8) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.tertiaryText)
+            searchField
+                .frame(maxWidth: 220)
 
-                TextField(text: $insightsService.searchFilter, prompt: Text("Search path or model...", bundle: .module))
-                { Text("Search path or model...", bundle: .module) }
-                .textFieldStyle(.plain)
-                .font(.system(size: 13))
-                .foregroundColor(theme.primaryText)
-
-                if !insightsService.searchFilter.isEmpty {
-                    Button(action: { insightsService.searchFilter = "" }) {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 12))
-                            .foregroundColor(theme.tertiaryText)
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                }
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(theme.inputBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(theme.inputBorder.opacity(0.5), lineWidth: 1)
-                    )
-            )
-            .frame(maxWidth: 220)
-
-            // Method filter
-            MethodFilterPills(selection: $insightsService.methodFilter)
-
-            // Source filter
-            SourceFilterPills(selection: $insightsService.sourceFilter)
+            FilterPills(selection: $insightsService.methodFilter, tint: methodFilterTint)
+            FilterPills(selection: $insightsService.sourceFilter, tint: { _ in .purple })
 
             Spacer()
 
-            // Total count
             Text("\(insightsService.totalRequestCount) requests", bundle: .module)
                 .font(.system(size: 11, weight: .medium))
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
                 .foregroundColor(theme.tertiaryText)
+        }
+    }
+
+    private var searchField: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 12))
+                .foregroundColor(theme.tertiaryText)
+
+            TextField(
+                text: $insightsService.searchFilter,
+                prompt: Text("Search path or model...", bundle: .module)
+            ) {
+                Text("Search path or model...", bundle: .module)
+            }
+            .textFieldStyle(.plain)
+            .font(.system(size: 13))
+            .foregroundColor(theme.primaryText)
+
+            if !insightsService.searchFilter.isEmpty {
+                Button(action: { insightsService.searchFilter = "" }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 12))
+                        .foregroundColor(theme.tertiaryText)
+                }
+                .buttonStyle(PlainButtonStyle())
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(theme.inputBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(theme.inputBorder.opacity(0.5), lineWidth: 1)
+                )
+        )
+    }
+
+    private func methodFilterTint(_ filter: MethodFilter) -> Color {
+        switch filter {
+        case .all: return .blue
+        case .get: return .green
+        case .post: return .blue
         }
     }
 
@@ -226,17 +283,15 @@ struct InsightsView: View {
                 Text("TIME", bundle: .module)
                     .frame(width: 70, alignment: .leading)
                 Text("SOURCE", bundle: .module)
-                    .frame(width: 50, alignment: .leading)
+                    .frame(width: 64, alignment: .leading)
                 Text("METHOD", bundle: .module)
-                    .frame(width: 55, alignment: .leading)
+                    .frame(width: 60, alignment: .leading)
                 Text("PATH", bundle: .module)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 Text("STATUS", bundle: .module)
                     .frame(width: 60, alignment: .center)
                 Text("DURATION", bundle: .module)
                     .frame(width: 80, alignment: .trailing)
-                Text("")
-                    .frame(width: 30)
             }
             .font(.system(size: 10, weight: .semibold))
             .foregroundColor(theme.tertiaryText.opacity(0.7))
@@ -253,16 +308,8 @@ struct InsightsView: View {
                     ForEach(insightsService.filteredLogs) { log in
                         RequestLogRow(
                             log: log,
-                            isExpanded: selectedLogId == log.id,
-                            onTap: {
-                                withAnimation(.easeInOut(duration: 0.2)) {
-                                    if selectedLogId == log.id {
-                                        selectedLogId = nil
-                                    } else {
-                                        selectedLogId = log.id
-                                    }
-                                }
-                            }
+                            isSelected: selectedLogId == log.id,
+                            onTap: { push(log.id) }
                         )
 
                         if log.id != insightsService.filteredLogs.last?.id {
@@ -301,24 +348,39 @@ struct InsightsView: View {
     }
 }
 
-// MARK: - Method Filter Pills
+// MARK: - Filter Pills
 
-private struct MethodFilterPills: View {
-    @Binding var selection: MethodFilter
+/// Segmented-style pill bar for any string-backed `CaseIterable` filter
+/// enum. Used by both the method (`All / GET / POST`) and source
+/// (`All / Chat / HTTP / Plugin`) filters; the `tint` closure decides the
+/// per-case selected color so each filter can keep its own visual identity.
+private struct FilterPills<Filter>: View
+where
+    Filter: Hashable,
+    Filter: CaseIterable,
+    Filter: RawRepresentable,
+    Filter.RawValue == String
+{
+    @Binding var selection: Filter
+    let tint: (Filter) -> Color
+
     @Environment(\.theme) private var theme
 
     var body: some View {
         HStack(spacing: 2) {
-            ForEach(MethodFilter.allCases, id: \.self) { filter in
+            ForEach(Array(Filter.allCases), id: \.self) { filter in
+                let isSelected = selection == filter
                 Button(action: { selection = filter }) {
                     Text(filter.rawValue)
-                        .font(.system(size: 11, weight: selection == filter ? .semibold : .medium))
-                        .foregroundColor(selection == filter ? .white : theme.secondaryText)
+                        .font(.system(size: 11, weight: isSelected ? .semibold : .medium))
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .foregroundColor(isSelected ? .white : theme.secondaryText)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 6)
                         .background(
                             RoundedRectangle(cornerRadius: 6)
-                                .fill(selection == filter ? methodColor(filter).opacity(0.8) : Color.clear)
+                                .fill(isSelected ? tint(filter).opacity(0.8) : Color.clear)
                         )
                 }
                 .buttonStyle(PlainButtonStyle())
@@ -329,45 +391,7 @@ private struct MethodFilterPills: View {
             RoundedRectangle(cornerRadius: 8)
                 .fill(theme.tertiaryBackground.opacity(0.5))
         )
-    }
-
-    private func methodColor(_ filter: MethodFilter) -> Color {
-        switch filter {
-        case .all: return .blue
-        case .get: return .green
-        case .post: return .blue
-        }
-    }
-}
-
-// MARK: - Source Filter Pills
-
-private struct SourceFilterPills: View {
-    @Binding var selection: SourceFilter
-    @Environment(\.theme) private var theme
-
-    var body: some View {
-        HStack(spacing: 2) {
-            ForEach(SourceFilter.allCases, id: \.self) { filter in
-                Button(action: { selection = filter }) {
-                    Text(filter.rawValue)
-                        .font(.system(size: 11, weight: selection == filter ? .semibold : .medium))
-                        .foregroundColor(selection == filter ? .white : theme.secondaryText)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(selection == filter ? Color.purple.opacity(0.8) : Color.clear)
-                        )
-                }
-                .buttonStyle(PlainButtonStyle())
-            }
-        }
-        .padding(3)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(theme.tertiaryBackground.opacity(0.5))
-        )
+        .fixedSize()
     }
 }
 
@@ -406,321 +430,61 @@ private struct RequestLogRow: View {
     @Environment(\.theme) private var theme
 
     let log: RequestLog
-    let isExpanded: Bool
+    let isSelected: Bool
     let onTap: () -> Void
 
     var body: some View {
-        VStack(spacing: 0) {
-            // Main row
-            Button(action: onTap) {
-                HStack(spacing: 0) {
-                    // Timestamp
-                    Text(log.formattedTimestamp)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundColor(theme.tertiaryText)
-                        .frame(width: 70, alignment: .leading)
+        Button(action: onTap) {
+            HStack(spacing: 0) {
+                Text(log.formattedTimestamp)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(theme.tertiaryText)
+                    .frame(width: 70, alignment: .leading)
 
-                    // Source badge
-                    SourceBadge(source: log.source)
-                        .frame(width: 50, alignment: .leading)
+                SourceBadge(source: log.source)
+                    .frame(width: 64, alignment: .leading)
 
-                    // Method badge
-                    MethodBadge(method: log.method)
-                        .frame(width: 55, alignment: .leading)
+                MethodBadge(method: log.method)
+                    .frame(width: 60, alignment: .leading)
 
-                    // Path + plugin badge
-                    HStack(spacing: 6) {
-                        if let pluginId = log.pluginId {
-                            Text(pluginId)
-                                .font(.system(size: 8, weight: .bold))
-                                .foregroundColor(.teal.opacity(0.9))
-                                .padding(.horizontal, 5)
-                                .padding(.vertical, 2)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 3)
-                                        .fill(Color.teal.opacity(0.12))
-                                )
-                        }
-                        Text(log.path)
-                            .font(.system(size: 12, weight: .medium, design: .monospaced))
-                            .foregroundColor(log.isPluginLog ? logLevelColor(log.statusCode) : theme.primaryText)
-                            .lineLimit(1)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                    // Status code
-                    HTTPStatusBadge(statusCode: log.statusCode)
-                        .frame(width: 60, alignment: .center)
-
-                    // Duration
-                    Text(log.formattedDuration)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundColor(theme.secondaryText)
-                        .frame(width: 80, alignment: .trailing)
-
-                    // Expand chevron
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundColor(theme.tertiaryText.opacity(0.5))
-                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
-                        .frame(width: 30, alignment: .trailing)
-                }
-                .padding(.horizontal, 24)
-                .padding(.vertical, 12)
-                .background(isExpanded ? theme.secondaryBackground.opacity(0.5) : Color.clear)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(PlainButtonStyle())
-
-            // Expanded details
-            if isExpanded {
-                expandedDetails
-            }
-        }
-    }
-
-    private var expandedDetails: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            // Plugin attribution
-            if let pluginId = log.pluginId {
                 HStack(spacing: 6) {
-                    Image(systemName: "puzzlepiece.extension.fill")
-                        .font(.system(size: 10))
-                        .foregroundColor(.teal.opacity(0.8))
-                    Text("Plugin: \(pluginId)", bundle: .module)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(.teal)
-                }
-            }
-
-            if log.isPluginLog {
-                // Plugin console log -- show message only
-                HStack(spacing: 8) {
-                    Image(systemName: logLevelIcon(log.statusCode))
-                        .font(.system(size: 12))
-                        .foregroundColor(logLevelColor(log.statusCode))
-
-                    if let body = log.requestBody {
-                        Text(body)
-                            .font(.system(size: 12, design: .monospaced))
-                            .foregroundColor(logLevelColor(log.statusCode))
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                }
-                .padding(12)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(logLevelColor(log.statusCode).opacity(0.06))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 6)
-                                .stroke(logLevelColor(log.statusCode).opacity(0.2), lineWidth: 1)
-                        )
-                )
-            } else {
-                HStack(alignment: .top, spacing: 24) {
-                    // Request panel
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Label {
-                                Text("Request", bundle: .module)
-                            } icon: {
-                                Image(systemName: "arrow.up.circle.fill")
-                            }
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundColor(theme.secondaryText)
-                            Spacer()
-                        }
-
-                        if let body = log.formattedRequestBody {
-                            ScrollView {
-                                Text(body)
-                                    .font(.system(size: 11, design: .monospaced))
-                                    .foregroundColor(theme.primaryText)
-                                    .textSelection(.enabled)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                            }
-                            .frame(maxHeight: 150)
-                            .padding(10)
-                            .background(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .fill(theme.codeBlockBackground)
-                            )
-                        } else {
-                            Text("No request body", bundle: .module)
-                                .font(.system(size: 11))
-                                .foregroundColor(theme.tertiaryText)
-                                .padding(10)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 6)
-                                        .fill(theme.codeBlockBackground)
-                                )
+                    if let pluginId = log.pluginId {
+                        InlineTag(tint: .teal) {
+                            Text(pluginId).font(.system(size: 8, weight: .bold))
                         }
                     }
-                    .frame(maxWidth: .infinity)
-
-                    // Response panel
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Label {
-                                Text("Response", bundle: .module)
-                            } icon: {
-                                Image(systemName: "arrow.down.circle.fill")
-                            }
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundColor(theme.secondaryText)
-                            Spacer()
-
-                            if let body = log.responseBody {
-                                Button(action: {
-                                    NSPasteboard.general.clearContents()
-                                    NSPasteboard.general.setString(body, forType: .string)
-                                }) {
-                                    Image(systemName: "doc.on.doc")
-                                        .font(.system(size: 10))
-                                        .foregroundColor(theme.tertiaryText)
-                                }
-                                .buttonStyle(PlainButtonStyle())
-                                .help(Text("Copy response", bundle: .module))
-                            }
-                        }
-
-                        if let body = log.formattedResponseBody {
-                            ScrollView {
-                                Text(body)
-                                    .font(.system(size: 11, design: .monospaced))
-                                    .foregroundColor(log.isSuccess ? theme.primaryText : theme.errorColor)
-                                    .textSelection(.enabled)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                            }
-                            .frame(maxHeight: 150)
-                            .padding(10)
-                            .background(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .fill(theme.codeBlockBackground)
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 6)
-                                            .stroke(
-                                                log.isSuccess ? Color.green.opacity(0.2) : Color.red.opacity(0.2),
-                                                lineWidth: 1
-                                            )
-                                    )
-                            )
-                        } else {
-                            Text("No response body", bundle: .module)
-                                .font(.system(size: 11))
-                                .foregroundColor(theme.tertiaryText)
-                                .padding(10)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 6)
-                                        .fill(theme.codeBlockBackground)
-                                )
-                        }
+                    if let toolCount = log.toolDefinitionCount {
+                        ToolsBadge(count: toolCount)
                     }
-                    .frame(maxWidth: .infinity)
+                    Text(log.path)
+                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                        .foregroundColor(log.isPluginLog ? logLevelColor(log.statusCode) : theme.primaryText)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
                 }
-            }
-
-            // Inference data (only for chat endpoints)
-            if log.isInference {
-                inferenceDetails
-            }
-
-            // Error message
-            if let error = log.errorMessage {
-                HStack(spacing: 8) {
-                    Image(systemName: "exclamationmark.circle.fill")
-                        .font(.system(size: 11))
-                        .foregroundColor(.red.opacity(0.8))
-
-                    Text(error)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundColor(.red.opacity(0.8))
-                        .textSelection(.enabled)
-                }
-                .padding(10)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(Color.red.opacity(0.08))
-                )
+
+                HTTPStatusBadge(statusCode: log.statusCode)
+                    .frame(width: 60, alignment: .center)
+
+                Text(log.formattedDuration)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(theme.secondaryText)
+                    .frame(width: 80, alignment: .trailing)
             }
-
-            // Tool calls
-            if let toolCalls = log.toolCalls, !toolCalls.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Tool Calls", bundle: .module)
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(theme.tertiaryText)
-
-                    ForEach(toolCalls) { tool in
-                        ToolCallRow(tool: tool)
-                    }
+            .padding(.horizontal, 24)
+            .padding(.vertical, 12)
+            .background(isSelected ? theme.accentColor.opacity(0.12) : Color.clear)
+            .overlay(alignment: .leading) {
+                if isSelected {
+                    Rectangle()
+                        .fill(theme.accentColor)
+                        .frame(width: 3)
                 }
             }
+            .contentShape(Rectangle())
         }
-        .padding(.horizontal, 24)
-        .padding(.top, 8)
-        .padding(.bottom, 16)
-        .background(theme.secondaryBackground.opacity(0.3))
-    }
-
-    @ViewBuilder
-    private var inferenceDetails: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Label {
-                Text("Inference Details", bundle: .module)
-            } icon: {
-                Image(systemName: "bolt.fill")
-            }
-            .font(.system(size: 11, weight: .semibold))
-            .foregroundColor(.purple.opacity(0.8))
-
-            HStack(spacing: 24) {
-                if log.model != nil {
-                    DetailPill(label: "Model", value: log.shortModelName)
-                }
-
-                if let input = log.inputTokens, let output = log.outputTokens {
-                    DetailPill(label: "Tokens", value: "\(input) → \(output)")
-                }
-
-                if let speed = log.tokensPerSecond, speed > 0 {
-                    DetailPill(label: "Speed", value: String(format: "%.1f tok/s", speed), color: speedColor(speed))
-                }
-
-                if let temp = log.temperature {
-                    DetailPill(label: "Temp", value: String(format: "%.2f", temp))
-                }
-
-                if let maxTokens = log.maxTokens {
-                    DetailPill(label: "Max Tokens", value: "\(maxTokens)")
-                }
-
-                if let reason = log.finishReason {
-                    DetailPill(label: "Finish", value: reason.rawValue)
-                }
-
-                Spacer()
-            }
-            .padding(12)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.purple.opacity(0.05))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(Color.purple.opacity(0.15), lineWidth: 1)
-                    )
-            )
-        }
-    }
-
-    private func speedColor(_ speed: Double) -> Color {
-        if speed >= 30 { return .green }
-        if speed >= 15 { return .orange }
-        return theme.secondaryText
+        .buttonStyle(PlainButtonStyle())
     }
 
     private func logLevelColor(_ statusCode: Int) -> Color {
@@ -730,34 +494,45 @@ private struct RequestLogRow: View {
         default: return theme.primaryText
         }
     }
+}
 
-    private func logLevelIcon(_ statusCode: Int) -> String {
-        switch statusCode {
-        case 500: return "exclamationmark.circle.fill"
-        case 299: return "exclamationmark.triangle.fill"
-        default: return "info.circle.fill"
-        }
+// MARK: - Inline Tag
+
+/// Compact tinted pill used for in-row metadata (plugin id, tool count).
+/// Wraps any `Content` view in the standard envelope (8pt fg opacity,
+/// 12pt bg opacity, 5/2 padding, corner radius 3) so callers only worry
+/// about the inner text/icon. Centralizes the look so changing pill
+/// styling in one place updates every row badge.
+private struct InlineTag<Content: View>: View {
+    let tint: Color
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        content()
+            .foregroundColor(tint.opacity(0.9))
+            .padding(.horizontal, 5)
+            .padding(.vertical, 2)
+            .background(
+                RoundedRectangle(cornerRadius: 3).fill(tint.opacity(0.12))
+            )
     }
 }
 
-// MARK: - Detail Pill
+// MARK: - Tools Badge
 
-private struct DetailPill: View {
-    @Environment(\.theme) private var theme
-
-    let label: String
-    let value: String
-    var color: Color? = nil
+private struct ToolsBadge: View {
+    let count: Int
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(label)
-                .font(.system(size: 9, weight: .medium))
-                .foregroundColor(theme.tertiaryText)
-            Text(value)
-                .font(.system(size: 11, weight: .medium, design: .monospaced))
-                .foregroundColor(color ?? theme.primaryText)
+        InlineTag(tint: .teal) {
+            HStack(spacing: 3) {
+                Image(systemName: "wrench.and.screwdriver.fill")
+                    .font(.system(size: 8, weight: .bold))
+                Text("\(count)")
+                    .font(.system(size: 9, weight: .bold, design: .monospaced))
+            }
         }
+        .help(Text("\(count) tool(s) sent", bundle: .module))
     }
 }
 
@@ -827,6 +602,8 @@ private struct SourceBadge: View {
     var body: some View {
         Text(source.shortName)
             .font(.system(size: 9, weight: .bold))
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
             .foregroundColor(badgeColor.opacity(0.9))
             .padding(.horizontal, 5)
             .padding(.vertical, 3)
@@ -852,47 +629,6 @@ extension RequestSource {
         case .httpAPI: return "HTTP"
         case .plugin: return "Plugin"
         }
-    }
-}
-
-// MARK: - Tool Call Row
-
-private struct ToolCallRow: View {
-    @Environment(\.theme) private var theme
-
-    let tool: ToolCallLog
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: tool.isError ? "xmark.circle.fill" : "checkmark.circle.fill")
-                .font(.system(size: 10))
-                .foregroundColor(tool.isError ? .red.opacity(0.7) : .green.opacity(0.7))
-
-            Text(tool.name)
-                .font(.system(size: 11, weight: .medium, design: .monospaced))
-                .foregroundColor(theme.primaryText)
-
-            if !tool.arguments.isEmpty && tool.arguments != "{}" {
-                Text(tool.arguments)
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundColor(theme.tertiaryText)
-                    .lineLimit(1)
-            }
-
-            Spacer()
-
-            if let duration = tool.durationMs {
-                Text(String(format: "%.0fms", duration))
-                    .font(.system(size: 9, design: .monospaced))
-                    .foregroundColor(theme.tertiaryText)
-            }
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 6)
-                .fill(theme.tertiaryBackground.opacity(0.3))
-        )
     }
 }
 

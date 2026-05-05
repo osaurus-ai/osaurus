@@ -293,7 +293,7 @@ final class ChatWindowState: ObservableObject {
                 self?.applyAgentsUpdate(latest)
             }
     }
-    
+
     private func observeSessionsManager() {
         sessionsCancellable = ChatSessionsManager.shared.$sessions
             .dropFirst()

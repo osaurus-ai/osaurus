@@ -2407,7 +2407,7 @@ struct ScheduleEditorSheet: View {
 
             Button(action: onCancel) { Text("Cancel", bundle: .module) }
                 .buttonStyle(ScheduleSecondaryButtonStyle())
-            
+
             Button(isEditing ? "Save Changes" : "Create Schedule") {
                 saveSchedule()
             }

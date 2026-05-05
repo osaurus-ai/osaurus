@@ -205,8 +205,12 @@ struct InsightsStats {
 // MARK: - Nonisolated Logging Interface
 
 extension InsightsService {
-    /// Maximum stored body size (4 KB) to cap ring buffer memory usage.
-    private nonisolated static let maxBodySize = 4096
+    /// Maximum stored body size (256 KB) to cap ring buffer memory usage.
+    /// Sized to fit realistic chat completion requests (long system prompts,
+    /// tool definitions, multi-turn history) without truncation in the
+    /// common case while still bounding the 500-entry ring buffer to a few
+    /// hundred MB worst-case.
+    private nonisolated static let maxBodySize = 262_144
 
     /// Defense-in-depth credential redactors run on every logged body so a
     /// future caller that forgets to scrub a `/pair` response (or any other
@@ -258,7 +262,14 @@ extension InsightsService {
         guard let body else { return nil }
         let scrubbed = redactCredentials(body)
         guard scrubbed.count > maxBodySize else { return scrubbed }
-        return String(scrubbed.prefix(maxBodySize)) + "…[truncated]"
+        // Surface the original size so a user looking at a clipped body in
+        // the detail pane knows whether they're missing 1 KB or 1 MB.
+        let originalBytes = scrubbed.utf8.count
+        let formatted = ByteCountFormatter.string(
+            fromByteCount: Int64(originalBytes),
+            countStyle: .binary
+        )
+        return String(scrubbed.prefix(maxBodySize)) + "\n…[truncated, original \(formatted)]"
     }
 
     /// Thread-safe logging from non-main-actor contexts
@@ -308,7 +319,11 @@ extension InsightsService {
         }
     }
 
-    /// Legacy compatibility for ChatEngine inference logging
+    /// Legacy compatibility for ChatEngine inference logging.
+    /// Accepts optional `requestBody`/`responseBody` so Chat UI inferences
+    /// can surface the same level of detail as HTTP API requests in the
+    /// Insights detail pane (system prompt, tools, accumulated assistant
+    /// text). Defaults are nil to preserve existing call-site ergonomics.
     nonisolated static func logInference(
         source: RequestSource,
         model: String,
@@ -319,7 +334,9 @@ extension InsightsService {
         maxTokens: Int,
         toolCalls: [ToolCallLog]? = nil,
         finishReason: RequestLog.FinishReason = .stop,
-        errorMessage: String? = nil
+        errorMessage: String? = nil,
+        requestBody: String? = nil,
+        responseBody: String? = nil
     ) {
         logRequest(
             source: source,
@@ -327,6 +344,8 @@ extension InsightsService {
             path: "/chat/completions",
             statusCode: errorMessage != nil ? 500 : 200,
             durationMs: durationMs,
+            requestBody: requestBody,
+            responseBody: responseBody,
             model: model,
             inputTokens: inputTokens,
             outputTokens: outputTokens,

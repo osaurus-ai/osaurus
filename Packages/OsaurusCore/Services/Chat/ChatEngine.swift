@@ -147,6 +147,66 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         return max(1, totalChars / 4)
     }
 
+    /// Pretty-print a `ChatCompletionRequest` for the Insights ring buffer.
+    /// Encoding routes through `ChatCompletionRequest.CodingKeys`, which
+    /// already excludes runtime-only fields (`modelOptions`, `ttftTrace`),
+    /// so the captured body matches what an HTTP client would have sent.
+    /// Returns nil only if encoding fails — in which case the caller
+    /// gracefully degrades to logging without a body.
+    static func serializeRequestForLog(_ request: ChatCompletionRequest) -> String? {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        guard let data = try? encoder.encode(request),
+            let s = String(data: data, encoding: .utf8)
+        else { return nil }
+        return s
+    }
+
+    /// Pretty-print a `ChatCompletionResponse` for the Insights ring buffer.
+    /// Used by `completeChat` paths so the Response tab shows the structured
+    /// envelope (id, choices, usage, tool_calls) instead of just the raw
+    /// assistant text.
+    static func serializeResponseForLog(_ response: ChatCompletionResponse) -> String? {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        guard let data = try? encoder.encode(response),
+            let s = String(data: data, encoding: .utf8)
+        else { return nil }
+        return s
+    }
+
+    /// Build the response body to log for a streamed chat completion.
+    /// Prefers a JSON envelope when the stream resolved to a tool call so
+    /// the Insights Response tab still shows something meaningful (the
+    /// stream produces no assistant text in that case). Falls back to the
+    /// accumulated assistant deltas, or nil if neither is available.
+    /// Uses `JSONSerialization` rather than string interpolation so tool
+    /// names / arguments containing quotes can't corrupt the JSON shape.
+    static func streamResponseBody(
+        accumulated: String,
+        toolInvocation: (name: String, args: String)?
+    ) -> String? {
+        if let (name, args) = toolInvocation {
+            // Try to embed `args` as a parsed JSON object so the UI can
+            // pretty-print it; fall back to a string if it isn't valid JSON.
+            let argsValue: Any =
+                (args.data(using: .utf8)
+                    .flatMap { try? JSONSerialization.jsonObject(with: $0) }) ?? args
+            let envelope: [String: Any] = [
+                "tool_calls": [["name": name, "arguments": argsValue]]
+            ]
+            if let data = try? JSONSerialization.data(
+                withJSONObject: envelope,
+                options: [.prettyPrinted, .sortedKeys]
+            ),
+                let s = String(data: data, encoding: .utf8)
+            {
+                return s
+            }
+        }
+        return accumulated.isEmpty ? nil : accumulated
+    }
+
     /// Build a non-stream OpenAI-style response from one or more tool
     /// invocations parsed out of a single completion. Local models can emit
     /// multiple `<tool_call>` blocks per response; OpenAI clients expect a
@@ -161,7 +221,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         startTime: Date,
         inferenceSource: InferenceSource,
         temperature: Float?,
-        maxTokens: Int
+        maxTokens: Int,
+        requestBodyJSON: String? = nil
     ) -> ChatCompletionResponse {
         let toolCalls: [ToolCall] = invocations.map { inv in
             let raw = UUID().uuidString.replacingOccurrences(of: "-", with: "")
@@ -182,6 +243,15 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         let choice = ChatChoice(index: 0, message: assistant, finish_reason: "tool_calls")
         let usage = Usage(prompt_tokens: inputTokens, completion_tokens: 0, total_tokens: inputTokens)
 
+        let response = ChatCompletionResponse(
+            id: responseId,
+            created: created,
+            model: effectiveModel,
+            choices: [choice],
+            usage: usage,
+            system_fingerprint: nil
+        )
+
         if inferenceSource == .chatUI {
             let durationMs = Date().timeIntervalSince(startTime) * 1000
             InsightsService.logInference(
@@ -195,18 +265,13 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                 toolCalls: invocations.map {
                     ToolCallLog(name: $0.toolName, arguments: $0.jsonArguments)
                 },
-                finishReason: .toolCalls
+                finishReason: .toolCalls,
+                requestBody: requestBodyJSON,
+                responseBody: serializeResponseForLog(response)
             )
         }
 
-        return ChatCompletionResponse(
-            id: responseId,
-            created: created,
-            model: effectiveModel,
-            choices: [choice],
-            usage: usage,
-            system_fingerprint: nil
-        )
+        return response
     }
 
     func streamChat(request: ChatCompletionRequest) async throws -> AsyncThrowingStream<String, Error> {
@@ -274,6 +339,9 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             let model = effectiveModel
             let temp = temperature
             let maxTok = maxTokens
+            // Capture the request body up-front so the producer task does not
+            // need to retain `request` (a non-Sendable in Swift 6 strict mode).
+            let requestBodyJSON = source == .chatUI ? Self.serializeRequestForLog(request) : nil
 
             return wrapStreamWithLogging(
                 innerStream,
@@ -281,7 +349,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                 model: model,
                 inputTokens: inputTokens,
                 temperature: temp,
-                maxTokens: maxTok
+                maxTokens: maxTok,
+                requestBodyJSON: requestBodyJSON
             )
 
         case .none:
@@ -298,7 +367,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         model: String,
         inputTokens: Int,
         temperature: Float?,
-        maxTokens: Int
+        maxTokens: Int,
+        requestBodyJSON: String? = nil
     ) -> AsyncThrowingStream<String, Error> {
         let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
 
@@ -314,6 +384,15 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             var errorMsg: String? = nil
             var toolInvocation: (name: String, args: String)? = nil
             var lastDeltaTime = startTime
+            // Accumulate the streamed assistant text so the Insights Response
+            // tab can show what was produced. Only retained when logging is
+            // active (chatUI) and capped soft via maxBodySize on storage.
+            // Only accumulate streamed text when we'll actually log it
+            // (Chat UI source). HTTP API requests are logged by HTTPHandler
+            // with the upstream body, so accumulating here would just waste
+            // memory as the buffer grows with the stream.
+            let shouldAccumulate = source == .chatUI
+            var responseAccumulator = ""
 
             print("[Osaurus][Stream] Starting stream wrapper for model: \(model)")
 
@@ -343,6 +422,10 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                         print(
                             "[Osaurus][Stream] Delta #\(deltaCount): +\(String(format: "%.2f", timeSinceStart))s total, gap=\(String(format: "%.3f", timeSinceLastDelta))s, len=\(delta.count)"
                         )
+                    }
+
+                    if shouldAccumulate {
+                        responseAccumulator.append(delta)
                     }
 
                     // Estimate tokens: each delta chunk is roughly proportional to tokens
@@ -385,10 +468,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             // Log the completed inference (only for Chat UI - HTTP requests are logged by HTTPHandler)
             if source == .chatUI {
                 let durationMs = Date().timeIntervalSince(startTime) * 1000
-                var toolCalls: [ToolCallLog]? = nil
-                if let (name, args) = toolInvocation {
-                    toolCalls = [ToolCallLog(name: name, arguments: args)]
-                }
+                let toolCallsLog = toolInvocation.map { [ToolCallLog(name: $0.name, arguments: $0.args)] }
 
                 InsightsService.logInference(
                     source: source,
@@ -398,9 +478,14 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                     durationMs: durationMs,
                     temperature: temperature,
                     maxTokens: maxTokens,
-                    toolCalls: toolCalls,
+                    toolCalls: toolCallsLog,
                     finishReason: finishReason,
-                    errorMessage: errorMsg
+                    errorMessage: errorMsg,
+                    requestBody: requestBodyJSON,
+                    responseBody: Self.streamResponseBody(
+                        accumulated: responseAccumulator,
+                        toolInvocation: toolInvocation
+                    )
                 )
             }
         }
@@ -429,6 +514,10 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         let inputTokens = estimateInputTokens(messages)
         let temperature = request.temperature
         let maxTokens = request.max_tokens ?? 16384
+        // Capture the request body once so all four downstream log paths
+        // (text-only, text-with-tools, tool-calls batch, tool-calls single)
+        // surface the same prompt + tools in the Insights detail pane.
+        let requestBodyJSON = inferenceSource == .chatUI ? Self.serializeRequestForLog(request) : nil
         // Carry the caller's `ttftTrace` through to non-streaming requests
         // for parity with `streamChat` — useful when an HTTP route runs the
         // same `request.ttftTrace` across both code paths.
@@ -471,6 +560,15 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                         total_tokens: inputTokens + outputTokens
                     )
 
+                    let response = ChatCompletionResponse(
+                        id: responseId,
+                        created: created,
+                        model: effectiveModel,
+                        choices: [choice],
+                        usage: usage,
+                        system_fingerprint: nil
+                    )
+
                     // Log the inference (only for Chat UI - HTTP requests are logged by HTTPHandler)
                     if inferenceSource == .chatUI {
                         let durationMs = Date().timeIntervalSince(startTime) * 1000
@@ -482,18 +580,13 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                             durationMs: durationMs,
                             temperature: temperature,
                             maxTokens: maxTokens,
-                            finishReason: .stop
+                            finishReason: .stop,
+                            requestBody: requestBodyJSON,
+                            responseBody: Self.serializeResponseForLog(response)
                         )
                     }
 
-                    return ChatCompletionResponse(
-                        id: responseId,
-                        created: created,
-                        model: effectiveModel,
-                        choices: [choice],
-                        usage: usage,
-                        system_fingerprint: nil
-                    )
+                    return response
                 } catch let invs as ServiceToolInvocations {
                     return Self.makeToolCallResponse(
                         invocations: invs.invocations,
@@ -504,7 +597,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                         startTime: startTime,
                         inferenceSource: inferenceSource,
                         temperature: temperature,
-                        maxTokens: maxTokens
+                        maxTokens: maxTokens,
+                        requestBodyJSON: requestBodyJSON
                     )
                 } catch let inv as ServiceToolInvocation {
                     return Self.makeToolCallResponse(
@@ -516,7 +610,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                         startTime: startTime,
                         inferenceSource: inferenceSource,
                         temperature: temperature,
-                        maxTokens: maxTokens
+                        maxTokens: maxTokens,
+                        requestBodyJSON: requestBodyJSON
                     )
                 }
             }
@@ -539,6 +634,15 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                 total_tokens: inputTokens + outputTokens
             )
 
+            let response = ChatCompletionResponse(
+                id: responseId,
+                created: created,
+                model: effectiveModel,
+                choices: [choice],
+                usage: usage,
+                system_fingerprint: nil
+            )
+
             // Log the inference (only for Chat UI - HTTP requests are logged by HTTPHandler)
             if inferenceSource == .chatUI {
                 let durationMs = Date().timeIntervalSince(startTime) * 1000
@@ -550,18 +654,13 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                     durationMs: durationMs,
                     temperature: temperature,
                     maxTokens: maxTokens,
-                    finishReason: .stop
+                    finishReason: .stop,
+                    requestBody: requestBodyJSON,
+                    responseBody: Self.serializeResponseForLog(response)
                 )
             }
 
-            return ChatCompletionResponse(
-                id: responseId,
-                created: created,
-                model: effectiveModel,
-                choices: [choice],
-                usage: usage,
-                system_fingerprint: nil
-            )
+            return response
         case .none:
             throw EngineError(kind: .modelNotFound(requested: request.model))
         }

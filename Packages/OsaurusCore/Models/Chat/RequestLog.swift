@@ -231,6 +231,20 @@ struct RequestLog: Identifiable, Sendable {
         }
         return body
     }
+
+    /// Number of tool definitions sent with the request, parsed on demand
+    /// from `requestBody`. Returns nil for non-chat or non-JSON bodies, or
+    /// when the request did not include a `tools` array. Computed lazily so
+    /// the parse cost is only paid for visible rows.
+    var toolDefinitionCount: Int? {
+        guard isInference,
+            let body = requestBody,
+            let data = body.data(using: .utf8),
+            let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let tools = obj["tools"] as? [Any]
+        else { return nil }
+        return tools.isEmpty ? nil : tools.count
+    }
 }
 
 /// Pending inference metadata captured at start
