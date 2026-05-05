@@ -52,6 +52,7 @@ final class ChatWindowState: ObservableObject {
     private var sessionRefreshWorkItem: DispatchWorkItem?
     private var bonjourCancellable: AnyCancellable?
     private var agentsCancellable: AnyCancellable?
+    private var sessionsCancellable: AnyCancellable?
 
     // MARK: - Initialization
 
@@ -86,6 +87,7 @@ final class ChatWindowState: ObservableObject {
         setupNotificationObservers()
         observeBonjourBrowser()
         observeAgentManager()
+        observeSessionsManager()
         refreshPairedRelayAgents()
     }
 
@@ -112,6 +114,7 @@ final class ChatWindowState: ObservableObject {
         setupNotificationObservers()
         observeBonjourBrowser()
         observeAgentManager()
+        observeSessionsManager()
         refreshPairedRelayAgents()
     }
 
@@ -288,6 +291,14 @@ final class ChatWindowState: ObservableObject {
         agentsCancellable = AgentManager.shared.$agents
             .sink { [weak self] latest in
                 self?.applyAgentsUpdate(latest)
+            }
+    }
+    
+    private func observeSessionsManager() {
+        sessionsCancellable = ChatSessionsManager.shared.$sessions
+            .dropFirst()
+            .sink { [weak self] _ in
+                self?.refreshSessions()
             }
     }
 
