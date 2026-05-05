@@ -3,6 +3,34 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.18.8</title>
+            <pubDate>Mon, 04 May 2026 18:59:58 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.18.8</sparkle:version>
+            <sparkle:shortVersionString>0.18.8</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.18.8/Osaurus-0.18.8.dmg" length="39650467" type="application/octet-stream" sparkle:edSignature="6wiRA4dXwpEIWJmvKPTcF5yw3+2T6iAarkbrNj/ushiqF0a+8E8hzcuRTt3LjlaH+3ErYEvsxmptztz/GaIGDw=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- [codex] Fix false granted permission states (#1019) by @mimeding
+- [codex] Fix scheduled state leaking into new chats (#1018) by @mimeding
+- [codex] Sync refreshed provider service models (#1025) by @mimeding
+- [codex] Stabilize OsaurusCore test gate (#1015) by @mimeding
+
+## 🐛 Bug Fixes
+
+- refresh model picker when new models/providers are added (#1020) by @RaajeevChandran
+
+## 🧰 Maintenance
+
+- fixed pie chart labelling mismatch (#1016) by @RaajeevChandran
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.18.7...0.18.8
+]]></description>
+        </item>
+        <item>
             <title>0.18.7</title>
             <pubDate>Sun, 03 May 2026 15:23:39 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>

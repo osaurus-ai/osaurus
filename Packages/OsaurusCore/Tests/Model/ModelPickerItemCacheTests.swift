@@ -21,6 +21,7 @@ import Testing
 
 @testable import OsaurusCore
 
+@Suite(.serialized)
 @MainActor
 struct ModelPickerItemCacheTests {
 
@@ -33,33 +34,35 @@ struct ModelPickerItemCacheTests {
     /// order, so callers could disagree about whether remote models were
     /// present.
     @Test func concurrentCallers_returnIdenticalResults() async throws {
-        // Establish a baseline so we know what to compare against, and so
-        // any work needed to populate the cache (e.g. local model
-        // discovery) doesn't perturb the concurrent run below.
-        let baselineItems = await ModelPickerItemCache.shared.buildModelPickerItems()
-        let baselineIds = baselineItems.map(\.id)
+        await RemoteProviderTestLock.shared.run {
+            // Establish a baseline so we know what to compare against, and so
+            // any work needed to populate the cache (e.g. local model
+            // discovery) doesn't perturb the concurrent run below.
+            let baselineItems = await ModelPickerItemCache.shared.buildModelPickerItems()
+            let baselineIds = baselineItems.map(\.id)
 
-        // Spawn many detached tasks that each call into the @MainActor
-        // cache. Detached tasks are deliberately used so the calls hop
-        // back into the MainActor at the await point and exercise the
-        // serialized rebuild path the way real callers do (notification
-        // observer Tasks, the AppDelegate prewarm Task, ChatView's
-        // refresh Task, and so on).
-        var tasks: [Task<[String], Never>] = []
-        for _ in 0 ..< 32 {
-            tasks.append(
-                Task.detached {
-                    let items = await ModelPickerItemCache.shared.buildModelPickerItems()
-                    return items.map(\.id)
-                }
-            )
-        }
+            // Spawn many detached tasks that each call into the @MainActor
+            // cache. Detached tasks are deliberately used so the calls hop
+            // back into the MainActor at the await point and exercise the
+            // serialized rebuild path the way real callers do (notification
+            // observer Tasks, the AppDelegate prewarm Task, ChatView's
+            // refresh Task, and so on).
+            var tasks: [Task<[String], Never>] = []
+            for _ in 0 ..< 32 {
+                tasks.append(
+                    Task.detached {
+                        let items = await ModelPickerItemCache.shared.buildModelPickerItems()
+                        return items.map(\.id)
+                    }
+                )
+            }
 
-        for task in tasks {
-            let ids = await task.value
-            #expect(ids == baselineIds)
+            for task in tasks {
+                let ids = await task.value
+                #expect(ids == baselineIds)
+            }
+            #expect(ModelPickerItemCache.shared.isLoaded)
         }
-        #expect(ModelPickerItemCache.shared.isLoaded)
     }
 
     /// Posting a burst of `.remoteProviderModelsChanged` notifications used
@@ -70,46 +73,48 @@ struct ModelPickerItemCacheTests {
     /// asserts the invariant that, once populated, `items` never goes
     /// empty across rebuilds.
     @Test func notificationBurst_doesNotTransientlyEmptyItems() async throws {
-        let cache = ModelPickerItemCache.shared
+        await RemoteProviderTestLock.shared.run {
+            let cache = ModelPickerItemCache.shared
 
-        // Make sure we start populated. If this machine has no foundation
-        // model, no local MLX models, and no connected remote providers,
-        // the invariant is trivially satisfied — skip in that case so CI
-        // doesn't false-positive.
-        _ = await cache.buildModelPickerItems()
-        guard !cache.items.isEmpty else { return }
-        let initialCount = cache.items.count
+            // Make sure we start populated. If this machine has no foundation
+            // model, no local MLX models, and no connected remote providers,
+            // the invariant is trivially satisfied - skip in that case so CI
+            // doesn't false-positive.
+            _ = await cache.buildModelPickerItems()
+            guard !cache.items.isEmpty else { return }
+            let initialCount = cache.items.count
 
-        // Spam many notifications. Each one schedules an observer Task
-        // that calls `buildModelPickerItems()`. Pre-fix, each Task would
-        // first set `items = []` and `isLoaded = false`.
-        for _ in 0 ..< 50 {
-            NotificationCenter.default.post(
-                name: .remoteProviderModelsChanged,
-                object: nil
+            // Spam many notifications. Each one schedules an observer Task
+            // that calls `buildModelPickerItems()`. Pre-fix, each Task would
+            // first set `items = []` and `isLoaded = false`.
+            for _ in 0 ..< 50 {
+                NotificationCenter.default.post(
+                    name: .remoteProviderModelsChanged,
+                    object: nil
+                )
+            }
+
+            // Drain the observer Tasks by repeatedly yielding the MainActor
+            // and sampling `items`. With the fix, every sample must be
+            // non-empty - the rebuild only assigns `items` when it has the
+            // full list.
+            var samples: [Int] = []
+            for _ in 0 ..< 200 {
+                samples.append(cache.items.count)
+                try? await Task.sleep(nanoseconds: 200_000)  // 0.2ms
+            }
+
+            #expect(
+                !samples.contains(0),
+                "items must remain populated during rebuilds; observed sample counts: \(samples)"
             )
+
+            // After the burst settles, the cache should still hold a
+            // populated list (state hasn't actually changed, so it should
+            // match the initial count).
+            let final = await cache.buildModelPickerItems()
+            #expect(!final.isEmpty)
+            #expect(final.count == initialCount)
         }
-
-        // Drain the observer Tasks by repeatedly yielding the MainActor
-        // and sampling `items`. With the fix, every sample must be
-        // non-empty — the rebuild only assigns `items` when it has the
-        // full list.
-        var samples: [Int] = []
-        for _ in 0 ..< 200 {
-            samples.append(cache.items.count)
-            try? await Task.sleep(nanoseconds: 200_000)  // 0.2ms
-        }
-
-        #expect(
-            !samples.contains(0),
-            "items must remain populated during rebuilds; observed sample counts: \(samples)"
-        )
-
-        // After the burst settles, the cache should still hold a
-        // populated list (state hasn't actually changed, so it should
-        // match the initial count).
-        let final = await cache.buildModelPickerItems()
-        #expect(!final.isEmpty)
-        #expect(final.count == initialCount)
     }
 }

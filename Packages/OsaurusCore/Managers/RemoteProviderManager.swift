@@ -77,9 +77,10 @@ public final class RemoteProviderManager: ObservableObject {
         var didChange = false
         for i in configuration.providers.indices {
             let host = configuration.providers[i].host.lowercased()
-            if configuration.providers[i].providerType == .openaiLegacy
+            let shouldMigrate =
+                configuration.providers[i].providerType == .openaiLegacy
                 && host.contains("openai.com")
-            {
+            if shouldMigrate {
                 configuration.providers[i].providerType = .openResponses
                 didChange = true
             }
@@ -229,12 +230,11 @@ public final class RemoteProviderManager: ObservableObject {
         providerStates[providerId] = state
 
         do {
-            if provider.authType == .openAICodexOAuth,
-                let tokens = provider.getOAuthTokens(),
-                tokens.isExpired
-            {
-                let refreshed = try await OpenAICodexOAuthService.refresh(tokens)
-                RemoteProviderKeychain.saveOAuthTokens(refreshed, for: provider.id)
+            if provider.authType == .openAICodexOAuth {
+                if let tokens = provider.getOAuthTokens(), tokens.isExpired {
+                    let refreshed = try await OpenAICodexOAuthService.refresh(tokens)
+                    RemoteProviderKeychain.saveOAuthTokens(refreshed, for: provider.id)
+                }
             }
 
             // Fetch models from the provider and merge any manually configured deployment IDs.
@@ -368,6 +368,9 @@ public final class RemoteProviderManager: ObservableObject {
 
         state.discoveredModels = merged
         providerStates[providerId] = state
+        if let service = services[providerId] {
+            await service.updateModels(merged)
+        }
         notifyModelsChanged()
     }
 
@@ -383,9 +386,9 @@ public final class RemoteProviderManager: ObservableObject {
             let now = Date()
             let throttle = Self.modelRefetchThrottle
             let dueIds: [UUID] = self.configuration.enabledProviders.compactMap { provider in
-                if let last = self.lastModelRefetchAt[provider.id],
-                    now.timeIntervalSince(last) < throttle
-                {
+                let lastRefetch = self.lastModelRefetchAt[provider.id]
+                let isThrottled = lastRefetch.map { now.timeIntervalSince($0) < throttle } ?? false
+                if isThrottled {
                     return nil
                 }
                 return provider.id
@@ -539,9 +542,12 @@ public final class RemoteProviderManager: ObservableObject {
         // Add headers
         for (key, value) in testHeaders {
             // Don't log the full auth header for security
-            if key.lowercased() == "authorization" || key.lowercased() == "x-api-key"
-                || key.lowercased() == "x-goog-api-key"
-            {
+            let lowercasedKey = key.lowercased()
+            let shouldRedact =
+                lowercasedKey == "authorization"
+                || lowercasedKey == "x-api-key"
+                || lowercasedKey == "x-goog-api-key"
+            if shouldRedact {
                 print("[Osaurus] Test Connection: Adding header \(key)=***")
             } else {
                 print("[Osaurus] Test Connection: Adding header \(key)=\(value)")
@@ -624,9 +630,10 @@ public final class RemoteProviderManager: ObservableObject {
     }
 
     /// Test Anthropic connection by fetching models from the /models endpoint
-    private func testAnthropicConnection(tempProvider: RemoteProvider, testHeaders: [String: String]) async throws
-        -> [String]
-    {
+    private func testAnthropicConnection(
+        tempProvider: RemoteProvider,
+        testHeaders: [String: String]
+    ) async throws -> [String] {
         guard let baseURL = tempProvider.url(for: "/models") else {
             print("[Osaurus] Test Connection (Anthropic): Invalid URL")
             throw RemoteProviderError.invalidURL
@@ -659,9 +666,14 @@ public final class RemoteProviderManager: ObservableObject {
 
     // MARK: - Test Helpers
 
-    /// Insert a fake connected provider directly into state, bypassing the
-    /// real `connect()` (no network, no service instance). Test-only.
-    func _testInstallConnectedProvider(_ provider: RemoteProvider, discoveredModels: [String]) {
+    /// Insert a fake connected provider directly into state, optionally with a
+    /// matching service instance for tests that assert routing state. Test-only.
+    @discardableResult
+    func _testInstallConnectedProvider(
+        _ provider: RemoteProvider,
+        discoveredModels: [String],
+        installService: Bool = false
+    ) -> RemoteProviderService? {
         configuration.add(provider)
         ephemeralProviderIds.insert(provider.id)
         var state = RemoteProviderState(providerId: provider.id)
@@ -669,6 +681,16 @@ public final class RemoteProviderManager: ObservableObject {
         state.discoveredModels = discoveredModels
         state.lastConnectedAt = Date()
         providerStates[provider.id] = state
+
+        guard installService else { return nil }
+
+        let service = RemoteProviderService(
+            provider: provider,
+            models: discoveredModels,
+            resolvedHeaders: provider.resolvedHeaders()
+        )
+        services[provider.id] = service
+        return service
     }
 
     /// Mutate a test-installed provider's state. Test-only.
@@ -684,6 +706,9 @@ public final class RemoteProviderManager: ObservableObject {
             ephemeralProviderIds.remove(id)
             providerStates.removeValue(forKey: id)
             lastModelRefetchAt.removeValue(forKey: id)
+            if let service = services.removeValue(forKey: id) {
+                Task { await service.invalidateSession() }
+            }
         }
         refreshConnectedTask = nil
         testFetchModelsOverride = nil

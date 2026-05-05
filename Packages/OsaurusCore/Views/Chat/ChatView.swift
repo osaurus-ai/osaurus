@@ -581,6 +581,10 @@ final class ChatSession: ObservableObject {
         title = "New Chat"
         createdAt = Date()
         updatedAt = Date()
+        source = .chat
+        sourcePluginId = nil
+        externalSessionKey = nil
+        dispatchTaskId = nil
         isDirty = false
 
         // Reset agent-loop UI state.

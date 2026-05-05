@@ -8,9 +8,57 @@
 @preconcurrency import AppKit
 import AVFoundation
 import Contacts
+import CoreGraphics
 import CoreLocation
 import EventKit
 import Foundation
+
+enum SystemPermissionProbe {
+    struct FullDiskResource: Sendable {
+        let relativePath: String
+    }
+
+    static let defaultFullDiskResources: [FullDiskResource] = [
+        .init(relativePath: "Library/Application Support/com.apple.TCC/TCC.db"),
+        .init(relativePath: "Library/Messages/chat.db"),
+        .init(relativePath: "Library/Safari/Bookmarks.plist"),
+        .init(relativePath: "Library/Safari/CloudTabs.db"),
+    ]
+
+    static func fullDiskAccessGranted(
+        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
+        fileManager: FileManager = .default,
+        resources: [FullDiskResource] = defaultFullDiskResources
+    ) -> Bool {
+        resources.contains { resource in
+            canReadProtectedFile(
+                homeDirectory.appendingPathComponent(resource.relativePath),
+                fileManager: fileManager
+            )
+        }
+    }
+
+    static func screenRecordingGranted(
+        preflight: () -> Bool = { CGPreflightScreenCaptureAccess() }
+    ) -> Bool {
+        preflight()
+    }
+
+    private static func canReadProtectedFile(_ url: URL, fileManager: FileManager) -> Bool {
+        var isDirectory: ObjCBool = false
+        guard fileManager.fileExists(atPath: url.path, isDirectory: &isDirectory), !isDirectory.boolValue else {
+            return false
+        }
+
+        do {
+            let handle = try FileHandle(forReadingFrom: url)
+            try handle.close()
+            return true
+        } catch {
+            return false
+        }
+    }
+}
 
 @MainActor
 final class SystemPermissionService: NSObject, ObservableObject, CLLocationManagerDelegate {
@@ -24,7 +72,7 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
     private var refreshTimer: Timer?
     private let kPermissionStatesKey = "SystemPermissionStates"
 
-    private override init() {
+    override private init() {
         super.init()
         locationManager.delegate = self
         loadPermissionStates()
@@ -387,11 +435,11 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
         script?.executeAndReturnError(&errorInfo)
 
         // If there's an error with code -1743, it's a permission error
-        if let error = errorInfo,
-            let errorNumber = error[NSAppleScript.errorNumber] as? Int,
-            errorNumber == -1743
-        {
-            return false
+        if let error = errorInfo {
+            let errorNumber = error[NSAppleScript.errorNumber] as? Int
+            if errorNumber == -1743 {
+                return false
+            }
         }
 
         // If execution succeeded or had a different error, assume we have permission
@@ -536,9 +584,8 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
         var errorInfo: NSDictionary?
         script?.executeAndReturnError(&errorInfo)
 
-        if let error = errorInfo,
+        if let error = errorInfo {
             let errorNumber = error[NSAppleScript.errorNumber] as? Int
-        {
             // -1743 = permission denied (not authorized to send Apple events)
             if errorNumber == -1743 {
                 return false
@@ -583,36 +630,7 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
     // MARK: - Full Disk Access Permission
 
     private func checkDiskPermission() -> Bool {
-        // Check Full Disk Access by attempting to access a protected file.
-        // ~/Library/Safari/Bookmarks.plist is protected and requires FDA.
-        // We attempt to get file attributes which will fail without FDA.
-        let protectedPaths = [
-            FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent("Library/Safari/Bookmarks.plist"),
-            FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent("Library/Safari"),
-            FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent("Library/Mail"),
-        ]
-
-        for path in protectedPaths {
-            do {
-                // Try to get attributes - this will fail without FDA
-                _ = try FileManager.default.attributesOfItem(atPath: path.path)
-                return true
-            } catch let error as NSError {
-                // Error code 257 = permission denied (no FDA)
-                // Error code 4 = file not found (try next path)
-                if error.code == 257 {
-                    return false
-                }
-                // For other errors (like file not found), try the next path
-                continue
-            }
-        }
-
-        // If none of the protected paths exist or all failed, assume no FDA
-        return false
+        SystemPermissionProbe.fullDiskAccessGranted()
     }
 
     private func requestDiskPermission() {
@@ -650,21 +668,7 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
     // MARK: - Screen Recording Permission (for System Audio)
 
     private func checkScreenRecordingPermission() -> Bool {
-        // ScreenCaptureKit requires screen recording permission to capture system audio
-        // We check by attempting to get shareable content - this triggers the permission check
-        // For a quick check, we use CGWindowListCopyWindowInfo which requires screen recording
-        if let windowList = CGWindowListCopyWindowInfo(.optionOnScreenOnly, kCGNullWindowID) as? [[String: Any]] {
-            // If we can read window names, we have permission
-            for window in windowList {
-                if let name = window[kCGWindowName as String] as? String, !name.isEmpty {
-                    return true
-                }
-            }
-            // If we got windows but no names, we might not have permission
-            // Try a different check - if we have any windows at all, we likely have permission
-            return !windowList.isEmpty
-        }
-        return false
+        SystemPermissionProbe.screenRecordingGranted()
     }
 
     private func requestScreenRecordingPermission() {
@@ -1015,7 +1019,7 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
     }
 
     /// Run an AppleScript using osascript command
-    private nonisolated static func runOsascript(_ script: String) -> Result<String, OsascriptError> {
+    nonisolated private static func runOsascript(_ script: String) -> Result<String, OsascriptError> {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
         process.arguments = ["-e", script]

@@ -87,6 +87,50 @@ struct SessionSourcePersistenceTests {
     }
 
     @Test
+    func chatSession_resetClearsScheduledOriginForNextManualChat() {
+        let scheduleId = UUID()
+        let dispatchId = UUID()
+        let session = ChatSession()
+        session.source = .schedule
+        session.externalSessionKey = scheduleId.uuidString
+        session.dispatchTaskId = dispatchId
+        session.sessionId = dispatchId
+        session.title = "Scheduled report"
+
+        session.reset()
+
+        #expect(session.source == .chat)
+        #expect(session.sourcePluginId == nil)
+        #expect(session.externalSessionKey == nil)
+        #expect(session.dispatchTaskId == nil)
+        #expect(session.sessionId == nil)
+        #expect(session.turns.isEmpty)
+    }
+
+    @Test
+    func chatSession_firstSaveAfterResetPersistsManualChatOrigin() async throws {
+        try await ChatHistoryTestStorage.run {
+            let scheduleId = UUID()
+            let dispatchId = UUID()
+            let session = ChatSession()
+            session.source = .schedule
+            session.externalSessionKey = scheduleId.uuidString
+            session.dispatchTaskId = dispatchId
+            session.sessionId = dispatchId
+
+            session.reset()
+            session.turns = [ChatTurn(role: .user, content: "manual follow-up")]
+            session.save()
+
+            let data = session.toSessionData()
+            #expect(data.source == .chat)
+            #expect(data.sourcePluginId == nil)
+            #expect(data.externalSessionKey == nil)
+            #expect(data.dispatchTaskId == nil)
+        }
+    }
+
+    @Test
     func executionContext_reattach_restoresIdAndOriginAndTurns() async {
         let originalId = UUID()
         let agentId = UUID()
