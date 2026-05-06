@@ -705,7 +705,12 @@ struct FileSearchTool: OsaurusTool {
 struct ShellRunTool: OsaurusTool, PermissionedTool {
     let name = "shell_run"
     let description =
-        "Run a shell command in the working directory. This action requires approval. Output is truncated to 10,000 characters. Use for builds, tests, or other commands."
+        "Run a shell command in the working directory. **Reserve this for builds, tests, "
+        + "git, processes, network calls, and filesystem mutations (`mv`/`cp`/`rm`/`mkdir`).** "
+        + "For file IO, search, edit, write, and directory listing, prefer the dedicated "
+        + "`file_*` tools — each one's description states the `shell_run` pattern it "
+        + "replaces. This action requires approval. Output is truncated to 10,000 characters. "
+        + "Default timeout 30s, max 300s."
     let parameters: JSONValue? = .object([
         "type": .string("object"),
         "additionalProperties": .bool(false),
