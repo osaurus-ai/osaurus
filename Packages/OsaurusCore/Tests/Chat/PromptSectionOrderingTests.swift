@@ -160,6 +160,59 @@ struct PromptSectionOrderingTests {
         }
     }
 
+    // MARK: - Folder mode
+
+    /// Folder mode parallels sandbox mode structurally. File-mutation
+    /// tools (file_write, file_edit, shell_run) are always-loaded for
+    /// folder mounts, so codeStyle + riskAware fire here too.
+    @Test("ordering: auto + gpt + folder mode")
+    func ordering_autoGptFolder() async {
+        await SandboxTestLock.runWithStoragePaths {
+            let agent = Agent(
+                name: "OrderingTestAgent-Folder",
+                systemPrompt: "Test identity",
+                agentAddress: "test-ordering-folder-\(UUID().uuidString)"
+            )
+            AgentManager.shared.add(agent)
+            let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+                .appendingPathComponent("osaurus-folder-order-\(UUID().uuidString)")
+            try? FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: tmp) }
+            let folderCtx = FolderContext(
+                rootPath: tmp,
+                projectType: .swift,
+                tree: "./\nREADME.md",
+                manifest: nil,
+                gitStatus: nil,
+                isGitRepo: false
+            )
+            FolderToolManager.shared.registerFolderTools(for: folderCtx)
+            defer { FolderToolManager.shared.unregisterFolderTools() }
+
+            let ctx = await SystemPromptComposer.composeChatContext(
+                agentId: agent.id,
+                executionMode: .hostFolder(folderCtx),
+                model: "gpt-5",
+                cachedPreflight: .empty
+            )
+            assertOrderedPrefix(
+                [
+                    "platform",
+                    "persona",
+                    "modelFamilyGuidance",
+                    "codeStyle",
+                    "riskAware",
+                    "agentLoopGuidance",
+                    "folderContext",
+                    "capabilityNudge",
+                ],
+                inside: sectionIds(ctx)
+            )
+
+            _ = await AgentManager.shared.delete(id: agent.id)
+        }
+    }
+
     // MARK: - Statics-before-dynamics invariant
 
     /// The cached prefix is everything ahead of the first dynamic section.

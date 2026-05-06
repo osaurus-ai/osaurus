@@ -87,4 +87,26 @@ struct PromptWhitespaceTests {
         let section = SystemPromptTemplates.sandbox()
         assertNoContinuationLeak(section, label: "sandbox()")
     }
+
+    /// Folder section runs through the same composition path. Pin both
+    /// the bare guide and the fully-rendered section so a future
+    /// `\` continuation regression in either surfaces immediately.
+    @Test("folder section has no whitespace continuation artifacts")
+    func folderSectionRendersClean() {
+        assertNoContinuationLeak(
+            SystemPromptTemplates.folderToolGuide,
+            label: "folderToolGuide"
+        )
+        let folder = FolderContext(
+            rootPath: URL(fileURLWithPath: "/tmp/whitespace-test"),
+            projectType: .swift,
+            tree: "./\nREADME.md",
+            manifest: nil,
+            gitStatus: " M file.swift",
+            isGitRepo: true,
+            contextFiles: nil
+        )
+        let section = SystemPromptTemplates.folderContext(from: folder)
+        assertNoContinuationLeak(section, label: "folderContext(from:)")
+    }
 }

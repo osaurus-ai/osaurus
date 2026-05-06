@@ -48,13 +48,9 @@ public final class FolderToolManager {
 
         currentFolderContext = context
 
-        // Build core tools (always)
+        // Build core tools (always). `shell_run` lives in the core set so
+        // the folder-section prompt can reference it unconditionally.
         folderTools = FolderToolFactory.buildCoreTools(rootPath: context.rootPath)
-
-        // Add coding tools if known project type
-        if context.projectType != .unknown {
-            folderTools += FolderToolFactory.buildCodingTools(rootPath: context.rootPath)
-        }
 
         // Add git tools if git repo
         if context.isGitRepo {

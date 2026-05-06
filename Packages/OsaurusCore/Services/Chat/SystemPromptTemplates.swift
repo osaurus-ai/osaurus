@@ -197,40 +197,39 @@ public enum SystemPromptTemplates {
     // MARK: - Folder Context
 
     /// Working-directory framing appended to the system prompt when chat
-    /// is mounted on a host folder (`ExecutionMode.hostFolder`). Carries
-    /// the path, project type, top-level layout, optional git status,
-    /// usage guidance, and any project-level context file
-    /// (AGENTS.md / CLAUDE.md / .hermes.md / .cursorrules) loaded at
-    /// folder-mount time. Returns `""` when no folder is mounted so the
+    /// is mounted on a host folder (`ExecutionMode.hostFolder`). Mirrors
+    /// the sandbox section's structure: heading + environment metadata +
+    /// path rule + tool dispatch + mode-specific framing + optional
+    /// project context. Returns `""` when no folder is mounted so the
     /// composer can append unconditionally.
     public static func folderContext(from folderContext: FolderContext?) -> String {
         guard let folder = folderContext else { return "" }
 
+        var lines: [String] = ["## Working Directory"]
+        lines.append("**Path:** \(folder.rootPath.path)")
+        if folder.projectType != .unknown {
+            lines.append("**Project Type:** \(folder.projectType.displayName)")
+        }
         let topLevel = buildTopLevelSummary(from: folder.tree)
-        let gitBlock =
-            folder.gitStatus.flatMap { status -> String? in
-                let trimmed = String(status.prefix(300))
-                guard !trimmed.isEmpty else { return nil }
-                return "\n**Git status (uncommitted changes):**\n```\n\(trimmed)\n```\n"
-            } ?? ""
+        if !topLevel.isEmpty {
+            lines.append("**Root contents:** \(topLevel)")
+        }
+        var section = "\n" + lines.joined(separator: "\n") + "\n"
 
-        var section = """
+        if let status = folder.gitStatus {
+            let trimmed = String(status.prefix(300))
+            if !trimmed.isEmpty {
+                section += "\n**Git status (uncommitted changes):**\n```\n\(trimmed)\n```\n"
+            }
+        }
 
-            ## Working Directory
-            **Path:** \(folder.rootPath.path)
-            **Project Type:** \(folder.projectType.displayName)
-            **Root contents:** \(topLevel)
-            \(gitBlock)
-            **Path arguments are relative to the Working Directory** — pass `README.md`, `src/app.py`, `docs/intro.md`. Absolute paths are rejected as a security boundary, even ones that point inside the directory. The path above is for orientation when you describe the project to the user, not for tool calls.
+        section += """
 
-            Tool recipe — prefer dedicated tools over their shell equivalents:
-            - Layout: `file_tree` for the directory structure (skips hidden + truncates at 300 entries) — **not** `ls`/`tree` in `shell_run`.
-            - Discovery: `file_search` for content (ripgrep) — **not** `grep`/`rg`/`find`. Read individual files with `file_read` — **not** `cat`/`head`/`tail`.
-            - Edits: `file_edit` for targeted (old_string -> new_string) changes — **not** `sed`/`awk`. `file_write` for new files or full rewrites — **not** `echo`/`cat` heredoc. Always read a file before editing it.
-            - Mutations: use `shell_run` for `mv` / `cp` / `rm` / `mkdir` (write/exec ops are logged and undoable).
-            - Multi-step work: take the next concrete action each turn — read, write, run. Don't narrate intent; just do the thing.
+            \(folderPathRule)
 
-            **Files land in the working folder, not in chat.** When you create or edit a file with `file_write` / `file_edit`, the user can see it on disk and in the operations log. If the user needs the deliverable to appear in the chat thread (an image, chart, generated text, report, code blob), additionally call `share_artifact` — it's the only thing that surfaces an artifact card.
+            \(folderToolGuide)
+
+            \(folderArtifactReminder)
 
             """
 
@@ -253,6 +252,35 @@ public enum SystemPromptTemplates {
 
         return section
     }
+
+    // MARK: - Folder Building Blocks
+
+    /// One-line restatement of the path-arg rule. Each `file_*` tool's
+    /// description carries the per-arg detail; this lives in the prompt
+    /// so the rule is anchored once at the top of the section instead of
+    /// repeated in every dispatch bullet.
+    static let folderPathRule =
+        "Tool paths are relative to the working directory; absolute paths are rejected."
+
+    /// Positive dispatch table for the folder-mode tools. Mirror of
+    /// `sandboxToolGuide` — discipline ("instead of cat / sed / awk")
+    /// lives in each tool's description.
+    static let folderToolGuide = """
+        Tool dispatch (each tool's description has full detail and the \
+        shell pattern it replaces):
+        - Layout: `file_tree` to list directory structure.
+        - Search: `file_search` for content (case-insensitive substring match).
+        - Read: `file_read` to inspect a file (optional line range).
+        - Edit: `file_edit` for targeted in-place edits, `file_write` for new files or full rewrites.
+        - Shell: `shell_run` for `mv` / `cp` / `rm` / `mkdir` (write/exec ops are logged and undoable).
+        """
+
+    /// Folder-mode-specific reminder: filesystem changes ARE visible to
+    /// the user (unlike sandbox), but only `share_artifact` surfaces an
+    /// artifact card in the chat thread.
+    static let folderArtifactReminder = """
+        **Files land in the working folder, not in chat.** When you create or edit a file with `file_write` / `file_edit`, the user can see it on disk and in the operations log. If the user needs the deliverable to appear in the chat thread (an image, chart, generated text, report, code blob), additionally call `share_artifact` — it's the only thing that surfaces an artifact card.
+        """
 
     private static func buildTopLevelSummary(from tree: String) -> String {
         let lines = tree.components(separatedBy: .newlines)
