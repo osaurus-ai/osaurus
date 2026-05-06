@@ -578,6 +578,7 @@ See [AGENT_LOOP.md](AGENT_LOOP.md) for the full guide.
 - **Safe execution** — Agents run code in a disposable VM with zero risk to the host macOS system
 - **Real dev environment** — Full Linux with shell, Python (pip), Node.js (npm), system packages (apk), compilers, and POSIX tools
 - **Multi-agent isolation** — Each agent gets its own Linux user and home directory, preventing cross-contamination
+- **Per-agent SOUL.md** — Each sandboxed agent gets a self-editable `~/SOUL.md` for stable preferences and patterns, persisted across sessions. Seeded on first provision; rendered into the system prompt as a `## SOUL` section between persona and operational directives. See [SANDBOX.md](SANDBOX.md).
 - **Lightweight plugins** — JSON recipe plugins require no compilation, no Xcode, no code signing
 - **Local-first** — Apple Virtualization framework with native Apple Silicon performance; no Docker or cloud VMs
 - **Seamless host bridge** — Agents in the VM access Osaurus inference, memory, secrets, and events via vsock
@@ -672,6 +673,7 @@ Read-only tools are always available. Write/exec/package/secret tools require `a
 | `~/.osaurus/container/kernel/vmlinux` | Linux kernel |
 | `~/.osaurus/container/workspace/` | Mounted as `/workspace` |
 | `~/.osaurus/container/workspace/agents/{name}/` | Per-agent home |
+| `~/.osaurus/container/workspace/agents/{name}/SOUL.md` | Per-agent SOUL identity layer (seeded on first provision) |
 | `~/.osaurus/container/output/` | Mounted as `/output` |
 | `~/.osaurus/sandbox-plugins/` | Plugin library |
 | `~/.osaurus/config/sandbox.json` | Configuration |

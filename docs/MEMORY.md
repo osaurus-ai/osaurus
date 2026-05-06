@@ -70,6 +70,20 @@ One per session. Created by `MemoryService.distillSession` once the writer's deb
 
 Raw user/assistant turns. Never injected into the default context block. Used only when the user asks for literal recall ("what did I exactly say...") or as fallback search via the `transcript` scope of `search_memory`.
 
+### Memory vs. SOUL.md (sandbox)
+
+Memory and `SOUL.md` are **separate surfaces by design** — do not cross-pollinate them.
+
+| | Memory | `SOUL.md` |
+|---|---|---|
+| Author | Distilled from conversations by Osaurus | The agent itself, via `sandbox_edit_file` / `sandbox_write_file` |
+| Scope | Session facts, episodes, user identity | Stable preferences and patterns the agent learned about working with you |
+| Update cadence | Background after each session | Whenever the agent observes a durable pattern |
+| Where it lands | Prepended to the latest user message (volatile) | Static section in the system prompt (KV-cacheable) |
+| Available in | Every chat | Sandbox mode only |
+
+If a fact belongs to a session ("we decided to use Postgres for the demo"), memory owns it. If a fact is a preference the agent should keep applying ("user prefers Postgres for new projects"), the agent's `SOUL.md` owns it. See [SANDBOX.md](SANDBOX.md) for the full SOUL.md contract.
+
 ---
 
 ## Write Path: Deferred and Debounced
