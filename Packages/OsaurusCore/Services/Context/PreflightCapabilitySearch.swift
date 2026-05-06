@@ -147,7 +147,7 @@ struct PreflightDiagnostic: Sendable {
 /// block byte-stable across turns and maximizing KV-cache reuse.
 struct SessionToolState: Sendable {
     var initialPreflight: PreflightResult
-    var loadedToolNames: Set<String>
+    var loadedToolNames: LoadedTools
     /// Snapshot of always-loaded tool names from the FIRST compose of this
     /// session. On subsequent composes the resolver intersects the live
     /// always-loaded set against this snapshot so a tool that registers
@@ -157,7 +157,7 @@ struct SessionToolState: Sendable {
     /// disorients the model. New tools only enter via the explicit
     /// `capabilities_load` path (which writes loadedToolNames).
     /// `nil` means "no snapshot yet" — the next compose will record one.
-    var initialAlwaysLoadedNames: Set<String>?
+    var initialAlwaysLoadedNames: LoadedTools?
     /// Compact signature of the (executionMode, toolSelectionMode) that
     /// captured this state. The send path compares the live signature on
     /// every turn and invalidates on a flip, so dynamically-loaded tools
@@ -168,8 +168,8 @@ struct SessionToolState: Sendable {
 
     init(
         initialPreflight: PreflightResult,
-        loadedToolNames: Set<String> = [],
-        initialAlwaysLoadedNames: Set<String>? = nil,
+        loadedToolNames: LoadedTools = [],
+        initialAlwaysLoadedNames: LoadedTools? = nil,
         sessionFingerprint: String? = nil
     ) {
         self.initialPreflight = initialPreflight
@@ -916,12 +916,9 @@ enum PreflightCapabilitySearch {
 /// `shouldInject(_:)` with plain booleans — no actor hops, no globals.
 public enum PluginCreatorGate {
     /// Every input that decides whether to inject the skill this turn.
-    ///
-    /// All values are captured upfront in the composer so subsequent
-    /// `await`s can't race the decision (prior bug: `dynamicCatalogIsEmpty`
-    /// and the skill's `enabled` flag were read much later than
-    /// `canCreatePlugins`, and cross-suite tests were flipping them
-    /// mid-compose).
+    /// Agent-side flags ride on the composer's `AgentConfigSnapshot`,
+    /// captured once at the start of compose so the gate sees the same
+    /// view of the world the rest of the pipeline does.
     public struct Inputs: Equatable, Sendable {
         public var effectiveToolsOff: Bool
         public var sandboxAvailable: Bool

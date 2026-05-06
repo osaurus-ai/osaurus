@@ -515,8 +515,7 @@ final class AnthropicSSEResponseWriter {
             writeTextBlockStart(context: context)
         }
 
-        // Estimate output tokens (rough: 1 token per 4 chars)
-        outputTokens += max(1, text.count / 4)
+        outputTokens += TokenEstimator.estimate(text)
 
         let event = ContentBlockDeltaEvent(index: currentBlockIndex, text: text)
         writeSSEEvent("content_block_delta", payload: event, context: context)
@@ -558,7 +557,7 @@ final class AnthropicSSEResponseWriter {
             writeThinkingBlockStart(context: context)
         }
 
-        outputTokens += max(1, thinking.count / 4)
+        outputTokens += TokenEstimator.estimate(thinking)
 
         let event = ContentBlockDeltaEvent(thinkingAt: currentBlockIndex, text: thinking)
         writeSSEEvent("content_block_delta", payload: event, context: context)
@@ -830,7 +829,7 @@ final class OpenResponsesSSEWriter {
         }
 
         accumulatedReasoning += text
-        outputTokens += max(1, text.count / 4)
+        outputTokens += TokenEstimator.estimate(text)
 
         let event = ReasoningSummaryTextDeltaEvent(
             sequenceNumber: nextSequenceNumber(),
@@ -879,7 +878,7 @@ final class OpenResponsesSSEWriter {
         guard !text.isEmpty else { return }
 
         accumulatedText += text
-        outputTokens += max(1, text.count / 4)
+        outputTokens += TokenEstimator.estimate(text)
 
         let event = OutputTextDeltaEvent(
             sequenceNumber: nextSequenceNumber(),

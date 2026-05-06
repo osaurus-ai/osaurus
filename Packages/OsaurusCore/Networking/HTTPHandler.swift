@@ -1410,6 +1410,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
     /// Enrich a chat request with the agent's system prompt and memory context
     /// when an agent ID is provided via the `X-Osaurus-Agent-Id` header.
+    ///
+    /// Goes through `composeChatContext` (the same entry point the chat UI
+    /// uses) and then injects the rendered prompt + memory snippet into the
+    /// outgoing message array. `executionMode: .none` matches the original
+    /// HTTP-path semantics — sandbox / folder modes are chat-window-only;
+    /// HTTP requests don't have one of those bound.
     private static func enrichWithAgentContext(
         _ request: ChatCompletionRequest,
         agentId: String?
@@ -1420,11 +1426,16 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
         var enriched = request
         let query = request.messages.last(where: { $0.role == "user" })?.content ?? ""
-        await SystemPromptComposer.injectAgentContext(
+        let composed = await SystemPromptComposer.composeChatContext(
             agentId: agentUUID,
+            executionMode: .none,
             query: query,
-            into: &enriched.messages
+            messages: enriched.messages
         )
+        if !composed.prompt.isEmpty {
+            SystemPromptComposer.injectSystemContent(composed.prompt, into: &enriched.messages)
+        }
+        SystemPromptComposer.injectMemoryPrefix(composed.memorySection, into: &enriched.messages)
         return enriched
     }
 
@@ -1508,7 +1519,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     ("assistant", turn.assistant, i * 2 + 1),
                 ]
                 for (role, content, chunkIndex) in pairs {
-                    let tokens = max(1, content.count / 4)
+                    let tokens = TokenEstimator.estimate(content)
                     let storedTurn = TranscriptTurn(
                         conversationId: req.conversation_id,
                         chunkIndex: chunkIndex,
@@ -3253,7 +3264,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     }
                     let includeUsage = req.stream_options?.include_usage == true
                     let promptTokens = Self.estimatePromptTokens(enrichedReq.messages)
-                    let completionTokens = max(1, accumulatedContent.count / 4)
+                    let completionTokens = TokenEstimator.estimate(accumulatedContent)
                     hop {
                         writerBound.value.writeFinish(
                             model,
@@ -3806,12 +3817,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 for call in calls {
                     chars += call.function.name.count
                     chars += call.function.arguments.count
-                    chars += 20  // ~20 chars overhead per call envelope
+                    chars += TokenEstimator.toolCallEnvelopeChars
                 }
             }
             return sum + chars
         }
-        return max(1, totalChars / 4)
+        return max(1, totalChars / TokenEstimator.charsPerToken)
     }
 
     // MARK: - Health Endpoint
@@ -4614,8 +4625,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         // Estimate input tokens (rough: 1 token per 4 chars)
         let inputTokens =
             anthropicReq.messages.reduce(0) { acc, msg in
-                acc + max(1, msg.content.plainText.count / 4)
-            } + (anthropicReq.system?.plainText.count ?? 0) / 4
+                acc + TokenEstimator.estimate(msg.content.plainText)
+            } + (anthropicReq.system?.plainText.count ?? 0) / TokenEstimator.charsPerToken
 
         // Send headers and message_start
         hop {
@@ -5228,20 +5239,20 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             {
                 switch request.input {
                 case .text(let text):
-                    return max(1, text.count / 4)
+                    return TokenEstimator.estimate(text)
                 case .items(let items):
                     return items.reduce(0) { acc, item in
                         switch item {
                         case .message(let msg):
-                            return acc + max(1, msg.content.plainText.count / 4)
+                            return acc + TokenEstimator.estimate(msg.content.plainText)
                         case .functionCall(let call):
-                            return acc + max(1, call.arguments.count / 4)
+                            return acc + TokenEstimator.estimate(call.arguments)
                         case .functionCallOutput(let output):
-                            return acc + max(1, output.output.count / 4)
+                            return acc + TokenEstimator.estimate(output.output)
                         }
                     }
                 }
-            }() + (request.instructions?.count ?? 0) / 4
+            }() + (request.instructions?.count ?? 0) / TokenEstimator.charsPerToken
 
         let itemId = Self.shortId(prefix: "item_")
         let reasoningItemId = Self.shortId(prefix: "rs_")

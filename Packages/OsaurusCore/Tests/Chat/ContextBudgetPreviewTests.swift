@@ -68,14 +68,14 @@ struct ContextBudgetPreviewTests {
     /// The misleading-default fix. With both knobs off and no execution
     /// mode, the popover collapses to just the agent identity — no
     /// Agent Loop, no Capability Discovery, no Skills, no Tools.
-    @Test("preview: tools off + memory off → only base section")
+    @Test("preview: tools off + memory off → only platform + persona sections")
     func toolsOff_memoryOff_isJustBase() async {
         await withAgent(toolsDisabled: true, memoryDisabled: true) { agentId in
             let preview = SystemPromptComposer.composePreviewContext(
                 agentId: agentId,
                 executionMode: .none
             )
-            #expect(sectionIds(preview) == ["base"])
+            #expect(sectionIds(preview) == ["platform", "persona"])
             #expect(preview.tools.isEmpty)
             #expect(preview.toolTokens == 0)
             #expect(preview.memorySection == nil)
@@ -86,16 +86,16 @@ struct ContextBudgetPreviewTests {
     /// `Memory` doesn't ride on `composePreviewContext` — the chat view
     /// surfaces it through `cachedMemoryTokens` so the preview manifest
     /// stays byte-stable. Memory-on with tools-off therefore still has
-    /// a one-section manifest: the popover row comes from the separate
+    /// a two-section manifest: the popover row comes from the separate
     /// `memoryTokens` plumb in `ContextBreakdown.from`.
-    @Test("preview: tools off + memory on → manifest still only has base")
+    @Test("preview: tools off + memory on → manifest still only has platform + persona")
     func toolsOff_memoryOn_manifestStaysMinimal() async {
         await withAgent(toolsDisabled: true, memoryDisabled: false) { agentId in
             let preview = SystemPromptComposer.composePreviewContext(
                 agentId: agentId,
                 executionMode: .none
             )
-            #expect(sectionIds(preview) == ["base"])
+            #expect(sectionIds(preview) == ["platform", "persona"])
         }
     }
 
@@ -112,7 +112,8 @@ struct ContextBudgetPreviewTests {
                 executionMode: .none
             )
             let ids = sectionIds(preview)
-            #expect(ids.contains("base"))
+            #expect(ids.contains("platform"))
+            #expect(ids.contains("persona"))
             #expect(ids.contains("agentLoopGuidance"))
             #expect(ids.contains("capabilityNudge"))
             // No model-family hint without a model id, no skills configured.
@@ -259,11 +260,11 @@ struct ContextBudgetPreviewTests {
     }
 
     /// Parity holds in tools-off mode too: both paths collapse to a
-    /// single-section manifest, regardless of which entry point the
+    /// platform + persona manifest, regardless of which entry point the
     /// caller used. Catches any future drift where `composeChatContext`
     /// adds a tools-off-only section that `composePreviewContext`
     /// forgets to mirror.
-    @Test("parity: tools off, both paths return only the base section")
+    @Test("parity: tools off, both paths return only platform + persona")
     func parity_toolsOff_bothCollapseToBase() async {
         await withAgent(toolsDisabled: true, memoryDisabled: true) { agentId in
             let preview = SystemPromptComposer.composePreviewContext(
@@ -277,8 +278,8 @@ struct ContextBudgetPreviewTests {
                 cachedPreflight: .empty
             )
 
-            #expect(sectionIds(preview) == ["base"])
-            #expect(real.manifest.sections.map(\.id) == ["base"])
+            #expect(sectionIds(preview) == ["platform", "persona"])
+            #expect(real.manifest.sections.map(\.id) == ["platform", "persona"])
         }
     }
 
@@ -297,10 +298,10 @@ struct ContextBudgetPreviewTests {
                 model: "foundation"
             )
             // Tools are gone — tools-off cascades to all the gated
-            // sections too, so only `base` survives.
+            // sections too, so only platform + persona survive.
             #expect(preview.tools.isEmpty)
             #expect(preview.toolTokens == 0)
-            #expect(sectionIds(preview) == ["base"])
+            #expect(sectionIds(preview) == ["platform", "persona"])
 
             // Disable info is populated and reports both axes.
             guard let info = preview.contextDisable else {

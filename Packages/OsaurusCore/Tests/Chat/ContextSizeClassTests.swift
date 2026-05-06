@@ -30,15 +30,14 @@ struct ContextSizeClassTests {
 
     @Test("foundation canonical id maps to .tiny")
     func foundationIdIsTiny() {
-        let (cls, ctx) = ContextSizeResolver.resolve(modelId: "foundation")
-        #expect(cls == .tiny)
-        #expect(ctx == ContextSizeResolver.tinyCeiling)
+        let info = ContextSizeResolver.resolve(modelId: "foundation")
+        #expect(info.sizeClass == .tiny)
+        #expect(info.contextLength == ContextSizeResolver.tinyCeiling)
     }
 
     @Test("default alias maps to .tiny (matches FoundationModelService.handles)")
     func defaultAliasIsTiny() {
-        let (cls, _) = ContextSizeResolver.resolve(modelId: "default")
-        #expect(cls == .tiny)
+        #expect(ContextSizeResolver.resolve(modelId: "default").sizeClass == .tiny)
     }
 
     @Test("Foundation matching is case-insensitive")
@@ -47,12 +46,9 @@ struct ContextSizeClassTests {
         // tests in ModelOverride exercise this exact path). The
         // resolver MUST keep matching them or the auto-disable
         // silently breaks for users who edited the config by hand.
-        let (a, _) = ContextSizeResolver.resolve(modelId: "Foundation")
-        let (b, _) = ContextSizeResolver.resolve(modelId: "FOUNDATION")
-        let (c, _) = ContextSizeResolver.resolve(modelId: "Default")
-        #expect(a == .tiny)
-        #expect(b == .tiny)
-        #expect(c == .tiny)
+        #expect(ContextSizeResolver.resolve(modelId: "Foundation").sizeClass == .tiny)
+        #expect(ContextSizeResolver.resolve(modelId: "FOUNDATION").sizeClass == .tiny)
+        #expect(ContextSizeResolver.resolve(modelId: "Default").sizeClass == .tiny)
     }
 
     @Test("foundation match wins even if ModelInfo would disagree")
@@ -62,28 +58,26 @@ struct ContextSizeClassTests {
         // resolver does not need that branch to hit. If someone ever
         // ships a folder named "foundation" with a bigger context
         // length, the alias check still wins. Tests the ordering.
-        let (cls, ctx) = ContextSizeResolver.resolve(modelId: "foundation")
-        #expect(cls == .tiny)
-        #expect(ctx == ContextSizeResolver.tinyCeiling)
+        let info = ContextSizeResolver.resolve(modelId: "foundation")
+        #expect(info.sizeClass == .tiny)
+        #expect(info.contextLength == ContextSizeResolver.tinyCeiling)
     }
 
     // MARK: - Nil / blank
 
     @Test("nil model id returns .normal with no ctx")
     func nilModelIsNormal() {
-        let (cls, ctx) = ContextSizeResolver.resolve(modelId: nil)
-        #expect(cls == .normal)
-        #expect(ctx == nil)
+        let info = ContextSizeResolver.resolve(modelId: nil)
+        #expect(info.sizeClass == .normal)
+        #expect(info.contextLength == nil)
     }
 
     @Test("blank / whitespace model id returns .normal")
     func blankModelIsNormal() {
         // Mid-window state: chat hasn't picked a model yet. We should
         // NOT speculatively hide tools — `.normal` is the safe default.
-        let (a, _) = ContextSizeResolver.resolve(modelId: "")
-        let (b, _) = ContextSizeResolver.resolve(modelId: "   \n\t  ")
-        #expect(a == .normal)
-        #expect(b == .normal)
+        #expect(ContextSizeResolver.resolve(modelId: "").sizeClass == .normal)
+        #expect(ContextSizeResolver.resolve(modelId: "   \n\t  ").sizeClass == .normal)
     }
 
     // MARK: - Unknown model
@@ -94,11 +88,11 @@ struct ContextSizeClassTests {
         // we don't know the budget, so don't auto-disable. Conservative
         // by design — false positives would silently strip tools from
         // users on niche models we haven't catalogued.
-        let (cls, ctx) = ContextSizeResolver.resolve(
+        let info = ContextSizeResolver.resolve(
             modelId: "definitely-not-installed-\(UUID().uuidString)"
         )
-        #expect(cls == .normal)
-        #expect(ctx == nil)
+        #expect(info.sizeClass == .normal)
+        #expect(info.contextLength == nil)
     }
 
     // MARK: - Disable predicates

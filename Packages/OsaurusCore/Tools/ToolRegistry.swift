@@ -55,7 +55,7 @@ final class ToolRegistry: ObservableObject {
             // Overhead for JSON structure: {"type":"function","function":{"name":"...","description":"...","parameters":...}}
             // = 38 (prefix) + 17 (desc key) + 15 (params key) + 2 (closing) = 72 chars
             total += 72
-            return max(1, total / 4)
+            return max(1, total / TokenEstimator.charsPerToken)
         }
 
         /// Recursively estimate the serialized size of a JSONValue
@@ -174,7 +174,8 @@ final class ToolRegistry: ObservableObject {
     }
 
     private static func estimateTokenCount(_ tool: OsaurusTool) -> Int {
-        tool.asOpenAITool().function.name.count + (tool.description.count / 4)
+        tool.asOpenAITool().function.name.count
+            + (tool.description.count / TokenEstimator.charsPerToken)
     }
 
     /// Get specs for specific tools by name (ignores enabled state).

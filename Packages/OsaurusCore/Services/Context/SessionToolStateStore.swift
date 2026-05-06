@@ -49,7 +49,7 @@ actor SessionToolStateStore {
     func setInitial(
         _ sessionId: String,
         preflight: PreflightResult,
-        alwaysLoadedNames: Set<String>?,
+        alwaysLoadedNames: LoadedTools?,
         fingerprint: String? = nil
     ) {
         guard states[sessionId] == nil else { return }
@@ -96,7 +96,7 @@ actor SessionToolStateStore {
         _ sessionId: String,
         names: [String],
         fallbackPreflight: PreflightResult,
-        fallbackAlwaysLoadedNames: Set<String>?
+        fallbackAlwaysLoadedNames: LoadedTools?
     ) {
         var entry =
             states[sessionId]

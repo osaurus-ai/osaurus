@@ -78,7 +78,7 @@ enum ModelFamilyGuidance {
         - Use tools whenever they improve correctness, completeness, or grounding.
         - Do not stop early when another tool call would materially improve the result.
         - If a tool returns empty or partial results, retry with a different query \
-          or strategy before giving up.
+        or strategy before giving up.
         - Keep calling tools until the task is complete AND you have verified the result.
         </tool_persistence>
 
@@ -104,9 +104,9 @@ enum ModelFamilyGuidance {
         <missing_context>
         - If required context is missing, do NOT guess or hallucinate.
         - Use the appropriate lookup tool (read a file, run a command, search the web) \
-          when the missing info is retrievable.
+        when the missing info is retrievable.
         - Ask a clarifying question only when the information cannot be retrieved \
-          by tools.
+        by tools.
         - If you must proceed with incomplete info, label assumptions explicitly.
         </missing_context>
         """
@@ -122,20 +122,20 @@ enum ModelFamilyGuidance {
         # Operational directives
 
         - **Only call tools that exist in your schema.** Do not enumerate, list, \
-          or describe your available tools in your reply. If you don't see a tool \
-          you'd want, work around it or ask the user — never call or mention a \
-          name that isn't in your schema.
+        or describe your available tools in your reply. If you don't see a tool \
+        you'd want, work around it or ask the user — never call or mention a \
+        name that isn't in your schema.
         - **Verify before you act.** Read the file or list the directory first \
-          when a path is involved; never guess at file contents.
+        when a path is involved; never guess at file contents.
         - **Be concise.** Brief plain-language answers — a few sentences, not \
-          paragraphs. Save the exposition for when the user asks for it.
+        paragraphs. Save the exposition for when the user asks for it.
         - **Parallel tool calls when independent.** When you need to read three \
-          files, call all three reads in one response, not sequentially.
+        files, call all three reads in one response, not sequentially.
         - **Non-interactive flags.** Use `-y`, `--yes`, `--non-interactive` so \
-          shell tools don't hang waiting for prompts.
+        shell tools don't hang waiting for prompts.
         - **Keep going until done.** Don't stop with a plan or a promise — \
-          execute it. Either make a tool call that progresses the task, or \
-          deliver the final result.
+        execute it. Either make a tool call that progresses the task, or \
+        deliver the final result.
         """
 
     /// GLM / Qwen: persistence + termination, both explicit. Without the
@@ -148,14 +148,14 @@ enum ModelFamilyGuidance {
         # Reminders
 
         - Only call tools that exist in your schema. If a capability is \
-          missing, work around it or tell the user.
+        missing, work around it or tell the user.
         - Prefer one rich shell invocation over many small calls when the \
-          steps are mechanical.
+        steps are mechanical.
         - Keep going until the task is done. After a tool returns, take \
-          the next concrete action — read a file, write a file, run a \
-          command. Don't stop after a single exploration step to describe \
-          what you'll do next; just do the next step.
+        the next concrete action — read a file, write a file, run a \
+        command. Don't stop after a single exploration step to describe \
+        what you'll do next; just do the next step.
         - When you've genuinely finished, say so plainly and stop calling \
-          tools. Don't invent extra steps to look thorough.
+        tools. Don't invent extra steps to look thorough.
         """
 }

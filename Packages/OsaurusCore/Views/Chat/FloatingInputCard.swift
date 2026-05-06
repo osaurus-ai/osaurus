@@ -209,7 +209,7 @@ struct FloatingInputCard: View {
     private var displayContextBreakdown: ContextBreakdown {
         var bd = contextBreakdown
         if !localText.isEmpty {
-            let typingTokens = max(1, localText.count / 4)
+            let typingTokens = TokenEstimator.estimate(localText)
             bd.setTokens(
                 for: "input",
                 in: \.messages,

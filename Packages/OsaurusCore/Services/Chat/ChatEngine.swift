@@ -138,13 +138,12 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                 for call in calls {
                     chars += call.function.name.count
                     chars += call.function.arguments.count
-                    // ~20 chars overhead per call for JSON envelope shape
-                    chars += 20
+                    chars += TokenEstimator.toolCallEnvelopeChars
                 }
             }
             return sum + chars
         }
-        return max(1, totalChars / 4)
+        return max(1, totalChars / TokenEstimator.charsPerToken)
     }
 
     /// Pretty-print a `ChatCompletionRequest` for the Insights ring buffer.
@@ -430,7 +429,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
 
                     // Estimate tokens: each delta chunk is roughly proportional to tokens
                     // More accurate: count whitespace-separated words, or use tokenizer
-                    outputTokenCount += max(1, delta.count / 4)
+                    outputTokenCount += TokenEstimator.estimate(delta)
                     continuation.yield(delta)
                 }
 
@@ -543,7 +542,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                         toolChoice: request.tool_choice,
                         requestedModel: request.model
                     )
-                    let outputTokens = max(1, text.count / 4)
+                    let outputTokens = TokenEstimator.estimate(text)
                     let choice = ChatChoice(
                         index: 0,
                         message: ChatMessage(
@@ -622,7 +621,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                 parameters: params,
                 requestedModel: request.model
             )
-            let outputTokens = max(1, text.count / 4)
+            let outputTokens = TokenEstimator.estimate(text)
             let choice = ChatChoice(
                 index: 0,
                 message: ChatMessage(role: "assistant", content: text, tool_calls: nil, tool_call_id: nil),

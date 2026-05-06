@@ -1427,7 +1427,7 @@ final class PluginHostContext: @unchecked Sendable {
                         "dimensions": vec.count,
                     ])
                 }
-                let tokenEstimate = texts.reduce(0) { $0 + max(1, $1.count / 4) }
+                let tokenEstimate = texts.reduce(0) { $0 + TokenEstimator.estimate($1) }
                 let response: [String: Any] = [
                     "model": json["model"] as? String ?? EmbeddingService.modelName,
                     "data": embeddings,

@@ -1,9 +1,9 @@
 //
 //  SystemPromptDefaultIdentityTests.swift
 //
-//  Regression: the unconditional `defaultIdentity` block in
-//  `SystemPromptTemplates` must NOT name any chat-layer-intercepted tools
-//  (`todo`, `complete`, `share_artifact`, `clarify`, `capabilities_search`)
+//  Regression: the unconditional `platformIdentity` and `defaultPersona`
+//  blocks in `SystemPromptTemplates` must NOT name any chat-layer-intercepted
+//  tools (`todo`, `complete`, `share_artifact`, `clarify`, `capabilities_search`)
 //  or sandbox / folder tools. Naming them in the always-on system prompt
 //  caused MiniMax M2.7 Small JANGTQ (and other low-bit MoE models) to fall
 //  into a recitation loop on chats where those tools weren't actually in
@@ -22,22 +22,19 @@ import Testing
 
 @testable import OsaurusCore
 
-@Suite("SystemPromptTemplates default identity tool-name leak guard")
+@Suite("SystemPromptTemplates platform + persona tool-name leak guard")
 struct SystemPromptDefaultIdentityTests {
 
-    /// The set of tool names that MUST NOT appear in `defaultIdentity`.
-    /// Each one has a separately-gated guidance block that only fires
-    /// when the tool is actually in the resolved schema.
+    /// The set of tool names that MUST NOT appear in the always-on
+    /// platform / persona blocks. Each one has a separately-gated guidance
+    /// block that only fires when the tool is actually in the resolved schema.
     private static let leakedToolNames: [String] = [
-        // Chat-layer intercepted (gated by `agentLoopGuidance`)
         "todo",
         "complete",
         "clarify",
         "share_artifact",
-        // Capability discovery (gated by `capabilityDiscoveryNudge`)
         "capabilities_search",
         "capabilities_load",
-        // Sandbox tools (gated by sandbox-section composer)
         "sandbox_read_file",
         "sandbox_edit_file",
         "sandbox_write_file",
@@ -48,67 +45,75 @@ struct SystemPromptDefaultIdentityTests {
         "sandbox_pip_install",
         "sandbox_npm_install",
         "sandbox_install",
-        // Folder tools (gated by `folderContext` composer)
         "file_tree",
         "file_search",
         "file_read",
         "file_edit",
         "file_write",
-        // Misc tools the model might know from training but that osaurus
-        // does not register by default
         "render_chart",
         "search_memory",
     ]
 
-    @Test("defaultIdentity does not name any chat-layer or sandbox tool")
-    func defaultIdentityDoesNotLeakToolNames() {
-        let identity = SystemPromptTemplates.defaultIdentity
+    @Test("platformIdentity does not name any tool")
+    func platformIdentityDoesNotLeakToolNames() {
+        let identity = SystemPromptTemplates.platformIdentity
         for name in Self.leakedToolNames {
             #expect(
                 !identity.contains(name),
-                "defaultIdentity must not mention `\(name)` — it leaked tool names cause low-bit MoE models (MiniMax M2.7 Small JANGTQ) to recite tool-spec text in a loop when the tool isn't in the request's tools[] array. Move the mention into the gated agentLoopGuidance / capabilityDiscoveryNudge / sandbox / folderContext block."
+                "platformIdentity must not mention `\(name)` — it's emitted unconditionally on every chat."
             )
         }
     }
 
-    /// Empty / whitespace base prompt → falls back to defaultIdentity.
+    @Test("defaultPersona does not name any chat-layer or sandbox tool")
+    func defaultPersonaDoesNotLeakToolNames() {
+        let persona = SystemPromptTemplates.defaultPersona
+        for name in Self.leakedToolNames {
+            #expect(
+                !persona.contains(name),
+                "defaultPersona must not mention `\(name)` — leaked tool names cause low-bit MoE models (MiniMax M2.7 Small JANGTQ) to recite tool-spec text in a loop when the tool isn't in the request's tools[] array. Move the mention into the gated agentLoopGuidance / capabilityDiscoveryNudge / sandbox / folderContext block."
+            )
+        }
+    }
+
+    /// Empty / whitespace base prompt → falls back to defaultPersona.
     /// Same leak guard applies after the fallback path.
-    @Test("effectiveBasePrompt('') falls back to defaultIdentity and stays clean")
+    @Test("effectivePersona('') falls back to defaultPersona and stays clean")
     func emptyBasePromptStaysClean() {
-        let resolved = SystemPromptTemplates.effectiveBasePrompt("")
+        let resolved = SystemPromptTemplates.effectivePersona("")
         for name in Self.leakedToolNames {
             #expect(
                 !resolved.contains(name),
-                "effectiveBasePrompt('') leaked `\(name)` via the defaultIdentity fallback"
+                "effectivePersona('') leaked `\(name)` via the defaultPersona fallback"
             )
         }
     }
 
-    @Test("effectiveBasePrompt(whitespace) also stays clean")
+    @Test("effectivePersona(whitespace) also stays clean")
     func whitespaceBasePromptStaysClean() {
-        let resolved = SystemPromptTemplates.effectiveBasePrompt("   \n\t  ")
+        let resolved = SystemPromptTemplates.effectivePersona("   \n\t  ")
         for name in Self.leakedToolNames {
             #expect(!resolved.contains(name))
         }
     }
 
-    /// User-customised base prompt is passed through verbatim — we do NOT
+    /// User-customised persona is passed through verbatim — we do NOT
     /// scrub their content. This test confirms the `?:` semantic in
-    /// `effectiveBasePrompt` so a future refactor doesn't accidentally
+    /// `effectivePersona` so a future refactor doesn't accidentally
     /// auto-strip user content.
-    @Test("user-supplied base prompt is passed through unchanged")
+    @Test("user-supplied persona is passed through unchanged")
     func userBasePromptIsRespected() {
         let userPrompt = "I am a custom assistant. Use `my_special_tool` always."
-        let resolved = SystemPromptTemplates.effectiveBasePrompt(userPrompt)
+        let resolved = SystemPromptTemplates.effectivePersona(userPrompt)
         #expect(resolved == userPrompt)
     }
 
     /// Sanity: the gated `agentLoopGuidance` block IS allowed to mention
     /// the four chat-layer-intercepted tool names, since it only fires
-    /// when those tools are present in the resolved schema (per
-    /// `SystemPromptComposer.swift:265-277`). This test guards against a
-    /// future "clean everything" refactor that strips the names from
-    /// EVERYWHERE — that would break the actual agent-loop UX.
+    /// when those tools are present in the resolved schema. This test
+    /// guards against a future "clean everything" refactor that strips
+    /// the names from EVERYWHERE — that would break the actual
+    /// agent-loop UX.
     @Test("agentLoopGuidance still names todo / complete / clarify / share_artifact")
     func agentLoopGuidanceStillCarriesTheNames() {
         let block = SystemPromptTemplates.agentLoopGuidance

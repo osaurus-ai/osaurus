@@ -28,9 +28,7 @@ public struct PromptSection: Sendable {
     }
 
     public var estimatedTokens: Int {
-        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return 0 }
-        return max(1, trimmed.count / ContextBudgetManager.charsPerToken)
+        TokenEstimator.estimate(content.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
     public var isEmpty: Bool {
@@ -151,7 +149,7 @@ struct ComposedContext: Sendable {
     /// first compose so subsequent composes can freeze the schema against
     /// it via `frozenAlwaysLoadedNames` — preventing tools that register
     /// mid-session from silently appearing in turn 2.
-    let alwaysLoadedNames: Set<String>
+    let alwaysLoadedNames: LoadedTools
     /// Hash of the static prefix + tool names for KV cache lookup.
     let cacheHint: String
     /// Rendered static-only system content for prefix cache building.

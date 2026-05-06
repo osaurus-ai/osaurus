@@ -355,13 +355,15 @@ public struct Attachment: Codable, Sendable, Equatable, Identifiable {
     public var estimatedTokens: Int {
         switch kind {
         case .image(let data):
-            return max(1, (data.count * 4) / 3 / 4)
+            // Base64-encoded byte expansion (×4/3) then chars→tokens via
+            // the canonical heuristic.
+            return max(1, (data.count * 4) / 3 / TokenEstimator.charsPerToken)
         case .imageRef(_, let byteCount):
-            return max(1, (byteCount * 4) / 3 / 4)
+            return max(1, (byteCount * 4) / 3 / TokenEstimator.charsPerToken)
         case .document(_, let content, _):
-            return max(1, content.count / 4)
+            return TokenEstimator.estimate(content)
         case .documentRef(_, _, let fileSize):
-            return max(1, fileSize / 4)
+            return max(1, fileSize / TokenEstimator.charsPerToken)
         case .audio(let data, _, _):
             // ~50 acoustic tokens/sec @ 16kHz mono → ~1 token / 640 bytes
             return max(1, data.count / 640)

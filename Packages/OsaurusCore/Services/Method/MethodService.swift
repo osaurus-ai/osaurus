@@ -41,7 +41,7 @@ public actor MethodService {
     ) async throws -> Method {
         let toolsUsed = extractToolIds(from: body)
         let skillsUsed = extractSkillIds(from: body)
-        let tokenCount = max(1, body.count / 4)
+        let tokenCount = TokenEstimator.estimate(body)
 
         let method = Method(
             name: name,

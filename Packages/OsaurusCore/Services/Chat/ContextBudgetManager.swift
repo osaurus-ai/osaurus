@@ -45,7 +45,8 @@ public struct ContextBreakdown: Equatable, Sendable {
     /// Tint for a given prompt section ID.
     static func tint(for sectionId: String) -> Tint {
         switch sectionId {
-        case "base": return .purple
+        case "platform": return .indigo
+        case "persona": return .purple
         case "sandbox": return .teal
         case "memory": return .blue
         case "preflight": return .cyan
@@ -110,9 +111,7 @@ public struct ContextBreakdown: Equatable, Sendable {
     }
 
     private static func estimateTokens(for text: String) -> Int {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return 0 }
-        return max(1, trimmed.count / ContextBudgetManager.charsPerToken)
+        TokenEstimator.estimate(text.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
     /// Update the token count for an entry by ID, or append it if not present.
@@ -151,9 +150,6 @@ public struct ContextBudgetManager: Sendable {
     /// Accounts for imprecision in the 4-chars/token heuristic.
     public static let safetyMargin: Double = 0.85
 
-    /// Approximate characters per token (consistent with codebase heuristic)
-    static let charsPerToken: Int = 4
-
     /// The effective token budget (context length * safety margin)
     public let effectiveBudget: Int
 
@@ -184,7 +180,7 @@ public struct ContextBudgetManager: Sendable {
     ///   - category: The budget category
     ///   - characters: Number of characters to convert and reserve
     public mutating func reserveByCharCount(_ category: ContextBudgetCategory, characters: Int) {
-        reservations[category] = max(1, characters / Self.charsPerToken)
+        reservations[category] = max(1, characters / TokenEstimator.charsPerToken)
     }
 
     /// Total tokens reserved across all non-history categories
@@ -199,25 +195,29 @@ public struct ContextBudgetManager: Sendable {
 
     /// Estimate token count for a string
     public static func estimateTokens(for text: String?) -> Int {
-        guard let text = text, !text.isEmpty else { return 0 }
-        return max(1, text.count / charsPerToken)
+        TokenEstimator.estimate(text)
     }
 
     /// Estimate token count for a set of chat turns (conversation history).
     static func estimateTokens(for turns: [ChatTurn]) -> Int {
         turns.reduce(0) { total, turn in
             var t = 0
-            if !turn.contentIsEmpty { t += max(1, turn.contentLength / charsPerToken) }
+            if !turn.contentIsEmpty {
+                t += max(1, turn.contentLength / TokenEstimator.charsPerToken)
+            }
             if let calls = turn.toolCalls {
                 for call in calls {
-                    t += max(1, (call.function.name.count + call.function.arguments.count) / charsPerToken)
+                    t += TokenEstimator.toolCallTokens(
+                        name: call.function.name,
+                        arguments: call.function.arguments
+                    )
                 }
             }
             for (_, result) in turn.toolResults {
-                t += max(1, result.count / charsPerToken)
+                t += max(1, result.count / TokenEstimator.charsPerToken)
             }
             if turn.hasThinking {
-                t += max(1, turn.thinkingLength / charsPerToken)
+                t += max(1, turn.thinkingLength / TokenEstimator.charsPerToken)
             }
             for attachment in turn.attachments {
                 t += attachment.estimatedTokens
@@ -230,14 +230,17 @@ public struct ContextBudgetManager: Sendable {
     static func estimateOutputTokens(for turn: ChatTurn) -> Int {
         var tokens = 0
         if !turn.contentIsEmpty {
-            tokens += max(1, turn.contentLength / charsPerToken)
+            tokens += max(1, turn.contentLength / TokenEstimator.charsPerToken)
         }
         if turn.hasThinking {
-            tokens += max(1, turn.thinkingLength / charsPerToken)
+            tokens += max(1, turn.thinkingLength / TokenEstimator.charsPerToken)
         }
         if let calls = turn.toolCalls {
             for call in calls {
-                tokens += max(1, (call.function.name.count + call.function.arguments.count) / charsPerToken)
+                tokens += TokenEstimator.toolCallTokens(
+                    name: call.function.name,
+                    arguments: call.function.arguments
+                )
             }
         }
         return tokens
@@ -251,16 +254,18 @@ public struct ContextBudgetManager: Sendable {
     /// Estimate total tokens for a message array
     static func estimateTokens(for messages: [ChatMessage]) -> Int {
         return messages.reduce(0) { total, msg in
-            var msgTokens = estimateTokens(for: msg.content)
-            // Account for tool call arguments in assistant messages
+            var msgTokens = TokenEstimator.estimate(msg.content)
             if let toolCalls = msg.tool_calls {
                 for tc in toolCalls {
-                    msgTokens += estimateTokens(for: tc.function.arguments)
-                    msgTokens += max(1, (tc.function.name.count + tc.id.count + 20) / charsPerToken)
+                    msgTokens += TokenEstimator.estimate(tc.function.arguments)
+                    msgTokens += TokenEstimator.toolCallTokens(
+                        name: tc.function.name,
+                        arguments: "",
+                        id: tc.id
+                    )
                 }
             }
-            // Per-message overhead (role, delimiters, etc.) ~4 tokens
-            msgTokens += 4
+            msgTokens += TokenEstimator.messageOverheadTokens
             return total + msgTokens
         }
     }

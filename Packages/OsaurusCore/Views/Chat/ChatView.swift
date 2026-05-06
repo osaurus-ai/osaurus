@@ -1055,7 +1055,7 @@ final class ChatSession: ObservableObject {
             let userChunkIndex = chunkIdx - 1
             let conversationTitle = title
             let userContent = context.userContent
-            let userTokenCount = max(1, userContent.count / 4)
+            let userTokenCount = TokenEstimator.estimate(userContent)
 
             // Move the SQL insert + Vectura indexing off the main
             // actor. Previously `db.insertTranscriptTurn` was called
@@ -1090,7 +1090,7 @@ final class ChatSession: ObservableObject {
             }
 
             if let assistantContent, !assistantContent.isEmpty {
-                let assistantTokenCount = max(1, assistantContent.count / 4)
+                let assistantTokenCount = TokenEstimator.estimate(assistantContent)
                 Task.detached {
                     let db = MemoryDatabase.shared
                     do {

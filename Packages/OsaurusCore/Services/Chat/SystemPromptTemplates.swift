@@ -13,13 +13,21 @@ public enum SystemPromptTemplates {
 
     // MARK: - Identity
 
-    /// Default identity used when the user has not configured a base prompt.
+    /// Platform framing — emitted unconditionally as a stable, non-customizable
+    /// section ahead of the user's persona. Tells the model where it's
+    /// running so a custom persona doesn't accidentally erase that context.
+    /// Names no tools (see `defaultPersona` for why).
+    public static let platformIdentity =
+        "You are an Osaurus chat agent running locally on the user's Mac."
+
+    /// Default persona used when the user has not configured a custom one.
     /// Frames the agent as tool-driven so models don't reflexively say
-    /// "I cannot do that" when they actually can.
+    /// "I cannot do that" when they actually can. Behavior-only — platform
+    /// framing lives separately in `platformIdentity`.
     ///
     /// **Tool names are deliberately NOT mentioned here.** Naming `todo` /
     /// `complete` / `share_artifact` / `clarify` / `capabilities_search`
-    /// in the unconditional identity caused MiniMax M2.7 Small JANGTQ
+    /// in the unconditional persona caused MiniMax M2.7 Small JANGTQ
     /// (and other low-bit MoE models) to fall into a recitation loop on
     /// any chat where those tools weren't actually in the request's
     /// `tools[]` array — the model saw the names in the system prompt,
@@ -32,20 +40,18 @@ public enum SystemPromptTemplates {
     /// which fire ONLY when the corresponding tool is actually resolved
     /// into the schema. Sandbox-/folder-tool hints are similarly gated
     /// at their composer call-sites.
-    public static let defaultIdentity = """
-        You are an Osaurus chat agent running locally on the user's Mac.
-
+    public static let defaultPersona = """
         Use the tools available in this conversation when they raise \
         correctness or ground a claim in real data; do not narrate intent \
         before acting. If no tools are listed, answer directly from your \
         own knowledge.
         """
 
-    /// Returns the effective base prompt, falling back to `defaultIdentity`
+    /// Returns the effective persona, falling back to `defaultPersona`
     /// when the user has not configured one.
-    public static func effectiveBasePrompt(_ basePrompt: String) -> String {
+    public static func effectivePersona(_ basePrompt: String) -> String {
         let trimmed = basePrompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? defaultIdentity : trimmed
+        return trimmed.isEmpty ? defaultPersona : trimmed
     }
 
     // MARK: - Agent Loop
@@ -162,7 +168,7 @@ public enum SystemPromptTemplates {
         Tool usage — pick the dedicated tool, not its shell equivalent:
         - **Do NOT use `cat`/`head`/`tail` to read files** — use `sandbox_read_file`.
         - **Do NOT use `grep`/`rg`/`find`/`ls` to search** — use `sandbox_search_files`. \
-          `target="content"` (default) searches inside files; `target="files"` finds by name.
+        `target="content"` (default) searches inside files; `target="files"` finds by name.
         - **Do NOT use `sed`/`awk` to edit files** — use `sandbox_edit_file` (old_string -> new_string).
         - **Do NOT use `echo`/`cat` heredoc to create files** — use `sandbox_write_file`.
         - Read before edit: `sandbox_read_file` first; never modify code you have not inspected.

@@ -75,19 +75,22 @@ public struct ContextDisableInfo: Equatable, Sendable {
     /// Build the popover-facing summary for a resolved size class.
     /// Returns `nil` when the class is `.normal` or both axes were
     /// already off at the agent level (nothing for the auto-disable
-    /// to take credit for). Centralised so `composeChatContext` and
-    /// `composePreviewContext` produce identical info.
-    public init?(
+    /// to take credit for). Named factory so the "should this surface
+    /// to the popover?" predicate lives at the constructor boundary
+    /// instead of being smuggled inside a failable `init?` — callers
+    /// that just want to model the disable info pass concrete flags
+    /// to the regular initialiser.
+    public static func from(
         sizeClass: ContextSizeClass,
         modelId: String?,
         contextLength: Int?,
         agentToolsOff: Bool,
         agentMemoryOff: Bool
-    ) {
+    ) -> ContextDisableInfo? {
         let disabledTools = sizeClass.disablesTools && !agentToolsOff
         let disabledMemory = sizeClass.disablesMemory && !agentMemoryOff
         guard sizeClass != .normal, disabledTools || disabledMemory else { return nil }
-        self.init(
+        return ContextDisableInfo(
             sizeClass: sizeClass,
             modelId: modelId,
             contextLength: contextLength,
@@ -95,6 +98,28 @@ public struct ContextDisableInfo: Equatable, Sendable {
             disabledMemory: disabledMemory
         )
     }
+}
+
+// MARK: - ContextWindowInfo
+
+/// `(sizeClass, contextLength)` pair returned by `ContextSizeResolver`.
+/// Replaces the bare tuple so call sites read field names instead of
+/// destructuring an anonymous pair, and so the type can grow new
+/// fields (model family, raw provider hint) without breaking every
+/// `let (a, b) = resolve(...)` site.
+public struct ContextWindowInfo: Sendable, Equatable {
+    public let sizeClass: ContextSizeClass
+    public let contextLength: Int?
+
+    public init(sizeClass: ContextSizeClass, contextLength: Int?) {
+        self.sizeClass = sizeClass
+        self.contextLength = contextLength
+    }
+
+    /// Conservative default returned when the model id is unknown or
+    /// blank — keeps tools and memory enabled so we never hide them
+    /// speculatively before the picker has resolved a model.
+    public static let unknown = ContextWindowInfo(sizeClass: .normal, contextLength: nil)
 }
 
 // MARK: - Resolver
@@ -121,9 +146,9 @@ public enum ContextSizeResolver {
     ///   composer on a fresh window) — in that case the caller
     ///   doesn't know the budget, so we conservatively return
     ///   `.normal` to avoid hiding tools speculatively.
-    public static func resolve(modelId: String?) -> (ContextSizeClass, Int?) {
+    public static func resolve(modelId: String?) -> ContextWindowInfo {
         guard let modelId, !modelId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        else { return (.normal, nil) }
+        else { return .unknown }
 
         // Foundation's nominal context isn't readable through
         // `ModelInfo.load` (no MLX `config.json` on disk). Match the
@@ -135,15 +160,19 @@ public enum ContextSizeResolver {
         if trimmed.caseInsensitiveCompare("foundation") == .orderedSame
             || trimmed.caseInsensitiveCompare("default") == .orderedSame
         {
-            return (.tiny, tinyCeiling)
+            return ContextWindowInfo(sizeClass: .tiny, contextLength: tinyCeiling)
         }
 
         guard let info = ModelInfo.load(modelId: modelId),
             let ctx = info.model.contextLength
-        else { return (.normal, nil) }
+        else { return .unknown }
 
-        if ctx <= tinyCeiling { return (.tiny, ctx) }
-        if ctx <= smallCeiling { return (.small, ctx) }
-        return (.normal, ctx)
+        if ctx <= tinyCeiling {
+            return ContextWindowInfo(sizeClass: .tiny, contextLength: ctx)
+        }
+        if ctx <= smallCeiling {
+            return ContextWindowInfo(sizeClass: .small, contextLength: ctx)
+        }
+        return ContextWindowInfo(sizeClass: .normal, contextLength: ctx)
     }
 }
