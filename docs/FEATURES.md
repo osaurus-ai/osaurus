@@ -511,7 +511,7 @@ See [INFERENCE_RUNTIME.md](./INFERENCE_RUNTIME.md) for the full runtime architec
 - `Tools/FolderToolManager.swift` — Registers folder tools when a working folder is selected; unregisters on clear. `share_artifact` is no longer registered here — it lives as a global built-in alongside the loop tools.
 - `Folder/FolderContext.swift` — Project type, file tree, manifest, git status, optional `AGENTS.md`/`CLAUDE.md`/`.cursorrules`
 - `Folder/FolderContextService.swift` — `NSOpenPanel`, security-scoped bookmark persistence, MainActor service
-- `Folder/FolderTools.swift` — File/coding/git tool implementations + `FolderToolFactory`
+- `Folder/FolderTools.swift` — File / shell / git tool implementations + `FolderToolFactory`
 - `Folder/ChatExecutionContext.swift` — TaskLocal session/agent/batch IDs read by tools at execution time
 - `Folder/ExecutionMode.swift` — First-class `.hostFolder | .sandbox | .none` enum
 - `Folder/FileOperation.swift`, `Folder/FileOperationLog.swift` — Per-op log used for undo
@@ -524,7 +524,7 @@ See [INFERENCE_RUNTIME.md](./INFERENCE_RUNTIME.md) for the full runtime architec
 - **`todo` / `complete` / `clarify`** — Three minimal-schema global built-in tools whose results the chat layer intercepts to drive the inline UI (not a pre-dispatch hook — the registry runs them like any other tool)
 - **Single mode resolver** — `ToolRegistry.resolveExecutionMode(folderContext:autonomousEnabled:)` decides sandbox > host folder > none for chat, plugin, and HTTP entry points
 - **Working folder picker** — Per-chat folder via `FolderContextService`, with security-scoped bookmark persistence
-- **Project-aware tools** — File/coding/git tools registered automatically when a folder is selected; tool kit varies by project type and git status
+- **Project-aware tools** — Core file tools + `shell_run` registered for every folder mount; git tools layered on when the folder is a git repo. Project type only changes the file-tree ignore patterns (and prompt metadata), not the tool surface.
 - **Sandbox toggle** — Mutually exclusive with the working-folder backend; selecting a folder disables sandbox autonomous exec and vice versa
 - **`share_artifact`** — Only path for the user to see files the agent produced
 **Loop Tools (engine-intercepted):**
@@ -542,9 +542,9 @@ See [INFERENCE_RUNTIME.md](./INFERENCE_RUNTIME.md) for the full runtime architec
 | `file_tree`       | Core     | Directory structure with project-aware ignore patterns            |
 | `file_read`       | Core     | Read with line ranges or tail mode                                |
 | `file_write`      | Core     | Create or overwrite                                               |
-| `file_edit`       | Coding   | Surgical exact-string replacement                                 |
-| `file_search`     | Coding   | ripgrep-style search                                              |
-| `shell_run`       | Coding   | Run a shell command (requires approval). Registered when project type detected. Use for `mv`/`cp`/`rm`/`mkdir`. |
+| `file_edit`       | Core     | Surgical exact-string replacement                                 |
+| `file_search`     | Core     | ripgrep-style search                                              |
+| `shell_run`       | Core     | Run a shell command (requires approval). Reserve for `mv`/`cp`/`rm`/`mkdir`, builds, tests, git, installs. |
 | `git_status`      | Git      | Repository status. Registered when `.git` present.                |
 | `git_diff`        | Git      | Show diffs                                                        |
 | `git_commit`      | Git      | Stage + commit (requires approval)                                |

@@ -109,14 +109,11 @@ Built by [`FolderToolFactory`](../Packages/OsaurusCore/Folder/FolderTools.swift)
 | `file_write`    | Create or overwrite files. Use this instead of `echo`/`cat` heredoc. |
 | `file_edit`     | Surgical exact-string replacement. Use this instead of `sed`/`awk`. |
 | `file_search`   | ripgrep-style search across the folder. Use this instead of `grep`/`rg`/`find`. |
+| `shell_run`     | Execute a shell command (requires approval). Reserve for `mv`/`cp`/`rm`/`mkdir`, builds, tests, git, installs, and any work that can't be expressed via the dedicated `file_*` tools. |
 
 The previously-discrete `file_move`, `file_copy`, `file_delete`, `dir_create`, and `batch` tools were dropped — `mv`, `cp`, `rm`, and `mkdir` go through `shell_run` so the model picks "shell command" once instead of differentiating four near-identical tool names. Multi-step orchestration goes through `shell_run` chains.
 
-**Coding (registered when project type is detected):**
-
-| Tool        | Description                                |
-| ----------- | ------------------------------------------ |
-| `shell_run` | Execute a shell command (requires approval). Reserve for `mv`/`cp`/`rm`/`mkdir`, builds, installs, and any work that can't be expressed via the dedicated `file_*` tools. |
+`shell_run` lives in the core set so it's available for every folder mount, regardless of whether a project type was detected; the folder-section prompt names it unconditionally and the registration matrix has to follow.
 
 **Git (registered when the folder is a git repo):**
 
