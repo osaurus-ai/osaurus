@@ -25,6 +25,32 @@ public struct SkillSearchResult: Sendable {
     }
 }
 
+/// Diagnostic snapshot for `SkillSearchService.searchWithDiagnostic`. Mirror
+/// of `ToolSearchDiagnostic` / `MethodSearchDiagnostic`; same usage gates
+/// (env-flag trace + offline eval).
+public struct SkillSearchDiagnostic: Sendable {
+    public struct Hit: Sendable {
+        public let name: String
+        public let score: Float
+        public init(name: String, score: Float) {
+            self.name = name
+            self.score = score
+        }
+    }
+
+    public let indexedSkillCount: Int
+    public let rawHits: [Hit]
+    public let acceptedHits: [Hit]
+    public let threshold: Float
+
+    public init(indexedSkillCount: Int, rawHits: [Hit], acceptedHits: [Hit], threshold: Float) {
+        self.indexedSkillCount = indexedSkillCount
+        self.rawHits = rawHits
+        self.acceptedHits = acceptedHits
+        self.threshold = threshold
+    }
+}
+
 public actor SkillSearchService {
     public static let shared = SkillSearchService()
 
@@ -157,6 +183,25 @@ public actor SkillSearchService {
             SkillSearchLogger.search.error("Skill search failed: \(error)")
             return []
         }
+    }
+
+    /// Diagnostic-capturing search. See `ToolSearchService.searchWithDiagnostic`
+    /// for the rationale of the two-pass design.
+    public func searchWithDiagnostic(
+        query: String,
+        topK: Int,
+        threshold: Float
+    ) async -> (results: [SkillSearchResult], diagnostic: SkillSearchDiagnostic) {
+        let indexedCount = await MainActor.run { SkillManager.shared.skills.count }
+        let raw = await search(query: query, topK: topK, threshold: 0.0)
+        let accepted = await search(query: query, topK: topK, threshold: threshold)
+        let diagnostic = SkillSearchDiagnostic(
+            indexedSkillCount: indexedCount,
+            rawHits: raw.map { SkillSearchDiagnostic.Hit(name: $0.skill.name, score: $0.searchScore) },
+            acceptedHits: accepted.map { SkillSearchDiagnostic.Hit(name: $0.skill.name, score: $0.searchScore) },
+            threshold: threshold
+        )
+        return (accepted, diagnostic)
     }
 
     // MARK: - Rebuild

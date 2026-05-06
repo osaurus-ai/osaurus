@@ -1,0 +1,11 @@
+{
+  "_comment": "Recall floors for `osaurus-evals run --fail-on-floor`. Keys are case `id` strings \u2014 must match the fixture id exactly. The `--fail-on-floor` flag is OPT-IN and not yet wired into CI. Two `capability_search` cases are intentionally OMITTED as tracking-only: (1) `capability_search.shell-execution` because `sandbox_exec` / `sandbox_execute_code` are excluded from the search index by design (ToolIndexService.syncFromRegistry's runtimeManagedToolNames exclusion); (2) `capability_search.abstain-greeting` because RRF with k=60 caps the max fused score at ~0.033, compressing the gap between abstain noise (top 0.032) and legitimate recall (top 0.033) below any usable threshold \u2014 a proper abstain mechanism is a follow-up issue. The remaining floors match each case's fixture `minMatches` so the gate is consistent with the assertions the runner already enforces.",
+  "capability_search": {
+    "capability_search.browser-prefix": { "minMatches": 5 },
+    "capability_search.extract-webpage-natural": { "minMatches": 1 },
+    "capability_search.weather-natural": { "minMatches": 1 }
+  },
+  "preflight": {
+    "preflight.browser.natural": { "minMatches": 1 }
+  }
+}

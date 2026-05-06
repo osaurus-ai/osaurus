@@ -1,0 +1,17 @@
+{
+  "id": "capability_search.weather-natural",
+  "domain": "capability_search",
+  "label": "capability search • weather (natural language)",
+  "query": "what's the weather in tokyo",
+  "fixtures": {
+    "requirePlugins": ["osaurus.weather"]
+  },
+  "expect": {
+    "capabilitySearch": {
+      "expectedTools": {
+        "anyOf": ["get_weather", "weather_forecast"],
+        "minMatches": 1
+      }
+    }
+  }
+}

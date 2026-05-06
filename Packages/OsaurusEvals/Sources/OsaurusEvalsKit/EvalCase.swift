@@ -31,6 +31,14 @@ public struct EvalCase: Sendable, Codable, Identifiable {
     public let label: String?
     /// User message the case sends through preflight.
     public let query: String
+    /// Free-form per-case explanatory text. Echoed into the report's
+    /// per-case `notes` array so a reader sees WHY a case is shaped the
+    /// way it is. Used today to call out cases that are intentionally
+    /// red (e.g. `capability_search.shell-execution` — `sandbox_exec`
+    /// is excluded from the search index by design, so no recall fix
+    /// can rescue it). Avoid using this as a debug log; keep it short
+    /// and structural.
+    public let notes: String?
     public let fixtures: Fixtures
     public let expect: Expectations
 
@@ -39,6 +47,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         domain: String,
         label: String? = nil,
         query: String,
+        notes: String? = nil,
         fixtures: Fixtures,
         expect: Expectations
     ) {
@@ -46,6 +55,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         self.domain = domain
         self.label = label
         self.query = query
+        self.notes = notes
         self.fixtures = fixtures
         self.expect = expect
     }
@@ -82,6 +92,15 @@ public struct EvalCase: Sendable, Codable, Identifiable {
     /// scope its assertions narrowly. An empty `Expectations` is valid
     /// — it acts as a smoke-test that just records what preflight did
     /// without scoring anything (useful while bootstrapping a new case).
+    ///
+    /// TODO(eval-shape-unification): `tools.mustInclude` (preflight)
+    /// and `capabilitySearch.expectedTools.anyOf` are two different
+    /// shapes for asserting on tool sets across two sibling domains.
+    /// Worth one cleanup pass once both runners have stabilised — pick
+    /// the union (`mustInclude` + `mustNotInclude` + `anyOf` +
+    /// `minMatches`) and have both domains use it. Don't block the
+    /// hybrid PR on this; surfacing the divergence here so the next
+    /// contributor sees it.
     public struct Expectations: Sendable, Codable {
         public let tools: ToolExpectations?
         public let companions: CompanionExpectations?
@@ -96,6 +115,11 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         public let prefixHash: PrefixHashExpectations?
         public let argumentCoercion: ArgumentCoercionExpectations?
         public let requestValidation: RequestValidationExpectations?
+        /// Recall expectation for `domain == "capability_search"` cases.
+        /// Drives the index-only path through `CapabilitySearchEvaluator`
+        /// — no LLM, fast, deterministic. Used to lock in recall floors
+        /// against the embedder + threshold layer that feeds preflight.
+        public let capabilitySearch: CapabilitySearchExpectations?
 
         public init(
             tools: ToolExpectations? = nil,
@@ -105,7 +129,8 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             streamingHint: StreamingHintExpectations? = nil,
             prefixHash: PrefixHashExpectations? = nil,
             argumentCoercion: ArgumentCoercionExpectations? = nil,
-            requestValidation: RequestValidationExpectations? = nil
+            requestValidation: RequestValidationExpectations? = nil,
+            capabilitySearch: CapabilitySearchExpectations? = nil
         ) {
             self.tools = tools
             self.companions = companions
@@ -115,6 +140,54 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.prefixHash = prefixHash
             self.argumentCoercion = argumentCoercion
             self.requestValidation = requestValidation
+            self.capabilitySearch = capabilitySearch
+        }
+    }
+
+    /// Recall expectation for the `capability_search` domain. Each
+    /// non-nil `expected*` matcher must overlap the accepted hits by
+    /// at least `minMatches`; `maxAccepted` (when set) caps total
+    /// accepted hits — used by abstain-style cases so a permissive
+    /// threshold can't silently drown the user in noise.
+    public struct CapabilitySearchExpectations: Sendable, Codable {
+        public struct AnyOfMatcher: Sendable, Codable {
+            public let anyOf: [String]
+            public let minMatches: Int
+
+            public init(anyOf: [String], minMatches: Int) {
+                self.anyOf = anyOf
+                self.minMatches = minMatches
+            }
+        }
+
+        /// Per-case `topK` override forwarded to
+        /// `CapabilitySearchEvaluator.evaluate(query:topK:threshold:)`.
+        /// `nil` uses the evaluator's default of 10.
+        public let topK: Int?
+        /// Per-case threshold. The CLI `--threshold` flag wins when set.
+        public let thresholdOverride: Float?
+        public let expectedTools: AnyOfMatcher?
+        public let expectedMethods: AnyOfMatcher?
+        public let expectedSkills: AnyOfMatcher?
+        /// Cap on total accepted-hit count across tools+methods+skills.
+        /// `nil` = no cap. `0` = abstain-style: ANY accepted hit fails
+        /// the case.
+        public let maxAccepted: Int?
+
+        public init(
+            topK: Int? = nil,
+            thresholdOverride: Float? = nil,
+            expectedTools: AnyOfMatcher? = nil,
+            expectedMethods: AnyOfMatcher? = nil,
+            expectedSkills: AnyOfMatcher? = nil,
+            maxAccepted: Int? = nil
+        ) {
+            self.topK = topK
+            self.thresholdOverride = thresholdOverride
+            self.expectedTools = expectedTools
+            self.expectedMethods = expectedMethods
+            self.expectedSkills = expectedSkills
+            self.maxAccepted = maxAccepted
         }
     }
 

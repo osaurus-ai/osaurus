@@ -89,7 +89,7 @@ public enum ToolIndexSource: String, Codable, Sendable {
 public final class ToolDatabase: @unchecked Sendable {
     public static let shared = ToolDatabase()
 
-    private static let schemaVersion = 1
+    private static let schemaVersion = 2
 
     nonisolated(unsafe) private static let iso8601Formatter: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
@@ -182,6 +182,7 @@ public final class ToolDatabase: @unchecked Sendable {
     private func runMigrations() throws {
         let currentVersion = try getSchemaVersion()
         if currentVersion < 1 { try migrateToV1() }
+        if currentVersion < 2 { try migrateToV2() }
     }
 
     private func getSchemaVersion() throws -> Int {
@@ -219,6 +220,78 @@ public final class ToolDatabase: @unchecked Sendable {
 
         try executeRaw("CREATE INDEX IF NOT EXISTS idx_tool_index_runtime ON tool_index(runtime)")
         try setSchemaVersion(1)
+    }
+
+    /// Adds an FTS5 mirror over `tool_index(name, description)` so the
+    /// hybrid search path (`ToolSearchService.searchHybrid`) has a
+    /// real BM25 source to fuse with the embedding side. External-
+    /// content + triggers + initial backfill keeps the mirror in sync
+    /// with `tool_index` going forward; we never write to
+    /// `tool_index_fts` directly outside the trigger bodies.
+    ///
+    /// Tokenizer: `unicode61 remove_diacritics 2` is the modern
+    /// FTS5 default for English-mostly corpora — handles tool name
+    /// snake_case via the unicode61 separator class, strips diacritics,
+    /// and avoids the legacy `simple` tokenizer's punctuation
+    /// quirks.
+    private func migrateToV2() throws {
+        try executeRaw(
+            """
+                CREATE VIRTUAL TABLE IF NOT EXISTS tool_index_fts USING fts5(
+                    name, description,
+                    content='tool_index', content_rowid='rowid',
+                    tokenize='unicode61 remove_diacritics 2'
+                )
+            """
+        )
+        try executeRaw(
+            """
+                CREATE TRIGGER IF NOT EXISTS tool_index_ai AFTER INSERT ON tool_index BEGIN
+                    INSERT INTO tool_index_fts(rowid, name, description)
+                    VALUES (new.rowid, new.name, new.description);
+                END
+            """
+        )
+        try executeRaw(
+            """
+                CREATE TRIGGER IF NOT EXISTS tool_index_ad AFTER DELETE ON tool_index BEGIN
+                    INSERT INTO tool_index_fts(tool_index_fts, rowid, name, description)
+                    VALUES('delete', old.rowid, old.name, old.description);
+                END
+            """
+        )
+        try executeRaw(
+            """
+                CREATE TRIGGER IF NOT EXISTS tool_index_au AFTER UPDATE ON tool_index BEGIN
+                    INSERT INTO tool_index_fts(tool_index_fts, rowid, name, description)
+                    VALUES('delete', old.rowid, old.name, old.description);
+                    INSERT INTO tool_index_fts(rowid, name, description)
+                    VALUES (new.rowid, new.name, new.description);
+                END
+            """
+        )
+
+        // Backfill existing rows. Wrapped in a transaction so the FTS5
+        // doclist commits in one fsync (orders-of-magnitude faster on
+        // hosts with many MCP tools) and so a partial-failure leaves the
+        // mirror in either fully-empty or fully-populated state — never
+        // halfway. This migration fires once, on the first DB open after
+        // the schemaVersion bump from 1 → 2; subsequent opens skip via
+        // the `getSchemaVersion()` short-circuit in `runMigrations()`.
+        try executeRaw("BEGIN")
+        do {
+            try executeRaw(
+                """
+                    INSERT INTO tool_index_fts(rowid, name, description)
+                    SELECT rowid, name, description FROM tool_index
+                """
+            )
+            try executeRaw("COMMIT")
+        } catch {
+            try? executeRaw("ROLLBACK")
+            throw error
+        }
+        try setSchemaVersion(2)
     }
 
     // MARK: - Raw Execution
@@ -340,6 +413,26 @@ public final class ToolDatabase: @unchecked Sendable {
         return entries
     }
 
+    /// Lightweight name-only listing keyed by `source`. Used by the
+    /// capability-search health probe (`CapabilitySearchDiagnostics`) to
+    /// compute registry-vs-index name diffs without paying the full row
+    /// deserialisation cost of `loadAllEntries()` (the JSON `tools_json`
+    /// blob in particular). Sub-millisecond on a 100-entry index in
+    /// practice; budgeted to 50ms by callers.
+    public func loadAllEntryNames(source: ToolIndexSource) throws -> [String] {
+        var names: [String] = []
+        try prepareAndExecute(
+            "SELECT id FROM tool_index WHERE source = ?1 ORDER BY name",
+            bind: { stmt in Self.bindText(stmt, index: 1, value: source.rawValue) },
+            process: { stmt in
+                while sqlite3_step(stmt) == SQLITE_ROW {
+                    names.append(String(cString: sqlite3_column_text(stmt, 0)))
+                }
+            }
+        )
+        return names
+    }
+
     public func entryCount() throws -> Int {
         var count = 0
         try prepareAndExecute(
@@ -352,6 +445,84 @@ public final class ToolDatabase: @unchecked Sendable {
             }
         )
         return count
+    }
+
+    // MARK: - BM25 (FTS5)
+
+    /// Lexical search over the FTS5 mirror. Returns up to `topK`
+    /// `(toolId, score)` pairs ordered by relevance (higher is
+    /// better). SQLite's `bm25()` returns NEGATIVE scores where lower
+    /// = better match — we negate inside the SELECT so callers don't
+    /// have to remember the inversion.
+    ///
+    /// Returns `[]` (no throw) when `sanitizeFTS5Query` produces no
+    /// usable tokens (all-punctuation queries, etc.) — the hybrid
+    /// caller is expected to fall through to the embedding side via
+    /// RRF in that case.
+    ///
+    /// Synchronous: matches the existing `loadAllEntries` /
+    /// `entryCount` pattern (queue-serialised under the hood). On a
+    /// 100-row index this is sub-millisecond; the caller in
+    /// `ToolSearchService.searchHybrid` runs it inline before
+    /// launching the slower async embed call.
+    public func searchBM25(query: String, topK: Int) throws -> [(id: String, score: Float)] {
+        guard let prepared = Self.sanitizeFTS5Query(query) else { return [] }
+        var results: [(id: String, score: Float)] = []
+        try prepareAndExecute(
+            """
+            SELECT t.id, -bm25(tool_index_fts) AS score
+            FROM tool_index_fts f
+            JOIN tool_index t ON t.rowid = f.rowid
+            WHERE tool_index_fts MATCH ?1
+            ORDER BY score DESC
+            LIMIT ?2
+            """,
+            bind: { stmt in
+                Self.bindText(stmt, index: 1, value: prepared)
+                sqlite3_bind_int(stmt, 2, Int32(topK))
+            },
+            process: { stmt in
+                while sqlite3_step(stmt) == SQLITE_ROW {
+                    let id = String(cString: sqlite3_column_text(stmt, 0))
+                    let score = Float(sqlite3_column_double(stmt, 1))
+                    results.append((id, score))
+                }
+            }
+        )
+        return results
+    }
+
+    /// Convert a free-form query into a safe FTS5 MATCH expression.
+    /// Lowercase + split on non-alphanumerics + filter out empty
+    /// tokens + OR-join. **No minimum length floor** — short technical
+    /// tokens (`go`, `vm`, `ai`, `ui`, `io`, `db`, `fs`, …) are real
+    /// words in tool names and descriptions; BM25's IDF naturally
+    /// suppresses any single-letter noise. **No stopword list** either —
+    /// FTS5 doesn't ship one and we don't want one (we want `"and"` to
+    /// score against descriptions that contain it as a literal token).
+    /// Returns `nil` when the input collapses to zero usable tokens
+    /// (e.g. `"!@#$%"`, all-whitespace) — callers treat this as
+    /// "BM25 cannot contribute, fall back to embed-only".
+    static func sanitizeFTS5Query(_ raw: String) -> String? {
+        let allowed = CharacterSet.alphanumerics
+        let scalars = raw.lowercased().unicodeScalars
+        var current = ""
+        var tokens: [String] = []
+        for s in scalars {
+            if allowed.contains(s) {
+                current.append(Character(s))
+            } else if !current.isEmpty {
+                tokens.append(current)
+                current = ""
+            }
+        }
+        if !current.isEmpty { tokens.append(current) }
+        guard !tokens.isEmpty else { return nil }
+        // FTS5 OR-join. Each token is bare alphanumerics so no
+        // additional escaping is needed; the surrounding double-quotes
+        // would only be required if a token contained a syntax char,
+        // which our sanitiser strips by construction.
+        return tokens.joined(separator: " OR ")
     }
 
     public func deleteAll() throws {

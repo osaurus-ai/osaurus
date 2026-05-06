@@ -1,0 +1,17 @@
+{
+  "id": "capability_search.extract-webpage-natural",
+  "domain": "capability_search",
+  "label": "capability search • extract webpage contents (natural language)",
+  "query": "extract webpage contents",
+  "fixtures": {
+    "requirePlugins": ["osaurus.fetch", "osaurus.search"]
+  },
+  "expect": {
+    "capabilitySearch": {
+      "expectedTools": {
+        "anyOf": ["fetch_html", "search_and_extract"],
+        "minMatches": 1
+      }
+    }
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "id": "capability_search.abstain-greeting",
+  "domain": "capability_search",
+  "label": "capability search • abstain on chit-chat",
+  "query": "thanks, that's perfect",
+  "fixtures": {},
+  "expect": {
+    "capabilitySearch": {
+      "expectedTools": {
+        "anyOf": [],
+        "minMatches": 0
+      },
+      "maxAccepted": 0
+    }
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "id": "preflight.browser.natural",
+  "domain": "preflight",
+  "label": "preflight • browser natural language",
+  "query": "open the orders page on amazon",
+  "fixtures": {
+    "preflightMode": "balanced",
+    "requirePlugins": ["osaurus.browser"]
+  },
+  "expect": {
+    "tools": {
+      "mustInclude": ["browser_navigate"]
+    }
+  }
+}

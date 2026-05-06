@@ -62,8 +62,13 @@ public struct EvalCaseReport: Sendable, Codable {
     public let outcome: EvalCaseOutcome
     public let score: EvalCaseScore?
     /// Preflight snapshot we ran the scorers against. `nil` for
-    /// `skipped` / `errored` outcomes.
+    /// `skipped` / `errored` outcomes and for non-`preflight` domains.
     public let observed: PreflightEvaluation?
+    /// Capability-search snapshot for `domain == "capability_search"`
+    /// rows. Carries both raw and accepted hits so the
+    /// `--report-forensics` CLI flag can compute the H1/H2/H3
+    /// disambiguation block without re-running the eval.
+    public let capabilitySearch: CapabilitySearchEvaluation?
     /// One-line per-component diagnostic — populated for `failed` and
     /// `errored` so a glance at the report tells you WHAT broke without
     /// rerunning. Empty for clean passes.
@@ -79,6 +84,7 @@ public struct EvalCaseReport: Sendable, Codable {
         outcome: EvalCaseOutcome,
         score: EvalCaseScore?,
         observed: PreflightEvaluation?,
+        capabilitySearch: CapabilitySearchEvaluation? = nil,
         notes: [String],
         modelId: String,
         latencyMs: Double?
@@ -90,6 +96,7 @@ public struct EvalCaseReport: Sendable, Codable {
         self.outcome = outcome
         self.score = score
         self.observed = observed
+        self.capabilitySearch = capabilitySearch
         self.notes = notes
         self.modelId = modelId
         self.latencyMs = latencyMs
@@ -114,6 +121,7 @@ public struct EvalCaseReport: Sendable, Codable {
             outcome: outcome,
             score: nil,
             observed: nil,
+            capabilitySearch: nil,
             notes: notes,
             modelId: modelId,
             latencyMs: nil

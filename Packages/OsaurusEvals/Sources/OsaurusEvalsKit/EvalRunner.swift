@@ -22,10 +22,16 @@ public enum EvalRunner {
     /// `filter` is a substring that must appear in `case.id` for the
     /// case to run — the CLI exposes it via `--filter` so a contributor
     /// debugging a single case doesn't burn tokens on the whole suite.
+    /// `thresholdOverride` (when non-nil) is forwarded to
+    /// `capability_search` cases and supersedes any per-case
+    /// `expect.capabilitySearch.thresholdOverride`. No-op for other
+    /// domains. Lets the CLI sweep candidate thresholds without
+    /// editing fixtures (`--threshold 0.25`).
     public static func run(
         suite: EvalSuite,
         model: ModelSelection,
-        filter: String? = nil
+        filter: String? = nil,
+        thresholdOverride: Float? = nil
     ) async -> EvalReport {
         // The CLI is its own process — it has to scan + dlopen every
         // installed plugin manually before preflight can see plugin
@@ -57,17 +63,51 @@ public enum EvalRunner {
         await ModelOverride.withSelection(model) {
             for testCase in suite.cases {
                 if let filter, !testCase.id.contains(filter) { continue }
-                let row = await runOne(testCase, modelId: modelLabel)
-                rows.append(row)
+                let row = await runOne(
+                    testCase,
+                    modelId: modelLabel,
+                    thresholdOverride: thresholdOverride
+                )
+                rows.append(annotatedWithCaseNotes(row, from: testCase))
             }
         }
 
         return EvalReport(modelId: modelLabel, startedAt: startedAt, cases: rows)
     }
 
+    /// Prepends `testCase.notes` (if any) to the report row's `notes`
+    /// array as `note: <text>`. Centralised here so each per-domain
+    /// runner branch (preflight, schema, capability_search, …) doesn't
+    /// have to remember to forward the case-level field. Used today
+    /// for tracking-only cases like `capability_search.shell-execution`
+    /// where the case file documents WHY it stays red.
+    private static func annotatedWithCaseNotes(
+        _ row: EvalCaseReport,
+        from testCase: EvalCase
+    ) -> EvalCaseReport {
+        guard let extra = testCase.notes, !extra.isEmpty else { return row }
+        return EvalCaseReport(
+            id: row.id,
+            label: row.label,
+            domain: row.domain,
+            query: row.query,
+            outcome: row.outcome,
+            score: row.score,
+            observed: row.observed,
+            capabilitySearch: row.capabilitySearch,
+            notes: ["note: \(extra)"] + row.notes,
+            modelId: row.modelId,
+            latencyMs: row.latencyMs
+        )
+    }
+
     // MARK: - Per-case
 
-    private static func runOne(_ testCase: EvalCase, modelId: String) async -> EvalCaseReport {
+    private static func runOne(
+        _ testCase: EvalCase,
+        modelId: String,
+        thresholdOverride: Float? = nil
+    ) async -> EvalCaseReport {
         let label = testCase.label ?? testCase.id
 
         switch testCase.domain {
@@ -85,6 +125,12 @@ public enum EvalRunner {
             return runArgumentCoercionCase(testCase, modelId: modelId)
         case "request_validation":
             return runRequestValidationCase(testCase, modelId: modelId)
+        case "capability_search":
+            return await runCapabilitySearchCase(
+                testCase,
+                modelId: modelId,
+                cliThresholdOverride: thresholdOverride
+            )
         case "tools", "streaming", "contract":
             // Scaffolded domains — runner implementation lives in a
             // follow-up so cases can be authored against the format
@@ -599,6 +645,149 @@ public enum EvalRunner {
             outcome: passed ? .passed : .failed,
             notes: notes,
             modelId: modelId
+        )
+    }
+
+    // MARK: - Capability search domain
+
+    /// Pure-data evaluator for `domain == "capability_search"`. Drives
+    /// `CapabilitySearchEvaluator.evaluate` and pins recall + abstain
+    /// behaviour against the `expect.capabilitySearch` matchers. No
+    /// LLM call, no agent state — fast enough to run in CI on every
+    /// PR once the threshold floor is set (see `recall_floors.json`).
+    ///
+    /// Threshold precedence: CLI `--threshold` > per-case
+    /// `thresholdOverride` > `CapabilitySearch.minimumRelevanceScore`.
+    /// Honours the existing `requirePlugins` skip behaviour so a host
+    /// without the relevant plugin gets `skipped + missing plugins`
+    /// instead of a misleading `failed`.
+    private static func runCapabilitySearchCase(
+        _ testCase: EvalCase,
+        modelId: String,
+        cliThresholdOverride: Float?
+    ) async -> EvalCaseReport {
+        let label = testCase.label ?? testCase.id
+
+        guard let exp = testCase.expect.capabilitySearch else {
+            return Self.errored(
+                testCase,
+                label: label,
+                modelId: modelId,
+                note: "missing `expect.capabilitySearch`"
+            )
+        }
+
+        if let required = testCase.fixtures.requirePlugins, !required.isEmpty {
+            let installed = PreflightEvaluator.installedPluginIds()
+            let missing = required.filter { !installed.contains($0) }
+            if !missing.isEmpty {
+                return .terminal(
+                    id: testCase.id,
+                    label: label,
+                    domain: testCase.domain,
+                    outcome: .skipped,
+                    notes: ["missing plugins: \(missing.joined(separator: ", "))"],
+                    modelId: modelId
+                )
+            }
+        }
+
+        let threshold = cliThresholdOverride ?? exp.thresholdOverride
+        let topK = exp.topK ?? 10
+        let observed = await CapabilitySearchEvaluator.evaluate(
+            query: testCase.query,
+            topK: topK,
+            threshold: threshold
+        )
+
+        var notes: [String] = []
+        var passed = true
+
+        let acceptedToolNames = Set(observed.toolHits.filter(\.acceptedByThreshold).map(\.name))
+        let acceptedMethodNames = Set(observed.methodHits.filter(\.acceptedByThreshold).map(\.name))
+        let acceptedSkillNames = Set(observed.skillHits.filter(\.acceptedByThreshold).map(\.name))
+        let acceptedTotal = acceptedToolNames.count + acceptedMethodNames.count + acceptedSkillNames.count
+
+        if let m = exp.expectedTools {
+            let result = scoreAnyOf(matcher: m, accepted: acceptedToolNames, kind: "tools")
+            passed = passed && result.passed
+            notes.append(result.note)
+        }
+        if let m = exp.expectedMethods {
+            let result = scoreAnyOf(matcher: m, accepted: acceptedMethodNames, kind: "methods")
+            passed = passed && result.passed
+            notes.append(result.note)
+        }
+        if let m = exp.expectedSkills {
+            let result = scoreAnyOf(matcher: m, accepted: acceptedSkillNames, kind: "skills")
+            passed = passed && result.passed
+            notes.append(result.note)
+        }
+        if let cap = exp.maxAccepted {
+            if acceptedTotal > cap {
+                passed = false
+                notes.append("maxAccepted breached: got \(acceptedTotal) accepted, expected ≤ \(cap)")
+            } else {
+                notes.append("maxAccepted ok: \(acceptedTotal) ≤ \(cap)")
+            }
+        }
+
+        // Always include a one-line forensic summary so a failing case
+        // in `--verbose` (or `--report-forensics`) reads at a glance.
+        // Tools use the hybrid `appliedMinFusedScore` (RRF cutoff);
+        // methods + skills are still pure embedding and use the
+        // optional `appliedThreshold` (rendered as "n/a" when nil so
+        // we don't leak Swift's `Optional(...)` interpolation form).
+        let methodSkillThreshold = observed.appliedThreshold.map { String(format: "%.3f", $0) } ?? "n/a"
+        notes.append(
+            "summary: tools raw=\(observed.toolHits.count) accepted=\(acceptedToolNames.count) | "
+                + "methods raw=\(observed.methodHits.count) accepted=\(acceptedMethodNames.count) | "
+                + "skills raw=\(observed.skillHits.count) accepted=\(acceptedSkillNames.count) | "
+                + "registry=\(observed.registrySize) index=\(observed.indexSize) "
+                + "minFusedScore=\(String(format: "%.3f", observed.appliedMinFusedScore)) "
+                + "embedThreshold=\(methodSkillThreshold)"
+        )
+
+        return EvalCaseReport(
+            id: testCase.id,
+            label: label,
+            domain: testCase.domain,
+            query: testCase.query,
+            outcome: passed ? .passed : .failed,
+            score: nil,
+            observed: nil,
+            capabilitySearch: observed,
+            notes: notes,
+            modelId: modelId,
+            latencyMs: observed.latencyMs
+        )
+    }
+
+    /// Score one `AnyOfMatcher` against the accepted-name set for its
+    /// kind. Returns `(passed, note)` so the caller can fold the note
+    /// into the case report regardless of pass/fail.
+    private static func scoreAnyOf(
+        matcher: EvalCase.CapabilitySearchExpectations.AnyOfMatcher,
+        accepted: Set<String>,
+        kind: String
+    ) -> (passed: Bool, note: String) {
+        let hits = matcher.anyOf.filter { accepted.contains($0) }
+        let passed = hits.count >= matcher.minMatches
+        if matcher.minMatches == 0 && matcher.anyOf.isEmpty {
+            // Abstain-style matcher: minMatches=0, anyOf=[]. Pass is
+            // signalled separately by `maxAccepted`; here we just
+            // emit a note so the report makes sense.
+            return (true, "\(kind) abstain matcher (no expected names)")
+        }
+        if passed {
+            return (
+                true,
+                "\(kind) matched \(hits.count)/\(matcher.minMatches): [\(hits.joined(separator: ","))]"
+            )
+        }
+        return (
+            false,
+            "\(kind) under floor: matched \(hits.count)/\(matcher.minMatches) of [\(matcher.anyOf.joined(separator: ","))]"
         )
     }
 

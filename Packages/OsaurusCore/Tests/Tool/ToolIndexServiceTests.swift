@@ -92,6 +92,135 @@ struct ToolDatabaseTests {
         #expect(try db.entryCount() == 2)
     }
 
+    // MARK: - FTS5 mirror
+
+    @Test func fts5MirrorReflectsInsert() throws {
+        let db = try makeTempDB()
+        try db.upsertEntry(
+            sampleEntry(
+                id: "fts-ins",
+                name: "kestrel",
+                description: "Manage zorglax fields in the cluster"
+            )
+        )
+        // Unique tokens so only this row matches.
+        let kestrel = try db.searchBM25(query: "kestrel", topK: 10)
+        #expect(kestrel.map(\.id) == ["fts-ins"])
+        let zorglax = try db.searchBM25(query: "zorglax", topK: 10)
+        #expect(zorglax.map(\.id) == ["fts-ins"])
+    }
+
+    @Test func fts5MirrorReflectsUpdate() throws {
+        let db = try makeTempDB()
+        try db.upsertEntry(
+            sampleEntry(
+                id: "fts-upd",
+                name: "kestrel",
+                description: "Manage zorglax fields"
+            )
+        )
+        // Overwrite description: the old token should disappear from
+        // the FTS5 mirror, the new token should appear.
+        try db.upsertEntry(
+            sampleEntry(
+                id: "fts-upd",
+                name: "kestrel",
+                description: "Sync wibblefoo records"
+            )
+        )
+        let zorglaxAfter = try db.searchBM25(query: "zorglax", topK: 10)
+        #expect(zorglaxAfter.isEmpty)
+        let wibblefoo = try db.searchBM25(query: "wibblefoo", topK: 10)
+        #expect(wibblefoo.map(\.id) == ["fts-upd"])
+    }
+
+    @Test func fts5MirrorReflectsDelete() throws {
+        let db = try makeTempDB()
+        try db.upsertEntry(
+            sampleEntry(
+                id: "fts-del",
+                name: "kestrel",
+                description: "Manage zorglax fields"
+            )
+        )
+        try db.deleteEntry(id: "fts-del")
+        let after = try db.searchBM25(query: "zorglax", topK: 10)
+        #expect(after.isEmpty)
+    }
+
+    @Test func searchBM25EmptyQueryReturnsEmpty() throws {
+        let db = try makeTempDB()
+        try db.upsertEntry(sampleEntry(id: "any", name: "anything", description: "anything"))
+        // All-punctuation collapses to zero usable tokens; the
+        // sanitiser returns nil and searchBM25 short-circuits to [].
+        #expect(try db.searchBM25(query: "!@#$%^&*()", topK: 10).isEmpty)
+        #expect(try db.searchBM25(query: "   ", topK: 10).isEmpty)
+        #expect(try db.searchBM25(query: "", topK: 10).isEmpty)
+    }
+
+    @Test func searchBM25KeepsShortTechnicalTokens() throws {
+        // Confirms the sanitiser does NOT impose a minimum token
+        // length — `go`, `ai`, `ui` etc. are real technical tokens.
+        let db = try makeTempDB()
+        try db.upsertEntry(
+            sampleEntry(
+                id: "short-tok",
+                name: "wibblefoo",
+                description: "Useful for go projects"
+            )
+        )
+        let results = try db.searchBM25(query: "go", topK: 10)
+        #expect(results.map(\.id) == ["short-tok"])
+    }
+
+    @Test func loadAllEntryNamesFiltersBySource() throws {
+        let db = try makeTempDB()
+        try db.upsertEntry(sampleEntry(id: "sys-a", name: "alpha"))
+        try db.upsertEntry(sampleEntry(id: "sys-b", name: "beta"))
+        try db.upsertEntry(
+            ToolIndexEntry(
+                id: "manual-x",
+                name: "xenon",
+                description: "manual entry",
+                runtime: .native,
+                toolsJSON: "{}",
+                source: .manual,
+                tokenCount: 0
+            )
+        )
+
+        let systemNames = try db.loadAllEntryNames(source: .system)
+        #expect(systemNames.sorted() == ["sys-a", "sys-b"])
+
+        let manualNames = try db.loadAllEntryNames(source: .manual)
+        #expect(manualNames == ["manual-x"])
+    }
+
+    /// Smoke test for the `CapabilitySearchHealth` full-mode budget.
+    /// Asserts the median wall-clock of `loadAllEntryNames(source:)` over
+    /// 5 runs against a 100-entry index is ≤ 5ms — well below the 50ms
+    /// runtime ceiling that trips `diffSkippedDueToBudget`. The 10× gap
+    /// is intentional: a 5ms test catches a 10× regression while sitting
+    /// above CI-runner / Intel-Mac noise. A 50ms test would silently let
+    /// a 10× slowdown ship.
+    @Test func loadAllEntryNamesIsFastOn100Entries() throws {
+        let db = try makeTempDB()
+        for i in 0 ..< 100 {
+            try db.upsertEntry(sampleEntry(id: "tool-\(i)", name: "tool-\(i)"))
+        }
+
+        var samplesMs: [Double] = []
+        for _ in 0 ..< 5 {
+            let started = Date()
+            let names = try db.loadAllEntryNames(source: .system)
+            let elapsedMs = Date().timeIntervalSince(started) * 1000
+            #expect(names.count == 100)
+            samplesMs.append(elapsedMs)
+        }
+        let median = samplesMs.sorted()[samplesMs.count / 2]
+        #expect(median <= 5.0, "loadAllEntryNames median \(median)ms exceeded 5ms budget on 100-entry index")
+    }
+
     @Test func deleteAllClearsTable() throws {
         let db = try makeTempDB()
         try db.upsertEntry(sampleEntry(id: "a", name: "alpha"))

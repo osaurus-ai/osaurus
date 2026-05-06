@@ -11,6 +11,32 @@ import Foundation
 import VecturaKit
 import os
 
+/// Diagnostic snapshot for `MethodSearchService.searchWithDiagnostic`.
+/// Mirrors `ToolSearchDiagnostic` shape so the env-flag log path in
+/// `CapabilitySearch.search` can format all three uniformly.
+public struct MethodSearchDiagnostic: Sendable {
+    public struct Hit: Sendable {
+        public let name: String
+        public let score: Float
+        public init(name: String, score: Float) {
+            self.name = name
+            self.score = score
+        }
+    }
+
+    public let indexedMethodCount: Int
+    public let rawHits: [Hit]
+    public let acceptedHits: [Hit]
+    public let threshold: Float
+
+    public init(indexedMethodCount: Int, rawHits: [Hit], acceptedHits: [Hit], threshold: Float) {
+        self.indexedMethodCount = indexedMethodCount
+        self.rawHits = rawHits
+        self.acceptedHits = acceptedHits
+        self.threshold = threshold
+    }
+}
+
 public actor MethodSearchService {
     public static let shared = MethodSearchService()
 
@@ -145,6 +171,27 @@ public actor MethodSearchService {
             MethodLogger.search.error("Method search failed: \(error)")
             return []
         }
+    }
+
+    /// Diagnostic-capturing search. See `ToolSearchService.searchWithDiagnostic`
+    /// for rationale — runs the underlying query twice (raw + accepted)
+    /// to surface the embedder's pre-threshold candidate set without
+    /// changing the production single-call hot path.
+    public func searchWithDiagnostic(
+        query: String,
+        topK: Int,
+        threshold: Float
+    ) async -> (results: [MethodSearchResult], diagnostic: MethodSearchDiagnostic) {
+        let indexedCount = (try? MethodDatabase.shared.loadAllMethods().count) ?? 0
+        let raw = await search(query: query, topK: topK, threshold: 0.0)
+        let accepted = await search(query: query, topK: topK, threshold: threshold)
+        let diagnostic = MethodSearchDiagnostic(
+            indexedMethodCount: indexedCount,
+            rawHits: raw.map { MethodSearchDiagnostic.Hit(name: $0.method.name, score: $0.searchScore) },
+            acceptedHits: accepted.map { MethodSearchDiagnostic.Hit(name: $0.method.name, score: $0.searchScore) },
+            threshold: threshold
+        )
+        return (accepted, diagnostic)
     }
 
     // MARK: - Rebuild

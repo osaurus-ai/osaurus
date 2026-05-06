@@ -1,0 +1,30 @@
+{
+  "id": "capability_search.browser-prefix",
+  "domain": "capability_search",
+  "label": "capability search • browser prefix",
+  "query": "browser",
+  "fixtures": {
+    "requirePlugins": ["osaurus.browser"]
+  },
+  "expect": {
+    "capabilitySearch": {
+      "expectedTools": {
+        "anyOf": [
+          "browser_reset_session",
+          "browser_open_login",
+          "browser_screenshot",
+          "browser_set_viewport",
+          "browser_cookies",
+          "browser_click",
+          "browser_hover",
+          "browser_execute_script",
+          "browser_console_messages",
+          "browser_set_user_agent",
+          "browser_navigate",
+          "browser_do"
+        ],
+        "minMatches": 5
+      }
+    }
+  }
+}

@@ -204,22 +204,81 @@ struct CapabilitySearchResults {
 }
 
 enum CapabilitySearch {
+    /// Legacy threshold, retained for the methods + skills lanes which
+    /// still run pure-embedding (no FTS5 mirror yet — separate follow-up).
+    /// Tools no longer use this; they use `minimumFusedScore`.
     static let minimumRelevanceScore: Float = 0.7
+
+    /// RRF cutoff for the tools lane (BM25 + embed fusion). Baked in
+    /// as `let` to avoid a mutable global — component scores in
+    /// forensics are only meaningful against a fixed cutoff. Future
+    /// tunability surfaces through a `CapabilitySearchSettings` type
+    /// (out of scope this PR), which reads its own copy and never
+    /// mutates this constant.
+    ///
+    /// Sweep result (T ∈ {0.005, 0.010, 0.015, 0.020, 0.025, 0.030}):
+    /// `0.020` is the empirical sweet spot — `browser-prefix` matches
+    /// 9/5 expected, `extract-webpage-natural` matches 2/1 expected,
+    /// and `abstain-greeting` accepted-count drops from 10 → 3 (vs
+    /// 10 at lower thresholds). Higher T (0.025, 0.030) doesn't help
+    /// abstain materially (3 → 2) but starts costing recall on
+    /// browser at T=0.030 (9 → 7).
+    ///
+    /// **Known limitation:** abstain never reaches 0 accepted hits at
+    /// any tested T because RRF with k=60 caps the max fused score at
+    /// `2 × 1/(60+1) ≈ 0.0328`, which compresses the gap between
+    /// abstain noise (top 0.032) and legitimate recall (top 0.033) to
+    /// a 0.001 window. No single `minFusedScore` separates them. The
+    /// abstain case is moved to tracking-only in `recall_floors.json`
+    /// alongside `shell-execution`. A proper abstain mechanism — pre-
+    /// filter quality gate before RRF, score-based fusion instead of
+    /// rank-based, or a query-intent classifier — is a follow-up.
+    ///
+    /// Future tunability surfaces through a `CapabilitySearchSettings`
+    /// type (out of scope this PR), which reads its own copy and
+    /// never mutates this constant.
+    static let minimumFusedScore: Float = 0.020
+
+    /// Env var that swaps the inner per-lane search calls for their
+    /// diagnostic variants (`searchHybridWithDiagnostic` for tools,
+    /// `searchWithDiagnostic` for methods + skills) and emits a single
+    /// multi-line `Logger.notice` block per call with per-component
+    /// BM25 + embed scores. Doubles the embed cost of
+    /// `capabilities_search` while set — only flip it during a manual
+    /// recall repro.
+    private static let debugTraceEnvVar = "OSAURUS_DEBUG_CAPABILITY_SEARCH"
 
     static func search(
         query: String,
         topK: (methods: Int, tools: Int, skills: Int)
     ) async -> CapabilitySearchResults {
         let threshold = minimumRelevanceScore
+        let fusedCutoff = minimumFusedScore
+
+        // Per-process cheap-path snapshot. First call from this site
+        // emits one `CapabilitySearchHealth` line; subsequent calls
+        // are dropped. Cheap mode is sub-millisecond — `entryCount()`
+        // + an in-memory `ToolRegistry.listTools()` walk.
+        await CapabilitySearchDiagnostics.logSnapshotOnce(reason: "CapabilitySearch.search")
+
+        if ProcessInfo.processInfo.environment[Self.debugTraceEnvVar] == "1" {
+            return await searchWithVerboseTrace(
+                query: query,
+                topK: topK,
+                threshold: threshold,
+                fusedCutoff: fusedCutoff
+            )
+        }
+
         async let methodHits = MethodSearchService.shared.search(
             query: query,
             topK: topK.methods,
             threshold: threshold
         )
-        async let toolHits = ToolSearchService.shared.search(
+        async let toolHits = ToolSearchService.shared.searchHybrid(
             query: query,
             topK: topK.tools,
-            threshold: threshold
+            minFusedScore: fusedCutoff
         )
         async let skillHits = SkillSearchService.shared.search(
             query: query,
@@ -227,10 +286,72 @@ enum CapabilitySearch {
             threshold: threshold
         )
 
+        // Methods + skills double-filter mirrors the in-actor cutoff
+        // (kept from the diagnostics PR — collapsing it crosses the
+        // Phase 1 instrumentation boundary; tracked as an out-of-scope
+        // tidy that should land alongside the methods/skills BM25
+        // mirror). Tools come from `searchHybrid` which has already
+        // applied `minFusedScore` — no outer filter needed.
         return CapabilitySearchResults(
             methods: (await methodHits).filter { $0.searchScore >= threshold },
-            tools: (await toolHits).filter { $0.searchScore >= threshold },
+            tools: await toolHits,
             skills: (await skillHits).filter { $0.searchScore >= threshold }
+        )
+    }
+
+    /// Env-flag branch. Identical I/O contract to the production path
+    /// (same `CapabilitySearchResults`) plus a multi-line structured
+    /// log capturing every raw + accepted hit, the current
+    /// `CapabilitySearchHealth` (full mode), and per-component BM25
+    /// + embed scores for the tools lane. Doubles the embed cost;
+    /// only fires when `OSAURUS_DEBUG_CAPABILITY_SEARCH=1`.
+    private static func searchWithVerboseTrace(
+        query: String,
+        topK: (methods: Int, tools: Int, skills: Int),
+        threshold: Float,
+        fusedCutoff: Float
+    ) async -> CapabilitySearchResults {
+        async let methodPair = MethodSearchService.shared.searchWithDiagnostic(
+            query: query,
+            topK: topK.methods,
+            threshold: threshold
+        )
+        async let toolPair = ToolSearchService.shared.searchHybridWithDiagnostic(
+            query: query,
+            topK: topK.tools,
+            minFusedScore: fusedCutoff
+        )
+        async let skillPair = SkillSearchService.shared.searchWithDiagnostic(
+            query: query,
+            topK: topK.skills,
+            threshold: threshold
+        )
+        async let healthSnapshot = CapabilitySearchDiagnostics.snapshot(mode: .full)
+
+        let (methodResults, methodDiag) = await methodPair
+        let (toolResults, toolDiag) = await toolPair
+        let (skillResults, skillDiag) = await skillPair
+        let health = await healthSnapshot
+        let healthSummary = CapabilitySearchDiagnostics.formatSummary(health)
+
+        logger.notice(
+            """
+            CapabilitySearch query=\(query, privacy: .public)
+            threshold=\(threshold, privacy: .public) fusedCutoff=\(fusedCutoff, privacy: .public)
+            health=\(healthSummary, privacy: .public)
+            methods raw=\(formatHits(methodDiag.rawHits), privacy: .public)
+            methods accepted=\(formatHits(methodDiag.acceptedHits), privacy: .public)
+            tools bm25Available=\(toolDiag.bm25Available, privacy: .public) all=\(formatHybridHits(toolDiag.allHits), privacy: .public)
+            tools accepted=\(formatHybridHits(toolDiag.acceptedHits), privacy: .public)
+            skills raw=\(formatHits(skillDiag.rawHits), privacy: .public)
+            skills accepted=\(formatHits(skillDiag.acceptedHits), privacy: .public)
+            """
+        )
+
+        return CapabilitySearchResults(
+            methods: methodResults.filter { $0.searchScore >= threshold },
+            tools: toolResults,
+            skills: skillResults.filter { $0.searchScore >= threshold }
         )
     }
 
@@ -240,6 +361,44 @@ enum CapabilitySearch {
             return config.enabled && config.pluginCreate
         }
     }
+}
+
+// MARK: - Diagnostic helpers (fileprivate)
+
+/// Marker protocol so the env-flag log path can format hits from any
+/// of the three `*SearchDiagnostic.Hit` types with one helper.
+fileprivate protocol DiagnosticHit {
+    var name: String { get }
+    var score: Float { get }
+}
+
+extension ToolSearchDiagnostic.Hit: DiagnosticHit {}
+extension MethodSearchDiagnostic.Hit: DiagnosticHit {}
+extension SkillSearchDiagnostic.Hit: DiagnosticHit {}
+
+fileprivate func formatHits<H: DiagnosticHit>(_ hits: [H]) -> String {
+    if hits.isEmpty { return "[]" }
+    return
+        hits
+        .map { "\($0.name)=\(String(format: "%.3f", $0.score))" }
+        .joined(separator: ",")
+}
+
+/// Per-hit format for the tools-lane hybrid trace block. Each hit
+/// renders as `name(bm25=X.XXX|n/a, embed=Y.YYY|n/a, fused=Z.ZZZ)`
+/// so an engineer reading Console can see at a glance which source
+/// surfaced the candidate (the `n/a` markers carry the H4/H5 signal).
+fileprivate func formatHybridHits(_ hits: [ToolSearchHybridDiagnostic.Hit]) -> String {
+    if hits.isEmpty { return "[]" }
+    return
+        hits
+        .map { hit -> String in
+            let bm25 = hit.bm25Score.map { String(format: "%.3f", $0) } ?? "n/a"
+            let embed = hit.embedScore.map { String(format: "%.3f", $0) } ?? "n/a"
+            let fused = String(format: "%.3f", hit.fusedScore)
+            return "\(hit.name)(bm25=\(bm25),embed=\(embed),fused=\(fused))"
+        }
+        .joined(separator: ",")
 }
 
 // MARK: - Preflight Tool Selection
@@ -283,6 +442,12 @@ enum PreflightCapabilitySearch {
         agentId: UUID,
         model: String? = nil
     ) async -> PreflightResult {
+        // Per-process cheap-path snapshot, mirroring the gate inside
+        // `CapabilitySearch.search`. Different `reason` keys so both
+        // sites can fire once each — independently helpful when one
+        // path runs early-boot and the other doesn't.
+        await CapabilitySearchDiagnostics.logSnapshotOnce(reason: "PreflightCapabilitySearch.search")
+
         let allowed = await MainActor.run {
             AgentManager.shared.effectiveEnabledToolNames(for: agentId).map(Set.init)
         }
@@ -488,16 +653,22 @@ enum PreflightCapabilitySearch {
     ) async -> [ToolRegistry.ToolEntry] {
         guard topK > 0, catalog.count > topK else { return catalog }
 
-        let hits = await ToolSearchService.shared.search(
+        // Hybrid (BM25 + embed via RRF) with `minFusedScore: 0.0` —
+        // catalog narrowing is rank-only, never an acceptance gate.
+        // The LLM is the actual filter at this stage; we just want
+        // the catalog ordered by relevance before truncation.
+        let hits = await ToolSearchService.shared.searchHybrid(
             query: query,
             topK: topK,
-            threshold: 0.0
+            minFusedScore: 0.0
         )
         guard !hits.isEmpty else {
+            let fallback = safeFallbackSlice(catalog: catalog, topK: topK)
+            let sliceNames = fallback.map(\.name)
             logger.notice(
-                "rankCatalog: tool index returned no hits (index warming or embedder unavailable) — falling back to alphabetical top \(topK) of \(catalog.count)"
+                "rankCatalog fallback: query=\(query, privacy: .public) catalogSize=\(catalog.count) topK=\(topK) sliceNames=\(sliceNames.joined(separator: ","), privacy: .public) reason=empty-hits"
             )
-            return safeFallbackSlice(catalog: catalog, topK: topK)
+            return fallback
         }
 
         // Map ranked names back to the input catalog entries (preserves
@@ -518,7 +689,15 @@ enum PreflightCapabilitySearch {
         // branch above — never return a catalog larger than `topK`,
         // even when the index hits don't map back to live entries
         // (stale index, MCP re-registration race, etc.).
-        return ranked.isEmpty ? safeFallbackSlice(catalog: catalog, topK: topK) : ranked
+        if ranked.isEmpty {
+            let fallback = safeFallbackSlice(catalog: catalog, topK: topK)
+            let sliceNames = fallback.map(\.name)
+            logger.notice(
+                "rankCatalog fallback: query=\(query, privacy: .public) catalogSize=\(catalog.count) topK=\(topK) sliceNames=\(sliceNames.joined(separator: ","), privacy: .public) reason=no-mappable-hits"
+            )
+            return fallback
+        }
+        return ranked
     }
 
     /// Deterministic top-K slice used when the embedding index can't
