@@ -1149,12 +1149,9 @@ private struct SandboxExecTool: OsaurusTool, @unchecked Sendable {
     let description = """
         Run a shell command (bash) in the agent's sandbox. **Reserve this for \
         builds, installs, git, processes, network calls, package managers, \
-        and anything else that needs a shell.**
-
-        Do NOT use `cat` / `head` / `tail` to read files — use `sandbox_read_file`. \
-        Do NOT use `grep` / `rg` / `find` / `ls` to search — use `sandbox_search_files`. \
-        Do NOT use `sed` / `awk` to edit files — use `sandbox_edit_file`. \
-        Do NOT use `echo` / `cat` heredoc to create files — use `sandbox_write_file`.
+        and anything else that needs a shell.** For file IO, search, edit, \
+        write, and dependency installs, prefer the dedicated `sandbox_*` \
+        tools — each tool's description states which shell pattern it replaces.
 
         Foreground (default): returns INSTANTLY when the command finishes, \
         even if you set a high `timeout`. Prefer ONE rich invocation \

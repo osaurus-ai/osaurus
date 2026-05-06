@@ -47,6 +47,7 @@ public struct ContextBreakdown: Equatable, Sendable {
         switch sectionId {
         case "platform": return .indigo
         case "persona": return .purple
+        case "codeStyle", "riskAware": return .gray
         case "sandbox": return .teal
         case "memory": return .blue
         case "preflight": return .cyan

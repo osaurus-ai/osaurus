@@ -79,14 +79,12 @@ struct PromptWhitespaceTests {
     }
 
     /// Composed sandbox section bundles `sandboxToolGuide` (the historical
-    /// offender — `target="content"` had a 3-space leak) — assert the full
-    /// composition stays clean.
+    /// offender — `target="content"` had a 3-space leak) — assert the
+    /// composition stays clean. The compact variant was dropped in the
+    /// sandbox tightening pass; only the canonical version exists now.
     @Test("sandbox prompt section has no whitespace continuation artifacts")
     func sandboxSectionRendersClean() {
-        let section = SystemPromptTemplates.sandbox(compact: false)
-        assertNoContinuationLeak(section, label: "sandbox(compact: false)")
-
-        let compact = SystemPromptTemplates.sandbox(compact: true)
-        assertNoContinuationLeak(compact, label: "sandbox(compact: true)")
+        let section = SystemPromptTemplates.sandbox()
+        assertNoContinuationLeak(section, label: "sandbox()")
     }
 }

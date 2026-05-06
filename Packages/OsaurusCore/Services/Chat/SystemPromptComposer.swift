@@ -6,9 +6,6 @@
 //  section-by-section composition plus the high-level `composeChatContext`
 //  entry point that handles the full pipeline.
 //
-//  Compact prompt selection is automatic: pass the model ID and the composer
-//  resolves whether to use compact or full prompt variants via isLocalModel.
-//
 
 import Foundation
 
@@ -401,14 +398,36 @@ public struct SystemPromptComposer: Sendable {
         return teasers
     }
 
-    /// Append every gated "deterministic" prompt section (sandbox notice,
-    /// plugin companions, agent loop, capability nudge, model family,
-    /// plugin creator) given the resolved tool set + preflight.
+    /// Append every gated "deterministic" prompt section given the
+    /// resolved tool set + preflight.
+    ///
+    /// Order is deliberate — cross-cutting rules first, harness second,
+    /// mode-specific capability third, recovery path last, dynamics
+    /// finally. Pre-platform/persona happens in `forChat`. The full
+    /// rendered prompt looks like:
+    ///
+    ///   1. platform                  (forChat)
+    ///   2. persona                   (forChat)
+    ///   3. modelFamilyGuidance       static, gated on family match
+    ///   4. codeStyle                 static, gated on file-mutation tools
+    ///   5. riskAware                 static, gated on file-mutation tools
+    ///   6. agentLoopGuidance         static, gated on loop tools
+    ///   7. sandbox / folderContext   static, mode-specific
+    ///   8. capabilityNudge           static, gated on capabilities_search
+    ///   9. sandboxUnavailable        dynamic, gated on registrar failure
+    ///  10. pluginCompanions          dynamic, gated on preflight result
+    ///  11. skillSuggestions          dynamic, gated on preflight result
+    ///  12. pluginCreator             dynamic, backstop
+    ///
+    /// Statics come before dynamics so the cached prefix
+    /// (`PromptManifest.staticPrefixContent`) reaches as far as possible —
+    /// every static section above the first dynamic break joins the
+    /// KV-cache reuse window.
     ///
     /// Shared between the real send path (`finalizeContext`) and the sync
     /// preview path (`composePreviewContext`) so the welcome-screen budget
     /// popover lists the same sections the next send will produce, modulo
-    /// the two query-dependent ones (preflight tools + plugin companions).
+    /// the dynamic ones it can't price ahead of time.
     ///
     /// Skills are intentionally NOT injected here — they're discovered via
     /// `capabilities_search` and pulled in via `capabilities_load` instead.
@@ -428,6 +447,108 @@ public struct SystemPromptComposer: Sendable {
         let tools = toolset.tools
         let preflight = toolset.preflight
         let effectiveToolsOff = toolset.effectiveToolsOff
+        let resolvedNames = Set(tools.map { $0.function.name })
+
+        // ── Statics ──────────────────────────────────────────────────
+
+        // Per-model-family nudge — small, targeted blocks for known model
+        // weaknesses (Gemma over-enumerates, GPT under-acts, etc.). We
+        // deliberately ship NO universal "agentic workflow" addendum: it
+        // inflates context and encourages tool enumeration.
+        // See ModelFamilyGuidance.swift.
+        if !effectiveToolsOff,
+            let familyGuidance = ModelFamilyGuidance.guidance(forModelId: snapshot.model)
+        {
+            composer.append(
+                .static(
+                    id: "modelFamilyGuidance",
+                    label: "Model Family Guidance",
+                    content: familyGuidance
+                )
+            )
+        }
+
+        // Code style + risk-aware actions — general engineering discipline
+        // for any agent that can mutate the user's filesystem or run
+        // arbitrary code. Sandbox tools, folder tools, and any future
+        // plugin tool that writes all qualify. The set lives at the top
+        // of the file so it can grow as new mutation-capable tools land.
+        if !effectiveToolsOff,
+            !resolvedNames.isDisjoint(with: Self.mutationToolNames)
+        {
+            composer.append(
+                .static(
+                    id: "codeStyle",
+                    label: "Code Style",
+                    content: SystemPromptTemplates.codeStyleGuidance
+                )
+            )
+            composer.append(
+                .static(
+                    id: "riskAware",
+                    label: "Risk-Aware Actions",
+                    content: SystemPromptTemplates.riskAwareGuidance
+                )
+            )
+        }
+
+        // Agent-loop guidance: short cheat-sheet for the chat-layer-
+        // intercepted tools (todo / complete / clarify / share_artifact).
+        // Gated on at least one of those names appearing in the resolved
+        // schema — in practice that's every chat where tools are on, but
+        // the gate keeps tools-off sessions from carrying dead text.
+        if !effectiveToolsOff,
+            !resolvedNames.isDisjoint(with: Self.agentLoopToolNames)
+        {
+            composer.append(
+                .static(
+                    id: "agentLoopGuidance",
+                    label: "Agent Loop",
+                    content: SystemPromptTemplates.agentLoopGuidance
+                )
+            )
+        }
+
+        // Mode-specific capability framing: sandbox section when sandbox
+        // tools are active, working-directory framing when chat is mounted
+        // on a host folder. Static so it joins the cached prefix.
+        if executionMode.usesSandboxTools {
+            let secretNames = Array(AgentSecretsKeychain.getAllSecrets(agentId: agentId).keys)
+            composer.append(
+                .static(
+                    id: "sandbox",
+                    label: "Chat Sandbox",
+                    content: SystemPromptTemplates.sandbox(secretNames: secretNames)
+                )
+            )
+        } else if let folder = executionMode.folderContext {
+            composer.append(
+                .static(
+                    id: "folderContext",
+                    label: "Working Directory",
+                    content: SystemPromptTemplates.folderContext(from: folder)
+                )
+            )
+        }
+
+        // Capability-discovery nudge: explain how to recover when the
+        // current tool kit is incomplete. Gated to auto mode + presence of
+        // `capabilities_search` so manual-mode agents and tools-disabled
+        // sessions don't see irrelevant guidance.
+        if snapshot.toolMode == .auto,
+            !effectiveToolsOff,
+            tools.contains(where: { $0.function.name == "capabilities_search" })
+        {
+            composer.append(
+                .static(
+                    id: "capabilityNudge",
+                    label: "Capability Discovery",
+                    content: SystemPromptTemplates.capabilityDiscoveryNudge
+                )
+            )
+        }
+
+        // ── Dynamics ─────────────────────────────────────────────────
 
         // Surface a "sandbox unavailable" notice when the agent wants
         // sandbox tools but registration couldn't provide them — otherwise
@@ -492,61 +613,6 @@ public struct SystemPromptComposer: Sendable {
             )
         }
 
-        // Agent-loop guidance: short cheat-sheet for the chat-layer-
-        // intercepted tools (todo / complete / clarify / share_artifact).
-        // Gated on at least one of those names appearing in the resolved
-        // schema — in practice that's every chat where tools are on, but
-        // the gate keeps tools-off sessions from carrying dead text.
-        // Static section so it joins the cached prefix.
-        if !effectiveToolsOff {
-            let resolvedNames = Set(tools.map { $0.function.name })
-            let loopNames: Set<String> = ["todo", "complete", "clarify", "share_artifact"]
-            if !resolvedNames.isDisjoint(with: loopNames) {
-                composer.append(
-                    .static(
-                        id: "agentLoopGuidance",
-                        label: "Agent Loop",
-                        content: SystemPromptTemplates.agentLoopGuidance
-                    )
-                )
-            }
-        }
-
-        // Capability-discovery nudge: explain how to recover when the
-        // current tool kit is incomplete. Gated to auto mode + presence of
-        // `capabilities_search` so manual-mode agents and tools-disabled
-        // sessions don't see irrelevant guidance. Static section so it
-        // contributes to the cached prefix.
-        if snapshot.toolMode == .auto,
-            !effectiveToolsOff,
-            tools.contains(where: { $0.function.name == "capabilities_search" })
-        {
-            composer.append(
-                .static(
-                    id: "capabilityNudge",
-                    label: "Capability Discovery",
-                    content: SystemPromptTemplates.capabilityDiscoveryNudge
-                )
-            )
-        }
-
-        // Per-model-family nudge — small, targeted blocks for known model
-        // weaknesses (Gemma over-enumerates, GPT under-acts, etc.). Static
-        // section so it joins the cached prefix. We deliberately ship NO
-        // universal "agentic workflow" addendum: it inflates context and
-        // encourages tool enumeration. See ModelFamilyGuidance.swift.
-        if !effectiveToolsOff,
-            let familyGuidance = ModelFamilyGuidance.guidance(forModelId: snapshot.model)
-        {
-            composer.append(
-                .static(
-                    id: "modelFamilyGuidance",
-                    label: "Model Family Guidance",
-                    content: familyGuidance
-                )
-            )
-        }
-
         // Plugin-creator backstop: only inject when the agent literally
         // has NO dynamic tools available (no MCP / plugin / sandbox-plugin
         // installed) AND nothing was resolved this turn. The narrower gate
@@ -587,6 +653,26 @@ public struct SystemPromptComposer: Sendable {
             trace?.set("pluginCreatorInjected", "1")
         }
     }
+
+    /// Tools that drive the chat-layer agent loop — `agentLoopGuidance`
+    /// fires when any one of these resolves into the schema.
+    static let agentLoopToolNames: Set<String> = [
+        "todo", "complete", "clarify", "share_artifact",
+    ]
+
+    /// Tools that can mutate the user's filesystem, exec arbitrary code,
+    /// or install dependencies. `codeStyleGuidance` and `riskAwareGuidance`
+    /// fire whenever any one of these resolves into the schema. Grow this
+    /// set as new write-capable tools land (plugin tools, future sandbox
+    /// tools, etc.).
+    static let mutationToolNames: Set<String> = [
+        // sandbox built-ins
+        "sandbox_write_file", "sandbox_edit_file", "sandbox_exec",
+        "sandbox_install", "sandbox_pip_install", "sandbox_npm_install",
+        "sandbox_execute_code",
+        // folder tools
+        "file_write", "file_edit", "shell_run",
+    ]
 
     /// Capture the always-loaded names present in this turn's schema so
     /// callers can stash the snapshot for the next turn. When a snapshot
@@ -1036,39 +1122,19 @@ public struct SystemPromptComposer: Sendable {
         return forChat(snapshot: snapshot, agentId: agentId, executionMode: executionMode)
     }
 
-    /// Snapshot-aware composer factory. `agentId` is still required to
-    /// pull sandbox secrets out of the keychain.
+    /// Snapshot-aware composer factory. Returns just the platform +
+    /// persona pair — every other static section (operational directives,
+    /// agent loop, sandbox/folder, capability nudge) is appended later by
+    /// `appendGatedSections` so the static cross-cutting block can land
+    /// between persona and the mode-specific section.
     @MainActor
     public static func forChat(
         snapshot: AgentConfigSnapshot,
         agentId: UUID,
         executionMode: ExecutionMode
     ) -> SystemPromptComposer {
-        let compact = SystemPromptTemplates.isLocalModel(snapshot.model)
         var composer = SystemPromptComposer()
         composer.appendBasePrompt(systemPrompt: snapshot.systemPrompt)
-        if executionMode.usesSandboxTools {
-            let secretNames = Array(AgentSecretsKeychain.getAllSecrets(agentId: agentId).keys)
-            composer.append(
-                .static(
-                    id: "sandbox",
-                    label: "Chat Sandbox",
-                    content: SystemPromptTemplates.sandbox(compact: compact, secretNames: secretNames)
-                )
-            )
-        } else if let folder = executionMode.folderContext {
-            // Working-directory framing for `.hostFolder`. Without it the
-            // model gets folder tools in its schema but no prose anchor for
-            // WHERE it is, which leads to generic exploration + "I'll do X"
-            // stalls. Static so it joins the cached prefix.
-            composer.append(
-                .static(
-                    id: "folderContext",
-                    label: "Working Directory",
-                    content: SystemPromptTemplates.folderContext(from: folder)
-                )
-            )
-        }
         return composer
     }
 
