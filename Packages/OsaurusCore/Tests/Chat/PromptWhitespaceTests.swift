@@ -88,6 +88,17 @@ struct PromptWhitespaceTests {
         assertNoContinuationLeak(section, label: "sandbox()")
     }
 
+    /// SOUL section is rendered with the same `\` continuation style as
+    /// `sandboxEnvironmentBlock` — pin both the bare framing (no agent
+    /// content, just the standing intro paragraph) and a sample with a
+    /// short body so a future re-indent of the spec wording cannot leak
+    /// stray spaces into the prompt.
+    @Test("soul section has no whitespace continuation artifacts")
+    func soulSectionRendersClean() {
+        let bare = SystemPromptTemplates.soulSection("- prefer Postgres")
+        assertNoContinuationLeak(bare, label: "soulSection")
+    }
+
     /// Folder section runs through the same composition path. Pin both
     /// the bare guide and the fully-rendered section so a future
     /// `\` continuation regression in either surfaces immediately.

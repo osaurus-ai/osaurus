@@ -46,6 +46,65 @@ struct SandboxIntegrationTests {
         #expect(SandboxAgentMap.resolve(linuxName: "agent-\(agentName)") == agentId)
     }
 
+    /// End-to-end SOUL.md bootstrap: the seed appears at `~/SOUL.md`
+    /// after the very first provision, and a subsequent provision
+    /// preserves agent edits instead of overwriting them. The script
+    /// shape is unit-pinned in `SandboxAgentProvisionerSoulSeedTests`;
+    /// this test verifies the actual filesystem effect inside a real
+    /// container.
+    @Test
+    func soulSeed_appearsOnFirstProvisionAndIsPreserved() async throws {
+        guard await sandboxAvailable() else { return }
+
+        let agentId = UUID()
+        defer {
+            Task {
+                _ = await SandboxAgentProvisioner.shared.unprovision(agentId: agentId)
+            }
+        }
+
+        try await SandboxAgentProvisioner.shared.ensureProvisioned(agentId: agentId)
+        let agentName = await MainActor.run {
+            SandboxAgentProvisioner.linuxName(for: agentId.uuidString)
+        }
+
+        // First-provision check: seed body lives at ~/SOUL.md.
+        let firstRead = try await SandboxManager.shared.execAsAgent(
+            agentName,
+            command: #"cat "$HOME/SOUL.md""#
+        )
+        #expect(firstRead.succeeded)
+        #expect(firstRead.stdout.contains("# SOUL"))
+        #expect(firstRead.stdout.contains("sandbox_edit_file"))
+
+        // Simulate the agent editing its own SOUL — overwrite with a
+        // distinguishable marker that the seed body never contains.
+        let userMarker = "USER-EDITED-MARKER-\(UUID().uuidString.prefix(8))"
+        let writeResult = try await SandboxManager.shared.execAsAgent(
+            agentName,
+            command: #"printf '%s\n' "\#(userMarker)" > "$HOME/SOUL.md""#
+        )
+        #expect(writeResult.succeeded)
+
+        // Re-provision (same agent id). The idempotency guard MUST keep
+        // the agent's edit — the seed must NOT clobber it.
+        try await SandboxAgentProvisioner.shared.ensureProvisioned(agentId: agentId)
+
+        let secondRead = try await SandboxManager.shared.execAsAgent(
+            agentName,
+            command: #"cat "$HOME/SOUL.md""#
+        )
+        #expect(secondRead.succeeded)
+        #expect(
+            secondRead.stdout.contains(userMarker),
+            "Re-provision overwrote the agent's edited SOUL.md — the `test -f` guard in the seed script regressed. stdout=\(secondRead.stdout)"
+        )
+        #expect(
+            !secondRead.stdout.contains("# SOUL"),
+            "Re-provision appended/restored the seed body on top of the user's edit — it should be a no-op when the file exists. stdout=\(secondRead.stdout)"
+        )
+    }
+
     @Test @MainActor
     func sandboxExecTool_runsThroughRegistryForProvisionedAgent() async throws {
         guard await sandboxAvailable() else { return }

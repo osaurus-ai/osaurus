@@ -133,3 +133,177 @@ struct SystemPromptDefaultIdentityTests {
         #expect(block.contains("capabilities_load"))
     }
 }
+
+/// SOUL.md is the agent-authored complement to the user-authored persona
+/// slot — sandbox-only by design, gated on a non-empty file at
+/// `~/SOUL.md` (host-side: `containerAgentDir(linuxName)/SOUL.md`).
+/// These tests pin: section gate, framing, render order vs persona +
+/// sandbox, and the 8 KB cap with line-boundary truncation.
+@Suite("SOUL.md section integration", .serialized)
+@MainActor
+struct SoulSectionTests {
+
+    // MARK: - Pure renderer
+
+    @Test("soulSection renders with framing when content is non-empty")
+    func soulSection_rendersFraming() {
+        let rendered = SystemPromptTemplates.soulSection("- prefer Postgres")
+        #expect(rendered.contains("## SOUL"))
+        #expect(rendered.contains("the user's instructions in earlier sections take precedence"))
+        #expect(rendered.contains("- prefer Postgres"))
+    }
+
+    @Test("soulSection returns empty string for blank content")
+    func soulSection_dropsBlank() {
+        #expect(SystemPromptTemplates.soulSection("").isEmpty)
+        #expect(SystemPromptTemplates.soulSection("   \n\t  ").isEmpty)
+    }
+
+    // MARK: - 8 KB cap
+
+    @Test("capSoulContent leaves under-budget content unchanged")
+    func cap_underBudgetIsNoop() {
+        let small = "line one\nline two\nline three\n"
+        #expect(SystemPromptComposer.capSoulContent(small) == small)
+    }
+
+    /// 9 KB seed: cap at the 8 KB byte budget on the previous newline,
+    /// then append the truncation marker. Output must (a) be shorter
+    /// than the input, (b) end at a line boundary + marker, (c) stay
+    /// within the byte budget plus the marker length.
+    @Test("capSoulContent truncates 9 KB seed at line boundary + marker")
+    func cap_overBudgetTruncates() {
+        // 9 KB of distinguishable lines (each "line N\n" averages ~7 B)
+        // so a line boundary always exists below the 8 KB cutoff.
+        var raw = ""
+        var n = 0
+        while raw.utf8.count < 9 * 1024 {
+            raw += "line \(n)\n"
+            n += 1
+        }
+        let capped = SystemPromptComposer.capSoulContent(raw)
+        #expect(
+            capped.utf8.count <= SystemPromptComposer.soulMaxBytes
+                + SystemPromptComposer.soulTruncationMarker.utf8.count
+        )
+        #expect(capped.hasSuffix(SystemPromptComposer.soulTruncationMarker))
+        // Cut precedes the marker — i.e. the cut sits on a `\n`, not
+        // mid-line. Strip the marker, the remaining text must end with `\n`.
+        let withoutMarker = String(
+            capped.dropLast(
+                SystemPromptComposer.soulTruncationMarker.count
+            )
+        )
+        #expect(withoutMarker.hasSuffix("\n"))
+    }
+
+    // MARK: - End-to-end: gated read + emit
+
+    /// Helper: spin up an agent, optionally write SOUL.md to its host
+    /// home, run a preview compose, return the section IDs and the
+    /// rendered prompt for assertions. Holds the sandbox + storage
+    /// locks like `PromptSectionOrderingTests` does because we touch
+    /// `AgentManager.shared` and `containerAgentDir`.
+    private func withSoulAgent(
+        soulContent: String? = nil,
+        executionMode: ExecutionMode = .sandbox,
+        body: @MainActor @Sendable ([String], ComposedContext) -> Void
+    ) async {
+        await SandboxTestLock.runWithStoragePaths {
+            let agent = Agent(
+                name: "SoulTestAgent-\(UUID().uuidString.prefix(6))",
+                systemPrompt: "Test identity",
+                agentAddress: "test-soul-\(UUID().uuidString)",
+                autonomousExec: AutonomousExecConfig(enabled: true)
+            )
+            AgentManager.shared.add(agent)
+            let linuxName = SandboxAgentProvisioner.linuxName(for: agent.id.uuidString)
+            let agentDir = OsaurusPaths.containerAgentDir(linuxName)
+            try? FileManager.default.createDirectory(
+                at: agentDir,
+                withIntermediateDirectories: true
+            )
+            let soulPath = agentDir.appendingPathComponent("SOUL.md", isDirectory: false)
+            if let soulContent {
+                try? soulContent.write(to: soulPath, atomically: true, encoding: .utf8)
+            }
+            defer {
+                try? FileManager.default.removeItem(at: soulPath)
+            }
+
+            let ctx = SystemPromptComposer.composePreviewContext(
+                agentId: agent.id,
+                executionMode: executionMode
+            )
+            body(ctx.manifest.sections.map(\.id), ctx)
+            _ = await AgentManager.shared.delete(id: agent.id)
+        }
+    }
+
+    @Test("soul section absent in non-sandbox mode even when SOUL.md exists")
+    func soul_skipsOutsideSandbox() async {
+        await withSoulAgent(
+            soulContent: "- always use conventional commits",
+            executionMode: .none
+        ) { ids, _ in
+            #expect(!ids.contains("soul"))
+        }
+    }
+
+    @Test("soul section absent when SOUL.md missing")
+    func soul_skipsWhenMissing() async {
+        await withSoulAgent(soulContent: nil) { ids, _ in
+            #expect(!ids.contains("soul"))
+        }
+    }
+
+    @Test("soul section absent when SOUL.md trims to empty")
+    func soul_skipsWhenEmpty() async {
+        await withSoulAgent(soulContent: "   \n\n   \t\n") { ids, _ in
+            #expect(!ids.contains("soul"))
+        }
+    }
+
+    @Test("soul section present + framed when SOUL.md has content")
+    func soul_emitsWithContent() async {
+        let body = "- user prefers Postgres\n- skip bash explanations"
+        await withSoulAgent(soulContent: body) { ids, ctx in
+            #expect(ids.contains("soul"))
+            #expect(ctx.prompt.contains("## SOUL"))
+            #expect(ctx.prompt.contains("user prefers Postgres"))
+            #expect(ctx.prompt.contains("skip bash explanations"))
+            #expect(
+                ctx.prompt.contains(
+                    "the user's instructions in earlier sections take precedence"
+                )
+            )
+        }
+    }
+
+    @Test("ordering: persona < soul < sandbox")
+    func soul_landsBetweenPersonaAndSandbox() async {
+        await withSoulAgent(soulContent: "- prefer Postgres") { ids, _ in
+            guard
+                let personaIdx = ids.firstIndex(of: "persona"),
+                let soulIdx = ids.firstIndex(of: "soul"),
+                let sandboxIdx = ids.firstIndex(of: "sandbox")
+            else {
+                Issue.record("Expected persona, soul, and sandbox sections; got \(ids)")
+                return
+            }
+            #expect(personaIdx < soulIdx, "persona must precede soul; ids=\(ids)")
+            #expect(soulIdx < sandboxIdx, "soul must precede sandbox; ids=\(ids)")
+        }
+    }
+
+    @Test("soul section cacheability is static (joins KV-cache prefix)")
+    func soul_isStatic() async {
+        await withSoulAgent(soulContent: "- prefer Postgres") { _, ctx in
+            guard let soul = ctx.manifest.sections.first(where: { $0.id == "soul" }) else {
+                Issue.record("Expected soul section in manifest")
+                return
+            }
+            #expect(soul.cacheability == .static)
+        }
+    }
+}

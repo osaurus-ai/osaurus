@@ -187,7 +187,18 @@ public struct SystemPromptComposer: Sendable {
         trace: TTFTTrace? = nil
     ) async -> ComposedContext {
         var comp = composer
-        let memorySection = await resolveMemory(snapshot: snapshot, agentId: agentId, trace: trace)
+        // Memory and SOUL are independent — overlap their reads. Memory
+        // does DB work; SOUL is a tiny file read; running them in
+        // parallel keeps SOUL effectively free behind the memory hop.
+        async let memoryAsync = resolveMemory(snapshot: snapshot, agentId: agentId, trace: trace)
+        async let soulAsync = resolveSoul(
+            snapshot: snapshot,
+            agentId: agentId,
+            executionMode: executionMode,
+            trace: trace
+        )
+        let memorySection = await memoryAsync
+        let soulSection = await soulAsync
         let toolset = await resolveToolset(
             snapshot: snapshot,
             agentId: agentId,
@@ -204,6 +215,7 @@ public struct SystemPromptComposer: Sendable {
             toolset: toolset,
             agentId: agentId,
             executionMode: executionMode,
+            soulSection: soulSection,
             trace: trace
         )
         let manifest = comp.manifest()
@@ -253,6 +265,89 @@ public struct SystemPromptComposer: Sendable {
         let section = await assembleMemorySection(agentId: agentId.uuidString)
         trace?.mark("memory_done")
         return section
+    }
+
+    // MARK: - SOUL Assembly
+
+    /// 8 KB cap for `~/SOUL.md` content surfaced into the prompt. Past
+    /// this size the file's value-per-token plummets and the agent is
+    /// almost certainly stashing transient context that belongs in
+    /// memory or AGENTS.md, not the soul. Caps live next to the read so
+    /// PR2's bootstrap seed and PR3's advert don't have to re-derive it.
+    static let soulMaxBytes: Int = 8 * 1024
+
+    /// Marker appended on its own line after a truncation so the model
+    /// knows the agent's soul was clipped (don't extrapolate from the
+    /// trailing line as if it were the natural end of the file).
+    static let soulTruncationMarker = "... (truncated)"
+
+    /// Read SOUL.md from the agent's host-mounted home, trim, and cap
+    /// at `soulMaxBytes` on a line boundary. Returns `nil` when the
+    /// file is missing, unreadable, or trims to empty — the composer's
+    /// existing `PromptSection.isEmpty` filter then drops the section
+    /// without an explicit gate at the call-site.
+    ///
+    /// Sync because the read is a tiny local file and the preview path
+    /// (`composePreviewContext`) is itself sync; the async `resolveSoul`
+    /// wrapper just adds trace marks. Errors are swallowed and logged —
+    /// a missing/corrupt SOUL must never block compose.
+    private static func loadSoulContent(linuxName: String) -> String? {
+        let url = OsaurusPaths.containerAgentDir(linuxName)
+            .appendingPathComponent("SOUL.md", isDirectory: false)
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        let raw: String
+        do {
+            raw = try String(contentsOf: url, encoding: .utf8)
+        } catch {
+            debugLog("[Soul] read failed for \(url.path): \(error.localizedDescription)")
+            return nil
+        }
+        let capped = capSoulContent(raw)
+        let trimmed = capped.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    /// Truncate `raw` at the nearest line boundary at or before the
+    /// `soulMaxBytes` UTF-8 byte budget and append `soulTruncationMarker`
+    /// on its own line. No-op when the input already fits.
+    ///
+    /// When no newline exists in the budget (single huge line — not a
+    /// realistic shape for a markdown soul, but possible in principle)
+    /// we hard-cut at the budget and still append the marker on a new
+    /// line so the model sees the truncation signal regardless.
+    static func capSoulContent(_ raw: String) -> String {
+        let utf8 = Array(raw.utf8)
+        guard utf8.count > soulMaxBytes else { return raw }
+        // Cutoff = byte index of the last `\n` within the budget + 1
+        // (so the slice keeps the newline). Falls back to a hard cut
+        // at the budget when no newline is reachable.
+        let lastNewline = utf8.prefix(soulMaxBytes)
+            .lastIndex(of: UInt8(ascii: "\n"))
+        let cutoff = lastNewline.map { $0 + 1 } ?? soulMaxBytes
+        let prefix = String(decoding: utf8.prefix(cutoff), as: UTF8.self)
+        // Hard-cut prefix may not end on `\n`; force one so the marker
+        // always reads as its own line below the soul content.
+        let separator = prefix.hasSuffix("\n") ? "" : "\n"
+        return prefix + separator + soulTruncationMarker
+    }
+
+    /// Per-turn SOUL snippet, or nil when not in sandbox mode or the
+    /// file is missing/empty. Mirrors `resolveMemory` shape (gate +
+    /// trace marks) so a future async-only soul source can slot in
+    /// without changing the call-site.
+    @MainActor
+    private static func resolveSoul(
+        snapshot: AgentConfigSnapshot,
+        agentId: UUID,
+        executionMode: ExecutionMode,
+        trace: TTFTTrace?
+    ) async -> String? {
+        guard executionMode.usesSandboxTools else { return nil }
+        trace?.mark("soul_start")
+        let linuxName = SandboxAgentProvisioner.linuxName(for: agentId.uuidString)
+        let content = loadSoulContent(linuxName: linuxName)
+        trace?.mark("soul_done")
+        return content
     }
 
     /// Assemble every tool-axis decision for the request: size-class
@@ -408,16 +503,17 @@ public struct SystemPromptComposer: Sendable {
     ///
     ///   1. platform                  (forChat)
     ///   2. persona                   (forChat)
-    ///   3. modelFamilyGuidance       static, gated on family match
-    ///   4. codeStyle                 static, gated on file-mutation tools
-    ///   5. riskAware                 static, gated on file-mutation tools
-    ///   6. agentLoopGuidance         static, gated on loop tools
-    ///   7. sandbox / folderContext   static, mode-specific
-    ///   8. capabilityNudge           static, gated on capabilities_search
-    ///   9. sandboxUnavailable        dynamic, gated on registrar failure
-    ///  10. pluginCompanions          dynamic, gated on preflight result
-    ///  11. skillSuggestions          dynamic, gated on preflight result
-    ///  12. pluginCreator             dynamic, backstop
+    ///   3. soul                      static, sandbox-only, gated on non-empty SOUL.md
+    ///   4. modelFamilyGuidance       static, gated on family match
+    ///   5. codeStyle                 static, gated on file-mutation tools
+    ///   6. riskAware                 static, gated on file-mutation tools
+    ///   7. agentLoopGuidance         static, gated on loop tools
+    ///   8. sandbox / folderContext   static, mode-specific
+    ///   9. capabilityNudge           static, gated on capabilities_search
+    ///  10. sandboxUnavailable        dynamic, gated on registrar failure
+    ///  11. pluginCompanions          dynamic, gated on preflight result
+    ///  12. skillSuggestions          dynamic, gated on preflight result
+    ///  13. pluginCreator             dynamic, backstop
     ///
     /// Statics come before dynamics so the cached prefix
     /// (`PromptManifest.staticPrefixContent`) reaches as far as possible —
@@ -435,6 +531,10 @@ public struct SystemPromptComposer: Sendable {
     /// the budget on small-context models (55k+ tokens with reference
     /// inlining); the loader path keeps the schema small and lets the
     /// model decide which skill bodies it actually needs.
+    ///
+    /// `soulSection` is passed in (rather than re-read here) because the
+    /// read needs to happen once per compose — `finalizeContext` calls
+    /// `resolveSoul`, the preview path calls `loadSoulContent` directly.
     @MainActor
     private static func appendGatedSections(
         composer: inout SystemPromptComposer,
@@ -442,6 +542,7 @@ public struct SystemPromptComposer: Sendable {
         toolset: ResolvedToolset,
         agentId: UUID,
         executionMode: ExecutionMode,
+        soulSection: String? = nil,
         trace: TTFTTrace? = nil
     ) {
         let tools = toolset.tools
@@ -450,6 +551,23 @@ public struct SystemPromptComposer: Sendable {
         let resolvedNames = Set(tools.map { $0.function.name })
 
         // ── Statics ──────────────────────────────────────────────────
+
+        // SOUL: agent-authored identity layer for sandbox mode. Sits
+        // between the user-authored persona (above) and operational
+        // directives (below) so render order reinforces the inline
+        // "earlier sections take precedence" framing — persona wins on
+        // conflict. Sandbox-only by design: folder-mode agents are
+        // short-lived and project-bound. `composer.append` drops empty
+        // sections, so we don't re-check past the `nil` gate.
+        if let soulSection {
+            composer.append(
+                .static(
+                    id: "soul",
+                    label: "Soul",
+                    content: SystemPromptTemplates.soulSection(soulSection)
+                )
+            )
+        }
 
         // Per-model-family nudge — small, targeted blocks for known model
         // weaknesses (Gemma over-enumerates, GPT under-acts, etc.). We
@@ -728,12 +846,21 @@ public struct SystemPromptComposer: Sendable {
             executionMode: executionMode
         )
         let toolset = previewToolset(snapshot: snapshot, executionMode: executionMode)
+        // Sync soul read — the preview path is itself sync and the file
+        // is tiny + local. `resolveSoul` is just an async wrapper around
+        // `loadSoulContent` for trace marks, so calling the underlying
+        // helper directly keeps the popover honest with no I/O hop.
+        let soulSection: String? =
+            executionMode.usesSandboxTools
+            ? loadSoulContent(linuxName: SandboxAgentProvisioner.linuxName(for: agentId.uuidString))
+            : nil
         appendGatedSections(
             composer: &composer,
             snapshot: snapshot,
             toolset: toolset,
             agentId: agentId,
-            executionMode: executionMode
+            executionMode: executionMode,
+            soulSection: soulSection
         )
 
         let manifest = composer.manifest()

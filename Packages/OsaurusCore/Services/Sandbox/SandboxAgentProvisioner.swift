@@ -94,6 +94,12 @@ public final class SandboxAgentProvisioner {
                     agentId: uuid
                 )
             }
+            // Materialise `~/SOUL.md` so the system prompt's SOUL section
+            // has something to render on the first turn. See
+            // `seedSoulIfMissing` for the idempotency + non-throwing
+            // contract — both matter here, after `provisionBridgeToken`
+            // already established the agent user.
+            await Self.seedSoulIfMissing(agentName: agentName)
         }
         inFlight[agentId] = task
         defer { inFlight[agentId] = nil }
@@ -154,6 +160,81 @@ public final class SandboxAgentProvisioner {
         let agentDir = OsaurusPaths.containerAgentDir(agentName)
         let pluginsDir = agentDir.appendingPathComponent("plugins", isDirectory: true)
         try? fm.createDirectory(at: pluginsDir, withIntermediateDirectories: true)
+    }
+
+    // MARK: - SOUL.md Bootstrap
+
+    /// First-run seed body for `~/SOUL.md`. Spelt out so the agent's
+    /// first read of its own soul file makes the contract explicit:
+    /// what the file is, what belongs in it, what does NOT belong in
+    /// it, and the cadence on which edits become visible.
+    ///
+    /// An empty SOUL.md would leave the agent unsure whether the file
+    /// is meaningful or accidental — the seed is what makes editing
+    /// sanctioned. Stable across versions; do not bump opportunistically.
+    nonisolated static let soulSeedBody: String = """
+        # SOUL
+
+        This file is your space to record stable preferences and patterns you
+        learn about working with the user. It persists across sessions. You
+        can edit it freely with sandbox_edit_file or sandbox_write_file.
+
+        What goes here:
+        - Stable user preferences (tooling choices, voice, formatting).
+        - Recurring patterns the user expects.
+        - Working agreements established over time.
+
+        What does NOT go here:
+        - Session-specific facts (use memory).
+        - Project-specific details (use AGENTS.md in folder mode if applicable).
+        - Transient context.
+
+        Edits apply on the next session.
+        """
+
+    /// Build the `test -f ... || cat > ... <<'SOUL_EOF' ... SOUL_EOF`
+    /// script that guards the seed write. Exposed (instead of inlined
+    /// in `seedSoulIfMissing`) so unit tests can pin the script shape
+    /// without needing a real container — the integration test boots
+    /// a container to verify behaviour, but the unit test catches
+    /// regressions in the heredoc / guard wording on every CI run.
+    ///
+    /// Single-quoted heredoc (`'SOUL_EOF'`) disables `$` / backtick /
+    /// `\` expansion inside the body, so the seed text lands byte-exact.
+    nonisolated static func soulSeedScript() -> String {
+        """
+        test -f "$HOME/SOUL.md" || cat > "$HOME/SOUL.md" <<'SOUL_EOF'
+        \(soulSeedBody)
+        SOUL_EOF
+        """
+    }
+
+    /// Idempotently seed `~/SOUL.md` for the agent. Runs inside the
+    /// container as `agent-<agentName>` so the file ends up owned by
+    /// the agent user without a separate `chown` hop.
+    ///
+    /// - Idempotency: shell `test -f "$HOME/SOUL.md" ||` guards the
+    ///   heredoc, so a soul the agent has accumulated edits to is
+    ///   never overwritten on subsequent provisions.
+    /// - Failure handling: log + return. A failed seed is recoverable
+    ///   (the read path simply emits no section); we must not block
+    ///   agent provisioning on it.
+    nonisolated static func seedSoulIfMissing(agentName: String) async {
+        do {
+            let result = try await SandboxManager.shared.execAsAgent(
+                agentName,
+                command: soulSeedScript()
+            )
+            if !result.succeeded {
+                debugLog(
+                    "[Soul] seed write for agent-\(agentName) failed: \(result.stderr)"
+                )
+            }
+        } catch {
+            debugLog(
+                "[Soul] seed exec for agent-\(agentName) threw: \(error.localizedDescription)"
+            )
+        }
     }
 
     private func removeHostWorkspace(at url: URL) -> Bool {

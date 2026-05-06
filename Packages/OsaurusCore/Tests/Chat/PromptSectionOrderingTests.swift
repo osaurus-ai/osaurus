@@ -16,16 +16,17 @@
 //
 //    1. platform                  (forChat)
 //    2. persona                   (forChat)
-//    3. modelFamilyGuidance       static, gated on family match
-//    4. codeStyle                 static, gated on file-mutation tools
-//    5. riskAware                 static, gated on file-mutation tools
-//    6. agentLoopGuidance         static, gated on loop tools
-//    7. sandbox / folderContext   static, mode-specific
-//    8. capabilityNudge           static, gated on capabilities_search
-//    9. sandboxUnavailable        dynamic
-//   10. pluginCompanions          dynamic
-//   11. skillSuggestions          dynamic
-//   12. pluginCreator             dynamic
+//    3. soul                      static, sandbox-only, gated on SOUL.md non-empty
+//    4. modelFamilyGuidance       static, gated on family match
+//    5. codeStyle                 static, gated on file-mutation tools
+//    6. riskAware                 static, gated on file-mutation tools
+//    7. agentLoopGuidance         static, gated on loop tools
+//    8. sandbox / folderContext   static, mode-specific
+//    9. capabilityNudge           static, gated on capabilities_search
+//   10. sandboxUnavailable        dynamic
+//   11. pluginCompanions          dynamic
+//   12. skillSuggestions          dynamic
+//   13. pluginCreator             dynamic
 //
 
 import Foundation

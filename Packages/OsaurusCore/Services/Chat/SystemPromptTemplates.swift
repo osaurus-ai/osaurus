@@ -117,6 +117,35 @@ public enum SystemPromptTemplates {
         - When encountering unexpected state (unfamiliar files, unknown processes), investigate before removing anything.
         """
 
+    // MARK: - Soul
+
+    /// Renders the SOUL section — agent-authored, sandbox-only identity
+    /// layer that complements the user-authored persona slot. Frames the
+    /// content as the agent's own notes and explicitly tells the model
+    /// that earlier sections (i.e. persona) take precedence on conflict.
+    ///
+    /// Returns `""` when `content` trims to empty so the composer's
+    /// existing `PromptSection.isEmpty` filter drops the section without
+    /// the caller having to second-guess the gate.
+    ///
+    /// Size policy (truncate at 8 KB on a line boundary) lives at the
+    /// read site in `SystemPromptComposer.resolveSoul` — keeping the
+    /// renderer pure means PR2's bootstrap seed and PR3's advert can
+    /// reuse `soulSection` without dragging in I/O.
+    public static func soulSection(_ content: String) -> String {
+        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+        return """
+            ## SOUL
+
+            The agent has recorded the following stable preferences and patterns \
+            across prior sessions. These are the agent's own notes; the user's \
+            instructions in earlier sections take precedence.
+
+            \(trimmed)
+            """
+    }
+
     // MARK: - Sandbox
 
     /// Renders the sandbox section. Code style + risk-aware actions are
@@ -181,6 +210,7 @@ public enum SystemPromptTemplates {
         - System packages: `sandbox_install` — e.g. `{"packages": ["ffmpeg"]}`.
         - Use \(sandboxReadFileHint) to inspect large logs.
         - The sandbox is disposable — experiment freely.
+        - Your `SOUL.md` at `~/SOUL.md` records stable preferences across sessions. Edit it with `sandbox_edit_file` or `sandbox_write_file` when you observe a durable pattern; edits apply on the next session.
         """
 
     private static func secretsPromptBlock(_ names: [String]) -> String {

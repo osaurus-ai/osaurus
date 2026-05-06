@@ -2,19 +2,21 @@
 //  SandboxSectionTokenAuditTests.swift
 //
 //  Item 7 of the sandbox tightening spec, decided after measurement:
-//  the canonical sandbox section sits at ~408 tokens once items 1–6 land.
-//  The compact pair only saved ~150 tokens vs that baseline while doubling
-//  the maintenance surface (same lockstep hazard `composeChatContext` and
-//  `composePreviewContext` had before parity tests landed). The compact
-//  variants were dropped — `SystemPromptTemplates.sandbox` now takes only
-//  `secretNames`. This test pins the canonical cost so it can't drift back
-//  into "expensive enough that someone re-introduces a compact pair"
-//  territory.
+//  the canonical sandbox section sits at ~458 tokens once items 1–6
+//  land plus the SOUL.md advert (~50 tokens, added in the SOUL.md PR3).
+//  The compact pair only saved ~150 tokens vs that baseline while
+//  doubling the maintenance surface (same lockstep hazard
+//  `composeChatContext` and `composePreviewContext` had before parity
+//  tests landed). The compact variants were dropped —
+//  `SystemPromptTemplates.sandbox` now takes only `secretNames`. This
+//  test pins the canonical cost so it can't drift back into "expensive
+//  enough that someone re-introduces a compact pair" territory.
 //
-//  Numbers from the in-tree run on 2026-05-05:
-//    canonical: 408 tokens (no secrets configured)
+//  Numbers from the in-tree run on 2026-05-06:
+//    canonical: 458 tokens (no secrets configured)
+//      (was 408 tokens before SOUL.md advert landed)
 //
-//  The 500-token ceiling leaves headroom for trivial wording changes
+//  The 550-token ceiling leaves headroom for trivial wording changes
 //  without breaking the test. The failure message includes the live
 //  number so reviewers can re-anchor this comment when it shifts.
 //
@@ -27,13 +29,36 @@ import Testing
 @Suite("Sandbox section token cost audit")
 struct SandboxSectionTokenAuditTests {
 
-    @Test("sandbox section stays under 500 tokens")
+    @Test("sandbox section stays under 550 tokens")
     func sandboxSectionFitsBudget() {
         let section = SystemPromptTemplates.sandbox()
         let cost = TokenEstimator.estimate(section)
         #expect(
-            cost < 500,
-            "Sandbox section grew to \(cost) tokens (>500). Trim it back; if the growth is genuinely needed, revisit whether the small-context budget allocation still makes sense."
+            cost < 550,
+            "Sandbox section grew to \(cost) tokens (>550). Trim it back; if the growth is genuinely needed, revisit whether the small-context budget allocation still makes sense."
+        )
+    }
+
+    /// PR3 of the SOUL.md spec adds a one-line advert to
+    /// `sandboxRuntimeHints`. The advert is the only signal the agent
+    /// has that `~/SOUL.md` is meaningful — the bootstrap seed exists
+    /// but a model with no advert has no reason to read or write it.
+    /// Pin both the file path and the verb so a future trim cannot
+    /// silently drop the affordance while the seed file still ships.
+    @Test("sandbox section advertises ~/SOUL.md as agent-editable")
+    func sandboxSectionAdvertisesSoul() {
+        let section = SystemPromptTemplates.sandbox()
+        #expect(
+            section.contains("~/SOUL.md"),
+            "Sandbox section dropped the `~/SOUL.md` mention. Without it the agent has no signal that the bootstrap seed is meaningful or that editing is sanctioned. Section:\n\(section)"
+        )
+        #expect(
+            section.contains("stable preferences across sessions"),
+            "Sandbox section dropped the SOUL framing — the agent needs to know edits persist beyond the current session."
+        )
+        #expect(
+            section.contains("edits apply on the next session"),
+            "Sandbox section dropped the cadence note — the agent needs to know SOUL edits are not visible mid-session."
         )
     }
 
