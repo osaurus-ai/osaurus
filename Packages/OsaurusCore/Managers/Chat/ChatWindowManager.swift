@@ -167,8 +167,9 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         } else {
             _ = NSRunningApplication.current.activate(options: .activateIgnoringOtherApps)
         }
+        NSApp.activate(ignoringOtherApps: true)
 
-        // Bring the window forward and make it key
+        window.orderFrontRegardless()
         window.makeKeyAndOrderFront(nil)
 
         // Update last focused
