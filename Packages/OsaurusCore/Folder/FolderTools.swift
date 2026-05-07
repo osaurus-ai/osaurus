@@ -193,8 +193,13 @@ struct FileTreeTool: OsaurusTool {
     }
 
     func execute(argumentsJSON: String) async throws -> String {
-        let args = try FolderToolHelpers.parseArguments(argumentsJSON)
-        let relativePath = args["path"] as? String ?? "."
+        let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
+        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
+
+        // `path` is optional (defaults to root). Coercion already drops
+        // empty-string fillers, so a missing or absent value cleanly
+        // falls back to ".".
+        let relativePath = (args["path"] as? String) ?? "."
         let maxDepth = coerceInt(args["max_depth"]) ?? 3
 
         let targetURL = try FolderToolHelpers.resolvePath(relativePath, rootPath: rootPath)
@@ -304,10 +309,17 @@ struct FileReadTool: OsaurusTool {
     private static let maxOutputChars = 15_000
 
     func execute(argumentsJSON: String) async throws -> String {
-        let args = try FolderToolHelpers.parseArguments(argumentsJSON)
+        let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
+        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
 
-        guard let relativePath = args["path"] as? String else {
-            throw FolderToolError.invalidArguments("Missing required parameter: path")
+        let pathReq = requireString(
+            args,
+            "path",
+            expected: "relative path under the working folder (e.g. `src/app.py`)",
+            tool: name
+        )
+        guard case .value(let relativePath) = pathReq else {
+            return pathReq.failureEnvelope ?? ""
         }
 
         let fileURL = try FolderToolHelpers.resolvePath(relativePath, rootPath: rootPath)
@@ -389,13 +401,29 @@ struct FileWriteTool: OsaurusTool, PermissionedTool {
     }
 
     func execute(argumentsJSON: String) async throws -> String {
-        let args = try FolderToolHelpers.parseArguments(argumentsJSON)
+        let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
+        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
 
-        guard let relativePath = args["path"] as? String else {
-            throw FolderToolError.invalidArguments("Missing required parameter: path")
+        let pathReq = requireString(
+            args,
+            "path",
+            expected: "relative path under the working folder (e.g. `src/app.py`)",
+            tool: name
+        )
+        guard case .value(let relativePath) = pathReq else {
+            return pathReq.failureEnvelope ?? ""
         }
-        guard let content = args["content"] as? String else {
-            throw FolderToolError.invalidArguments("Missing required parameter: content")
+
+        // `content: ""` is legitimate (truncate-to-zero), so allow empty.
+        let contentReq = requireString(
+            args,
+            "content",
+            expected: "string of file contents (use `\"\"` for an empty file)",
+            tool: name,
+            allowEmpty: true
+        )
+        guard case .value(let content) = contentReq else {
+            return contentReq.failureEnvelope ?? ""
         }
 
         let fileURL = try FolderToolHelpers.resolvePath(relativePath, rootPath: rootPath)
@@ -487,23 +515,42 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
     }
 
     func execute(argumentsJSON: String) async throws -> String {
-        let args = try FolderToolHelpers.parseArguments(argumentsJSON)
+        let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
+        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
 
-        guard let relativePath = args["path"] as? String else {
-            throw FolderToolError.invalidArguments("Missing required parameter: path")
+        let pathReq = requireString(
+            args,
+            "path",
+            expected: "relative path under the working folder (e.g. `src/app.py`)",
+            tool: name
+        )
+        guard case .value(let relativePath) = pathReq else {
+            return pathReq.failureEnvelope ?? ""
         }
-        guard let oldString = args["old_string"] as? String else {
-            throw FolderToolError.invalidArguments("Missing required parameter: old_string")
+
+        // Empty `old_string` is ambiguous — `requireString` (default
+        // `allowEmpty: false`) rejects it with a pointed envelope that
+        // matches `sandbox_edit_file`.
+        let oldReq = requireString(
+            args,
+            "old_string",
+            expected: "non-empty exact text that uniquely matches one location in the file",
+            tool: name
+        )
+        guard case .value(let oldString) = oldReq else {
+            return oldReq.failureEnvelope ?? ""
         }
-        // Empty `old_string` is ambiguous — reject explicitly (matches
-        // `sandbox_edit_file`).
-        guard !oldString.isEmpty else {
-            throw FolderToolError.invalidArguments(
-                "old_string must not be empty. Pass the exact text you want to replace."
-            )
-        }
-        guard let newString = args["new_string"] as? String else {
-            throw FolderToolError.invalidArguments("Missing required parameter: new_string")
+
+        // Empty `new_string` is the supported delete-the-match form.
+        let newReq = requireString(
+            args,
+            "new_string",
+            expected: "replacement text (use `\"\"` to delete the match)",
+            tool: name,
+            allowEmpty: true
+        )
+        guard case .value(let newString) = newReq else {
+            return newReq.failureEnvelope ?? ""
         }
 
         let fileURL = try FolderToolHelpers.resolvePath(relativePath, rootPath: rootPath)
@@ -595,13 +642,20 @@ struct FileSearchTool: OsaurusTool {
     }
 
     func execute(argumentsJSON: String) async throws -> String {
-        let args = try FolderToolHelpers.parseArguments(argumentsJSON)
+        let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
+        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
 
-        guard let pattern = args["pattern"] as? String else {
-            throw FolderToolError.invalidArguments("Missing required parameter: pattern")
+        let patternReq = requireString(
+            args,
+            "pattern",
+            expected: "search text (case-insensitive substring, e.g. `TODO`)",
+            tool: name
+        )
+        guard case .value(let pattern) = patternReq else {
+            return patternReq.failureEnvelope ?? ""
         }
 
-        let searchPath = args["path"] as? String ?? "."
+        let searchPath = (args["path"] as? String) ?? "."
         let filePattern = args["file_pattern"] as? String
         let maxResults = coerceInt(args["max_results"]) ?? 50
 
@@ -737,10 +791,17 @@ struct ShellRunTool: OsaurusTool, PermissionedTool {
     }
 
     func execute(argumentsJSON: String) async throws -> String {
-        let args = try FolderToolHelpers.parseArguments(argumentsJSON)
+        let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
+        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
 
-        guard let command = args["command"] as? String else {
-            throw FolderToolError.invalidArguments("Missing required parameter: command")
+        let cmdReq = requireString(
+            args,
+            "command",
+            expected: "shell command string (e.g. `ls -la`)",
+            tool: name
+        )
+        guard case .value(let command) = cmdReq else {
+            return cmdReq.failureEnvelope ?? ""
         }
 
         let timeout = min(coerceInt(args["timeout"]) ?? 30, 300)
@@ -873,8 +934,12 @@ struct GitDiffTool: OsaurusTool {
     }
 
     func execute(argumentsJSON: String) async throws -> String {
-        let args = try FolderToolHelpers.parseArguments(argumentsJSON)
+        let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
+        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
 
+        // All three are optional; the preflight already drops empty-string
+        // fillers (`path: ""`, `commit: ""`) so a plain `as? String` cleanly
+        // yields nil when the model didn't intend to specify them.
         let filePath = args["path"] as? String
         let staged = coerceBool(args["staged"]) ?? false
         let commit = args["commit"] as? String
@@ -951,10 +1016,17 @@ struct GitCommitTool: OsaurusTool, PermissionedTool {
     }
 
     func execute(argumentsJSON: String) async throws -> String {
-        let args = try FolderToolHelpers.parseArguments(argumentsJSON)
+        let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
+        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
 
-        guard let message = args["message"] as? String else {
-            throw FolderToolError.invalidArguments("Missing required parameter: message")
+        let messageReq = requireString(
+            args,
+            "message",
+            expected: "non-empty commit message",
+            tool: name
+        )
+        guard case .value(let message) = messageReq else {
+            return messageReq.failureEnvelope ?? ""
         }
 
         let files = coerceStringArray(args["files"])

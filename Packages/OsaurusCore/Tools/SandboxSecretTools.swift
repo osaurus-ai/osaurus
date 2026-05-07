@@ -140,7 +140,21 @@ struct SandboxSecretSetTool: OsaurusTool, @unchecked Sendable {
         )
         guard case .value(let instructions) = instReq else { return instReq.failureEnvelope ?? "" }
 
-        if let value = args["value"] as? String, !value.isEmpty {
+        // `value` is optional. Preflight already drops empty-string
+        // fillers; what arrives here is either a non-empty string or
+        // missing (→ prompt the user). A wrong-typed value (e.g. number
+        // for a long token) surfaces a structured failure instead of
+        // silently falling through to the prompt path.
+        let valueReq = optionalString(
+            args,
+            "value",
+            expected: "the secret value to store (omit to prompt the user)",
+            tool: name
+        )
+        guard case .value(let valueOpt) = valueReq else {
+            return valueReq.failureEnvelope ?? ""
+        }
+        if let value = valueOpt, !value.isEmpty {
             guard let uuid = UUID(uuidString: agentId) else {
                 return ToolEnvelope.failure(
                     kind: .executionError,

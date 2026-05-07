@@ -1,0 +1,208 @@
+//
+//  FolderToolsResilienceTests.swift
+//
+//  Pin the resilience contract for the folder built-ins. Every tool
+//  must return a structured `ToolEnvelope` failure (with `field` +
+//  `expected`) for the common malformed shapes quantized models emit —
+//  not a bare `FolderToolError.invalidArguments` prose message.
+//
+//  Cases covered (per tool, where applicable):
+//    - missing required arg            → `invalid_args` with `field`
+//    - required arg as wrong type      → `invalid_args` with `field`
+//    - empty required string           → `invalid_args` with `field`
+//    - empty optional string filler    → preflight drops the key
+//    - extra unknown key               → `invalid_args` (preflight)
+//    - JSON-encoded scalar / array     → coerced through preflight
+//
+//  Tools without required args (file_tree, git_status, git_diff) skip
+//  the missing/empty/wrong-type rows.
+//
+
+import Foundation
+import Testing
+
+@testable import OsaurusCore
+
+@Suite(.serialized)
+struct FolderToolsResilienceTests {
+
+    private func tmpRoot() -> URL {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("osaurus-folder-tools-test-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(
+            at: dir,
+            withIntermediateDirectories: true
+        )
+        return dir
+    }
+
+    private func failureField(_ result: String) -> String? {
+        EnvelopeAssertions.failureField(result)
+    }
+
+    private func failureKind(_ result: String) -> String? {
+        EnvelopeAssertions.failureKind(result)
+    }
+
+    // MARK: - file_read
+
+    @Test func fileRead_missingPath() async throws {
+        let tool = FileReadTool(rootPath: tmpRoot())
+        let result = try await tool.execute(argumentsJSON: "{}")
+        #expect(ToolEnvelope.isError(result))
+        #expect(failureKind(result) == "invalid_args")
+        #expect(failureField(result) == "path")
+    }
+
+    @Test func fileRead_pathWrongType() async throws {
+        let tool = FileReadTool(rootPath: tmpRoot())
+        let result = try await tool.execute(argumentsJSON: #"{"path": 42}"#)
+        #expect(ToolEnvelope.isError(result))
+        #expect(failureField(result) == "path")
+    }
+
+    @Test func fileRead_emptyPath() async throws {
+        let tool = FileReadTool(rootPath: tmpRoot())
+        // `requireString` rejects empty without `allowEmpty: true`, so this
+        // surfaces as a pointed `must not be empty` envelope rather than
+        // continuing with `path: ""`.
+        let result = try await tool.execute(argumentsJSON: #"{"path": ""}"#)
+        #expect(ToolEnvelope.isError(result))
+        #expect(failureField(result) == "path")
+    }
+
+    // MARK: - file_write
+
+    @Test func fileWrite_missingContent() async throws {
+        let tool = FileWriteTool(rootPath: tmpRoot())
+        let result = try await tool.execute(argumentsJSON: #"{"path": "x.txt"}"#)
+        #expect(ToolEnvelope.isError(result))
+        #expect(failureField(result) == "content")
+    }
+
+    @Test func fileWrite_emptyContentIsAllowed() async throws {
+        // Truncate-to-zero is a legitimate use of file_write; the tool
+        // explicitly opts in via `allowEmpty: true`.
+        let root = tmpRoot()
+        let tool = FileWriteTool(rootPath: root)
+        let result = try await tool.execute(
+            argumentsJSON: #"{"path": "empty.txt", "content": ""}"#
+        )
+        #expect(ToolEnvelope.isSuccess(result))
+        let path = root.appendingPathComponent("empty.txt").path
+        #expect(FileManager.default.fileExists(atPath: path))
+    }
+
+    @Test @MainActor func fileWrite_unknownKeyIsRejected() {
+        // `additionalProperties: false` kicks in during preflight
+        // validation; the model gets a structured envelope pointing at
+        // the offending key without ever touching the filesystem.
+        let tool = FileWriteTool(rootPath: tmpRoot())
+        let outcome = ToolRegistry.shared.preflightForTest(
+            argumentsJSON: #"{"path": "x.txt", "content": "hi", "extra": "nope"}"#,
+            schema: tool.parameters,
+            toolName: tool.name
+        )
+        switch outcome {
+        case .rejected(let envelope):
+            #expect(failureKind(envelope) == "invalid_args")
+            #expect(failureField(envelope) == "extra")
+        case .ready(let argsJSON):
+            Issue.record("preflight should have rejected the extra key, got: \(argsJSON)")
+        }
+    }
+
+    // MARK: - file_edit
+
+    @Test func fileEdit_emptyOldStringIsRejected() async throws {
+        let tool = FileEditTool(rootPath: tmpRoot())
+        let result = try await tool.execute(
+            argumentsJSON: #"{"path": "f.txt", "old_string": "", "new_string": "x"}"#
+        )
+        #expect(ToolEnvelope.isError(result))
+        #expect(failureField(result) == "old_string")
+    }
+
+    @Test func fileEdit_emptyNewStringIsAllowed() async throws {
+        // Empty new_string deletes the matched text; the tool opts into
+        // it via `allowEmpty: true`. Validation should not block before
+        // execution (the file-not-found path can fail later).
+        let root = tmpRoot()
+        let path = root.appendingPathComponent("f.txt")
+        try "hello world".write(to: path, atomically: true, encoding: .utf8)
+        let tool = FileEditTool(rootPath: root)
+        let result = try await tool.execute(
+            argumentsJSON: #"{"path": "f.txt", "old_string": "world", "new_string": ""}"#
+        )
+        #expect(ToolEnvelope.isSuccess(result))
+        let after = try String(contentsOf: path, encoding: .utf8)
+        #expect(after == "hello ")
+    }
+
+    // MARK: - file_search
+
+    @Test func fileSearch_missingPattern() async throws {
+        let tool = FileSearchTool(rootPath: tmpRoot())
+        let result = try await tool.execute(argumentsJSON: "{}")
+        #expect(ToolEnvelope.isError(result))
+        #expect(failureField(result) == "pattern")
+    }
+
+    // MARK: - shell_run
+
+    @Test func shellRun_missingCommand() async throws {
+        let tool = ShellRunTool(rootPath: tmpRoot())
+        let result = try await tool.execute(argumentsJSON: "{}")
+        #expect(ToolEnvelope.isError(result))
+        #expect(failureField(result) == "command")
+    }
+
+    @Test @MainActor func shellRun_stringTimeoutPassesPreflight() {
+        // The screenshot bug: `"timeout": "15"`. Preflight coercion must
+        // accept the string-encoded integer and forward it as a native
+        // value to the tool body; without this the validator would
+        // surface a confusing `invalid_args` failure for what's a real
+        // execution request.
+        let tool = ShellRunTool(rootPath: tmpRoot())
+        let outcome = ToolRegistry.shared.preflightForTest(
+            argumentsJSON: #"{"command": "echo hi", "timeout": "15"}"#,
+            schema: tool.parameters,
+            toolName: tool.name
+        )
+        switch outcome {
+        case .ready(let argsJSON):
+            // Sanity: the rewrite turned the string into a native int.
+            #expect(argsJSON.contains("\"timeout\":15"))
+        case .rejected(let envelope):
+            Issue.record("preflight rejected the call: \(envelope)")
+        }
+    }
+
+    // MARK: - git_commit
+
+    @Test func gitCommit_missingMessage() async throws {
+        let tool = GitCommitTool(rootPath: tmpRoot())
+        let result = try await tool.execute(argumentsJSON: "{}")
+        #expect(ToolEnvelope.isError(result))
+        #expect(failureField(result) == "message")
+    }
+
+    @Test @MainActor func gitCommit_filesAcceptsJSONEncodedArray() {
+        // Local models occasionally emit `files: "[\"a.txt\", \"b.txt\"]"`.
+        // Preflight coerces the stringified array to a native one before
+        // dispatch; we assert the rewrite happened rather than executing
+        // git against a non-repo tmp dir.
+        let tool = GitCommitTool(rootPath: tmpRoot())
+        let outcome = ToolRegistry.shared.preflightForTest(
+            argumentsJSON: #"{"message": "x", "files": "[\"a.txt\"]"}"#,
+            schema: tool.parameters,
+            toolName: tool.name
+        )
+        switch outcome {
+        case .ready(let argsJSON):
+            #expect(argsJSON.contains("\"files\":[\"a.txt\"]"))
+        case .rejected(let envelope):
+            Issue.record("preflight rejected the call: \(envelope)")
+        }
+    }
+}

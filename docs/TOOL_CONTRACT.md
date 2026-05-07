@@ -186,3 +186,58 @@ command finishes (capped by `timeout`, max 300s). Pass `background:true`
 to spawn a detached process — the tool returns `{pid, log_file, cwd,
 background:true}` as soon as the spawn shim returns. Manage the resulting
 job through `sandbox_process` (poll/wait/kill).
+
+---
+
+## Resilience checklist for tool authors
+
+Quantized models routinely emit slightly off shapes — string-encoded
+integers (`"timeout": "15"`), JSON-encoded arrays
+(`"packages": "[\"a\",\"b\"]"`), empty-string fillers for unused
+optional fields (`"description": ""`), and mixed-case enums
+(`"scope": "Pinned"`). The platform handles every one of these at the
+preflight layer ([`SchemaValidator.coerceArguments`](../Packages/OsaurusCore/Tools/SchemaValidator.swift)
++ `validate`) before your tool body sees the arguments. To stay
+inside that contract:
+
+- Use the `requireXxx` helpers — `requireArgumentsDictionary`,
+  `requireString`, `requireStringArray`, `requireInt`, `optionalString`
+  — instead of `args["x"] as? String`. They produce the standard
+  `invalid_args` envelope with `field` and `expected` populated, which
+  the model uses to self-correct on the next turn.
+- Set `"additionalProperties": .bool(false)` on every top-level (and
+  nested object) schema so the central preflight rejects unknown keys
+  with a pointed envelope. The matrix test
+  [`BuiltinToolResilienceTests.allBuiltInsRejectUnknownProperties`](../Packages/OsaurusCore/Tests/Tool/BuiltinToolResilienceTests.swift)
+  pins this for every built-in.
+- Declare `enum` for closed-set string values. The preflight
+  case-normalises to the canonical declared form, so the body's
+  equality check stays strict without per-tool case-folding.
+- Declare `default` for optional values; the schema's `default` is
+  visible to the model.
+- Return `ToolEnvelope.success(...)` / `ToolEnvelope.failure(...)`
+  envelopes — never raw `{stdout, stderr, exit_code}` blobs. The chat
+  UI's `ToolEnvelope.isSuccess` / `isError` detectors drive grouping,
+  retry classification, and the failure card; tools that bypass the
+  envelope land in a "neither success nor failure" gap and render
+  generically.
+- Cap large stdout/stderr (or any model-bound text) with
+  `truncateForModel(_:maxChars:)` (head + tail strategy, defaults to
+  ~50KB). The function lives next to the sandbox built-ins and is
+  internal-scope so plugin tools can share it.
+
+What you can rely on the preflight to handle for you:
+
+- `"15"` ↔ `15`, `"true"` ↔ `true`, `"3.14"` ↔ `3.14` for typed
+  scalars (mirrors `ArgumentCoercion`).
+- `"[\"a\",\"b\"]"` ↔ `["a","b"]` for typed arrays.
+- `"{\"a\":1}"` ↔ `{"a":1}` for typed objects.
+- `"description": ""` (empty / whitespace-only) → key is dropped
+  before the body runs, when the field is optional. Required fields
+  keep their empty value so your `requireString` can surface a pointed
+  `must not be empty` envelope.
+- `"Pinned"` → canonical `"pinned"` for declared string enums.
+- `{"properties": {chartType: "bar", ...}}` → unwrapped to the
+  top-level shape when the model accidentally wraps its args in a
+  `properties` envelope (only when `properties` isn't itself a declared
+  field of the schema and at least one inner key matches).

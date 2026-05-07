@@ -28,10 +28,13 @@ struct RenderChartTool: OsaurusTool {
 
     let parameters: JSONValue? = .object([
         "type": .string("object"),
-        // Note: NOT setting `additionalProperties: false` here — render_chart
-        // historically tolerated a nested `properties` object as a model
-        // schema-confusion fallback (see execute body). Locking the schema
-        // strict would break that compat.
+        // The `properties:` wrapper schema-confusion case is now rescued
+        // by `SchemaValidator.coerceArguments` for every tool, so we can
+        // safely lock this schema strict. Keeps the model from sneaking
+        // in unexpected keys (e.g. `chartType` typoed as `chart_type`)
+        // by surfacing them as `invalid_args` instead of silently
+        // dropping them.
+        "additionalProperties": .bool(false),
         "required": .array([.string("data"), .string("chartType"), .string("series")]),
         "properties": .object([
             "data": .object([
@@ -83,29 +86,13 @@ struct RenderChartTool: OsaurusTool {
         )
         guard case .value(let raw) = dataReq else { return dataReq.failureEnvelope ?? "" }
 
-        // chartType may be top-level or nested inside a "properties" object (model schema confusion)
-        let chartType: String
-        if let ct = args["chartType"] as? String {
-            chartType = ct
-        } else if let props = args["properties"] as? [String: Any],
-            let ct = props["chartType"] as? String
-        {
-            chartType = ct
-        } else if let propsStr = args["properties"] as? String,
-            let data = propsStr.data(using: .utf8),
-            let props = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let ct = props["chartType"] as? String
-        {
-            chartType = ct
-        } else {
-            return ToolEnvelope.failure(
-                kind: .invalidArgs,
-                message: "Missing required argument `chartType`.",
-                field: "chartType",
-                expected: "one of \(Self.chartTypeList)",
-                tool: name
-            )
-        }
+        let chartReq = requireString(
+            args,
+            "chartType",
+            expected: "one of \(Self.chartTypeList)",
+            tool: name
+        )
+        guard case .value(let chartType) = chartReq else { return chartReq.failureEnvelope ?? "" }
 
         // Reject unknown chart types up front. Previously `ChartSpec.normalized`
         // silently coerced anything-not-in-validChartTypes to `column`, hiding
@@ -120,17 +107,18 @@ struct RenderChartTool: OsaurusTool {
             )
         }
 
-        // series may be a proper array or a JSON-encoded string array
-        guard let seriesCols = coerceStringArray(args["series"]) ?? parseStringArrayFromJSON(args["series"]),
-            !seriesCols.isEmpty
-        else {
-            return ToolEnvelope.failure(
-                kind: .invalidArgs,
-                message: "Missing required argument `series` (array of column names).",
-                field: "series",
-                expected: "non-empty array of column-name strings",
-                tool: name
-            )
+        // `series` is required (array of column names). Preflight already
+        // unwraps a JSON-encoded string array; `requireStringArray` keeps
+        // its bare-string fallback for the rare case where preflight
+        // didn't fire (no schema in scope).
+        let seriesReq = requireStringArray(
+            args,
+            "series",
+            expected: "non-empty array of column-name strings",
+            tool: name
+        )
+        guard case .value(let seriesCols) = seriesReq else {
+            return seriesReq.failureEnvelope ?? ""
         }
 
         let format = (args["format"] as? String)?.lowercased() ?? "csv"
@@ -306,15 +294,6 @@ struct RenderChartTool: OsaurusTool {
         guard rows.count > maxCount else { return rows }
         let step = Double(rows.count) / Double(maxCount)
         return (0 ..< maxCount).map { i in rows[Int(Double(i) * step)] }
-    }
-
-    /// Fallback for when the model serializes an array as a JSON string e.g. "[\"Apple\",\"Google\"]"
-    private func parseStringArrayFromJSON(_ value: Any?) -> [String]? {
-        guard let str = value as? String,
-            let data = str.data(using: .utf8),
-            let arr = try? JSONSerialization.jsonObject(with: data) as? [String]
-        else { return nil }
-        return arr.isEmpty ? nil : arr
     }
 
 }

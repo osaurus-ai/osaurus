@@ -81,10 +81,26 @@ final class SearchMemoryTool: OsaurusTool, @unchecked Sendable {
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
         guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
 
-        guard let scopeRaw = (args["scope"] as? String)?.lowercased() else {
+        // Preflight already coerces a mixed-case `"Pinned"` to its
+        // canonical `"pinned"` (the schema declares an enum), so a
+        // simple `requireString` is enough here. The strict equality
+        // against `allScopes` below catches any value that slipped
+        // through (e.g. preflight bypass in tests).
+        let scopeReq = requireString(
+            args,
+            "scope",
+            expected: "one of \(Self.scopeListPipe)",
+            tool: name
+        )
+        guard case .value(let scopeRaw) = scopeReq else {
+            return scopeReq.failureEnvelope ?? ""
+        }
+        let scope = scopeRaw.lowercased()
+
+        guard Self.allScopes.contains(scope) else {
             return ToolEnvelope.failure(
                 kind: .invalidArgs,
-                message: "Missing required argument `scope`. Use one of: \(Self.scopeListPipe).",
+                message: "Unknown scope `\(scopeRaw)`. Use one of: \(Self.scopeListPipe).",
                 field: "scope",
                 expected: "one of \(Self.scopeListPipe)",
                 tool: name
@@ -93,11 +109,11 @@ final class SearchMemoryTool: OsaurusTool, @unchecked Sendable {
 
         for key in args.keys {
             guard let allowed = Self.scopeAllowedParams[key] else { continue }
-            if !allowed.contains(scopeRaw) {
+            if !allowed.contains(scope) {
                 return ToolEnvelope.failure(
                     kind: .invalidArgs,
                     message:
-                        "`\(key)` is not valid with `scope=\(scopeRaw)`. "
+                        "`\(key)` is not valid with `scope=\(scope)`. "
                         + "Valid scopes for `\(key)`: \(allowed.sorted().joined(separator: ", ")).",
                     field: key,
                     expected: "scope in \(allowed.sorted().joined(separator: "|"))",
@@ -106,22 +122,20 @@ final class SearchMemoryTool: OsaurusTool, @unchecked Sendable {
             }
         }
 
-        guard let query = args["query"] as? String, !query.trimmingCharacters(in: .whitespaces).isEmpty else {
+        let queryReq = requireString(
+            args,
+            "query",
+            expected: "non-empty natural-language query string",
+            tool: name
+        )
+        guard case .value(let queryRaw) = queryReq else { return queryReq.failureEnvelope ?? "" }
+        let query = queryRaw.trimmingCharacters(in: .whitespaces)
+        guard !query.isEmpty else {
             return ToolEnvelope.failure(
                 kind: .invalidArgs,
-                message: "Missing required argument `query`.",
+                message: "Argument `query` must not be whitespace-only.",
                 field: "query",
                 expected: "non-empty natural-language query string",
-                tool: name
-            )
-        }
-
-        guard Self.allScopes.contains(scopeRaw) else {
-            return ToolEnvelope.failure(
-                kind: .invalidArgs,
-                message: "Unknown scope `\(scopeRaw)`. Use one of: \(Self.scopeListPipe).",
-                field: "scope",
-                expected: "one of \(Self.scopeListPipe)",
                 tool: name
             )
         }
@@ -139,7 +153,7 @@ final class SearchMemoryTool: OsaurusTool, @unchecked Sendable {
         let topK = max(1, min(50, ArgumentCoercion.int(args["top_k"]) ?? 10))
 
         let text: String
-        switch scopeRaw {
+        switch scope {
         case "pinned":
             text = await searchPinned(query: query, agentId: agentId, topK: topK)
         case "episodes":
@@ -150,7 +164,7 @@ final class SearchMemoryTool: OsaurusTool, @unchecked Sendable {
         default:
             return ToolEnvelope.failure(
                 kind: .invalidArgs,
-                message: "Unknown scope `\(scopeRaw)`.",
+                message: "Unknown scope `\(scope)`.",
                 tool: name
             )
         }

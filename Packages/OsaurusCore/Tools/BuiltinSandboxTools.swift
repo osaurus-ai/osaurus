@@ -312,7 +312,10 @@ private func jsonResult(_ dict: [String: Any]) -> String {
 ///
 /// Default budget is 50_000 chars (~12.5K tokens). When the input fits
 /// under the budget the text is returned untouched.
-private func truncateForModel(_ text: String, maxChars: Int = 50_000) -> String {
+///
+/// Internal — `SandboxPluginTool` shares this so user-created plugin
+/// runs cap their stdout/stderr the same way the built-in shell tools do.
+internal func truncateForModel(_ text: String, maxChars: Int = 50_000) -> String {
     if text.count <= maxChars { return text }
     let headChars = Int(Double(maxChars) * 0.4)
     let tailChars = maxChars - headChars

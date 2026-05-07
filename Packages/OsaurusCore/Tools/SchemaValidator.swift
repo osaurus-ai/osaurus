@@ -249,6 +249,15 @@ public struct SchemaValidator {
         guard case .array(let enumArr)? = schemaObject["enum"] else { return .ok() }
         let allowed = enumArr.map { $0.foundationValue }
         if allowed.contains(where: { equalJSONValues($0, value) }) { return .ok() }
+        // Case-insensitive fallback for string enums. `coerceValue` already
+        // normalises matching strings to their canonical case before the
+        // validator runs, but callers that bypass coercion (tests, ad-hoc
+        // validation) still benefit from this lenient comparison.
+        if let s = value as? String,
+            allowed.contains(where: { ($0 as? String)?.lowercased() == s.lowercased() })
+        {
+            return .ok()
+        }
         let label = key.map { " '\($0)'" } ?? ""
         return .fail("Property\(label) must be one of: \(allowed)", field: key)
     }
@@ -415,9 +424,36 @@ public struct SchemaValidator {
             return value
         case "boolean":
             return coerceScalarString(value) { ArgumentCoercion.bool($0) as Any? } ?? value
+        case "string":
+            // Normalise case-insensitive enum hits to their canonical
+            // declared form. Quantized models routinely emit `"Pinned"`
+            // when the schema declares `"pinned"` — handing the canonical
+            // value to the tool body lets it keep its strict equality
+            // check (and skip a private case-folding helper per tool).
+            return normalizeStringEnumCase(value, schemaObject: schemaObject)
         default:
             return value
         }
+    }
+
+    /// When `schemaObject` declares a string `enum`, replace `value` with
+    /// the canonical-case entry it matches case-insensitively. Pure pass-
+    /// through when there's no enum, the value isn't a string, or the
+    /// value already matches an enum entry verbatim.
+    private static func normalizeStringEnumCase(
+        _ value: Any,
+        schemaObject: [String: JSONValue]
+    ) -> Any {
+        guard let s = value as? String,
+            case .array(let enumArr)? = schemaObject["enum"]
+        else { return value }
+        let canonical: [String] = enumArr.compactMap {
+            if case .string(let str) = $0 { return str }
+            return nil
+        }
+        if canonical.contains(s) { return value }
+        let lower = s.lowercased()
+        return canonical.first(where: { $0.lowercased() == lower }) ?? value
     }
 
     private static func coerceObject(
@@ -425,10 +461,63 @@ public struct SchemaValidator {
         schemaObject: [String: JSONValue]
     ) -> [String: Any] {
         guard case .object(let propsDict)? = schemaObject["properties"] else { return obj }
-        var out = obj
-        for (key, value) in obj {
+        var out = unwrapPropertiesWrapper(in: obj, propsDict: propsDict)
+        out = dropEmptyOptionalStrings(in: out, propsDict: propsDict, required: requiredKeys(schemaObject))
+        for (key, value) in out {
             guard case .object(let propSchema)? = propsDict[key] else { continue }
             out[key] = coerceValue(value, schemaObject: propSchema)
+        }
+        return out
+    }
+
+    /// Quantized models occasionally emit `{"properties": {chartType:
+    /// "bar", …}}` when they confuse the schema body with the schema
+    /// itself. Merge the inner object up so the validator and tool body
+    /// see the unwrapped shape. Only when (a) `properties` is not itself
+    /// a declared property of this schema and (b) the inner object
+    /// contains at least one declared key. Outer keys win on collision
+    /// so a partial double-emit doesn't get clobbered.
+    private static func unwrapPropertiesWrapper(
+        in obj: [String: Any],
+        propsDict: [String: JSONValue]
+    ) -> [String: Any] {
+        guard propsDict["properties"] == nil,
+            let nested = obj["properties"] as? [String: Any]
+        else { return obj }
+        let declared = Set(propsDict.keys)
+        guard !declared.intersection(Set(nested.keys)).isEmpty else { return obj }
+        var out = obj
+        out.removeValue(forKey: "properties")
+        for (key, value) in nested where out[key] == nil {
+            out[key] = value
+        }
+        return out
+    }
+
+    /// Drop optional string properties whose value is empty or
+    /// whitespace-only. Many models pass empty placeholders for
+    /// fields they don't intend to use (`description: ""`,
+    /// `filename: ""`); treating them as absent stops downstream
+    /// non-empty checks from rejecting a legitimate call. Required
+    /// fields keep their empty value so the validator's
+    /// `Missing required` / tool's `must not be empty` envelope still
+    /// surfaces — `requireString` (default `allowEmpty: false`) will
+    /// then point at the offending field.
+    private static func dropEmptyOptionalStrings(
+        in obj: [String: Any],
+        propsDict: [String: JSONValue],
+        required: [String]
+    ) -> [String: Any] {
+        let requiredSet = Set(required)
+        var out = obj
+        for (key, value) in obj {
+            guard !requiredSet.contains(key),
+                case .object(let propSchema)? = propsDict[key],
+                case .string("string")? = propSchema["type"],
+                let s = value as? String,
+                s.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            else { continue }
+            out.removeValue(forKey: key)
         }
         return out
     }

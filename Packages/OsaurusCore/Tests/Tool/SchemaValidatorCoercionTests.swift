@@ -293,4 +293,214 @@ struct SchemaValidatorCoercionTests {
         )
         #expect(r.isValid, "got: \(r.errorMessage ?? "?")")
     }
+
+    // MARK: - Empty-string-as-absent (optional string fields)
+
+    private let optionalStringSchema: JSONValue = .object([
+        "type": .string("object"),
+        "additionalProperties": .bool(false),
+        "properties": .object([
+            "path": .object(["type": .string("string")]),
+            "description": .object(["type": .string("string")]),
+        ]),
+        "required": .array([.string("path")]),
+    ])
+
+    @Test func emptyOptionalStringIsDropped() throws {
+        // ShareArtifact-style: model passes `description: ""` as filler
+        // for an unused optional. Coercion should drop the key so
+        // downstream tools don't trip non-empty checks.
+        let coerced =
+            SchemaValidator.coerceArguments(
+                ["path": "report.pdf", "description": ""],
+                against: optionalStringSchema
+            ) as? [String: Any]
+        #expect(coerced?["description"] == nil)
+        #expect((coerced?["path"] as? String) == "report.pdf")
+    }
+
+    @Test func whitespaceOnlyOptionalStringIsDropped() throws {
+        let coerced =
+            SchemaValidator.coerceArguments(
+                ["path": "report.pdf", "description": "   \n\t  "],
+                against: optionalStringSchema
+            ) as? [String: Any]
+        #expect(coerced?["description"] == nil)
+    }
+
+    @Test func emptyRequiredStringIsPreserved() throws {
+        // Required fields must keep their empty value so the validator's
+        // own "Missing required" check fires (the value IS present —
+        // it's just empty) and the tool's `requireString` rejects with a
+        // pointed `must not be empty` envelope.
+        let coerced =
+            SchemaValidator.coerceArguments(
+                ["path": "", "description": ""],
+                against: optionalStringSchema
+            ) as? [String: Any]
+        #expect((coerced?["path"] as? String) == "")
+        #expect(coerced?["description"] == nil)
+    }
+
+    @Test func nonStringOptionalPropertyIsLeftAlone() throws {
+        // Empty-string-as-absent only applies to declared `string` properties
+        // — a typed `boolean` or `integer` field that happens to receive
+        // `""` should fall through to the validator's type check.
+        let schema: JSONValue = .object([
+            "type": .string("object"),
+            "properties": .object([
+                "verbose": .object(["type": .string("boolean")])
+            ]),
+        ])
+        let coerced =
+            SchemaValidator.coerceArguments(
+                ["verbose": ""],
+                against: schema
+            ) as? [String: Any]
+        #expect((coerced?["verbose"] as? String) == "")
+    }
+
+    // MARK: - Case-insensitive enum match
+
+    private let enumSchema: JSONValue = .object([
+        "type": .string("object"),
+        "properties": .object([
+            "scope": .object([
+                "type": .string("string"),
+                "enum": .array([
+                    .string("pinned"),
+                    .string("episodes"),
+                    .string("transcript"),
+                ]),
+            ])
+        ]),
+    ])
+
+    @Test func enumNormalizesCanonicalCaseDuringCoercion() throws {
+        // SearchMemory-style: model emits `"Pinned"` for an enum that
+        // declares `"pinned"`. Coercion should normalise the value to
+        // its canonical case so the tool body's strict equality check
+        // succeeds without per-tool case-folding.
+        let coerced =
+            SchemaValidator.coerceArguments(
+                ["scope": "Pinned"],
+                against: enumSchema
+            ) as? [String: Any]
+        #expect((coerced?["scope"] as? String) == "pinned")
+    }
+
+    @Test func enumValidatesCaseInsensitivelyWithoutCoercion() {
+        // Defence in depth: callers that bypass coercion (tests, ad-hoc
+        // validators) should still get a permissive enum match.
+        let r = SchemaValidator.validate(
+            arguments: ["scope": "TRANSCRIPT"],
+            against: enumSchema
+        )
+        #expect(r.isValid, "got: \(r.errorMessage ?? "?")")
+    }
+
+    @Test func enumStillRejectsUnknownValue() {
+        let coerced = SchemaValidator.coerceArguments(
+            ["scope": "graph"],
+            against: enumSchema
+        )
+        let r = SchemaValidator.validate(arguments: coerced, against: enumSchema)
+        #expect(!r.isValid)
+        #expect(r.field == "scope")
+    }
+
+    // MARK: - Nested `properties:` wrapper rescue
+
+    private let renderChartLikeSchema: JSONValue = .object([
+        "type": .string("object"),
+        "properties": .object([
+            "data": .object(["type": .string("string")]),
+            "chartType": .object(["type": .string("string")]),
+            "series": .object([
+                "type": .string("array"),
+                "items": .object(["type": .string("string")]),
+            ]),
+        ]),
+        "required": .array([.string("data"), .string("chartType"), .string("series")]),
+    ])
+
+    @Test func unwrapsPropertiesWrapper() throws {
+        // RenderChart-style schema confusion: the model wrapped its real
+        // arguments in a `properties:` envelope. Coercion should unwrap.
+        let raw: [String: Any] = [
+            "properties": [
+                "data": "x,y\n1,2\n",
+                "chartType": "bar",
+                "series": ["y"],
+            ]
+        ]
+        let coerced =
+            SchemaValidator.coerceArguments(raw, against: renderChartLikeSchema)
+            as? [String: Any]
+        #expect((coerced?["chartType"] as? String) == "bar")
+        #expect((coerced?["data"] as? String)?.contains("x,y") == true)
+        #expect(coerced?["properties"] == nil)
+        let r = SchemaValidator.validate(arguments: coerced as Any, against: renderChartLikeSchema)
+        #expect(r.isValid, "got: \(r.errorMessage ?? "?")")
+    }
+
+    @Test func partialPropertiesWrapperKeepsTopLevelPriority() throws {
+        // Model double-emitted: `chartType` at the top level AND inside
+        // `properties`. Outer wins.
+        let raw: [String: Any] = [
+            "chartType": "line",
+            "properties": [
+                "chartType": "bar",
+                "data": "x,y\n1,2\n",
+                "series": ["y"],
+            ],
+        ]
+        let coerced =
+            SchemaValidator.coerceArguments(raw, against: renderChartLikeSchema)
+            as? [String: Any]
+        #expect((coerced?["chartType"] as? String) == "line")
+        #expect((coerced?["data"] as? String)?.contains("x,y") == true)
+    }
+
+    @Test func propertiesWithoutOverlapIsLeftAlone() throws {
+        // Defensive: if `properties` is present but contains no declared
+        // keys, leave it alone (the schema's `additionalProperties: false`
+        // can still flag it). Stops innocuous payloads from being
+        // accidentally rewritten.
+        let schema: JSONValue = .object([
+            "type": .string("object"),
+            "properties": .object([
+                "data": .object(["type": .string("string")])
+            ]),
+            "required": .array([.string("data")]),
+        ])
+        let raw: [String: Any] = [
+            "data": "ok",
+            "properties": ["unrelated": "stuff"],
+        ]
+        let coerced = SchemaValidator.coerceArguments(raw, against: schema) as? [String: Any]
+        #expect(coerced?["properties"] is [String: Any])
+        #expect((coerced?["data"] as? String) == "ok")
+    }
+
+    @Test func declaredPropertiesPropertyIsNotUnwrapped() throws {
+        // If a schema legitimately declares a property literally named
+        // `properties`, coercion must leave it intact — unwrapping would
+        // silently move the user's data out of the field they meant to
+        // populate.
+        let schema: JSONValue = .object([
+            "type": .string("object"),
+            "properties": .object([
+                "properties": .object([
+                    "type": .string("object")
+                ])
+            ]),
+        ])
+        let raw: [String: Any] = [
+            "properties": ["nested": "value"]
+        ]
+        let coerced = SchemaValidator.coerceArguments(raw, against: schema) as? [String: Any]
+        let nested = try #require(coerced?["properties"] as? [String: Any])
+        #expect((nested["nested"] as? String) == "value")
+    }
 }
