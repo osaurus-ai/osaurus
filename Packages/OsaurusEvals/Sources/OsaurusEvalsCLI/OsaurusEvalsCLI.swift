@@ -369,10 +369,13 @@ struct OsaurusEvalsCLI {
         let filter: String?
         let out: String?
         let verbose: Bool
-        /// Capability-search threshold sweep value. Forwarded to
-        /// `EvalRunner.run(thresholdOverride:)`; no-op for other
-        /// domains. `nil` keeps the production
-        /// `CapabilitySearch.minimumRelevanceScore`.
+        /// Capability-search **tools-lane** RRF cutoff sweep value.
+        /// Forwarded to `EvalRunner.run(thresholdOverride:)`; no-op
+        /// for other domains. `nil` keeps the production
+        /// `CapabilitySearch.minimumFusedScore`. Methods + skills
+        /// lanes always use their own embed-cosine constants (see
+        /// `CapabilitySearchEvaluator.evaluate` doc) — sweeping one
+        /// scale into the other silently disables the cosine gate.
         let threshold: Float?
         /// Print the per-case `(rawHits, acceptedHits, topRawScore)`
         /// H1/H2/H3 forensics block after the human-readable report.
@@ -492,17 +495,17 @@ struct OsaurusEvalsCLI {
                                       the preflight prompt.
                 --threshold <float>   Override the **tools-lane** RRF cutoff
                                       (`minFusedScore`) for this run. The
-                                      methods + skills lanes always use the
-                                      production embed-cosine default
-                                      (`CapabilitySearch.minimumRelevanceScore`)
-                                      regardless of this flag — fused-score
-                                      and cosine values live on different
-                                      scales (RRF max ≈ 0.033 vs cosine 0–1),
-                                      so a single knob can't drive both
-                                      meaningfully. Use this to sweep RRF
-                                      cutoffs (e.g. --threshold 0.020) without
-                                      rebuilding. No-op for non-capability_search
-                                      domains.
+                                      methods + skills lanes always use their
+                                      own production embed-cosine constants
+                                      (`minimumRelevanceScoreMethods` /
+                                      `…Skills`) regardless of this flag —
+                                      fused-score and cosine values live on
+                                      different scales (RRF max ≈ 0.033 vs
+                                      cosine 0–1), so a single knob can't
+                                      drive both meaningfully. Use this to
+                                      sweep RRF cutoffs (e.g. --threshold
+                                      0.020) without rebuilding. No-op for
+                                      non-capability_search domains.
                 --report-forensics    Print a per-case `(rawHits, acceptedHits,
                                       topFused)` block tagged with a
                                       H1/H2/H3/H4/H5 hypothesis label. H4 =

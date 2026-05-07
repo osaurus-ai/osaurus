@@ -47,11 +47,18 @@ public struct CapabilitySearchEvaluation: Sendable, Codable {
     /// `threshold:` argument when set, otherwise the production
     /// `CapabilitySearch.minimumFusedScore`.
     public let appliedMinFusedScore: Float
-    /// Pure-embedding cutoff applied to the **methods + skills** lanes.
-    /// `nil` would only happen on a future migration; today it's
-    /// always populated. Kept optional so JSON readers can detect the
-    /// transition if/when those lanes also move to hybrid.
-    public let appliedThreshold: Float?
+    /// Embed-cosine acceptance floor applied to the **methods** lane.
+    /// Echoes `CapabilitySearch.minimumRelevanceScoreMethods`. The
+    /// per-case `thresholdOverride` and CLI `--threshold` flag drive
+    /// the **tools** lane only (RRF scale, ~0.033 max), so this lane
+    /// always uses the production constant — sweeping a fused-score
+    /// value into the cosine lane would silently disable the
+    /// methods quality gate.
+    public let appliedMethodsThreshold: Float
+    /// Embed-cosine acceptance floor applied to the **skills** lane.
+    /// Held independent of the methods cutoff so a future eval pass
+    /// can move one without the other.
+    public let appliedSkillsThreshold: Float
     public let latencyMs: Double
 
     /// One per (raw OR accepted) candidate for the case's query. The
@@ -91,7 +98,8 @@ public struct CapabilitySearchEvaluation: Sendable, Codable {
         registrySize: Int,
         indexSize: Int,
         appliedMinFusedScore: Float,
-        appliedThreshold: Float?,
+        appliedMethodsThreshold: Float,
+        appliedSkillsThreshold: Float,
         latencyMs: Double
     ) {
         self.query = query
@@ -101,7 +109,8 @@ public struct CapabilitySearchEvaluation: Sendable, Codable {
         self.registrySize = registrySize
         self.indexSize = indexSize
         self.appliedMinFusedScore = appliedMinFusedScore
-        self.appliedThreshold = appliedThreshold
+        self.appliedMethodsThreshold = appliedMethodsThreshold
+        self.appliedSkillsThreshold = appliedSkillsThreshold
         self.latencyMs = latencyMs
     }
 }
@@ -122,22 +131,23 @@ public enum CapabilitySearchEvaluator {
     /// `threshold` is **scoped to the tools lane**. When non-nil it
     /// overrides `CapabilitySearch.minimumFusedScore` (the RRF cutoff
     /// for the BM25+embed hybrid). When nil, the production default
-    /// is used. The methods + skills lanes always use
-    /// `CapabilitySearch.minimumRelevanceScore` (the embed-cosine
-    /// cutoff, scale ~0.0–1.0) regardless of `threshold`. Reason:
-    /// fused-score values (RRF k=60 max ≈ 0.033) and embed-cosine
-    /// values live on completely different scales — applying the
-    /// sweep value to both lanes silently disables the methods/skills
-    /// quality gate when sweeping low fused values like 0.005.
-    /// Sweeping the embed cutoff is a separate concern; expose its
-    /// own flag if/when needed.
+    /// is used. The methods + skills lanes always use their own
+    /// production constants (`minimumRelevanceScoreMethods` and
+    /// `…Skills`, both embed-cosine, scale ~0.0–1.0) regardless of
+    /// `threshold`. Reason: fused-score values (RRF k=60 max ≈ 0.033)
+    /// and embed-cosine values live on completely different scales —
+    /// applying the sweep value to both lanes silently disables the
+    /// methods/skills quality gate when sweeping low fused values
+    /// like 0.005. Sweeping the embed cutoffs is a separate concern;
+    /// expose its own flag if/when needed.
     public static func evaluate(
         query: String,
         topK: Int = 10,
         threshold: Float? = nil
     ) async -> CapabilitySearchEvaluation {
         let appliedFused = threshold ?? CapabilitySearch.minimumFusedScore
-        let appliedThreshold = CapabilitySearch.minimumRelevanceScore
+        let appliedMethodsThreshold = CapabilitySearch.minimumRelevanceScoreMethods
+        let appliedSkillsThreshold = CapabilitySearch.minimumRelevanceScoreSkills
         let started = Date()
 
         async let toolPair = ToolSearchService.shared.searchHybridWithDiagnostic(
@@ -148,12 +158,12 @@ public enum CapabilitySearchEvaluator {
         async let methodPair = MethodSearchService.shared.searchWithDiagnostic(
             query: query,
             topK: topK,
-            threshold: appliedThreshold
+            threshold: appliedMethodsThreshold
         )
         async let skillPair = SkillSearchService.shared.searchWithDiagnostic(
             query: query,
             topK: topK,
-            threshold: appliedThreshold
+            threshold: appliedSkillsThreshold
         )
         async let healthSnapshot = CapabilitySearchDiagnostics.snapshot(mode: .full)
 
@@ -177,7 +187,8 @@ public enum CapabilitySearchEvaluator {
             registrySize: health.registryToolCount,
             indexSize: health.indexedToolCount,
             appliedMinFusedScore: appliedFused,
-            appliedThreshold: appliedThreshold,
+            appliedMethodsThreshold: appliedMethodsThreshold,
+            appliedSkillsThreshold: appliedSkillsThreshold,
             latencyMs: elapsedMs
         )
     }

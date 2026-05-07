@@ -92,9 +92,10 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         ///
         /// Mutates the user's persistent skill state for the run
         /// window only; the runner snapshots prior state and
-        /// restores it in a `defer` so a crash mid-case leaves
-        /// state recoverable on the next run (state restoration
-        /// is best-effort, not crash-safe).
+        /// restores it after the case body. Restoration is
+        /// best-effort, not crash-safe — a process crash mid-case
+        /// can leave a built-in skill flipped on. Re-running any
+        /// case that names the same skill converges the state back.
         public let enableSkills: [String]?
 
         public init(

@@ -1,9 +1,14 @@
 {
-  "_comment": "Recall floors for `osaurus-evals run --fail-on-floor`. Keys are case `id` strings \u2014 must match the fixture id exactly. The `--fail-on-floor` flag is OPT-IN and not yet wired into CI. Two `capability_search` cases are intentionally OMITTED as tracking-only: (1) `capability_search.shell-execution` because `sandbox_exec` / `sandbox_execute_code` are excluded from the search index by design (ToolIndexService.syncFromRegistry's runtimeManagedToolNames exclusion); (2) `capability_search.abstain-greeting` because RRF with k=60 caps the max fused score at ~0.033, compressing the gap between abstain noise (top 0.032) and legitimate recall (top 0.033) below any usable threshold \u2014 a proper abstain mechanism is a follow-up issue. The remaining floors match each case's fixture `minMatches` so the gate is consistent with the assertions the runner already enforces.",
+  "_comment": "Recall floors for `osaurus-evals run --fail-on-floor`. Keys are case `id` strings — must match the fixture id exactly. The `--fail-on-floor` flag is OPT-IN and not yet wired into CI. Cases intentionally OMITTED as tracking-only: (1) `capability_search.shell-execution` because `sandbox_exec` / `sandbox_execute_code` are excluded from the search index by design (ToolIndexService.syncFromRegistry's runtimeManagedToolNames exclusion); (2) `capability_search.abstain-greeting`, `capability_search.method-abstain`, `capability_search.skill-abstain` because RRF with k=60 caps the max fused score at ~0.033, compressing the gap between abstain noise (top 0.032) and legitimate recall (top 0.033) below any usable threshold — a proper abstain mechanism (pre-RRF gate / query-intent classifier) is the follow-up workstream documented at PreflightCapabilitySearch.swift:232-235; (3) `capability_search.skill-paraphrase` because `Content Summarizer` doesn't surface in the embedder's top-10 raw hits for 'give me the gist' (semantic gap, not a threshold issue) — addressed by the description-audit follow-up PR. The remaining floors match each case's fixture `minMatches` so the gate is consistent with the assertions the runner already enforces. The four method/skill non-abstain floors below were calibrated by the PR-A baseline (2026-05-07) against the per-lane embed-cosine cutoffs `CapabilitySearch.minimumRelevanceScoreMethods` = `…Skills` = 0.25.",
   "capability_search": {
     "capability_search.browser-prefix": { "minMatches": 5 },
     "capability_search.extract-webpage-natural": { "minMatches": 1 },
-    "capability_search.weather-natural": { "minMatches": 1 }
+    "capability_search.weather-natural": { "minMatches": 1 },
+    "capability_search.method-lexical-name": { "minMatches": 1 },
+    "capability_search.method-paraphrase": { "minMatches": 1 },
+    "capability_search.method-multi-match": { "minMatches": 2 },
+    "capability_search.skill-direct-name": { "minMatches": 1 },
+    "capability_search.skill-keyword-only": { "minMatches": 1 }
   },
   "preflight": {
     "preflight.browser.natural": { "minMatches": 1 }

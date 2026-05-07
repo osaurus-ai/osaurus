@@ -141,67 +141,50 @@ public enum PreflightEvaluator {
         return ids
     }
 
-    /// Boot every subsystem the chat path's preflight depends on so an
-    /// out-of-process eval CLI gets the same view the host app does.
-    /// Mirrors the relevant slice of
-    /// `AppDelegate.applicationDidFinishLaunching`:
+    /// Boot every subsystem the chat path's preflight + capability-
+    /// search depends on so an out-of-process eval CLI sees the same
+    /// indices the host app does. Mirrors the relevant slice of
+    /// `AppDelegate.applicationDidFinishLaunching`. Idempotent.
     ///
-    /// 1. Scan + dlopen every installed plugin into `PluginManager` /
-    ///    `ToolRegistry` / `SkillManager` so plugin tools become
-    ///    visible to `listDynamicTools()` and `installedPluginIds()`.
-    /// 2. Open the on-disk tool index database and initialise
-    ///    `ToolSearchService` so the embedding-rerank step in
-    ///    `PreflightCapabilitySearch.rankCatalog` actually has an
-    ///    index to query (without this, rerank degrades to the full
-    ///    catalog and small models with tight context windows like
-    ///    Apple Foundation reject the request before the LLM runs).
-    /// 3. Sync the tool index from the live registry so freshly
-    ///    registered plugin tools are present in the vector store.
-    /// 4. Open the methods database, initialise `MethodSearchService`,
-    ///    and force `SkillManager.refresh()` + `SkillSearchService`
-    ///    init/rebuild so the methods + skills lanes of
-    ///    `CapabilitySearchEvaluator` aren't silently empty. Without
-    ///    these, every method/skill recall fixture would report 0
-    ///    raw hits and any failure would be indistinguishable from
-    ///    "infrastructure not booted" vs "real recall miss".
-    ///
-    /// Idempotent — every step serializes concurrent invocations and
-    /// re-uses already-initialised state.
+    /// Subsystem coverage:
+    /// - **plugins** — dlopen every installed plugin into
+    ///   `PluginManager` / `ToolRegistry` / `SkillManager` so plugin
+    ///   tools become visible to `listDynamicTools()` and
+    ///   `installedPluginIds()`.
+    /// - **tools index** — open `ToolDatabase`, init
+    ///   `ToolSearchService`, sync from registry. Without these,
+    ///   `PreflightCapabilitySearch.rankCatalog` falls back to the
+    ///   full catalog and small-context models like Apple Foundation
+    ///   reject the request before the LLM runs.
+    /// - **methods + skills indices** — open `MethodDatabase`, init
+    ///   `MethodSearchService`, force `SkillManager.refresh()` +
+    ///   `SkillSearchService` init/rebuild. Without these, every
+    ///   method/skill recall fixture would silently report 0 raw
+    ///   hits, making "infrastructure not booted" indistinguishable
+    ///   from "real recall miss". The explicit `refresh()` await
+    ///   replaces relying on `SkillManager`'s eager init Task —
+    ///   out-of-process callers can start querying before that Task
+    ///   ever gets scheduled.
     public static func loadInstalledPlugins() async {
-        // Drive the storage migration gate through its **async**
-        // entry point first so the defensive `blockingAwaitReady()`
-        // calls inside every `*Database.open()` hit the lock-free
-        // fast atomic path. The slow path (`Task { @MainActor in
-        // … }` + `DispatchSemaphore` + run-loop pump) deadlocks in
-        // CLI processes that own the main thread via Swift
-        // Concurrency's `@main async` — there's no AppKit runloop
-        // to drain the queued `Task @MainActor` that signals the
-        // semaphore, so the main thread blocks on `semaphore.wait`
-        // forever. The host app side-steps this in
-        // `AppDelegate.applicationDidFinishLaunching` because
-        // AppKit's installed runloop sources DO drive the main
-        // DispatchQueue while it pumps; the CLI has no such
+        // Drive the storage migration gate through its async entry
+        // point first so the defensive `blockingAwaitReady()` calls
+        // inside every `*Database.open()` hit the lock-free atomic
+        // path. The slow path (`Task @MainActor` + `DispatchSemaphore`
+        // + run-loop pump) deadlocks in CLI processes that own the
+        // main thread via Swift Concurrency's `@main async` — no
+        // AppKit runloop to drain the queued main-actor task that
+        // signals the semaphore. The host app side-steps this
+        // because AppKit's installed runloop sources do drive the
+        // main DispatchQueue while it pumps; the CLI has no such
         // sources.
         await StorageMigrationCoordinator.shared.awaitReady()
 
         await PluginManager.shared.loadAll()
-        // `ToolDatabase.shared.open()` itself routes through the
-        // shared synchronous storage-migration gate (the same one
-        // every `*Database.open()` defensively hits), so we don't
-        // need an extra `await` here.
+
         try? ToolDatabase.shared.open()
         await ToolSearchService.shared.initialize()
         await ToolIndexService.shared.syncFromRegistry()
 
-        // Methods + skills boot — required for the capability_search
-        // eval domain. The host app does these in
-        // `AppDelegate.applicationDidFinishLaunching` (lines ~243-252);
-        // we mirror the same order here so the eval-CLI process sees
-        // the same indices the chat path sees. The explicit
-        // `SkillManager.refresh()` await replaces relying on the
-        // manager's eager init Task — out-of-process callers can
-        // start querying `SkillSearchService` before that Task ever
-        // gets scheduled, which produces an empty rebuild.
         try? MethodDatabase.shared.open()
         await MethodSearchService.shared.initialize()
         await SkillManager.shared.refresh()

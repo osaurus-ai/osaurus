@@ -204,10 +204,25 @@ struct CapabilitySearchResults {
 }
 
 enum CapabilitySearch {
-    /// Legacy threshold, retained for the methods + skills lanes which
-    /// still run pure-embedding (no FTS5 mirror yet — separate follow-up).
-    /// Tools no longer use this; they use `minimumFusedScore`.
-    static let minimumRelevanceScore: Float = 0.7
+    /// Embed-cosine acceptance floor for the **methods** lane.
+    /// Calibrated against `Suites/CapabilitySearch/method-*.json`
+    /// (PR-A baseline, 2026-05-07): lowest expected-hit was
+    /// `plot_data` at 0.281; highest abstain noise was 0.179.
+    /// 0.25 sits 40% above abstain noise and 12% below the
+    /// tightest recall hit — the only band that flips every
+    /// PR-A method case to PASS without re-admitting abstain.
+    /// Was a single global `0.7` until PR-A showed that value
+    /// dropped every method/skill true positive (top hits land
+    /// at 0.28-0.59 on `potion-base-4M`, not 0.7+).
+    static let minimumRelevanceScoreMethods: Float = 0.25
+
+    /// Embed-cosine acceptance floor for the **skills** lane.
+    /// Held identical to `…Methods` because the embedder is
+    /// shared (`potion-base-4M`) and PR-A surfaced no signal
+    /// arguing for a different floor. Kept as a separate
+    /// constant so a future eval pass can move one lane
+    /// without the other.
+    static let minimumRelevanceScoreSkills: Float = 0.25
 
     /// RRF cutoff for the tools lane (BM25 + embed fusion). Baked in
     /// as `let` to avoid a mutable global — component scores in
@@ -252,7 +267,8 @@ enum CapabilitySearch {
         query: String,
         topK: (methods: Int, tools: Int, skills: Int)
     ) async -> CapabilitySearchResults {
-        let threshold = minimumRelevanceScore
+        let methodsThreshold = minimumRelevanceScoreMethods
+        let skillsThreshold = minimumRelevanceScoreSkills
         let fusedCutoff = minimumFusedScore
 
         // Per-process cheap-path snapshot. First call from this site
@@ -265,7 +281,8 @@ enum CapabilitySearch {
             return await searchWithVerboseTrace(
                 query: query,
                 topK: topK,
-                threshold: threshold,
+                methodsThreshold: methodsThreshold,
+                skillsThreshold: skillsThreshold,
                 fusedCutoff: fusedCutoff
             )
         }
@@ -273,7 +290,7 @@ enum CapabilitySearch {
         async let methodHits = MethodSearchService.shared.search(
             query: query,
             topK: topK.methods,
-            threshold: threshold
+            threshold: methodsThreshold
         )
         async let toolHits = ToolSearchService.shared.searchHybrid(
             query: query,
@@ -283,19 +300,18 @@ enum CapabilitySearch {
         async let skillHits = SkillSearchService.shared.search(
             query: query,
             topK: topK.skills,
-            threshold: threshold
+            threshold: skillsThreshold
         )
 
         // Methods + skills double-filter mirrors the in-actor cutoff
         // (kept from the diagnostics PR — collapsing it crosses the
         // Phase 1 instrumentation boundary; tracked as an out-of-scope
-        // tidy that should land alongside the methods/skills BM25
-        // mirror). Tools come from `searchHybrid` which has already
+        // tidy). Tools come from `searchHybrid` which has already
         // applied `minFusedScore` — no outer filter needed.
         return CapabilitySearchResults(
-            methods: (await methodHits).filter { $0.searchScore >= threshold },
+            methods: (await methodHits).filter { $0.searchScore >= methodsThreshold },
             tools: await toolHits,
-            skills: (await skillHits).filter { $0.searchScore >= threshold }
+            skills: (await skillHits).filter { $0.searchScore >= skillsThreshold }
         )
     }
 
@@ -308,13 +324,14 @@ enum CapabilitySearch {
     private static func searchWithVerboseTrace(
         query: String,
         topK: (methods: Int, tools: Int, skills: Int),
-        threshold: Float,
+        methodsThreshold: Float,
+        skillsThreshold: Float,
         fusedCutoff: Float
     ) async -> CapabilitySearchResults {
         async let methodPair = MethodSearchService.shared.searchWithDiagnostic(
             query: query,
             topK: topK.methods,
-            threshold: threshold
+            threshold: methodsThreshold
         )
         async let toolPair = ToolSearchService.shared.searchHybridWithDiagnostic(
             query: query,
@@ -324,7 +341,7 @@ enum CapabilitySearch {
         async let skillPair = SkillSearchService.shared.searchWithDiagnostic(
             query: query,
             topK: topK.skills,
-            threshold: threshold
+            threshold: skillsThreshold
         )
         async let healthSnapshot = CapabilitySearchDiagnostics.snapshot(mode: .full)
 
@@ -337,7 +354,7 @@ enum CapabilitySearch {
         logger.notice(
             """
             CapabilitySearch query=\(query, privacy: .public)
-            threshold=\(threshold, privacy: .public) fusedCutoff=\(fusedCutoff, privacy: .public)
+            methodsThreshold=\(methodsThreshold, privacy: .public) skillsThreshold=\(skillsThreshold, privacy: .public) fusedCutoff=\(fusedCutoff, privacy: .public)
             health=\(healthSummary, privacy: .public)
             methods raw=\(formatHits(methodDiag.rawHits), privacy: .public)
             methods accepted=\(formatHits(methodDiag.acceptedHits), privacy: .public)
@@ -349,9 +366,9 @@ enum CapabilitySearch {
         )
 
         return CapabilitySearchResults(
-            methods: methodResults.filter { $0.searchScore >= threshold },
+            methods: methodResults.filter { $0.searchScore >= methodsThreshold },
             tools: toolResults,
-            skills: skillResults.filter { $0.searchScore >= threshold }
+            skills: skillResults.filter { $0.searchScore >= skillsThreshold }
         )
     }
 

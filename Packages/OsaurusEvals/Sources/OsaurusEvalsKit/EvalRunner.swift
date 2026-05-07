@@ -656,8 +656,10 @@ public enum EvalRunner {
     /// LLM call, no agent state — fast enough to run in CI on every
     /// PR once the threshold floor is set (see `recall_floors.json`).
     ///
-    /// Threshold precedence: CLI `--threshold` > per-case
-    /// `thresholdOverride` > `CapabilitySearch.minimumRelevanceScore`.
+    /// Tools-lane threshold precedence: CLI `--threshold` > per-case
+    /// `thresholdOverride` > `CapabilitySearch.minimumFusedScore`.
+    /// Methods + skills lanes always use their own per-lane cosine
+    /// constants — see `CapabilitySearchEvaluator.evaluate` doc.
     /// Honours the existing `requirePlugins` skip behaviour so a host
     /// without the relevant plugin gets `skipped + missing plugins`
     /// instead of a misleading `failed`.
@@ -748,17 +750,17 @@ public enum EvalRunner {
         // Always include a one-line forensic summary so a failing case
         // in `--verbose` (or `--report-forensics`) reads at a glance.
         // Tools use the hybrid `appliedMinFusedScore` (RRF cutoff);
-        // methods + skills are still pure embedding and use the
-        // optional `appliedThreshold` (rendered as "n/a" when nil so
-        // we don't leak Swift's `Optional(...)` interpolation form).
-        let methodSkillThreshold = observed.appliedThreshold.map { String(format: "%.3f", $0) } ?? "n/a"
+        // methods + skills carry independent embed-cosine cutoffs
+        // post-PR-A (split out of the legacy single `appliedThreshold`,
+        // which now mirrors `appliedMethodsThreshold` for back-compat).
         notes.append(
             "summary: tools raw=\(observed.toolHits.count) accepted=\(acceptedToolNames.count) | "
                 + "methods raw=\(observed.methodHits.count) accepted=\(acceptedMethodNames.count) | "
                 + "skills raw=\(observed.skillHits.count) accepted=\(acceptedSkillNames.count) | "
                 + "registry=\(observed.registrySize) index=\(observed.indexSize) "
                 + "minFusedScore=\(String(format: "%.3f", observed.appliedMinFusedScore)) "
-                + "embedThreshold=\(methodSkillThreshold)"
+                + "methodsThreshold=\(String(format: "%.3f", observed.appliedMethodsThreshold)) "
+                + "skillsThreshold=\(String(format: "%.3f", observed.appliedSkillsThreshold))"
         )
 
         return EvalCaseReport(
