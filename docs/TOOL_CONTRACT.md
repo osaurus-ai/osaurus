@@ -182,10 +182,50 @@ unused fields, and rejecting that as `invalid_args` was a footgun.
 ### `sandbox_exec` background flag
 
 Foreground (default): returns `{stdout, stderr, exit_code, cwd}` when the
-command finishes (capped by `timeout`, max 300s). Pass `background:true`
-to spawn a detached process — the tool returns `{pid, log_file, cwd,
-background:true}` as soon as the spawn shim returns. Manage the resulting
-job through `sandbox_process` (poll/wait/kill).
+command finishes. **No built-in wall-clock timeout** — long-running
+commands run to completion. Pass `timeout: <seconds>` to set a hard
+idle ceiling (kill if no output for N seconds). The user's
+`[Terminate]` button on the chat tool-call card is the primary control;
+when pressed, the result envelope additionally carries
+`killed_by: "user"` so the model can branch on it.
+
+Pass `background:true` to spawn a detached process — the tool returns
+`{pid, log_file, cwd, background:true}` as soon as the spawn shim
+returns. The chat card still streams the live tail of the log file, and
+the `[Terminate]` button still works (signals SIGTERM via
+`execAsRoot kill -TERM <pid>`). Manage the resulting job through
+`sandbox_process` (poll/wait/kill).
+
+### Streaming-aware tools
+
+Tools that drive long-running shell commands (`sandbox_exec`,
+`shell_run`) opt out of the registry's 120 s wall-clock race via
+`var bypassRegistryTimeout: Bool { true }` on `OsaurusTool`. They have
+no usable wall-clock budget — a `cargo build` legitimately runs for
+30+ minutes — and rely on:
+
+1. The user's `[Terminate]` button (sends SIGTERM, then SIGKILL after a
+   3 s grace; surfaces `killed_by: "user"` in the result envelope).
+2. The optional `timeout` arg (idle ceiling; resets on every byte of
+   output).
+3. Container CPU / memory limits + per-turn command count.
+
+Other tools keep the 120 s safety net unchanged.
+
+### Pipefail by default
+
+`sandbox_exec` and `shell_run` wrap the model's command in
+`set -o pipefail; ...` so a real upstream pipeline failure surfaces as
+the rightmost non-zero exit instead of being masked by `head` / `tee`.
+SIGPIPE (exit 141) is treated as a benign soft warning — common and
+expected for `cmd | head -n N` patterns.
+
+The same path adds an empty-output warning when
+`exit_code == 0 && stdout.isEmpty && stderr.isEmpty` AND the command
+contained `|` or `2>/dev/null`. Tool authors writing wrappers around
+shell exec should follow the same pattern (see
+`diagnosticWarnings(...)` in `BuiltinSandboxTools.swift`) so the model
+sees the same vocabulary regardless of which tool ran the pipeline.
 
 ---
 

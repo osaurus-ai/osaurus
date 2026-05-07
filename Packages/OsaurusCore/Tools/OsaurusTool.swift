@@ -26,9 +26,22 @@ protocol OsaurusTool: Sendable {
     /// with a `ToolEnvelope.failure(kind: .executionError, …,
     /// retryable: false)` so resources are released promptly.
     func execute(argumentsJSON: String) async throws -> String
+
+    /// When `true`, the registry skips its own wall-clock race and
+    /// dispatches the body straight through. Streaming-aware tools
+    /// (`sandbox_exec`, `shell_run`) opt in here because they have no
+    /// usable wall-clock budget — a `cargo build` legitimately runs
+    /// for 30+ minutes — and rely on the user's `[Terminate]` button
+    /// + their own optional inactivity timeout as the safety net.
+    /// Default `false`: every other tool keeps the 120s safety net.
+    var bypassRegistryTimeout: Bool { get }
 }
 
 extension OsaurusTool {
+    /// Default: every tool gets the registry's wall-clock safety net.
+    /// Streaming tools (`sandbox_exec`, `shell_run`) override to `true`.
+    var bypassRegistryTimeout: Bool { false }
+
     /// Build OpenAI-compatible Tool specification
     func asOpenAITool() -> Tool {
         Tool(

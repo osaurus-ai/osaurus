@@ -7,6 +7,8 @@
 //  All paths are validated on the host side before any container exec.
 //
 
+import Combine
+import Containerization
 import Foundation
 
 // MARK: - Registration
@@ -259,6 +261,50 @@ private func sandboxExecutionFailure(
     )
 }
 
+/// Compute the per-call warning list for a foreground shell execution.
+/// Two cases the model wants flagged:
+///   - `exit 0 + empty stdout + empty stderr + pipeline / 2>/dev/null` →
+///     loud "no output" warning. Pre-pipefail this was the silent
+///     `head` masking pattern; with pipefail on we still surface the
+///     warning because suppressed stderr (`2>/dev/null`) means any
+///     genuine error is invisible to the model.
+///   - `exit 141` → soft SIGPIPE note. Common and benign for
+///     `cmd | head -n N` patterns where the upstream had more output;
+///     captured stdout is still trustworthy.
+///
+/// Internal — shared by `SandboxExecTool` and `ShellRunTool` so both
+/// tools speak the same vocabulary.
+internal func diagnosticWarnings(
+    command: String,
+    exitCode: Int32,
+    stdout: String,
+    stderr: String
+) -> [String] {
+    var warnings: [String] = []
+    let suspiciousEmpty =
+        exitCode == 0
+        && stdout.isEmpty
+        && stderr.isEmpty
+        && (command.contains("|") || command.contains("2>/dev/null"))
+    if suspiciousEmpty {
+        warnings.append(
+            "Command exited 0 but produced no output. If you used `2>/dev/null` "
+                + "in a pipeline, the upstream error was suppressed — re-run without "
+                + "it to see what failed. (Pipefail is on, so a real upstream failure "
+                + "would have set a non-zero exit; this looks like genuine empty "
+                + "output OR redirected stderr.)"
+        )
+    }
+    if exitCode == 141 {
+        warnings.append(
+            "A pipeline stage was terminated by SIGPIPE (exit 141). Usually safe "
+                + "when piping into `head -n N` and the upstream had more data; the "
+                + "captured stdout is still trustworthy."
+        )
+    }
+    return warnings
+}
+
 private let sandboxDefaultPATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 private func agentVenvPath(home: String) -> String {
@@ -334,16 +380,21 @@ protocol SandboxToolCommandRunning: Sendable {
         command: String,
         env: [String: String],
         cwd: String?,
-        timeout: TimeInterval,
+        timeout: TimeInterval?,
         streamToLogs: Bool,
-        logSource: String?
+        logSource: String?,
+        stdoutTee: (any Writer)?,
+        stderrTee: (any Writer)?,
+        onProcessStarted: (@Sendable (ProcessHandle) -> Void)?
     ) async throws -> ContainerExecResult
 
     func execAsRoot(
         command: String,
-        timeout: TimeInterval,
+        timeout: TimeInterval?,
         streamToLogs: Bool,
-        logSource: String?
+        logSource: String?,
+        stdoutTee: (any Writer)?,
+        stderrTee: (any Writer)?
     ) async throws -> ContainerExecResult
 
     func execAsAgent(
@@ -351,9 +402,12 @@ protocol SandboxToolCommandRunning: Sendable {
         command: String,
         pluginName: String?,
         env: [String: String],
-        timeout: TimeInterval,
+        timeout: TimeInterval?,
         streamToLogs: Bool,
-        logSource: String?
+        logSource: String?,
+        stdoutTee: (any Writer)?,
+        stderrTee: (any Writer)?,
+        onProcessStarted: (@Sendable (ProcessHandle) -> Void)?
     ) async throws -> ContainerExecResult
 }
 
@@ -363,9 +417,12 @@ private struct LiveSandboxToolCommandRunner: SandboxToolCommandRunning {
         command: String,
         env: [String: String] = [:],
         cwd: String? = nil,
-        timeout: TimeInterval = 30,
+        timeout: TimeInterval? = 30,
         streamToLogs: Bool = false,
-        logSource: String? = nil
+        logSource: String? = nil,
+        stdoutTee: (any Writer)? = nil,
+        stderrTee: (any Writer)? = nil,
+        onProcessStarted: (@Sendable (ProcessHandle) -> Void)? = nil
     ) async throws -> ContainerExecResult {
         try await SandboxManager.shared.exec(
             user: user,
@@ -374,21 +431,28 @@ private struct LiveSandboxToolCommandRunner: SandboxToolCommandRunning {
             cwd: cwd,
             timeout: timeout,
             streamToLogs: streamToLogs,
-            logSource: logSource
+            logSource: logSource,
+            stdoutTee: stdoutTee,
+            stderrTee: stderrTee,
+            onProcessStarted: onProcessStarted
         )
     }
 
     func execAsRoot(
         command: String,
-        timeout: TimeInterval = 60,
+        timeout: TimeInterval? = 60,
         streamToLogs: Bool = false,
-        logSource: String? = nil
+        logSource: String? = nil,
+        stdoutTee: (any Writer)? = nil,
+        stderrTee: (any Writer)? = nil
     ) async throws -> ContainerExecResult {
         try await SandboxManager.shared.execAsRoot(
             command: command,
             timeout: timeout,
             streamToLogs: streamToLogs,
-            logSource: logSource
+            logSource: logSource,
+            stdoutTee: stdoutTee,
+            stderrTee: stderrTee
         )
     }
 
@@ -397,9 +461,12 @@ private struct LiveSandboxToolCommandRunner: SandboxToolCommandRunning {
         command: String,
         pluginName: String? = nil,
         env: [String: String] = [:],
-        timeout: TimeInterval = 30,
+        timeout: TimeInterval? = 30,
         streamToLogs: Bool = false,
-        logSource: String? = nil
+        logSource: String? = nil,
+        stdoutTee: (any Writer)? = nil,
+        stderrTee: (any Writer)? = nil,
+        onProcessStarted: (@Sendable (ProcessHandle) -> Void)? = nil
     ) async throws -> ContainerExecResult {
         try await SandboxManager.shared.execAsAgent(
             agentName,
@@ -408,7 +475,10 @@ private struct LiveSandboxToolCommandRunner: SandboxToolCommandRunning {
             env: env,
             timeout: timeout,
             streamToLogs: streamToLogs,
-            logSource: logSource
+            logSource: logSource,
+            stdoutTee: stdoutTee,
+            stderrTee: stderrTee,
+            onProcessStarted: onProcessStarted
         )
     }
 }
@@ -431,9 +501,12 @@ actor SandboxToolCommandRunnerRegistry {
         command: String,
         env: [String: String] = [:],
         cwd: String? = nil,
-        timeout: TimeInterval = 30,
+        timeout: TimeInterval? = 30,
         streamToLogs: Bool = false,
-        logSource: String? = nil
+        logSource: String? = nil,
+        stdoutTee: (any Writer)? = nil,
+        stderrTee: (any Writer)? = nil,
+        onProcessStarted: (@Sendable (ProcessHandle) -> Void)? = nil
     ) async throws -> ContainerExecResult {
         try await runner.exec(
             user: user,
@@ -442,21 +515,28 @@ actor SandboxToolCommandRunnerRegistry {
             cwd: cwd,
             timeout: timeout,
             streamToLogs: streamToLogs,
-            logSource: logSource
+            logSource: logSource,
+            stdoutTee: stdoutTee,
+            stderrTee: stderrTee,
+            onProcessStarted: onProcessStarted
         )
     }
 
     func execAsRoot(
         command: String,
-        timeout: TimeInterval = 60,
+        timeout: TimeInterval? = 60,
         streamToLogs: Bool = false,
-        logSource: String? = nil
+        logSource: String? = nil,
+        stdoutTee: (any Writer)? = nil,
+        stderrTee: (any Writer)? = nil
     ) async throws -> ContainerExecResult {
         try await runner.execAsRoot(
             command: command,
             timeout: timeout,
             streamToLogs: streamToLogs,
-            logSource: logSource
+            logSource: logSource,
+            stdoutTee: stdoutTee,
+            stderrTee: stderrTee
         )
     }
 
@@ -465,9 +545,12 @@ actor SandboxToolCommandRunnerRegistry {
         command: String,
         pluginName: String? = nil,
         env: [String: String] = [:],
-        timeout: TimeInterval = 30,
+        timeout: TimeInterval? = 30,
         streamToLogs: Bool = false,
-        logSource: String? = nil
+        logSource: String? = nil,
+        stdoutTee: (any Writer)? = nil,
+        stderrTee: (any Writer)? = nil,
+        onProcessStarted: (@Sendable (ProcessHandle) -> Void)? = nil
     ) async throws -> ContainerExecResult {
         try await runner.execAsAgent(
             agentName,
@@ -476,7 +559,10 @@ actor SandboxToolCommandRunnerRegistry {
             env: env,
             timeout: timeout,
             streamToLogs: streamToLogs,
-            logSource: logSource
+            logSource: logSource,
+            stdoutTee: stdoutTee,
+            stderrTee: stderrTee,
+            onProcessStarted: onProcessStarted
         )
     }
 }
@@ -1156,28 +1242,42 @@ private struct SandboxExecTool: OsaurusTool, @unchecked Sendable {
         write, and dependency installs, prefer the dedicated `sandbox_*` \
         tools — each tool's description states which shell pattern it replaces.
 
-        Foreground (default): returns INSTANTLY when the command finishes, \
-        even if you set a high `timeout`. Prefer ONE rich invocation \
-        (chained with `&&` / `;` / pipes) over many round-trips.
+        Foreground (default): runs to completion. Long-running commands \
+        (builds, installs, large fetches) stream their output live to the \
+        chat — the user sees it as it happens and can press [Terminate] at \
+        any time, which signals SIGTERM and surfaces `killed_by: "user"` in \
+        your result. Prefer ONE rich invocation (chained with `&&` / `;` / \
+        pipes) over many round-trips.
 
         Background (`background:true`): returns a `pid` + `log_file` \
-        immediately; spawn-side timeout is fixed at 10s. Use for servers, \
-        watchers, test runs, long builds. Then call `sandbox_process` to \
-        poll/wait/kill. Do NOT shell-background yourself with `&` / `nohup` \
-        / `disown` — pass `background:true` so the runtime can track it.
+        immediately; the user can also tail and terminate via the chat card. \
+        Use for servers, watchers, daemons that should outlive your call. \
+        Then call `sandbox_process` to poll/wait/kill. Do NOT shell-background \
+        yourself with `&` / `nohup` / `disown` — pass `background:true` so \
+        the runtime can track it.
 
         For multi-step Python orchestration (≥3 tool calls with logic \
         between them, output filtering, looping), prefer `sandbox_execute_code`.
 
-        LIMITS: foreground default timeout 30s, max 300s. Stdout truncated \
-        at ~50KB (40% head + 60% tail). Per-turn command count is capped — \
-        chain inside one call instead of burning the cap on N small ones.
+        LIMITS: no built-in foreground timeout — the user terminates if they \
+        care. Pass `timeout: <seconds>` ONLY if you want a hard idle ceiling \
+        (kill the process if it produces no output for N seconds). Final \
+        stdout truncated at ~50KB (40% head + 60% tail). Per-turn command \
+        count is capped — chain inside one call instead of burning the cap. \
+        Avoid `2>/dev/null` in pipelines — it hides errors from the result \
+        envelope (pipefail is on, so a real upstream failure DOES surface as \
+        a non-zero exit; suppressed stderr will trigger an empty-output warning).
         """
     let agentId: String
     let agentName: String
     let home: String
     let maxTimeout: Int
     let maxCommandsPerTurn: Int
+
+    /// Streaming exec opts out of the registry's wall-clock cap. Long
+    /// commands rely on the user's [Terminate] button + the optional
+    /// `timeout` (idle ceiling) as the safety net.
+    var bypassRegistryTimeout: Bool { true }
 
     var parameters: JSONValue? {
         .object([
@@ -1197,17 +1297,19 @@ private struct SandboxExecTool: OsaurusTool, @unchecked Sendable {
                 "timeout": .object([
                     "type": .string("integer"),
                     "description": .string(
-                        "Foreground timeout in seconds (default 30, max 300). Ignored when `background:true`."
+                        "Optional idle-timeout in seconds. When set, the command is killed if it "
+                            + "produces no stdout/stderr output for this many seconds (resets on every "
+                            + "byte). When omitted, the command runs to completion — the user terminates "
+                            + "from the chat card if needed. Ignored when `background:true`."
                     ),
-                    "default": .number(30),
                 ]),
                 "background": .object([
                     "type": .string("boolean"),
                     "description": .string(
                         "When true, the command runs detached with stdout+stderr redirected to "
                             + "a per-job log under the agent home; the tool returns the pid + log "
-                            + "path immediately. Use for long-lived processes (servers, watchers) "
-                            + "and tasks that exceed the foreground timeout. Pair with `sandbox_process`."
+                            + "path immediately. Use for long-lived processes (servers, watchers). "
+                            + "Pair with `sandbox_process`."
                     ),
                     "default": .bool(false),
                 ]),
@@ -1263,8 +1365,17 @@ private struct SandboxExecTool: OsaurusTool, @unchecked Sendable {
             // Detached job: start it, return pid + log path right away. The
             // 10s timeout here is just for the spawn shim — the spawned
             // process itself can run as long as it likes.
+            //
+            // `set -o pipefail` is wrapped around the user's command via a
+            // nested `bash -c` so a real upstream pipeline failure
+            // surfaces as the rightmost non-zero exit instead of being
+            // masked by `head` / `tee` / `cat`. The user's command is
+            // single-quoted; we escape any internal `'` per shell rules.
             let logFile = "\(home)/bg-\(UUID().uuidString.prefix(8)).log"
-            let fullCmd = "cd '\(cwd)' && nohup \(command) > \(logFile) 2>&1 & echo $!"
+            let escaped = command.replacingOccurrences(of: "'", with: "'\\''")
+            let fullCmd =
+                "cd '\(cwd)' && nohup bash -c 'set -o pipefail; \(escaped)' "
+                + "> \(logFile) 2>&1 & echo $!"
 
             let result = try await SandboxToolCommandRunnerRegistry.shared.exec(
                 user: "agent-\(agentName)",
@@ -1283,6 +1394,19 @@ private struct SandboxExecTool: OsaurusTool, @unchecked Sendable {
                     logFile: logFile,
                     command: command
                 )
+                // Tee the log file into the chat UI so background jobs
+                // get the same Cursor-style live tail as foreground
+                // ones. Terminate maps to `kill -<sig> <pid>` via
+                // execAsRoot so the user can stop a runaway server
+                // without leaving the chat.
+                let toolCallId = ChatExecutionContext.currentToolCallId ?? UUID().uuidString
+                await registerBackgroundLiveExec(
+                    toolCallId: toolCallId,
+                    pid: pid,
+                    command: command,
+                    inContainerLogPath: logFile,
+                    agentName: agentName
+                )
             }
             return sandboxSuccess(
                 tool: name,
@@ -1295,29 +1419,240 @@ private struct SandboxExecTool: OsaurusTool, @unchecked Sendable {
             )
         }
 
-        let timeout = min(
-            coerceInt(args["timeout"]) ?? 30,
-            min(maxTimeout, 300)
+        // Foreground timeout: optional inactivity ceiling. When the
+        // model omits `timeout`, we pass nil all the way down so
+        // `waitWithInactivityTimeout` falls back to `process.wait()`
+        // with no idle check. The user's [Terminate] button is the
+        // primary control for runaway commands.
+        let idleTimeout: TimeInterval? = coerceInt(args["timeout"]).map(TimeInterval.init)
+
+        // Live streaming wiring: register a LiveExecRegistry entry
+        // BEFORE the runner blocks. The chat layer observes the
+        // registry, attaches the handle to the matching tool-call
+        // item, and the row mounts a LiveOutputView that subscribes
+        // to the sink's publishers. The user's [Terminate] button
+        // calls back through the entry's `terminate` closure, which
+        // signals SIGTERM via the captured ProcessHandle.
+        let toolCallId = ChatExecutionContext.currentToolCallId ?? UUID().uuidString
+        let sink = LiveExecSink()
+        let processBox = ProcessHandleBox()
+
+        let terminate: @Sendable (Int) async -> Void = { graceSeconds in
+            sink.requestTerminate()
+            await processBox.terminateWithGrace(graceSeconds: graceSeconds)
+        }
+
+        await LiveExecRegistry.shared.register(
+            LiveExecRegistry.Entry(
+                toolCallId: toolCallId,
+                pid: "",
+                command: command,
+                startedAt: Date(),
+                outputPublisher: sink.outputPublisher,
+                statusPublisher: sink.statusPublisher,
+                currentStatus: { sink.currentStatus },
+                seed: { await sink.bufferedSnapshot() },
+                terminate: terminate
+            )
         )
 
-        let result = try await SandboxToolCommandRunnerRegistry.shared.exec(
-            user: "agent-\(agentName)",
+        // `set -o pipefail` so a real upstream pipeline failure
+        // surfaces as the rightmost non-zero exit rather than being
+        // masked by `head` / `tee` / `cat`. The downstream
+        // `set -o pipefail` only affects the shell that runs the
+        // model's command, NOT the various built-in sandbox helpers
+        // (which compose their own pipelines and call SandboxManager
+        // directly without going through this entry point).
+        let prefixedCommand = "set -o pipefail; \(command)"
+
+        let result: ContainerExecResult
+        do {
+            result = try await SandboxToolCommandRunnerRegistry.shared.exec(
+                user: "agent-\(agentName)",
+                command: prefixedCommand,
+                env: agentShellEnvironment(agentId: agentId, home: home, cwd: cwd),
+                cwd: cwd,
+                timeout: idleTimeout,
+                streamToLogs: true,
+                logSource: agentName,
+                stdoutTee: sink,
+                stderrTee: sink,
+                onProcessStarted: { handle in
+                    Task { await processBox.set(handle) }
+                }
+            )
+        } catch {
+            // Synthetic exit code surfaces the underlying error to live
+            // subscribers (the chat row's status pill flips to "exited
+            // (-1)") before we re-throw for the model.
+            sink.markExited(code: -1)
+            await LiveExecRegistry.shared.unregister(toolCallId: toolCallId)
+            throw error
+        }
+        sink.markExited(code: result.exitCode)
+        await LiveExecRegistry.shared.unregister(toolCallId: toolCallId)
+
+        var payload: [String: Any] = [
+            "stdout": truncateForModel(result.stdout),
+            "stderr": truncateForModel(result.stderr, maxChars: 10_000),
+            "exit_code": Int(result.exitCode),
+            "cwd": cwd,
+        ]
+        if sink.terminationReason == .user {
+            payload["killed_by"] = "user"
+        }
+        let warnings = diagnosticWarnings(
             command: command,
-            env: agentShellEnvironment(agentId: agentId, home: home, cwd: cwd),
-            cwd: cwd,
-            timeout: TimeInterval(timeout),
-            streamToLogs: true,
-            logSource: agentName
+            exitCode: result.exitCode,
+            stdout: result.stdout,
+            stderr: result.stderr
         )
-
         return sandboxSuccess(
             tool: name,
-            result: [
-                "stdout": truncateForModel(result.stdout),
-                "stderr": truncateForModel(result.stderr, maxChars: 10_000),
-                "exit_code": Int(result.exitCode),
-                "cwd": cwd,
-            ]
+            result: payload,
+            warnings: warnings.isEmpty ? nil : warnings
+        )
+    }
+}
+
+/// Holds the `ProcessHandle` once the underlying foreground exec
+/// process is up. Used so the LiveExecRegistry entry's `terminate`
+/// closure (registered BEFORE the process exists) can later signal
+/// the running process.
+private actor ProcessHandleBox {
+    private var handle: ProcessHandle?
+
+    func set(_ handle: ProcessHandle) {
+        self.handle = handle
+    }
+
+    /// SIGTERM → grace → SIGKILL. Idempotent against a process that's
+    /// already exited (signal failures are swallowed by `try?`). The
+    /// grace lets a well-behaved program flush stdout / clean up.
+    func terminateWithGrace(graceSeconds: Int) async {
+        guard let handle else { return }
+        try? await handle.kill(15)
+        if graceSeconds > 0 {
+            try? await Task.sleep(nanoseconds: UInt64(graceSeconds) * 1_000_000_000)
+        }
+        try? await handle.kill(9)
+    }
+}
+
+/// Register a `LiveExecRegistry.Entry` for a background sandbox job.
+/// The output publisher is backed by a `LogFileTailer` reading the
+/// host-side bind-mount of the agent's workspace; terminate maps to
+/// `kill -<sig> <pid>` issued as root inside the container.
+///
+/// The entry's status moves to `.exited(0)` when `kill -0` reports the
+/// process is gone — a detached task polls once a second and unwinds
+/// when the pid dies. On `terminate`, we send SIGTERM, wait
+/// `graceSeconds`, then SIGKILL via execAsRoot.
+private func registerBackgroundLiveExec(
+    toolCallId: String,
+    pid: String,
+    command: String,
+    inContainerLogPath: String,
+    agentName: String
+) async {
+    // /workspace/agents/<name>/bg-XXX.log → host bind-mount path.
+    let prefix = OsaurusPaths.inContainerAgentHome(agentName) + "/"
+    guard inContainerLogPath.hasPrefix(prefix) else { return }
+    let relative = String(inContainerLogPath.dropFirst(prefix.count))
+    let hostLogURL = OsaurusPaths.containerAgentDir(agentName)
+        .appendingPathComponent(relative)
+
+    let tailer = LogFileTailer(path: hostLogURL.path)
+    tailer.start()
+
+    let statusBox = StatusSubjectBox()
+    let userTerminated = UserTerminatedFlag()
+
+    // Poll the in-VM pid every second; flip to .exited when it's gone.
+    // The detached Task is self-retaining for its lifetime — we don't
+    // need to hold the returned Task value.
+    Task.detached { @Sendable in
+        while !Task.isCancelled {
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            if Task.isCancelled { return }
+            let alive = await BackgroundExecLiveness.isPidAlive(pid: pid, agentName: agentName)
+            if !alive {
+                let killedByUser = await userTerminated.value
+                statusBox.send(killedByUser ? .killed(reason: "user") : .exited(0))
+                tailer.stop()
+                return
+            }
+        }
+    }
+
+    let terminate: @Sendable (Int) async -> Void = { graceSeconds in
+        await userTerminated.set(true)
+        await BackgroundExecLiveness.kill(pid: pid, signal: "TERM")
+        if graceSeconds > 0 {
+            try? await Task.sleep(nanoseconds: UInt64(graceSeconds) * 1_000_000_000)
+        }
+        await BackgroundExecLiveness.kill(pid: pid, signal: "KILL")
+    }
+
+    await LiveExecRegistry.shared.register(
+        LiveExecRegistry.Entry(
+            toolCallId: toolCallId,
+            pid: pid,
+            command: command,
+            startedAt: Date(),
+            outputPublisher: tailer.publisher,
+            statusPublisher: statusBox.publisher,
+            currentStatus: { statusBox.current },
+            seed: { tailer.snapshot() },
+            terminate: terminate
+        )
+    )
+}
+
+private actor UserTerminatedFlag {
+    private var _value = false
+    var value: Bool { _value }
+    func set(_ v: Bool) { _value = v }
+}
+
+/// Sendable wrapper around `CurrentValueSubject` for cross-task use.
+/// `CurrentValueSubject` is thread-safe internally but doesn't have a
+/// formal Sendable conformance; this thin wrapper closes the gap.
+private final class StatusSubjectBox: @unchecked Sendable {
+    private let subject = CurrentValueSubject<LiveExecRegistry.LiveExecStatus, Never>(.running)
+
+    var publisher: AnyPublisher<LiveExecRegistry.LiveExecStatus, Never> {
+        subject.eraseToAnyPublisher()
+    }
+
+    var current: LiveExecRegistry.LiveExecStatus { subject.value }
+
+    func send(_ status: LiveExecRegistry.LiveExecStatus) {
+        subject.send(status)
+    }
+}
+
+/// Container-side process lifecycle helpers for background jobs. Keep
+/// the in-VM `kill` invocations in one place so the polling watcher
+/// and the user-terminate path can't drift in their command shape.
+private enum BackgroundExecLiveness {
+    static func isPidAlive(pid: String, agentName: String) async -> Bool {
+        guard
+            let result = try? await SandboxToolCommandRunnerRegistry.shared.execAsAgent(
+                agentName,
+                command: "kill -0 \(pid) 2>/dev/null && echo a || echo d"
+            )
+        else { return false }
+        return result.stdout.contains("a")
+    }
+
+    /// `kill -<signal> <pid>` as root, fire-and-forget. Used to signal
+    /// background jobs when the user presses [Terminate]. `|| true` so
+    /// a process that's already exited doesn't surface as a runner error.
+    static func kill(pid: String, signal: String) async {
+        _ = try? await SandboxToolCommandRunnerRegistry.shared.execAsRoot(
+            command: "kill -\(signal) \(pid) 2>/dev/null || true",
+            timeout: 5
         )
     }
 }

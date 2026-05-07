@@ -7,6 +7,7 @@
 //  is selected; agents use them to operate directly on the host folder.
 //
 
+import Darwin
 import Foundation
 
 // MARK: - Tool Errors
@@ -763,8 +764,12 @@ struct ShellRunTool: OsaurusTool, PermissionedTool {
         + "git, processes, network calls, and filesystem mutations (`mv`/`cp`/`rm`/`mkdir`).** "
         + "For file IO, search, edit, write, and directory listing, prefer the dedicated "
         + "`file_*` tools — each one's description states the `shell_run` pattern it "
-        + "replaces. This action requires approval. Output is truncated to 10,000 characters. "
-        + "Default timeout 30s, max 300s."
+        + "replaces. This action requires approval. Long-running commands stream their "
+        + "output live to the chat — the user sees it as it happens and can press [Terminate] "
+        + "at any time. Final stdout truncated to 10,000 characters. No built-in timeout: "
+        + "pass `timeout: <seconds>` ONLY if you want a hard idle ceiling (kill the process "
+        + "if no output for N seconds). Avoid `2>/dev/null` in pipelines — pipefail is on "
+        + "and suppressing stderr will trigger an empty-output warning."
     let parameters: JSONValue? = .object([
         "type": .string("object"),
         "additionalProperties": .bool(false),
@@ -775,7 +780,11 @@ struct ShellRunTool: OsaurusTool, PermissionedTool {
             ]),
             "timeout": .object([
                 "type": .string("integer"),
-                "description": .string("Timeout in seconds (default: 30, max: 300)"),
+                "description": .string(
+                    "Optional idle timeout in seconds. Kills the process if it produces no "
+                        + "output for this many seconds. Omit to run to completion (the user "
+                        + "terminates from the chat card if needed)."
+                ),
             ]),
         ]),
         "required": .array([.string("command")]),
@@ -783,6 +792,11 @@ struct ShellRunTool: OsaurusTool, PermissionedTool {
 
     var requirements: [String] { ["permission:shell"] }
     var defaultPermissionPolicy: ToolPermissionPolicy { .ask }
+
+    /// Streaming exec opts out of the registry's wall-clock cap. Long
+    /// commands rely on the user's [Terminate] button + the optional
+    /// `timeout` (idle ceiling) as the safety net.
+    var bypassRegistryTimeout: Bool { true }
 
     private let rootPath: URL
 
@@ -804,11 +818,18 @@ struct ShellRunTool: OsaurusTool, PermissionedTool {
             return cmdReq.failureEnvelope ?? ""
         }
 
-        let timeout = min(coerceInt(args["timeout"]) ?? 30, 300)
+        // Optional idle ceiling; nil = run forever (user terminates).
+        let idleTimeout: TimeInterval? = coerceInt(args["timeout"]).map(TimeInterval.init)
+
+        // `set -o pipefail` wrapping so a real upstream pipeline
+        // failure surfaces as the rightmost non-zero exit instead of
+        // being masked by `head` / `tee` / `cat`. zsh honours pipefail
+        // identically to bash.
+        let prefixedCommand = "set -o pipefail; \(command)"
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        process.arguments = ["-c", command]
+        process.arguments = ["-c", prefixedCommand]
         process.currentDirectoryURL = rootPath
 
         let stdoutPipe = Pipe()
@@ -816,44 +837,146 @@ struct ShellRunTool: OsaurusTool, PermissionedTool {
         process.standardOutput = stdoutPipe
         process.standardError = stderrPipe
 
-        // Set up timeout
-        let timeoutTask = Task {
-            try await Task.sleep(nanoseconds: UInt64(timeout) * 1_000_000_000)
-            if process.isRunning {
-                process.terminate()
+        // Live streaming wiring: incrementally read from both pipes,
+        // appending to a per-stream buffer (for the model's final
+        // result) AND broadcasting to a LiveExecSink (for the chat UI).
+        // `lastActivity` powers the optional idle-timeout watchdog.
+        let collector = ShellRunOutputCollector()
+        let sink = LiveExecSink()
+
+        installPipeReader(
+            pipe: stdoutPipe,
+            collector: collector,
+            isStderr: false,
+            sink: sink
+        )
+        installPipeReader(
+            pipe: stderrPipe,
+            collector: collector,
+            isStderr: true,
+            sink: sink
+        )
+
+        // Register the live entry BEFORE starting the process so the
+        // chat card can mount its viewer immediately.
+        let toolCallId = ChatExecutionContext.currentToolCallId ?? UUID().uuidString
+        let processBox = ShellRunProcessBox(process: process)
+        let terminate: @Sendable (Int) async -> Void = { graceSeconds in
+            sink.requestTerminate()
+            await processBox.terminateWithGrace(graceSeconds: graceSeconds)
+        }
+
+        await LiveExecRegistry.shared.register(
+            LiveExecRegistry.Entry(
+                toolCallId: toolCallId,
+                pid: "",
+                command: command,
+                startedAt: Date(),
+                outputPublisher: sink.outputPublisher,
+                statusPublisher: sink.statusPublisher,
+                currentStatus: { sink.currentStatus },
+                seed: { await sink.bufferedSnapshot() },
+                terminate: terminate
+            )
+        )
+
+        // Idle-timeout watchdog. Only runs when `idleTimeout` is set;
+        // resets implicitly on every chunk via `collector.lastActivity`.
+        let idleWatcher: Task<Void, Never>?
+        if let idleTimeout {
+            idleWatcher = Task.detached { @Sendable in
+                let pollNanos: UInt64 = 1_000_000_000
+                while !Task.isCancelled {
+                    try? await Task.sleep(nanoseconds: pollNanos)
+                    if Task.isCancelled { return }
+                    let last = await collector.lastActivity
+                    if Date().timeIntervalSince(last) >= idleTimeout {
+                        await processBox.terminate()
+                        return
+                    }
+                }
             }
+        } else {
+            idleWatcher = nil
         }
 
         defer {
-            timeoutTask.cancel()
+            idleWatcher?.cancel()
         }
 
         do {
             try await FolderToolHelpers.runProcessAsync(process)
         } catch {
+            sink.markExited(code: -1)
+            await LiveExecRegistry.shared.unregister(toolCallId: toolCallId)
             throw FolderToolError.operationFailed("Failed to execute command: \(error)")
         }
 
-        let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-        let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+        // Drain anything buffered in the pipes after exit (the
+        // readabilityHandlers stop firing once the process closes its
+        // end). `availableData` returns the residual bytes.
+        await collector.appendDrain(
+            stdoutData: stdoutPipe.fileHandleForReading.availableData,
+            stderrData: stderrPipe.fileHandleForReading.availableData,
+            sink: sink
+        )
 
-        let stdout =
-            String(data: stdoutData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
-            ?? ""
-        let stderr =
-            String(data: stderrData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
-            ?? ""
+        // Stop the readabilityHandlers — Foundation leaves them wired
+        // even after the process exits, which keeps the FileHandle
+        // alive.
+        stdoutPipe.fileHandleForReading.readabilityHandler = nil
+        stderrPipe.fileHandleForReading.readabilityHandler = nil
 
         let exitCode = process.terminationStatus
+        sink.markExited(code: exitCode)
+        await LiveExecRegistry.shared.unregister(toolCallId: toolCallId)
 
+        let (stdoutText, stderrText) = await collector.snapshot()
+        let trimmedStdout = stdoutText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedStderr = stderrText.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        var payload: [String: Any] = [
+            "stdout": truncateOutput(trimmedStdout),
+            "stderr": truncateOutput(trimmedStderr),
+            "exit_code": Int(exitCode),
+        ]
+        if sink.terminationReason == .user {
+            payload["killed_by"] = "user"
+        }
+        let warnings = diagnosticWarnings(
+            command: command,
+            exitCode: exitCode,
+            stdout: trimmedStdout,
+            stderr: trimmedStderr
+        )
         return ToolEnvelope.success(
             tool: name,
-            result: [
-                "stdout": truncateOutput(stdout),
-                "stderr": truncateOutput(stderr),
-                "exit_code": Int(exitCode),
-            ]
+            result: payload,
+            warnings: warnings.isEmpty ? nil : warnings
         )
+    }
+
+    /// Install a `readabilityHandler` that streams every chunk into
+    /// the collector AND the sink. Closes both sides cleanly on EOF
+    /// so the FileHandle isn't leaked.
+    private func installPipeReader(
+        pipe: Pipe,
+        collector: ShellRunOutputCollector,
+        isStderr: Bool,
+        sink: LiveExecSink
+    ) {
+        pipe.fileHandleForReading.readabilityHandler = { handle in
+            let chunk = handle.availableData
+            guard !chunk.isEmpty else {
+                handle.readabilityHandler = nil
+                return
+            }
+            // Tee to UI synchronously (cheap; PassthroughSubject.send
+            // is non-blocking).
+            try? sink.write(chunk)
+            // Append to the model's result buffer asynchronously.
+            Task { await collector.append(chunk, isStderr: isStderr) }
+        }
     }
 
     private func truncateOutput(_ output: String, maxLength: Int = 10000) -> String {
@@ -861,6 +984,82 @@ struct ShellRunTool: OsaurusTool, PermissionedTool {
             return String(output.prefix(maxLength)) + "\n... (truncated)"
         }
         return output
+    }
+}
+
+/// Per-call output collector for `ShellRunTool`. Splits the streaming
+/// chunks back into stdout / stderr (the underlying `Pipe`s feed two
+/// separate `readabilityHandler`s, but the actor serialises updates so
+/// we don't need a lock around `lastActivity`).
+private actor ShellRunOutputCollector {
+    private var stdoutBuf = Data()
+    private var stderrBuf = Data()
+    private var _lastActivity = Date()
+
+    var lastActivity: Date { _lastActivity }
+
+    func append(_ chunk: Data, isStderr: Bool) {
+        if isStderr {
+            stderrBuf.append(chunk)
+        } else {
+            stdoutBuf.append(chunk)
+        }
+        _lastActivity = Date()
+    }
+
+    /// Append the residual bytes drained from the pipes after process
+    /// exit, also pushing them through the live sink so the chat card
+    /// sees the final flush. `availableData` may return empty data on
+    /// each pipe; we no-op in that case.
+    func appendDrain(stdoutData: Data, stderrData: Data, sink: LiveExecSink) {
+        if !stdoutData.isEmpty {
+            stdoutBuf.append(stdoutData)
+            try? sink.write(stdoutData)
+        }
+        if !stderrData.isEmpty {
+            stderrBuf.append(stderrData)
+            try? sink.write(stderrData)
+        }
+    }
+
+    func snapshot() -> (stdout: String, stderr: String) {
+        (
+            String(data: stdoutBuf, encoding: .utf8) ?? "",
+            String(data: stderrBuf, encoding: .utf8) ?? ""
+        )
+    }
+}
+
+/// Lightweight Sendable wrapper around the host `Process` so the
+/// terminate closure (which crosses task boundaries) can signal it
+/// without tripping strict-concurrency on `Process` itself.
+private actor ShellRunProcessBox {
+    private let process: Process
+
+    init(process: Process) {
+        self.process = process
+    }
+
+    /// Send SIGTERM only — used by the idle-timeout watchdog where the
+    /// "graceful then kill" escalation is overkill.
+    func terminate() {
+        guard process.isRunning else { return }
+        process.terminate()  // SIGTERM
+    }
+
+    /// SIGTERM → grace → SIGKILL. Mirrors `ProcessHandleBox` for
+    /// `sandbox_exec` so terminate-from-the-chat-card behaves the
+    /// same across both tools.
+    func terminateWithGrace(graceSeconds: Int) async {
+        guard process.isRunning else { return }
+        process.terminate()  // SIGTERM
+        if graceSeconds > 0 {
+            try? await Task.sleep(nanoseconds: UInt64(graceSeconds) * 1_000_000_000)
+        }
+        guard process.isRunning else { return }
+        // Foundation has no SIGKILL helper; fall back to the POSIX
+        // syscall via the process identifier.
+        Darwin.kill(process.processIdentifier, SIGKILL)
     }
 }
 

@@ -11,6 +11,7 @@
 //
 
 import AppKit
+import Combine
 import SwiftUI
 
 // MARK: - JSON Formatting Utility
@@ -469,6 +470,18 @@ final class NativeToolCallRowView: NSView {
     private var resultSectionTitle: NSTextField?
     private var argsView: NativeMarkdownView?
     private var resultView: NativeMarkdownView?
+    /// Cursor-style live terminal pane. Mounts when LiveExecRegistry
+    /// has an entry for this row's tool-call-id AND the row's static
+    /// result hasn't landed yet. Mutually exclusive with `resultView`
+    /// in the layout pin so we never double-pin contentContainer's
+    /// bottom.
+    private var liveOutputView: LiveOutputView?
+    private var liveOutputBottomConstraint: NSLayoutConstraint?
+    private var liveExecSubscription: AnyCancellable?
+    /// Tool-call-id the live subscription is currently observing.
+    /// Avoids re-subscribing on every layout-only `configure(item:)`
+    /// pass for the same row.
+    private var liveExecBoundCallId: String?
     private let separatorView = NSView()
     /// pins contentContainer height for hit-testing; toggled when result section is shown
     private var contentBottomToArgs: NSLayoutConstraint?
@@ -614,26 +627,17 @@ final class NativeToolCallRowView: NSView {
                 )
                 av.onHeightChanged = { [weak self] in self?.applyHeight() }
             }
-            if let result = item.result {
-                ensureResultSectionTitle(theme: theme).isHidden = false
+            applyResultOrLiveState(width: width, theme: theme)
+            // Subscribe so that grace-expiry / late-registration
+            // transitions also trigger a re-decision. Subscription
+            // dedups on toolCallId, so this is a no-op on the second
+            // call for the same row.
+            bindLiveOutputIfPresent(toolCallId: item.call.id, theme: theme)
+        }
 
-                let rv = ensureResultView()
-                rv.isHidden = false
-                let textW = max(0, width - Self.sectionMarkdownWidthDeduction)
-                let resultMarkdown = Self.markdownForToolResultDisplay(result)
-                rv.configure(
-                    text: resultMarkdown,
-                    width: textW,
-                    theme: theme,
-                    cacheKey: "result-\(item.call.id)",
-                    isStreaming: false
-                )
-                rv.onHeightChanged = { [weak self] in self?.applyHeight() }
-                contentBottomToArgs?.isActive = false
-                contentBottomToResult?.isActive = true
-            } else {
-                tearDownResultSection()
-            }
+        // Tear down live binding when collapsed.
+        if !isExpanded {
+            tearDownLiveOutput()
         }
 
         applyHeight()
@@ -659,7 +663,144 @@ final class NativeToolCallRowView: NSView {
         } else {
             resultH = 0
         }
-        return rowH + 1 + 8 + sectionTitleH + argsH + resultH + 8
+        let liveH: CGFloat = (liveOutputView != nil ? 8 + LiveOutputView.measuredHeight() : 0)
+        return rowH + 1 + 8 + sectionTitleH + argsH + liveH + resultH + 8
+    }
+
+    // MARK: - Live output bindings
+
+    /// Re-evaluate which expanded section to show (live pane or static
+    /// result) given the current `LiveExecRegistry` snapshot. Called
+    /// from `configure(item:)` for the initial mount AND from the
+    /// registry subscription closure on every entry-change tick.
+    ///
+    /// Mount the live pane ONLY while the tool is actively running.
+    /// The moment status flips to `.exited` / `.killed` we tear it
+    /// down and fall through to the static result — even though the
+    /// registry keeps the entry around for late binders, leaving the
+    /// pane visible after exit eats screen real estate without any
+    /// extra signal to the user (the static result already shows the
+    /// final stdout/stderr/exit_code).
+    private func applyResultOrLiveState(width: CGFloat, theme: any ThemeProtocol) {
+        guard let item = currentItem else { return }
+        if let entry = LiveExecRegistry.shared.currentEntries()[item.call.id],
+            entry.currentStatus() == .running
+        {
+            tearDownResultSection()
+            mountLiveOutputView(with: entry, theme: theme)
+            return
+        }
+        tearDownLiveOutput()
+        guard let result = item.result else {
+            tearDownResultSection()
+            return
+        }
+        ensureResultSectionTitle(theme: theme).isHidden = false
+        let rv = ensureResultView()
+        rv.isHidden = false
+        let textW = max(0, width - Self.sectionMarkdownWidthDeduction)
+        let resultMarkdown = Self.markdownForToolResultDisplay(result)
+        rv.configure(
+            text: resultMarkdown,
+            width: textW,
+            theme: theme,
+            cacheKey: "result-\(item.call.id)",
+            isStreaming: false
+        )
+        rv.onHeightChanged = { [weak self] in self?.applyHeight() }
+        contentBottomToArgs?.isActive = false
+        contentBottomToResult?.isActive = true
+        applyHeight()
+    }
+
+    /// Subscribe to `LiveExecRegistry` and re-run `applyResultOrLiveState`
+    /// on every entries snapshot. Handles three transitions:
+    ///   - tool registers → live pane mounts
+    ///   - tool unregisters mid-grace (rare) → falls through to static
+    ///   - 60 s grace expires → falls through to static result if any
+    ///
+    /// Idempotent on the same id so layout-only re-configures don't
+    /// re-subscribe.
+    private func bindLiveOutputIfPresent(toolCallId: String, theme: any ThemeProtocol) {
+        if liveExecBoundCallId == toolCallId, liveExecSubscription != nil {
+            return
+        }
+        liveExecSubscription?.cancel()
+        liveExecBoundCallId = toolCallId
+
+        let width = currentWidth
+        liveExecSubscription = LiveExecRegistry.shared.entriesPublisher
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                MainActor.assumeIsolated {
+                    self.applyResultOrLiveState(width: width, theme: theme)
+                }
+            }
+    }
+
+    private func mountLiveOutputView(
+        with entry: LiveExecRegistry.Entry,
+        theme: any ThemeProtocol
+    ) {
+        let view: LiveOutputView
+        if let existing = liveOutputView {
+            view = existing
+        } else {
+            view = LiveOutputView()
+            view.translatesAutoresizingMaskIntoConstraints = false
+            contentContainer.addSubview(view)
+            let av = ensureArgsView()
+            // The view itself needs an explicit height because its body
+            // is an NSScrollView (no intrinsic size); without this the
+            // layout solver gives it 0 height and the row reserves
+            // space for nothing.
+            NSLayoutConstraint.activate([
+                view.leadingAnchor.constraint(
+                    equalTo: contentContainer.leadingAnchor,
+                    constant: Self.sectionContentInset
+                ),
+                view.trailingAnchor.constraint(
+                    equalTo: contentContainer.trailingAnchor,
+                    constant: -Self.sectionContentInset
+                ),
+                view.topAnchor.constraint(equalTo: av.bottomAnchor, constant: 8),
+                view.heightAnchor.constraint(
+                    equalToConstant: LiveOutputView.measuredHeight()
+                ),
+            ])
+            let pin = contentContainer.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+            liveOutputBottomConstraint = pin
+            liveOutputView = view
+        }
+        // CRITICAL: this branch runs on EVERY mount — including the
+        // "view already exists" path — because `applyResultOrLiveState`
+        // → `tearDownResultSection` re-activates `contentBottomToArgs`
+        // every tick. Two active bottom pins on `contentContainer`
+        // (args AND live) would let Auto Layout silently pick whichever
+        // gives the bigger height, and the textView pinned to the
+        // shorter live constraint ends up clipped outside the visible
+        // contentContainer region. Always swap pins atomically here.
+        contentBottomToArgs?.isActive = false
+        liveOutputBottomConstraint?.isActive = true
+        view.bind(to: entry, theme: theme)
+        applyHeight()
+    }
+
+    private func tearDownLiveOutput() {
+        liveExecSubscription?.cancel()
+        liveExecSubscription = nil
+        liveExecBoundCallId = nil
+        guard let view = liveOutputView else { return }
+        view.unbind()
+        liveOutputBottomConstraint?.isActive = false
+        liveOutputBottomConstraint = nil
+        view.removeFromSuperview()
+        liveOutputView = nil
+        // Restore args' bottom pin so contentContainer keeps a single
+        // bottom anchor (otherwise the layout becomes ambiguous).
+        contentBottomToArgs?.isActive = true
+        applyHeight()
     }
 
     // MARK: - Private

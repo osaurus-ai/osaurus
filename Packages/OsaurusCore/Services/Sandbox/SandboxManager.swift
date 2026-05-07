@@ -402,9 +402,12 @@
             command: String,
             env: [String: String] = [:],
             cwd: String? = nil,
-            timeout: TimeInterval = 30,
+            timeout: TimeInterval? = 30,
             streamToLogs: Bool = false,
-            logSource: String? = nil
+            logSource: String? = nil,
+            stdoutTee: (any Writer)? = nil,
+            stderrTee: (any Writer)? = nil,
+            onProcessStarted: (@Sendable (ProcessHandle) -> Void)? = nil
         ) async throws -> ContainerExecResult {
             guard linuxContainer != nil else {
                 throw SandboxError.containerNotRunning
@@ -423,21 +426,30 @@
                 env: env,
                 timeout: timeout,
                 streamToLogs: streamToLogs,
-                logSource: logSource
+                logSource: logSource,
+                stdoutTee: stdoutTee,
+                stderrTee: stderrTee,
+                onProcessStarted: onProcessStarted
             )
         }
 
         public func execAsRoot(
             command: String,
-            timeout: TimeInterval = 60,
+            timeout: TimeInterval? = 60,
             streamToLogs: Bool = false,
-            logSource: String? = nil
+            logSource: String? = nil,
+            stdoutTee: (any Writer)? = nil,
+            stderrTee: (any Writer)? = nil,
+            onProcessStarted: (@Sendable (ProcessHandle) -> Void)? = nil
         ) async throws -> ContainerExecResult {
             try await exec(
                 command: command,
                 timeout: timeout,
                 streamToLogs: streamToLogs,
-                logSource: logSource
+                logSource: logSource,
+                stdoutTee: stdoutTee,
+                stderrTee: stderrTee,
+                onProcessStarted: onProcessStarted
             )
         }
 
@@ -446,9 +458,12 @@
             command: String,
             pluginName: String? = nil,
             env: [String: String] = [:],
-            timeout: TimeInterval = 30,
+            timeout: TimeInterval? = 30,
             streamToLogs: Bool = false,
-            logSource: String? = nil
+            logSource: String? = nil,
+            stdoutTee: (any Writer)? = nil,
+            stderrTee: (any Writer)? = nil,
+            onProcessStarted: (@Sendable (ProcessHandle) -> Void)? = nil
         ) async throws -> ContainerExecResult {
             let cwd = pluginName.map { OsaurusPaths.inContainerPluginDir(agentName, $0) }
             return try await exec(
@@ -458,7 +473,10 @@
                 cwd: cwd,
                 timeout: timeout,
                 streamToLogs: streamToLogs,
-                logSource: logSource
+                logSource: logSource,
+                stdoutTee: stdoutTee,
+                stderrTee: stderrTee,
+                onProcessStarted: onProcessStarted
             )
         }
 
@@ -933,24 +951,40 @@
         private func execViaAgent(
             args: [String],
             env: [String: String],
-            timeout: TimeInterval,
+            timeout: TimeInterval?,
             streamToLogs: Bool = false,
-            logSource: String? = nil
+            logSource: String? = nil,
+            stdoutTee: (any Writer)? = nil,
+            stderrTee: (any Writer)? = nil,
+            onProcessStarted: (@Sendable (ProcessHandle) -> Void)? = nil
         ) async throws -> ContainerExecResult {
             guard let container = linuxContainer else {
                 throw SandboxError.containerNotRunning
             }
 
             let source = logSource ?? "exec"
-            let stdout: any Writer & DataWriterReadable
-            let stderr: any Writer & DataWriterReadable
+            // Authoritative collection for the model's final result envelope.
+            let stdoutCollector: any Writer & DataWriterReadable
+            let stderrCollector: any Writer & DataWriterReadable
             if streamToLogs {
-                stdout = LoggingDataWriter(source: source, level: .stdout)
-                stderr = LoggingDataWriter(source: source, level: .error)
+                stdoutCollector = LoggingDataWriter(source: source, level: .stdout)
+                stderrCollector = LoggingDataWriter(source: source, level: .error)
             } else {
-                stdout = DataWriter()
-                stderr = DataWriter()
+                stdoutCollector = DataWriter()
+                stderrCollector = DataWriter()
             }
+            // Optionally fan out every byte to a live observer (chat-side
+            // streaming tail). The collector stays the source of truth for
+            // the model's `{stdout, stderr, exit_code}`; the tee is purely
+            // a side-channel for the UI.
+            let stdoutWire: any Writer =
+                stdoutTee.map {
+                    TeeWriter(primary: stdoutCollector, secondary: $0)
+                } ?? stdoutCollector
+            let stderrWire: any Writer =
+                stderrTee.map {
+                    TeeWriter(primary: stderrCollector, secondary: $0)
+                } ?? stderrCollector
 
             var mergedEnv = env
             if mergedEnv["PATH"] == nil {
@@ -960,23 +994,34 @@
             let process = try await container.exec(UUID().uuidString) { config in
                 config.arguments = args
                 config.environmentVariables = environ
-                config.stdout = stdout
-                config.stderr = stderr
+                config.stdout = stdoutWire
+                config.stderr = stderrWire
             }
 
             try await process.start()
 
+            // Hand the kill handle to the caller before we start
+            // waiting. The user's [Terminate] button uses this to
+            // signal the live exec without us needing to hold a
+            // separate process registry.
+            if let onProcessStarted {
+                let handle = ProcessHandle(pid: process.pid) { signal in
+                    try await process.kill(signal)
+                }
+                onProcessStarted(handle)
+            }
+
             do {
                 let exitStatus = try await waitWithInactivityTimeout(
                     process: process,
-                    stdout: stdout,
-                    stderr: stderr,
+                    stdout: stdoutCollector,
+                    stderr: stderrCollector,
                     timeout: timeout
                 )
                 try await process.delete()
                 return ContainerExecResult(
-                    stdout: stdout.string,
-                    stderr: stderr.string,
+                    stdout: stdoutCollector.string,
+                    stderr: stderrCollector.string,
                     exitCode: exitStatus.exitCode
                 )
             } catch {
@@ -985,15 +1030,23 @@
             }
         }
 
-        /// Waits for a process to exit, using an inactivity-based timeout that
-        /// resets whenever stdout or stderr receives data. Only kills the process
-        /// if no output arrives for `timeout` seconds.
+        /// Waits for a process to exit, using an inactivity-based timeout
+        /// that resets whenever stdout or stderr receives data. Only kills
+        /// the process if no output arrives for `timeout` seconds.
+        ///
+        /// `timeout: nil` means "no idle check" — we just await
+        /// `process.wait()` straight, with no per-poll wakeup. Used by the
+        /// streaming exec path where the user terminate button + container
+        /// resource limits are the safety net.
         private func waitWithInactivityTimeout(
             process: LinuxProcess,
             stdout: any DataWriterReadable,
             stderr: any DataWriterReadable,
-            timeout: TimeInterval
+            timeout: TimeInterval?
         ) async throws -> ExitStatus {
+            guard let timeout else {
+                return try await process.wait()
+            }
             let startTime = Date()
             return try await withThrowingTaskGroup(of: ExitStatus?.self) { group in
                 group.addTask {

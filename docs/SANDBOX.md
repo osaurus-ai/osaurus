@@ -229,6 +229,54 @@ Failures use `kind: invalid_args` with `field` pointing at the offending argumen
 
 ---
 
+## Streaming Exec & Terminate
+
+`sandbox_exec` (foreground OR `background: true`) and folder-mode `shell_run` stream their live output into the chat tool-call card while the process runs. The model still gets the final `{stdout, stderr, exit_code}` blob when the process exits — streaming is purely a side-channel for the user.
+
+### What the user sees
+
+When a long-running command starts, the tool-call card mounts an inline terminal pane:
+
+- **Status pill** in the header: `running 0:42`, `exited (0)`, `terminated (user)`.
+- **Live output** below: monospaced, ANSI-stripped, auto-follows the tail unless the user scrolls up.
+- **`[Copy]`** button: snapshots the current output to the clipboard.
+- **`[Terminate]`** button: red-tinted, only visible while the process is running. Sends SIGTERM, then SIGKILL after a 3 s grace.
+
+The pane is capped at ~14 lines of monospaced text (240 pt); content beyond that scrolls inside the pane rather than growing the row, so a 10 MB build log can't blow up the chat layout.
+
+### Untimed by default
+
+Phase 1 dropped the wall-clock timeouts that used to kill long commands at ~2 minutes:
+
+- The registry-level 120 s safety net is bypassed for `sandbox_exec` and `shell_run` via `OsaurusTool.bypassRegistryTimeout`.
+- The tool's own `timeout` parameter is now an **optional inactivity ceiling**, not a wall-clock cap. When the model omits it, the command runs to completion or until the user terminates.
+- Pass `timeout: <seconds>` ONLY when you want a hard idle ceiling (kill if no output for N seconds). The user's `[Terminate]` button is the primary control.
+
+The inactivity timer (when set) resets on every byte of output, so a `cargo build` that produces silent stretches between status lines won't trip it as long as it's actually progressing.
+
+### Terminate semantics
+
+When the user presses `[Terminate]`:
+
+1. SIGTERM is sent to the process group.
+2. After a 3 s grace, SIGKILL.
+3. The result envelope returned to the model carries `killed_by: "user"` (alongside the usual `stdout` / `stderr` / `exit_code`) so it can decide whether to retry, fall back, or move on.
+4. The status pill flips to `terminated (user)`.
+
+Terminating from the chat card races the model the same way `sandbox_process(kill)` does — both end up at the SIGTERM/SIGKILL path. A model `read` mid-flight returns the captured output up to termination.
+
+### Pipeline diagnostics
+
+Two related changes catch the silent-pipeline-failure pattern that used to surface as `{exit_code: 0, stdout: "", stderr: ""}` from a failed `curl ... 2>/dev/null | grep ... | head -80`:
+
+- **`set -o pipefail` is on by default** for both `sandbox_exec` and `shell_run`. A real upstream failure now surfaces as the rightmost non-zero exit instead of being masked by `head` / `tee` / `cat`.
+- **Empty-output warning**. When `exit_code == 0` AND stdout AND stderr are all empty AND the command contained `|` or `2>/dev/null`, the result envelope's `warnings:` array carries a hint pointing at the suppressed-stderr / pipeline pattern.
+- **SIGPIPE soft note**. `cmd | head -n N` legitimately kills `cmd` with SIGPIPE (exit 141) once `head` reaches its limit. The result envelope flags this with a softer "captured stdout is still trustworthy" warning so the model doesn't treat it as a failure.
+
+**Don't use `2>/dev/null` in pipelines.** It hides errors from the result envelope. If you genuinely need silent stderr, redirect to a log file you can `sandbox_read_file` later.
+
+---
+
 ## Sandbox Plugins
 
 Sandbox plugins are JSON recipes that extend agent capabilities inside the container. They can install system dependencies, seed files, define custom tools, and configure secrets — all without compiling code.

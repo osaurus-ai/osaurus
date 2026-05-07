@@ -1787,6 +1787,21 @@ final class ChatSession: ObservableObject {
                             return toolTurn
                         }
 
+                        // Materialise the tool-call row BEFORE we await
+                        // execute(...). Without this the chat skips
+                        // straight from `pendingToolCall` (args still
+                        // streaming) to `toolCallGroup` with the result
+                        // already attached — `NativeToolCallRowView`
+                        // never gets a chance to render with
+                        // `item.result == nil`, so its inline live-
+                        // streaming pane (LiveOutputView) never mounts
+                        // for sandbox_exec / shell_run. Rebuilding here
+                        // emits the row with a nil result; the row
+                        // subscribes to LiveExecRegistry and starts
+                        // streaming the moment the tool body registers
+                        // its sink.
+                        rebuildVisibleBlocks()
+
                         // Execute tool and append hidden tool result turn
                         var resultText: String
                         do {

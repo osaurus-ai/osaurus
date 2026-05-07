@@ -1,3 +1,4 @@
+import Containerization
 import Foundation
 import Testing
 
@@ -437,7 +438,10 @@ struct BuiltinSandboxToolsTests {
             Issue.record("Expected exec call")
             return
         }
-        #expect(command.contains("nohup python3 server.py"))
+        // Background is wrapped via `nohup bash -c 'set -o pipefail; <cmd>'`
+        // so a pipeline failure in the spawned command surfaces as the
+        // rightmost non-zero exit, mirroring the foreground path.
+        #expect(command.contains("nohup bash -c 'set -o pipefail; python3 server.py'"))
         #expect(command.contains("echo $!"))
     }
 
@@ -607,10 +611,15 @@ struct BuiltinSandboxToolsTests {
             return
         }
         #expect(user == "agent-test-agent")
-        // `sandbox_exec` defaults `cwd` to the agent home, and the mock
-        // mirrors `SandboxManager.exec`'s `cd '<cwd>' && …` prepend so
-        // we see exactly what bash would run inside the container.
-        #expect(command == "cd /workspace/agents/test-agent && pytest test_app.py -v")
+        // `sandbox_exec` defaults `cwd` to the agent home, prepends
+        // `set -o pipefail; ` to the model's command (so pipelines
+        // surface the rightmost non-zero exit), and the mock mirrors
+        // `SandboxManager.exec`'s `cd '<cwd>' && …` prepend so we see
+        // exactly what bash would run inside the container.
+        #expect(
+            command
+                == "cd /workspace/agents/test-agent && set -o pipefail; pytest test_app.py -v"
+        )
         #expect(env["VIRTUAL_ENV"]?.contains(".venv") == true)
         #expect(env["PATH"]?.contains(".venv/bin") == true)
     }
@@ -758,9 +767,12 @@ private actor MockSandboxToolCommandRunner: SandboxToolCommandRunning {
         command: String,
         env: [String: String],
         cwd: String?,
-        timeout _: TimeInterval,
+        timeout _: TimeInterval?,
         streamToLogs _: Bool,
-        logSource _: String?
+        logSource _: String?,
+        stdoutTee _: (any Writer)?,
+        stderrTee _: (any Writer)?,
+        onProcessStarted _: (@Sendable (ProcessHandle) -> Void)?
     ) async throws -> ContainerExecResult {
         // Mirror `SandboxManager.exec`'s wire-level shell composition so
         // tests that inspect the recorded command see exactly what the
@@ -776,9 +788,11 @@ private actor MockSandboxToolCommandRunner: SandboxToolCommandRunning {
 
     func execAsRoot(
         command: String,
-        timeout _: TimeInterval,
+        timeout _: TimeInterval?,
         streamToLogs _: Bool,
-        logSource _: String?
+        logSource _: String?,
+        stdoutTee _: (any Writer)?,
+        stderrTee _: (any Writer)?
     ) async throws -> ContainerExecResult {
         calls.append(.root(command))
         return rootResults.isEmpty ? .init(stdout: "", stderr: "", exitCode: 0) : rootResults.removeFirst()
@@ -789,9 +803,12 @@ private actor MockSandboxToolCommandRunner: SandboxToolCommandRunning {
         command: String,
         pluginName _: String?,
         env _: [String: String],
-        timeout _: TimeInterval,
+        timeout _: TimeInterval?,
         streamToLogs _: Bool,
-        logSource _: String?
+        logSource _: String?,
+        stdoutTee _: (any Writer)?,
+        stderrTee _: (any Writer)?,
+        onProcessStarted _: (@Sendable (ProcessHandle) -> Void)?
     ) async throws -> ContainerExecResult {
         calls.append(.agent(agentName, command))
         let index = agentCallCount

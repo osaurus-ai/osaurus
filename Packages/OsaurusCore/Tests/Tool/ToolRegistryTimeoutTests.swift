@@ -98,4 +98,36 @@ struct ToolRegistryTimeoutTests {
             #expect(text == "ok")
         }
     }
+
+    /// Streaming-aware tools opt out of the wall-clock race via
+    /// `bypassRegistryTimeout`. A `cargo build` takes 30+ minutes and
+    /// must not be killed at the registry's default 120s. This test
+    /// proves a tool that sleeps longer than the bypass path's notional
+    /// budget still completes when the opt-out is set.
+    private struct SlowBypassTool: OsaurusTool {
+        static let sleepNanoseconds: UInt64 = 1_500_000_000  // 1.5s
+        let name: String = "test_slow_bypass"
+        let description: String = "Test fixture: opts out of registry timeout."
+        let parameters: JSONValue? = .object(["type": .string("object")])
+        var bypassRegistryTimeout: Bool { true }
+        func execute(argumentsJSON: String) async throws -> String {
+            try await Task.sleep(nanoseconds: Self.sleepNanoseconds)
+            return ToolEnvelope.success(tool: name, text: "completed")
+        }
+    }
+
+    @Test
+    func bypassRegistryTimeoutSkipsTheRace() async throws {
+        let tool = SlowBypassTool()
+        // 0.2s wall-clock budget — would normally kill the body
+        // mid-sleep. With `bypassRegistryTimeout: true` the body should
+        // run to its 1.5s sleep without intervention.
+        let result = try await ToolRegistry.runToolBodyUntimed(
+            tool,
+            argumentsJSON: "{}"
+        )
+        #expect(!ToolEnvelope.isError(result))
+        let payload = ToolEnvelope.successPayload(result) as? [String: Any]
+        #expect(payload?["text"] as? String == "completed")
+    }
 }

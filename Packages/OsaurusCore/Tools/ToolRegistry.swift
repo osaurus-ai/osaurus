@@ -302,15 +302,50 @@ final class ToolRegistry: ObservableObject {
         case .ready(let effectiveArgumentsJSON):
             // Run the tool body off MainActor so long-running tools (file
             // I/O, network, shell) don't contend with SwiftUI layout on the
-            // main thread. A global timeout caps every tool body so a
-            // misbehaving tool can never block the agent loop forever —
-            // tools that legitimately need longer (sandbox shell, model
-            // evaluation) still own their own tighter timeout internally.
+            // main thread.
+            //
+            // By default a global wall-clock timeout caps every tool body
+            // so a misbehaving tool can never block the agent loop
+            // forever. Streaming-aware tools (`sandbox_exec`, `shell_run`)
+            // opt out via `bypassRegistryTimeout`: they have no usable
+            // wall-clock budget — a `cargo build` legitimately runs for
+            // 30+ minutes — and rely on the user's `[Terminate]` button
+            // + container resource limits + their own optional inactivity
+            // timeout as the safety net.
+            if tool.bypassRegistryTimeout {
+                return try await Self.runToolBodyUntimed(
+                    tool,
+                    argumentsJSON: effectiveArgumentsJSON
+                )
+            }
             return try await Self.runToolBody(
                 tool,
                 argumentsJSON: effectiveArgumentsJSON,
                 timeoutSeconds: Self.defaultToolTimeoutSeconds
             )
+        }
+    }
+
+    /// Bypass-path for streaming-aware tools. Runs the body straight
+    /// through with the same error-mapping as `runToolBody`, but no
+    /// wall-clock race. Cancellation still propagates: when the calling
+    /// task is cancelled, the body's own `Task.isCancelled` checks (or
+    /// the underlying process signals) tear it down.
+    internal nonisolated static func runToolBodyUntimed(
+        _ tool: OsaurusTool,
+        argumentsJSON: String
+    ) async throws -> String {
+        do {
+            return try await tool.execute(argumentsJSON: argumentsJSON)
+        } catch is CancellationError {
+            return ToolEnvelope.failure(
+                kind: .executionError,
+                message: "Tool '\(tool.name)' was cancelled.",
+                tool: tool.name,
+                retryable: false
+            )
+        } catch {
+            return ToolEnvelope.fromError(error, tool: tool.name)
         }
     }
 
