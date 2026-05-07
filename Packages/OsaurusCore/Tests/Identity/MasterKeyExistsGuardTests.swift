@@ -128,15 +128,18 @@ struct MasterKeyExistsGuardTests {
 
 // MARK: - Keychain Availability Probe
 
-/// `true` when the runtime has a working keychain we can write to. False on
-/// GitHub Actions macOS runners (no iCloud account, restricted keychain) and
-/// any other environment where a probe `SecItemAdd` fails or is suspected to
-/// hang. The check is cheap and runs once per process.
+/// `true` when the runtime has a working keychain we can write to using the
+/// same synchronizable path `MasterKey.generate` uses. False on:
+///
+/// - GitHub Actions macOS runners (no iCloud account, restricted keychain).
+/// - Any unsigned `swift test` bundle without an `application-identifier`
+///   entitlement — `SecItemAdd` fails with `errSecMissingEntitlement` (-34018)
+///   or hangs trying to talk to the iCloud Keychain daemon.
+///
+/// The probe runs once per process. Result is cached in this `let`.
 private let keychainAvailable: Bool = {
-    if isContinuousIntegrationEnvironment() {
-        return false
-    }
-    return canProbeKeychain()
+    if isContinuousIntegrationEnvironment() { return false }
+    return canProbeMasterKeyWritePath()
 }()
 
 private func isContinuousIntegrationEnvironment() -> Bool {
@@ -145,30 +148,62 @@ private func isContinuousIntegrationEnvironment() -> Bool {
     return signals.contains(where: { env[$0] != nil })
 }
 
-/// Attempt a no-op write into a unique throwaway keychain item. Round-trip
-/// success means we have a usable keychain; any failure means the runner
-/// environment is too constrained for the overwrite-guard tests.
-private func canProbeKeychain() -> Bool {
+/// Mirror `MasterKey.addToKeychain`'s exact write path on a unique throwaway
+/// service so we can tell whether the real generate flow would succeed in
+/// this environment. We attempt `synchronizable: true` first (matching the
+/// production code), then `synchronizable: false` as fallback. Both must
+/// succeed within a short watchdog window — if SecItemAdd hangs, we treat
+/// the environment as unavailable.
+private func canProbeMasterKeyWritePath() -> Bool {
     let probeService = "com.osaurus.tests.keychain-probe"
     let probeAccount = "probe-\(UUID().uuidString)"
-    let payload = Data([0x01])
 
-    let query: [String: Any] = [
-        kSecClass as String: kSecClassGenericPassword,
-        kSecAttrService as String: probeService,
-        kSecAttrAccount as String: probeAccount,
-        kSecValueData as String: payload,
-        kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
-    ]
+    defer {
+        let cleanup: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: probeService,
+            kSecAttrAccount as String: probeAccount,
+            kSecAttrSynchronizable as String: kSecAttrSynchronizableAny,
+        ]
+        SecItemDelete(cleanup as CFDictionary)
+    }
 
-    let addStatus = SecItemAdd(query as CFDictionary, nil)
-    guard addStatus == errSecSuccess else { return false }
+    func attemptAdd(synchronizable: Bool) -> OSStatus {
+        var query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: probeService,
+            kSecAttrAccount as String: probeAccount,
+            kSecValueData as String: Data([0x01]),
+        ]
+        if synchronizable {
+            query[kSecAttrSynchronizable as String] = true
+            query[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlocked
+        } else {
+            query[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+        }
+        return SecItemAdd(query as CFDictionary, nil)
+    }
 
-    let deleteQuery: [String: Any] = [
-        kSecClass as String: kSecClassGenericPassword,
-        kSecAttrService as String: probeService,
-        kSecAttrAccount as String: probeAccount,
-    ]
-    SecItemDelete(deleteQuery as CFDictionary)
-    return true
+    return runWithWatchdog(timeoutSeconds: 1.0) {
+        let primary = attemptAdd(synchronizable: true)
+        if primary == errSecSuccess { return true }
+        return attemptAdd(synchronizable: false) == errSecSuccess
+    } ?? false
+}
+
+/// Run `body` on a background queue and wait up to `timeoutSeconds` for the
+/// result. Returns `nil` if the body did not complete in time — used here to
+/// catch the multi-second `SecItemAdd` hang that happens in unsigned test
+/// bundles trying to talk to the iCloud Keychain daemon.
+private func runWithWatchdog<T>(
+    timeoutSeconds: TimeInterval,
+    _ body: @escaping () -> T
+) -> T? {
+    let semaphore = DispatchSemaphore(value: 0)
+    var result: T?
+    DispatchQueue.global(qos: .userInitiated).async {
+        result = body()
+        semaphore.signal()
+    }
+    return semaphore.wait(timeout: .now() + timeoutSeconds) == .success ? result : nil
 }
