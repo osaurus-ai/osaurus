@@ -1,0 +1,27 @@
+{
+  "id": "capability_search.skill-paraphrase",
+  "domain": "capability_search",
+  "label": "capability search • skill • paraphrase",
+  "query": "give me the gist of this article",
+  "notes": "Probes the embed-still-needed class on the skills lane: 'gist' is a synonym of 'summarize' / 'tldr' / 'key-points' but shares no surface tokens with the 'Content Summarizer' skill's name, description, or keywords. BM25 will silently miss this; only the embedder can bridge it. If this case fails, the description audit (or expanding the keywords array) is the right fix — not BM25.",
+  "fixtures": {
+    "enableSkills": [
+      "Research Analyst",
+      "Creative Brainstormer",
+      "Study Tutor",
+      "Productivity Coach",
+      "Content Summarizer",
+      "Debug Assistant",
+      "Sandbox Plugin Creator",
+      "Data Visualizer"
+    ]
+  },
+  "expect": {
+    "capabilitySearch": {
+      "expectedSkills": {
+        "anyOf": ["Content Summarizer"],
+        "minMatches": 1
+      }
+    }
+  }
+}

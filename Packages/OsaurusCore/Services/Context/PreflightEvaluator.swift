@@ -157,10 +157,33 @@ public enum PreflightEvaluator {
     ///    Apple Foundation reject the request before the LLM runs).
     /// 3. Sync the tool index from the live registry so freshly
     ///    registered plugin tools are present in the vector store.
+    /// 4. Open the methods database, initialise `MethodSearchService`,
+    ///    and force `SkillManager.refresh()` + `SkillSearchService`
+    ///    init/rebuild so the methods + skills lanes of
+    ///    `CapabilitySearchEvaluator` aren't silently empty. Without
+    ///    these, every method/skill recall fixture would report 0
+    ///    raw hits and any failure would be indistinguishable from
+    ///    "infrastructure not booted" vs "real recall miss".
     ///
     /// Idempotent — every step serializes concurrent invocations and
     /// re-uses already-initialised state.
     public static func loadInstalledPlugins() async {
+        // Drive the storage migration gate through its **async**
+        // entry point first so the defensive `blockingAwaitReady()`
+        // calls inside every `*Database.open()` hit the lock-free
+        // fast atomic path. The slow path (`Task { @MainActor in
+        // … }` + `DispatchSemaphore` + run-loop pump) deadlocks in
+        // CLI processes that own the main thread via Swift
+        // Concurrency's `@main async` — there's no AppKit runloop
+        // to drain the queued `Task @MainActor` that signals the
+        // semaphore, so the main thread blocks on `semaphore.wait`
+        // forever. The host app side-steps this in
+        // `AppDelegate.applicationDidFinishLaunching` because
+        // AppKit's installed runloop sources DO drive the main
+        // DispatchQueue while it pumps; the CLI has no such
+        // sources.
+        await StorageMigrationCoordinator.shared.awaitReady()
+
         await PluginManager.shared.loadAll()
         // `ToolDatabase.shared.open()` itself routes through the
         // shared synchronous storage-migration gate (the same one
@@ -169,5 +192,20 @@ public enum PreflightEvaluator {
         try? ToolDatabase.shared.open()
         await ToolSearchService.shared.initialize()
         await ToolIndexService.shared.syncFromRegistry()
+
+        // Methods + skills boot — required for the capability_search
+        // eval domain. The host app does these in
+        // `AppDelegate.applicationDidFinishLaunching` (lines ~243-252);
+        // we mirror the same order here so the eval-CLI process sees
+        // the same indices the chat path sees. The explicit
+        // `SkillManager.refresh()` await replaces relying on the
+        // manager's eager init Task — out-of-process callers can
+        // start querying `SkillSearchService` before that Task ever
+        // gets scheduled, which produces an empty rebuild.
+        try? MethodDatabase.shared.open()
+        await MethodSearchService.shared.initialize()
+        await SkillManager.shared.refresh()
+        await SkillSearchService.shared.initialize()
+        await SkillSearchService.shared.rebuildIndex()
     }
 }

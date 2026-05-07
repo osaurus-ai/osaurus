@@ -70,13 +70,82 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// missing requirements are SKIPPED in the report (not failed)
         /// so an incomplete local setup doesn't mask real regressions.
         public let requirePlugins: [String]?
+        /// Methods to insert into `MethodDatabase` before the case
+        /// runs (and remove afterwards). Used by `capability_search`
+        /// cases that probe the methods lane — methods have no
+        /// built-in seed so a fixture has to bring its own. Each
+        /// entry's `id` becomes the deterministic primary key
+        /// (preferred: `eval-<slug>`) so cleanup works idempotently
+        /// across crashes.
+        ///
+        /// Insert/cleanup is wrapped around the case body in
+        /// `EvalRunner.runCapabilitySearchCase`. Other domains
+        /// ignore this field.
+        public let seedMethods: [SeedMethod]?
+        /// Skill names to flip `enabled = true` on for the duration
+        /// of the case (and restore afterwards). Used by
+        /// `capability_search` skill-lane fixtures because every
+        /// built-in skill ships disabled-by-default and
+        /// `SkillSearchService.search` post-filters disabled skills
+        /// out — so a recall fixture against e.g. "Research Analyst"
+        /// silently returns 0 unless we toggle it on first.
+        ///
+        /// Mutates the user's persistent skill state for the run
+        /// window only; the runner snapshots prior state and
+        /// restores it in a `defer` so a crash mid-case leaves
+        /// state recoverable on the next run (state restoration
+        /// is best-effort, not crash-safe).
+        public let enableSkills: [String]?
 
         public init(
             preflightMode: PreflightMode? = nil,
-            requirePlugins: [String]? = nil
+            requirePlugins: [String]? = nil,
+            seedMethods: [SeedMethod]? = nil,
+            enableSkills: [String]? = nil
         ) {
             self.preflightMode = preflightMode
             self.requirePlugins = requirePlugins
+            self.seedMethods = seedMethods
+            self.enableSkills = enableSkills
+        }
+    }
+
+    /// One method to seed into `MethodDatabase` for a case run. Schema
+    /// is intentionally minimal — the recall layer reads
+    /// `name`/`description`/`triggerText` (via
+    /// `MethodSearchService.buildIndexText`) and needs nothing else
+    /// to score recall.
+    ///
+    /// `body` and `triggerText` are optional in the JSON shape so
+    /// fixture authors don't have to think about them — `body` is
+    /// only required by the storage layer's `NOT NULL` constraint
+    /// (search ignores it); `triggerText` exists so cases probing
+    /// the "user phrasing differs from method name" shape can pin
+    /// extra index signal. Codable's synthesized decoder doesn't
+    /// honour Swift's `= ""` defaults — declaring these `Optional`
+    /// is the only way to make them omittable in JSON.
+    public struct SeedMethod: Sendable, Codable {
+        /// Stable id used as the `methods.id` primary key. Prefer
+        /// the form `eval-<slug>` so accidental leftovers in a
+        /// developer's local DB are obviously test data.
+        public let id: String
+        public let name: String
+        public let description: String
+        public let triggerText: String?
+        public let body: String?
+
+        public init(
+            id: String,
+            name: String,
+            description: String,
+            triggerText: String? = nil,
+            body: String? = nil
+        ) {
+            self.id = id
+            self.name = name
+            self.description = description
+            self.triggerText = triggerText
+            self.body = body
         }
     }
 

@@ -1,0 +1,32 @@
+{
+  "id": "capability_search.method-abstain",
+  "domain": "capability_search",
+  "label": "capability search • method • abstain on chit-chat",
+  "query": "thanks, that's perfect",
+  "notes": "Symmetric with `capability_search.abstain-greeting` on the tools lane. RRF saturation (max ≈ 0.0328 with k=60) caps the abstain-vs-recall gap to ~0.001 — methods/skills face the same ceiling under RRF. If this case fails after PR-B lands, the right fix is the abstain quality floor workstream (pre-RRF gate / query-intent classifier), NOT threshold tuning. Track here as `expect maxAccepted=0` so the recall_floors gate can adopt the same known-tracking pattern.",
+  "fixtures": {
+    "seedMethods": [
+      {
+        "id": "eval-summarize-pdf-abstain",
+        "name": "summarize_pdf",
+        "description": "Generate a summary of the contents of a PDF document",
+        "triggerText": "summarize_pdf"
+      },
+      {
+        "id": "eval-plot-data-abstain",
+        "name": "plot_data",
+        "description": "Render a graph from tabular numbers using the visualization library",
+        "triggerText": "plot_data"
+      }
+    ]
+  },
+  "expect": {
+    "capabilitySearch": {
+      "expectedMethods": {
+        "anyOf": [],
+        "minMatches": 0
+      },
+      "maxAccepted": 0
+    }
+  }
+}

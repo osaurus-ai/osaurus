@@ -692,6 +692,16 @@ public enum EvalRunner {
             }
         }
 
+        // Per-case fixture setup. Both `seedMethods` and `enableSkills`
+        // mutate persistent state (SQLite + on-disk skill files) — the
+        // wrap snapshots prior state and restores it after the case
+        // body runs. Crashes mid-case can leak `eval-` prefixed methods
+        // and toggled-on skills into the developer's local state; we
+        // accept this as a cost of running fixtures against the live
+        // DB rather than building an isolated test harness.
+        let seededMethods = await applySeedMethods(testCase.fixtures.seedMethods)
+        let priorSkillState = await applyEnableSkills(testCase.fixtures.enableSkills)
+
         let threshold = cliThresholdOverride ?? exp.thresholdOverride
         let topK = exp.topK ?? 10
         let observed = await CapabilitySearchEvaluator.evaluate(
@@ -699,6 +709,9 @@ public enum EvalRunner {
             topK: topK,
             threshold: threshold
         )
+
+        await restoreSkillEnabledState(priorSkillState)
+        await cleanupSeededMethods(seededMethods)
 
         var notes: [String] = []
         var passed = true
@@ -789,6 +802,95 @@ public enum EvalRunner {
             false,
             "\(kind) under floor: matched \(hits.count)/\(matcher.minMatches) of [\(matcher.anyOf.joined(separator: ","))]"
         )
+    }
+
+    // MARK: - Capability search fixture seeding
+
+    /// Insert each `SeedMethod` into the live `MethodDatabase` and
+    /// the `MethodSearchService` index. Returns the ids of methods
+    /// that were actually inserted (skipping any that pre-existed) so
+    /// `cleanupSeededMethods` only deletes what this case created —
+    /// a developer who happens to have a real `eval-pdf-summary`
+    /// method on disk doesn't lose it because their fixture name
+    /// collided.
+    ///
+    /// Index errors are logged via `notes` but do not fail the case
+    /// here; a missing index hit becomes a real recall miss in the
+    /// observed `methodHits` count, which is exactly the signal the
+    /// case is designed to surface.
+    private static func applySeedMethods(_ seeds: [EvalCase.SeedMethod]?) async -> [String] {
+        guard let seeds, !seeds.isEmpty else { return [] }
+        var insertedIds: [String] = []
+        for seed in seeds {
+            // Skip when the id already exists so we never clobber a
+            // real user method that happens to share the test slug.
+            // `loadMethod` returns `Method?` and throws — flatten the
+            // double-optional from `try?` into a single existence check.
+            let existing = (try? MethodDatabase.shared.loadMethod(id: seed.id)) ?? nil
+            if existing != nil { continue }
+            let method = Method(
+                id: seed.id,
+                name: seed.name,
+                description: seed.description,
+                triggerText: seed.triggerText,
+                body: seed.body ?? "",
+                source: .user
+            )
+            do {
+                try MethodDatabase.shared.insertMethod(method)
+                await MethodSearchService.shared.indexMethod(method)
+                insertedIds.append(seed.id)
+            } catch {
+                // Best-effort: continue. The case will read back fewer
+                // candidates and the recall assertion will surface it.
+                continue
+            }
+        }
+        return insertedIds
+    }
+
+    /// Reverse of `applySeedMethods`. Tolerates missing rows (a crash
+    /// mid-cleanup on a previous run could have already removed some)
+    /// so re-running a case after a crash converges back to a clean
+    /// state.
+    private static func cleanupSeededMethods(_ ids: [String]) async {
+        for id in ids {
+            try? MethodDatabase.shared.deleteMethod(id: id)
+            await MethodSearchService.shared.removeMethod(id: id)
+        }
+    }
+
+    /// Snapshot the prior `enabled` flag of every named skill, then
+    /// flip them all on. Returns `[(skillId, priorEnabled)]` for
+    /// `restoreSkillEnabledState` to walk in reverse.
+    ///
+    /// Skill lookup is by name (case-insensitive, mirrors
+    /// `SkillManager.skill(named:)`). Names that don't resolve are
+    /// silently ignored — the `expectedSkills` matcher will surface
+    /// the miss as a real recall failure rather than a config error.
+    private static func applyEnableSkills(_ names: [String]?) async -> [(UUID, Bool)] {
+        guard let names, !names.isEmpty else { return [] }
+        var prior: [(UUID, Bool)] = []
+        for name in names {
+            guard let skill = SkillManager.shared.skill(named: name) else { continue }
+            prior.append((skill.id, skill.enabled))
+            if !skill.enabled {
+                await SkillManager.shared.setEnabled(true, for: skill.id)
+            }
+        }
+        return prior
+    }
+
+    /// Restore the snapshot taken by `applyEnableSkills`. Skips
+    /// entries whose current state already matches the prior state
+    /// to avoid an unnecessary disk write.
+    private static func restoreSkillEnabledState(_ prior: [(UUID, Bool)]) async {
+        for (id, wasEnabled) in prior {
+            guard let current = SkillManager.shared.skill(for: id) else { continue }
+            if current.enabled != wasEnabled {
+                await SkillManager.shared.setEnabled(wasEnabled, for: id)
+            }
+        }
     }
 
     // MARK: - Helpers

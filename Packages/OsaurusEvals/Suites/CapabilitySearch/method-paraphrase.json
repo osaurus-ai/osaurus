@@ -1,0 +1,37 @@
+{
+  "id": "capability_search.method-paraphrase",
+  "domain": "capability_search",
+  "label": "capability search • method • paraphrase / synonym bridge",
+  "query": "make a chart from this data",
+  "notes": "Probes the embed-still-needed class on the methods lane: the user's phrasing ('make a chart') shares no surface tokens with the method name `plot_data` or its description ('Render a graph from tabular numbers'). BM25 cannot bridge the synonym gap — only the embedder can. If this case fails, BM25 isn't the right fix; the description audit (or a richer triggerText set) is.",
+  "fixtures": {
+    "seedMethods": [
+      {
+        "id": "eval-plot-data",
+        "name": "plot_data",
+        "description": "Render a graph from tabular numbers using the visualization library",
+        "triggerText": "plot_data"
+      },
+      {
+        "id": "eval-translate-text-paraphrase",
+        "name": "translate_text",
+        "description": "Translate text between languages using a translation service",
+        "triggerText": "translate_text"
+      },
+      {
+        "id": "eval-deploy-app",
+        "name": "deploy_app",
+        "description": "Deploy a built application to a cloud environment",
+        "triggerText": "deploy_app"
+      }
+    ]
+  },
+  "expect": {
+    "capabilitySearch": {
+      "expectedMethods": {
+        "anyOf": ["plot_data"],
+        "minMatches": 1
+      }
+    }
+  }
+}

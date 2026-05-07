@@ -59,6 +59,21 @@ final class CapabilitiesSearchTool: OsaurusTool, @unchecked Sendable {
         "required": .array([.string("queries")]),
     ])
 
+    /// Cap on the number of distinct queries we'll fan out per call.
+    /// Each query triggers one embedding pass + one BM25/FTS5 read,
+    /// so a runaway model emitting `["a","b","c",…]` could otherwise
+    /// fan out to N embed calls per turn. 8 covers every realistic
+    /// "search for these aspects of my problem" use case while
+    /// keeping the worst-case fan-out bounded.
+    private static let maxQueries = 8
+
+    /// Per-query topK passed down to `CapabilitySearch.search`. Kept
+    /// at the historical (5,5,3) so a single-query call returns the
+    /// same shaped result as before; the multi-query path lets the
+    /// merged set grow naturally up to `maxQueries × topK` minus dedup.
+    private static let perQueryTopK: (methods: Int, tools: Int, skills: Int) =
+        (methods: 5, tools: 5, skills: 3)
+
     func execute(argumentsJSON: String) async throws -> String {
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
         guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
@@ -69,13 +84,52 @@ final class CapabilitiesSearchTool: OsaurusTool, @unchecked Sendable {
             expected: "non-empty array of search query strings",
             tool: name
         )
-        guard case .value(let queries) = queriesReq else { return queriesReq.failureEnvelope ?? "" }
+        guard case .value(let rawQueries) = queriesReq else { return queriesReq.failureEnvelope ?? "" }
 
-        let query = queries.joined(separator: " ")
-        let hits = await CapabilitySearch.search(
-            query: query,
-            topK: (methods: 5, tools: 5, skills: 3)
-        )
+        // Normalise: trim, drop empties, dedupe case-insensitively (small
+        // models routinely emit the same query in different casing or
+        // with stray whitespace), and cap the fan-out. Keep first-seen
+        // order so the no-match diagnostic mirrors what the model asked.
+        var seen = Set<String>()
+        let queries: [String] =
+            rawQueries
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty && seen.insert($0.lowercased()).inserted }
+            .prefix(Self.maxQueries)
+            .map { $0 }
+
+        guard !queries.isEmpty else {
+            return ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message: "Argument `queries` must contain at least one non-empty search string.",
+                field: "queries",
+                expected: "non-empty array of search query strings",
+                tool: name
+            )
+        }
+
+        // Run each query independently and merge by best score per item.
+        // The previous implementation joined every query into one string
+        // and ran a single search — `["weather API", "get current weather
+        // data"]` became `"weather API get current weather data"`, which
+        // tokenises as a longer, less precise sentence the embedder
+        // doesn't recognise. The whole point of accepting an array is
+        // "OR these searches", not "concatenate them".
+        let perQueryResults: [CapabilitySearchResults] = await withTaskGroup(
+            of: CapabilitySearchResults.self
+        ) { group in
+            for q in queries {
+                group.addTask {
+                    await CapabilitySearch.search(query: q, topK: Self.perQueryTopK)
+                }
+            }
+            var collected: [CapabilitySearchResults] = []
+            collected.reserveCapacity(queries.count)
+            for await r in group { collected.append(r) }
+            return collected
+        }
+
+        let hits = Self.mergeHits(perQueryResults)
 
         if hits.isEmpty {
             let id: UUID
@@ -85,16 +139,17 @@ final class CapabilitiesSearchTool: OsaurusTool, @unchecked Sendable {
                 id = await MainActor.run { AgentManager.shared.activeAgent.id }
             }
 
+            let queryList = queries.map { "'\($0)'" }.joined(separator: ", ")
             let text: String
             if await CapabilitySearch.canCreatePlugins(agentId: id) {
                 text = """
-                    No capabilities found matching '\(query)'.
+                    No capabilities found matching \(queryList).
 
                     You can create new tools for this. Load the plugin creator skill:
                       capabilities_load("skill/Sandbox Plugin Creator")
                     """
             } else {
-                text = "No capabilities found matching '\(query)'."
+                text = "No capabilities found matching \(queryList)."
             }
             return ToolEnvelope.success(tool: name, text: text)
         }
@@ -147,6 +202,54 @@ final class CapabilitiesSearchTool: OsaurusTool, @unchecked Sendable {
         }
         output += "Use `capabilities_load` with the IDs to load them into this session."
         return ToolEnvelope.success(tool: name, text: output)
+    }
+
+    // MARK: - Merge
+
+    /// Merge per-query `CapabilitySearchResults` into a single set,
+    /// keeping the entry with the highest `searchScore` per (type, id).
+    /// `searchScore` is the embedding similarity in every lane and is
+    /// directly comparable across queries (same embedder, same vector
+    /// space). Methods carry an extra `score: Double` used downstream
+    /// for cross-type ranking; that field follows the kept entry, so
+    /// the existing display sort remains stable.
+    ///
+    /// Each lane is independently sorted by `searchScore` desc so the
+    /// caller's cross-type ranker sees inputs in best-first order even
+    /// before its own sort runs.
+    private static func mergeHits(
+        _ results: [CapabilitySearchResults]
+    ) -> CapabilitySearchResults {
+        var methodsById: [String: MethodSearchResult] = [:]
+        var toolsById: [String: ToolSearchResult] = [:]
+        var skillsByName: [String: SkillSearchResult] = [:]
+
+        for r in results {
+            for m in r.methods {
+                if let existing = methodsById[m.method.id], existing.searchScore >= m.searchScore {
+                    continue
+                }
+                methodsById[m.method.id] = m
+            }
+            for t in r.tools {
+                if let existing = toolsById[t.entry.id], existing.searchScore >= t.searchScore {
+                    continue
+                }
+                toolsById[t.entry.id] = t
+            }
+            for s in r.skills {
+                if let existing = skillsByName[s.skill.name], existing.searchScore >= s.searchScore {
+                    continue
+                }
+                skillsByName[s.skill.name] = s
+            }
+        }
+
+        return CapabilitySearchResults(
+            methods: methodsById.values.sorted { $0.searchScore > $1.searchScore },
+            tools: toolsById.values.sorted { $0.searchScore > $1.searchScore },
+            skills: skillsByName.values.sorted { $0.searchScore > $1.searchScore }
+        )
     }
 }
 

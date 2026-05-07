@@ -1,0 +1,43 @@
+{
+  "id": "capability_search.method-multi-match",
+  "domain": "capability_search",
+  "label": "capability search • method • multi-match ranking",
+  "query": "I have a PDF I need to work with",
+  "notes": "Probes ranking quality: three PDF-related methods are seeded and the broad query should surface at least two of them. A single-hit pass means the embedder picked one PDF method and dropped the others; we want to see whether the lane preserves multiple related candidates above the acceptance floor.",
+  "fixtures": {
+    "seedMethods": [
+      {
+        "id": "eval-summarize-pdf-multi",
+        "name": "summarize_pdf",
+        "description": "Generate a summary of the contents of a PDF document",
+        "triggerText": "summarize_pdf"
+      },
+      {
+        "id": "eval-extract-pdf-tables",
+        "name": "extract_pdf_tables",
+        "description": "Extract tables from a PDF document into structured rows",
+        "triggerText": "extract_pdf_tables"
+      },
+      {
+        "id": "eval-redact-pdf-pii",
+        "name": "redact_pdf_pii",
+        "description": "Redact personally identifying information in a PDF document",
+        "triggerText": "redact_pdf_pii"
+      },
+      {
+        "id": "eval-fetch-stock-multi",
+        "name": "fetch_stock_price",
+        "description": "Look up the current stock price for a ticker symbol",
+        "triggerText": "fetch_stock_price"
+      }
+    ]
+  },
+  "expect": {
+    "capabilitySearch": {
+      "expectedMethods": {
+        "anyOf": ["summarize_pdf", "extract_pdf_tables", "redact_pdf_pii"],
+        "minMatches": 2
+      }
+    }
+  }
+}

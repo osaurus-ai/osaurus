@@ -1,0 +1,28 @@
+{
+  "id": "capability_search.skill-abstain",
+  "domain": "capability_search",
+  "label": "capability search • skill • abstain on chit-chat",
+  "query": "good morning",
+  "notes": "Symmetric with `capability_search.abstain-greeting` (tools) and `method-abstain` (methods). All 8 built-in skills enabled so abstain has the full opportunity to mis-match against a realistic catalog. RRF saturation under PR-B will apply to skills the same way it does to tools — if this case fails after PR-B, mark it as known-tracking in `recall_floors.json` rather than tightening the threshold.",
+  "fixtures": {
+    "enableSkills": [
+      "Research Analyst",
+      "Creative Brainstormer",
+      "Study Tutor",
+      "Productivity Coach",
+      "Content Summarizer",
+      "Debug Assistant",
+      "Sandbox Plugin Creator",
+      "Data Visualizer"
+    ]
+  },
+  "expect": {
+    "capabilitySearch": {
+      "expectedSkills": {
+        "anyOf": [],
+        "minMatches": 0
+      },
+      "maxAccepted": 0
+    }
+  }
+}

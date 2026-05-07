@@ -1,0 +1,37 @@
+{
+  "id": "capability_search.method-lexical-name",
+  "domain": "capability_search",
+  "label": "capability search • method • lexical name match",
+  "query": "summarize this PDF for me",
+  "notes": "Probes the BM25-would-help class on the methods lane: query contains 'PDF' and 'summarize' as plain English while the seeded method's id is the snake_case literal `eval-summarize-pdf` and its name carries the `summarize_pdf` token. Pure embedding (potion-base-4M) frequently undershoots when the strongest signal is a snake_case identifier match — a BM25 mirror would lift this case.",
+  "fixtures": {
+    "seedMethods": [
+      {
+        "id": "eval-summarize-pdf",
+        "name": "summarize_pdf",
+        "description": "Generate a summary of the contents of a PDF document",
+        "triggerText": "summarize_pdf"
+      },
+      {
+        "id": "eval-translate-text",
+        "name": "translate_text",
+        "description": "Translate text between languages using a translation service",
+        "triggerText": "translate_text"
+      },
+      {
+        "id": "eval-fetch-stock-price",
+        "name": "fetch_stock_price",
+        "description": "Look up the current stock price for a ticker symbol",
+        "triggerText": "fetch_stock_price"
+      }
+    ]
+  },
+  "expect": {
+    "capabilitySearch": {
+      "expectedMethods": {
+        "anyOf": ["summarize_pdf"],
+        "minMatches": 1
+      }
+    }
+  }
+}
