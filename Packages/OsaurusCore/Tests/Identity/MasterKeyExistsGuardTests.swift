@@ -28,7 +28,12 @@ import Testing
 
 @testable import OsaurusCore
 
-@Suite("MasterKey overwrite guard", .enabled(if: keychainAvailable))
+// `.serialized` is required because every test in this suite mutates the same
+// `com.osaurus.account` Master Key slot in Keychain. Without it Swift Testing
+// runs the four tests in parallel, races on the shared slot, and tests fail
+// non-deterministically with `.keychainWriteFailed` from `SecItemAdd`
+// returning `errSecDuplicateItem` mid-race.
+@Suite("MasterKey overwrite guard", .enabled(if: keychainAvailable), .serialized)
 struct MasterKeyExistsGuardTests {
 
     /// A fresh-generated master must throw `.masterAlreadyExists` if `generate`
