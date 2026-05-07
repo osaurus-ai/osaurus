@@ -10,13 +10,20 @@ These evals are deliberately **off the CI path**. They burn LLM tokens, depend o
 Packages/OsaurusEvals/
   Package.swift
   README.md (this file)
+  Config/
+    recall_floors.json  — opt-in `--fail-on-floor` gate config
   Sources/
     OsaurusEvalsKit/    — library (case schema, runner, scorers, model override)
     OsaurusEvalsCLI/    — `osaurus-evals` executable
   Suites/
-    Preflight/          — preflight pick + companion teaser cases
-    AgentLoop/          — placeholder for future agent-loop cases
-    ...
+    ArgumentCoercion/   — ArgumentCoercion.{stringArray,int,bool} pinning
+    CapabilitySearch/   — index-only recall measurements (no LLM)
+    Preflight/          — preflight pick + companion teaser cases (LLM)
+    PrefixHash/         — KV-cache prefix-hash stability
+    RequestValidation/  — RequestValidator.unsupportedSamplerReason
+    Schema/             — SchemaValidator.validate pinning
+    StreamingHint/      — StreamingToolHint encode/decode round-trips
+    ToolEnvelope/       — ToolEnvelope.{success,failure} JSON shape
 ```
 
 A "suite" is just a directory of `*.json` case files. Add a new case by dropping a JSON file in — no Swift edit required.
@@ -54,7 +61,24 @@ Exit codes:
 
 ## Case schema
 
-Minimal example:
+Every case file shares a top-level shape: `id`, `domain`, optional `label` and `notes`, `query`, `fixtures`, `expect`. The `domain` field selects which runner branch handles the case and which `expect.<sub>` block is required. Eight domains exist today:
+
+| Domain | Hits LLM? | Runner branch | Required expectation block |
+|---|---|---|---|
+| `preflight` | yes | `runOne` (default arm) | `expect.tools` + optional `expect.companions` |
+| `capability_search` | no | `runCapabilitySearchCase` | `expect.capabilitySearch` |
+| `schema` | no | `runSchemaCase` | `expect.schema` |
+| `tool_envelope` | no | `runToolEnvelopeCase` | `expect.toolEnvelope` |
+| `streaming_hint` | no | `runStreamingHintCase` | `expect.streamingHint` |
+| `prefix_hash` | no | `runPrefixHashCase` | `expect.prefixHash` |
+| `argument_coercion` | no | `runArgumentCoercionCase` | `expect.argumentCoercion` |
+| `request_validation` | no | `runRequestValidationCase` | `expect.requestValidation` |
+
+The non-LLM domains are pure-data and run in single-digit ms each — safe to keep growing. `preflight` is the only LLM-burning domain today.
+
+A case with empty `expect: {}` is a valid smoke test — it records what the runner observed without scoring. Useful while bootstrapping.
+
+### `preflight` domain
 
 ```json
 {
@@ -81,25 +105,62 @@ Minimal example:
 }
 ```
 
-Field reference:
+Field notes:
 
-- `id` — unique slug; surfaced in reports for diffing across runs.
-- `domain` — selects the runner code path. Today only `preflight` is supported.
-- `label` — optional human label; falls back to `id`.
-- `query` — the user message preflight runs against.
 - `fixtures.preflightMode` — `off` / `narrow` / `balanced` / `wide`. Default `balanced`.
 - `fixtures.requirePlugins` — plugin ids the case needs locally. Cases with missing plugins are **skipped** (not failed) so an incomplete install doesn't mask real regressions.
-- `expect.tools.mustInclude` / `mustNotInclude` — picked-set assertions, equal-weighted. Partial credit is given.
-- `expect.companions.skills` — plugin skills that should surface in the teaser. **Use the registered display name** (e.g. `"Osaurus Browser"`), not the slug. Plugin skills authored with the agent-skills `lowercase-hyphen` form get title-cased on registration (`osaurus-browser` → `Osaurus Browser`); the companion teaser surfaces the display name and that's what `capabilities_load` looks up.
+- `expect.tools.mustInclude` / `mustNotInclude` — picked-set assertions, equal-weighted, partial credit.
+- `expect.companions.skills` — plugin skills that should surface in the teaser. **Use the registered display name** (e.g. `"Osaurus Browser"`), not the slug. Plugin skills authored with the agent-skills `lowercase-hyphen` form get title-cased on registration (`osaurus-browser` → `Osaurus Browser`); that's what `capabilities_load` looks up.
 - `expect.companions.siblings` — at-least-N overlap matcher against a candidate list (resilient to ordering churn).
 
-A case with empty `expect: {}` is a valid smoke test — it records what preflight did without scoring anything. Useful while bootstrapping.
+### `capability_search` domain
+
+Index-only recall measurements over the tools / methods / skills lanes. No LLM, fast (~10 ms/case), deterministic. Drives `CapabilitySearchEvaluator.evaluate` and pins recall + abstain behaviour against `expect.capabilitySearch`.
+
+```json
+{
+  "id": "capability_search.method-paraphrase",
+  "domain": "capability_search",
+  "label": "capability search • method • paraphrase / synonym bridge",
+  "query": "make a chart from this data",
+  "notes": "Probes the embed-still-needed class on the methods lane …",
+  "fixtures": {
+    "seedMethods": [
+      { "id": "eval-plot-data", "name": "plot_data", "description": "Render a graph from tabular numbers" }
+    ]
+  },
+  "expect": {
+    "capabilitySearch": {
+      "expectedMethods": { "anyOf": ["plot_data"], "minMatches": 1 }
+    }
+  }
+}
+```
+
+Field notes:
+
+- `fixtures.seedMethods` — methods to insert into `MethodDatabase` before the case runs (and remove after). Each entry is `{ id, name, description, triggerText?, body? }`. Methods have no built-in seed so a fixture has to bring its own. Prefer `eval-<slug>` ids — the runner skips inserts when the id already exists, so a real user method on disk won't get clobbered if your slug collides.
+- `fixtures.enableSkills` — array of skill **display names** to flip `enabled = true` on for the duration of the case (and restore after). Built-in skills ship disabled-by-default and the search post-filters disabled skills out, so a recall fixture against e.g. `"Debug Assistant"` silently returns 0 unless we toggle it on first. Restoration is best-effort, not crash-safe — re-running any case that names the same skill converges back.
+- `expect.capabilitySearch.expectedTools` / `expectedMethods` / `expectedSkills` — `{ anyOf: [...names], minMatches: N }` matchers. Each matched name must appear in the **accepted** hit set for its lane (i.e. above the lane's threshold).
+- `expect.capabilitySearch.maxAccepted` — caps total accepted hits across all three lanes. `0` is the abstain-style assertion: any accepted hit fails the case.
+- `expect.capabilitySearch.thresholdOverride` — per-case sweep value. **Tools-lane only** (RRF fused-score scale, max ≈ 0.033). Methods + skills lanes always use their own production embed-cosine constants — sweeping a fused-score value into the cosine lane would silently disable the cosine quality gate.
+
+### Other domains
+
+The five pure-data domains (`schema`, `tool_envelope`, `streaming_hint`, `prefix_hash`, `argument_coercion`, `request_validation`) follow the same shape — pick one of the existing `Suites/<domain>/*.json` cases as a template and copy it.
+
+## Recall floors gate
+
+`Config/recall_floors.json` lists per-case `minMatches` floors for `--fail-on-floor`. The flag is opt-in (not yet wired into CI) and lets contributors dry-run a stricter recall gate locally before it becomes authoritative. Cases intentionally omitted from the floor map are documented in the file's `_comment` (today: indexer-side exclusions, abstain cases blocked by RRF saturation, and embedder-miss cases that need a description audit).
+
+When a case in the floor map's accepted-hit count drops below `minMatches`, the run exits non-zero even if the case itself "passes" by softer criteria. The gate is independent of pass/fail outcome so it can catch silent recall slippage that the case-level matcher wouldn't.
 
 ## Adding a new case
 
-1. Drop `Suites/Preflight/my-case.json` with the schema above.
-2. `swift run osaurus-evals run --suite Suites/Preflight --filter my-case` to iterate.
+1. Drop `Suites/<Domain>/my-case.json` with the schema above (pick a sibling case as a template).
+2. `swift run osaurus-evals run --suite Suites/<Domain> --filter my-case` to iterate.
 3. Once green, run the whole suite to make sure you didn't break a sibling.
+4. If your case asserts a recall floor, add it to `Config/recall_floors.json` so `--fail-on-floor` covers it.
 
 ## Adding a new domain
 
