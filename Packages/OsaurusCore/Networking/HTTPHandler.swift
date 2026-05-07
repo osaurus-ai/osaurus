@@ -1600,6 +1600,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let name: String
         let description: String
         let default_model: String?
+        /// Server-resolved model id, known before the first streamed chunk.
+        let effective_model: String?
+        /// True when the resolved model has a `disableThinking` ModelProfile
+        /// option — i.e. clients should render a thinking on/off toggle.
+        let supports_thinking: Bool
         let supports_vision: Bool
         let is_built_in: Bool
         let memory_entry_count: Int
@@ -2117,11 +2122,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let items = agents.map { agent in
                 let modelId = effectiveModels[agent.id] ?? agent.defaultModel
                 let supportsVision = modelId.map { VLMDetection.isVLM(modelId: $0) } ?? false
+                let supportsThinking =
+                    modelId.flatMap { ModelProfileRegistry.profile(for: $0)?.thinkingOption } != nil
                 return AgentListItem(
                     id: agent.id.uuidString,
                     name: agent.name,
                     description: agent.description,
                     default_model: agent.defaultModel,
+                    effective_model: modelId,
+                    supports_thinking: supportsThinking,
                     supports_vision: supportsVision,
                     is_built_in: agent.isBuiltIn,
                     memory_entry_count: memoryCounts[agent.id.uuidString] ?? 0,
@@ -2215,11 +2224,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     AgentManager.shared.effectiveModel(for: agent.id)
                 } ?? agent.defaultModel
             let supportsVision = effectiveModelId.map { VLMDetection.isVLM(modelId: $0) } ?? false
+            let supportsThinking =
+                effectiveModelId.flatMap { ModelProfileRegistry.profile(for: $0)?.thinkingOption } != nil
             let item = AgentListItem(
                 id: agent.id.uuidString,
                 name: agent.name,
                 description: agent.description,
                 default_model: agent.defaultModel,
+                effective_model: effectiveModelId,
+                supports_thinking: supportsThinking,
                 supports_vision: supportsVision,
                 is_built_in: agent.isBuiltIn,
                 memory_entry_count: 0,
@@ -2394,7 +2407,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             while iteration < maxIterations {
                 iteration += 1
 
-                let iterationReq = ChatCompletionRequest(
+                var iterationReq = ChatCompletionRequest(
                     model: model,
                     messages: messages,
                     temperature: req.temperature,
@@ -2412,6 +2425,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     response_format: req.response_format,
                     stream_options: req.stream_options
                 )
+                if let enable = req.enable_thinking {
+                    var opts = iterationReq.modelOptions ?? [:]
+                    opts["disableThinking"] = .bool(!enable)
+                    iterationReq.modelOptions = opts
+                }
 
                 var responseContent = ""
                 // Local models can emit multiple tool calls in a single

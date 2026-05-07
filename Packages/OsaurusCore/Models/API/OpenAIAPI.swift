@@ -510,6 +510,9 @@ struct ChatCompletionRequest: Codable, Sendable {
     var modelOptions: [String: ModelOptionValue]? = nil
     /// Optional TTFT trace for diagnostic timing (not serialized to JSON).
     var ttftTrace: TTFTTrace? = nil
+    /// Per-request thinking toggle. Translated to `modelOptions["disableThinking"]`
+    /// at request entry; absent preserves server defaults.
+    var enable_thinking: Bool? = nil
 
     /// Resolved max tokens, preferring max_tokens then max_completion_tokens.
     var resolvedMaxTokens: Int? { max_tokens ?? max_completion_tokens }
@@ -519,6 +522,7 @@ struct ChatCompletionRequest: Codable, Sendable {
         case frequency_penalty, presence_penalty, stop, n
         case tools, tool_choice, session_id
         case seed, response_format, stream_options
+        case enable_thinking
     }
 
     func withModel(_ newModel: String) -> ChatCompletionRequest {
