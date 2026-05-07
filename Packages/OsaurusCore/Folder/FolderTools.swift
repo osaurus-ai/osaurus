@@ -889,7 +889,7 @@ struct ShellRunTool: OsaurusTool, PermissionedTool {
                 while !Task.isCancelled {
                     try? await Task.sleep(nanoseconds: pollNanos)
                     if Task.isCancelled { return }
-                    let last = await collector.lastActivity
+                    let last = collector.lastActivity
                     if Date().timeIntervalSince(last) >= idleTimeout {
                         await processBox.terminate()
                         return
@@ -915,7 +915,7 @@ struct ShellRunTool: OsaurusTool, PermissionedTool {
         // Drain anything buffered in the pipes after exit (the
         // readabilityHandlers stop firing once the process closes its
         // end). `availableData` returns the residual bytes.
-        await collector.appendDrain(
+        collector.appendDrain(
             stdoutData: stdoutPipe.fileHandleForReading.availableData,
             stderrData: stderrPipe.fileHandleForReading.availableData,
             sink: sink
@@ -931,7 +931,7 @@ struct ShellRunTool: OsaurusTool, PermissionedTool {
         sink.markExited(code: exitCode)
         await LiveExecRegistry.shared.unregister(toolCallId: toolCallId)
 
-        let (stdoutText, stderrText) = await collector.snapshot()
+        let (stdoutText, stderrText) = collector.snapshot()
         let trimmedStdout = stdoutText.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedStderr = stderrText.trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -959,6 +959,14 @@ struct ShellRunTool: OsaurusTool, PermissionedTool {
     /// Install a `readabilityHandler` that streams every chunk into
     /// the collector AND the sink. Closes both sides cleanly on EOF
     /// so the FileHandle isn't leaked.
+    ///
+    /// Both sinks here are non-blocking and synchronous: `sink.write`
+    /// just hits a PassthroughSubject; `collector.append` is a single
+    /// lock-guarded Data append. We deliberately AVOID `Task { … }`
+    /// per chunk — on a chatty pipe that fires the handler thousands
+    /// of times a second the per-Task overhead dominates the actual
+    /// work, swamping the cooperative thread pool and starving the
+    /// process drain that actually frees the pipe.
     private func installPipeReader(
         pipe: Pipe,
         collector: ShellRunOutputCollector,
@@ -971,11 +979,8 @@ struct ShellRunTool: OsaurusTool, PermissionedTool {
                 handle.readabilityHandler = nil
                 return
             }
-            // Tee to UI synchronously (cheap; PassthroughSubject.send
-            // is non-blocking).
             try? sink.write(chunk)
-            // Append to the model's result buffer asynchronously.
-            Task { await collector.append(chunk, isStderr: isStderr) }
+            collector.append(chunk, isStderr: isStderr)
         }
     }
 
@@ -989,22 +994,34 @@ struct ShellRunTool: OsaurusTool, PermissionedTool {
 
 /// Per-call output collector for `ShellRunTool`. Splits the streaming
 /// chunks back into stdout / stderr (the underlying `Pipe`s feed two
-/// separate `readabilityHandler`s, but the actor serialises updates so
-/// we don't need a lock around `lastActivity`).
-private actor ShellRunOutputCollector {
+/// separate `readabilityHandler`s on Foundation's IO queue).
+///
+/// Was an `actor` originally, which serialised updates cleanly but
+/// forced every `installPipeReader` callback to spawn a `Task` per
+/// chunk. On a chatty pipe (think `cargo build` or `npm install`)
+/// that's hundreds of Tasks per second — enough to swamp the
+/// cooperative thread pool and starve the process drain. A plain
+/// `NSLock` guards the same data with no scheduling overhead, and
+/// every callsite is already short and non-blocking.
+final class ShellRunOutputCollector: @unchecked Sendable {
+    private let lock = NSLock()
     private var stdoutBuf = Data()
     private var stderrBuf = Data()
     private var _lastActivity = Date()
 
-    var lastActivity: Date { _lastActivity }
+    var lastActivity: Date {
+        lock.withLock { _lastActivity }
+    }
 
     func append(_ chunk: Data, isStderr: Bool) {
-        if isStderr {
-            stderrBuf.append(chunk)
-        } else {
-            stdoutBuf.append(chunk)
+        lock.withLock {
+            if isStderr {
+                stderrBuf.append(chunk)
+            } else {
+                stdoutBuf.append(chunk)
+            }
+            _lastActivity = Date()
         }
-        _lastActivity = Date()
     }
 
     /// Append the residual bytes drained from the pipes after process
@@ -1012,21 +1029,25 @@ private actor ShellRunOutputCollector {
     /// sees the final flush. `availableData` may return empty data on
     /// each pipe; we no-op in that case.
     func appendDrain(stdoutData: Data, stderrData: Data, sink: LiveExecSink) {
-        if !stdoutData.isEmpty {
-            stdoutBuf.append(stdoutData)
-            try? sink.write(stdoutData)
-        }
-        if !stderrData.isEmpty {
-            stderrBuf.append(stderrData)
-            try? sink.write(stderrData)
+        lock.withLock {
+            if !stdoutData.isEmpty {
+                stdoutBuf.append(stdoutData)
+                try? sink.write(stdoutData)
+            }
+            if !stderrData.isEmpty {
+                stderrBuf.append(stderrData)
+                try? sink.write(stderrData)
+            }
         }
     }
 
     func snapshot() -> (stdout: String, stderr: String) {
-        (
-            String(data: stdoutBuf, encoding: .utf8) ?? "",
-            String(data: stderrBuf, encoding: .utf8) ?? ""
-        )
+        lock.withLock {
+            (
+                String(data: stdoutBuf, encoding: .utf8) ?? "",
+                String(data: stderrBuf, encoding: .utf8) ?? ""
+            )
+        }
     }
 }
 

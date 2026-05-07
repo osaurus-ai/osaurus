@@ -1429,7 +1429,7 @@ private struct SandboxExecTool: OsaurusTool, @unchecked Sendable {
         // Live streaming wiring: register a LiveExecRegistry entry
         // BEFORE the runner blocks. The chat layer observes the
         // registry, attaches the handle to the matching tool-call
-        // item, and the row mounts a LiveOutputView that subscribes
+        // item, and the row mounts a TerminalDisplayView that subscribes
         // to the sink's publishers. The user's [Terminate] button
         // calls back through the entry's `terminate` closure, which
         // signals SIGTERM via the captured ProcessHandle.

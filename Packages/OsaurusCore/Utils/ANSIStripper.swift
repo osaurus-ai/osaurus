@@ -4,8 +4,9 @@
 //
 //  Drop ANSI escape sequences (SGR colors, cursor moves, alternate-
 //  screen toggles) from terminal output before rendering it in the
-//  chat UI. Best-effort — not a vt100 emulator. Used by `LiveOutputView`
-//  so a `claude` REPL or coloured `cargo build` reads as plain text in
+//  chat UI. Best-effort — not a vt100 emulator. Used by
+//  `TerminalDisplayView` so a `claude` REPL or coloured `cargo build`
+//  reads as plain text in
 //  the chat instead of being littered with `\u{1B}[...m` markers.
 //
 //  Coverage:

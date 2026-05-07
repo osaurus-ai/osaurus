@@ -470,4 +470,124 @@ struct BuiltinToolResilienceTests {
     private func failureField(_ result: String) -> String? {
         EnvelopeAssertions.failureField(result)
     }
+
+    // MARK: - Phase B: shell-tool routing through TerminalSnapshot.from
+
+    /// Routing decision the chat layer makes when a shell tool
+    /// completes. The single `TerminalSnapshot.from(toolResult:item:)`
+    /// factory enforces all three branches:
+    ///   1. shell tool + valid envelope → non-nil snapshot
+    ///   2. non-shell tool             → nil (markdown fallback)
+    ///   3. error envelope             → nil (markdown fallback)
+
+    @Test func shellToolSnapshotExtractsStdoutStderrExitCommand() {
+        let envelope = ToolEnvelope.success(
+            tool: "shell_run",
+            result: [
+                "stdout": "hello\nworld\n",
+                "stderr": "warn: x\n",
+                "exit_code": 0,
+            ] as [String: Any]
+        )
+        let item = makeItem(
+            name: "shell_run",
+            arguments: #"{"command": "echo hello"}"#,
+            result: envelope
+        )
+        guard let snap = TerminalSnapshot.from(toolResult: envelope, item: item)
+        else {
+            Issue.record("expected non-nil snapshot for shell_run envelope")
+            return
+        }
+        #expect(snap.command == "echo hello")
+        #expect(snap.exitCode == 0)
+        #expect(!snap.killedByUser)
+        let body = String(data: snap.output, encoding: .utf8) ?? ""
+        #expect(body.contains("hello"))
+        #expect(body.contains("world"))
+        #expect(body.contains("warn: x"))
+    }
+
+    @Test func shellToolSnapshotMarksKilledByUser() {
+        let envelope = ToolEnvelope.success(
+            tool: "sandbox_exec",
+            result: [
+                "stdout": "",
+                "stderr": "",
+                "exit_code": -1,
+                "killed_by": "user",
+            ] as [String: Any]
+        )
+        let item = makeItem(
+            name: "sandbox_exec",
+            arguments: #"{"command": "sleep 100"}"#,
+            result: envelope
+        )
+        let snap = TerminalSnapshot.from(toolResult: envelope, item: item)
+        #expect(snap?.killedByUser == true)
+    }
+
+    @Test func errorEnvelopeReturnsNilSnapshot() {
+        // Failures must keep the markdown path so the model-facing
+        // error message is preserved verbatim.
+        let envelope = ToolEnvelope.failure(
+            kind: .invalidArgs,
+            message: "bad",
+            field: "command",
+            expected: "string",
+            tool: "shell_run"
+        )
+        let item = makeItem(
+            name: "shell_run",
+            arguments: "{}",
+            result: envelope
+        )
+        let snap = TerminalSnapshot.from(toolResult: envelope, item: item)
+        #expect(snap == nil)
+    }
+
+    @Test func nonShellToolReturnsNilSnapshot() {
+        // file_read is a tool whose envelope has the success shape
+        // but isn't a shell tool. The factory's name check filters
+        // it out so the markdown path renders the prose verbatim.
+        let envelope = ToolEnvelope.success(tool: "file_read", text: "file body")
+        let item = makeItem(
+            name: "file_read",
+            arguments: #"{"path": "x.txt"}"#,
+            result: envelope
+        )
+        let snap = TerminalSnapshot.from(toolResult: envelope, item: item)
+        #expect(snap == nil)
+    }
+
+    @Test func shellToolWithoutExitCodeReturnsNil() {
+        // A shell-tool name but a malformed envelope (no exit_code key)
+        // must still bail out. Defensive against payload-shape drift.
+        let envelope = ToolEnvelope.success(
+            tool: "shell_run",
+            result: ["stdout": "x"] as [String: Any]
+        )
+        let item = makeItem(
+            name: "shell_run",
+            arguments: #"{"command": "echo x"}"#,
+            result: envelope
+        )
+        let snap = TerminalSnapshot.from(toolResult: envelope, item: item)
+        #expect(snap == nil)
+    }
+
+    private func makeItem(
+        name: String,
+        arguments: String,
+        result: String
+    ) -> ToolCallItem {
+        ToolCallItem(
+            call: ToolCall(
+                id: UUID().uuidString,
+                type: "function",
+                function: ToolCallFunction(name: name, arguments: arguments)
+            ),
+            result: result
+        )
+    }
 }

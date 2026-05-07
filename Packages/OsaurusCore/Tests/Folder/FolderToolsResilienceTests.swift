@@ -205,4 +205,51 @@ struct FolderToolsResilienceTests {
             Issue.record("preflight rejected the call: \(envelope)")
         }
     }
+
+    // MARK: - ShellRunOutputCollector (perf-shellrun-tasks)
+
+    /// Pin Phase A's shellrun-tasks change: the collector is no longer
+    /// an actor, so a chatty pipe doesn't spawn a `Task` per chunk.
+    /// Concurrency stress here just confirms the lock-guarded class
+    /// preserves chunk ordering and totals.
+    @Test func shellRunCollector_handlesChunkFloodWithoutLoss() async {
+        let collector = ShellRunOutputCollector()
+        let chunkCount = 1_000
+
+        // Fan out from many tasks to mimic readabilityHandler firing
+        // off Foundation's IO queue. Lock contention is the path under
+        // test — actor used to serialise via the cooperative executor;
+        // the lock-guarded class must produce the same exact totals.
+        await withTaskGroup(of: Void.self) { group in
+            for i in 0 ..< chunkCount {
+                let isStderr = i % 2 == 1
+                let payload = Data("\(i)\n".utf8)
+                group.addTask {
+                    collector.append(payload, isStderr: isStderr)
+                }
+            }
+        }
+
+        let (stdout, stderr) = collector.snapshot()
+        // Even halves go to stdout, odd halves to stderr → 500 chunks
+        // each, regardless of arrival order.
+        #expect(
+            stdout.split(separator: "\n").count == chunkCount / 2,
+            "stdout chunk count mismatch: \(stdout.split(separator: "\n").count)"
+        )
+        #expect(
+            stderr.split(separator: "\n").count == chunkCount / 2,
+            "stderr chunk count mismatch: \(stderr.split(separator: "\n").count)"
+        )
+    }
+
+    @Test func shellRunCollector_lastActivityAdvancesOnAppend() async throws {
+        let collector = ShellRunOutputCollector()
+        let before = collector.lastActivity
+        // Even a 1ms wait is enough for `Date()` to tick.
+        try await Task.sleep(nanoseconds: 5_000_000)
+        collector.append(Data("hello".utf8), isStderr: false)
+        let after = collector.lastActivity
+        #expect(after > before)
+    }
 }

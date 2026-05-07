@@ -5,15 +5,19 @@
 //  Single source of truth for live-streaming tool calls (`sandbox_exec`,
 //  `shell_run`, including `background:true` jobs). Tools register an
 //  `Entry` keyed by tool-call-id when they start; the chat UI observes
-//  the registry and binds each row's `LiveOutputView` to the matching
+//  the registry and binds each row's `TerminalDisplayView` to the matching
 //  entry's publishers. The registry itself never routes bytes — it just
 //  hands out the per-call publishers + the `terminate` closure.
 //
 //  Lifecycle:
 //   - On entry register, `entriesPublisher` emits the new map.
-//   - On `unregister`, the entry is kept for 60 s as a "grace tail" so a
+//   - On `unregister`, the entry is kept for 3 s as a "grace tail" so a
 //     row that scrolls in just after a fast command finishes can still
-//     bind, see the seeded output, and then notice `.exited`.
+//     bind, see the seeded output, and then notice `.exited`. Was 60 s
+//     in earlier iterations — dropped to 3 s once `TerminalDisplayView`
+//     learned to render from the envelope-shaped `TerminalSnapshot`,
+//     so completed rendering no longer depends on the registry holding
+//     the entry around.
 //   - `clearAll()` drops every entry immediately (used by integration
 //     tests; production only ever calls `unregister`).
 //
@@ -115,8 +119,11 @@ public actor LiveExecRegistry {
     /// Grace window between a tool's `unregister` and the entry being
     /// dropped from the live snapshot. Lets a row that mounts a few
     /// seconds after a fast command finishes still bind, replay the
-    /// seed, and notice `.exited` via the publisher.
-    private static let dropGrace: TimeInterval = 60
+    /// seed, and notice `.exited` via the publisher. 3 s is enough
+    /// for the row's `bind → seed → applyStatus` round trip to settle
+    /// without holding stale entries around for a full minute — the
+    /// snapshot-based completed render owns the long-tail case.
+    private static let dropGrace: TimeInterval = 3
 
     /// Register a fresh entry. Replaces any existing entry under the
     /// same id (and cancels the pending drop, if one is in flight).

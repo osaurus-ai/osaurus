@@ -6,9 +6,11 @@
 //   - entriesPublisher emits on every register / unregister tick
 //   - terminate closure is invoked exactly once per [Terminate] press
 //   - clearAll cancels grace tasks and drops everything
-//
-//  We DON'T pin the 60s drop-grace timer here (that would slow CI by a
-//  full minute); the public `clearAll` covers the cleanup path.
+//   - drop grace post-unregister is short (~3 s) — completed-mode
+//     rendering owns the long tail through `TerminalSnapshot`, so the
+//     registry no longer needs to hold dead entries around for a
+//     full minute. We pin a small upper bound here as a regression
+//     guard rather than the exact 3 s value (CI scheduling jitter).
 //
 
 import Combine
@@ -107,6 +109,21 @@ struct LiveExecRegistryTests {
         await registry.clearAll()
         #expect(await registry.handle(toolCallId: "a") == nil)
         #expect(await registry.handle(toolCallId: "b") == nil)
+    }
+
+    @Test func unregisterEntryClearedWithinGraceUpperBound() async throws {
+        // Phase B regression guard: drop grace MUST be short enough
+        // that a 5-second wait is enough to see the entry disappear.
+        // Earlier iterations held entries for 60 s and broke this
+        // assumption. Bound is loose to absorb CI scheduling jitter.
+        let registry = LiveExecRegistry()
+        let entry = makeEntry(toolCallId: "ephemeral")
+        await registry.register(entry)
+        await registry.unregister(toolCallId: "ephemeral")
+        // Wait > grace + jitter; entry MUST be gone.
+        try await Task.sleep(nanoseconds: 5_000_000_000)
+        let stillThere = await registry.handle(toolCallId: "ephemeral")
+        #expect(stillThere == nil, "entry should drop within grace window")
     }
 }
 

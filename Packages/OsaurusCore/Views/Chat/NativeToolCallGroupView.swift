@@ -470,13 +470,19 @@ final class NativeToolCallRowView: NSView {
     private var resultSectionTitle: NSTextField?
     private var argsView: NativeMarkdownView?
     private var resultView: NativeMarkdownView?
-    /// Cursor-style live terminal pane. Mounts when LiveExecRegistry
-    /// has an entry for this row's tool-call-id AND the row's static
-    /// result hasn't landed yet. Mutually exclusive with `resultView`
-    /// in the layout pin so we never double-pin contentContainer's
-    /// bottom.
-    private var liveOutputView: LiveOutputView?
-    private var liveOutputBottomConstraint: NSLayoutConstraint?
+    /// Cursor-style terminal pane. Mounts in two distinct cases:
+    ///   1. .live(entry) — LiveExecRegistry has a running entry for
+    ///      this row's tool-call-id. Streams chunks into the view,
+    ///      shows [Terminate].
+    ///   2. .completed(snapshot) — this row's tool is `sandbox_exec`
+    ///      / `shell_run` and the envelope decoded successfully. The
+    ///      view renders the static stdout+stderr through the same
+    ///      chrome the live pane used.
+    /// Mutually exclusive with `resultView` in the layout pin so we
+    /// never double-pin contentContainer's bottom.
+    private var terminalView: TerminalDisplayView?
+    private var terminalBottomConstraint: NSLayoutConstraint?
+    private var terminalHeightConstraint: NSLayoutConstraint?
     private var liveExecSubscription: AnyCancellable?
     /// Tool-call-id the live subscription is currently observing.
     /// Avoids re-subscribing on every layout-only `configure(item:)`
@@ -635,9 +641,9 @@ final class NativeToolCallRowView: NSView {
             bindLiveOutputIfPresent(toolCallId: item.call.id, theme: theme)
         }
 
-        // Tear down live binding when collapsed.
+        // Tear down terminal pane when the row collapses.
         if !isExpanded {
-            tearDownLiveOutput()
+            tearDownTerminalView()
         }
 
         applyHeight()
@@ -663,34 +669,61 @@ final class NativeToolCallRowView: NSView {
         } else {
             resultH = 0
         }
-        let liveH: CGFloat = (liveOutputView != nil ? 8 + LiveOutputView.measuredHeight() : 0)
-        return rowH + 1 + 8 + sectionTitleH + argsH + liveH + resultH + 8
+        // Live mode locks at maxBodyHeight; completed mode uses the
+        // view's adaptive measured height (60–140pt body + 30pt header).
+        let terminalH: CGFloat
+        if let tv = terminalView {
+            terminalH = 8 + tv.currentMeasuredHeight
+        } else {
+            terminalH = 0
+        }
+        return rowH + 1 + 8 + sectionTitleH + argsH + terminalH + resultH + 8
     }
 
-    // MARK: - Live output bindings
+    // MARK: - Terminal pane bindings
 
-    /// Re-evaluate which expanded section to show (live pane or static
-    /// result) given the current `LiveExecRegistry` snapshot. Called
-    /// from `configure(item:)` for the initial mount AND from the
-    /// registry subscription closure on every entry-change tick.
+    /// Re-evaluate which expanded section to show given the current
+    /// `LiveExecRegistry` snapshot AND the tool name. Called from
+    /// `configure(item:)` for the initial mount AND from the registry
+    /// subscription closure on every entry-change tick.
     ///
-    /// Mount the live pane ONLY while the tool is actively running.
-    /// The moment status flips to `.exited` / `.killed` we tear it
-    /// down and fall through to the static result — even though the
-    /// registry keeps the entry around for late binders, leaving the
-    /// pane visible after exit eats screen real estate without any
-    /// extra signal to the user (the static result already shows the
-    /// final stdout/stderr/exit_code).
+    /// Routing:
+    ///   - tool is running                    → mount terminal in
+    ///                                         .live(entry) mode
+    ///   - tool is shell (sandbox_exec/run)  + completed
+    ///                                       → mount terminal in
+    ///                                         .completed(snapshot) mode
+    ///   - any other completed tool           → fall back to the
+    ///                                         markdown result section
+    /// Live → completed transitions carry the same view through both
+    /// modes so the row chrome doesn't visually shift when streaming
+    /// ends.
     private func applyResultOrLiveState(width: CGFloat, theme: any ThemeProtocol) {
         guard let item = currentItem else { return }
+
+        // 1) Live path takes priority while a tool is actively running.
         if let entry = LiveExecRegistry.shared.currentEntries()[item.call.id],
             entry.currentStatus() == .running
         {
             tearDownResultSection()
-            mountLiveOutputView(with: entry, theme: theme)
+            mountTerminalView(mode: .live(entry), theme: theme)
             return
         }
-        tearDownLiveOutput()
+
+        // 2) Completed shell tool → snapshot rendering through the
+        //    same terminal chrome. The factory returns nil for non-
+        //    shell tools and error envelopes, which then fall through
+        //    to the markdown path below.
+        if let result = item.result,
+            let snapshot = TerminalSnapshot.from(toolResult: result, item: item)
+        {
+            tearDownResultSection()
+            mountTerminalView(mode: .completed(snapshot), theme: theme)
+            return
+        }
+
+        // 3) Markdown fallback for everything else.
+        tearDownTerminalView()
         guard let result = item.result else {
             tearDownResultSection()
             return
@@ -739,22 +772,31 @@ final class NativeToolCallRowView: NSView {
             }
     }
 
-    private func mountLiveOutputView(
-        with entry: LiveExecRegistry.Entry,
+    /// Lazily install (or reuse) a `TerminalDisplayView` and bind it
+    /// in the given mode. The view itself decides between the live
+    /// streaming path and the static snapshot render based on the
+    /// passed `mode`.
+    private func mountTerminalView(
+        mode: TerminalDisplayView.Mode,
         theme: any ThemeProtocol
     ) {
-        let view: LiveOutputView
-        if let existing = liveOutputView {
+        let view: TerminalDisplayView
+        if let existing = terminalView {
             view = existing
         } else {
-            view = LiveOutputView()
+            view = TerminalDisplayView()
             view.translatesAutoresizingMaskIntoConstraints = false
             contentContainer.addSubview(view)
             let av = ensureArgsView()
             // The view itself needs an explicit height because its body
             // is an NSScrollView (no intrinsic size); without this the
             // layout solver gives it 0 height and the row reserves
-            // space for nothing.
+            // space for nothing. We start at the live-mode max height
+            // and adjust per-bind below for completed mode.
+            let heightConst = view.heightAnchor.constraint(
+                equalToConstant: TerminalDisplayView.liveModeMeasuredHeight()
+            )
+            terminalHeightConstraint = heightConst
             NSLayoutConstraint.activate([
                 view.leadingAnchor.constraint(
                     equalTo: contentContainer.leadingAnchor,
@@ -765,13 +807,11 @@ final class NativeToolCallRowView: NSView {
                     constant: -Self.sectionContentInset
                 ),
                 view.topAnchor.constraint(equalTo: av.bottomAnchor, constant: 8),
-                view.heightAnchor.constraint(
-                    equalToConstant: LiveOutputView.measuredHeight()
-                ),
+                heightConst,
             ])
             let pin = contentContainer.bottomAnchor.constraint(equalTo: view.bottomAnchor)
-            liveOutputBottomConstraint = pin
-            liveOutputView = view
+            terminalBottomConstraint = pin
+            terminalView = view
         }
         // CRITICAL: this branch runs on EVERY mount — including the
         // "view already exists" path — because `applyResultOrLiveState`
@@ -782,21 +822,26 @@ final class NativeToolCallRowView: NSView {
         // shorter live constraint ends up clipped outside the visible
         // contentContainer region. Always swap pins atomically here.
         contentBottomToArgs?.isActive = false
-        liveOutputBottomConstraint?.isActive = true
-        view.bind(to: entry, theme: theme)
+        terminalBottomConstraint?.isActive = true
+        view.bind(mode, theme: theme)
+        // After bind, `currentMeasuredHeight` reflects the right size
+        // for the mode we just bound in (live = locked maxBodyHeight,
+        // completed = adaptive 60–140pt body).
+        terminalHeightConstraint?.constant = view.currentMeasuredHeight
         applyHeight()
     }
 
-    private func tearDownLiveOutput() {
+    private func tearDownTerminalView() {
         liveExecSubscription?.cancel()
         liveExecSubscription = nil
         liveExecBoundCallId = nil
-        guard let view = liveOutputView else { return }
+        guard let view = terminalView else { return }
         view.unbind()
-        liveOutputBottomConstraint?.isActive = false
-        liveOutputBottomConstraint = nil
+        terminalBottomConstraint?.isActive = false
+        terminalBottomConstraint = nil
+        terminalHeightConstraint = nil
         view.removeFromSuperview()
-        liveOutputView = nil
+        terminalView = nil
         // Restore args' bottom pin so contentContainer keeps a single
         // bottom anchor (otherwise the layout becomes ambiguous).
         contentBottomToArgs?.isActive = true

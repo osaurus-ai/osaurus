@@ -1794,7 +1794,7 @@ final class ChatSession: ObservableObject {
                         // already attached — `NativeToolCallRowView`
                         // never gets a chance to render with
                         // `item.result == nil`, so its inline live-
-                        // streaming pane (LiveOutputView) never mounts
+                        // streaming pane (TerminalDisplayView) never mounts
                         // for sandbox_exec / shell_run. Rebuilding here
                         // emits the row with a nil result; the row
                         // subscribes to LiveExecRegistry and starts
