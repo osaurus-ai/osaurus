@@ -41,11 +41,45 @@ public struct TokenPayload: Codable, Sendable {
 
 // MARK: - Identity
 
+/// UserDefaults keys for the identity subsystem. Centralised so the
+/// onboarding view, the Identity view, and the wipe helper can't drift on
+/// the spelling of a magic string. Add new identity-scoped flags here.
+public enum IdentityDefaultsKey {
+    /// Set to `true` once the user has acknowledged ("I've saved it") that
+    /// they have stored the BIP39 master recovery phrase. When false, the
+    /// Identity view shows a yellow "backup not confirmed" banner.
+    public static let masterMnemonicAcknowledged = "masterMnemonicAcknowledged"
+
+    /// One-shot migration flag set by `AgentManager` after it has back-filled
+    /// derived addresses for agents created before the address feature shipped.
+    /// Resetting the identity clears this so freshly-onboarded agents go back
+    /// through the migration path.
+    public static let agentAddressesMigrated = "agentAddressesMigrated"
+}
+
 /// Returned once after initial identity setup.
+///
+/// `mnemonic` is the BIP39 24-word backup of the master key. It is `nil` when
+/// `OsaurusIdentity.setup()` short-circuits because an identity already exists
+/// (the original mnemonic was discarded after the original setup screen — we
+/// do not re-display it on subsequent runs).
 public struct IdentityInfo: Sendable {
     public let osaurusId: OsaurusID
     public let deviceId: String
     public let recovery: RecoveryInfo
+    public let mnemonic: [String]?
+
+    public init(
+        osaurusId: OsaurusID,
+        deviceId: String,
+        recovery: RecoveryInfo,
+        mnemonic: [String]? = nil
+    ) {
+        self.osaurusId = osaurusId
+        self.deviceId = deviceId
+        self.recovery = recovery
+        self.mnemonic = mnemonic
+    }
 }
 
 /// One-time recovery code, shown at creation then discarded from memory.

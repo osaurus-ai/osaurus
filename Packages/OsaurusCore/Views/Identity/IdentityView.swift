@@ -14,10 +14,27 @@ import SwiftUI
 
 struct IdentityView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var agentManager = AgentManager.shared
+    @EnvironmentObject private var server: ServerController
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
     @State private var hasAppeared = false
     @State private var phase: IdentityPhase = .checking
+    @State private var drift: IdentityDrift?
+    @State private var mnemonicAcknowledged: Bool = UserDefaults.standard
+        .bool(forKey: IdentityDefaultsKey.masterMnemonicAcknowledged)
+
+    @State private var showRecoverSheet = false
+    @State private var showRepairConfirm = false
+    @State private var showResetConfirm = false
+    @State private var lastActionResult: ActionResult?
+
+    /// Result of the most recent recover / repair / reset action, surfaced in
+    /// the inline banner above the sections. `nil` hides the banner.
+    private struct ActionResult {
+        let message: String
+        let isError: Bool
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -28,19 +45,7 @@ struct IdentityView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    switch phase {
-                    case .checking:
-                        ProgressView()
-                            .frame(maxWidth: .infinity, minHeight: 200)
-                    case .noIdentity:
-                        IdentitySetupCard(onCreated: handleIdentityCreated)
-                    case .recoveryPrompt(let info):
-                        RecoveryPromptCard(info: info, onDismiss: handleRecoveryDismissed)
-                    case .ready(let osaurusId, let deviceId):
-                        MasterAddressSection(osaurusId: osaurusId)
-                        AgentAddressesSection(masterAddress: osaurusId)
-                        DeviceSection(deviceId: deviceId)
-                    }
+                    phaseContent
                 }
                 .padding(24)
             }
@@ -55,6 +60,83 @@ struct IdentityView: View {
                 hasAppeared = true
             }
         }
+        .sheet(isPresented: $showRecoverSheet) {
+            RecoverFromMnemonicSheet(
+                drift: drift ?? IdentityDrift(mismatchedAgents: [], staleAccessKeys: []),
+                onRecovered: handleRecovered,
+                onCancel: { showRecoverSheet = false }
+            )
+            .environment(\.theme, theme)
+        }
+        .alert(
+            Text("Repair Identity?", bundle: .module),
+            isPresented: $showRepairConfirm,
+            actions: {
+                Button("Repair", role: .destructive) { repair() }
+                Button("Cancel", role: .cancel) {}
+            },
+            message: { Text(repairConfirmMessage, bundle: .module) }
+        )
+        .alert(
+            Text("Reset Identity?", bundle: .module),
+            isPresented: $showResetConfirm,
+            actions: {
+                Button("Reset", role: .destructive) { resetIdentity() }
+                Button("Cancel", role: .cancel) {}
+            },
+            message: {
+                Text(
+                    "This deletes your Master Key, every agent's derived address, and every osk-v1 access key. Onboarding will start over.\n\nIf you have not saved your 24-word recovery phrase, this is irreversible.",
+                    bundle: .module
+                )
+            }
+        )
+    }
+
+    // MARK: - Phase content
+
+    @ViewBuilder
+    private var phaseContent: some View {
+        switch phase {
+        case .checking:
+            ProgressView()
+                .frame(maxWidth: .infinity, minHeight: 200)
+        case .noIdentity:
+            IdentitySetupCard(onCreated: handleIdentityCreated)
+        case .recoveryPrompt(let info):
+            RecoveryPromptCard(info: info, onDismiss: handleRecoveryDismissed)
+        case .ready(let osaurusId, let deviceId):
+            readyContent(osaurusId: osaurusId, deviceId: deviceId)
+        }
+    }
+
+    @ViewBuilder
+    private func readyContent(osaurusId: OsaurusID, deviceId: String) -> some View {
+        if let drift, drift.hasDrift {
+            IdentityDriftBanner(
+                drift: drift,
+                onRecover: { showRecoverSheet = true },
+                onRepair: { showRepairConfirm = true },
+                onReset: { showResetConfirm = true }
+            )
+        }
+
+        if let lastActionResult {
+            actionResultBanner(lastActionResult)
+        }
+
+        if !mnemonicAcknowledged {
+            BackupNotConfirmedBanner()
+        }
+
+        MasterAddressSection(osaurusId: osaurusId)
+        AgentAddressesSection(
+            masterAddress: osaurusId,
+            mismatchedAgentIds: Set((drift?.mismatchedAgents ?? []).map(\.id)),
+            onChange: { runRefresh() }
+        )
+        DeviceSection(deviceId: deviceId)
+        DangerZoneSection(onReset: { showResetConfirm = true })
     }
 
     // MARK: - Header
@@ -71,14 +153,49 @@ struct IdentityView: View {
     private var subtitleText: String {
         switch phase {
         case .checking:
-            "Loading identity..."
+            return "Loading identity..."
         case .noIdentity:
-            "Set up your Osaurus Identity"
+            return "Set up your Osaurus Identity"
         case .recoveryPrompt:
-            "Save your recovery code"
+            return "Save your recovery phrase"
         case .ready:
-            "Your identity is active"
+            return drift?.hasDrift == true ? "Identity drift detected" : "Your identity is active"
         }
+    }
+
+    private var repairConfirmMessage: LocalizedStringKey {
+        let agents = drift?.mismatchedAgents.count ?? 0
+        let keys = drift?.staleAccessKeys.count ?? 0
+        return LocalizedStringKey(
+            "Repair will derive fresh addresses for \(agents) agent(s) and revoke \(keys) stale access key(s) under the current master. Existing pairings and clients holding those keys will stop working until they're re-issued."
+        )
+    }
+
+    private func actionResultBanner(_ result: ActionResult) -> some View {
+        let tint = result.isError ? theme.errorColor : theme.successColor
+        return HStack(spacing: 8) {
+            Image(systemName: result.isError ? "exclamationmark.triangle.fill" : "checkmark.shield.fill")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(tint)
+            Text(result.message)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(tint)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+            Button(action: { lastActionResult = nil }) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(theme.tertiaryText)
+                    .padding(4)
+            }
+            .buttonStyle(PlainButtonStyle())
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(tint.opacity(0.10))
+        )
     }
 
     // MARK: - State Machine
@@ -88,6 +205,7 @@ struct IdentityView: View {
             loadExistingIdentity()
         } else {
             phase = .noIdentity
+            drift = nil
         }
     }
 
@@ -95,11 +213,32 @@ struct IdentityView: View {
         do {
             let deviceId = try DeviceKey.currentDeviceId()
             let context = OsaurusIdentityContext.biometric()
-            let osaurusId = try MasterKey.getOsaurusId(context: context)
+            var masterKeyData = try MasterKey.getPrivateKey(context: context)
+            defer { masterKeyData.zeroOut() }
+
+            let osaurusId = try deriveOsaurusId(from: masterKeyData)
+
+            let agents = agentManager.agents
+            let accessKeys = APIKeyManager.shared.listKeys()
+            let diagnosed = IdentityHealthCheck.diagnose(
+                masterKey: masterKeyData,
+                agents: agents,
+                accessKeys: accessKeys
+            )
+
             phase = .ready(osaurusId: osaurusId, deviceId: deviceId)
+            drift = diagnosed
+            mnemonicAcknowledged = UserDefaults.standard.bool(forKey: IdentityDefaultsKey.masterMnemonicAcknowledged)
         } catch {
             phase = .noIdentity
+            drift = nil
         }
+    }
+
+    private func runRefresh() {
+        APIKeyManager.shared.reload()
+        agentManager.refresh()
+        loadExistingIdentity()
     }
 
     private func handleIdentityCreated(_ info: IdentityInfo) {
@@ -107,7 +246,85 @@ struct IdentityView: View {
     }
 
     private func handleRecoveryDismissed(_ osaurusId: OsaurusID, _ deviceId: String) {
+        UserDefaults.standard.set(true, forKey: IdentityDefaultsKey.masterMnemonicAcknowledged)
+        mnemonicAcknowledged = true
         phase = .ready(osaurusId: osaurusId, deviceId: deviceId)
+        runRefresh()
+    }
+
+    // MARK: - Recover
+
+    private func handleRecovered() {
+        showRecoverSheet = false
+        lastActionResult = ActionResult(
+            message: "Master key restored from recovery phrase.",
+            isError: false
+        )
+        runRefresh()
+        restartServerIfRunning()
+    }
+
+    // MARK: - Repair
+
+    private func repair() {
+        guard let drift else { return }
+
+        var failures: [String] = []
+        for agent in drift.mismatchedAgents {
+            do {
+                // Forget the stale derivation, then re-assign at a fresh index
+                // off the current master.
+                var cleared = agent
+                cleared.agentIndex = nil
+                cleared.agentAddress = nil
+                agentManager.update(cleared)
+                if let refreshed = agentManager.agent(for: agent.id) {
+                    try agentManager.assignAddress(to: refreshed)
+                }
+            } catch {
+                failures.append("\(agent.name): \(error.localizedDescription)")
+            }
+        }
+
+        for key in drift.staleAccessKeys where !key.revoked {
+            APIKeyManager.shared.revoke(id: key.id)
+        }
+
+        lastActionResult =
+            failures.isEmpty
+            ? ActionResult(
+                message: "Repair complete. Re-derived agent addresses and revoked stale access keys.",
+                isError: false
+            )
+            : ActionResult(
+                message: "Repair completed with errors:\n" + failures.joined(separator: "\n"),
+                isError: true
+            )
+
+        runRefresh()
+        restartServerIfRunning()
+    }
+
+    // MARK: - Reset
+
+    private func resetIdentity() {
+        OsaurusIdentity.wipe()
+        OnboardingService.shared.resetOnboarding()
+
+        lastActionResult = ActionResult(
+            message: "Identity reset. Re-open the app to start onboarding.",
+            isError: false
+        )
+        phase = .noIdentity
+        drift = nil
+        mnemonicAcknowledged = false
+
+        restartServerIfRunning()
+    }
+
+    private func restartServerIfRunning() {
+        guard server.isRunning else { return }
+        Task { await server.restartServer() }
     }
 }
 
@@ -118,6 +335,202 @@ private enum IdentityPhase {
     case noIdentity
     case recoveryPrompt(info: IdentityInfo)
     case ready(osaurusId: OsaurusID, deviceId: String)
+}
+
+// MARK: - Drift Banner
+
+private struct IdentityDriftBanner: View {
+    @Environment(\.theme) private var theme
+
+    let drift: IdentityDrift
+    let onRecover: () -> Void
+    let onRepair: () -> Void
+    let onReset: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Image(systemName: "exclamationmark.octagon.fill")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(theme.errorColor)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Identity drift detected", bundle: .module)
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundColor(theme.errorColor)
+                    Text(summary)
+                        .font(.system(size: 12))
+                        .foregroundColor(theme.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+            }
+
+            Text(
+                "Your current Master Key no longer matches the addresses your agents and access keys were derived from. This usually means a Master Key was created on top of an existing one — for example, by a re-run of onboarding.",
+                bundle: .module
+            )
+            .font(.system(size: 11))
+            .foregroundColor(theme.secondaryText)
+            .fixedSize(horizontal: false, vertical: true)
+
+            HStack(spacing: 8) {
+                Button(action: onRecover) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "arrow.uturn.backward")
+                            .font(.system(size: 11, weight: .semibold))
+                        Text("Recover from phrase", bundle: .module)
+                            .font(.system(size: 12, weight: .semibold))
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 7)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(theme.accentColor)
+                    )
+                }
+                .buttonStyle(PlainButtonStyle())
+
+                Button(action: onRepair) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "wrench.and.screwdriver")
+                            .font(.system(size: 11, weight: .semibold))
+                        Text("Repair forward", bundle: .module)
+                            .font(.system(size: 12, weight: .semibold))
+                    }
+                    .foregroundColor(theme.primaryText)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 7)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(theme.tertiaryBackground)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .stroke(theme.inputBorder, lineWidth: 1)
+                            )
+                    )
+                }
+                .buttonStyle(PlainButtonStyle())
+
+                Button(action: onReset) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "trash")
+                            .font(.system(size: 11, weight: .semibold))
+                        Text("Reset identity", bundle: .module)
+                            .font(.system(size: 12, weight: .semibold))
+                    }
+                    .foregroundColor(theme.errorColor)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 7)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(theme.errorColor.opacity(0.10))
+                    )
+                }
+                .buttonStyle(PlainButtonStyle())
+
+                Spacer(minLength: 0)
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(theme.errorColor.opacity(0.06))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(theme.errorColor.opacity(0.25), lineWidth: 1)
+                )
+        )
+    }
+
+    private var summary: String {
+        let agents = drift.mismatchedAgents.count
+        let keys = drift.staleAccessKeys.count
+        switch (agents, keys) {
+        case (0, 0): return "Drift detected"
+        case (let a, 0): return "\(a) agent address(es) no longer derive from this master."
+        case (0, let k): return "\(k) access key(s) signed by a previous master."
+        case (let a, let k):
+            return "\(a) agent address(es) and \(k) access key(s) reference a previous master."
+        }
+    }
+}
+
+// MARK: - Backup Reminder Banner
+
+private struct BackupNotConfirmedBanner: View {
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(theme.warningColor)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Master key backup not confirmed", bundle: .module)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(theme.warningColor)
+                Text(
+                    "Your 24-word recovery phrase wasn't acknowledged. Without it, you cannot restore this master key if it's ever lost or replaced.",
+                    bundle: .module
+                )
+                .font(.system(size: 11))
+                .foregroundColor(theme.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(theme.warningColor.opacity(0.08))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(theme.warningColor.opacity(0.20), lineWidth: 1)
+                )
+        )
+    }
+}
+
+// MARK: - Danger Zone
+
+private struct DangerZoneSection: View {
+    @Environment(\.theme) private var theme
+    let onReset: () -> Void
+
+    var body: some View {
+        IdentitySection(title: "DANGER ZONE", icon: "exclamationmark.triangle.fill") {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Reset Identity", bundle: .module)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
+                    Text(
+                        "Wipes the Master Key, every agent address, and every access key. Onboarding will start over.",
+                        bundle: .module
+                    )
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer()
+                Button(action: onReset) {
+                    Text("Reset…", bundle: .module)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(theme.errorColor)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 7)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(theme.errorColor.opacity(0.10))
+                        )
+                }
+                .buttonStyle(PlainButtonStyle())
+            }
+        }
+    }
 }
 
 // MARK: - Biometric Context Helper
@@ -249,44 +662,31 @@ private struct RecoveryPromptCard: View {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(theme.warningColor)
-                Text("Print this now. It won't be shown again.", bundle: .module)
+                Text("Save this now. It won't be shown again.", bundle: .module)
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(theme.warningColor)
+                Spacer(minLength: 0)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            if let mnemonic = info.mnemonic {
+                MasterMnemonicCard(words: mnemonic)
+                    .environment(\.theme, theme)
             }
 
-            recoveryCard
+            metadataCard
 
             HStack(spacing: 12) {
-                Button(action: printRecoveryCode) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "printer.fill")
-                            .font(.system(size: 12, weight: .semibold))
-                        Text("Print", bundle: .module)
-                            .font(.system(size: 13, weight: .semibold))
-                    }
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 10)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(theme.accentColor)
-                    )
-                }
-                .buttonStyle(PlainButtonStyle())
-
+                Spacer()
                 Button(action: dismiss) {
                     Text("I've saved it", bundle: .module)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(theme.primaryText)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(.white)
                         .padding(.horizontal, 20)
                         .padding(.vertical, 10)
                         .background(
                             RoundedRectangle(cornerRadius: 8)
-                                .fill(theme.tertiaryBackground)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .stroke(theme.inputBorder, lineWidth: 1)
-                                )
+                                .fill(theme.accentColor)
                         )
                 }
                 .buttonStyle(PlainButtonStyle())
@@ -304,7 +704,7 @@ private struct RecoveryPromptCard: View {
         )
     }
 
-    private var recoveryCard: some View {
+    private var metadataCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("OSAURUS IDENTITY RECOVERY", bundle: .module)
                 .font(.system(size: 12, weight: .bold, design: .monospaced))
@@ -312,17 +712,19 @@ private struct RecoveryPromptCard: View {
                 .tracking(1)
 
             VStack(alignment: .leading, spacing: 6) {
-                recoveryField(label: "Master Address", value: info.osaurusId)
-                recoveryField(label: "Recovery Code", value: info.recovery.code)
+                metadataField(label: "Master Address", value: info.osaurusId)
+                if !info.recovery.code.isEmpty {
+                    metadataField(label: "Recovery Code", value: info.recovery.code)
+                }
             }
 
             Divider()
                 .background(theme.secondaryBorder)
 
             VStack(alignment: .leading, spacing: 4) {
-                bulletPoint("Single-use — consumed on recovery")
-                bulletPoint("Store in a safe place")
-                bulletPoint("Cannot be retrieved by Osaurus")
+                bulletPoint("The 24-word phrase above can restore your master key locally")
+                bulletPoint("The recovery code is single-use and only valid against the Osaurus directory")
+                bulletPoint("Neither can be retrieved by Osaurus once dismissed")
             }
 
             Text("Generated: \(formattedDate)", bundle: .module)
@@ -341,7 +743,7 @@ private struct RecoveryPromptCard: View {
         )
     }
 
-    private func recoveryField(label: String, value: String) -> some View {
+    private func metadataField(label: String, value: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(label + ":")
                 .font(.system(size: 11, weight: .medium))
@@ -370,36 +772,8 @@ private struct RecoveryPromptCard: View {
         return formatter.string(from: Date())
     }
 
-    private func printRecoveryCode() {
-        let printContent = """
-            OSAURUS IDENTITY RECOVERY
-
-            Master Address:
-            \(info.osaurusId)
-
-            Recovery Code:
-            \(info.recovery.code)
-
-            • Single-use — consumed on recovery
-            • Store in a safe place
-            • Cannot be retrieved by Osaurus
-
-            Generated: \(formattedDate)
-            """
-
-        let textView = NSTextView(frame: NSRect(x: 0, y: 0, width: 468, height: 300))
-        textView.string = printContent
-        textView.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
-
-        let printOp = NSPrintOperation(view: textView)
-        printOp.printInfo.isHorizontallyCentered = true
-        printOp.printInfo.isVerticallyCentered = false
-        printOp.printInfo.topMargin = 72
-        printOp.printInfo.leftMargin = 72
-        printOp.runModal(for: NSApp.keyWindow ?? NSWindow(), delegate: nil, didRun: nil, contextInfo: nil)
-    }
-
     private func dismiss() {
+        UserDefaults.standard.set(true, forKey: IdentityDefaultsKey.masterMnemonicAcknowledged)
         onDismiss(info.osaurusId, info.deviceId)
     }
 }
@@ -494,12 +868,23 @@ private struct MasterAddressSection: View {
 private struct AgentAddressesSection: View {
     @ObservedObject private var themeManager = ThemeManager.shared
     @ObservedObject private var agentManager = AgentManager.shared
+    @EnvironmentObject private var server: ServerController
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
     let masterAddress: OsaurusID
+    let mismatchedAgentIds: Set<UUID>
+    let onChange: () -> Void
 
     @State private var copiedAddress: OsaurusID?
+    @State private var expandedAgentId: UUID?
     @State private var errorMessage: String?
+
+    @State private var generatorAgent: Agent?
+    @State private var generatorLabel: String = ""
+    @State private var generatorExpiration: AccessKeyExpiration = .days90
+    @State private var generatorError: String?
+    @State private var generatorBusy: Bool = false
+    @State private var lastGeneratedKey: String?
 
     private var customAgents: [Agent] {
         agentManager.agents.filter { !$0.isBuiltIn }
@@ -507,7 +892,7 @@ private struct AgentAddressesSection: View {
 
     var body: some View {
         IdentitySection(title: "AGENT ADDRESSES", icon: "person.2.badge.key.fill") {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 10) {
                 if customAgents.isEmpty {
                     Text("No agents yet — create one in the Agents tab", bundle: .module)
                         .font(.system(size: 12))
@@ -515,8 +900,31 @@ private struct AgentAddressesSection: View {
                         .padding(.vertical, 4)
                 } else {
                     ForEach(customAgents) { agent in
-                        agentRow(agent: agent)
+                        if agent.agentAddress == nil {
+                            unassignedRow(for: agent)
+                        } else {
+                            AgentKeyManagementRow(
+                                agent: agent,
+                                isMismatched: mismatchedAgentIds.contains(agent.id),
+                                isExpanded: expandedAgentId == agent.id,
+                                onToggleExpanded: { toggleExpanded(agent.id) },
+                                onRotate: { rotateKey(for: agent) },
+                                onRevoke: { revokeKey(for: agent) },
+                                onGenerateAccessKey: { openGenerator(for: agent) },
+                                onRevokeAccessKey: { id in revokeAccessKey(id) },
+                                copiedAddress: copiedAddress,
+                                onCopyAddress: copyAddress(_:),
+                                accessKeys: accessKeys(for: agent)
+                            )
+                        }
                     }
+                }
+
+                if let lastGeneratedKey {
+                    GeneratedAccessKeyBanner(
+                        key: lastGeneratedKey,
+                        onDismiss: { self.lastGeneratedKey = nil }
+                    )
                 }
 
                 if let errorMessage {
@@ -526,9 +934,33 @@ private struct AgentAddressesSection: View {
                 }
             }
         }
+        .sheet(
+            isPresented: Binding(
+                get: { generatorAgent != nil },
+                set: { newValue in if !newValue { closeGenerator() } }
+            )
+        ) {
+            if let agent = generatorAgent {
+                AccessKeyGeneratorSheet(
+                    theme: theme,
+                    title: "Generate Access Key",
+                    scopeCaption: LocalizedStringKey(
+                        "Scoped to \(agent.name) (\(agent.agentAddress ?? "?"))"
+                    ),
+                    label: $generatorLabel,
+                    expiration: $generatorExpiration,
+                    isGenerating: $generatorBusy,
+                    error: $generatorError,
+                    onGenerate: { generateAccessKey(for: agent) },
+                    onCancel: closeGenerator
+                )
+            }
+        }
     }
 
-    private func agentRow(agent: Agent) -> some View {
+    // MARK: - Unassigned (no address yet)
+
+    private func unassignedRow(for agent: Agent) -> some View {
         HStack(spacing: 10) {
             Image(systemName: "person.fill")
                 .font(.system(size: 10))
@@ -539,53 +971,29 @@ private struct AgentAddressesSection: View {
                 Text(agent.name)
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(theme.secondaryText)
-
-                if let address = agent.agentAddress {
-                    Text(address)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundColor(theme.primaryText)
-                        .textSelection(.enabled)
-                        .lineLimit(1)
-                } else {
-                    Text("No address", bundle: .module)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
-                }
+                Text("No address", bundle: .module)
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.tertiaryText)
             }
 
             Spacer()
 
-            if let address = agent.agentAddress {
-                let isCopied = copiedAddress == address
-                Button(action: { copyAddress(address) }) {
-                    Image(systemName: isCopied ? "checkmark" : "doc.on.doc")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(isCopied ? theme.successColor : theme.secondaryText)
-                        .padding(5)
-                        .background(
-                            RoundedRectangle(cornerRadius: 4)
-                                .fill(theme.tertiaryBackground)
-                        )
+            Button(action: { generateAddress(for: agent) }) {
+                HStack(spacing: 4) {
+                    Image(systemName: "key.fill")
+                        .font(.system(size: 9, weight: .semibold))
+                    Text("Generate", bundle: .module)
+                        .font(.system(size: 11, weight: .semibold))
                 }
-                .buttonStyle(PlainButtonStyle())
-            } else {
-                Button(action: { generateAddress(for: agent) }) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "key.fill")
-                            .font(.system(size: 9, weight: .semibold))
-                        Text("Generate", bundle: .module)
-                            .font(.system(size: 11, weight: .semibold))
-                    }
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(
-                        RoundedRectangle(cornerRadius: 5)
-                            .fill(theme.accentColor)
-                    )
-                }
-                .buttonStyle(PlainButtonStyle())
+                .foregroundColor(.white)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(
+                    RoundedRectangle(cornerRadius: 5)
+                        .fill(theme.accentColor)
+                )
             }
+            .buttonStyle(PlainButtonStyle())
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
@@ -595,12 +1003,92 @@ private struct AgentAddressesSection: View {
         )
     }
 
+    // MARK: - Actions
+
+    private func toggleExpanded(_ id: UUID) {
+        if expandedAgentId == id {
+            expandedAgentId = nil
+        } else {
+            expandedAgentId = id
+        }
+    }
+
     private func generateAddress(for agent: Agent) {
         errorMessage = nil
         do {
             try agentManager.assignAddress(to: agent)
+            onChange()
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    private func rotateKey(for agent: Agent) {
+        errorMessage = nil
+        do {
+            try agentManager.rotateAddress(of: agent)
+            restartServerIfRunning()
+            onChange()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func revokeKey(for agent: Agent) {
+        errorMessage = nil
+        agentManager.revokeAddress(of: agent)
+        restartServerIfRunning()
+        onChange()
+    }
+
+    private func revokeAccessKey(_ id: UUID) {
+        APIKeyManager.shared.revoke(id: id)
+        restartServerIfRunning()
+        onChange()
+    }
+
+    private func accessKeys(for agent: Agent) -> [AccessKeyInfo] {
+        guard let address = agent.agentAddress else { return [] }
+        return APIKeyManager.shared
+            .listKeys(forAudience: address)
+            .sorted { $0.createdAt > $1.createdAt }
+    }
+
+    private func openGenerator(for agent: Agent) {
+        generatorAgent = agent
+        generatorLabel = ""
+        generatorError = nil
+        generatorBusy = false
+        generatorExpiration = .days90
+    }
+
+    private func closeGenerator() {
+        generatorAgent = nil
+        generatorLabel = ""
+        generatorError = nil
+        generatorBusy = false
+    }
+
+    private func generateAccessKey(for agent: Agent) {
+        let label = generatorLabel.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !label.isEmpty, let agentIndex = agent.agentIndex else { return }
+
+        generatorBusy = true
+        generatorError = nil
+
+        do {
+            let result = try APIKeyManager.shared.generate(
+                label: label,
+                expiration: generatorExpiration,
+                agentIndex: agentIndex
+            )
+            lastGeneratedKey = result.fullKey
+            closeGenerator()
+            restartServerIfRunning()
+            onChange()
+        } catch {
+            generatorError = error.localizedDescription
+            generatorBusy = false
         }
     }
 
@@ -611,6 +1099,90 @@ private struct AgentAddressesSection: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
             withAnimation { copiedAddress = nil }
         }
+    }
+
+    private func restartServerIfRunning() {
+        guard server.isRunning else { return }
+        Task { await server.restartServer() }
+    }
+}
+
+// MARK: - Generated Access Key Banner
+
+private struct GeneratedAccessKeyBanner: View {
+    @Environment(\.theme) private var theme
+    let key: String
+    let onDismiss: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(theme.warningColor)
+                Text("Copy this key now. It won't be shown again.", bundle: .module)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(theme.warningColor)
+                Spacer(minLength: 0)
+                Button(action: onDismiss) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(theme.tertiaryText)
+                        .padding(4)
+                }
+                .buttonStyle(PlainButtonStyle())
+            }
+
+            HStack(spacing: 8) {
+                Text(key)
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundColor(theme.primaryText)
+                    .textSelection(.enabled)
+                    .lineLimit(1)
+
+                Spacer()
+
+                Button(action: copyToClipboard) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "doc.on.doc")
+                            .font(.system(size: 10, weight: .medium))
+                        Text("Copy", bundle: .module)
+                            .font(.system(size: 11, weight: .medium))
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(theme.accentColor)
+                    )
+                }
+                .buttonStyle(PlainButtonStyle())
+            }
+            .padding(8)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(theme.tertiaryBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(theme.warningColor.opacity(0.3), lineWidth: 1)
+                    )
+            )
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(theme.warningColor.opacity(0.06))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(theme.warningColor.opacity(0.15), lineWidth: 1)
+                )
+        )
+    }
+
+    private func copyToClipboard() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(key, forType: .string)
     }
 }
 

@@ -95,11 +95,7 @@ public actor OsaurusServer: Sendable {
 
         do {
             var masterKeyData = try MasterKey.getPrivateKey(context: context)
-            defer {
-                masterKeyData.withUnsafeMutableBytes { ptr in
-                    if let base = ptr.baseAddress { memset(base, 0, ptr.count) }
-                }
-            }
+            defer { masterKeyData.zeroOut() }
 
             let masterAddress = try deriveOsaurusId(from: masterKeyData)
             let agentAddress: OsaurusID =

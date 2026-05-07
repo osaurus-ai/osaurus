@@ -20,6 +20,7 @@ enum OnboardingIdentityPhase: Equatable {
     case prompt
     case generating
     case recovery(IdentityInfo)
+    case alreadyExists
     case error(String)
 
     static func == (lhs: OnboardingIdentityPhase, rhs: OnboardingIdentityPhase) -> Bool {
@@ -27,6 +28,7 @@ enum OnboardingIdentityPhase: Equatable {
         case (.prompt, .prompt): return true
         case (.generating, .generating): return true
         case (.recovery(let a), .recovery(let b)): return a.osaurusId == b.osaurusId
+        case (.alreadyExists, .alreadyExists): return true
         case (.error(let a), .error(let b)): return a == b
         default: return false
         }
@@ -44,13 +46,22 @@ final class IdentityState: ObservableObject {
     var footerCaption: LocalizedStringKey? {
         switch phase {
         case .recovery:
-            return "Your recovery code is shown once. Copy it before you continue."
-        case .prompt, .generating, .error:
+            return "Your recovery phrase is shown once. Save it before you continue."
+        case .prompt, .generating, .alreadyExists, .error:
             return nil
         }
     }
 
     func generate() {
+        // If a master already exists, jump straight past identity setup —
+        // re-running onboarding (e.g., after the version bump in
+        // OnboardingService) must never silently regenerate the master and
+        // strand all derived agent / access keys.
+        if OsaurusIdentity.exists() {
+            phase = .alreadyExists
+            return
+        }
+
         phase = .generating
         // No `withAnimation` wrappers below — the body has its own
         // `.animation(value: phaseID)` modifier scoped to the phase ZStack.
@@ -60,11 +71,25 @@ final class IdentityState: ObservableObject {
             guard let self = self else { return }
             do {
                 let info = try await OsaurusIdentity.setup()
-                self.phase = .recovery(info)
+                if info.mnemonic == nil {
+                    // setup() short-circuited because a key already exists.
+                    // Surface that state explicitly rather than rendering a
+                    // blank recovery card.
+                    self.phase = .alreadyExists
+                } else {
+                    self.phase = .recovery(info)
+                }
             } catch {
                 self.phase = .error(error.localizedDescription)
             }
         }
+    }
+
+    /// Persist the user-facing acknowledgement that they have saved the BIP39
+    /// recovery phrase. Drives the banner in `IdentityView.MasterAddressSection`
+    /// on subsequent launches.
+    func acknowledgeBackup() {
+        UserDefaults.standard.set(true, forKey: IdentityDefaultsKey.masterMnemonicAcknowledged)
     }
 }
 
@@ -102,7 +127,8 @@ struct IdentityBody: View {
     private var leftHeadline: LocalizedStringKey {
         switch state.phase {
         case .prompt, .generating, .error: return "Your root identity"
-        case .recovery: return "Save your recovery code"
+        case .recovery: return "Save your recovery phrase"
+        case .alreadyExists: return "Identity already set up"
         }
     }
 
@@ -115,7 +141,10 @@ struct IdentityBody: View {
             return "Generating a fresh keypair. This only takes a moment."
         case .recovery:
             return
-                "This is the only way to restore your identity if you lose access. Lost codes can't be recovered, not even by Osaurus."
+                "Write down the 24-word phrase below. It's the only way to restore your master key if it's ever lost or replaced. Osaurus cannot recover it for you."
+        case .alreadyExists:
+            return
+                "We found an existing identity in your iCloud Keychain. Onboarding will not create a new one — your existing master, agents, and access keys are preserved."
         }
     }
 
@@ -125,6 +154,7 @@ struct IdentityBody: View {
             return "The root of trust your agents, devices, and tools all derive from."
         case .generating: return "Creating your keypair…"
         case .recovery: return "Shown once. Copy it before you continue."
+        case .alreadyExists: return "Continuing with the existing identity."
         }
     }
 
@@ -133,6 +163,7 @@ struct IdentityBody: View {
         case .prompt: return "prompt"
         case .generating: return "generating"
         case .recovery: return "recovery"
+        case .alreadyExists: return "alreadyExists"
         case .error: return "error"
         }
     }
@@ -155,11 +186,43 @@ struct IdentityBody: View {
             generatingBody
         case .recovery(let info):
             recoveryBody(info: info)
+        case .alreadyExists:
+            alreadyExistsBody
         case .error(let message):
             VStack(alignment: .leading, spacing: 12) {
                 errorBanner(message)
                 promptBody
             }
+        }
+    }
+
+    private var alreadyExistsBody: some View {
+        OnboardingGlassCard {
+            HStack(alignment: .center, spacing: 12) {
+                ZStack {
+                    Circle()
+                        .fill(theme.successColor.opacity(0.14))
+                        .frame(width: 32, height: 32)
+                    Image(systemName: "checkmark.shield.fill")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(theme.successColor)
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Existing identity detected", bundle: .module)
+                        .font(theme.font(size: 13, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
+                    Text(
+                        "Skipping master key creation to protect existing agents and access keys.",
+                        bundle: .module
+                    )
+                    .font(theme.font(size: 11))
+                    .foregroundColor(theme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
         }
     }
 
@@ -355,7 +418,7 @@ struct IdentityBody: View {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundColor(theme.warningColor)
-                Text("Lost codes cannot be recovered.", bundle: .module)
+                Text("Lost phrases cannot be recovered.", bundle: .module)
                     .font(theme.font(size: 12, weight: .semibold))
                     .foregroundColor(theme.warningColor)
                 Spacer(minLength: 0)
@@ -367,7 +430,9 @@ struct IdentityBody: View {
                     .fill(theme.warningColor.opacity(0.10))
             )
 
-            recoveryCodeCard(info)
+            if let mnemonic = info.mnemonic {
+                MasterMnemonicCard(words: mnemonic)
+            }
 
             addressChip(info.osaurusId, label: "Master address")
 
@@ -375,7 +440,7 @@ struct IdentityBody: View {
                 Image(systemName: "lock.fill")
                     .font(.system(size: 10, weight: .semibold))
                 Text(
-                    "Copy this code and store it in a password manager.",
+                    "Write the 24 words down or save them in a password manager.",
                     bundle: .module
                 )
                 .font(theme.font(size: 11))
@@ -386,35 +451,6 @@ struct IdentityBody: View {
         }
     }
 
-    /// The recovery code itself, given the visual weight it deserves —
-    /// it's the only restore path. Soft accent glow draws focus without
-    /// fighting the warning banner above it.
-    private func recoveryCodeCard(_ info: IdentityInfo) -> some View {
-        OnboardingGlassCard {
-            VStack(alignment: .leading, spacing: 10) {
-                Text("RECOVERY CODE", bundle: .module)
-                    .font(.system(size: 10, weight: .bold, design: .monospaced))
-                    .foregroundColor(theme.tertiaryText)
-                    .tracking(1)
-
-                ZStack {
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(theme.accentColor.opacity(0.06))
-                        .blur(radius: 6)
-
-                    Text(info.recovery.code)
-                        .font(.system(size: 22, weight: .semibold, design: .monospaced))
-                        .foregroundColor(theme.primaryText)
-                        .textSelection(.enabled)
-                        .padding(.vertical, 6)
-                        .padding(.horizontal, 12)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(14)
-        }
-    }
 }
 
 // MARK: - CTA
@@ -435,7 +471,14 @@ struct IdentityCTA: View {
             Color.clear.frame(width: OnboardingMetrics.ctaWidthCompact, height: OnboardingMetrics.buttonHeight)
 
         case .recovery:
-            OnboardingBrandButton(title: "I've Saved It", action: onComplete)
+            OnboardingBrandButton(title: "I've Saved It") {
+                state.acknowledgeBackup()
+                onComplete()
+            }
+            .frame(width: OnboardingMetrics.ctaWidthCompact)
+
+        case .alreadyExists:
+            OnboardingBrandButton(title: "Continue", action: onComplete)
                 .frame(width: OnboardingMetrics.ctaWidthCompact)
         }
     }
@@ -451,12 +494,13 @@ struct IdentitySecondary: View {
         switch state.phase {
         case .prompt, .error:
             OnboardingTextButton(title: "Skip for now", action: onSkip)
-        case .generating:
+        case .generating, .alreadyExists:
             EmptyView()
         case .recovery(let info):
-            OnboardingTextButton(title: "Copy code") {
+            OnboardingTextButton(title: "Copy phrase") {
+                guard let mnemonic = info.mnemonic else { return }
                 NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(info.recovery.code, forType: .string)
+                NSPasteboard.general.setString(mnemonic.joined(separator: " "), forType: .string)
             }
         }
     }
