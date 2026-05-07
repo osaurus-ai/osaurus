@@ -20,6 +20,7 @@ struct ThemeEditorView: View {
     @State private var showSaveConfirmation = false
     @State private var collapsedSections: Set<String> = ["Advanced Colors", "Advanced"]
     @State private var animationPreviewTrigger = false
+    @State private var showGlassPerformanceWarning = false
 
     let onDismiss: () -> Void
 
@@ -46,6 +47,21 @@ struct ThemeEditorView: View {
         ) { result in
             handleImageImport(result)
         }
+        .themedAlert(
+            String(localized: "Enable Glass Background?", bundle: .module),
+            isPresented: $showGlassPerformanceWarning,
+            message: String(
+                localized:
+                    "Glass effects use behind-window blur and additional compositing layers. This may impact performance, especially on older Macs or under heavy load.",
+                bundle: .module
+            ),
+            primaryButton: .primary(String(localized: "Enable", bundle: .module)) {},
+            secondaryButton: .cancel(String(localized: "Cancel", bundle: .module)) {
+                editingTheme.glass.enabled = false
+            }
+        )
+        .themedAlertScope(.content)
+        .overlay(ThemedAlertHost(scope: .content))
     }
 
     // MARK: - Editor Panel
@@ -162,6 +178,8 @@ struct ThemeEditorView: View {
                     Text("Background", bundle: .module)
                 }
                 .pickerStyle(.segmented)
+
+                glassBackgroundToggle
             }
         }
     }
@@ -279,6 +297,42 @@ struct ThemeEditorView: View {
                     currentTheme.tertiaryText
                 ).textCase(.uppercase)
                 sliderRow("Input Radius", value: $editingTheme.borders.inputCornerRadius, range: 0 ... 20)
+            }
+        }
+    }
+
+    private var glassBackgroundToggle: some View {
+        let isImageBackground = editingTheme.background.type == .image
+        return VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text("Glass Background", bundle: .module)
+                    .font(.system(size: 13))
+                    .foregroundColor(isImageBackground ? currentTheme.tertiaryText : currentTheme.primaryText)
+                Spacer()
+                Toggle("", isOn: Binding(
+                    get: { editingTheme.glass.enabled && !isImageBackground },
+                    set: { newValue in
+                        editingTheme.glass.enabled = newValue
+                        if newValue {
+                            showGlassPerformanceWarning = true
+                        }
+                    }
+                ))
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .tint(currentTheme.accentColor)
+                .disabled(isImageBackground)
+            }
+
+            if isImageBackground {
+                Text("Disabled while using an image background.", bundle: .module)
+                    .font(.system(size: 11))
+                    .foregroundColor(currentTheme.tertiaryText)
+            }
+        }
+        .onChange(of: editingTheme.background.type) { _, newType in
+            if newType == .image && editingTheme.glass.enabled {
+                editingTheme.glass.enabled = false
             }
         }
     }

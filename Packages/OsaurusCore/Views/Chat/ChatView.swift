@@ -2624,10 +2624,43 @@ struct ChatView: View {
     // MARK: - Background
 
     private var chatBackground: some View {
-        ThemedBackgroundLayer(
-            cachedBackgroundImage: windowState.cachedBackgroundImage,
-            showSidebar: windowState.showSidebar
-        )
+        ZStack {
+            ThemedBackgroundLayer(
+                cachedBackgroundImage: windowState.cachedBackgroundImage,
+                showSidebar: windowState.showSidebar
+            )
+
+            if theme.glassEnabled {
+                ThemedGlassSurface(
+                    cornerRadius: 24,
+                    topLeadingRadius: windowState.showSidebar ? 0 : nil,
+                    bottomLeadingRadius: windowState.showSidebar ? 0 : nil
+                )
+                .allowsHitTesting(false)
+
+                let baseBacking = theme.windowBackingOpacity
+                let backingOpacity = baseBacking * (0.4 + theme.glassOpacityPrimary * 0.6)
+
+                LinearGradient(
+                    colors: [
+                        theme.primaryBackground.opacity(backingOpacity + theme.glassOpacityPrimary * 0.3),
+                        theme.primaryBackground.opacity(backingOpacity + theme.glassOpacitySecondary * 0.2),
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .clipShape(
+                    UnevenRoundedRectangle(
+                        topLeadingRadius: windowState.showSidebar ? 0 : 24,
+                        bottomLeadingRadius: windowState.showSidebar ? 0 : 24,
+                        bottomTrailingRadius: 24,
+                        topTrailingRadius: 24,
+                        style: .continuous
+                    )
+                )
+                .allowsHitTesting(false)
+            }
+        }
     }
 
     // MARK: - Header

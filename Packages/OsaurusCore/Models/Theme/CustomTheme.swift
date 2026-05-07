@@ -321,7 +321,7 @@ public struct ThemeGlass: Codable, Equatable, Sendable {
     public var windowBackingOpacity: Double
 
     public init(
-        enabled: Bool = true,
+        enabled: Bool = false,
         material: GlassMaterial = .hudWindow,
         blurRadius: Double = 30,
         opacityPrimary: Double = 0.10,
@@ -352,7 +352,7 @@ public struct ThemeGlass: Codable, Equatable, Sendable {
     /// Light theme glass defaults
     public static var lightDefaults: ThemeGlass {
         ThemeGlass(
-            enabled: true,
+            enabled: false,
             material: .hudWindow,
             blurRadius: 20,
             opacityPrimary: 0.15,
@@ -659,7 +659,7 @@ public struct CustomTheme: Codable, Equatable, Sendable {
             ),
             background: .default,
             glass: ThemeGlass(
-                enabled: true,
+                enabled: false,
                 material: .hudWindow,
                 blurRadius: 30,
                 opacityPrimary: 0.10,
@@ -737,7 +737,7 @@ public struct CustomTheme: Codable, Equatable, Sendable {
             ),
             background: .default,
             glass: ThemeGlass(
-                enabled: true,
+                enabled: false,
                 material: .hudWindow,
                 blurRadius: 20,
                 opacityPrimary: 0.15,

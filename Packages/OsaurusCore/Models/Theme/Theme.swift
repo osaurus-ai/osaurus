@@ -133,7 +133,7 @@ protocol ThemeProtocol {
 
 extension ThemeProtocol {
     // Provide defaults for new properties so existing themes don't break
-    var glassEnabled: Bool { true }
+    var glassEnabled: Bool { false }
     var glassMaterial: NSVisualEffectView.Material { .hudWindow }
     var glassTintColor: Color? { nil }
     var glassTintOpacity: Double { 0 }
