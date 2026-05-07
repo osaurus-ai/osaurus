@@ -15,7 +15,9 @@ This document covers the theory behind the design, the address hierarchy, key de
 - [Access Keys (osk-v1)](#access-keys-osk-v1)
 - [Whitelist System](#whitelist-system)
 - [Revocation](#revocation)
-- [Recovery](#recovery)
+- [Master Key Backup and Recovery](#master-key-backup-and-recovery)
+- [Identity Health and Drift](#identity-health-and-drift)
+- [Per-Agent Key Management](#per-agent-key-management)
 - [Internal vs External Communication](#internal-vs-external-communication)
 - [Security Properties](#security-properties)
 - [File Reference](#file-reference)
@@ -60,7 +62,9 @@ The human's root identity. All authority in the system flows from this address.
 - **Access:** Requires biometric authentication (Face ID / Touch ID)
 - **Format:** Checksummed hex address (EIP-55 style), e.g. `0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18`
 
-The master key is a 32-byte random secret generated via `SecRandomCopyBytes`. It is stored once in the Keychain and never exported. The address is derived from the corresponding secp256k1 public key via Keccak-256 hashing.
+The master key is a 32-byte random secret generated via `SecRandomCopyBytes`. It is stored once in the Keychain and never exported during normal operation. The address is derived from the corresponding secp256k1 public key via Keccak-256 hashing.
+
+**Overwrite protection.** `MasterKey.generate(allowReplace:)` defaults to `allowReplace: false` and throws `OsaurusIdentityError.masterAlreadyExists` if a master is already present. `OsaurusIdentity.setup()` short-circuits when an identity exists and returns the existing master without minting a new one. Replacing the master is only allowed via the explicit "Reset Identity" or "Recover from phrase" flows in the Identity view (both of which pass `allowReplace: true`). This guards against the silent-overwrite class of bug where a re-run of onboarding would otherwise strand every persisted agent address and access key.
 
 ### Agent Addresses
 
@@ -71,6 +75,14 @@ Each agent in Osaurus gets a deterministic child key derived from the master key
 - **Association:** Each agent's `agentIndex` and `agentAddress` are persisted on the `Agent` model
 
 Agent addresses enable per-agent scoping: an access key signed by an agent can only authorize actions for that specific agent, not the entire identity.
+
+**Lifecycle.** Three operations mutate an agent's derived identity, all on `AgentManager` and all driven from the Identity view:
+
+| Operation | Effect |
+|-----------|--------|
+| `assignAddress(to:)` | Allocates the next unused HMAC index and persists the derived address. No-op if the agent already has one. |
+| `rotateAddress(of:)` | Allocates a fresh unused index, re-derives a new address, and revokes every active osk-v1 key whose audience matched the previous address. Indices are never reused — old addresses may still be referenced by external clients holding tokens. |
+| `revokeAddress(of:)` | Clears the agent's address and index, and revokes every active osk-v1 key scoped to it. The agent itself stays around (prompt, settings, etc.) but loses signing authority until a fresh address is assigned. |
 
 ### Device ID
 
@@ -293,9 +305,26 @@ Revocation data is persisted in macOS Keychain (`kSecAttrAccessibleWhenUnlockedT
 
 ---
 
-## Recovery
+## Master Key Backup and Recovery
 
-During initial identity setup, a one-time recovery code is generated:
+The identity system has **two** independent recovery artifacts. They serve different purposes and are not interchangeable.
+
+### BIP39 Master Recovery Phrase (local restore)
+
+A standard BIP39 24-word mnemonic encoding the 32-byte master key. This is the only artifact that can rebuild the local secp256k1 master if the iCloud Keychain entry is ever lost or replaced.
+
+```
+1.  flat      2.  depend    3.  bright    4.  dose      ...
+24. bargain
+```
+
+- **Algorithm:** BIP39 §3. 256 bits of entropy plus the high 8 bits of `SHA-256(entropy)` as a checksum (264 bits total = 24 × 11), split into 24 11-bit big-endian indices into the canonical 2048-word English wordlist.
+- **Encoding:** Implemented in [`Identity/MasterKeyMnemonic.swift`](../Packages/OsaurusCore/Identity/MasterKeyMnemonic.swift) with no external SwiftPM dependency. The wordlist ships as a bundle resource at `Resources/Identity/bip39-english.txt`.
+- **Display:** Shown exactly once during onboarding's recovery phase and once in `IdentityView.RecoveryPromptCard` immediately after a fresh `OsaurusIdentity.setup()`. Rendered as a 4×6 grid with "Copy phrase", "Save as .txt", and "Print" actions.
+- **Memory hygiene:** The 32-byte seed is held only on the stack of `OsaurusIdentity.setup()` long enough to compute the mnemonic, then wiped via `Data.zeroOut()` (which calls `memset` over the underlying buffer).
+- **Acknowledgement:** A `masterMnemonicAcknowledged` UserDefaults flag (canonicalised in `IdentityDefaultsKey`) is set when the user confirms "I've saved it". On subsequent launches the Identity view shows a yellow "Master key backup not confirmed" banner whenever the flag is missing.
+
+### One-time recovery code (server-side claim)
 
 ```
 OSAURUS-XXXX-XXXX-XXXX-XXXX
@@ -303,11 +332,62 @@ OSAURUS-XXXX-XXXX-XXXX-XXXX
 
 Format: `OSAURUS-` prefix followed by 4 groups of 4 uppercase hex characters (8 random bytes = 64 bits of entropy).
 
-The recovery code is:
-- Generated from `SecRandomCopyBytes` (cryptographically secure)
-- Shown to the user exactly once during setup
-- Discarded from application memory after display
-- Never stored on device in plaintext
+- Generated from `SecRandomCopyBytes` and shown to the user exactly once during initial setup.
+- Single-use; consumed when claimed against the Osaurus directory.
+- **Cannot rebuild the local master** — it is only an authenticator for the future server-side recovery flow.
+- Discarded from application memory after display; never stored on device in plaintext.
+
+### The three "fix it" exits
+
+When the persisted derivatives no longer match the current master (see [Identity Health and Drift](#identity-health-and-drift)), the Identity view surfaces three actions in a banner:
+
+| Action | What it does | When to use |
+|--------|--------------|-------------|
+| **Recover from phrase** | Opens `RecoverFromMnemonicSheet`, validates the entered 24 words against the BIP39 wordlist + checksum, derives a candidate `OsaurusID`, and confirms it reproduces the persisted agent addresses before calling `MasterKey.install(seed:allowReplace: true)`. Drift goes away because every existing derivative now matches. | The user has the original mnemonic from onboarding and wants their old identity back. |
+| **Repair forward** | Re-derives every mismatched agent at a fresh unused index off the *current* master and revokes every stale osk-v1 access key in one synchronous pass. The HTTP server is restarted so the new validator picks up the change. | The original mnemonic is gone. Existing pairings will need to be re-issued. |
+| **Reset identity** | `OsaurusIdentity.wipe()` deletes the master, clears every non-built-in agent's address/index, calls `APIKeyManager.deleteAll()`, clears the `masterMnemonicAcknowledged` and `agentAddressesMigrated` flags, then triggers `OnboardingService.resetOnboarding()`. The revocation store is intentionally kept (cheap and harmless). | Nuclear option. Start completely fresh. |
+
+The **Recover** path will refuse to overwrite the current master if the entered phrase derives a different identity than the one the persisted agents were minted under, unless the user explicitly clicks "Restore Anyway". This catches the case where the user pastes a valid but unrelated BIP39 phrase.
+
+---
+
+## Identity Health and Drift
+
+[`Identity/IdentityHealthCheck.swift`](../Packages/OsaurusCore/Identity/IdentityHealthCheck.swift) is a pure synchronous helper that, given an already-unlocked master key, returns an `IdentityDrift` value:
+
+```swift
+public struct IdentityDrift: Sendable {
+    public let mismatchedAgents: [Agent]    // stored agentAddress != deriveAddress(currentMaster, agentIndex)
+    public let staleAccessKeys: [AccessKeyInfo] // iss is neither the current master nor any current agent
+    public var hasDrift: Bool { ... }
+}
+```
+
+The helper does no Keychain or biometric work itself — the Identity view performs the biometric unlock once on load, passes the bytes in, and wipes them after the call.
+
+**Why drift happens:** Pre-fix, `MasterKey.generate()` would silently `delete()` then write a new master whenever onboarding re-ran. Every pre-existing derivative (agent addresses minted via `AgentKey.deriveAddress(masterKey, index)`, every osk-v1 key signed by either the master or an agent) still pointed at addresses derived from the *previous* master, but the validator would only accept derivatives of the current one. Requests would fail with opaque "audience mismatch" / "issuer not whitelisted" errors with no UI hint that the master had silently changed.
+
+**What the health check catches:**
+
+- **Mismatched agents** — `agent.agentAddress.lowercased() != AgentKey.deriveAddress(currentMaster, agent.agentIndex).lowercased()` for any non-built-in agent with both fields set. Built-in agents and agents without an address yet are skipped.
+- **Stale access keys** — `key.iss` does not match the current master and does not match any agent's *current* derived address. Revoked keys are ignored. The check tolerates rotated agents (it knows about both the old and new derived address while drift is still being repaired).
+
+When `drift.hasDrift` is true, `IdentityView` renders an `IdentityDriftBanner` at the top of the scroll view with the three exit doors above. The same banner shows a one-line summary like "3 agent address(es) and 2 access key(s) reference a previous master."
+
+---
+
+## Per-Agent Key Management
+
+The `AgentAddressesSection` of the Identity view renders each non-built-in agent as an expandable row backed by [`Views/Identity/AgentKeyManagement.swift`](../Packages/OsaurusCore/Views/Identity/AgentKeyManagement.swift).
+
+The collapsed row is a compact summary: address, copy button, "Stale" pill if the agent appears in `IdentityDrift.mismatchedAgents`, and a chevron. Expanded, the row exposes:
+
+- **Rotate Key** — `AgentManager.rotateAddress(of:)`. Picks a fresh unused HMAC index, derives a new address, persists it, and revokes every active osk-v1 key whose audience matched the *previous* address. The HTTP server restarts so the new validator takes effect immediately.
+- **Revoke** — `AgentManager.revokeAddress(of:)`. Clears the agent's address and index and revokes every active osk-v1 key scoped to it. The agent's prompt and settings stay intact.
+- **Per-agent osk-v1 access keys.** A scoped list of every key whose `aud` matches the agent's address (via `APIKeyManager.listKeys(forAudience:)`). Each key shows its label, status pill (Active / Expired / Revoked), expiration, and a per-key Revoke button.
+- **Generate access key (scoped to this agent).** Opens the shared `AccessKeyGeneratorSheet` with `agentIndex` pre-filled, so `APIKeyManager.generate(label:expiration:agentIndex:)` mints an agent-scoped key. The sheet displays a "Scoped to {agent name} ({address})" caption to make the scope unambiguous. The freshly generated key is shown in a one-shot copy banner ("Copy this key now. It won't be shown again.") and is never persisted to disk.
+
+The same `AccessKeyGeneratorSheet` powers the global `AccessKeysSection` in `ServerView` (master-scoped). It was extracted from `ServerView.swift` into [`Views/Settings/AccessKeyGeneratorSheet.swift`](../Packages/OsaurusCore/Views/Settings/AccessKeyGeneratorSheet.swift) so both call sites share one widget.
 
 ---
 
@@ -369,33 +449,56 @@ The address-based design naturally extends to agent-to-agent communication acros
 | Property | Mechanism |
 |----------|-----------|
 | Master key never leaves Keychain | Stored with `kSecAttrAccessibleWhenUnlocked`, read requires `LAContext` biometric auth |
+| Master key cannot be silently overwritten | `MasterKey.generate(allowReplace:)` defaults to `false` and throws `masterAlreadyExists` if a master is present; `OsaurusIdentity.setup()` short-circuits when one already exists |
+| Master key has a local restore path | BIP39 24-word mnemonic shown once at setup; entered via `RecoverFromMnemonicSheet` to call `MasterKey.install(seed:allowReplace: true)` |
 | Agent keys never stored | Re-derived on demand via HMAC-SHA512 from master key |
+| Agent indices are never reused | `AgentManager.nextUnusedAgentIndex()` always picks a fresh slot so old derived addresses cannot be regenerated by the rotate path |
 | Device keys hardware-bound | Secure Enclave P-256 via App Attest (`DCAppAttestService`) |
 | Anti-replay | Per-device monotonic counter (`cnt`) persisted in `UserDefaults`; server rejects seen values |
 | Domain separation | `Osaurus Signed Message`, `Osaurus Signed Access`, and `Osaurus Signed Pairing` prefixes prevent cross-protocol signature reuse |
 | Recovery code single-use | Generated from `SecRandomCopyBytes`, shown once, never stored on device |
 | Canonical encoding | Access key payloads use sorted-key JSON for deterministic signature verification |
-| Memory safety | Master key bytes are zeroed after use (`memset` / index-level zeroing) |
+| Memory safety | Master key bytes and seed bytes are zeroed after use via `Data.zeroOut()` extension (calls `memset` over the underlying buffer) |
 | Pairings scoped to one agent | `/pair` mints agent-scoped keys (`agentIndex` from approved agent), 90-day default expiry |
 | Issued credentials never logged | `/pair` success path logs a redacted body; `InsightsService.redactCredentials` scrubs `osk-v1` values and `Bearer` headers everywhere as a backstop |
 | Pre-auth body-size limits | `/pair` capped at 64 KiB, other public routes at 32 MiB; rejected with `413` before the auth gate |
+| Drift between master and derivatives is surfaced | `IdentityHealthCheck.diagnose(...)` runs once per Identity view load; mismatched agents and stale osk-v1 keys are rendered in an `IdentityDriftBanner` with explicit Recover / Repair / Reset actions instead of failing silently at request time |
 
 ---
 
 ## File Reference
 
+### Identity core (`Packages/OsaurusCore/Identity/`)
+
 | File | Responsibility |
 |------|---------------|
-| `MasterKey.swift` | Generate, store, read, sign with the secp256k1 master key in iCloud Keychain |
+| `MasterKey.swift` | Generate (`generate(allowReplace:)`), install a caller-supplied seed (`install(seed:allowReplace:)`), read, sign, and delete the secp256k1 master key in iCloud Keychain |
+| `MasterKeyMnemonic.swift` | BIP39 24-word encode/decode of the 32-byte master, backed by the bundled English wordlist |
+| `IdentityHealthCheck.swift` | Pure helper that classifies persisted derivatives as healthy / mismatched against the current master |
 | `AgentKey.swift` | Deterministic child key derivation (HMAC-SHA512) and signing for per-agent identities |
 | `DeviceKey.swift` | App Attest key generation, attestation, assertion, and software fallback |
-| `OsaurusIdentity.swift` | Public entry point — orchestrates setup and two-layer request signing |
-| `IdentityModels.swift` | Data types: `OsaurusID`, `TokenHeader`, `TokenPayload`, `AccessKeyPayload`, `AccessKeyInfo`, `AgentInfo`, `RevocationSnapshot` |
-| `APIKeyManager.swift` | Generate, persist, and revoke `osk-v1` access keys (metadata in Keychain) |
+| `OsaurusIdentity.swift` | Public entry point — orchestrates `setup()`, `wipe()`, and two-layer request signing |
+| `IdentityModels.swift` | Data types: `OsaurusID`, `TokenHeader`, `TokenPayload`, `AccessKeyPayload`, `AccessKeyInfo`, `AgentInfo`, `RevocationSnapshot`, `IdentityInfo` (now carries `mnemonic`), and the `IdentityDefaultsKey` namespace for UserDefaults flags |
+| `APIKeyManager.swift` | Generate, persist, and revoke `osk-v1` access keys (metadata in Keychain). Includes `listKeys(forAudience:)` for per-agent scoping |
 | `APIKeyValidator.swift` | Immutable, lock-free access key validation via ecrecover + whitelist + revocation |
 | `WhitelistStore.swift` | Master-level and per-agent address whitelist with Keychain persistence |
 | `RevocationStore.swift` | Individual and bulk access key revocation with Keychain persistence |
 | `CounterStore.swift` | Per-device monotonic counter in `UserDefaults` |
 | `RecoveryManager.swift` | One-time recovery code generation at identity creation |
-| `CryptoHelpers.swift` | Keccak-256, domain-separated signing, ecrecover, address derivation, encoding utilities |
-| `OsaurusIdentityError.swift` | Error types for the identity system |
+| `CryptoHelpers.swift` | Keccak-256, domain-separated signing, ecrecover, address derivation, encoding utilities, and `Data.zeroOut()` |
+| `OsaurusIdentityError.swift` | Error types for the identity system, including `masterAlreadyExists` and the four `mnemonic*` validation cases |
+
+### Identity UI (`Packages/OsaurusCore/Views/Identity/`)
+
+| File | Responsibility |
+|------|---------------|
+| `IdentityView.swift` | The Identity tab: setup card, recovery prompt, ready state with master / agents / device / danger-zone sections, drift banner, and the three exit-door sheets / alerts |
+| `MasterMnemonicCard.swift` | Numbered 4×6 grid of the 24-word BIP39 phrase with copy / save / print actions. Shared between onboarding and the recovery prompt |
+| `AgentKeyManagement.swift` | Expandable per-agent row: rotate / revoke address + scoped osk-v1 list + scoped generate/revoke |
+| `RecoverFromMnemonicSheet.swift` | Phrase-entry sheet with live word count, BIP39 validation, prior-master matching, and "Restore Anyway" override |
+
+### Shared key generator
+
+| File | Responsibility |
+|------|---------------|
+| `Views/Settings/AccessKeyGeneratorSheet.swift` | Modal sheet for generating an `osk-v1` key. Used by `ServerView` (master-scoped) and `IdentityView` (agent-scoped via the optional `scopeCaption`) |

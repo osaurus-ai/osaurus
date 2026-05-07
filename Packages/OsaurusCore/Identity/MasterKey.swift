@@ -16,22 +16,54 @@ public struct MasterKey: Sendable {
 
     // MARK: - Generate
 
-    /// Generate a new Master Key, store it in iCloud Keychain, and return the Osaurus ID.
+    /// Generate a new Master Key, store it in iCloud Keychain, and return the Osaurus ID
+    /// alongside the raw 32-byte seed (so callers can derive a BIP39 backup before
+    /// zeroing it). The seed Data **must** be wiped by the caller after use.
+    ///
+    /// - Parameter allowReplace: When false (the default), refuses to run if a Master
+    ///   Key already exists in Keychain. The "Reset Identity" flow is the only place
+    ///   that should pass `true`.
     @discardableResult
-    public static func generate() throws -> OsaurusID {
+    public static func generate(allowReplace: Bool = false) throws -> (osaurusId: OsaurusID, seed: Data) {
+        if !allowReplace, exists() {
+            throw OsaurusIdentityError.masterAlreadyExists
+        }
+
         var bytes = [UInt8](repeating: 0, count: 32)
         guard SecRandomCopyBytes(kSecRandomDefault, 32, &bytes) == errSecSuccess else {
             throw OsaurusIdentityError.randomFailed
         }
-        defer { zeroBytes(&bytes) }
 
         let keyData = Data(bytes)
+        zeroBytes(&bytes)
+
+        let osaurusId = try install(seed: keyData, allowReplace: allowReplace)
+        return (osaurusId, keyData)
+    }
+
+    /// Install a caller-supplied 32-byte seed as the Master Key. Used by the
+    /// recovery-from-mnemonic flow to restore a previous identity from a saved
+    /// BIP39 phrase.
+    ///
+    /// - Parameter allowReplace: Mirrors `generate(allowReplace:)`. Defaults to false.
+    @discardableResult
+    public static func install(seed keyData: Data, allowReplace: Bool = false) throws -> OsaurusID {
+        if !allowReplace, exists() {
+            throw OsaurusIdentityError.masterAlreadyExists
+        }
+
+        guard keyData.count == 32 else {
+            throw OsaurusIdentityError.signingFailed
+        }
+
         let osaurusId = try deriveOsaurusId(from: keyData)
 
-        // Remove any leftover key from a previous failed attempt
-        delete()
+        // If we are replacing, drop any existing key first so SecItemAdd doesn't
+        // collide on the (service, account) pair.
+        if exists() {
+            delete()
+        }
 
-        // Try iCloud-synced first, fall back to device-only if unavailable
         let status = addToKeychain(keyData: keyData, synchronizable: true)
         if status != errSecSuccess {
             let fallback = addToKeychain(keyData: keyData, synchronizable: false)
@@ -79,7 +111,7 @@ public struct MasterKey: Sendable {
     /// Retrieve the Osaurus ID (triggers biometric auth).
     public static func getOsaurusId(context: LAContext) throws -> OsaurusID {
         var key = try getPrivateKey(context: context)
-        defer { zeroData(&key) }
+        defer { key.zeroOut() }
         return try deriveOsaurusId(from: key)
     }
 
@@ -108,7 +140,7 @@ public struct MasterKey: Sendable {
     /// Sign a payload with the Master Key (triggers biometric auth).
     public static func sign(payload: Data, context: LAContext) throws -> Data {
         var key = try getPrivateKey(context: context)
-        defer { zeroData(&key) }
+        defer { key.zeroOut() }
         return try signPayload(payload, privateKey: key)
     }
 
@@ -131,13 +163,5 @@ public struct MasterKey: Sendable {
 
     private static func zeroBytes(_ bytes: inout [UInt8]) {
         for i in bytes.indices { bytes[i] = 0 }
-    }
-
-    private static func zeroData(_ data: inout Data) {
-        data.withUnsafeMutableBytes { ptr in
-            if let base = ptr.baseAddress {
-                memset(base, 0, ptr.count)
-            }
-        }
     }
 }

@@ -41,11 +41,7 @@ public final class APIKeyManager: @unchecked Sendable {
         context.touchIDAuthenticationAllowableReuseDuration = 300
 
         var masterKeyData = try MasterKey.getPrivateKey(context: context)
-        defer {
-            masterKeyData.withUnsafeMutableBytes { ptr in
-                if let base = ptr.baseAddress { memset(base, 0, ptr.count) }
-            }
-        }
+        defer { masterKeyData.zeroOut() }
 
         let masterAddress = try deriveOsaurusId(from: masterKeyData)
 
@@ -152,6 +148,15 @@ public final class APIKeyManager: @unchecked Sendable {
 
     public func listKeys() -> [AccessKeyInfo] {
         queue.sync { keys }
+    }
+
+    /// Return all access keys whose audience matches `audience` (case-insensitive).
+    /// Used by per-agent key management UI to scope listing/revoke to one agent.
+    public func listKeys(forAudience audience: OsaurusID) -> [AccessKeyInfo] {
+        let lower = audience.lowercased()
+        return queue.sync {
+            keys.filter { $0.aud.lowercased() == lower }
+        }
     }
 
     /// Returns active access keys that look like pre-upgrade pairings:

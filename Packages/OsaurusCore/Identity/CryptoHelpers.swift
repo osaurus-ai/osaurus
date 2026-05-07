@@ -246,6 +246,18 @@ func checksumEncode(raw: String) -> String {
 // MARK: - Encoding Extensions
 
 extension Data {
+    /// Zero out the underlying bytes in place. Use in `defer` blocks immediately
+    /// after pulling secret material out of Keychain so the bytes don't sit on
+    /// the heap longer than necessary. Replaces the boilerplate
+    /// `withUnsafeMutableBytes { ptr in if let base = ptr.baseAddress { memset(base, 0, ptr.count) } }`
+    /// used at every Master Key read site.
+    mutating func zeroOut() {
+        withUnsafeMutableBytes { ptr in
+            guard let base = ptr.baseAddress else { return }
+            memset(base, 0, ptr.count)
+        }
+    }
+
     /// Base64url encoding (no padding) per RFC 4648 §5.
     var base64urlEncoded: String {
         base64EncodedString()

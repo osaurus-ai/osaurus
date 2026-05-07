@@ -15,22 +15,74 @@ public struct OsaurusIdentity: Sendable {
 
     // MARK: - Setup
 
-    /// Full identity setup: generates Master Key, attests device, generates recovery code.
+    /// Full identity setup: generates Master Key, attests device, generates recovery
+    /// code, and computes a BIP39 24-word backup of the master.
+    ///
+    /// If an identity already exists, this short-circuits and returns the existing
+    /// identity (no new master, no new recovery code, no mnemonic). The caller is
+    /// expected to detect the `mnemonic == nil` case and skip the recovery-display UI.
     public static func setup() async throws -> IdentityInfo {
-        let osaurusId = try MasterKey.generate()
-        let deviceId = try await DeviceKey.attest()
-        let recovery = RecoveryManager.configure(address: osaurusId)
+        if MasterKey.exists() {
+            return try await loadExistingIdentity()
+        }
 
+        let result = try MasterKey.generate(allowReplace: false)
+        var seed = result.seed
+        defer { seed.zeroOut() }
+        let mnemonic = try MasterKeyMnemonic.mnemonic(forKey: seed)
+
+        let deviceId = try await DeviceKey.attest()
+        let recovery = RecoveryManager.configure(address: result.osaurusId)
+
+        return IdentityInfo(
+            osaurusId: result.osaurusId,
+            deviceId: deviceId,
+            recovery: recovery,
+            mnemonic: mnemonic
+        )
+    }
+
+    /// Build an `IdentityInfo` from the already-installed master key. Triggers a
+    /// biometric prompt to read the master and re-attest the device, but does NOT
+    /// produce a new mnemonic or recovery code.
+    private static func loadExistingIdentity() async throws -> IdentityInfo {
+        let context = LAContext()
+        context.touchIDAuthenticationAllowableReuseDuration = 300
+        let osaurusId = try MasterKey.getOsaurusId(context: context)
+        let deviceId = try DeviceKey.currentDeviceId()
         return IdentityInfo(
             osaurusId: osaurusId,
             deviceId: deviceId,
-            recovery: recovery
+            recovery: RecoveryInfo(code: ""),
+            mnemonic: nil
         )
     }
 
     /// Whether an identity already exists (no biometric prompt).
     public static func exists() -> Bool {
         MasterKey.exists()
+    }
+
+    // MARK: - Wipe
+
+    /// Full identity wipe used by the "Reset Identity" flow. Deletes the master
+    /// key, clears every non-built-in agent's derived address, and removes every
+    /// stored osk-v1 access key. The revocation store is intentionally kept.
+    @MainActor
+    public static func wipe() {
+        MasterKey.delete()
+        APIKeyManager.shared.deleteAll()
+
+        for agent in AgentManager.shared.agents where !agent.isBuiltIn {
+            guard agent.agentIndex != nil || agent.agentAddress != nil else { continue }
+            var cleared = agent
+            cleared.agentIndex = nil
+            cleared.agentAddress = nil
+            AgentManager.shared.update(cleared)
+        }
+
+        UserDefaults.standard.set(false, forKey: IdentityDefaultsKey.masterMnemonicAcknowledged)
+        UserDefaults.standard.set(false, forKey: IdentityDefaultsKey.agentAddressesMigrated)
     }
 
     // MARK: - Request Signing

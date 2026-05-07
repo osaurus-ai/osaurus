@@ -145,22 +145,83 @@ public final class AgentManager: ObservableObject {
 
         let context = OsaurusIdentityContext.biometric()
         var masterKeyData = try MasterKey.getPrivateKey(context: context)
-        defer {
-            masterKeyData.withUnsafeMutableBytes { ptr in
-                if let base = ptr.baseAddress { memset(base, 0, ptr.count) }
-            }
-        }
+        defer { masterKeyData.zeroOut() }
 
-        let usedIndices = Set(agents.compactMap(\.agentIndex))
-        var nextIndex: UInt32 = 0
-        while usedIndices.contains(nextIndex) { nextIndex += 1 }
-
+        let nextIndex = nextUnusedAgentIndex()
         let address = try AgentKey.deriveAddress(masterKey: masterKeyData, index: nextIndex)
 
         var updated = agent
         updated.agentIndex = nextIndex
         updated.agentAddress = address
         update(updated)
+    }
+
+    /// Rotate an agent's cryptographic address: pick a fresh unused HMAC index,
+    /// re-derive its address, persist, and revoke every active osk-v1 access
+    /// key whose audience matched the previous address (those keys now grant
+    /// access to a different identity, which is exactly the situation we're
+    /// trying to undo).
+    ///
+    /// No-op for built-in agents. Throws if there's no master key in Keychain.
+    public func rotateAddress(of agent: Agent) throws {
+        guard !agent.isBuiltIn else { return }
+        guard MasterKey.exists() else { throw OsaurusIdentityError.keychainReadFailed }
+
+        let context = OsaurusIdentityContext.biometric()
+        var masterKeyData = try MasterKey.getPrivateKey(context: context)
+        defer { masterKeyData.zeroOut() }
+
+        let nextIndex = nextUnusedAgentIndex()
+        let newAddress = try AgentKey.deriveAddress(masterKey: masterKeyData, index: nextIndex)
+        let previousAddress = agent.agentAddress
+
+        var updated = agent
+        updated.agentIndex = nextIndex
+        updated.agentAddress = newAddress
+        update(updated)
+
+        if let previousAddress {
+            revokeActiveKeys(forAudience: previousAddress)
+        }
+    }
+
+    /// Clear an agent's cryptographic identity and revoke every active osk-v1
+    /// access key whose audience pointed at it. The agent itself stays around
+    /// (the user may want to keep its prompt / settings) but it loses signing
+    /// authority until `assignAddress(to:)` is called again.
+    public func revokeAddress(of agent: Agent) {
+        guard !agent.isBuiltIn else { return }
+        guard agent.agentAddress != nil || agent.agentIndex != nil else { return }
+
+        let previousAddress = agent.agentAddress
+
+        var updated = agent
+        updated.agentIndex = nil
+        updated.agentAddress = nil
+        update(updated)
+
+        if let previousAddress {
+            revokeActiveKeys(forAudience: previousAddress)
+        }
+    }
+
+    /// First derivation index not already used by any agent in the list. We do
+    /// not reuse indices because previously-derived addresses may still be
+    /// referenced by external clients holding osk-v1 tokens.
+    private func nextUnusedAgentIndex() -> UInt32 {
+        let used = Set(agents.compactMap(\.agentIndex))
+        var index: UInt32 = 0
+        while used.contains(index) { index += 1 }
+        return index
+    }
+
+    /// Revoke every still-active osk-v1 access key whose audience matches
+    /// `audience`. Used by both rotate and revoke paths so the revocation
+    /// behavior stays in lock-step.
+    private func revokeActiveKeys(forAudience audience: OsaurusID) {
+        for key in APIKeyManager.shared.listKeys(forAudience: audience) where !key.revoked {
+            APIKeyManager.shared.revoke(id: key.id)
+        }
     }
 
     /// Delete an agent by ID
@@ -203,7 +264,7 @@ public final class AgentManager: ObservableObject {
     // MARK: - Active Agent Persistence
 
     private static let activeAgentKey = "activeAgentId"
-    private static let agentAddressesMigratedKey = "agentAddressesMigrated"
+    private static let agentAddressesMigratedKey = IdentityDefaultsKey.agentAddressesMigrated
 
     private func loadActiveAgentId() -> UUID? {
         migrateActiveAgentFileIfNeeded()

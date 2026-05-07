@@ -14,6 +14,11 @@ public enum OsaurusIdentityError: LocalizedError {
     case attestNotSupported
     case deviceNotAttested
     case signingFailed
+    case masterAlreadyExists
+    case mnemonicInvalidWordCount
+    case mnemonicUnknownWord(String)
+    case mnemonicChecksumFailed
+    case mnemonicAddressMismatch(expected: String, got: String)
 
     public var errorDescription: String? {
         switch self {
@@ -29,6 +34,16 @@ public enum OsaurusIdentityError: LocalizedError {
             "Device has not been attested — run setup first"
         case .signingFailed:
             "Failed to produce a cryptographic signature"
+        case .masterAlreadyExists:
+            "A Master Key already exists. Refusing to overwrite without explicit confirmation."
+        case .mnemonicInvalidWordCount:
+            "Recovery phrase must be exactly 24 words."
+        case .mnemonicUnknownWord(let word):
+            "Recovery phrase contains a word that isn't in the BIP39 English wordlist: \(word)"
+        case .mnemonicChecksumFailed:
+            "Recovery phrase checksum is invalid. Double-check each word."
+        case .mnemonicAddressMismatch(let expected, let got):
+            "Recovery phrase derives a different identity (\(got)) than the one your agents were derived from (\(expected))."
         }
     }
 }
