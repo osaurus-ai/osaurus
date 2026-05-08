@@ -491,9 +491,9 @@ struct PluginsView: View {
 }
 
 #if DEBUG && canImport(PreviewsMacros)
-#Preview {
-    PluginsView()
-}
+    #Preview {
+        PluginsView()
+    }
 #endif
 
 // MARK: - Plugin Card (Grid)

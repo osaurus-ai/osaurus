@@ -340,58 +340,58 @@ private struct AlwaysAllowButton: View {
 // MARK: - Preview
 
 #if DEBUG && canImport(PreviewsMacros)
-#Preview("Tool Permission - Dark") {
-    ToolPermissionView(
-        toolName: "execute_code",
-        description: "This tool will execute Python code on your system.",
-        argumentsJSON: """
-            {
-                "language": "python",
-                "code": "import os\\nprint(os.getcwd())",
-                "timeout": 30
-            }
-            """,
-        onAllow: { print("Allowed") },
-        onDeny: { print("Denied") },
-        onAlwaysAllow: { print("Always Allow") }
-    )
-    .environment(\.theme, DarkTheme())
-    .preferredColorScheme(.dark)
-    .padding(40)
-    .background(Color.black.opacity(0.8))
-}
+    #Preview("Tool Permission - Dark") {
+        ToolPermissionView(
+            toolName: "execute_code",
+            description: "This tool will execute Python code on your system.",
+            argumentsJSON: """
+                {
+                    "language": "python",
+                    "code": "import os\\nprint(os.getcwd())",
+                    "timeout": 30
+                }
+                """,
+            onAllow: { print("Allowed") },
+            onDeny: { print("Denied") },
+            onAlwaysAllow: { print("Always Allow") }
+        )
+        .environment(\.theme, DarkTheme())
+        .preferredColorScheme(.dark)
+        .padding(40)
+        .background(Color.black.opacity(0.8))
+    }
 
-#Preview("Tool Permission - Light") {
-    ToolPermissionView(
-        toolName: "read_file",
-        description: "Read the contents of a file from disk.",
-        argumentsJSON: """
-            {
-                "path": "/Users/example/Documents/config.json"
-            }
-            """,
-        onAllow: { print("Allowed") },
-        onDeny: { print("Denied") },
-        onAlwaysAllow: { print("Always Allow") }
-    )
-    .environment(\.theme, LightTheme())
-    .preferredColorScheme(.light)
-    .padding(40)
-    .background(Color.gray.opacity(0.2))
-}
+    #Preview("Tool Permission - Light") {
+        ToolPermissionView(
+            toolName: "read_file",
+            description: "Read the contents of a file from disk.",
+            argumentsJSON: """
+                {
+                    "path": "/Users/example/Documents/config.json"
+                }
+                """,
+            onAllow: { print("Allowed") },
+            onDeny: { print("Denied") },
+            onAlwaysAllow: { print("Always Allow") }
+        )
+        .environment(\.theme, LightTheme())
+        .preferredColorScheme(.light)
+        .padding(40)
+        .background(Color.gray.opacity(0.2))
+    }
 
-#Preview("Tool Permission - No Arguments") {
-    ToolPermissionView(
-        toolName: "list_directory",
-        description: "List all files in the current working directory.",
-        argumentsJSON: "{}",
-        onAllow: { print("Allowed") },
-        onDeny: { print("Denied") },
-        onAlwaysAllow: { print("Always Allow") }
-    )
-    .environment(\.theme, DarkTheme())
-    .preferredColorScheme(.dark)
-    .padding(40)
-    .background(Color.black.opacity(0.8))
-}
+    #Preview("Tool Permission - No Arguments") {
+        ToolPermissionView(
+            toolName: "list_directory",
+            description: "List all files in the current working directory.",
+            argumentsJSON: "{}",
+            onAllow: { print("Allowed") },
+            onDeny: { print("Denied") },
+            onAlwaysAllow: { print("Always Allow") }
+        )
+        .environment(\.theme, DarkTheme())
+        .preferredColorScheme(.dark)
+        .padding(40)
+        .background(Color.black.opacity(0.8))
+    }
 #endif

@@ -332,15 +332,18 @@ struct ThemeEditorView: View {
                     .font(.system(size: 13))
                     .foregroundColor(isImageBackground ? currentTheme.tertiaryText : currentTheme.primaryText)
                 Spacer()
-                Toggle("", isOn: Binding(
-                    get: { editingTheme.glass.enabled && !isImageBackground },
-                    set: { newValue in
-                        editingTheme.glass.enabled = newValue
-                        if newValue {
-                            showGlassPerformanceWarning = true
+                Toggle(
+                    "",
+                    isOn: Binding(
+                        get: { editingTheme.glass.enabled && !isImageBackground },
+                        set: { newValue in
+                            editingTheme.glass.enabled = newValue
+                            if newValue {
+                                showGlassPerformanceWarning = true
+                            }
                         }
-                    }
-                ))
+                    )
+                )
                 .labelsHidden()
                 .toggleStyle(.switch)
                 .tint(currentTheme.accentColor)

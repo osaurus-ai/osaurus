@@ -105,7 +105,8 @@ final class AvatarImageCache: @unchecked Sendable {
 
     func image(for url: URL) -> NSImage? {
         let path = url.path
-        let mtime = (try? FileManager.default.attributesOfItem(atPath: path)[.modificationDate] as? Date) ?? .distantPast
+        let mtime =
+            (try? FileManager.default.attributesOfItem(atPath: path)[.modificationDate] as? Date) ?? .distantPast
 
         lock.lock()
         if let hit = entries[path], hit.mtime == mtime {

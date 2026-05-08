@@ -126,7 +126,10 @@ public enum AgentStore {
         do {
             // Remove any prior file with a different extension for the same agent.
             if let existing = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) {
-                for f in existing where f.deletingPathExtension().lastPathComponent == agentId.uuidString && f.lastPathComponent != filename {
+                for f in existing
+                where f.deletingPathExtension().lastPathComponent == agentId.uuidString
+                    && f.lastPathComponent != filename
+                {
                     try? FileManager.default.removeItem(at: f)
                 }
             }
@@ -142,7 +145,8 @@ public enum AgentStore {
     /// responsible for clearing `customAvatarFilename` on the Agent record.
     public static func removeCustomAvatar(for agentId: UUID) {
         let dir = avatarsDirectory()
-        guard let entries = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else { return }
+        guard let entries = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)
+        else { return }
         for f in entries where f.deletingPathExtension().lastPathComponent == agentId.uuidString {
             try? FileManager.default.removeItem(at: f)
         }

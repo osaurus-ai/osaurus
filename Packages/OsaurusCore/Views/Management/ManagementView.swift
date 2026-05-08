@@ -293,7 +293,7 @@ private extension ManagementView {
 // MARK: - Preview
 
 #if DEBUG && canImport(PreviewsMacros)
-#Preview {
-    ManagementView()
-}
+    #Preview {
+        ManagementView()
+    }
 #endif

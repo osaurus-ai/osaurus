@@ -161,53 +161,38 @@ enum PluginsTab: String, CaseIterable, AnimatedTabItem {
     }
 }
 
-// MARK: - Sandbox Tab (for SandboxView)
-
-enum SandboxTab: String, CaseIterable, AnimatedTabItem {
-    case container = "Container"
-    case agents = "Agents"
-
-    var title: String { rawValue }
-}
-
 // MARK: - Preview
 
 #if DEBUG && canImport(PreviewsMacros)
-#Preview {
-    struct PreviewWrapper: View {
-        @State private var modelTab: ModelListTab = .all
-        @State private var toolsTab: ToolsTab = .available
-        @State private var pluginsTab: PluginsTab = .installed
-        @State private var sandboxTab: SandboxTab = .container
+    #Preview {
+        struct PreviewWrapper: View {
+            @State private var modelTab: ModelListTab = .all
+            @State private var toolsTab: ToolsTab = .available
+            @State private var pluginsTab: PluginsTab = .installed
 
-        var body: some View {
-            VStack(spacing: 40) {
-                AnimatedTabSelector(
-                    selection: $modelTab,
-                    counts: [.all: 150, .downloaded: 3]
-                )
+            var body: some View {
+                VStack(spacing: 40) {
+                    AnimatedTabSelector(
+                        selection: $modelTab,
+                        counts: [.all: 150, .downloaded: 3]
+                    )
 
-                AnimatedTabSelector(
-                    selection: $toolsTab,
-                    counts: [.available: 8, .remote: 2]
-                )
+                    AnimatedTabSelector(
+                        selection: $toolsTab,
+                        counts: [.available: 8, .remote: 2]
+                    )
 
-                AnimatedTabSelector(
-                    selection: $pluginsTab,
-                    counts: [.installed: 3, .browse: 24],
-                    badges: [.browse: 2]
-                )
-
-                AnimatedTabSelector(
-                    selection: $sandboxTab,
-                    counts: [.agents: 5]
-                )
+                    AnimatedTabSelector(
+                        selection: $pluginsTab,
+                        counts: [.installed: 3, .browse: 24],
+                        badges: [.browse: 2]
+                    )
+                }
+                .padding(40)
+                .background(Color(hex: "f9fafb"))
             }
-            .padding(40)
-            .background(Color(hex: "f9fafb"))
         }
-    }
 
-    return PreviewWrapper()
-}
+        return PreviewWrapper()
+    }
 #endif

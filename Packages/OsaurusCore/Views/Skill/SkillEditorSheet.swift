@@ -773,11 +773,11 @@ private struct ThemedNSTextView: NSViewRepresentable {
 }
 
 #if DEBUG && canImport(PreviewsMacros)
-#Preview {
-    SkillEditorSheet(
-        mode: .create,
-        onSave: { _ in },
-        onCancel: {}
-    )
-}
+    #Preview {
+        SkillEditorSheet(
+            mode: .create,
+            onSave: { _ in },
+            onCancel: {}
+        )
+    }
 #endif

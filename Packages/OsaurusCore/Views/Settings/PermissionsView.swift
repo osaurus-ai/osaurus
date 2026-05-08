@@ -374,7 +374,7 @@ private struct SystemPermissionRow: View {
 }
 
 #if DEBUG && canImport(PreviewsMacros)
-#Preview {
-    PermissionsView()
-}
+    #Preview {
+        PermissionsView()
+    }
 #endif

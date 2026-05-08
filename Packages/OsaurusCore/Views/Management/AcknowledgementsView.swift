@@ -396,7 +396,7 @@ private struct PackageRow: View {
 // MARK: - Preview
 
 #if DEBUG && canImport(PreviewsMacros)
-#Preview {
-    AcknowledgementsView()
-}
+    #Preview {
+        AcknowledgementsView()
+    }
 #endif

@@ -2259,8 +2259,8 @@ private struct DeploymentNamesEditor: View {
 // MARK: - Preview
 
 #if DEBUG && canImport(PreviewsMacros)
-#Preview {
-    RemoteProviderEditSheet(provider: nil) { _, _, _ in }
-        .environment(\.theme, DarkTheme())
-}
+    #Preview {
+        RemoteProviderEditSheet(provider: nil) { _, _, _ in }
+            .environment(\.theme, DarkTheme())
+    }
 #endif

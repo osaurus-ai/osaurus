@@ -77,9 +77,16 @@ struct MLXBatchAdapterTests {
         let unspecified = GenerationParameters(temperature: nil, maxTokens: 16)
         let modelName = "OsaurusAI/Qwen3.5-30B-A3B-JANGTQ"
 
-        #expect(MLXBatchAdapter.additionalContext(for: disabled, modelName: modelName)["enable_thinking"] as? Bool == false)
-        #expect(MLXBatchAdapter.additionalContext(for: enabled, modelName: modelName)["enable_thinking"] as? Bool == true)
-        #expect(MLXBatchAdapter.additionalContext(for: unspecified, modelName: modelName)["enable_thinking"] as? Bool == true)
+        #expect(
+            MLXBatchAdapter.additionalContext(for: disabled, modelName: modelName)["enable_thinking"] as? Bool == false
+        )
+        #expect(
+            MLXBatchAdapter.additionalContext(for: enabled, modelName: modelName)["enable_thinking"] as? Bool == true
+        )
+        #expect(
+            MLXBatchAdapter.additionalContext(for: unspecified, modelName: modelName)["enable_thinking"] as? Bool
+                == true
+        )
     }
 
     @Test func additionalContext_forcesLingThinkingOff() {

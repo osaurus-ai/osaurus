@@ -417,24 +417,24 @@ extension HeaderTabsRow {
 // MARK: - Preview
 
 #if DEBUG && canImport(PreviewsMacros)
-#Preview {
-    VStack(spacing: 0) {
-        ManagerHeader(title: "Server", subtitle: "Developer tools and API reference")
+    #Preview {
+        VStack(spacing: 0) {
+            ManagerHeader(title: "Server", subtitle: "Developer tools and API reference")
 
-        Divider()
+            Divider()
 
-        ManagerHeaderWithActions(
-            title: "Agents",
-            subtitle: "Create custom assistant personalities",
-            count: 4
-        ) {
-            HeaderIconButton("arrow.clockwise", help: "Refresh") {}
-            HeaderSecondaryButton("Import", icon: "square.and.arrow.down") {}
-            HeaderPrimaryButton("Create Agent", icon: "plus") {}
+            ManagerHeaderWithActions(
+                title: "Agents",
+                subtitle: "Create custom assistant personalities",
+                count: 4
+            ) {
+                HeaderIconButton("arrow.clockwise", help: "Refresh") {}
+                HeaderSecondaryButton("Import", icon: "square.and.arrow.down") {}
+                HeaderPrimaryButton("Create Agent", icon: "plus") {}
+            }
         }
+        .frame(width: 700)
+        .background(Color.black)
+        .environment(\.theme, DarkTheme())
     }
-    .frame(width: 700)
-    .background(Color.black)
-    .environment(\.theme, DarkTheme())
-}
 #endif

@@ -541,28 +541,28 @@ struct SidebarUpdateButton: View {
 // MARK: - Preview
 
 #if DEBUG && canImport(PreviewsMacros)
-#Preview {
-    struct PreviewWrapper: View {
-        @State private var selection = "models"
-        @State private var searchText = ""
+    #Preview {
+        struct PreviewWrapper: View {
+            @State private var selection = "models"
+            @State private var searchText = ""
 
-        var body: some View {
-            SidebarNavigation(
-                selection: $selection,
-                searchText: $searchText,
-                items: [
-                    SidebarItemData(id: "models", icon: "cube.box.fill", label: "Models"),
-                    SidebarItemData(id: "tools", icon: "wrench.and.screwdriver.fill", label: "Tools", badge: 2),
-                    SidebarItemData(id: "settings", icon: "gearshape.fill", label: "Settings"),
-                ]
-            ) { selected in
-                Text("Content for \(selected)", bundle: .module)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            var body: some View {
+                SidebarNavigation(
+                    selection: $selection,
+                    searchText: $searchText,
+                    items: [
+                        SidebarItemData(id: "models", icon: "cube.box.fill", label: "Models"),
+                        SidebarItemData(id: "tools", icon: "wrench.and.screwdriver.fill", label: "Tools", badge: 2),
+                        SidebarItemData(id: "settings", icon: "gearshape.fill", label: "Settings"),
+                    ]
+                ) { selected in
+                    Text("Content for \(selected)", bundle: .module)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+                .frame(width: 800, height: 600)
             }
-            .frame(width: 800, height: 600)
         }
-    }
 
-    return PreviewWrapper()
-}
+        return PreviewWrapper()
+    }
 #endif

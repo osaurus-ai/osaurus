@@ -532,29 +532,29 @@ private struct DescriptionText: View {
 }
 
 #if DEBUG && canImport(PreviewsMacros)
-#Preview {
-    ToolSecretsSheet(
-        pluginId: "dev.example.weather",
-        agentId: Agent.defaultId,
-        pluginName: "Weather Plugin",
-        pluginVersion: "1.0.0",
-        secrets: [
-            PluginManifest.SecretSpec(
-                id: "api_key",
-                label: "OpenWeather API Key",
-                description: "Get your API key from [OpenWeather](https://openweathermap.org/api)",
-                required: true,
-                url: "https://openweathermap.org/api"
-            ),
-            PluginManifest.SecretSpec(
-                id: "backup_key",
-                label: "Backup API Key",
-                description: "Optional backup key for failover",
-                required: false,
-                url: nil
-            ),
-        ],
-        onSave: {}
-    )
-}
+    #Preview {
+        ToolSecretsSheet(
+            pluginId: "dev.example.weather",
+            agentId: Agent.defaultId,
+            pluginName: "Weather Plugin",
+            pluginVersion: "1.0.0",
+            secrets: [
+                PluginManifest.SecretSpec(
+                    id: "api_key",
+                    label: "OpenWeather API Key",
+                    description: "Get your API key from [OpenWeather](https://openweathermap.org/api)",
+                    required: true,
+                    url: "https://openweathermap.org/api"
+                ),
+                PluginManifest.SecretSpec(
+                    id: "backup_key",
+                    label: "Backup API Key",
+                    description: "Optional backup key for failover",
+                    required: false,
+                    url: nil
+                ),
+            ],
+            onSave: {}
+        )
+    }
 #endif

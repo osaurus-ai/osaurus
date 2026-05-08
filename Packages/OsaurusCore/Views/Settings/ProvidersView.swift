@@ -1382,9 +1382,9 @@ private struct ToolPillsFlowLayout: Layout {
 }
 
 #if DEBUG && canImport(PreviewsMacros)
-#Preview {
-    ProvidersView()
-        .frame(width: 700, height: 500)
-        .environment(\.theme, DarkTheme())
-}
+    #Preview {
+        ProvidersView()
+            .frame(width: 700, height: 500)
+            .environment(\.theme, DarkTheme())
+    }
 #endif

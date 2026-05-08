@@ -324,7 +324,7 @@ struct TaskCoalescerTests {
         let disposeEnd = AtomicTimestamp()
         async let removed: Sentinel? = coalescer.remove("k") { _ in
             await disposeStart.set()
-            try? await Task.sleep(nanoseconds: 100_000_000) // 100 ms shutdown
+            try? await Task.sleep(nanoseconds: 100_000_000)  // 100 ms shutdown
             await disposeEnd.set()
         }
 

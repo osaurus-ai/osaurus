@@ -46,37 +46,37 @@ struct SectionHeader<Trailing: View>: View {
 }
 
 #if DEBUG && canImport(PreviewsMacros)
-#Preview {
-    VStack(spacing: 24) {
-        SectionHeader(
-            title: "Available Tools",
-            description: "Tools from installed plugins and connected providers"
-        )
+    #Preview {
+        VStack(spacing: 24) {
+            SectionHeader(
+                title: "Available Tools",
+                description: "Tools from installed plugins and connected providers"
+            )
 
-        SectionHeader(
-            title: "Plugin Repository",
-            description: "Browse and install plugins to add new capabilities"
-        ) {
-            Button(action: {}) {
-                HStack(spacing: 6) {
-                    Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 12, weight: .semibold))
-                    Text("Refresh", bundle: .module)
-                        .font(.system(size: 13, weight: .semibold))
+            SectionHeader(
+                title: "Plugin Repository",
+                description: "Browse and install plugins to add new capabilities"
+            ) {
+                Button(action: {}) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 12, weight: .semibold))
+                        Text("Refresh", bundle: .module)
+                            .font(.system(size: 13, weight: .semibold))
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color.blue)
+                    )
                 }
-                .foregroundColor(.white)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(Color.blue)
-                )
+                .buttonStyle(PlainButtonStyle())
             }
-            .buttonStyle(PlainButtonStyle())
         }
+        .padding(24)
+        .background(Color.black.opacity(0.9))
+        .environment(\.theme, DarkTheme())
     }
-    .padding(24)
-    .background(Color.black.opacity(0.9))
-    .environment(\.theme, DarkTheme())
-}
 #endif

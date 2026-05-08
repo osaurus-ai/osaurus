@@ -1570,7 +1570,7 @@ private struct HuggingFaceImportSheet: View {
 }
 
 #if DEBUG && canImport(PreviewsMacros)
-#Preview {
-    ModelDownloadView()
-}
+    #Preview {
+        ModelDownloadView()
+    }
 #endif

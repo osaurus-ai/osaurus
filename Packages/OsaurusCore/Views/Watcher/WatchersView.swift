@@ -1260,7 +1260,7 @@ private struct WatcherSecondaryButtonStyle: ButtonStyle {
 }
 
 #if DEBUG && canImport(PreviewsMacros)
-#Preview {
-    WatchersView()
-}
+    #Preview {
+        WatchersView()
+    }
 #endif

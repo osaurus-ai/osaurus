@@ -635,8 +635,8 @@ extension RequestSource {
 // MARK: - Preview
 
 #if DEBUG && canImport(PreviewsMacros)
-#Preview {
-    InsightsView()
-        .frame(width: 900, height: 600)
-}
+    #Preview {
+        InsightsView()
+            .frame(width: 900, height: 600)
+    }
 #endif

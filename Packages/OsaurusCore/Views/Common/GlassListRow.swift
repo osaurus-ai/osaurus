@@ -61,19 +61,19 @@ struct GlassListRow<Content: View>: View {
 // MARK: - Preview
 
 #if DEBUG && canImport(PreviewsMacros)
-#Preview {
-    VStack(spacing: 12) {
-        ForEach(0 ..< 3) { index in
-            GlassListRow(animationIndex: index) {
-                HStack {
-                    Text("Item \(index + 1)", bundle: .module)
-                    Spacer()
-                    Image(systemName: "chevron.right")
+    #Preview {
+        VStack(spacing: 12) {
+            ForEach(0 ..< 3) { index in
+                GlassListRow(animationIndex: index) {
+                    HStack {
+                        Text("Item \(index + 1)", bundle: .module)
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                    }
                 }
             }
         }
+        .padding(24)
+        .background(Color(hex: "f9fafb"))
     }
-    .padding(24)
-    .background(Color(hex: "f9fafb"))
-}
 #endif

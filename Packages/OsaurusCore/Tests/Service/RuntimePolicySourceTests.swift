@@ -19,10 +19,12 @@ struct RuntimePolicySourceTests {
 
     private static func swiftFiles(under relativePath: String) throws -> [URL] {
         let root = packageRoot().appendingPathComponent(relativePath)
-        guard let enumerator = FileManager.default.enumerator(
-            at: root,
-            includingPropertiesForKeys: nil
-        ) else {
+        guard
+            let enumerator = FileManager.default.enumerator(
+                at: root,
+                includingPropertiesForKeys: nil
+            )
+        else {
             return []
         }
 
@@ -68,8 +70,12 @@ struct RuntimePolicySourceTests {
     @Test("SwiftPM graph stays on Osaurus transformers/Jinja chain")
     func swiftPMGraphUsesOsaurusTransformerForks() throws {
         let manifest = try Self.source("Package.swift")
-        let workspaceMirrors = try Self.source("../../osaurus.xcworkspace/xcshareddata/swiftpm/configuration/mirrors.json")
-        let appProjectMirrors = try Self.source("../../App/osaurus.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/configuration/mirrors.json")
+        let workspaceMirrors = try Self.source(
+            "../../osaurus.xcworkspace/xcshareddata/swiftpm/configuration/mirrors.json"
+        )
+        let appProjectMirrors = try Self.source(
+            "../../App/osaurus.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/configuration/mirrors.json"
+        )
         let contributing = try Self.source("../../docs/CONTRIBUTING.md")
 
         #expect(manifest.contains("https://github.com/osaurus-ai/swift-transformers"))
@@ -225,7 +231,7 @@ struct RuntimePolicySourceTests {
             let lines = source.components(separatedBy: .newlines)
             let previewLines = lines.indices.filter { lines[$0].hasPrefix("#Preview") }
             guard let firstPreviewLine = previewLines.first,
-                  let lastPreviewLine = previewLines.last
+                let lastPreviewLine = previewLines.last
             else {
                 continue
             }
@@ -271,12 +277,15 @@ struct RuntimePolicySourceTests {
             }
 
             let searchStart = previewCloseLine + 1
-            let nextContentLine = searchStart < lines.endIndex
+            let nextContentLine =
+                searchStart < lines.endIndex
                 ? lines.indices[searchStart...]
                     .first { !lines[$0].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
                 : nil
             if nextContentLine == nil || lines[nextContentLine!] != "#endif" {
-                failures.append("\(relativePath): PreviewsMacros gate must close immediately after the last preview block")
+                failures.append(
+                    "\(relativePath): PreviewsMacros gate must close immediately after the last preview block"
+                )
             }
         }
 
