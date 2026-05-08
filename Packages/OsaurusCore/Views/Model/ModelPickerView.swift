@@ -257,14 +257,20 @@ struct ModelPickerView: View {
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 13))
-                .foregroundColor(theme.tertiaryText)
+                .foregroundColor(theme.secondaryText)
 
-            TextField(text: $searchText, prompt: Text("Search models...", bundle: .module)) {
-                Text("Search models...", bundle: .module)
+            ZStack(alignment: .leading) {
+                if searchText.isEmpty {
+                    Text("Search models...", bundle: .module)
+                        .font(.system(size: 13))
+                        .foregroundColor(theme.secondaryText)
+                        .allowsHitTesting(false)
+                }
+                TextField("", text: $searchText)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 13))
+                    .foregroundColor(theme.primaryText)
             }
-            .textFieldStyle(.plain)
-            .font(.system(size: 13))
-            .foregroundColor(theme.primaryText)
 
             if !searchText.isEmpty {
                 Button(action: { searchText = "" }) {

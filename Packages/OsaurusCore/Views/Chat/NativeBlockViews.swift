@@ -109,7 +109,6 @@ final class NativeTypingIndicatorView: NSView {
         // "Loading Model..." label (hidden by default, shown during model load)
         loadingLabel.stringValue = "Loading Model..."
         loadingLabel.font = .systemFont(ofSize: 12, weight: .medium)
-        loadingLabel.textColor = .secondaryLabelColor
         loadingLabel.translatesAutoresizingMaskIntoConstraints = false
         loadingLabel.isHidden = true
         addSubview(loadingLabel)
@@ -210,6 +209,7 @@ final class NativeTypingIndicatorView: NSView {
         for (i, dot) in dots.enumerated() {
             dot.backgroundColor = (i == currentDot ? primary : secondary).cgColor
         }
+        loadingLabel.textColor = NSColor(theme.secondaryText)
     }
 
     private func startAnimation() {

@@ -125,6 +125,7 @@ struct ModelPickerTableRepresentable: NSViewRepresentable {
         coordinator.updateColorsIfNeeded(from: theme)
         coordinator.updateSelectedModelId(selectedModelId)
         coordinator.applyRows(rows)
+        applyScrollerStyle(to: scrollView)
         return scrollView
     }
 
@@ -136,6 +137,13 @@ struct ModelPickerTableRepresentable: NSViewRepresentable {
         coordinator.updateColorsIfNeeded(from: theme)
         coordinator.updateSelectedModelId(selectedModelId)
         coordinator.applyRows(rows)
+        applyScrollerStyle(to: scrollView)
+    }
+
+    private func applyScrollerStyle(to scrollView: NSScrollView) {
+        let knobStyle: NSScroller.KnobStyle = theme.isDark ? .light : .dark
+        scrollView.scrollerKnobStyle = knobStyle
+        scrollView.verticalScroller?.knobStyle = knobStyle
     }
 
     static func dismantleNSView(_ nsView: NSScrollView, coordinator: Coordinator) {
