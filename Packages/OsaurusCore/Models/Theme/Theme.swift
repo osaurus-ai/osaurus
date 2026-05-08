@@ -121,6 +121,8 @@ protocol ThemeProtocol {
     var assistantBubbleColor: Color? { get }
     var messageBorderWidth: Double { get }
     var showEdgeLight: Bool { get }
+    var showInlineAvatar: Bool { get }
+    var inlineAvatarSize: Double { get }
 
     // Border customization
     var defaultBorderWidth: Double { get }
@@ -163,6 +165,8 @@ extension ThemeProtocol {
     var assistantBubbleColor: Color? { nil }
     var messageBorderWidth: Double { 0.5 }
     var showEdgeLight: Bool { true }
+    var showInlineAvatar: Bool { true }
+    var inlineAvatarSize: Double { 24 }
 
     // Border defaults
     var defaultBorderWidth: Double { 1.0 }
@@ -514,6 +518,8 @@ struct CustomizableTheme: ThemeProtocol {
     }
     var messageBorderWidth: Double { config.messages.borderWidth }
     var showEdgeLight: Bool { config.messages.showEdgeLight }
+    var showInlineAvatar: Bool { config.messages.showInlineAvatar }
+    var inlineAvatarSize: Double { config.messages.inlineAvatarSize }
 
     // Border customization
     var defaultBorderWidth: Double { config.borders.defaultWidth }

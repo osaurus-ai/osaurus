@@ -66,6 +66,7 @@ struct MessageTableRepresentable: NSViewRepresentable {
     let width: CGFloat
     let agentName: String
     let agentAvatar: String?
+    let agentCustomAvatarPath: String?
     let isStreaming: Bool
     let lastAssistantTurnId: UUID?
     let autoScrollEnabled: Bool
@@ -188,6 +189,7 @@ struct MessageTableRepresentable: NSViewRepresentable {
             width: max(100, width),
             agentName: agentName,
             agentAvatar: agentAvatar,
+            agentCustomAvatarPath: agentCustomAvatarPath,
             isStreaming: isStreaming,
             lastAssistantTurnId: lastAssistantTurnId,
             theme: theme,
@@ -218,6 +220,7 @@ struct MessageTableRepresentable: NSViewRepresentable {
             width: max(100, width),
             agentName: agentName,
             agentAvatar: agentAvatar,
+            agentCustomAvatarPath: agentCustomAvatarPath,
             isStreaming: isStreaming,
             lastAssistantTurnId: lastAssistantTurnId,
             theme: theme,
@@ -319,6 +322,7 @@ extension MessageTableRepresentable {
             width: 400,
             agentName: "",
             agentAvatar: nil,
+            agentCustomAvatarPath: nil,
             isStreaming: false,
             lastAssistantTurnId: nil,
             theme: LightTheme(),

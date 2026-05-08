@@ -1,4 +1,6 @@
+import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 // MARK: - Shared Helpers
 
@@ -416,7 +418,8 @@ private struct AgentCard: View {
                         mascotId: agent.avatar,
                         name: agent.name,
                         tint: agentColor,
-                        diameter: 36
+                        diameter: 36,
+                        customImageURL: agent.customAvatarURL
                     )
 
                     VStack(alignment: .leading, spacing: 2) {
@@ -1179,6 +1182,7 @@ struct AgentDetailView: View {
                     name: other.name,
                     tint: color,
                     diameter: 26,
+                    customImageURL: other.customAvatarURL,
                     monogramFontSize: 11,
                     borderWidth: 1.5
                 )
@@ -1555,6 +1559,10 @@ struct AgentDetailView: View {
         AgentDetailSection(title: "Avatar", icon: "person.crop.circle") {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(spacing: 10) {
+                    if currentAgent.customAvatarURL != nil {
+                        customAvatarPreview
+                    }
+                    customAvatarUploadButton
                     avatarOption(mascotId: nil)
                     ForEach(AgentMascot.allCases) { mascot in
                         avatarOption(mascotId: mascot.id)
@@ -1562,11 +1570,114 @@ struct AgentDetailView: View {
                     Spacer(minLength: 0)
                 }
 
-                Text("Pick a mascot, or fall back to the agent's first letter.", bundle: .module)
+                Text("Upload a custom image, pick a mascot, or fall back to the agent's first letter.", bundle: .module)
                     .font(.system(size: 11))
                     .foregroundColor(theme.tertiaryText)
             }
         }
+    }
+
+    /// Square tile rendering the live custom avatar; tap clears it.
+    private var customAvatarPreview: some View {
+        Button {
+            agentManager.clearCustomAvatar(for: agent.id)
+            if let url = currentAgent.customAvatarURL {
+                AvatarImageCache.shared.invalidate(url: url)
+            }
+        } label: {
+            AgentAvatarView(
+                mascotId: nil,
+                name: name,
+                tint: agentColor,
+                diameter: 40,
+                customImageURL: currentAgent.customAvatarURL,
+                monogramFontSize: 16,
+                borderWidth: 1.5
+            )
+            .overlay(
+                Circle()
+                    .strokeBorder(theme.accentColor, lineWidth: 2)
+                    .padding(-3)
+            )
+            .overlay(alignment: .topTrailing) {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(theme.secondaryText)
+                    .background(Circle().fill(theme.primaryBackground))
+                    .offset(x: 4, y: -4)
+            }
+        }
+        .buttonStyle(.plain)
+        .help(Text("Remove custom avatar", bundle: .module))
+    }
+
+    /// "Upload…" tile: opens an NSOpenPanel and writes the selected image
+    /// (downscaled to 256×256 PNG) as this agent's custom avatar.
+    private var customAvatarUploadButton: some View {
+        Button(action: presentCustomAvatarPicker) {
+            ZStack {
+                Circle()
+                    .fill(theme.secondaryBackground.opacity(theme.isDark ? 0.4 : 0.5))
+                Circle()
+                    .strokeBorder(theme.inputBorder, style: StrokeStyle(lineWidth: 1.2, dash: [3, 3]))
+                Image(systemName: "photo.badge.plus")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(theme.secondaryText)
+            }
+            .frame(width: 40, height: 40)
+        }
+        .buttonStyle(.plain)
+        .help(Text("Upload custom image", bundle: .module))
+    }
+
+    @MainActor
+    private func presentCustomAvatarPicker() {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.allowedContentTypes = [.png, .jpeg, .heic, .tiff, .gif, .image]
+        panel.prompt = "Choose"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        guard let original = NSImage(contentsOf: url) else { return }
+        let downscaled = downscaleAvatar(original, maxDimension: 256)
+        guard let pngData = pngData(from: downscaled) else { return }
+        agentManager.setCustomAvatar(pngData, ext: "png", for: agent.id)
+        // Bust the cache for this agent's avatar URL so the new bytes show
+        // up immediately in inline chat + sidebar without an mtime race.
+        if let updated = agentManager.agent(for: agent.id), let newURL = updated.customAvatarURL {
+            AvatarImageCache.shared.invalidate(url: newURL)
+        }
+    }
+
+    /// Downscale `image` so its longer edge is at most `maxDimension` while
+    /// preserving aspect ratio. Source images are typically much larger; this
+    /// keeps disk + memory bounded and decode-time cheap on each redraw.
+    private func downscaleAvatar(_ image: NSImage, maxDimension: CGFloat) -> NSImage {
+        let srcSize = image.size
+        guard srcSize.width > 0, srcSize.height > 0 else { return image }
+        let scale = min(1.0, maxDimension / max(srcSize.width, srcSize.height))
+        guard scale < 1.0 else { return image }
+        let target = NSSize(width: floor(srcSize.width * scale), height: floor(srcSize.height * scale))
+        let result = NSImage(size: target)
+        result.lockFocus()
+        NSGraphicsContext.current?.imageInterpolation = .high
+        image.draw(
+            in: NSRect(origin: .zero, size: target),
+            from: NSRect(origin: .zero, size: srcSize),
+            operation: .copy,
+            fraction: 1.0
+        )
+        result.unlockFocus()
+        return result
+    }
+
+    private func pngData(from image: NSImage) -> Data? {
+        guard let tiff = image.tiffRepresentation,
+              let rep = NSBitmapImageRep(data: tiff)
+        else { return nil }
+        return rep.representation(using: .png, properties: [:])
     }
 
     private func avatarOption(mascotId: String?) -> some View {
@@ -3152,7 +3263,8 @@ struct AgentDetailView: View {
             manualSkillNames: current.manualSkillNames,
             disableTools: disableTools ? true : nil,
             disableMemory: disableMemory ? true : nil,
-            avatar: avatar
+            avatar: avatar,
+            customAvatarFilename: current.customAvatarFilename
         )
 
         agentManager.update(updated)

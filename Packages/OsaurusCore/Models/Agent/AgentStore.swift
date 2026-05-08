@@ -96,12 +96,55 @@ public enum AgentStore {
             return false
         }
 
+        // Best-effort cleanup of any custom avatar file before removing the JSON.
+        if let agent = load(id: id), let url = agent.customAvatarURL {
+            try? FileManager.default.removeItem(at: url)
+        }
+
         do {
             try FileManager.default.removeItem(at: agentFileURL(for: id))
             return true
         } catch {
             print("[Osaurus] Failed to delete agent \(id): \(error)")
             return false
+        }
+    }
+
+    // MARK: - Custom Avatar Storage
+
+    /// Persist `data` as the custom avatar image for `agent` and return the
+    /// resulting filename (relative to the avatars directory). The caller is
+    /// responsible for writing the updated `Agent` (with `customAvatarFilename`
+    /// set) via `save(_:)`.
+    @discardableResult
+    public static func writeCustomAvatar(_ data: Data, ext: String, for agentId: UUID) -> String? {
+        let dir = avatarsDirectory()
+        OsaurusPaths.ensureExistsSilent(dir)
+        let safeExt = ext.lowercased().trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
+        let filename = "\(agentId.uuidString).\(safeExt.isEmpty ? "png" : safeExt)"
+        let url = dir.appendingPathComponent(filename)
+        do {
+            // Remove any prior file with a different extension for the same agent.
+            if let existing = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) {
+                for f in existing where f.deletingPathExtension().lastPathComponent == agentId.uuidString && f.lastPathComponent != filename {
+                    try? FileManager.default.removeItem(at: f)
+                }
+            }
+            try data.write(to: url, options: [.atomic])
+            return filename
+        } catch {
+            print("[Osaurus] Failed to write custom avatar for \(agentId): \(error)")
+            return nil
+        }
+    }
+
+    /// Remove the custom avatar file for `agentId` if present. The caller is
+    /// responsible for clearing `customAvatarFilename` on the Agent record.
+    public static func removeCustomAvatar(for agentId: UUID) {
+        let dir = avatarsDirectory()
+        guard let entries = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else { return }
+        for f in entries where f.deletingPathExtension().lastPathComponent == agentId.uuidString {
+            try? FileManager.default.removeItem(at: f)
         }
     }
 
@@ -119,5 +162,9 @@ public enum AgentStore {
 
     private static func agentFileURL(for id: UUID) -> URL {
         agentsDirectory().appendingPathComponent("\(id.uuidString).json")
+    }
+
+    private static func avatarsDirectory() -> URL {
+        OsaurusPaths.agents().appendingPathComponent("avatars", isDirectory: true)
     }
 }

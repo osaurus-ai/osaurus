@@ -501,6 +501,13 @@ public struct ThemeMessages: Codable, Equatable, Sendable {
     public var borderWidth: Double
     /// Whether to show edge light effect on bubbles
     public var showEdgeLight: Bool
+    /// Whether the agent avatar is shown inline next to assistant messages.
+    /// When false, the inline header drops the avatar and the name slides
+    /// flush left.
+    public var showInlineAvatar: Bool
+    /// Diameter (in points) of the inline avatar shown beside assistant
+    /// messages. Clamped at consumption time to a sensible range.
+    public var inlineAvatarSize: Double
 
     public init(
         bubbleCornerRadius: Double = 20,
@@ -509,7 +516,9 @@ public struct ThemeMessages: Codable, Equatable, Sendable {
         userBubbleColor: String? = nil,
         assistantBubbleColor: String? = nil,
         borderWidth: Double = 0.5,
-        showEdgeLight: Bool = true
+        showEdgeLight: Bool = true,
+        showInlineAvatar: Bool = true,
+        inlineAvatarSize: Double = 24
     ) {
         self.bubbleCornerRadius = bubbleCornerRadius
         self.userBubbleOpacity = userBubbleOpacity
@@ -518,6 +527,21 @@ public struct ThemeMessages: Codable, Equatable, Sendable {
         self.assistantBubbleColor = assistantBubbleColor
         self.borderWidth = borderWidth
         self.showEdgeLight = showEdgeLight
+        self.showInlineAvatar = showInlineAvatar
+        self.inlineAvatarSize = inlineAvatarSize
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        bubbleCornerRadius = try c.decodeIfPresent(Double.self, forKey: .bubbleCornerRadius) ?? 20
+        userBubbleOpacity = try c.decodeIfPresent(Double.self, forKey: .userBubbleOpacity) ?? 0.3
+        assistantBubbleOpacity = try c.decodeIfPresent(Double.self, forKey: .assistantBubbleOpacity) ?? 0.85
+        userBubbleColor = try c.decodeIfPresent(String.self, forKey: .userBubbleColor)
+        assistantBubbleColor = try c.decodeIfPresent(String.self, forKey: .assistantBubbleColor)
+        borderWidth = try c.decodeIfPresent(Double.self, forKey: .borderWidth) ?? 0.5
+        showEdgeLight = try c.decodeIfPresent(Bool.self, forKey: .showEdgeLight) ?? true
+        showInlineAvatar = try c.decodeIfPresent(Bool.self, forKey: .showInlineAvatar) ?? true
+        inlineAvatarSize = try c.decodeIfPresent(Double.self, forKey: .inlineAvatarSize) ?? 24
     }
 
     public static var `default`: ThemeMessages { ThemeMessages() }

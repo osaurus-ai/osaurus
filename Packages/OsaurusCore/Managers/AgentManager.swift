@@ -124,6 +124,31 @@ public final class AgentManager: ObservableObject {
         try? assignAddress(to: agent)
     }
 
+    /// Set or replace the custom avatar image for `agentId`. Writes the bytes
+    /// to disk under `agents/avatars/`, updates the agent record, and posts
+    /// `.agentUpdated`. Returns true on success.
+    @discardableResult
+    public func setCustomAvatar(_ data: Data, ext: String, for agentId: UUID) -> Bool {
+        guard var agent = AgentStore.load(id: agentId), !agent.isBuiltIn else { return false }
+        guard let filename = AgentStore.writeCustomAvatar(data, ext: ext, for: agentId) else {
+            return false
+        }
+        agent.customAvatarFilename = filename
+        // Clear mascot id when a custom image is set so the avatar stack
+        // resolves unambiguously to the user-provided image.
+        agent.avatar = nil
+        update(agent)
+        return true
+    }
+
+    /// Remove any custom avatar for `agentId` and clear the agent record.
+    public func clearCustomAvatar(for agentId: UUID) {
+        guard var agent = AgentStore.load(id: agentId), !agent.isBuiltIn else { return }
+        AgentStore.removeCustomAvatar(for: agentId)
+        agent.customAvatarFilename = nil
+        update(agent)
+    }
+
     /// Update an existing agent
     public func update(_ agent: Agent) {
         guard !agent.isBuiltIn else {
