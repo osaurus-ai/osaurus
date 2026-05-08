@@ -14,7 +14,7 @@ public struct ToolsOutdated {
         let fm = FileManager.default
         let root = PluginInstallManager.toolsRootDirectory()
         guard let pluginDirs = try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil) else {
-            print("(no tools installed)")
+            print("Инструменты не установлены")
             exit(EXIT_SUCCESS)
         }
         var any = false
@@ -28,11 +28,11 @@ public struct ToolsOutdated {
                 continue
             }
             if let inst = installed, available > inst {
-                print("\(pluginId)\tinstalled: \(inst)\tavailable: \(available)")
+                print("\(pluginId)\tустановлено: \(inst)\tдоступно: \(available)")
                 any = true
             }
         }
-        if !any { print("All up to date.") }
+        if !any { print("Все актуально.") }
         exit(EXIT_SUCCESS)
     }
 }

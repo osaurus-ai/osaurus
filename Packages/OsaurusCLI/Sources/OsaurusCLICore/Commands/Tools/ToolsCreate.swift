@@ -10,7 +10,7 @@ import Foundation
 public struct ToolsCreate {
     public static func execute(args: [String]) {
         guard let name = args.first, !name.isEmpty else {
-            fputs("Usage: osaurus tools create <name> [--language swift|rust]\n", stderr)
+            fputs("Использование: osaurus tools create <name> [--language swift|rust]\n", stderr)
             exit(EXIT_FAILURE)
         }
         var language = "swift"
@@ -20,7 +20,7 @@ public struct ToolsCreate {
         }
         let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
         scaffoldPlugin(name: name, language: language, rootDirectory: root)
-        print("Created plugin scaffold at ./\(name)")
+        print("Создан каркас плагина в ./\(name)")
         exit(EXIT_SUCCESS)
     }
 
@@ -64,7 +64,7 @@ public struct ToolsCreate {
         try? FileManager.default.createDirectory(at: webDir, withIntermediateDirectories: true)
         let indexHtml = """
             <!DOCTYPE html>
-            <html lang="en">
+            <html lang="ru">
             <head>
                 <meta charset="UTF-8">
                 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -72,7 +72,7 @@ public struct ToolsCreate {
             </head>
             <body>
                 <h1>\(displayName)</h1>
-                <p>Plugin web UI placeholder.</p>
+                <p>Заглушка веб-интерфейса плагина.</p>
             </body>
             </html>
             """
@@ -396,18 +396,18 @@ public struct ToolsCreate {
         let readme = """
             # \(name)
 
-            An Osaurus plugin (v2 ABI).
+            Плагин Osaurus (ABI v2).
 
-            ## Development
+            ## Разработка
 
-            Start dev mode from the project root. This builds the plugin, installs it
-            into Osaurus, and watches for source changes with automatic rebuild + reload:
+            Запустите режим разработки из корня проекта. Это соберёт плагин, установит его
+            в Osaurus и будет отслеживать изменения исходников с автоматической пересборкой и перезагрузкой:
 
             ```bash
             osaurus tools dev
             ```
 
-            With frontend hot module replacement (HMR):
+            С горячей заменой модулей фронтенда (HMR):
 
             ```bash
             # Terminal 1: start your frontend dev server
@@ -417,18 +417,18 @@ public struct ToolsCreate {
             osaurus tools dev --web-proxy http://localhost:5173
             ```
 
-            ## Publishing
+            ## Публикация
 
-            This project includes a GitHub Actions workflow (`.github/workflows/release.yml`) that
-            automatically builds and releases the plugin when you push a version tag.
+            В этом проекте есть workflow GitHub Actions (`.github/workflows/release.yml`), который
+            автоматически собирает и публикует плагин, когда вы отправляете тег версии.
 
-            To release:
+            Чтобы выпустить релиз:
             ```bash
             git tag v0.1.0
             git push origin v0.1.0
             ```
 
-            For manual packaging and distribution:
+            Для ручной упаковки и распространения:
 
             ```bash
             swift build -c release
@@ -436,23 +436,23 @@ public struct ToolsCreate {
             osaurus tools install ./dev.example.\(name)-0.1.0.zip
             ```
 
-            ## Plugin Structure
+            ## Структура плагина
 
-            This plugin uses the **v2 ABI** which supports:
-            - **Tools** - AI-callable functions
-            - **Routes** - HTTP endpoints (OAuth, webhooks, APIs)
-            - **Config** - Persistent key-value storage via `host.config_get/set/delete`
-            - **Database** - Per-plugin SQLite via `host.db_exec/db_query`
-            - **Web** - Static frontend assets served from `web/`
-            - **Logging** - Structured logging via `host.log`
-            - **Agent Dispatch** - Background agent tasks via `host.dispatch`
-            - **Inference** - LLM completions and embeddings via `host.complete/embed`
-            - **HTTP Client** - Outbound HTTP requests via `host.http_request`
-            - **Task Events** - Lifecycle callbacks via `on_task_event`
+            Этот плагин использует **ABI v2**, который поддерживает:
+            - **Инструменты** - функции, вызываемые ИИ
+            - **Маршруты** - HTTP-эндпоинты (OAuth, webhooks, API)
+            - **Конфиг** - постоянное key-value-хранилище через `host.config_get/set/delete`
+            - **База данных** - SQLite на плагин через `host.db_exec/db_query`
+            - **Веб** - статические фронтенд-ассеты, отдаваемые из `web/`
+            - **Логирование** - структурированное логирование через `host.log`
+            - **Диспетчер агентов** - фоновые задачи агентов через `host.dispatch`
+            - **Инференс** - completions и embeddings LLM через `host.complete/embed`
+            - **HTTP-клиент** - исходящие HTTP-запросы через `host.http_request`
+            - **События задач** - callbacks жизненного цикла через `on_task_event`
 
-            Plugin metadata is defined in `get_manifest()` in Plugin.swift.
-            The `osaurus-plugin.json` file at the project root stores the plugin_id
-            and version used by `osaurus tools dev`.
+            Метаданные плагина определяются в `get_manifest()` в Plugin.swift.
+            Файл `osaurus-plugin.json` в корне проекта хранит `plugin_id`
+            и версию, используемые `osaurus tools dev`.
             """
         try? readme.write(to: dir.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
 
@@ -747,35 +747,35 @@ public struct ToolsCreate {
         let readme = """
             # \(name)
 
-            An Osaurus plugin (v2 ABI) written in Rust.
+            Плагин Osaurus (ABI v2), написанный на Rust.
 
-            ## Development
+            ## Разработка
 
-            Start dev mode from the project root. This builds the plugin, installs it
-            into Osaurus, and watches for source changes with automatic rebuild + reload:
+            Запустите режим разработки из корня проекта. Это соберёт плагин, установит его
+            в Osaurus и будет отслеживать изменения исходников с автоматической пересборкой и перезагрузкой:
 
             ```bash
             osaurus tools dev
             ```
 
-            With frontend hot module replacement (HMR):
+            С горячей заменой модулей фронтенда (HMR):
 
             ```bash
             osaurus tools dev --web-proxy http://localhost:5173
             ```
 
-            ## Publishing
+            ## Публикация
 
-            This project includes a GitHub Actions workflow (`.github/workflows/release.yml`) that
-            automatically builds and releases the plugin when you push a version tag.
+            В этом проекте есть workflow GitHub Actions (`.github/workflows/release.yml`), который
+            автоматически собирает и публикует плагин, когда вы отправляете тег версии.
 
-            To release:
+            Чтобы выпустить релиз:
             ```bash
             git tag v0.1.0
             git push origin v0.1.0
             ```
 
-            For manual packaging and distribution:
+            Для ручной упаковки и распространения:
 
             ```bash
             cargo build --release
@@ -783,23 +783,23 @@ public struct ToolsCreate {
             osaurus tools install ./dev.example.\(name)-0.1.0.zip
             ```
 
-            ## Plugin Structure
+            ## Структура плагина
 
-            This plugin uses the **v2 ABI** which supports:
-            - **Tools** - AI-callable functions
-            - **Routes** - HTTP endpoints (OAuth, webhooks, APIs)
-            - **Config** - Persistent key-value storage via `host.config_get/set/delete`
-            - **Database** - Per-plugin SQLite via `host.db_exec/db_query`
-            - **Web** - Static frontend assets served from `web/`
-            - **Logging** - Structured logging via `host.log`
-            - **Agent Dispatch** - Background agent tasks via `host.dispatch`
-            - **Inference** - LLM completions and embeddings via `host.complete/embed`
-            - **HTTP Client** - Outbound HTTP requests via `host.http_request`
-            - **Task Events** - Lifecycle callbacks via `on_task_event`
+            Этот плагин использует **ABI v2**, который поддерживает:
+            - **Инструменты** - функции, вызываемые ИИ
+            - **Маршруты** - HTTP-эндпоинты (OAuth, webhooks, API)
+            - **Конфиг** - постоянное key-value-хранилище через `host.config_get/set/delete`
+            - **База данных** - SQLite на плагин через `host.db_exec/db_query`
+            - **Веб** - статические фронтенд-ассеты, отдаваемые из `web/`
+            - **Логирование** - структурированное логирование через `host.log`
+            - **Диспетчер агентов** - фоновые задачи агентов через `host.dispatch`
+            - **Инференс** - completions и embeddings LLM через `host.complete/embed`
+            - **HTTP-клиент** - исходящие HTTP-запросы через `host.http_request`
+            - **События задач** - callbacks жизненного цикла через `on_task_event`
 
-            Plugin metadata is defined in `plugin_get_manifest()` in `src/lib.rs`.
-            The `osaurus-plugin.json` file at the project root stores the plugin_id
-            and version used by `osaurus tools dev`.
+            Метаданные плагина определяются в `plugin_get_manifest()` в `src/lib.rs`.
+            Файл `osaurus-plugin.json` в корне проекта хранит `plugin_id`
+            и версию, используемые `osaurus tools dev`.
             """
         try? readme.write(to: dir.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
 

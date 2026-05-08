@@ -19,9 +19,9 @@ public struct ToolsReset {
         if fm.fileExists(atPath: registryClone.path) {
             do {
                 try fm.removeItem(at: registryClone)
-                print("Reset plugin registry cache")
+                print("Кэш реестра плагинов сброшен")
             } catch {
-                fputs("Warning: failed to remove registry cache: \(error)\n", stderr)
+                fputs("Предупреждение: не удалось удалить кэш реестра: \(error)\n", stderr)
             }
         }
 
@@ -30,7 +30,7 @@ public struct ToolsReset {
             let url = toolsRoot.appendingPathComponent(name, isDirectory: false)
             if fm.fileExists(atPath: url.path) {
                 try? fm.removeItem(at: url)
-                print("Cleared \(name)")
+                print("Очищено \(name)")
             }
         }
 
@@ -45,7 +45,7 @@ public struct ToolsReset {
                     try? fm.removeItem(at: entry)
                     count += 1
                 }
-                print("Removed \(count) installed plugin(s)")
+                print("Удалено \(count) установленных плагинов")
             }
         }
 
@@ -54,11 +54,11 @@ public struct ToolsReset {
             defaults.removeObject(forKey: "LaunchGuard.startupInProgress")
             defaults.removeObject(forKey: "LaunchGuard.consecutiveCrashCount")
             defaults.synchronize()
-            print("Reset crash recovery state")
+            print("Состояние восстановления после сбоев сброшено")
         }
 
         AppControl.postDistributedNotification(name: "com.dinoki.osaurus.control.toolsReload", userInfo: [:])
-        print("Done. Restart Osaurus to apply changes.")
+        print("Готово. Перезапустите Osaurus, чтобы применить изменения.")
         exit(EXIT_SUCCESS)
     }
 }

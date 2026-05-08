@@ -21,21 +21,21 @@ enum BundleLoadError: Error, CustomStringConvertible {
     var description: String {
         switch self {
         case .missingPath:
-            return "Error: Bundle path required\n  Usage: osaurus bundle load <path.mcpb>"
+            return "Ошибка: требуется путь к bundle\n  Использование: osaurus bundle load <path.mcpb>"
         case let .fileNotFound(path):
-            return "Error: File not found: \(path)"
+            return "Ошибка: файл не найден: \(path)"
         case .invalidExtension:
-            return "Error: File must have .mcpb extension"
+            return "Ошибка: файл должен иметь расширение .mcpb"
         case let .extractionFailed(reason):
-            return "Error: Failed to extract bundle: \(reason)"
+            return "Ошибка: не удалось извлечь bundle: \(reason)"
         case .missingManifest:
-            return "Error: manifest.json not found in bundle"
+            return "Ошибка: manifest.json не найден в bundle"
         case let .invalidManifest(reason):
-            return "Error: Invalid manifest format: \(reason)"
+            return "Ошибка: неверный формат манифеста: \(reason)"
         case let .serverLaunchFailed(reason):
-            return "Error: Failed to start MCP server: \(reason)"
+            return "Ошибка: не удалось запустить MCP-сервер: \(reason)"
         case let .toolDiscoveryFailed(reason):
-            return "Error: Failed to discover tools: \(reason)"
+            return "Ошибка: не удалось обнаружить инструменты: \(reason)"
         }
     }
 }
@@ -93,10 +93,10 @@ struct BundleLoad {
         let manifest = try bundleInfo.parseManifest()
 
         // Display bundle info
-        print("Bundle: \(displayName ?? manifest.displayName ?? manifest.name)")
-        print("Version: \(manifest.version)")
+        print("Пакет: \(displayName ?? manifest.displayName ?? manifest.name)")
+        print("Версия: \(manifest.version)")
         if let description = manifest.description {
-            print("Description: \(description)")
+            print("Описание: \(description)")
         }
         print("")
 
@@ -111,19 +111,19 @@ struct BundleLoad {
             let tools = try await serverInfo.discoverTools()
 
             if tools.isEmpty {
-                print("No tools discovered.")
+                print("Инструменты не найдены.")
             } else {
-                print("Discovered \(tools.count) tool(s):")
+                print("Найдено \(tools.count) инструмент(ов):")
                 for tool in tools {
                     print("  - \(tool.name): \(tool.description ?? "")")
                 }
             }
         } catch {
-            print("Warning: Could not discover tools: \(error)")
+            print("Предупреждение: не удалось обнаружить инструменты: \(error)")
         }
 
         print("")
-        print("Server running. Press Ctrl+C to stop.")
+        print("Сервер запущен. Нажмите Ctrl+C, чтобы остановить.")
         print("")
 
         // Keep alive until interrupt

@@ -12,7 +12,7 @@ public struct RunCommand: Command {
 
     public static func execute(args: [String]) async {
         guard let modelArg = args.first, !modelArg.isEmpty else {
-            fputs("Missing required <model_id>\n\n", stderr)
+            fputs("Отсутствует обязательный <model_id>\n\n", stderr)
             // printUsage() // Usage is now handled by Main or Help command
             exit(EXIT_FAILURE)
         }
@@ -22,7 +22,7 @@ public struct RunCommand: Command {
         let sessionId = "cli-\(UUID().uuidString.prefix(8))"
         var transcript: [ChatMessage] = []
 
-        print("Chatting with \(modelArg). Type 'exit' to quit.\n")
+        print("Чат с \(modelArg). Чтобы выйти, введите 'exit'.\n")
         while true {
             // Prompt
             fputs("> ", stdout)
@@ -36,7 +36,7 @@ public struct RunCommand: Command {
 
             // Build streaming request
             guard let url = URL(string: "http://127.0.0.1:\(port)/chat") else {
-                fputs("Invalid URL for chat\n", stderr)
+                fputs("Неверный URL для чата\n", stderr)
                 exit(EXIT_FAILURE)
             }
             var request = URLRequest(url: url)
@@ -57,7 +57,7 @@ public struct RunCommand: Command {
                 let payload = try JSONEncoder().encode(body)
                 request.httpBody = payload
             } catch {
-                fputs("Failed to encode chat request: \(error.localizedDescription)\n", stderr)
+                fputs("Не удалось закодировать запрос чата: \(error.localizedDescription)\n", stderr)
                 exit(EXIT_FAILURE)
             }
 
@@ -70,7 +70,7 @@ public struct RunCommand: Command {
                         for try await chunk in bytes { errorData.append(contentsOf: [chunk]) }
                     } catch { /* ignore stream read errors on failure */  }
                     let message = String(data: errorData, encoding: .utf8) ?? ""
-                    fputs("Chat request failed (status \(http.statusCode)). \n\(message)\n", stderr)
+                    fputs("Запрос чата не выполнен (статус \(http.statusCode)).\n\(message)\n", stderr)
                     exit(EXIT_FAILURE)
                 }
 
@@ -100,11 +100,11 @@ public struct RunCommand: Command {
                     transcript.append(ChatMessage(role: "assistant", content: assistantAggregate))
                 }
             } catch {
-                fputs("Streaming error: \(error.localizedDescription)\n", stderr)
+                fputs("Ошибка потоковой передачи: \(error.localizedDescription)\n", stderr)
                 exit(EXIT_FAILURE)
             }
         }
-        print("Goodbye.")
+        print("До свидания.")
         exit(EXIT_SUCCESS)
     }
 }

@@ -27,9 +27,9 @@ public struct ToolsUpgrade {
             if let latest, installed == nil || latest > installed! {
                 do {
                     _ = try await PluginInstallManager.shared.install(pluginId: pid, preferredVersion: latest)
-                    print("Upgraded \(pid) to \(latest)")
+                    print("Обновлён \(pid) до \(latest)")
                 } catch {
-                    fputs("Upgrade failed for \(pid): \(error)\n", stderr)
+                    fputs("Не удалось обновить \(pid): \(error)\n", stderr)
                     failures += 1
                 }
             }

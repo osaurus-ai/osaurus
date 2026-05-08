@@ -49,7 +49,7 @@ public struct AppControl {
         }
         if !launched {
             fputs(
-                "Could not launch Osaurus.app. Install it with Homebrew: brew install --cask osaurus\n",
+                "Не удалось запустить Osaurus.app. Установите его через Homebrew: brew install --cask osaurus\n",
                 stderr
             )
             return

@@ -12,13 +12,13 @@ public struct ToolsList {
         let root = Configuration.toolsRootDirectory()
         let fm = FileManager.default
         if !fm.fileExists(atPath: root.path) {
-            print("(no plugins installed)")
+            print("Плагины не установлены")
             exit(EXIT_SUCCESS)
         }
         do {
             let contents = try fm.contentsOfDirectory(atPath: root.path)
             if contents.isEmpty {
-                print("(no plugins installed)")
+                print("Плагины не установлены")
             } else {
                 for entry in contents.sorted() {
                     // Skip hidden files
@@ -30,7 +30,7 @@ public struct ToolsList {
                     let currentLink = pluginDir.appendingPathComponent("current")
                     guard let versionName = try? fm.destinationOfSymbolicLink(atPath: currentLink.path) else {
                         // No current symlink - just print the directory name
-                        print("\(entry)  (no active version)")
+                        print("\(entry)  (нет активной версии)")
                         continue
                     }
 
@@ -45,16 +45,16 @@ public struct ToolsList {
                     {
                         let pluginId = (obj["plugin_id"] as? String) ?? entry
                         let version = (obj["version"] as? String) ?? versionName
-                        print("\(pluginId)  version=\(version)")
+                        print("\(pluginId)  версия=\(version)")
                     } else {
                         // Receipt not found - print basic info from directory structure
-                        print("\(entry)  version=\(versionName)")
+                        print("\(entry)  версия=\(versionName)")
                     }
                 }
             }
             exit(EXIT_SUCCESS)
         } catch {
-            fputs("Failed to read tools directory: \(error)\n", stderr)
+            fputs("Не удалось прочитать каталог инструментов: \(error)\n", stderr)
             exit(EXIT_FAILURE)
         }
     }

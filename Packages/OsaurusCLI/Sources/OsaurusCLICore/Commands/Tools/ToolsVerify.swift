@@ -14,7 +14,7 @@ public struct ToolsVerify {
         let fm = FileManager.default
         let root = PluginInstallManager.toolsRootDirectory()
         guard let pluginDirs = try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil) else {
-            print("(no tools installed)")
+            print("Инструменты не установлены")
             exit(EXIT_SUCCESS)
         }
         var failures = 0
@@ -41,9 +41,9 @@ public struct ToolsVerify {
                 let digest = CryptoKit.SHA256.hash(data: dylibData)
                 let sha = Data(digest).map { String(format: "%02x", $0) }.joined()
                 if sha.lowercased() == receipt.dylib_sha256.lowercased() {
-                    print("OK  \(receipt.plugin_id)@\(receipt.version)  \(receipt.dylib_filename)")
+                    print("ОК  \(receipt.plugin_id)@\(receipt.version)  \(receipt.dylib_filename)")
                 } else {
-                    print("FAIL  \(receipt.plugin_id)@\(receipt.version)  expected \(receipt.dylib_sha256) got \(sha)")
+                    print("ОШИБКА  \(receipt.plugin_id)@\(receipt.version)  ожидалось \(receipt.dylib_sha256), получено \(sha)")
                     failures += 1
                 }
             }

@@ -13,7 +13,7 @@ public struct BundleCommand: Command {
     public static func execute(args: [String]) async {
         guard let sub = args.first else {
             fputs(
-                "Missing bundle subcommand. Use one of: load\n",
+                "Отсутствует подкоманда bundle. Используйте одну из: load\n",
                 stderr
             )
             exit(EXIT_FAILURE)
@@ -23,7 +23,7 @@ public struct BundleCommand: Command {
         case "load":
             await BundleLoad.execute(args: rest)
         default:
-            fputs("Unknown bundle subcommand: \(sub)\n", stderr)
+            fputs("Неизвестная подкоманда bundle: \(sub)\n", stderr)
             exit(EXIT_FAILURE)
         }
     }

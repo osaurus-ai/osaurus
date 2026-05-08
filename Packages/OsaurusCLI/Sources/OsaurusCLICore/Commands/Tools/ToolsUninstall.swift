@@ -10,7 +10,7 @@ import Foundation
 public struct ToolsUninstall {
     public static func execute(args: [String]) {
         guard let target = args.first, !target.isEmpty else {
-            fputs("Usage: osaurus tools uninstall <plugin_id|folder|path>\n", stderr)
+            fputs("Использование: osaurus tools uninstall <plugin_id|folder|path>\n", stderr)
             exit(EXIT_FAILURE)
         }
         let fm = FileManager.default
@@ -64,14 +64,14 @@ public struct ToolsUninstall {
             }
         }
         guard let dir = dirToRemove else {
-            fputs("Could not locate installed plugin for '\(target)'\n", stderr)
+            fputs("Не удалось найти установленный плагин для '\(target)'\n", stderr)
             exit(EXIT_FAILURE)
         }
         do {
             try fm.removeItem(at: dir)
-            print("Uninstalled \(dir.lastPathComponent)")
+            print("Удалён \(dir.lastPathComponent)")
         } catch {
-            fputs("Failed to uninstall: \(error)\n", stderr)
+            fputs("Не удалось удалить плагин: \(error)\n", stderr)
             exit(EXIT_FAILURE)
         }
         // Notify app to reload

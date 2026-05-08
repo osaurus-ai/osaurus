@@ -37,20 +37,20 @@ public struct ServeCommand: Command {
         if expose && !assumeYes {
             // Security warning prompt
             let warning = """
-                WARNING: Exposing Osaurus to the local network will allow other devices on your LAN
-                to connect to your server. Make sure you trust your network and understand the risks.
-                Proceed with exposure? [y/N]: 
+                ВНИМАНИЕ: Если вы откроете Osaurus в локальной сети, другие устройства в вашей LAN
+                смогут подключаться к вашему серверу. Убедитесь, что вы доверяете своей сети и понимаете риски.
+                Продолжить публикацию? [y/N]:\u{20}
                 """
             fputs(warning, stderr)
             fflush(stderr)
             if let line = readLine(strippingNewline: true) {
                 let answer = line.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
                 if answer != "y" && answer != "yes" {
-                    fputs("aborted\n", stderr)
+                    fputs("прервано\n", stderr)
                     exit(EXIT_FAILURE)
                 }
             } else {
-                fputs("aborted\n", stderr)
+                fputs("прервано\n", stderr)
                 exit(EXIT_FAILURE)
             }
         }
@@ -76,7 +76,7 @@ public struct ServeCommand: Command {
         var relaunched = false
         while Date() < deadline {
             if await ServerControl.checkHealth(port: portToCheck) {
-                print("listening on http://127.0.0.1:\(portToCheck)")
+                print("Сервер слушает на http://127.0.0.1:\(portToCheck)")
                 exit(EXIT_SUCCESS)
             }
             // If the app was still initializing and missed the first signal, retry once after ~3s
@@ -98,13 +98,13 @@ public struct ServeCommand: Command {
         let altPort = min(max(portToCheck + 1, 1), 65535)
         fputs(
             """
-            Failed to start server on port \(portToCheck)
-            Hints:
-              - The port may be busy. Try: osaurus serve --port \(altPort)
-              - Ensure Osaurus.app is installed: brew install --cask osaurus
-              - Try launching the app first, then serve:
+            Не удалось запустить сервер на порту \(portToCheck)
+            Подсказки:
+              - Порт может быть занят. Попробуйте: osaurus serve --port \(altPort)
+              - Убедитесь, что Osaurus.app установлен: brew install --cask osaurus
+              - Попробуйте сначала запустить приложение, затем serve:
                 open -a /Applications/Osaurus.app && osaurus serve
-              - You can also open the UI: osaurus ui
+              - Также можно открыть интерфейс: osaurus ui
             """.appending("\n"),
             stderr
         )

@@ -20,7 +20,7 @@ public struct ListCommand: Command {
         let port = await ServerControl.ensureServerReadyOrExit()
 
         guard let url = URL(string: "http://127.0.0.1:\(port)/models") else {
-            fputs("Invalid URL for models\n", stderr)
+            fputs("Неверный URL для моделей\n", stderr)
             exit(EXIT_FAILURE)
         }
         var request = URLRequest(url: url)
@@ -30,23 +30,23 @@ public struct ListCommand: Command {
 
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
-            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-                fputs(
-                    "Failed to fetch models (status \((response as? HTTPURLResponse)?.statusCode ?? -1))\n",
-                    stderr
-                )
-                exit(EXIT_FAILURE)
-            }
-            let decoder = JSONDecoder()
-            let list = try decoder.decode(ModelsListResponse.self, from: data)
-            if list.data.isEmpty {
-                print("(no models found)")
+                guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+                    fputs(
+                        "Не удалось получить список моделей (статус \((response as? HTTPURLResponse)?.statusCode ?? -1))\n",
+                        stderr
+                    )
+                    exit(EXIT_FAILURE)
+                }
+                let decoder = JSONDecoder()
+                let list = try decoder.decode(ModelsListResponse.self, from: data)
+                if list.data.isEmpty {
+                    print("Модели не найдены")
+                    exit(EXIT_SUCCESS)
+                }
+                for m in list.data { print(m.id) }
                 exit(EXIT_SUCCESS)
-            }
-            for m in list.data { print(m.id) }
-            exit(EXIT_SUCCESS)
-        } catch {
-            fputs("Error fetching models: \(error.localizedDescription)\n", stderr)
+            } catch {
+            fputs("Ошибка при получении моделей: \(error.localizedDescription)\n", stderr)
             exit(EXIT_FAILURE)
         }
     }

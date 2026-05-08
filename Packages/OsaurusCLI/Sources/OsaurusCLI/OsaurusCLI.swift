@@ -58,7 +58,7 @@ struct OsaurusCLI {
     static func main() async {
         let arguments = CommandLine.arguments.dropFirst()
         guard let cmd = parseCommand(arguments) else {
-            if let first = arguments.first { fputs("Unknown or invalid command: \(first)\n\n", stderr) }
+            if let first = arguments.first { fputs("Неизвестная или недопустимая команда: \(first)\n\n", stderr) }
             printUsage()
             exit(EXIT_FAILURE)
         }
@@ -98,45 +98,45 @@ struct OsaurusCLI {
 
     private static func printUsage() {
         let usage = """
-            osaurus - CLI for Osaurus
+            osaurus - CLI для Osaurus
 
-            Usage:
+            Использование:
               osaurus serve [--port N] [--expose] [--yes|-y]
-                                      Start the server (default: localhost only). If --expose
-                                      is set, a warning prompt will appear unless --yes is provided.
-              osaurus stop            Stop the server
-              osaurus mcp             Run MCP stdio server proxying to local HTTP
-              osaurus version         Show version (also: --version or -v)
-              osaurus status          Check if the Osaurus server is running
-              osaurus list            List available model IDs
-              osaurus show <model_id> Show metadata for a model
-              osaurus pull <model_id> Download a model from Hugging Face
-              osaurus run <model_id>  Chat with a downloaded model (interactive)
-              osaurus ui              Show the Osaurus menu popover in the menu bar
-              osaurus tools list      List installed tools
+                                      Запускает сервер (по умолчанию только localhost). Если указан --expose,
+                                      появится предупреждение, если не передан --yes.
+              osaurus stop            Останавливает сервер
+              osaurus mcp             Запускает MCP stdio сервер с проксированием к локальному HTTP
+              osaurus version         Показывает версию (также: --version или -v)
+              osaurus status          Проверяет, запущен ли сервер Osaurus
+              osaurus list            Показывает доступные идентификаторы моделей
+              osaurus show <model_id> Показывает метаданные модели
+              osaurus pull <model_id> Скачивает модель с Hugging Face
+              osaurus run <model_id>  Общается со скачанной моделью (интерактивно)
+              osaurus ui              Показывает всплывающее меню Osaurus в строке меню
+              osaurus tools list      Показывает установленные инструменты
               osaurus tools install <plugin_id|url-or-path>
-                                      Install a tool from registry or local/URL
+                                      Устанавливает инструмент из реестра или из локального пути/URL
               osaurus tools search <query>
-                                      Search for tools in the registry
-              osaurus tools outdated  Check for outdated tools
-              osaurus tools upgrade   Upgrade installed tools
+                                      Ищет инструменты в реестре
+              osaurus tools outdated  Проверяет устаревшие инструменты
+              osaurus tools upgrade   Обновляет установленные инструменты
               osaurus tools uninstall <tool_name>
-                                      Uninstall a tool
-              osaurus tools verify    Verify dylib integrity of installed tools
+                                      Удаляет инструмент
+              osaurus tools verify    Проверяет целостность dylib установленных инструментов
               osaurus tools create <name> [--language swift|rust]
-                                      Scaffold a v2 plugin project
+                                      Создаёт каркас проекта плагина v2
               osaurus tools package <plugin_id> <version> [dylib_path]
-                                      Package plugin into a zip (includes web/, docs)
-              osaurus tools reload    Ask the app to rescan tools
+                                      Пакует плагин в zip (включая web/ и документацию)
+              osaurus tools reload    Просит приложение заново просканировать инструменты
               osaurus tools rollback <plugin_id>
-                                      Roll back a tool to its previous version
+                                      Откатывает инструмент к предыдущей версии
               osaurus tools dev <plugin_id> [--web-proxy <url>]
-                                      Dev mode with hot reload and optional web proxy
+                                      Режим разработки с горячей перезагрузкой и необязательным веб-прокси
               osaurus manifest extract <dylib>
-                                      Extract manifest JSON from built plugin
+                                      Извлекает JSON-манифест из собранного плагина
               osaurus bundle load <path.mcpb> [--name "Display Name"]
-                                      Load and run an MCP Bundle (.mcpb file)
-              osaurus help            Show this help
+                                      Загружает и запускает MCP Bundle (.mcpb)
+              osaurus help            Показывает эту справку
 
             """
         print(usage)

@@ -11,21 +11,21 @@ import OsaurusRepository
 public struct ToolsRollback {
     public static func execute(args: [String]) {
         guard let pluginId = args.first, !pluginId.isEmpty else {
-            fputs("Usage: osaurus tools rollback <plugin_id>\n", stderr)
+            fputs("Использование: osaurus tools rollback <plugin_id>\n", stderr)
             exit(EXIT_FAILURE)
         }
         let versions = InstalledPluginsStore.shared.installedVersions(pluginId: pluginId)
         guard versions.count >= 2 else {
-            fputs("No previous version to roll back to for \(pluginId)\n", stderr)
+            fputs("Для \(pluginId) нет предыдущей версии для отката\n", stderr)
             exit(EXIT_FAILURE)
         }
         let target = versions[1]  // previous
         do {
             try PluginInstallManager.updateCurrentSymlink(pluginId: pluginId, version: target)
-            print("Rolled back \(pluginId) to \(target)")
+            print("Откат выполнен: \(pluginId) -> \(target)")
             exit(EXIT_SUCCESS)
         } catch {
-            fputs("Rollback failed: \(error)\n", stderr)
+            fputs("Откат не удался: \(error)\n", stderr)
             exit(EXIT_FAILURE)
         }
     }

@@ -36,7 +36,7 @@ public struct ServerControl {
             healthy = await checkHealth(port: port)
         }
         guard healthy else {
-            fputs("Server is not running. Start it with 'osaurus serve'\n", stderr)
+            fputs("Сервер не запущен. Запустите его командой 'osaurus serve'\n", stderr)
             exit(EXIT_FAILURE)
         }
         return port

@@ -13,7 +13,7 @@ public struct ToolsCommand: Command {
     public static func execute(args: [String]) async {
         guard let sub = args.first else {
             fputs(
-                "Missing tools subcommand. Use one of: create, package, install, list, uninstall, reload, search, outdated, upgrade, rollback, verify, dev, reset\n",
+                "Отсутствует подкоманда tools. Используйте одну из: create, package, install, list, uninstall, reload, search, outdated, upgrade, rollback, verify, dev, reset\n",
                 stderr
             )
             exit(EXIT_FAILURE)
@@ -47,7 +47,7 @@ public struct ToolsCommand: Command {
         case "reset":
             ToolsReset.execute(args: rest)
         default:
-            fputs("Unknown tools subcommand: \(sub)\n", stderr)
+            fputs("Неизвестная подкоманда tools: \(sub)\n", stderr)
             exit(EXIT_FAILURE)
         }
     }
