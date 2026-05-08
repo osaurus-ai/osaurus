@@ -1280,9 +1280,14 @@ extension AppDelegate {
             .environmentObject(self.updater)
             .environment(\.theme, themeManager.currentTheme)
 
+            let themeAppearance = NSAppearance(
+                named: themeManager.currentTheme.isDark ? .darkAqua : .aqua
+            )
+
             // Reuse existing window if it exists
             if let existingWindow = windowManager.window(for: .management) {
                 existingWindow.contentViewController = NSHostingController(rootView: root)
+                existingWindow.appearance = themeAppearance
                 windowManager.show(.management, center: false)  // Don't re-center if user moved it
                 NSLog("[Management] Reused existing window and brought to front")
                 return
@@ -1293,6 +1298,16 @@ extension AppDelegate {
                 root
             }
             window.isReleasedWhenClosed = false
+            window.appearance = themeAppearance
+
+            // keep window appearance in sync with theme changes so AppKit
+            // chrome stays visible after live theme switches
+            themeManager.$currentTheme
+                .receive(on: DispatchQueue.main)
+                .sink { [weak window] theme in
+                    window?.appearance = NSAppearance(named: theme.isDark ? .darkAqua : .aqua)
+                }
+                .store(in: &self.cancellables)
 
             // Set center to false so the window respects its saved position (via setFrameAutosaveName)
             // instead of being manually centered by the WindowManager on every show.

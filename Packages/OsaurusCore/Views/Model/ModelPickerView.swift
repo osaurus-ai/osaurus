@@ -268,6 +268,7 @@ struct ModelPickerView: View {
                 }
                 TextField("", text: $searchText)
                     .textFieldStyle(.plain)
+                    .focusEffectDisabled()
                     .font(.system(size: 13))
                     .foregroundColor(theme.primaryText)
             }
