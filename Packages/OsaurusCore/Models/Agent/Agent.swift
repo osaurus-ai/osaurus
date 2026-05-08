@@ -107,6 +107,10 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
     /// Optional mascot avatar identifier. nil falls back
     /// to the agent name's first letter monogram in the UI
     public var avatar: String?
+    /// Filename of a user-supplied custom avatar image, stored under
+    /// `OsaurusPaths.agents()/avatars/`. When set, takes precedence over
+    /// `avatar` in the avatar UI. nil = no custom image.
+    public var customAvatarFilename: String?
 
     public init(
         id: UUID = UUID(),
@@ -132,7 +136,8 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         manualSkillNames: [String]? = nil,
         disableTools: Bool? = nil,
         disableMemory: Bool? = nil,
-        avatar: String? = nil
+        avatar: String? = nil,
+        customAvatarFilename: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -158,6 +163,20 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         self.disableTools = disableTools
         self.disableMemory = disableMemory
         self.avatar = avatar
+        self.customAvatarFilename = customAvatarFilename
+    }
+
+    // MARK: - Custom avatar resolution
+
+    /// Absolute URL of the custom avatar image, if one is set and the file
+    /// exists on disk. Returns nil when no custom avatar is configured or
+    /// the file has been removed out from under us.
+    public var customAvatarURL: URL? {
+        guard let name = customAvatarFilename, !name.isEmpty else { return nil }
+        let url = OsaurusPaths.agents()
+            .appendingPathComponent("avatars", isDirectory: true)
+            .appendingPathComponent(name)
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
     }
 
     // MARK: - Localized Display Helpers
@@ -241,6 +260,7 @@ extension Agent {
         disableTools = try c.decodeIfPresent(Bool.self, forKey: .disableTools)
         disableMemory = try c.decodeIfPresent(Bool.self, forKey: .disableMemory)
         avatar = try c.decodeIfPresent(String.self, forKey: .avatar)
+        customAvatarFilename = try c.decodeIfPresent(String.self, forKey: .customAvatarFilename)
     }
 }
 

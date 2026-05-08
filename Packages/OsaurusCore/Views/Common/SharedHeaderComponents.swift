@@ -168,6 +168,7 @@ struct AgentPill: View {
                 name: agent.name,
                 tint: agentColorFor(agent.name),
                 diameter: size,
+                customImageURL: agent.customAvatarURL,
                 monogramFontSize: size * 0.45,
                 borderWidth: 1.5
             )

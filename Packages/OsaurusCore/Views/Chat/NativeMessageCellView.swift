@@ -16,6 +16,9 @@ struct CellRenderingContext {
     var width: CGFloat
     let agentName: String
     let agentAvatar: String?
+    /// Absolute filesystem path to a user-supplied custom avatar image.
+    /// When present, takes precedence over `agentAvatar` (mascot id).
+    let agentCustomAvatarPath: String?
     let isStreaming: Bool
     let lastAssistantTurnId: UUID?
     let theme: any ThemeProtocol
@@ -53,7 +56,13 @@ final class NativeHeaderView: NSView {
     private var avatarLeadingConstraint: NSLayoutConstraint?
     private var nameLeadingToAvatar: NSLayoutConstraint?
     private var nameLeadingToSelf: NSLayoutConstraint?
-    private static let avatarSize: CGFloat = 24
+    /// Default avatar diameter when the theme doesn't provide one. Theme
+    /// override comes through `configure(...)` and is clamped to [16, 36]
+    /// before being applied via `avatarSizeConstraints`.
+    private static let defaultAvatarSize: CGFloat = 24
+    private var avatarWidthConstraint: NSLayoutConstraint?
+    private var avatarHeightConstraint: NSLayoutConstraint?
+    private var currentAvatarSize: CGFloat = NativeHeaderView.defaultAvatarSize
 
     private var turnId: UUID = UUID()
     private var onCopy: ((UUID) -> Void)?
@@ -78,7 +87,7 @@ final class NativeHeaderView: NSView {
         avatarImageView.imageScaling = .scaleProportionallyUpOrDown
         avatarImageView.isHidden = true
         avatarImageView.wantsLayer = true
-        avatarImageView.layer?.cornerRadius = Self.avatarSize / 2
+        avatarImageView.layer?.cornerRadius = Self.defaultAvatarSize / 2
         avatarImageView.layer?.masksToBounds = true
         avatarImageView.layer?.borderWidth = 1
         addSubview(avatarImageView)
@@ -109,11 +118,16 @@ final class NativeHeaderView: NSView {
         nameLeadingToAvatar = nameToAvatar
         nameLeadingToSelf = nameToSelf
 
+        let avatarW = avatarImageView.widthAnchor.constraint(equalToConstant: Self.defaultAvatarSize)
+        let avatarH = avatarImageView.heightAnchor.constraint(equalToConstant: Self.defaultAvatarSize)
+        avatarWidthConstraint = avatarW
+        avatarHeightConstraint = avatarH
+
         NSLayoutConstraint.activate([
             avatarLeading,
             avatarImageView.centerYAnchor.constraint(equalTo: centerYAnchor),
-            avatarImageView.widthAnchor.constraint(equalToConstant: Self.avatarSize),
-            avatarImageView.heightAnchor.constraint(equalToConstant: Self.avatarSize),
+            avatarW,
+            avatarH,
             nameLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
             actionStack.trailingAnchor.constraint(equalTo: trailingAnchor),
             actionStack.centerYAnchor.constraint(equalTo: centerYAnchor),
@@ -125,6 +139,7 @@ final class NativeHeaderView: NSView {
         role: MessageRole,
         name: String,
         avatar: String?,
+        customAvatarPath: String?,
         isEditing: Bool,
         isHovered: Bool,
         theme: any ThemeProtocol,
@@ -144,14 +159,43 @@ final class NativeHeaderView: NSView {
         self.currentRole = role
         self.currentTheme = theme
 
-        // Show the mascot only on assistant messages and only when a known
-        // mascot is set; monogram fallback intentionally renders nothing here.
-        let mascotImage: NSImage? = {
-            guard role == .assistant, let avatar, !avatar.isEmpty else { return nil }
-            return Bundle.module.image(forResource: "osaurus-avatar-\(avatar)")
+        // Resolve theme-driven sizing + visibility first so avatar generation
+        // matches the actual rendered size. Clamped to a sensible UI range
+        // even if a malformed theme JSON lands here.
+        let themeSize = CGFloat(max(16, min(36, theme.inlineAvatarSize)))
+        if currentAvatarSize != themeSize {
+            currentAvatarSize = themeSize
+            avatarWidthConstraint?.constant = themeSize
+            avatarHeightConstraint?.constant = themeSize
+            avatarImageView.layer?.cornerRadius = themeSize / 2
+        }
+
+        // Assistant messages always show *some* avatar (custom > mascot >
+        // monogram) so the chat header is visually consistent regardless of
+        // which avatar mode the user picked, unless the theme opts out via
+        // `showInlineAvatar`. User messages hide the avatar.
+        let resolved: NSImage? = {
+            guard role == .assistant, theme.showInlineAvatar else { return nil }
+            if let path = customAvatarPath, !path.isEmpty {
+                let url = URL(fileURLWithPath: path)
+                if let img = AvatarImageCache.shared.image(for: url) { return img }
+            }
+            if let avatar, !avatar.isEmpty,
+               let mascot = Bundle.module.image(forResource: "osaurus-avatar-\(avatar)") {
+                return mascot
+            }
+            return Self.monogramImage(
+                name: name,
+                tint: NSColor(theme.accentColor),
+                background: NSColor(theme.secondaryText).withAlphaComponent(0.12),
+                size: themeSize
+            )
         }()
-        avatarImageView.image = mascotImage
-        let showAvatar = mascotImage != nil
+        avatarImageView.image = resolved
+        // Custom + mascot images are scaled to fit; monograms are pre-rendered
+        // at the avatar size so any scaling mode is fine.
+        avatarImageView.imageScaling = .scaleProportionallyUpOrDown
+        let showAvatar = resolved != nil
         avatarImageView.isHidden = !showAvatar
         avatarImageView.layer?.borderColor =
             NSColor(theme.secondaryText).withAlphaComponent(0.35).cgColor
@@ -167,12 +211,63 @@ final class NativeHeaderView: NSView {
         setHovered(isHovered, animated: false)
     }
 
+    /// Renders a monogram avatar (initial-on-tinted-circle) into a cached
+    /// NSImage so the inline header has something to show when no mascot or
+    /// custom image is configured. Cached by (initial, tint, size) — themes
+    /// share the same key once stringified.
+    private static var monogramCache: [String: NSImage] = [:]
+    private static let monogramCacheLock = NSLock()
+    private static func monogramImage(
+        name: String,
+        tint: NSColor,
+        background: NSColor,
+        size: CGFloat
+    ) -> NSImage {
+        let initial: String = {
+            let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let first = trimmed.first else { return "?" }
+            return String(first).uppercased()
+        }()
+        let key = "\(initial)|\(tint.hashValue)|\(background.hashValue)|\(Int(size))"
+        monogramCacheLock.lock()
+        if let hit = monogramCache[key] {
+            monogramCacheLock.unlock()
+            return hit
+        }
+        monogramCacheLock.unlock()
+
+        let pixelSize = NSSize(width: size, height: size)
+        let image = NSImage(size: pixelSize, flipped: false) { rect in
+            let ctx = NSGraphicsContext.current?.cgContext
+            ctx?.saveGState()
+            background.setFill()
+            NSBezierPath(ovalIn: rect).fill()
+            let attrs: [NSAttributedString.Key: Any] = [
+                .font: NSFont.systemFont(ofSize: size * 0.5, weight: .bold),
+                .foregroundColor: tint,
+            ]
+            let str = NSAttributedString(string: initial, attributes: attrs)
+            let strSize = str.size()
+            let pt = NSPoint(
+                x: rect.midX - strSize.width / 2,
+                y: rect.midY - strSize.height / 2
+            )
+            str.draw(at: pt)
+            ctx?.restoreGState()
+            return true
+        }
+        monogramCacheLock.lock()
+        monogramCache[key] = image
+        monogramCacheLock.unlock()
+        return image
+    }
+
     override var intrinsicContentSize: NSSize {
         let count = CGFloat(actionStack.arrangedSubviews.count)
         guard count > 0 else { return NSSize(width: NSView.noIntrinsicMetric, height: 28) }
         let stackW = count * Self.actionButtonSize + max(0, count - 1) * actionStack.spacing
         let labelW = nameLabel.intrinsicContentSize.width
-        let avatarW: CGFloat = avatarImageView.isHidden ? 0 : (Self.avatarSize + 6)
+        let avatarW: CGFloat = avatarImageView.isHidden ? 0 : (currentAvatarSize + 6)
         let total = stackW + avatarW + (labelW > 0 ? labelW + 8 : 0)
         return NSSize(width: total, height: 28)
     }
@@ -1187,6 +1282,7 @@ final class NativeMessageCellView: NSTableCellView {
             role: role,
             name: displayName,
             avatar: context.agentAvatar,
+            customAvatarPath: context.agentCustomAvatarPath,
             isEditing: context.editingTurnId == block.turnId,
             isHovered: context.isTurnHovered,
             theme: context.theme,
@@ -1634,6 +1730,7 @@ final class NativeMessageCellView: NSTableCellView {
             role: .user,
             name: "",
             avatar: nil,
+            customAvatarPath: nil,
             isEditing: context.editingTurnId == block.turnId,
             isHovered: context.isTurnHovered,
             theme: context.theme,

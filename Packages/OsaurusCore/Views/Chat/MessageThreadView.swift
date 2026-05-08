@@ -16,6 +16,7 @@ struct MessageThreadView: View {
     let width: CGFloat
     let agentName: String
     let agentAvatar: String?
+    let agentCustomAvatarPath: String?
     let isStreaming: Bool
     let lastAssistantTurnId: UUID?
     var autoScrollEnabled: Bool = true
@@ -79,6 +80,7 @@ struct MessageThreadView: View {
             width: width,
             agentName: agentName,
             agentAvatar: agentAvatar,
+            agentCustomAvatarPath: agentCustomAvatarPath,
             isStreaming: isStreaming,
             lastAssistantTurnId: lastAssistantTurnId,
             autoScrollEnabled: autoScrollEnabled,

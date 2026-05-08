@@ -2723,6 +2723,7 @@ struct ChatView: View {
                     width: width,
                     agentName: displayName,
                     agentAvatar: windowState.cachedActiveAgent.avatar,
+                    agentCustomAvatarPath: windowState.cachedActiveAgent.customAvatarURL?.path,
                     isStreaming: session.isStreaming,
                     lastAssistantTurnId: lastAssistantTurnId,
                     expandedBlocksStore: session.expandedBlocksStore,
@@ -2836,6 +2837,7 @@ private struct IsolatedThreadView: View {
     let width: CGFloat
     let agentName: String
     let agentAvatar: String?
+    let agentCustomAvatarPath: String?
     let isStreaming: Bool
     let lastAssistantTurnId: UUID?
     let expandedBlocksStore: ExpandedBlocksStore
@@ -2864,6 +2866,7 @@ private struct IsolatedThreadView: View {
             width: width,
             agentName: agentName,
             agentAvatar: agentAvatar,
+            agentCustomAvatarPath: agentCustomAvatarPath,
             isStreaming: isStreaming,
             lastAssistantTurnId: lastAssistantTurnId,
             expandedBlocksStore: expandedBlocksStore,

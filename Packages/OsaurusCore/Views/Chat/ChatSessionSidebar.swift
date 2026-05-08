@@ -520,6 +520,7 @@ private struct SessionRow: View {
             name: agent.name,
             tint: agentColor,
             diameter: 24,
+            customImageURL: agent.customAvatarURL,
             monogramFontSize: 10,
             borderWidth: 1
         )

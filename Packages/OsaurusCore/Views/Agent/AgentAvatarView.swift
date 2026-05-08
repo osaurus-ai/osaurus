@@ -6,6 +6,7 @@
 //  falls back to the agent name's first-letter monogram otherwise.
 //
 
+import AppKit
 import SwiftUI
 
 /// Catalog of mascot avatars shipped with the app. The `id` is what gets
@@ -40,6 +41,9 @@ struct AgentAvatarView: View {
     let name: String
     let tint: Color
     let diameter: CGFloat
+    /// Optional user-supplied custom avatar image. When present, takes
+    /// precedence over `mascotId` and the monogram fallback.
+    var customImageURL: URL? = nil
     /// Font size for the monogram fallback. Callers tune this so the letter
     /// reads at the same visual weight as before per call site
     var monogramFontSize: CGFloat = 16
@@ -56,7 +60,13 @@ struct AgentAvatarView: View {
                     )
                 )
 
-            if let mascot = mascotId.flatMap(AgentMascot.init(rawValue:)) {
+            if let url = customImageURL, let nsImage = AvatarImageCache.shared.image(for: url) {
+                Image(nsImage: nsImage)
+                    .resizable()
+                    .interpolation(.high)
+                    .antialiased(true)
+                    .scaledToFill()
+            } else if let mascot = mascotId.flatMap(AgentMascot.init(rawValue:)) {
                 Image(mascot.assetName, bundle: .module)
                     .resizable()
                     .interpolation(.high)
@@ -74,5 +84,46 @@ struct AgentAvatarView: View {
         }
         .frame(width: diameter, height: diameter)
         .clipShape(Circle())
+    }
+}
+
+// MARK: - Avatar Image Cache
+
+/// Tiny URL→NSImage cache keyed by (path, modification-date). Custom avatars
+/// live on disk and are read by both SwiftUI and AppKit avatar surfaces; we
+/// avoid hitting the filesystem on every body re-evaluation.
+final class AvatarImageCache: @unchecked Sendable {
+    static let shared = AvatarImageCache()
+
+    private struct Entry {
+        let mtime: Date
+        let image: NSImage
+    }
+
+    private let lock = NSLock()
+    private var entries: [String: Entry] = [:]
+
+    func image(for url: URL) -> NSImage? {
+        let path = url.path
+        let mtime = (try? FileManager.default.attributesOfItem(atPath: path)[.modificationDate] as? Date) ?? .distantPast
+
+        lock.lock()
+        if let hit = entries[path], hit.mtime == mtime {
+            lock.unlock()
+            return hit.image
+        }
+        lock.unlock()
+
+        guard let image = NSImage(contentsOf: url) else { return nil }
+        lock.lock()
+        entries[path] = Entry(mtime: mtime, image: image)
+        lock.unlock()
+        return image
+    }
+
+    func invalidate(url: URL) {
+        lock.lock()
+        entries.removeValue(forKey: url.path)
+        lock.unlock()
     }
 }
