@@ -821,6 +821,7 @@ struct AgentDetailView: View {
     @State private var showCreateWatcher = false
     @State private var pinnedFacts: [PinnedFact] = []
     @State private var episodes: [Episode] = []
+    @State private var sessionTurnCounts: [UUID: Int] = [:]
     @State private var showAllSummaries = false
     @State private var isInitialLoadComplete = false
     @State private var agentSecrets: [AgentSecretEntry] = []
@@ -3165,7 +3166,10 @@ struct AgentDetailView: View {
                                     }
                                     Spacer()
                                     HStack(spacing: 4) {
-                                        Text("\(session.turns.count) turns", bundle: .module)
+                                        let turnCount =
+                                            sessionTurnCounts[session.id]
+                                            ?? session.turns.count
+                                        Text("\(turnCount) turns", bundle: .module)
                                             .font(.system(size: 10))
                                             .foregroundColor(theme.tertiaryText)
                                         Image(systemName: "arrow.up.right")
@@ -3290,6 +3294,12 @@ struct AgentDetailView: View {
         if !db.isOpen { try? db.open() }
         pinnedFacts = (try? db.loadPinnedFacts(agentId: agent.id.uuidString, limit: 200)) ?? []
         episodes = (try? db.loadEpisodes(agentId: agent.id.uuidString, limit: 100)) ?? []
+        // Counts come from `sessions.turn_count` directly so the row's
+        // "N turns" label is accurate without hydrating each session's
+        // turn array (which only happens on click — the prior root cause
+        // of the persistent "0 turns" display).
+        let agentFilter: UUID? = (agent.id == Agent.defaultId) ? nil : agent.id
+        sessionTurnCounts = ChatHistoryDatabase.shared.turnCounts(forAgent: agentFilter)
     }
 
     // MARK: - Agent Secrets

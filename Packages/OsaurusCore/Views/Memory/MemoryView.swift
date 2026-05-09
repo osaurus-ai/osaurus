@@ -9,11 +9,11 @@
 import SwiftUI
 
 struct MemoryView: View {
-    @ObservedObject private var themeManager = ThemeManager.shared
-    @ObservedObject private var agentManager = AgentManager.shared
+    @ObservedObject var themeManager = ThemeManager.shared
+    @ObservedObject var agentManager = AgentManager.shared
     @ObservedObject private var appConfig = AppConfiguration.shared
 
-    private var theme: ThemeProtocol { themeManager.currentTheme }
+    var theme: ThemeProtocol { themeManager.currentTheme }
 
     private static let iso8601Formatter = ISO8601DateFormatter()
 
@@ -23,20 +23,41 @@ struct MemoryView: View {
         return f
     }()
 
-    private static func formatRelativeDate(_ iso8601: String) -> String {
+    static func formatRelativeDate(_ iso8601: String) -> String {
         guard let date = iso8601Formatter.date(from: iso8601) else { return iso8601 }
         return relativeFormatter.localizedString(for: date, relativeTo: Date())
     }
 
     // MARK: Data State
 
-    @State private var config = MemoryConfiguration.default
+    // The diagnostics-related state below is internal (not private) so
+    // `MemoryView+Diagnostics` (sibling extension file) can read & write
+    // it. Swift extensions in another file see `internal` members but
+    // not `private` ones — adopting internal here is the simplest way
+    // to keep the diagnostics view-builders out of this file without
+    // resorting to a view-model wrapper.
+    @State var config = MemoryConfiguration.default
     @State private var identity: Identity?
     @State private var processingStats = ProcessingStats()
     @State private var dbSizeBytes: Int64 = 0
     @State private var agentMemoryCounts: [(agent: Agent, count: Int)] = []
     @State private var defaultAgentPinned: [PinnedFact] = []
     @State private var defaultAgentEpisodes: [Episode] = []
+    @State var pendingSignals = PendingSignalsSummary()
+    @State var totalEpisodes: Int = 0
+    @State var totalPinned: Int = 0
+    @State var coreModelStatus: CoreModelStatus = .unset
+    @State var recentLogs: [ProcessingLogRow] = []
+    @State var diagnosticsExpanded: Bool = false
+    @State var bufferTelemetry = BufferTurnTelemetry()
+    @State var memoryDBOpen: Bool = false
+    @State var probeBufferRunning: Bool = false
+    @State var probeBufferResult: BufferProbeOutcome?
+    @State var backfillRunning: Bool = false
+    @State var backfillProgress = MemoryBackfillProgress()
+    @State var backfillTask: Task<Void, Never>?
+    @State var backfillSummary: String?
+    @State var showBackfillConfirm: Bool = false
 
     // MARK: UI State
 
@@ -45,6 +66,7 @@ struct MemoryView: View {
     @State private var isLoading = true
     @State private var isRefreshing = false
     @State private var isSyncing = false
+    @State private var isDistilling = false
     @State private var isConsolidating = false
     @State private var showIdentityEditor = false
     @State private var showAddOverride = false
@@ -126,6 +148,7 @@ struct MemoryView: View {
                                 statsSection
                                 configurationSection
                                 dangerZoneSection
+                                diagnosticsSection
                             }
                             .padding(24)
                         }
@@ -244,6 +267,28 @@ struct MemoryView: View {
 
     private var identitySection: some View {
         MemorySectionCard(title: "Identity", icon: "person.text.rectangle") {
+            // "Distill pending" goes through `syncNow()` directly. The
+            // important difference vs `recoverOrphanedSignals()` (which
+            // runs at app launch) is that this path skips the
+            // `canDistillCheaply` guard, so it works for users who picked
+            // a large local MLX model that isn't resident yet.
+            MemorySectionActionButton(
+                isDistilling ? "Distilling..." : "Distill pending",
+                icon: "wand.and.stars"
+            ) {
+                guard !isDistilling else { return }
+                isDistilling = true
+                Task.detached {
+                    await MemoryService.shared.syncNow()
+                    await MainActor.run {
+                        isDistilling = false
+                        loadData()
+                        showToast("Pending distillation complete")
+                    }
+                }
+            }
+            .disabled(isDistilling || !config.enabled)
+
             MemorySectionActionButton(isSyncing ? "Syncing..." : "Sync", icon: "arrow.triangle.2.circlepath") {
                 guard !isSyncing else { return }
                 isSyncing = true
@@ -559,6 +604,15 @@ struct MemoryView: View {
         }
     }
 
+    // MARK: - Diagnostics Section
+    //
+    // The diagnostics card is large enough to live in its own file —
+    // see `MemoryDiagnosticsViews.swift` for `diagnosticsSection`,
+    // `runBackfill`, `runBufferProbe`, and all of the row / banner /
+    // headline helpers. The state those views read & write is declared
+    // above (intentionally non-private so a sibling extension file can
+    // see it).
+
     // MARK: - Statistics Section
 
     private var statsSection: some View {
@@ -826,7 +880,7 @@ struct MemoryView: View {
         }
     }
 
-    private func loadData(onComplete: (@Sendable @MainActor () -> Void)? = nil) {
+    func loadData(onComplete: (@Sendable @MainActor () -> Void)? = nil) {
         config = MemoryConfigurationStore.load()
         Task.detached(priority: .userInitiated) {
             let db = MemoryDatabase.shared
@@ -876,6 +930,16 @@ struct MemoryView: View {
             let loadedDefaultPinned = (try? db.loadPinnedFacts(agentId: defaultId, limit: 100)) ?? []
             let loadedDefaultEpisodes = (try? db.loadEpisodes(agentId: defaultId, limit: 50)) ?? []
 
+            // Diagnostics panel data — kept in the same Task so we don't
+            // re-open the database three times per refresh.
+            let loadedPending = (try? db.pendingSignalsSummary()) ?? PendingSignalsSummary()
+            let loadedTotalEpisodes = (try? db.episodeCount()) ?? 0
+            let loadedTotalPinned = (try? db.pinnedFactCount()) ?? 0
+            let loadedRecentLogs = (try? db.recentProcessingLog(limit: 20)) ?? []
+            let loadedCoreModelStatus = await CoreModelService.shared.resolveStatus()
+            let loadedTelemetry = await MemoryService.shared.bufferTelemetry()
+            let loadedDBOpen = MemoryDatabase.shared.isOpen
+
             await MainActor.run {
                 identity = loadedIdentity
                 processingStats = loadedStats
@@ -883,6 +947,13 @@ struct MemoryView: View {
                 agentMemoryCounts = resolvedCounts
                 defaultAgentPinned = loadedDefaultPinned
                 defaultAgentEpisodes = loadedDefaultEpisodes
+                pendingSignals = loadedPending
+                totalEpisodes = loadedTotalEpisodes
+                totalPinned = loadedTotalPinned
+                recentLogs = loadedRecentLogs
+                coreModelStatus = loadedCoreModelStatus
+                bufferTelemetry = loadedTelemetry
+                memoryDBOpen = loadedDBOpen
                 isLoading = false
                 onComplete?()
                 if let loadError {
@@ -949,7 +1020,7 @@ struct MemoryView: View {
         return formatter.string(fromByteCount: bytes)
     }
 
-    private func showToast(_ message: String, isError: Bool = false) {
+    func showToast(_ message: String, isError: Bool = false) {
         withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
             toastMessage = (message, isError)
         }

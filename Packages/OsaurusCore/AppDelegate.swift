@@ -589,6 +589,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             BackgroundTaskManager.shared.cancelAllTasks()
             MCPProviderManager.shared.disconnectAll()
             RemoteProviderManager.shared.disconnectAll()
+            // Best-effort: drain any debounced memory sessions before
+            // MLX / NIO / SQLCipher shutdown so the user doesn't lose
+            // pending_signals to the 60s debounce race.
+            await MemoryService.shared.flushAllPending(timeoutSeconds: 5)
             // Unconditional: ensureShutdown is idempotent when already clean.
             await serverController.ensureShutdown()
             await MCPServerManager.shared.stopAll()

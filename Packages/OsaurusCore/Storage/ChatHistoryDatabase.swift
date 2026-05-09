@@ -314,6 +314,47 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         loadMetadataInternal(filter: (agentId: agentId, source: source))
     }
 
+    /// Aggregated turn counts keyed by session id.
+    ///
+    /// Reads the maintained `turn_count` column on `sessions` rather than
+    /// `COUNT(*) FROM turns GROUP BY ...` because (a) turn_count is updated
+    /// in-transaction by `saveSession` / `appendTurn`, and (b) the alternative
+    /// would scan every turn row even when the caller only needs five rows.
+    ///
+    /// `agentId == nil` returns counts for every session — matches the
+    /// "Default agent shows all sessions" rule used elsewhere.
+    public func turnCounts(forAgent agentId: UUID?) -> [UUID: Int] {
+        var counts: [UUID: Int] = [:]
+        let sql: String
+        if agentId != nil {
+            sql = "SELECT id, turn_count FROM sessions WHERE agent_id = ?1"
+        } else {
+            sql = "SELECT id, turn_count FROM sessions"
+        }
+        do {
+            try prepareAndExecute(
+                sql,
+                bind: { stmt in
+                    if let agentId {
+                        Self.bindText(stmt, index: 1, value: agentId.uuidString)
+                    }
+                },
+                process: { stmt in
+                    while sqlite3_step(stmt) == SQLITE_ROW {
+                        let idStr = String(cString: sqlite3_column_text(stmt, 0))
+                        let count = Int(sqlite3_column_int(stmt, 1))
+                        if let uuid = UUID(uuidString: idStr) {
+                            counts[uuid] = count
+                        }
+                    }
+                }
+            )
+        } catch {
+            print("[ChatHistoryDatabase] turnCounts failed: \(error)")
+        }
+        return counts
+    }
+
     /// Find an existing session by `(source, external_session_key)`,
     /// optionally constrained to `agentId`. Used by HTTP / scheduler / watcher
     /// dispatch paths where there's no plugin id to scope by. Returns the

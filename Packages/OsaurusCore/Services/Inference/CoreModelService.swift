@@ -30,6 +30,25 @@ public enum CoreModelError: Error, LocalizedError, Equatable {
     }
 }
 
+/// Resolution snapshot for the configured core model. Surfaced in the
+/// Memory diagnostics panel so the user can tell whether their
+/// Foundation / MLX / remote core model is actually wired up before
+/// distillation tries to use it.
+public enum CoreModelStatus: Sendable, Equatable {
+    /// No core model configured (`coreModelIdentifier == nil`).
+    case unset
+    /// Configured and the router can resolve it to a live service.
+    case available(modelId: String, serviceId: String, effectiveModel: String)
+    /// Configured but no available service handles the identifier.
+    /// Most common reason: Foundation Model on a pre-macOS-26 system,
+    /// or a remote provider that was disconnected.
+    case unavailable(modelId: String, reason: String)
+    /// Breaker is currently open after consecutive failures; the next
+    /// call will probe the model anyway, but distillation will see
+    /// `circuitBreakerOpen` until the cooldown elapses.
+    case breakerOpen(modelId: String?, until: Date)
+}
+
 public actor CoreModelService {
     public static let shared = CoreModelService()
 
@@ -140,6 +159,66 @@ public actor CoreModelService {
     /// to a Settings affordance if we ever want a "Retry now" button.
     public func resetBreaker() {
         clearBreakerState()
+    }
+
+    /// Probe whether the configured core model can be resolved by the
+    /// router right now. Does NOT make an LLM call — only iterates the
+    /// candidate services' `isAvailable()` / `handles(...)` functions,
+    /// which are cheap and side-effect-free.
+    ///
+    /// Used by the Memory diagnostics panel to surface "Foundation
+    /// Model unavailable on this OS" / "remote provider disconnected"
+    /// instead of letting those failures live as `.info` log messages
+    /// the user never sees.
+    public func resolveStatus() async -> CoreModelStatus {
+        if let openUntil = circuitOpenUntil, Date() < openUntil {
+            let configured = await MainActor.run {
+                ChatConfigurationStore.load().coreModelIdentifier
+            }
+            return .breakerOpen(modelId: configured, until: openUntil)
+        }
+
+        let configured = await MainActor.run {
+            ChatConfigurationStore.load().coreModelIdentifier
+        }
+        guard let modelId = configured else { return .unset }
+
+        let remoteServices: [ModelService] = await MainActor.run {
+            RemoteProviderManager.shared.connectedServices()
+        }
+        let route = ModelServiceRouter.resolve(
+            requestedModel: modelId,
+            services: localServices,
+            remoteServices: remoteServices
+        )
+
+        switch route {
+        case .service(let service, let effectiveModel):
+            return .available(
+                modelId: modelId,
+                serviceId: service.id,
+                effectiveModel: effectiveModel
+            )
+        case .none:
+            let reason = Self.unavailableReason(modelId: modelId)
+            return .unavailable(modelId: modelId, reason: reason)
+        }
+    }
+
+    /// Best-effort human-readable reason for why the router couldn't
+    /// satisfy `modelId`. Pure heuristics — no I/O.
+    private static func unavailableReason(modelId: String) -> String {
+        let lowered = modelId.lowercased()
+        if lowered == "foundation" || lowered.hasSuffix("/foundation") {
+            return "Foundation Model not available on this OS (requires macOS 26+)."
+        }
+        if lowered.contains("/") {
+            let provider = lowered.split(separator: "/").first.map(String.init) ?? lowered
+            return
+                "Remote provider '\(provider)' is not connected. Reconnect it under Settings → Providers."
+        }
+        return
+            "No local model named '\(modelId)' is downloaded. Pick a different Core Model under Settings → General."
     }
 
     // MARK: - Private — breaker bookkeeping

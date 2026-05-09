@@ -38,6 +38,13 @@ public actor MemoryService {
     private var activeConversation: [String: String] = [:]
     private var conversationSessionDates: [String: String] = [:]
 
+    /// Reset on every process launch — see `BufferTurnTelemetry`.
+    private var telemetry = BufferTurnTelemetry()
+
+    public func bufferTelemetry() -> BufferTurnTelemetry {
+        telemetry
+    }
+
     private init() {}
 
     // MARK: - Buffer Turn (no LLM)
@@ -54,10 +61,23 @@ public actor MemoryService {
         conversationId: String,
         sessionDate: String? = nil
     ) async {
-        guard !userMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        // Telemetry intentionally precedes the early-return guards so
+        // "attempts" reflects every caller invocation. The diagnostics
+        // panel uses (attempts == 0) to localise "the chat code never
+        // even called bufferTurn" vs "called but bailed early".
+        telemetry.attempts += 1
+        telemetry.lastAttemptAt = Date()
+
+        guard !userMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            telemetry.earlyReturnsEmptyMessage += 1
+            return
+        }
 
         let config = MemoryConfigurationStore.load()
-        guard config.enabled else { return }
+        guard config.enabled else {
+            telemetry.earlyReturnsDisabled += 1
+            return
+        }
 
         do {
             try db.insertPendingSignal(
@@ -68,7 +88,12 @@ public actor MemoryService {
                     assistantMessage: assistantMessage
                 )
             )
+            telemetry.insertSuccesses += 1
+            telemetry.lastSuccessAt = Date()
+            telemetry.lastError = nil
         } catch {
+            telemetry.insertFailures += 1
+            telemetry.lastError = error.localizedDescription
             MemoryLogger.service.error("Failed to buffer turn: \(error)")
             return
         }
@@ -152,6 +177,104 @@ public actor MemoryService {
         await syncNow()
     }
 
+    /// Best-effort flush of every armed debounce task at app quit. Cancels
+    /// each pending sleep so distillation runs immediately, then awaits up
+    /// to `timeoutSeconds` for them to finish before returning. Callers
+    /// (specifically `applicationShouldTerminate`) should invoke this
+    /// BEFORE tearing down MLX / NIO / SQLCipher — otherwise the in-flight
+    /// distillation calls hit a closed database or a freed model runtime.
+    ///
+    /// The pre-fix behaviour was: if the user closed the chat window /
+    /// quit the app inside the 60s debounce window, the pending signal
+    /// stayed in the database forever until the next launch, AND
+    /// `recoverOrphanedSignals` self-defers when the core model isn't
+    /// resident. This converts that case into "distilled now".
+    public func flushAllPending(timeoutSeconds: TimeInterval = 5) async {
+        let config = MemoryConfigurationStore.load()
+        guard config.enabled else { return }
+
+        // Snapshot the dictionary so we can safely cancel + iterate even
+        // if more debounce tasks land while we're flushing.
+        let armed = debounceTasks
+        debounceTasks.removeAll(keepingCapacity: false)
+
+        // Conversations the actor may still have buffered but never armed
+        // a debounce for (e.g. .manual extractionMode, or an in-flight
+        // `bufferTurn` that hasn't reached the debounce-arm step).
+        let pendingFromDb: [(agentId: String, conversationId: String)] =
+            (try? db.pendingConversations()) ?? []
+        let alreadyArmed = Set(armed.keys)
+        let extras = pendingFromDb.filter { !alreadyArmed.contains($0.conversationId) }
+
+        guard !armed.isEmpty || !extras.isEmpty else { return }
+
+        MemoryLogger.service.info(
+            "flushAllPending: draining \(armed.count) armed + \(extras.count) extra conversation(s) (timeout=\(timeoutSeconds)s)"
+        )
+
+        // Cancel every armed sleep so each distillation can fire ASAP.
+        for (_, task) in armed { task.cancel() }
+
+        // Race the actual draining work against `timeoutSeconds`. We
+        // intentionally avoid throwing on timeout — quit can't wait
+        // forever, and the leftover signals will be picked up by
+        // `recoverOrphanedSignals` next launch.
+        let started = Date()
+        await withTaskGroup(of: Void.self) { group in
+            // Resolve the orphaned-but-not-armed conversations.
+            for conv in extras {
+                group.addTask { [weak self] in
+                    await self?.distillSession(
+                        agentId: conv.agentId,
+                        conversationId: conv.conversationId
+                    )
+                }
+            }
+            // Resolve the armed-but-cancelled conversations directly. We
+            // don't await the cancelled tasks themselves because their
+            // `Task.sleep` will return on cancellation and they'd run
+            // `distillSession` again concurrently — instead we drive
+            // distillation explicitly here so the actor's serial reentry
+            // is the only synchronization we rely on.
+            for (conversationId, _) in armed {
+                guard let agentId = activeConversation.first(where: { $0.value == conversationId })?.key
+                else {
+                    // Fall back to scanning pending_signals when the
+                    // agent map is stale (rare, but safe).
+                    if let match = pendingFromDb.first(where: { $0.conversationId == conversationId }) {
+                        let resolvedAgent = match.agentId
+                        group.addTask { [weak self] in
+                            await self?.distillSession(
+                                agentId: resolvedAgent,
+                                conversationId: conversationId
+                            )
+                        }
+                    }
+                    continue
+                }
+                group.addTask { [weak self] in
+                    await self?.distillSession(
+                        agentId: agentId,
+                        conversationId: conversationId
+                    )
+                }
+            }
+
+            // Time-bounded await: cancel the group when the deadline
+            // hits so callers can proceed with the rest of shutdown.
+            group.addTask {
+                try? await Task.sleep(for: .seconds(timeoutSeconds))
+            }
+            // Drain results until either everything is done OR the
+            // timeout task completed (which it does after `timeoutSeconds`).
+            // Either way we let the group's cancellation propagate.
+            await group.waitForAll()
+        }
+
+        let elapsed = Int(Date().timeIntervalSince(started) * 1000)
+        MemoryLogger.service.info("flushAllPending: complete in \(elapsed)ms")
+    }
+
     /// Foundation/remote: always cheap. Local MLX: cheap iff already
     /// cached or small (<= `coldLoadParamBudgetBillions`). Unknown
     /// param count is treated as large
@@ -176,6 +299,216 @@ public actor MemoryService {
 
     private static let coldLoadParamBudgetBillions: Double = 2.0
 
+    // MARK: - Chat-history Backfill
+
+    /// Walk every session in `chat_history.db`, buffer its turns into
+    /// `pending_signals`, then drain everything via `syncNow()` so each
+    /// session becomes an episode.
+    ///
+    /// Idempotent: skips sessions whose `(agent_id, conversation_id)`
+    /// already has an active episode, and skips conversations that
+    /// already have buffered signals waiting (so re-running after a
+    /// partial run doesn't double-buffer).
+    ///
+    /// Why this exists: prior to v7 of `MemoryDatabase` the
+    /// `pending_signals` table had an orphan `signal_type NOT NULL`
+    /// column from a pre-shipping schema iteration. Every `bufferTurn`
+    /// hit `SQLITE_CONSTRAINT_NOTNULL` (extended 1299) and the silent
+    /// `executeUpdate` swallowed the failure, so for affected installs
+    /// the entire chat history accumulated in `chat_history.db` without
+    /// ever reaching the memory pipeline. This backfill closes the gap.
+    ///
+    /// - Parameters:
+    ///   - distillAfterBuffering: when true (default), runs `syncNow()`
+    ///     after all sessions are buffered. Set to false if the caller
+    ///     wants to drive distillation explicitly (e.g. via the
+    ///     "Distill pending" button) so the user can scrub a giant
+    ///     backfill into the foreground or background as they like.
+    ///   - progress: callback fired on the MainActor whenever the
+    ///     buffering phase advances by one session AND on stage
+    ///     transitions. The diagnostics panel uses this to render a
+    ///     live progress UI without polling.
+    /// - Returns: a final `MemoryBackfillProgress` summarising what got
+    ///   buffered. The `stage` will be `.done` on success or
+    ///   `.cancelled` when the parent task is cancelled mid-flight.
+    @discardableResult
+    public func backfillFromChatHistory(
+        distillAfterBuffering: Bool = true,
+        progress: @escaping @Sendable @MainActor (MemoryBackfillProgress) -> Void
+    ) async -> MemoryBackfillProgress {
+        let config = MemoryConfigurationStore.load()
+        guard config.enabled else {
+            let snapshot = MemoryBackfillProgress(stage: .done)
+            await MainActor.run { progress(snapshot) }
+            return snapshot
+        }
+
+        // Gather candidate sessions on the MainActor (ChatSessionStore
+        // / ChatHistoryDatabase are MainActor-anchored on entry, but
+        // their queue.sync internals are Sendable).
+        let sessionMetadata: [ChatSessionData] = await MainActor.run {
+            ChatHistoryDatabase.shared.loadAllMetadata()
+        }
+
+        // Pre-compute dedupe sets so we don't pay one DB round-trip
+        // per session.
+        let alreadyDistilled =
+            (try? MemoryDatabase.shared.distilledConversationIds()) ?? []
+        let alreadyBuffered =
+            (try? MemoryDatabase.shared.bufferedConversationIds()) ?? []
+
+        var snapshot = MemoryBackfillProgress(
+            stage: .buffering,
+            sessionsTotal: sessionMetadata.count,
+            sessionsProcessed: 0,
+            sessionsSkipped: 0,
+            turnsBuffered: 0,
+            lastSessionTitle: nil
+        )
+        let initial = snapshot
+        await MainActor.run { progress(initial) }
+
+        for meta in sessionMetadata {
+            if Task.isCancelled {
+                snapshot.stage = .cancelled
+                let final = snapshot
+                await MainActor.run { progress(final) }
+                return snapshot
+            }
+
+            let convId = meta.id.uuidString
+            if alreadyDistilled.contains(convId) || alreadyBuffered.contains(convId) {
+                snapshot.sessionsSkipped += 1
+                snapshot.lastSessionTitle = meta.title
+                let snap = snapshot
+                await MainActor.run { progress(snap) }
+                continue
+            }
+
+            // Hydrate turns for this session. `loadSession(id:)` opens
+            // the database queue once per call, which is fine — the
+            // backfill is a one-shot UX action, not a hot path.
+            guard
+                let full = await MainActor.run(body: {
+                    ChatHistoryDatabase.shared.loadSession(id: meta.id)
+                })
+            else {
+                snapshot.sessionsSkipped += 1
+                continue
+            }
+
+            let pairs = Self.pairTurnsForBackfill(full.turns)
+            guard !pairs.isEmpty else {
+                snapshot.sessionsSkipped += 1
+                continue
+            }
+
+            let agentId = (full.agentId ?? Agent.defaultId).uuidString
+            let sessionDate = Self.iso8601Formatter.string(from: full.createdAt)
+
+            var bufferedThisSession = 0
+            for pair in pairs {
+                do {
+                    try MemoryDatabase.shared.insertPendingSignal(
+                        PendingSignal(
+                            agentId: agentId,
+                            conversationId: convId,
+                            userMessage: pair.user,
+                            assistantMessage: pair.assistant,
+                            createdAt: sessionDate
+                        )
+                    )
+                    bufferedThisSession += 1
+                } catch {
+                    MemoryLogger.service.error(
+                        "backfill: insertPendingSignal failed for \(convId): \(error)"
+                    )
+                }
+            }
+
+            // Cache the session date so distillSession's resolved-date
+            // logic picks up the original conversation timestamp instead
+            // of "now". Matches what bufferTurn does on the live path.
+            if bufferedThisSession > 0 {
+                conversationSessionDates[convId] = sessionDate
+            }
+
+            snapshot.sessionsProcessed += 1
+            snapshot.turnsBuffered += bufferedThisSession
+            snapshot.lastSessionTitle = meta.title
+            let snap = snapshot
+            await MainActor.run { progress(snap) }
+        }
+
+        guard distillAfterBuffering else {
+            snapshot.stage = .done
+            let final = snapshot
+            await MainActor.run { progress(final) }
+            return snapshot
+        }
+
+        snapshot.stage = .distilling
+        let beforeDistill = snapshot
+        await MainActor.run { progress(beforeDistill) }
+
+        await syncNow()
+
+        snapshot.stage = .done
+        let final = snapshot
+        await MainActor.run { progress(final) }
+        return snapshot
+    }
+
+    /// Walk a session's turns in seq order and produce `(user, assistant?)`
+    /// pairs in the same shape `bufferTurn` would have buffered them
+    /// during a live conversation:
+    ///
+    /// - A `user` turn opens a new pair.
+    /// - The next `assistant` turn closes the current pair.
+    /// - Non-text turns (tool, system) are skipped — they don't belong
+    ///   in the distillation prompt.
+    /// - Empty `content` turns are skipped.
+    ///
+    /// If the session ends with an unmatched `user` turn (assistant
+    /// response was never produced), we still emit it with
+    /// `assistantMessage = nil` so the user's message participates in
+    /// the episode.
+    nonisolated static func pairTurnsForBackfill(
+        _ turns: [ChatTurnData]
+    ) -> [(user: String, assistant: String?)] {
+        var pairs: [(user: String, assistant: String?)] = []
+        var pendingUser: String?
+
+        for turn in turns {
+            let trimmed = turn.content.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+
+            switch turn.role {
+            case .user:
+                // Two user turns in a row: emit the previous one with
+                // no assistant before opening the new pair.
+                if let prev = pendingUser {
+                    pairs.append((user: prev, assistant: nil))
+                }
+                pendingUser = trimmed
+            case .assistant:
+                if let user = pendingUser {
+                    pairs.append((user: user, assistant: trimmed))
+                    pendingUser = nil
+                }
+            // System and tool turns don't carry conversational content.
+            case .system, .tool:
+                continue
+            }
+        }
+
+        if let trailing = pendingUser {
+            pairs.append((user: trailing, assistant: nil))
+        }
+
+        return pairs
+    }
+
     // MARK: - Distillation (one LLM call per session)
 
     private func distillSession(
@@ -186,8 +519,19 @@ public actor MemoryService {
         let config = MemoryConfigurationStore.load()
         guard config.enabled else { return }
         guard await hasCoreModel() else {
-            MemoryLogger.service.info(
+            // Pre-fix this was an `.info` log, which meant the user
+            // had no UI affordance to see why distillation was silently
+            // disabled. Now we both warn AND write a `skipped` row to
+            // `processing_log` so the diagnostics panel can surface it.
+            MemoryLogger.service.warning(
                 "distill: no core model configured; signals stay pending (configure one in Settings → Core Model)"
+            )
+            logProcessing(
+                agentId: agentId,
+                taskType: "distill",
+                model: "none",
+                status: "skipped",
+                details: "core_model_unset"
             )
             return
         }
@@ -208,8 +552,15 @@ public actor MemoryService {
         }
         guard combinedChars >= MemoryConfiguration.distillNoveltyMinChars else {
             try? db.markSignalsProcessed(conversationId: conversationId)
-            MemoryLogger.service.debug(
+            MemoryLogger.service.warning(
                 "distill: skipping low-novelty session \(conversationId) (\(combinedChars) chars)"
+            )
+            logProcessing(
+                agentId: agentId,
+                taskType: "distill",
+                model: coreModelId,
+                status: "skipped",
+                details: "low_novelty:\(combinedChars)chars"
             )
             debounceTasks[conversationId] = nil
             return
@@ -253,6 +604,14 @@ public actor MemoryService {
             let summaryText = stripPreamble(episode.summary)
             guard !summaryText.isEmpty else {
                 MemoryLogger.service.warning("distill: empty summary for \(conversationId)")
+                logProcessing(
+                    agentId: agentId,
+                    taskType: "distill",
+                    model: coreModelId,
+                    status: "empty",
+                    durationMs: Int(Date().timeIntervalSince(startTime) * 1000),
+                    details: "empty_summary"
+                )
                 return
             }
 

@@ -45,7 +45,7 @@ public enum MemoryDatabaseError: Error, LocalizedError {
 public final class MemoryDatabase: @unchecked Sendable {
     public static let shared = MemoryDatabase()
 
-    private static let schemaVersion = 6
+    private static let schemaVersion = 7
 
     nonisolated(unsafe) private static let iso8601Formatter: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
@@ -142,6 +142,9 @@ public final class MemoryDatabase: @unchecked Sendable {
         }
         if currentVersion < 6 {
             try migrateToV6()
+        }
+        if currentVersion < 7 {
+            try migrateToV7()
         }
     }
 
@@ -341,6 +344,96 @@ public final class MemoryDatabase: @unchecked Sendable {
 
         try setSchemaVersion(6)
         MemoryLogger.database.info("v6 migration completed (FTS5 ready)")
+    }
+
+    /// V7 migration: drop the orphan `pending_signals.signal_type` column.
+    ///
+    /// Some pre-shipping versions of the v5 schema declared an extra
+    /// `signal_type TEXT NOT NULL` column on `pending_signals` that was
+    /// later removed from the source. Users whose database was created
+    /// against that earlier schema kept the orphan column — and because
+    /// the runtime `INSERT INTO pending_signals (...)` doesn't bind it,
+    /// every buffer-turn write throws `SQLITE_CONSTRAINT_NOTNULL`
+    /// (extended code 1299). The pre-fix version of `executeUpdate`
+    /// silently swallowed the failure, so the bug was invisible until
+    /// the diagnostics panel started surfacing the underlying SQLite
+    /// error.
+    ///
+    /// Fix: rebuild the table with the canonical schema and copy the
+    /// preserved columns over. Indexes are recreated by name. We
+    /// intentionally drop the `signal_type` *values* — the runtime never
+    /// reads them, and pending signals are short-lived (distilled within
+    /// the debounce window or purged within `episodeRetentionDays`).
+    /// Skipping the rebuild when the column is already absent makes the
+    /// migration a fast no-op for fresh installs.
+    private func migrateToV7() throws {
+        MemoryLogger.database.info("Running v7 migration (drop orphan pending_signals.signal_type)")
+
+        var hasOrphan = false
+        try executeRaw("PRAGMA table_info(pending_signals)") { stmt in
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                let name = String(cString: sqlite3_column_text(stmt, 1))
+                if name == "signal_type" {
+                    hasOrphan = true
+                    break
+                }
+            }
+        }
+
+        guard hasOrphan else {
+            try setSchemaVersion(7)
+            MemoryLogger.database.info("v7 migration: no orphan column found, schema already canonical")
+            return
+        }
+
+        // SQLite 3.35+ supports ALTER TABLE DROP COLUMN, but the
+        // vendored SQLCipher build's exact version is unknown to us
+        // here. The rename + recreate + copy + drop pattern works on
+        // every SQLite 3.x and is the SQLite-recommended path for
+        // schema rewrites. Wrap in a transaction so a crash mid-flight
+        // doesn't leave a half-rebuilt table.
+        try executeRaw("BEGIN TRANSACTION")
+        do {
+            try executeRaw("ALTER TABLE pending_signals RENAME TO pending_signals_v6")
+            try executeRaw(
+                """
+                    CREATE TABLE pending_signals (
+                        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                        agent_id          TEXT NOT NULL,
+                        conversation_id   TEXT NOT NULL,
+                        user_message      TEXT NOT NULL,
+                        assistant_message TEXT,
+                        status            TEXT NOT NULL DEFAULT 'pending',
+                        created_at        TEXT NOT NULL DEFAULT (datetime('now'))
+                    )
+                """
+            )
+            try executeRaw(
+                """
+                    INSERT INTO pending_signals
+                        (id, agent_id, conversation_id, user_message, assistant_message, status, created_at)
+                    SELECT
+                        id, agent_id, conversation_id, user_message, assistant_message, status, created_at
+                    FROM pending_signals_v6
+                """
+            )
+            try executeRaw("DROP TABLE pending_signals_v6")
+            // Indexes were attached to the old table name and got
+            // dropped along with it; recreate against the new table.
+            try executeRaw(
+                "CREATE INDEX IF NOT EXISTS idx_pending_conv_status ON pending_signals(conversation_id, status)"
+            )
+            try executeRaw(
+                "CREATE INDEX IF NOT EXISTS idx_pending_agent_status ON pending_signals(agent_id, status)"
+            )
+            try executeRaw("COMMIT")
+        } catch {
+            try? executeRaw("ROLLBACK")
+            throw error
+        }
+
+        try setSchemaVersion(7)
+        MemoryLogger.database.info("v7 migration: rebuilt pending_signals without signal_type column")
     }
 
     private func createV5Tables() throws {
@@ -739,33 +832,113 @@ public final class MemoryDatabase: @unchecked Sendable {
 
     /// Locking entry point — see `prepareAndExecute(_:bind:process:)`
     /// for the re-entrancy contract.
+    ///
+    /// Throws `MemoryDatabaseError.failedToExecute(...)` when
+    /// `sqlite3_step` returns anything other than `SQLITE_DONE`. The
+    /// pre-fix behaviour was to silently swallow the error and return
+    /// `false`, which combined with the universal `_ = try executeUpdate(...)`
+    /// callsite pattern meant constraint violations / busy / readonly
+    /// failures looked like silent successes — `bufferTurn`'s telemetry
+    /// happily incremented `insertSuccesses` while no row ever landed
+    /// in `pending_signals`. Always throw so the failure mode is
+    /// visible at the call site (and via the diagnostics panel).
+    @discardableResult
     func executeUpdate(_ sql: String, bind: (OpaquePointer) -> Void) throws -> Bool {
-        var success = false
         try prepareAndExecute(
             sql,
             bind: bind,
-            process: { stmt in success = sqlite3_step(stmt) == SQLITE_DONE }
+            process: { stmt in
+                let step = sqlite3_step(stmt)
+                guard step == SQLITE_DONE else {
+                    // `sqlite3_db_handle(stmt)` retrieves the live connection
+                    // associated with this prepared statement so we can pull
+                    // the extended error code + human-readable message even
+                    // though the closure doesn't capture the connection by
+                    // name. Critical: with just the primary code (e.g.
+                    // SQLITE_CONSTRAINT/19) the user can't tell whether a
+                    // NOT-NULL, UNIQUE, FK, or CHECK constraint tripped.
+                    let connection = sqlite3_db_handle(stmt)
+                    throw MemoryDatabaseError.failedToExecute(
+                        Self.describeStepFailure(step: step, sql: sql, connection: connection)
+                    )
+                }
+            }
         )
-        return success
+        return true
     }
 
     /// Non-locking core — call from inside `inTransaction { ... }`
     /// when you also need to issue updates against the same
-    /// connection without taking the queue lock again.
+    /// connection without taking the queue lock already.
     @discardableResult
     static func executeUpdate(
         on connection: OpaquePointer,
         _ sql: String,
         bind: (OpaquePointer) -> Void
     ) throws -> Bool {
-        var success = false
         try prepareAndExecute(
             on: connection,
             sql,
             bind: bind,
-            process: { stmt in success = sqlite3_step(stmt) == SQLITE_DONE }
+            process: { stmt in
+                let step = sqlite3_step(stmt)
+                guard step == SQLITE_DONE else {
+                    throw MemoryDatabaseError.failedToExecute(
+                        describeStepFailure(step: step, sql: sql, connection: connection)
+                    )
+                }
+            }
         )
-        return success
+        return true
+    }
+
+    /// Build a useful error string from the most recent SQLite step
+    /// failure: the numeric step result, the extended error code, the
+    /// human-readable error message, and a short SQL prefix so the log
+    /// line points to the exact statement.
+    private static func describeStepFailure(
+        step: Int32,
+        sql: String,
+        connection: OpaquePointer? = nil
+    ) -> String {
+        let prefix = sql.split(separator: "\n").first.map(String.init) ?? sql
+        let trimmed = prefix.trimmingCharacters(in: .whitespaces)
+        let stepName = sqliteResultName(step)
+        if let connection {
+            let extended = sqlite3_extended_errcode(connection)
+            let msg = String(cString: sqlite3_errmsg(connection))
+            return
+                "step=\(step)/\(stepName) extended=\(extended) msg=\(msg) sql=\(trimmed.prefix(120))"
+        }
+        return "step=\(step)/\(stepName) sql=\(trimmed.prefix(120))"
+    }
+
+    private func describeStepFailure(step: Int32, sql: String) -> String {
+        guard let connection = db else {
+            return Self.describeStepFailure(step: step, sql: sql)
+        }
+        return Self.describeStepFailure(step: step, sql: sql, connection: connection)
+    }
+
+    private static func sqliteResultName(_ code: Int32) -> String {
+        switch code {
+        case SQLITE_OK: return "SQLITE_OK"
+        case SQLITE_DONE: return "SQLITE_DONE"
+        case SQLITE_ROW: return "SQLITE_ROW"
+        case SQLITE_BUSY: return "SQLITE_BUSY"
+        case SQLITE_LOCKED: return "SQLITE_LOCKED"
+        case SQLITE_READONLY: return "SQLITE_READONLY"
+        case SQLITE_FULL: return "SQLITE_FULL"
+        case SQLITE_CONSTRAINT: return "SQLITE_CONSTRAINT"
+        case SQLITE_MISUSE: return "SQLITE_MISUSE"
+        case SQLITE_CORRUPT: return "SQLITE_CORRUPT"
+        case SQLITE_NOTADB: return "SQLITE_NOTADB"
+        case SQLITE_IOERR: return "SQLITE_IOERR"
+        case SQLITE_CANTOPEN: return "SQLITE_CANTOPEN"
+        case SQLITE_ERROR: return "SQLITE_ERROR"
+        case SQLITE_INTERNAL: return "SQLITE_INTERNAL"
+        default: return "code_\(code)"
+        }
     }
 
     func inTransaction<T>(_ operation: (OpaquePointer) throws -> T) throws -> T {
@@ -1962,6 +2135,210 @@ public final class MemoryDatabase: @unchecked Sendable {
             if let t = outputTokens { sqlite3_bind_int(stmt, 7, Int32(t)) } else { sqlite3_bind_null(stmt, 7) }
             if let t = durationMs { sqlite3_bind_int(stmt, 8, Int32(t)) } else { sqlite3_bind_null(stmt, 8) }
         }
+    }
+
+    /// Cheap row-count for the diagnostics panel — avoids loading every
+    /// episode just to display a single integer.
+    public func episodeCount(agentId: String? = nil) throws -> Int {
+        let sql: String
+        if agentId != nil {
+            sql = "SELECT COUNT(*) FROM episodes WHERE status = 'active' AND agent_id = ?1"
+        } else {
+            sql = "SELECT COUNT(*) FROM episodes WHERE status = 'active'"
+        }
+        var count = 0
+        try prepareAndExecute(
+            sql,
+            bind: { stmt in
+                if let agentId { Self.bindText(stmt, index: 1, value: agentId) }
+            },
+            process: { stmt in
+                if sqlite3_step(stmt) == SQLITE_ROW { count = Int(sqlite3_column_int(stmt, 0)) }
+            }
+        )
+        return count
+    }
+
+    /// Cheap row-count for the diagnostics panel.
+    public func pinnedFactCount(agentId: String? = nil) throws -> Int {
+        let sql: String
+        if agentId != nil {
+            sql = "SELECT COUNT(*) FROM pinned_facts WHERE status = 'active' AND agent_id = ?1"
+        } else {
+            sql = "SELECT COUNT(*) FROM pinned_facts WHERE status = 'active'"
+        }
+        var count = 0
+        try prepareAndExecute(
+            sql,
+            bind: { stmt in
+                if let agentId { Self.bindText(stmt, index: 1, value: agentId) }
+            },
+            process: { stmt in
+                if sqlite3_step(stmt) == SQLITE_ROW { count = Int(sqlite3_column_int(stmt, 0)) }
+            }
+        )
+        return count
+    }
+
+    /// Conversation ids that already have at least one active episode
+    /// for the given agent. Used by the backfill flow to skip
+    /// conversations we've already distilled (idempotent re-run safety).
+    public func distilledConversationIds(agentId: String? = nil) throws -> Set<String> {
+        var ids: Set<String> = []
+        let sql: String
+        if agentId != nil {
+            sql =
+                "SELECT DISTINCT conversation_id FROM episodes WHERE status = 'active' AND agent_id = ?1"
+        } else {
+            sql = "SELECT DISTINCT conversation_id FROM episodes WHERE status = 'active'"
+        }
+        try prepareAndExecute(
+            sql,
+            bind: { stmt in
+                if let agentId { Self.bindText(stmt, index: 1, value: agentId) }
+            },
+            process: { stmt in
+                while sqlite3_step(stmt) == SQLITE_ROW {
+                    ids.insert(String(cString: sqlite3_column_text(stmt, 0)))
+                }
+            }
+        )
+        return ids
+    }
+
+    /// Conversation ids that already have at least one pending signal.
+    /// Avoids double-buffering when a backfill is re-run after a partial
+    /// previous attempt.
+    public func bufferedConversationIds() throws -> Set<String> {
+        var ids: Set<String> = []
+        try prepareAndExecute(
+            "SELECT DISTINCT conversation_id FROM pending_signals",
+            bind: { _ in },
+            process: { stmt in
+                while sqlite3_step(stmt) == SQLITE_ROW {
+                    ids.insert(String(cString: sqlite3_column_text(stmt, 0)))
+                }
+            }
+        )
+        return ids
+    }
+
+    /// Dump the actual on-disk schema for a given table — used by the
+    /// memory diagnostics panel when a constraint fires on `INSERT INTO
+    /// pending_signals`. The user's database may have an older / mutated
+    /// schema (e.g. an extra NOT NULL column from a partial migration),
+    /// and seeing `PRAGMA table_info` lets us localise the divergence
+    /// without a second round-trip.
+    public func tableSchemaDescription(table: String) -> String {
+        var lines: [String] = []
+        let safeTable = table.replacingOccurrences(of: "'", with: "''")
+        do {
+            try prepareAndExecute(
+                "PRAGMA table_info('\(safeTable)')",
+                bind: { _ in },
+                process: { stmt in
+                    while sqlite3_step(stmt) == SQLITE_ROW {
+                        let cid = Int(sqlite3_column_int(stmt, 0))
+                        let name = String(cString: sqlite3_column_text(stmt, 1))
+                        let type = String(cString: sqlite3_column_text(stmt, 2))
+                        let notNull = sqlite3_column_int(stmt, 3) == 1
+                        let defaultVal: String =
+                            sqlite3_column_type(stmt, 4) == SQLITE_NULL
+                            ? "—"
+                            : String(cString: sqlite3_column_text(stmt, 4))
+                        let pk = Int(sqlite3_column_int(stmt, 5))
+                        let parts: [String] = [
+                            "[\(cid)]",
+                            name,
+                            type,
+                            notNull ? "NOT NULL" : "NULL",
+                            "default=\(defaultVal)",
+                            pk > 0 ? "PK\(pk)" : "",
+                        ].filter { !$0.isEmpty }
+                        lines.append(parts.joined(separator: " "))
+                    }
+                }
+            )
+        } catch {
+            return "(schema dump failed: \(error.localizedDescription))"
+        }
+        return lines.isEmpty ? "(table not found)" : lines.joined(separator: "\n")
+    }
+
+    /// Counts of unprocessed `pending_signals` plus an all-time row count
+    /// (regardless of status). The diagnostics panel uses the all-time
+    /// total to distinguish "bufferTurn never reached the database" (= 0)
+    /// from "buffered then drained" (= some N with empty `pending`).
+    public func pendingSignalsSummary() throws -> PendingSignalsSummary {
+        var summary = PendingSignalsSummary()
+        try prepareAndExecute(
+            """
+            SELECT
+                SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END),
+                COUNT(DISTINCT CASE WHEN status = 'pending' THEN conversation_id END),
+                COUNT(*)
+            FROM pending_signals
+            """,
+            bind: { _ in },
+            process: { stmt in
+                if sqlite3_step(stmt) == SQLITE_ROW {
+                    summary.totalSignals =
+                        sqlite3_column_type(stmt, 0) == SQLITE_NULL ? 0 : Int(sqlite3_column_int(stmt, 0))
+                    summary.distinctConversations = Int(sqlite3_column_int(stmt, 1))
+                    summary.allTimeSignals = Int(sqlite3_column_int(stmt, 2))
+                }
+            }
+        )
+        return summary
+    }
+
+    /// Most-recent `processing_log` rows for the diagnostics panel. Capped
+    /// by `limit` so we never page in the entire log on every Memory-tab
+    /// re-render.
+    public func recentProcessingLog(limit: Int = 20) throws -> [ProcessingLogRow] {
+        var rows: [ProcessingLogRow] = []
+        try prepareAndExecute(
+            """
+            SELECT id, agent_id, task_type, model, status, details,
+                   input_tokens, output_tokens, duration_ms, created_at
+            FROM processing_log
+            ORDER BY id DESC
+            LIMIT ?1
+            """,
+            bind: { stmt in sqlite3_bind_int(stmt, 1, Int32(max(0, limit))) },
+            process: { stmt in
+                while sqlite3_step(stmt) == SQLITE_ROW {
+                    let id = Int(sqlite3_column_int(stmt, 0))
+                    let agentId = String(cString: sqlite3_column_text(stmt, 1))
+                    let taskType = String(cString: sqlite3_column_text(stmt, 2))
+                    let model = sqlite3_column_text(stmt, 3).map { String(cString: $0) }
+                    let status = String(cString: sqlite3_column_text(stmt, 4))
+                    let details = sqlite3_column_text(stmt, 5).map { String(cString: $0) }
+                    let inputTokens: Int? =
+                        sqlite3_column_type(stmt, 6) == SQLITE_NULL ? nil : Int(sqlite3_column_int(stmt, 6))
+                    let outputTokens: Int? =
+                        sqlite3_column_type(stmt, 7) == SQLITE_NULL ? nil : Int(sqlite3_column_int(stmt, 7))
+                    let durationMs: Int? =
+                        sqlite3_column_type(stmt, 8) == SQLITE_NULL ? nil : Int(sqlite3_column_int(stmt, 8))
+                    let createdAt = String(cString: sqlite3_column_text(stmt, 9))
+                    rows.append(
+                        ProcessingLogRow(
+                            id: id,
+                            agentId: agentId,
+                            taskType: taskType,
+                            model: model,
+                            status: status,
+                            details: details,
+                            inputTokens: inputTokens,
+                            outputTokens: outputTokens,
+                            durationMs: durationMs,
+                            createdAt: createdAt
+                        )
+                    )
+                }
+            }
+        )
+        return rows
     }
 
     public func processingStats() throws -> ProcessingStats {

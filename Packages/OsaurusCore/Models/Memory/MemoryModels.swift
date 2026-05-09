@@ -273,3 +273,121 @@ public struct ProcessingStats: Sendable {
     public var successCount: Int = 0
     public var errorCount: Int = 0
 }
+
+/// One row from `processing_log`. Surfaces what every distillation /
+/// consolidation pass actually did — including the new `"skipped"` rows
+/// that the distill pipeline writes when it bails before reaching the
+/// model. The Memory diagnostics panel renders the last N of these so
+/// support / users can see why an episode wasn't produced.
+public struct ProcessingLogRow: Sendable, Identifiable {
+    public var id: Int
+    public var agentId: String
+    public var taskType: String
+    public var model: String?
+    public var status: String
+    public var details: String?
+    public var inputTokens: Int?
+    public var outputTokens: Int?
+    public var durationMs: Int?
+    public var createdAt: String
+
+    public init(
+        id: Int,
+        agentId: String,
+        taskType: String,
+        model: String?,
+        status: String,
+        details: String?,
+        inputTokens: Int?,
+        outputTokens: Int?,
+        durationMs: Int?,
+        createdAt: String
+    ) {
+        self.id = id
+        self.agentId = agentId
+        self.taskType = taskType
+        self.model = model
+        self.status = status
+        self.details = details
+        self.inputTokens = inputTokens
+        self.outputTokens = outputTokens
+        self.durationMs = durationMs
+        self.createdAt = createdAt
+    }
+}
+
+/// Aggregate snapshot of `pending_signals` rows. "Are we buffering
+/// anything at all?" is the fastest way to localise a memory-not-building
+/// bug to the buffer step vs the distill step.
+///
+/// `totalSignals` / `distinctConversations` are **pending** rows only
+/// (status='pending'). `allTimeSignals` is the full count regardless of
+/// status — when `allTimeSignals == 0` the chat code never reached
+/// `bufferTurn` at all; when it's non-zero but `totalSignals == 0`
+/// every signal has been distilled.
+public struct PendingSignalsSummary: Sendable {
+    public var totalSignals: Int
+    public var distinctConversations: Int
+    public var allTimeSignals: Int
+
+    public init(
+        totalSignals: Int = 0,
+        distinctConversations: Int = 0,
+        allTimeSignals: Int = 0
+    ) {
+        self.totalSignals = totalSignals
+        self.distinctConversations = distinctConversations
+        self.allTimeSignals = allTimeSignals
+    }
+}
+
+/// Snapshot of `MemoryService`'s buffer-path telemetry. Exists so the
+/// diagnostics panel can answer the *only* question that matters when
+/// `pending_signals` is empty AND `processing_log` is empty:
+/// "did `bufferTurn` ever run, or did the chat code never call it?"
+///
+/// All counters are reset in-process only; they don't survive a relaunch.
+/// That's intentional — a stale "1234 attempts" from yesterday tells us
+/// nothing useful about today's broken state.
+public struct BufferTurnTelemetry: Sendable {
+    public var attempts: Int = 0
+    public var insertSuccesses: Int = 0
+    public var earlyReturnsEmptyMessage: Int = 0
+    public var earlyReturnsDisabled: Int = 0
+    public var insertFailures: Int = 0
+    public var lastError: String?
+    public var lastAttemptAt: Date?
+    public var lastSuccessAt: Date?
+
+    public init() {}
+}
+
+/// Progress reported by `MemoryService.backfillFromChatHistory`.
+/// `stage = .buffering` while we walk chat-history sessions and write
+/// `pending_signals`; `.distilling` while `syncNow()` drains them; `.done`
+/// when the entire backfill finishes (or is cancelled).
+public struct MemoryBackfillProgress: Sendable {
+    public enum Stage: String, Sendable { case buffering, distilling, done, cancelled }
+    public var stage: Stage
+    public var sessionsTotal: Int
+    public var sessionsProcessed: Int
+    public var sessionsSkipped: Int
+    public var turnsBuffered: Int
+    public var lastSessionTitle: String?
+
+    public init(
+        stage: Stage = .buffering,
+        sessionsTotal: Int = 0,
+        sessionsProcessed: Int = 0,
+        sessionsSkipped: Int = 0,
+        turnsBuffered: Int = 0,
+        lastSessionTitle: String? = nil
+    ) {
+        self.stage = stage
+        self.sessionsTotal = sessionsTotal
+        self.sessionsProcessed = sessionsProcessed
+        self.sessionsSkipped = sessionsSkipped
+        self.turnsBuffered = turnsBuffered
+        self.lastSessionTitle = lastSessionTitle
+    }
+}
