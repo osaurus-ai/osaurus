@@ -137,7 +137,7 @@ public struct ToolsCreate {
             """
         try? packageSwift.write(to: dir.appendingPathComponent("Package.swift"), atomically: true, encoding: .utf8)
 
-        // Plugin.swift (v2 ABI)
+        // Plugin.swift (v3 surface, v2 entry symbol)
         let pluginSwift = """
             import Foundation
 
@@ -147,12 +147,84 @@ public struct ToolsCreate {
                 let working_directory: String
             }
 
+            // MARK: - Host API Helpers
+            //
+            // Thin wrappers around the trampolines so the rest of the
+            // plugin reads naturally. Each one logs the call and translates
+            // host return values into Swift types — same idiom as the
+            // ToolEnvelope-shaped responses we return to the host.
+
+            private func hostLog(level: Int32, _ message: String) {
+                hostAPI?.pointee.log?(level, makeCString(message))
+            }
+
+            /// Returns a per-plugin secret stored in the macOS Keychain, or
+            /// nil if the key is not set. The value is a `const char*` we
+            /// must free via the host's `free_string`. NULL is the host's
+            /// only special return — every other host call uses JSON envelopes.
+            private func hostConfigGet(_ key: String) -> String? {
+                guard let cstr = hostAPI?.pointee.config_get?(makeCString(key)) else { return nil }
+                let value = String(cString: cstr)
+                free(UnsafeMutableRawPointer(mutating: cstr))
+                return value
+            }
+
+            /// Runs a quick non-streaming inference call and returns the
+            /// assistant's content (or nil if anything went wrong).
+            private func hostComplete(prompt: String, model: String = "local", maxTokens: Int = 256) -> String? {
+                let request: [String: Any] = [
+                    "model": model,
+                    "max_tokens": maxTokens,
+                    "messages": [["role": "user", "content": prompt]],
+                ]
+                guard let body = try? JSONSerialization.data(withJSONObject: request),
+                      let json = String(data: body, encoding: .utf8),
+                      let cstr = hostAPI?.pointee.complete?(makeCString(json))
+                else { return nil }
+                let response = String(cString: cstr)
+                free(UnsafeMutableRawPointer(mutating: cstr))
+                guard let data = response.data(using: .utf8),
+                      let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let choices = dict["choices"] as? [[String: Any]],
+                      let message = choices.first?["message"] as? [String: Any],
+                      let content = message["content"] as? String
+                else { return nil }
+                return content
+            }
+
+            /// Executes a SQL statement against this plugin's per-plugin
+            /// SQLite database. Returns a JSON envelope from the host —
+            /// `{"changes": ..., "last_insert_rowid": ...}` on success or
+            /// `{"error": ..., "message": ...}` on failure.
+            @discardableResult
+            private func hostDbExec(_ sql: String, params: [Any] = []) -> String {
+                let paramsData = (try? JSONSerialization.data(withJSONObject: params)) ?? Data("[]".utf8)
+                let paramsJSON = String(data: paramsData, encoding: .utf8) ?? "[]"
+                guard let cstr = hostAPI?.pointee.db_exec?(makeCString(sql), makeCString(paramsJSON)) else {
+                    return #"{"error":"context_unavailable"}"#
+                }
+                let response = String(cString: cstr)
+                free(UnsafeMutableRawPointer(mutating: cstr))
+                return response
+            }
+
             // MARK: - Tool Implementation
+            //
+            // The default tool exercises four host APIs to give you a
+            // realistic starting point:
+            //
+            //   - log         — observability via Insights
+            //   - config_get  — read a per-plugin secret
+            //   - db_exec     — persist a row to the per-plugin SQLite DB
+            //   - complete    — run a quick inference call
+            //
+            // Tool returns must match the ToolEnvelope shape from
+            // docs/TOOL_CONTRACT.md: {"ok": true, "data": {...}, "summary": "..."}
 
             private struct HelloTool {
                 let name = "hello_world"
-                let description = "Return a friendly greeting"
-                
+                let description = "Return a friendly greeting (and demo a few host APIs)"
+
                 func run(args: String) -> String {
                     struct Args: Decodable {
                         let name: String
@@ -162,14 +234,48 @@ public struct ToolsCreate {
                     guard let data = args.data(using: .utf8),
                           let input = try? JSONDecoder().decode(Args.self, from: data)
                     else {
-                        return "{\\"error\\": \\"Invalid arguments\\"}"
+                        return #"{"ok":false,"error":{"code":"invalid_request","message":"Invalid arguments"}}"#
                     }
-                    hostAPI?.pointee.log?(1, makeCString("hello_world invoked for \\(input.name)"))
-                    return "{\\"message\\": \\"Hello, \\(input.name)!\\"}"
+                    hostLog(level: 1, "hello_world invoked for \\(input.name)")
+
+                    // Optional: read a secret the user configured. If the
+                    // plugin declares `secrets: [{ id: "greeting_style" }]`
+                    // in its manifest, the value flows through here.
+                    let style = hostConfigGet("greeting_style") ?? "friendly"
+
+                    // Optional: persist a row to the per-plugin SQLite DB.
+                    // The DB is created lazily on first use; safe to ignore
+                    // failures during local development.
+                    _ = hostDbExec(
+                        "CREATE TABLE IF NOT EXISTS greetings (name TEXT, ts INTEGER)"
+                    )
+                    _ = hostDbExec(
+                        "INSERT INTO greetings(name, ts) VALUES (?, ?)",
+                        params: [input.name, Int(Date().timeIntervalSince1970)]
+                    )
+
+                    let message = "Hello, \\(input.name)! (\\(style))"
+                    let payload: [String: Any] = [
+                        "ok": true,
+                        "data": ["message": message, "style": style],
+                        "summary": message,
+                    ]
+                    let body = (try? JSONSerialization.data(withJSONObject: payload)).flatMap {
+                        String(data: $0, encoding: .utf8)
+                    } ?? "{}"
+                    return body
                 }
             }
 
-            // MARK: - C ABI Surface (v2)
+            // MARK: - C ABI Surface (v3 documented surface)
+            //
+            // This Swift mirror MUST stay byte-compatible with `osr_host_api`
+            // in `osaurus_plugin.h`. Field order, count, and types are
+            // FROZEN — the host writes by offset. Two slots
+            // (`dispatch_clarify`, `dispatch_add_issue`) are RESERVED for
+            // ABI compatibility and must remain in their current positions;
+            // calling them returns a `not_supported` envelope, so new
+            // plugins should ignore them.
 
             private typealias osr_plugin_ctx_t = UnsafeMutableRawPointer
 
@@ -200,6 +306,18 @@ public struct ToolsCreate {
             // HTTP Client
             private typealias osr_http_request_fn = @convention(c) (UnsafePointer<CChar>?) -> UnsafePointer<CChar>?
 
+            // File I/O
+            private typealias osr_file_read_fn = @convention(c) (UnsafePointer<CChar>?) -> UnsafePointer<CChar>?
+
+            // Extended Agent Dispatch
+            private typealias osr_list_active_tasks_fn = @convention(c) () -> UnsafePointer<CChar>?
+            private typealias osr_send_draft_fn = @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> Void
+            private typealias osr_dispatch_interrupt_fn = @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> Void
+            private typealias osr_dispatch_add_issue_fn = @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> UnsafePointer<CChar>?
+
+            // Streaming control (v3)
+            private typealias osr_complete_cancel_fn = @convention(c) (UnsafePointer<CChar>?) -> Void
+
             private struct osr_host_api {
                 var version: UInt32
 
@@ -215,7 +333,7 @@ public struct ToolsCreate {
                 var dispatch: osr_dispatch_fn?
                 var task_status: osr_task_status_fn?
                 var dispatch_cancel: osr_dispatch_cancel_fn?
-                var dispatch_clarify: osr_dispatch_clarify_fn?
+                var dispatch_clarify: osr_dispatch_clarify_fn?  // RESERVED
 
                 // Inference
                 var complete: osr_complete_fn?
@@ -225,6 +343,18 @@ public struct ToolsCreate {
 
                 // HTTP Client
                 var http_request: osr_http_request_fn?
+
+                // File I/O
+                var file_read: osr_file_read_fn?
+
+                // Extended Agent Dispatch
+                var list_active_tasks: osr_list_active_tasks_fn?
+                var send_draft: osr_send_draft_fn?
+                var dispatch_interrupt: osr_dispatch_interrupt_fn?
+                var dispatch_add_issue: osr_dispatch_add_issue_fn?  // RESERVED
+
+                // Streaming control (v3)
+                var complete_cancel: osr_complete_cancel_fn?
             }
 
             private typealias osr_free_string_t = @convention(c) (UnsafePointer<CChar>?) -> Void
@@ -485,13 +615,20 @@ public struct ToolsCreate {
             """
         try? cargoToml.write(to: dir.appendingPathComponent("Cargo.toml"), atomically: true, encoding: .utf8)
 
-        // src/lib.rs (v2 ABI)
+        // src/lib.rs (v3 surface, v2 entry symbol)
         let libRs = """
             use serde::Deserialize;
             use std::ffi::{c_char, c_void, CStr, CString};
             use std::ptr;
 
             // ── Host API (provided by Osaurus at init) ──
+            //
+            // This Rust mirror MUST stay byte-compatible with `osr_host_api`
+            // in `osaurus_plugin.h`. Field order, count, and types are FROZEN
+            // — the host writes by offset. Two slots (`dispatch_clarify`,
+            // `dispatch_add_issue`) are RESERVED for ABI compatibility and
+            // must remain in their current positions; calling them returns a
+            // `not_supported` envelope, so new plugins should ignore them.
 
             // Config + Storage + Logging
             type OsrConfigGetFn = unsafe extern "C" fn(*const c_char) -> *const c_char;
@@ -520,6 +657,18 @@ public struct ToolsCreate {
             // HTTP Client
             type OsrHttpRequestFn = unsafe extern "C" fn(*const c_char) -> *const c_char;
 
+            // File I/O
+            type OsrFileReadFn = unsafe extern "C" fn(*const c_char) -> *const c_char;
+
+            // Extended Agent Dispatch
+            type OsrListActiveTasksFn = unsafe extern "C" fn() -> *const c_char;
+            type OsrSendDraftFn = unsafe extern "C" fn(*const c_char, *const c_char);
+            type OsrDispatchInterruptFn = unsafe extern "C" fn(*const c_char, *const c_char);
+            type OsrDispatchAddIssueFn = unsafe extern "C" fn(*const c_char, *const c_char) -> *const c_char;
+
+            // Streaming control (v3)
+            type OsrCompleteCancelFn = unsafe extern "C" fn(*const c_char);
+
             #[repr(C)]
             struct OsrHostApi {
                 version: u32,
@@ -536,7 +685,7 @@ public struct ToolsCreate {
                 dispatch: Option<OsrDispatchFn>,
                 task_status: Option<OsrTaskStatusFn>,
                 dispatch_cancel: Option<OsrDispatchCancelFn>,
-                dispatch_clarify: Option<OsrDispatchClarifyFn>,
+                dispatch_clarify: Option<OsrDispatchClarifyFn>,  // RESERVED
 
                 // Inference
                 complete: Option<OsrCompleteFn>,
@@ -546,6 +695,18 @@ public struct ToolsCreate {
 
                 // HTTP Client
                 http_request: Option<OsrHttpRequestFn>,
+
+                // File I/O
+                file_read: Option<OsrFileReadFn>,
+
+                // Extended Agent Dispatch
+                list_active_tasks: Option<OsrListActiveTasksFn>,
+                send_draft: Option<OsrSendDraftFn>,
+                dispatch_interrupt: Option<OsrDispatchInterruptFn>,
+                dispatch_add_issue: Option<OsrDispatchAddIssueFn>,  // RESERVED
+
+                // Streaming control (v3)
+                complete_cancel: Option<OsrCompleteCancelFn>,
             }
 
             // ── Plugin API (returned to Osaurus) ──
@@ -842,28 +1003,34 @@ public struct ToolsCreate {
 
             ## Architecture Overview
 
-            Osaurus plugins use a C ABI interface (v2). The plugin exports `osaurus_plugin_entry_v2(host)` which receives
-            host callbacks and returns a function table. A v1 fallback (`osaurus_plugin_entry`) is also exported for
-            compatibility with older Osaurus versions.
+            Osaurus plugins use a C ABI interface. New plugins target the **v3 documented surface** by
+            exporting `osaurus_plugin_entry_v2(host)` and reading host callbacks from the
+            `osr_host_api*` pointer. The host's `version` field is `3` in current builds; the struct
+            layout is frozen across versions for ABI compatibility, so older v1 and v2 plugins
+            continue to load unchanged.
 
             **Plugin API (returned to host):**
             - `init()` - Initialize plugin, return context pointer
             - `destroy(ctx)` - Clean up resources
             - `get_manifest(ctx)` - Return JSON describing plugin capabilities
             - `invoke(ctx, type, id, payload)` - Execute a tool with JSON payload
-            - `handle_route(ctx, request_json)` - Handle HTTP route requests (v2)
-            - `on_config_changed(ctx, key, value)` - React to config changes (v2)
-            - `on_task_event(ctx, task_id, event_type, event_json)` - Task lifecycle events (v2)
+            - `handle_route(ctx, request_json)` - Handle HTTP route requests
+            - `on_config_changed(ctx, key, value)` - React to config changes
+            - `on_task_event(ctx, task_id, event_type, event_json)` - Task lifecycle events
             - `free_string(s)` - Free strings returned to host
-            - `version` - Set to `2` for v2 plugins
+            - `version` - Set to `2` (signals v2+ surface, host treats `>= 2` as host-API-capable)
 
             **Host API (provided to plugin at init):**
-            - **Config**: `config_get(key)` / `config_set(key, value)` / `config_delete(key)` - Keychain-backed config
-            - **Database**: `db_exec(sql, params_json)` / `db_query(sql, params_json)` - Per-plugin SQLite
-            - **Logging**: `log(level, message)` - Structured logging (visible in Insights tab)
-            - **Agent Dispatch**: `dispatch(request_json)` / `task_status(task_id)` / `dispatch_cancel(task_id)` / `dispatch_clarify(task_id, response)` - Background agent tasks
-            - **Inference**: `complete(request_json)` / `complete_stream(request_json, on_chunk, user_data)` / `embed(request_json)` / `list_models()` - LLM inference
-            - **HTTP Client**: `http_request(request_json)` - Outbound HTTP with SSRF protection
+            - **Config**: `config_get(key)` / `config_set(key, value)` / `config_delete(key)` — Keychain-backed config
+            - **Database**: `db_exec(sql, params_json)` / `db_query(sql, params_json)` — Per-plugin SQLite
+            - **Logging**: `log(level, message)` — Structured logging (visible in Insights tab)
+            - **Agent Dispatch**: `dispatch(request_json)` / `task_status(task_id)` / `dispatch_cancel(task_id)` / `list_active_tasks()` / `send_draft(task_id, draft_json)` / `dispatch_interrupt(task_id, message)` — Background agent tasks
+            - **Inference**: `complete(request_json)` / `complete_stream(request_json, on_chunk, user_data)` / `embed(request_json)` / `list_models()` — LLM inference (per-plugin inflight cap of 2)
+            - **HTTP Client**: `http_request(request_json)` — Outbound HTTP with SSRF protection
+            - **File I/O**: `file_read(request_json)` — Read shared artifacts (50 MB cap, scoped to artifacts dir)
+
+            **Reserved (do not call):** `dispatch_clarify`, `dispatch_add_issue`. The slots remain
+            in the struct for ABI compatibility but return `not_supported` envelopes.
 
             ## Adding HTTP Routes
 
@@ -981,8 +1148,22 @@ public struct ToolsCreate {
             // Cancel a task
             hostAPI?.pointee.dispatch_cancel?(makeCString("<task-uuid>"))
 
-            // Submit clarification response
-            hostAPI?.pointee.dispatch_clarify?(makeCString("<task-uuid>"), makeCString("Yes, proceed"))
+            // List currently-active tasks dispatched by this plugin
+            if let listActive = hostAPI?.pointee.list_active_tasks {
+                let result = listActive()
+                // {"tasks": [<task_status objects>]}
+                if let result { defer { api.free_string?(result) } }
+            }
+
+            // Send a live-updating draft for an in-flight task
+            hostAPI?.pointee.send_draft?(
+                makeCString("<task-uuid>"),
+                makeCString(#"{"text":"Working on it..."}"#)
+            )
+
+            // Soft-stop a running task (the `message` argument is reserved
+            // and currently a no-op; pass an empty string)
+            hostAPI?.pointee.dispatch_interrupt?(makeCString("<task-uuid>"), makeCString(""))
             ```
             """ : """
             ```rust
@@ -1007,15 +1188,32 @@ public struct ToolsCreate {
                     cancel(make_c_string("<task-uuid>"));
                 }
 
-                // Submit clarification response
-                if let Some(clarify) = (*HOST_API).dispatch_clarify {
-                    clarify(make_c_string("<task-uuid>"), make_c_string("Yes, proceed"));
+                // List active tasks dispatched by this plugin
+                if let Some(list_active) = (*HOST_API).list_active_tasks {
+                    let result = list_active();
+                    if !result.is_null() { plugin_free_string(result); }
+                }
+
+                // Send a live-updating draft for an in-flight task
+                if let Some(send_draft) = (*HOST_API).send_draft {
+                    send_draft(
+                        make_c_string("<task-uuid>"),
+                        make_c_string(r#"{"text":"Working on it..."}"#),
+                    );
+                }
+
+                // Soft-stop a running task (the `message` argument is
+                // reserved and currently a no-op; pass an empty string)
+                if let Some(interrupt) = (*HOST_API).dispatch_interrupt {
+                    interrupt(make_c_string("<task-uuid>"), make_c_string(""));
                 }
             }
             ```
             """)
 
-            Rate limit: 10 dispatches per minute per plugin.
+            Rate limit: 10 dispatches per minute per `(plugin, agent)` pair. Each plugin keeps its
+            own bucket per agent, so two plugins running for the same agent each get their own
+            10/min budget — preventing cross-plugin starvation.
 
             ## Inference
 
@@ -1104,19 +1302,48 @@ public struct ToolsCreate {
             Request fields: `method`, `url`, `headers`, `body`, `body_encoding`, `timeout_ms`, `follow_redirects`.
             Response fields: `status`, `headers`, `body`, `body_encoding`, `elapsed_ms`.
 
+            ## File Read
+
+            Plugins can read files the user has explicitly shared as artifacts. The host enforces a
+            50 MB cap and refuses paths outside `~/.osaurus/artifacts/`.
+
+            \(isSwift ? """
+            ```swift
+            if let fileRead = hostAPI?.pointee.file_read {
+                let request = #"{"path":"/Users/me/.osaurus/artifacts/abc/file.png"}"#
+                let response = fileRead(makeCString(request))
+                // JSON: {"data":"<base64>","size":123,"mime_type":"image/png"} or {"error": ..., "message": ...}
+                if let response { defer { api.free_string?(response) } }
+            }
+            ```
+            """ : """
+            ```rust
+            unsafe {
+                if let Some(file_read) = (*HOST_API).file_read {
+                    let req = make_c_string(r#"{"path":"/Users/me/.osaurus/artifacts/abc/file.png"}"#);
+                    let response = file_read(req);
+                    plugin_free_string(req);
+                    if !response.is_null() { plugin_free_string(response); }
+                }
+            }
+            ```
+            """)
+
             ## Task Events
 
-            v2 plugins can receive lifecycle events for tasks they dispatch by implementing `on_task_event`:
+            Plugins receive lifecycle events for tasks they dispatch by implementing `on_task_event`:
 
             | Event Type | Value | Payload |
             |------------|-------|---------|
             | `STARTED` | 0 | `{"status":"running","mode":"...","title":"..."}` |
             | `ACTIVITY` | 1 | `{"kind":"...","title":"...","detail":"...","timestamp":"..."}` |
             | `PROGRESS` | 2 | `{"progress":0.5,"current_step":"..."}` |
-            | `CLARIFICATION` | 3 | `{"question":"...","options":[...]}` |
+            | `CLARIFICATION` | 3 | RESERVED — clarification is handled inline now; not emitted |
             | `COMPLETED` | 4 | `{"success":true,"summary":"...","session_id":"..."}` |
             | `FAILED` | 5 | `{"success":false,"summary":"..."}` |
             | `CANCELLED` | 6 | `{}` |
+            | `OUTPUT` | 7 | `{"text":"..."}` for streamed assistant output |
+            | `DRAFT` | 8 | `{"text":"...","parse_mode":"..."}` for plugin-written drafts |
 
             \(isSwift ? """
             ```swift

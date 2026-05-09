@@ -264,7 +264,7 @@ No per-agent skill configuration is needed. The system automatically matches the
 ## Related Documentation
 
 - [Agents](../README.md#agents) — Custom AI assistants
-- [Tools & Plugins](PLUGIN_AUTHORING.md) — Extend with custom tools
+- [Tools & Plugins](plugins/README.md) — Extend with custom tools
 - [Agent Skills Specification](https://agentskills.io/) — Open format documentation
 - [Features: Methods](FEATURES.md#methods) — Reusable learned workflows
 - [Features: Context Management](FEATURES.md#context-management) — Automated capability selection

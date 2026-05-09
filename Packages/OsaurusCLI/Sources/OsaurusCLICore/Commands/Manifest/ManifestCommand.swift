@@ -13,7 +13,7 @@ public struct ManifestCommand: Command {
     public static func execute(args: [String]) async {
         guard let sub = args.first else {
             fputs(
-                "Missing manifest subcommand. Use one of: extract\n",
+                "Missing manifest subcommand. Use one of: extract, validate\n",
                 stderr
             )
             exit(EXIT_FAILURE)
@@ -22,6 +22,8 @@ public struct ManifestCommand: Command {
         switch sub {
         case "extract":
             ManifestExtract.execute(args: rest)
+        case "validate":
+            ManifestValidate.execute(args: rest)
         default:
             fputs("Unknown manifest subcommand: \(sub)\n", stderr)
             exit(EXIT_FAILURE)

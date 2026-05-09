@@ -144,15 +144,26 @@ public final class BackgroundTaskManager: ObservableObject {
         scheduleAutoFinalize(backgroundId)
     }
 
-    /// Soft-stop a running task by cancelling its current stream. The chat
-    /// task can be resumed by the user opening its window and sending a
-    /// follow-up message.
+    /// Soft-stop a running task by cancelling its current stream.
+    ///
+    /// When `message` is non-empty, the trimmed content is appended to the
+    /// session as a `user`-role turn before the stream is cancelled. The
+    /// model picks the message up on the next user turn — i.e. when the
+    /// user opens the chat window, when the plugin dispatches a follow-up,
+    /// or when the session is otherwise resumed. This is the documented
+    /// behavior of `dispatch_interrupt` on the v3 surface.
+    ///
+    /// Empty / whitespace-only messages just cancel the stream, matching
+    /// the original soft-stop semantics. The chat task can always be
+    /// resumed by the user opening its window and sending a follow-up.
     public func interruptTask(_ backgroundId: UUID, message: String?) {
         guard let state = backgroundTasks[backgroundId], state.status.isActive else { return }
-        // `message` is ignored for chat tasks — ChatSession has no
-        // mid-stream redirect API. The user can open the window and send
-        // a follow-up message after the soft stop.
-        _ = message
+        if let trimmed = message?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty {
+            // Inject as a user-role turn so the next user-driven completion
+            // round (which the user or another dispatch will trigger) sees
+            // it as part of the conversation history.
+            state.chatSession?.appendInterruptMessage(trimmed)
+        }
         state.chatSession?.stop()
     }
 

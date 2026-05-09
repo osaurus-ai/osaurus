@@ -489,9 +489,8 @@ final class PluginManager {
             hostContext = ctx
 
             PluginHostContext.setContext(ctx, for: preliminaryId)
-            print("[Osaurus] Loaded v2 plugin from \(url.lastPathComponent)")
+            print("[Osaurus] Loaded plugin from \(url.lastPathComponent) (entry=v2, abi=v\(abiVersion))")
         } else if let v1sym = dlsym(handle, "osaurus_plugin_entry") {
-            // v1 path: no host API
             let entryFn = unsafeBitCast(v1sym, to: osr_plugin_entry_t.self)
             guard let apiRawPtr = entryFn() else {
                 let errorMsg = "Plugin entry returned null API"
@@ -503,8 +502,13 @@ final class PluginManager {
             let apiPtr = apiRawPtr.assumingMemoryBound(to: osr_plugin_api.self)
             api = apiPtr.pointee
             abiVersion = 1
+            print(
+                "[Osaurus] Loaded plugin from \(url.lastPathComponent) (entry=v1 legacy). "
+                    + "v1 plugins cannot call host APIs. Consider rebuilding against the v3 surface "
+                    + "(export osaurus_plugin_entry_v2 with api.version >= 2) for richer functionality."
+            )
         } else {
-            let errorMsg = "Missing plugin entry point (osaurus_plugin_entry or osaurus_plugin_entry_v2)"
+            let errorMsg = "Missing plugin entry point (osaurus_plugin_entry_v2 or osaurus_plugin_entry)"
             print("[Osaurus] \(errorMsg) in \(url.lastPathComponent)")
             dlclose(handle)
             return .failure(PluginLoadError(message: errorMsg))
@@ -565,6 +569,30 @@ final class PluginManager {
         // re-register the host context under the canonical ID.
         if let hc = hostContext, manifest.plugin_id != hc.pluginId {
             PluginHostContext.rekeyContext(from: hc.pluginId, to: manifest.plugin_id)
+        }
+
+        // Validate that web mount paths don't silently shadow dynamic routes.
+        // The runtime checks the static branch first, so any overlap means
+        // the plugin's `handle_route` for that path can never fire.
+        if let mount = manifest.capabilities.web?.mount,
+            let routes = manifest.capabilities.routes
+        {
+            let normalizedMount = mount.hasPrefix("/") ? mount : "/\(mount)"
+            for route in routes {
+                let routePath = route.path.hasPrefix("/") ? route.path : "/\(route.path)"
+                let isShadowed =
+                    routePath == normalizedMount
+                    || routePath.hasPrefix(normalizedMount + "/")
+                if isShadowed {
+                    let errorMsg =
+                        "Plugin \(manifest.plugin_id) declares route '\(route.path)' under web mount '\(mount)'; the static web branch would shadow this route. Move the route outside the web mount or remove the web mount overlap."
+                    print("[Osaurus] \(errorMsg)")
+                    api.destroy?(ctx)
+                    hostContext?.teardown()
+                    dlclose(handle)
+                    return .failure(PluginLoadError(message: errorMsg))
+                }
+            }
         }
 
         let plugin = ExternalPlugin(

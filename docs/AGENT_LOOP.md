@@ -184,11 +184,11 @@ The chat-layer wrapper surfaces a differentiated error envelope per failure mode
 
 ## Headless / HTTP / Plugin Use
 
-Plugins and HTTP API callers reach the same loop through [`TaskDispatcher`](../Packages/OsaurusCore/Managers/TaskDispatcher.swift) and [`BackgroundTaskManager`](../Packages/OsaurusCore/Managers/BackgroundTaskManager.swift). Each dispatched task runs as a background chat session — same engine, same loop tools, same intercepts. See the [Plugin Authoring Guide](PLUGIN_AUTHORING.md) for the dispatch JSON schema and event types.
+Plugins and HTTP API callers reach the same loop through [`TaskDispatcher`](../Packages/OsaurusCore/Managers/TaskDispatcher.swift) and [`BackgroundTaskManager`](../Packages/OsaurusCore/Managers/BackgroundTaskManager.swift). Each dispatched task runs as a background chat session — same engine, same loop tools, same intercepts. See [`docs/plugins/HOST_API.md`](plugins/HOST_API.md#dispatch) for the dispatch JSON schema and event types.
 
 ### Session Audit Dimension
 
-Every persisted [`ChatSessionData`](../Packages/OsaurusCore/Models/Chat/ChatSessionData.swift) carries a [`SessionSource`](../Packages/OsaurusCore/Models/Chat/SessionSource.swift) tag — `chat`, `plugin`, `http`, `schedule`, or `watcher` — plus the originating `sourcePluginId`, `externalSessionKey`, and `dispatchTaskId`. The chat sidebar surfaces this as a per-row badge and a source filter rail so users can audit what spawned each conversation. Telegram-style plugins that pass `external_session_key` get one growing session per external thread instead of a new row per inbound message — see [Conversation Grouping](PLUGIN_AUTHORING.md#conversation-grouping). The dispatch task id and the persisted session id are intentionally the same UUID so HTTP pollers, plugins, and the sidebar deep-link to the same row.
+Every persisted [`ChatSessionData`](../Packages/OsaurusCore/Models/Chat/ChatSessionData.swift) carries a [`SessionSource`](../Packages/OsaurusCore/Models/Chat/SessionSource.swift) tag — `chat`, `plugin`, `http`, `schedule`, or `watcher` — plus the originating `sourcePluginId`, `externalSessionKey`, and `dispatchTaskId`. The chat sidebar surfaces this as a per-row badge and a source filter rail so users can audit what spawned each conversation. Telegram-style plugins that pass `session_id` get one growing session per external thread instead of a new row per inbound message. The dispatch task id and the persisted session id are intentionally the same UUID so HTTP pollers, plugins, and the sidebar deep-link to the same row.
 
 ### HTTP API divergence (intentional)
 
@@ -209,5 +209,5 @@ The OpenAI-compatible HTTP endpoint is **stateless** — there's no Osaurus sess
 
 - [Sandbox Guide](SANDBOX.md) — Linux VM, sandbox tool inventory, plugin recipes
 - [Skills Guide](SKILLS.md) — Reusable AI capabilities and methods
-- [Plugin Authoring Guide](PLUGIN_AUTHORING.md) — Building tools and dispatching tasks
+- [Plugin Authoring Guide](plugins/README.md) — Building tools and dispatching tasks
 - [Features Overview](FEATURES.md) — Complete feature inventory

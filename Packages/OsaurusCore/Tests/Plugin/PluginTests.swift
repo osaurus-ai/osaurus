@@ -125,6 +125,88 @@ struct PluginRouteMatchingTests {
         #expect(m.matchRoute(method: "GET", subpath: "/protected")?.auth == PluginManifest.RouteAuth.verify)
         #expect(m.matchRoute(method: "GET", subpath: "/private")?.auth == PluginManifest.RouteAuth.owner)
     }
+
+    // MARK: - Path Parameters (v3 surface)
+
+    @Test func pathParam_singleSegment() {
+        let m = manifest(routes: [
+            .init(id: "item", path: "/items/:id", methods: ["GET"])
+        ])
+        let match = m.matchRouteWithParams(method: "GET", subpath: "/items/abc123")
+        #expect(match?.route.id == "item")
+        #expect(match?.pathParams["id"] == "abc123")
+    }
+
+    @Test func pathParam_multipleSegments() {
+        let m = manifest(routes: [
+            .init(id: "post", path: "/users/:userId/posts/:postId", methods: ["GET"])
+        ])
+        let match = m.matchRouteWithParams(method: "GET", subpath: "/users/u42/posts/p99")
+        #expect(match?.route.id == "post")
+        #expect(match?.pathParams["userId"] == "u42")
+        #expect(match?.pathParams["postId"] == "p99")
+    }
+
+    @Test func pathParam_percentDecodes() {
+        let m = manifest(routes: [
+            .init(id: "slug", path: "/posts/:slug", methods: ["GET"])
+        ])
+        let match = m.matchRouteWithParams(method: "GET", subpath: "/posts/hello%20world")
+        #expect(match?.pathParams["slug"] == "hello world")
+    }
+
+    @Test func pathParam_emptySegment_doesNotMatch() {
+        let m = manifest(routes: [
+            .init(id: "item", path: "/items/:id", methods: ["GET"])
+        ])
+        // Empty `:id` would be `/items/` which has 3 segments vs 3 in the
+        // route — but the captured value would be empty. We reject empty
+        // segments to keep semantics tight.
+        #expect(m.matchRouteWithParams(method: "GET", subpath: "/items/") == nil)
+    }
+
+    @Test func pathParam_segmentCountMustMatch() {
+        let m = manifest(routes: [
+            .init(id: "item", path: "/items/:id", methods: ["GET"])
+        ])
+        #expect(m.matchRouteWithParams(method: "GET", subpath: "/items/abc/extra") == nil)
+        #expect(m.matchRouteWithParams(method: "GET", subpath: "/items") == nil)
+    }
+
+    @Test func pathParam_methodFiltering() {
+        let m = manifest(routes: [
+            .init(id: "item", path: "/items/:id", methods: ["GET"])
+        ])
+        #expect(m.matchRouteWithParams(method: "POST", subpath: "/items/abc") == nil)
+    }
+
+    @Test func pathParam_exactMatchTakesPrecedence() {
+        let m = manifest(routes: [
+            .init(id: "param", path: "/items/:id", methods: ["GET"]),
+            .init(id: "exact", path: "/items/featured", methods: ["GET"]),
+        ])
+        let match = m.matchRouteWithParams(method: "GET", subpath: "/items/featured")
+        #expect(match?.route.id == "exact")
+        #expect(match?.pathParams.isEmpty == true)
+    }
+
+    @Test func pathParam_takesPrecedenceOverWildcard() {
+        let m = manifest(routes: [
+            .init(id: "wildcard", path: "/items/*", methods: ["GET"]),
+            .init(id: "param", path: "/items/:id", methods: ["GET"]),
+        ])
+        let match = m.matchRouteWithParams(method: "GET", subpath: "/items/abc")
+        #expect(match?.route.id == "param")
+        #expect(match?.pathParams["id"] == "abc")
+    }
+
+    @Test func pathParam_stripsQueryString() {
+        let m = manifest(routes: [
+            .init(id: "item", path: "/items/:id", methods: ["GET"])
+        ])
+        let match = m.matchRouteWithParams(method: "GET", subpath: "/items/abc?foo=bar")
+        #expect(match?.pathParams["id"] == "abc")
+    }
 }
 
 // MARK: - Query Parameter Parsing

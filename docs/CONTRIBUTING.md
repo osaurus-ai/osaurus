@@ -173,7 +173,7 @@ Good documentation is just as important as good code. Here's how to contribute t
 | [REMOTE_PROVIDERS.md](REMOTE_PROVIDERS.md)                     | Remote provider setup and configuration                           |
 | [REMOTE_MCP_PROVIDERS.md](REMOTE_MCP_PROVIDERS.md)             | Remote MCP provider setup                                         |
 | [DEVELOPER_TOOLS.md](DEVELOPER_TOOLS.md)                       | Insights and Server Explorer guide                                |
-| [PLUGIN_AUTHORING.md](PLUGIN_AUTHORING.md)                     | Plugin authoring: tools, routes, storage, config UI, and web apps |
+| [plugins/README.md](plugins/README.md)                         | Plugin authoring: tools, routes, storage, config UI, and web apps |
 | [OpenAI_API_GUIDE.md](OpenAI_API_GUIDE.md)                     | API usage, tool calling, streaming                                |
 | [SHARED_CONFIGURATION_GUIDE.md](SHARED_CONFIGURATION_GUIDE.md) | Shared configuration for teams                                    |
 

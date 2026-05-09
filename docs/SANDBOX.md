@@ -4,6 +4,8 @@ Run agent code in an isolated Linux virtual machine — safely, locally, and wit
 
 The Sandbox is a shared Linux container powered by Apple's [Containerization](https://developer.apple.com/documentation/containerization) framework. It gives every Osaurus agent access to a real Linux environment with shell, package managers, compilers, and file system access — all running natively on Apple Silicon with zero risk to your Mac.
 
+> **Sandbox Tools vs Native Plugins:** Osaurus has two distinct extensibility systems. **Sandbox tools** (this guide) are JSON recipes that run inside the Linux container — no compiler, no code signing, ideal for shell-based workflows. **Native plugins** are compiled `.dylib` files with full host API access (inference, storage, HTTP routes, web UIs); see [`docs/plugins/README.md`](plugins/README.md). The terms used to overlap; this doc uses **Sandbox Tools** consistently.
+
 ---
 
 ## Why Sandbox?
@@ -20,9 +22,9 @@ Agents gain a full Linux environment with shell access, Python (pip), Node.js (n
 
 Each agent gets its own Linux user and home directory. One agent's files, processes, and installed packages cannot interfere with another's. Run multiple specialized agents simultaneously — a Python data analyst, a Node.js web developer, and a system administration agent — without cross-contamination.
 
-### Lightweight Plugin Ecosystem
+### Lightweight Tool Ecosystem
 
-Sandbox plugins are simple JSON recipes. No compiled dylibs, no Xcode, no code signing required. Anyone can write, share, and import plugins that install dependencies, seed files, and define custom tools — dramatically lowering the barrier to extending agent capabilities.
+Sandbox tools are simple JSON recipes. No compiled dylibs, no Xcode, no code signing required. Anyone can write, share, and import tools that install dependencies, seed files, and define custom capabilities — dramatically lowering the barrier to extending agent capabilities. (For richer extensibility with full host API access, see [native plugins](plugins/README.md).)
 
 ### Local-First
 
@@ -55,9 +57,9 @@ Click **Provision** to download the Linux kernel and initial filesystem, then bo
 
 Once the container is running, sandbox tools are automatically registered for the active agent. The agent can now execute commands, read/write files, install packages, and more — all inside the VM.
 
-### 4. Install Plugins (Optional)
+### 4. Install Sandbox Tools (Optional)
 
-Switch to the **Plugins** tab to browse, import, or create sandbox plugins that extend your agents with custom tools.
+Switch to the **Sandbox** tab in the Tools manager to browse, import, or create JSON tool recipes that extend your agents with custom capabilities. For native dylib plugins (full host API access), use the **Available** tab and see [`docs/plugins/README.md`](plugins/README.md).
 
 ---
 

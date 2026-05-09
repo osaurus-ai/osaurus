@@ -8,10 +8,15 @@
 import Foundation
 
 // MARK: - C ABI Mirror
+//
+// Swift mirror of the C struct in `Tools/PluginABI/osaurus_plugin.h`.
+// The struct layout is FROZEN — adding/reordering fields would break
+// every installed plugin that reads the host API by offset. New host
+// callbacks must be appended after the existing trailing fields.
 
 typealias osr_plugin_ctx_t = UnsafeMutableRawPointer
 
-// v1 function types
+// Required plugin-side function types (every plugin implements these).
 typealias osr_free_string_t = @convention(c) (UnsafePointer<CChar>?) -> Void
 typealias osr_init_t = @convention(c) () -> osr_plugin_ctx_t?
 typealias osr_destroy_t = @convention(c) (osr_plugin_ctx_t?) -> Void
@@ -25,7 +30,7 @@ typealias osr_invoke_t =
         UnsafePointer<CChar>?  // payload
     ) -> UnsafePointer<CChar>?  // returns JSON string directly
 
-// v2 function types
+// Optional plugin-side function types (plugins that opt in to v2+ features).
 typealias osr_handle_route_t =
     @convention(c) (
         osr_plugin_ctx_t?,  // ctx
@@ -101,6 +106,9 @@ typealias osr_dispatch_interrupt_t = @convention(c) (UnsafePointer<CChar>?, Unsa
 typealias osr_dispatch_add_issue_t =
     @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> UnsafePointer<CChar>?
 
+// Streaming control
+typealias osr_complete_cancel_t = @convention(c) (UnsafePointer<CChar>?) -> Void
+
 struct osr_host_api {
     var version: UInt32
 
@@ -116,6 +124,9 @@ struct osr_host_api {
     var dispatch: osr_dispatch_t?
     var task_status: osr_task_status_t?
     var dispatch_cancel: osr_dispatch_cancel_t?
+    /// RESERVED — kept for ABI compatibility. The trampoline is a no-op;
+    /// clarification is handled inline in chat via the `clarify` agent
+    /// intercept. New plugins should not invoke this slot.
     var dispatch_clarify: osr_dispatch_clarify_t?
 
     // Inference
@@ -130,21 +141,27 @@ struct osr_host_api {
     // File I/O
     var file_read: osr_file_read_t?
 
-    // Extended Agent Dispatch (v2 trailing fields)
+    // Extended Agent Dispatch (added in v2; preserved in v3)
     var list_active_tasks: osr_list_active_tasks_t?
     var send_draft: osr_send_draft_t?
     var dispatch_interrupt: osr_dispatch_interrupt_t?
+    /// RESERVED — kept for ABI compatibility. The trampoline returns a
+    /// structured `not_supported` JSON envelope. The issue tracker was
+    /// retired; new plugins should call `dispatch` to start a fresh task.
     var dispatch_add_issue: osr_dispatch_add_issue_t?
+
+    // Streaming control (added in v3)
+    var complete_cancel: osr_complete_cancel_t?
 }
 
 struct osr_plugin_api {
-    // v1 fields
+    // Required fields (every plugin)
     var free_string: osr_free_string_t?
     var `init`: osr_init_t?
     var destroy: osr_destroy_t?
     var get_manifest: osr_get_manifest_t?
     var invoke: osr_invoke_t?
-    // v2 fields (zeroed for v1 plugins)
+    // Optional fields (zeroed for legacy v1 plugins; populated for v2+)
     var version: UInt32
     var handle_route: osr_handle_route_t?
     var on_config_changed: osr_on_config_changed_t?
@@ -231,14 +248,32 @@ public struct PluginManifest: Decodable, Sendable {
         public let methods: [String]
         public let description: String?
         public let auth: RouteAuth
+        /// When true, the route is reachable over the agent tunnel (in
+        /// addition to loopback). When false / nil, tunneled requests
+        /// receive 404 even if the host knows the route exists. Defaults
+        /// to false: routes are local-only by default and authors opt in
+        /// explicitly for OAuth callbacks, webhooks, and other endpoints
+        /// that need to be reachable over the public tunnel URL.
+        public let tunnel_exposed: Bool?
 
-        public init(id: String, path: String, methods: [String], description: String? = nil, auth: RouteAuth = .owner) {
+        public init(
+            id: String,
+            path: String,
+            methods: [String],
+            description: String? = nil,
+            auth: RouteAuth = .owner,
+            tunnel_exposed: Bool? = nil
+        ) {
             self.id = id
             self.path = path
             self.methods = methods
             self.description = description
             self.auth = auth
+            self.tunnel_exposed = tunnel_exposed
         }
+
+        /// Computed convenience: treats nil as the default (false).
+        public var isTunnelExposed: Bool { tunnel_exposed == true }
     }
 
     // MARK: - Config Spec
@@ -340,6 +375,19 @@ public struct PluginManifest: Decodable, Sendable {
         public let entry: String
         public let mount: String
         public let auth: RouteAuth
+        /// Optional custom API mount injected into `window.__osaurus.apiUrl`.
+        /// Defaults to `/api` when nil. Plugins that mount their HTTP routes
+        /// under a different prefix (e.g. `/v2`) can advertise the right URL
+        /// to their web UI.
+        public let api_mount: String?
+        /// When true, the static UI is reachable over the agent tunnel
+        /// (in addition to loopback). Defaults to false: web UIs are
+        /// local-only unless the author opts in. Auth still applies on
+        /// top — `auth: "owner"` requires `osk-v1` even on loopback.
+        public let tunnel_exposed: Bool?
+
+        /// Computed convenience: treats nil as the default (false).
+        public var isTunnelExposed: Bool { tunnel_exposed == true }
     }
 
     // MARK: - Docs Spec
@@ -357,27 +405,102 @@ public struct PluginManifest: Decodable, Sendable {
 
     // MARK: - Route Matching
 
+    /// Result of `matchRouteWithParams`: the matched route plus any
+    /// extracted path parameters keyed by the segment name.
+    public struct RouteMatch: Sendable {
+        public let route: RouteSpec
+        /// Path parameters extracted by `:name` segments. Empty for routes
+        /// that have no parameters.
+        public let pathParams: [String: String]
+
+        public init(route: RouteSpec, pathParams: [String: String] = [:]) {
+            self.route = route
+            self.pathParams = pathParams
+        }
+    }
+
     /// Finds the best matching route for a given HTTP method and subpath.
     /// The subpath is relative to the plugin's namespace (e.g., "/callback").
     public func matchRoute(method: String, subpath: String) -> RouteSpec? {
+        return matchRouteWithParams(method: method, subpath: subpath)?.route
+    }
+
+    /// Finds the best matching route for a given method and subpath and
+    /// extracts any `:name` path parameters. Match precedence is:
+    /// 1. Exact path match (highest priority)
+    /// 2. Path parameters (`:name` segments) — first defined wins
+    /// 3. Wildcard suffix (`/*`) — lowest priority
+    ///
+    /// Path parameter syntax: `/items/:id` matches `/items/abc` and yields
+    /// `{"id": "abc"}`. Multiple params are supported: `/users/:userId/posts/:postId`.
+    /// Wildcards still take precedence over no-match but lose to exact and
+    /// parameterised matches so plain SPA fallbacks (`/api/*`) keep working.
+    public func matchRouteWithParams(method: String, subpath: String) -> RouteMatch? {
         guard let routes = capabilities.routes else { return nil }
         let normalizedMethod = method.uppercased()
-        let normalizedPath = subpath.hasPrefix("/") ? subpath : "/\(subpath)"
+        // Strip the query string if the caller passed `subpath` as a raw URI.
+        let pathOnly = subpath.split(separator: "?", maxSplits: 1).first.map(String.init) ?? subpath
+        let normalizedPath = pathOnly.hasPrefix("/") ? pathOnly : "/\(pathOnly)"
+
+        var paramMatch: RouteMatch?
+        var wildcardMatch: RouteMatch?
 
         for route in routes {
             guard route.methods.contains(where: { $0.uppercased() == normalizedMethod }) else { continue }
 
             let routePath = route.path.hasPrefix("/") ? route.path : "/\(route.path)"
+
+            // Exact match — return immediately (highest priority).
+            if routePath == normalizedPath {
+                return RouteMatch(route: route, pathParams: [:])
+            }
+
+            // Wildcard suffix — remember as fallback.
             if routePath.hasSuffix("/*") {
                 let prefix = String(routePath.dropLast(2))
                 if normalizedPath == prefix || normalizedPath.hasPrefix(prefix + "/") {
-                    return route
+                    if wildcardMatch == nil {
+                        wildcardMatch = RouteMatch(route: route, pathParams: [:])
+                    }
                 }
-            } else if routePath == normalizedPath {
-                return route
+                continue
+            }
+
+            // Path parameter match — segment-by-segment, only the first
+            // definition wins to give plugin authors deterministic ordering.
+            if paramMatch == nil,
+                let params = matchPathParams(routePath: routePath, requestPath: normalizedPath)
+            {
+                paramMatch = RouteMatch(route: route, pathParams: params)
             }
         }
-        return nil
+
+        return paramMatch ?? wildcardMatch
+    }
+
+    /// Returns the captured path parameters when `requestPath` matches
+    /// `routePath`'s `:name` segments, or nil if the paths cannot match.
+    private func matchPathParams(routePath: String, requestPath: String) -> [String: String]? {
+        let routeSegments = routePath.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+        let requestSegments = requestPath.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+        guard routeSegments.count == requestSegments.count else { return nil }
+
+        var params: [String: String] = [:]
+        var hadParam = false
+        for (rSeg, qSeg) in zip(routeSegments, requestSegments) {
+            if rSeg.hasPrefix(":") {
+                let name = String(rSeg.dropFirst())
+                guard !name.isEmpty else { return nil }
+                guard !qSeg.isEmpty else { return nil }
+                params[name] = qSeg.removingPercentEncoding ?? qSeg
+                hadParam = true
+            } else if rSeg != qSeg {
+                return nil
+            }
+        }
+        // Must have actually used the parameter mechanism to be a "param" match;
+        // exact matches were already returned above and shouldn't reach here.
+        return hadParam ? params : nil
     }
 }
 
@@ -555,7 +678,16 @@ final class ExternalPlugin: @unchecked Sendable {
         }
     }
 
-    func handleRoute(requestJSON: String, agentId: UUID? = nil) async throws -> String {
+    /// Default per-route timeout. Mirrors `ToolRegistry.runToolBody`'s
+    /// 120s wall-clock guard so a hung plugin handler never blocks the
+    /// per-plugin invoke queue indefinitely.
+    static let defaultRouteHandlerTimeoutSeconds: TimeInterval = 30
+
+    func handleRoute(
+        requestJSON: String,
+        agentId: UUID? = nil,
+        timeoutSeconds: TimeInterval = ExternalPlugin.defaultRouteHandlerTimeoutSeconds
+    ) async throws -> String {
         guard abiVersion >= 2, let routeFn = api.handle_route else {
             throw NSError(
                 domain: "ExternalPlugin",
@@ -564,14 +696,41 @@ final class ExternalPlugin: @unchecked Sendable {
             )
         }
 
-        return try await dispatchPluginCall(
-            agentId: agentId,
-            errorCode: 4,
-            errorMessage: "Plugin route handler returned NULL"
-        ) { ctx in
-            requestJSON.withCString { reqPtr in
-                routeFn(ctx, reqPtr)
+        let work: @Sendable () async throws -> String = { [self] in
+            try await dispatchPluginCall(
+                agentId: agentId,
+                errorCode: 4,
+                errorMessage: "Plugin route handler returned NULL"
+            ) { ctx in
+                requestJSON.withCString { reqPtr in
+                    routeFn(ctx, reqPtr)
+                }
             }
+        }
+
+        return try await withThrowingTaskGroup(of: String?.self) { group in
+            group.addTask { try await work() }
+            group.addTask {
+                try await Task.sleep(nanoseconds: UInt64(timeoutSeconds * 1_000_000_000))
+                return nil
+            }
+            for try await first in group {
+                group.cancelAll()
+                if let value = first { return value }
+                throw NSError(
+                    domain: "ExternalPlugin",
+                    code: 5,
+                    userInfo: [
+                        NSLocalizedDescriptionKey:
+                            "Plugin route handler timed out after \(Int(timeoutSeconds))s"
+                    ]
+                )
+            }
+            throw NSError(
+                domain: "ExternalPlugin",
+                code: 5,
+                userInfo: [NSLocalizedDescriptionKey: "Plugin route handler returned without result"]
+            )
         }
     }
 

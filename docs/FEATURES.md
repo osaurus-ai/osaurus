@@ -14,7 +14,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 | Remote Providers                 | Stable    | "Key Features"     | REMOTE_PROVIDERS.md           | Managers/RemoteProviderManager.swift, Services/Provider/RemoteProviderService.swift            |
 | Remote MCP Providers             | Stable    | "Key Features"     | REMOTE_MCP_PROVIDERS.md       | Managers/MCPProviderManager.swift, Tools/MCPProviderTool.swift                        |
 | MCP Server                       | Stable    | "MCP Server"       | (in README)                   | Networking/OsaurusServer.swift, Services/MCP/MCPServerManager.swift                       |
-| Tools & Plugins                  | Stable    | "Tools & Plugins"  | PLUGIN_AUTHORING.md           | Tools/, Managers/Plugin/PluginManager.swift, Services/Plugin/PluginHostAPI.swift, Storage/PluginDatabase.swift, Models/Plugin/PluginHTTP.swift, Views/Plugin/PluginConfigView.swift |
+| Tools & Plugins                  | Stable    | "Tools & Plugins"  | plugins/README.md             | Tools/, Managers/Plugin/PluginManager.swift, Services/Plugin/PluginHostAPI.swift, Storage/PluginDatabase.swift, Models/Plugin/PluginHTTP.swift, Views/Plugin/PluginConfigView.swift |
 | Skills                           | Stable    | "Skills"           | SKILLS.md                     | Managers/SkillManager.swift, Views/Skill/SkillsView.swift, Services/Skill/SkillSearchService.swift |
 | Methods                          | Stable    | "Skills & Methods" | SKILLS.md                     | Models/Method/Method.swift, Services/Method/MethodService.swift, Services/Method/MethodSearchService.swift, Storage/MethodDatabase.swift |
 | Context Management               | Stable    | -                  | SKILLS.md                     | Services/Context/PreflightCapabilitySearch.swift, Tools/CapabilityTools.swift, Services/Tool/ToolSearchService.swift, Services/Tool/ToolIndexService.swift |
@@ -703,7 +703,7 @@ Read-only tools are always available. Write/exec/package/secret tools require `a
 - Auto-generated titles from first message
 - **Audit dimension** — every session is tagged with its origin (`chat` / `plugin` / `http` / `schedule` / `watcher`); the sidebar shows a colored badge with plugin name in the tooltip
 - **Source filter rail** — chip-style filter above the list, auto-hidden when a single source is present
-- **Conversation grouping** — plugins that pass `external_session_key` (e.g. Telegram chat id) reattach to the same session on subsequent dispatches instead of creating a new row each time; see [Plugin Authoring Guide](PLUGIN_AUTHORING.md#conversation-grouping)
+- **Conversation grouping** — plugins that pass `session_id` (e.g. Telegram chat id) reattach to the same session on subsequent dispatches instead of creating a new row each time; see [`docs/plugins/HOST_API.md`](plugins/HOST_API.md#dispatch)
 
 ---
 
@@ -742,7 +742,7 @@ Read-only tools are always available. Write/exec/package/secret tools require `a
 | Web        | `capabilities.web`    | Static frontend serving with context injection       |
 | Docs       | `docs`                | README, changelog, and external links                |
 
-See [PLUGIN_AUTHORING.md](PLUGIN_AUTHORING.md) for the full reference.
+See [docs/plugins/README.md](plugins/README.md) for the full reference.
 
 ---
 
@@ -1126,7 +1126,7 @@ Eight settings total, down from v1's 18. The per-section budget knobs, MMR tunin
 | [SKILLS.md](SKILLS.md)                                         | Skills, methods, and context management guide    |
 | [MEMORY.md](MEMORY.md)                                         | Memory system and configuration guide            |
 | [SANDBOX.md](SANDBOX.md)                                       | Sandbox VM and plugin guide                       |
-| [PLUGIN_AUTHORING.md](PLUGIN_AUTHORING.md)                     | Creating custom plugins                           |
+| [plugins/README.md](plugins/README.md)                         | Creating custom plugins                           |
 | [OpenAI_API_GUIDE.md](OpenAI_API_GUIDE.md)                     | API usage, tool calling, streaming                |
 | [SHARED_CONFIGURATION_GUIDE.md](SHARED_CONFIGURATION_GUIDE.md) | Shared configuration for teams                    |
 | [CONTRIBUTING.md](CONTRIBUTING.md)                             | Contribution guidelines                           |

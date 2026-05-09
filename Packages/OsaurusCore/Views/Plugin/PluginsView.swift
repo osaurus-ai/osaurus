@@ -1185,7 +1185,16 @@ private struct PluginDetailView: View {
                 {
                     Button {
                         let port = loadServerPort()
-                        let url = URL(string: "http://127.0.0.1:\(port)/plugins/\(plugin.pluginId)\(webConfig.mount)")!
+                        // Browsers cannot set the X-Osaurus-Agent-Id header
+                        // on top-level navigation; pass the agent id via the
+                        // `osr_agent` query param so the server accepts the
+                        // initial GET. The injected `window.__osaurus.fetch`
+                        // helper then carries it forward to subsequent calls.
+                        let agentId = Agent.defaultId.uuidString
+                        let url = URL(
+                            string:
+                                "http://127.0.0.1:\(port)/plugins/\(plugin.pluginId)\(webConfig.mount)?osr_agent=\(agentId)"
+                        )!
                         NSWorkspace.shared.open(url)
                     } label: {
                         HStack(spacing: 5) {

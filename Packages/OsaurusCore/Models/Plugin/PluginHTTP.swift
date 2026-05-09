@@ -14,6 +14,11 @@ struct OsaurusHTTPRequest: Encodable {
     let method: String
     let path: String
     let query: [String: String]
+    /// Path parameters extracted from `:name` segments in the route's
+    /// declared path. For example, a route declared as `/items/:id`
+    /// hit with `/items/abc` populates `path_params` as `["id": "abc"]`.
+    /// Empty for routes without parameters.
+    let path_params: [String: String]
     let headers: [String: String]
     let body: String
     let body_encoding: String

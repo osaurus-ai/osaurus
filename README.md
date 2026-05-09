@@ -150,7 +150,7 @@ osaurus tools create MyPlugin --swift    # Create a plugin
 osaurus tools dev com.acme.my-plugin     # Dev with hot reload
 ```
 
-20+ native plugins: Mail, Calendar, Vision, macOS Use, XLSX, PPTX, Browser, Music, Git, Filesystem, Search, Fetch, and more. Plugins support v1 (tools only) and v2 (full host API) ABIs -- register HTTP routes, serve web apps, persist data in SQLite, dispatch agent tasks, and call inference through any model. See the [Plugin Authoring Guide](docs/PLUGIN_AUTHORING.md).
+20+ native plugins: Mail, Calendar, Vision, macOS Use, XLSX, PPTX, Browser, Music, Git, Filesystem, Search, Fetch, and more. Plugins target the v3 host API surface — register HTTP routes, serve web apps, persist data in SQLite, dispatch agent tasks, and call inference through any model. Older v1/v2 plugins continue to load unchanged. See the [Plugin Authoring Guide](docs/plugins/README.md).
 
 ## More
 

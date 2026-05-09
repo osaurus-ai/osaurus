@@ -349,9 +349,9 @@ private struct SandboxPluginsTabContent: View {
         ScrollView {
             LazyVStack(spacing: 16) {
                 SectionHeader(
-                    title: L("Sandbox Plugins"),
+                    title: L("Sandbox Tools"),
                     description:
-                        "Plugins run inside the sandbox container. They are auto-provisioned when any agent uses them."
+                        "JSON-defined tools that run inside the sandbox container. Auto-provisioned when any agent uses them. Distinct from native dylib plugins, which appear under \"Available Tools\"."
                 )
 
                 HStack {
@@ -382,7 +382,7 @@ private struct SandboxPluginsTabContent: View {
                         HStack(spacing: 6) {
                             Image(systemName: "plus")
                                 .font(.system(size: 11))
-                            Text("Create Plugin", bundle: .module)
+                            Text("Create Sandbox Tool", bundle: .module)
                                 .font(.system(size: 12, weight: .medium))
                         }
                         .foregroundColor(.white)
@@ -477,7 +477,7 @@ private struct SandboxPluginsTabContent: View {
                 .font(.system(size: 40, weight: .light))
                 .foregroundColor(theme.tertiaryText)
 
-            Text("No sandbox plugins", bundle: .module)
+            Text("No sandbox tools", bundle: .module)
                 .font(.system(size: 15, weight: .medium))
                 .foregroundColor(theme.secondaryText)
 

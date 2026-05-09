@@ -74,8 +74,12 @@ final class PluginHostContext: @unchecked Sendable {
     }()
 
     /// Sliding window timestamps for dispatch rate limiting, keyed by agent ID.
-    /// Each agent gets its own 10/min budget so multiple agents sharing a
-    /// plugin don't exhaust each other's quota.
+    /// The bucket is **per (plugin, agent) pair** — each plugin keeps its own
+    /// `PluginHostContext`, so two plugins running for the same agent each
+    /// get an independent 10/min quota. This is intentional: it prevents a
+    /// chatty plugin from starving another plugin's dispatches against the
+    /// same agent. Plugin authors should size their dispatch cadence
+    /// against the per-plugin budget, not against a notional global one.
     private let rateLimitLock = NSLock()
     private var dispatchTimestamps: [UUID: [Date]] = [:]
     private static let dispatchRateLimit = 10
@@ -119,6 +123,41 @@ final class PluginHostContext: @unchecked Sendable {
                 "Plugin already has \(maxInflightPerPlugin) concurrent \(kind) calls in flight. Retry after a previous call returns.",
             "max_inflight": maxInflightPerPlugin,
         ])
+    }
+
+    // MARK: - Streaming Cancellation Registry
+
+    /// Per-plugin set of stream IDs marked for cancellation. The plugin
+    /// supplies a `stream_id` UUID when it calls `complete_stream`; calling
+    /// `complete_cancel(stream_id)` flips the entry, and the streaming task
+    /// observes it between deltas and unwinds with `finish_reason: "cancelled"`.
+    /// Membership in the set means "this stream id should be cancelled" —
+    /// the streaming task removes the entry on exit (success or cancel).
+    private let streamLock = NSLock()
+    private var cancelledStreamIds: Set<String> = []
+
+    /// Register a stream ID as in-flight. Idempotent; calling twice with
+    /// the same id is harmless.
+    private func registerStream(_ streamId: String) {
+        streamLock.withLock { _ = cancelledStreamIds.remove(streamId) }
+    }
+
+    /// Mark a stream as cancelled. The streaming task's `isStreamCancelled`
+    /// check picks it up on the next delta. Internal access so unit tests
+    /// can verify the cancellation registry directly.
+    func markStreamCancelled(_ streamId: String) {
+        streamLock.withLock { _ = cancelledStreamIds.insert(streamId) }
+    }
+
+    /// Returns true if the stream id has been marked for cancellation.
+    /// Internal access so unit tests can assert registry state.
+    func isStreamCancelled(_ streamId: String) -> Bool {
+        streamLock.withLock { cancelledStreamIds.contains(streamId) }
+    }
+
+    /// Drop bookkeeping for a stream that finished (success or cancel).
+    private func unregisterStream(_ streamId: String) {
+        streamLock.withLock { _ = cancelledStreamIds.remove(streamId) }
     }
 
     // MARK: - Per-Request Agent Context
@@ -277,9 +316,9 @@ final class PluginHostContext: @unchecked Sendable {
                 folderBookmark = Data(base64Encoded: bookmarkStr)
             }
 
-            let externalSessionKey =
-                json["external_session_key"] as? String
-                ?? json["session_id"] as? String
+            // v3: only `session_id` is accepted. The legacy `external_session_key`
+            // alias was removed; old plugins passing it will need to migrate.
+            let externalSessionKey = json["session_id"] as? String
 
             let request = DispatchRequest(
                 id: requestId,
@@ -329,22 +368,27 @@ final class PluginHostContext: @unchecked Sendable {
     }
 
     func dispatchCancel(taskId: String) {
-        guard let uuid = UUID(uuidString: taskId) else { return }
+        guard let uuid = UUID(uuidString: taskId) else {
+            Self.warnInvalidTaskIdOnce(pluginId: pluginId, op: "dispatch_cancel", taskId: taskId)
+            return
+        }
         Self.blockingMainActor { [pluginId] in
             guard let state = BackgroundTaskManager.shared.taskState(for: uuid),
                 state.sourcePluginId == pluginId
-            else { return }
+            else {
+                Self.warnUnownedTaskOnce(pluginId: pluginId, op: "dispatch_cancel", taskId: taskId)
+                return
+            }
             BackgroundTaskManager.shared.cancelTask(uuid)
         }
     }
 
-    /// No-op: clarifications are surfaced inline in the chat window via
-    /// the `clarify` agent intercept. The C ABI slot is preserved so old
-    /// plugins keep loading.
-    func dispatchClarify(taskId: String, response: String) {
-        _ = taskId
-        _ = response
-    }
+    /// RESERVED — preserved for ABI compatibility. The host returns void
+    /// (the C signature does not allow a JSON response), but the trampoline
+    /// logs the call with HTTP 410 + a `not_supported` body so plugin
+    /// developers see in Insights that the slot has no runtime effect.
+    /// Clarifications are surfaced inline via the `clarify` agent intercept.
+    func dispatchClarify(taskId _: String, response _: String) {}
 
     func listActiveTasks() -> String {
         Self.blockingMainActor { [pluginId] in
@@ -356,24 +400,47 @@ final class PluginHostContext: @unchecked Sendable {
     }
 
     func sendDraft(taskId: String, draftJSON: String) {
-        guard let uuid = UUID(uuidString: taskId) else { return }
+        guard let uuid = UUID(uuidString: taskId) else {
+            Self.warnInvalidTaskIdOnce(pluginId: pluginId, op: "send_draft", taskId: taskId)
+            return
+        }
         Self.blockingMainActor { [pluginId] in
             guard let state = BackgroundTaskManager.shared.taskState(for: uuid),
                 state.sourcePluginId == pluginId, state.status.isActive
-            else { return }
+            else {
+                Self.warnUnownedTaskOnce(pluginId: pluginId, op: "send_draft", taskId: taskId)
+                return
+            }
             state.draftText = draftJSON
             BackgroundTaskManager.shared.emitDraftEvent(state, draftJSON: draftJSON)
         }
     }
 
     func dispatchInterrupt(taskId: String, message: String?) {
-        guard let uuid = UUID(uuidString: taskId) else { return }
+        guard let uuid = UUID(uuidString: taskId) else {
+            Self.warnInvalidTaskIdOnce(pluginId: pluginId, op: "dispatch_interrupt", taskId: taskId)
+            return
+        }
         Self.blockingMainActor { [pluginId] in
             guard let state = BackgroundTaskManager.shared.taskState(for: uuid),
                 state.sourcePluginId == pluginId
-            else { return }
+            else {
+                Self.warnUnownedTaskOnce(pluginId: pluginId, op: "dispatch_interrupt", taskId: taskId)
+                return
+            }
             BackgroundTaskManager.shared.interruptTask(uuid, message: message)
         }
+    }
+
+    /// Mark an in-flight `complete_stream` call for cancellation by stream
+    /// id. Non-blocking; the streaming task observes the flag between
+    /// deltas and unwinds with `finish_reason: "cancelled"`. No-ops
+    /// silently if the stream id doesn't match an active stream — useful
+    /// for fire-and-forget cancel calls from `on_chunk`.
+    func completeCancel(streamId: String) {
+        let trimmed = streamId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        markStreamCancelled(trimmed)
     }
 
     // MARK: - Inference Callbacks
@@ -1080,15 +1147,43 @@ final class PluginHostContext: @unchecked Sendable {
         guard tryEnterInflightInference() else {
             return Self.pluginBusyJSON(kind: "complete_stream")
         }
+        // Warn once per plugin if the plugin passed a null chunk callback —
+        // chunks would otherwise be silently dropped, which is almost
+        // always a bug rather than intent.
+        if onChunk == nil {
+            Self.warnNullChunkCallbackOnce(pluginId: pluginId)
+        }
         let pid = self.pluginId
         nonisolated(unsafe) let userData = userData
-        let releaseSlot: @Sendable () -> Void = { [weak self] in
-            self?.exitInflightInference()
+        // Single weak capture used by every callback below. `nonisolated(unsafe)`
+        // is the documented way to share a weak ref into `@Sendable` closures
+        // when the captured object is itself `@unchecked Sendable` (which
+        // PluginHostContext is).
+        nonisolated(unsafe) weak var ctxRef = self
+        let releaseSlot: @Sendable () -> Void = {
+            ctxRef?.exitInflightInference()
+        }
+        // `unregisterStream` runs once at the end of the streaming work,
+        // regardless of how it terminates.
+        let unregisterStream: @Sendable (String?) -> Void = { streamId in
+            if let id = streamId { ctxRef?.unregisterStream(id) }
+        }
+        // `isCancelled` is the cheap per-delta check the for-await loop calls.
+        // Returns false when no stream id was supplied.
+        let isCancelled: @Sendable (String?) -> Bool = { streamId in
+            guard let id = streamId, let ctx = ctxRef else { return false }
+            return ctx.isStreamCancelled(id)
         }
         let activityId = Self.beginPluginActivity(pluginId: pid, kind: .completeStream)
         return Self.blockingAsync {
+            // Stream id is per-call: if the plugin supplied one in the
+            // request, register it so a concurrent `complete_cancel` call
+            // can flag the stream for cancellation. We treat it as opaque
+            // — any non-empty string works, but a UUID is recommended.
+            var streamId: String?
             defer {
                 releaseSlot()
+                unregisterStream(streamId)
                 Self.endPluginActivity(activityId)
             }
             guard let (rawJSON, sanitized) = Self.parseRawRequest(requestJSON),
@@ -1097,6 +1192,14 @@ final class PluginHostContext: @unchecked Sendable {
                 return Self.jsonString([
                     "error": "invalid_request", "message": "Failed to parse chat completion request",
                 ])
+            }
+
+            if let raw = rawJSON["stream_id"] as? String {
+                let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty {
+                    streamId = trimmed
+                    ctxRef?.registerStream(trimmed)
+                }
             }
 
             let prep = await Self.prepareInference(
@@ -1110,6 +1213,11 @@ final class PluginHostContext: @unchecked Sendable {
             var toolCallsExecuted: [[String: String]] = []
             var sharedArtifacts: [[String: Any]] = []
             var toolSpecs = prep.enriched.tools
+            // Captured token-usage stats from the underlying inference layer
+            // so the final stream result mirrors non-stream `complete`'s
+            // usage block, and so the last `usage` delta the plugin sees
+            // is also reflected in the aggregated return value.
+            var lastUsage: [String: Any]?
 
             let emit: ([String: Any]) -> Void = { payload in
                 Self.emitChunk(payload, callback: onChunk, userData: userData)
@@ -1128,15 +1236,52 @@ final class PluginHostContext: @unchecked Sendable {
                     var iterContent = ""
 
                     for try await delta in stream {
-                        // Reasoning sentinel must be decoded BEFORE the
-                        // generic `isSentinel` filter, otherwise reasoning
-                        // text gets dropped together with tool/stats hints.
-                        // We forward reasoning to plugins on the OpenAI
-                        // extended `reasoning_content` field of the chunk
-                        // delta — plugins that ignore the field continue
-                        // to work unchanged.
+                        // Cancellation check: plugin called `complete_cancel`
+                        // with our stream id. Emit a final chunk with
+                        // `finish_reason: "cancelled"` and unwind to the
+                        // post-loop branch which returns the cancelled
+                        // envelope.
+                        if isCancelled(streamId) {
+                            emit(Self.chunkPayload(id: cid, delta: [:], finishReason: "cancelled"))
+                            Self.persistStreamingInference(
+                                pluginId: pid,
+                                agentId: prep.agentId,
+                                externalSessionKey: prep.enriched.request.session_id,
+                                priorMessages: messages,
+                                assistantContent: lastContent,
+                                model: prep.enriched.request.model
+                            )
+                            return Self.cancelledStreamEnvelope(
+                                id: cid,
+                                streamId: streamId,
+                                model: prep.enriched.request.model,
+                                partialContent: lastContent,
+                                toolCallsExecuted: toolCallsExecuted,
+                                sharedArtifacts: sharedArtifacts,
+                                usage: lastUsage
+                            )
+                        }
+                        // Reasoning and stats sentinels must be decoded
+                        // BEFORE the generic `isSentinel` filter, otherwise
+                        // these payloads get dropped together with tool
+                        // hints and the plugin loses both reasoning text
+                        // and token-usage metering.
                         if let reasoning = StreamingReasoningHint.decode(delta) {
                             emit(Self.chunkPayload(id: cid, delta: ["reasoning_content": reasoning]))
+                            continue
+                        }
+                        if let stats = StreamingStatsHint.decode(delta) {
+                            // Forward usage to the plugin as an OpenAI-style
+                            // usage delta and remember it for the aggregated
+                            // return so non-stream and stream paths surface
+                            // the same metering shape.
+                            let usage: [String: Any] = [
+                                "completion_tokens": stats.tokenCount,
+                                "tokens_per_second": stats.tokensPerSecond,
+                                "unclosed_reasoning": stats.unclosedReasoning,
+                            ]
+                            lastUsage = usage
+                            emit(Self.chunkPayload(id: cid, delta: ["usage": usage]))
                             continue
                         }
                         if StreamingToolHint.isSentinel(delta) { continue }
@@ -1162,12 +1307,18 @@ final class PluginHostContext: @unchecked Sendable {
                         model: prep.enriched.request.model,
                         content: lastContent,
                         toolCallsExecuted: toolCallsExecuted,
-                        sharedArtifacts: sharedArtifacts
+                        sharedArtifacts: sharedArtifacts,
+                        usage: lastUsage,
+                        finishReason: "stop"
                     )
 
                 } catch let invs as ServiceToolInvocations {
                     guard iteration < prep.options.maxIterations else {
-                        emit(Self.chunkPayload(id: cid, delta: [:], finishReason: "stop"))
+                        // Last-iteration tool call: emit a finish_reason
+                        // chunk that is honest about why we stopped, then
+                        // return a structured `max_iterations_reached`
+                        // envelope (matches non-stream `complete` exactly).
+                        emit(Self.chunkPayload(id: cid, delta: [:], finishReason: "max_iterations"))
                         break
                     }
                     await Self.processInvocationBatch(
@@ -1185,7 +1336,7 @@ final class PluginHostContext: @unchecked Sendable {
 
                 } catch let inv as ServiceToolInvocation {
                     guard iteration < prep.options.maxIterations else {
-                        emit(Self.chunkPayload(id: cid, delta: [:], finishReason: "stop"))
+                        emit(Self.chunkPayload(id: cid, delta: [:], finishReason: "max_iterations"))
                         break
                     }
                     await Self.processInvocationBatch(
@@ -1216,13 +1367,16 @@ final class PluginHostContext: @unchecked Sendable {
                 assistantContent: lastContent,
                 model: prep.enriched.request.model
             )
-            return Self.buildStreamResult(
-                id: cid,
-                model: prep.enriched.request.model,
-                content: lastContent,
-                toolCallsExecuted: toolCallsExecuted,
-                sharedArtifacts: sharedArtifacts
-            )
+            return Self.jsonString([
+                "error": "max_iterations_reached",
+                "message":
+                    "Plugin streaming completion exhausted \(prep.options.maxIterations) iterations without converging on a final answer.",
+                "partial_content": lastContent,
+                "tool_calls_executed": toolCallsExecuted,
+                "shared_artifacts": sharedArtifacts,
+                "model": prep.enriched.request.model,
+                "id": cid,
+            ])
         }
     }
 
@@ -1356,15 +1510,52 @@ final class PluginHostContext: @unchecked Sendable {
         model: String,
         content: String,
         toolCallsExecuted: [[String: String]],
-        sharedArtifacts: [[String: Any]] = []
+        sharedArtifacts: [[String: Any]] = [],
+        usage: [String: Any]? = nil,
+        finishReason: String = "stop"
     ) -> String {
         var result: [String: Any] = [
             "id": id, "model": model,
-            "choices": [["index": 0, "message": ["role": "assistant", "content": content], "finish_reason": "stop"]],
+            "choices": [
+                [
+                    "index": 0,
+                    "message": ["role": "assistant", "content": content],
+                    "finish_reason": finishReason,
+                ]
+            ],
         ]
         if !toolCallsExecuted.isEmpty { result["tool_calls_executed"] = toolCallsExecuted }
         if !sharedArtifacts.isEmpty { result["shared_artifacts"] = sharedArtifacts }
+        if let usage { result["usage"] = usage }
         return jsonString(result)
+    }
+
+    /// Cancelled-stream envelope returned from `completeStream` when the
+    /// plugin invokes `complete_cancel(stream_id)` mid-stream. Mirrors the
+    /// fields a normal stream return carries (model, id, partial content,
+    /// usage, executed tool calls, shared artifacts) plus the stream id
+    /// the plugin supplied so it can correlate the cancellation back to
+    /// its own bookkeeping.
+    private static func cancelledStreamEnvelope(
+        id: String,
+        streamId: String?,
+        model: String,
+        partialContent: String,
+        toolCallsExecuted: [[String: String]],
+        sharedArtifacts: [[String: Any]],
+        usage: [String: Any]?
+    ) -> String {
+        jsonString([
+            "error": "cancelled",
+            "message": "Streaming completion cancelled by plugin via complete_cancel.",
+            "id": id,
+            "stream_id": streamId ?? "",
+            "model": model,
+            "partial_content": partialContent,
+            "tool_calls_executed": toolCallsExecuted,
+            "shared_artifacts": sharedArtifacts,
+            "usage": usage ?? [:],
+        ])
     }
 
     private static func chunkPayload(
@@ -1387,6 +1578,53 @@ final class PluginHostContext: @unchecked Sendable {
             let str = String(data: data, encoding: .utf8)
         else { return }
         str.withCString { callback($0, userData) }
+    }
+
+    /// Emit a one-shot warning when a plugin passes a task id that does
+    /// not parse as a UUID to a void-returning task op
+    /// (`dispatch_cancel`, `send_draft`, `dispatch_interrupt`). The C ABI
+    /// returns void so we can't surface an envelope; logging keeps the
+    /// signal visible to plugin authors without flooding the unified log.
+    static func warnInvalidTaskIdOnce(pluginId: String, op: String, taskId: String) {
+        PluginOnceLogger.warnOnce(
+            key: "\(pluginId)|\(op)|invalid",
+            "[PluginHostAPI] Plugin '%@' called %@ with an invalid UUID '%@'. The call was a no-op. "
+                + "This warning is logged once per plugin per op per process.",
+            pluginId,
+            op,
+            taskId
+        )
+    }
+
+    /// Emit a one-shot warning when a plugin passes a task id that parses
+    /// as a UUID but does not belong to (or is no longer active for) the
+    /// calling plugin. Catches stale ids and accidental cross-plugin
+    /// reference.
+    static func warnUnownedTaskOnce(pluginId: String, op: String, taskId: String) {
+        PluginOnceLogger.warnOnce(
+            key: "\(pluginId)|\(op)|unowned",
+            "[PluginHostAPI] Plugin '%@' called %@ for task '%@' that does not belong to this plugin or "
+                + "is no longer active. The call was a no-op. "
+                + "This warning is logged once per plugin per op per process.",
+            pluginId,
+            op,
+            taskId
+        )
+    }
+
+    /// Emit a one-shot warning when `complete_stream` is invoked with a
+    /// nil `on_chunk` callback. Streamed deltas would silently be dropped
+    /// in this case; the aggregated return value still works, but plugin
+    /// authors usually expect chunks to be delivered.
+    static func warnNullChunkCallbackOnce(pluginId: String) {
+        PluginOnceLogger.warnOnce(
+            key: "\(pluginId)|complete_stream|null_chunk",
+            "[PluginHostAPI] Plugin '%@' invoked complete_stream with a NULL on_chunk callback. "
+                + "Streamed deltas will be discarded; the aggregated return value still flows. "
+                + "Pass a callback if your plugin needs incremental output. "
+                + "This warning is logged once per plugin per process.",
+            pluginId
+        )
     }
 
     func embed(requestJSON: String) -> String {
@@ -1663,7 +1901,10 @@ final class PluginHostContext: @unchecked Sendable {
         let ptr = UnsafeMutablePointer<osr_host_api>.allocate(capacity: 1)
         ptr.initialize(
             to: osr_host_api(
-                version: 2,
+                // v3 surface — frozen layout. Two trampoline slots
+                // (`dispatch_clarify`, `dispatch_add_issue`) remain wired
+                // for ABI compat but return structured `not_supported` JSON.
+                version: 3,
                 config_get: PluginHostContext.trampolineConfigGet,
                 config_set: PluginHostContext.trampolineConfigSet,
                 config_delete: PluginHostContext.trampolineConfigDelete,
@@ -1683,7 +1924,8 @@ final class PluginHostContext: @unchecked Sendable {
                 list_active_tasks: PluginHostContext.trampolineListActiveTasks,
                 send_draft: PluginHostContext.trampolineSendDraft,
                 dispatch_interrupt: PluginHostContext.trampolineDispatchInterrupt,
-                dispatch_add_issue: PluginHostContext.trampolineDispatchAddIssue
+                dispatch_add_issue: PluginHostContext.trampolineDispatchAddIssue,
+                complete_cancel: PluginHostContext.trampolineCompleteCancel
             )
         )
         hostAPIPtr = ptr
@@ -1792,7 +2034,12 @@ extension PluginHostContext {
         }
 
         switch state.status {
-        case .running:
+        case .running, .awaitingClarification:
+            // v3: chat tasks always serialize as "running". The
+            // `.awaitingClarification` enum case is still used internally
+            // for UI hints (toast, notch) but never exposed via task_status,
+            // because clarification is handled inline through the `clarify`
+            // agent intercept rather than as an out-of-band state.
             result["status"] = "running"
             if let step = state.currentStep { result["current_step"] = step }
 
@@ -1806,13 +2053,6 @@ extension PluginHostContext {
                 return entry
             }
             if !activity.isEmpty { result["activity"] = activity }
-
-        case .awaitingClarification:
-            // Reachable only via legacy state transitions; chat tasks
-            // surface clarification inline via the agent intercept and
-            // do NOT mark the task awaiting from the manager's POV.
-            result["status"] = "awaiting_clarification"
-            result["current_step"] = "Needs input"
 
         case .completed(let success, let summary):
             result["status"] = success ? "completed" : "failed"
@@ -2027,13 +2267,17 @@ extension PluginHostContext {
 ///
 /// Context resolution order in `activeContext()`:
 /// 1. Thread-local storage — set per-thread around each plugin call. This is
-///    the primary and fully concurrent-safe mechanism.
+///    the primary and fully concurrent-safe mechanism, and the recommended
+///    path for all plugin-initiated host calls.
 /// 2. `lastDispatchedPluginId` — best-effort global fallback for background
-///    threads that plugins spawn (e.g. DispatchQueue.global().async). Because
-///    invoke queues are per-plugin and concurrent, this value is racy when
-///    multiple plugins or handlers run simultaneously. It exists only as a
-///    convenience for simple single-plugin setups; plugins that spawn their
-///    own threads should not rely on it.
+///    threads that plugins spawn (e.g. `DispatchQueue.global().async`). The
+///    value is protected by a lock so reads/writes are race-free, but the
+///    *value itself* is the most-recently-dispatched plugin id, which is
+///    racy when multiple plugins run simultaneously. The first time this
+///    fallback resolves a context for a given plugin, the host emits a
+///    one-shot warning so the plugin developer learns to do their own work
+///    on a context-carrying thread (e.g. by capturing the host API pointer
+///    on the dispatch thread and calling back from there).
 /// 3. `currentContext` — temporary fallback used only during plugin init.
 extension PluginHostContext {
     /// Thread-local storage for the active plugin ID during C callback dispatch
@@ -2081,14 +2325,69 @@ extension PluginHostContext {
             return getContext(for: pluginId)
         }
         if let pluginId = lastDispatchedPluginId {
+            warnFallbackOnce(pluginId: pluginId)
             return getContext(for: pluginId)
         }
         return currentContext
     }
 
+    /// Emit a one-shot deprecation-style warning per plugin when a host
+    /// callback resolves via the racy `lastDispatchedPluginId` fallback.
+    /// Plugin authors should structure their code so host calls happen on
+    /// a thread that has TLS set (e.g. inside the original `invoke` /
+    /// `handle_route` call frame, or via `DispatchQueue.async` that
+    /// captures the host pointer rather than relying on the global).
+    private static func warnFallbackOnce(pluginId: String) {
+        PluginOnceLogger.warnOnce(
+            key: "\(pluginId)|fallback_context",
+            "[PluginHostAPI] Plugin '%@' resolved a host context via the global "
+                + "lastDispatchedPluginId fallback. This path is racy across plugins; "
+                + "perform host API calls on a thread that carries the plugin context "
+                + "(e.g. inside invoke / handle_route, or by capturing the host API "
+                + "pointer on the dispatching thread). This warning is logged once "
+                + "per plugin per process.",
+            pluginId
+        )
+    }
+
+    /// Structured JSON envelope returned by trampolines when no plugin
+    /// context can be resolved for the calling thread. Replaces the older
+    /// silent `nil` return so plugin developers see the failure in
+    /// Insights and can recover programmatically (parse the `error` key).
+    static let contextUnavailableJSON: String =
+        #"{"error":"context_unavailable","message":"Plugin host API was called from a thread with no resolvable plugin context. This typically indicates the call originated from a background thread the host did not register; reconsider using thread-local context or call from an invokeQueue/eventQueue thread."}"#
+
     private static func makeCString(_ str: String) -> UnsafePointer<CChar>? {
         let cStr = strdup(str)
         return UnsafePointer(cStr)
+    }
+
+    /// Resolves the active plugin context for a JSON-returning trampoline
+    /// that takes one `request_json` C string argument. Returns NULL when
+    /// the plugin passed a NULL pointer (nothing to work on), and the
+    /// `context_unavailable` envelope when the host can't find a plugin
+    /// context for the current thread. Otherwise calls `body` with the
+    /// resolved context and decoded request string.
+    private static func withActiveContext(
+        requestPtr: UnsafePointer<CChar>?,
+        _ body: (_ ctx: PluginHostContext, _ json: String) -> UnsafePointer<CChar>?
+    ) -> UnsafePointer<CChar>? {
+        guard let requestPtr else { return nil }
+        guard let ctx = activeContext() else {
+            return makeCString(contextUnavailableJSON)
+        }
+        return body(ctx, String(cString: requestPtr))
+    }
+
+    /// Same as `withActiveContext(requestPtr:_:)` but for trampolines that
+    /// take no arguments (e.g. `list_models`, `list_active_tasks`).
+    private static func withActiveContext(
+        _ body: (_ ctx: PluginHostContext) -> UnsafePointer<CChar>?
+    ) -> UnsafePointer<CChar>? {
+        guard let ctx = activeContext() else {
+            return makeCString(contextUnavailableJSON)
+        }
+        return body(ctx)
     }
 
     // MARK: - Insights Logging Helpers
@@ -2135,8 +2434,33 @@ extension PluginHostContext {
         return String(match[colonQuote ..< match.index(before: match.endIndex)])
     }
 
-    private static func responseContainsError(_ json: String) -> Bool {
-        json.contains("\"error\"")
+    /// Maps a top-level `error` code in a host response envelope to the
+    /// closest HTTP status for Insights/observability. Returns nil if the
+    /// response does not contain a string-typed `error` key — used as the
+    /// "is this response an error?" predicate everywhere we record status.
+    private static func errorStatusCode(for json: String) -> Int? {
+        guard let data = json.data(using: .utf8),
+            let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let code = obj["error"] as? String
+        else { return nil }
+        switch code {
+        case "invalid_request", "invalid_task_id":
+            return 400
+        case "unauthorized", "consent_required":
+            return 401
+        case "forbidden", "access_denied":
+            return 403
+        case "not_found":
+            return 404
+        case "rate_limit_exceeded", "plugin_busy", "task_limit_reached":
+            return 429
+        case "not_supported":
+            return 501
+        case "context_unavailable", "max_iterations_reached":
+            return 500
+        default:
+            return 500
+        }
     }
 
     // MARK: Config Trampolines
@@ -2164,19 +2488,17 @@ extension PluginHostContext {
     // MARK: Database Trampolines
 
     static let trampolineDbExec: osr_db_exec_t = { sqlPtr, paramsPtr in
-        guard let sqlPtr, let ctx = activeContext() else { return nil }
-        let sql = String(cString: sqlPtr)
-        let params = paramsPtr.map { String(cString: $0) }
-        let result = ctx.dbExec(sql: sql, paramsJSON: params)
-        return makeCString(result)
+        withActiveContext(requestPtr: sqlPtr) { ctx, sql in
+            let params = paramsPtr.map { String(cString: $0) }
+            return makeCString(ctx.dbExec(sql: sql, paramsJSON: params))
+        }
     }
 
     static let trampolineDbQuery: osr_db_query_t = { sqlPtr, paramsPtr in
-        guard let sqlPtr, let ctx = activeContext() else { return nil }
-        let sql = String(cString: sqlPtr)
-        let params = paramsPtr.map { String(cString: $0) }
-        let result = ctx.dbQuery(sql: sql, paramsJSON: params)
-        return makeCString(result)
+        withActiveContext(requestPtr: sqlPtr) { ctx, sql in
+            let params = paramsPtr.map { String(cString: $0) }
+            return makeCString(ctx.dbQuery(sql: sql, paramsJSON: params))
+        }
     }
 
     // MARK: Logging Trampoline
@@ -2207,42 +2529,42 @@ extension PluginHostContext {
     // MARK: Dispatch Trampolines
 
     static let trampolineDispatch: osr_dispatch_t = { requestPtr in
-        guard let requestPtr, let ctx = activeContext() else { return nil }
-        let json = String(cString: requestPtr)
-        var result = ""
-        var taskId: UUID?
-        let ms = measureMs { (result, taskId) = ctx.dispatch(requestJSON: json) }
-        logPluginCall(
-            pluginId: ctx.pluginId,
-            method: "POST",
-            path: "/host-api/dispatch",
-            statusCode: responseContainsError(result) ? 429 : 202,
-            durationMs: ms,
-            requestBody: json,
-            responseBody: result
-        )
-        if let taskId {
-            Task { @MainActor in
-                BackgroundTaskManager.shared.releaseEventsForDispatch(taskId: taskId)
+        withActiveContext(requestPtr: requestPtr) { ctx, json in
+            var result = ""
+            var taskId: UUID?
+            let ms = measureMs { (result, taskId) = ctx.dispatch(requestJSON: json) }
+            logPluginCall(
+                pluginId: ctx.pluginId,
+                method: "POST",
+                path: "/host-api/dispatch",
+                statusCode: errorStatusCode(for: result) ?? 202,
+                durationMs: ms,
+                requestBody: json,
+                responseBody: result
+            )
+            if let taskId {
+                Task { @MainActor in
+                    BackgroundTaskManager.shared.releaseEventsForDispatch(taskId: taskId)
+                }
             }
+            return makeCString(result)
         }
-        return makeCString(result)
     }
 
     static let trampolineTaskStatus: osr_task_status_t = { taskIdPtr in
-        guard let taskIdPtr, let ctx = activeContext() else { return nil }
-        let taskId = String(cString: taskIdPtr)
-        var result = ""
-        let ms = measureMs { result = ctx.taskStatus(taskId: taskId) }
-        logPluginCall(
-            pluginId: ctx.pluginId,
-            method: "GET",
-            path: "/host-api/tasks/\(taskId)",
-            statusCode: 200,
-            durationMs: ms,
-            responseBody: result
-        )
-        return makeCString(result)
+        withActiveContext(requestPtr: taskIdPtr) { ctx, taskId in
+            var result = ""
+            let ms = measureMs { result = ctx.taskStatus(taskId: taskId) }
+            logPluginCall(
+                pluginId: ctx.pluginId,
+                method: "GET",
+                path: "/host-api/tasks/\(taskId)",
+                statusCode: errorStatusCode(for: result) ?? 200,
+                durationMs: ms,
+                responseBody: result
+            )
+            return makeCString(result)
+        }
     }
 
     static let trampolineDispatchCancel: osr_dispatch_cancel_t = { taskIdPtr in
@@ -2258,36 +2580,44 @@ extension PluginHostContext {
         )
     }
 
+    /// RESERVED slot — preserved for ABI compatibility. The C signature
+    /// returns void, so we cannot return a `not_supported` envelope to the
+    /// plugin. Insights logs the call with HTTP 410 so the plugin developer
+    /// sees that the call had no effect. Clarification is now handled inline
+    /// via the `clarify` agent intercept.
     static let trampolineDispatchClarify: osr_dispatch_clarify_t = { taskIdPtr, responsePtr in
         guard let taskIdPtr, let responsePtr, let ctx = activeContext() else { return }
         let taskId = String(cString: taskIdPtr)
         let response = String(cString: responsePtr)
-        let ms = measureMs { ctx.dispatchClarify(taskId: taskId, response: response) }
+        ctx.dispatchClarify(taskId: taskId, response: response)
         logPluginCall(
             pluginId: ctx.pluginId,
             method: "POST",
             path: "/host-api/tasks/\(taskId)/clarify",
-            statusCode: 200,
-            durationMs: ms,
-            requestBody: response
+            statusCode: 410,
+            durationMs: 0,
+            requestBody: response,
+            responseBody:
+                #"{"error":"not_supported","message":"dispatch_clarify is reserved. Clarification is handled inline via the clarify agent intercept."}"#
         )
     }
 
     // MARK: Extended Dispatch Trampolines
 
     static let trampolineListActiveTasks: osr_list_active_tasks_t = {
-        guard let ctx = activeContext() else { return nil }
-        var result = ""
-        let ms = measureMs { result = ctx.listActiveTasks() }
-        logPluginCall(
-            pluginId: ctx.pluginId,
-            method: "GET",
-            path: "/host-api/tasks",
-            statusCode: 200,
-            durationMs: ms,
-            responseBody: result
-        )
-        return makeCString(result)
+        withActiveContext { ctx in
+            var result = ""
+            let ms = measureMs { result = ctx.listActiveTasks() }
+            logPluginCall(
+                pluginId: ctx.pluginId,
+                method: "GET",
+                path: "/host-api/tasks",
+                statusCode: 200,
+                durationMs: ms,
+                responseBody: result
+            )
+            return makeCString(result)
+        }
     }
 
     static let trampolineSendDraft: osr_send_draft_t = { taskIdPtr, draftPtr in
@@ -2320,143 +2650,161 @@ extension PluginHostContext {
         )
     }
 
-    /// Returns a `not_supported` error envelope: nested issues no longer
-    /// exist as a concept, so plugins should call `dispatch` to start a
-    /// fresh task instead. The C ABI slot is retained so old plugins
-    /// keep loading.
+    /// RESERVED slot — preserved for ABI compatibility. Returns a
+    /// structured `not_supported` envelope: nested issues are no longer a
+    /// concept, so plugins should call `dispatch` to start a fresh task
+    /// instead.
     static let trampolineDispatchAddIssue: osr_dispatch_add_issue_t = { taskIdPtr, _ in
-        guard let taskIdPtr, let ctx = activeContext() else { return nil }
-        let taskId = String(cString: taskIdPtr)
-        let result = jsonString([
-            "error": "not_supported",
-            "message":
-                "dispatch_add_issue is no longer supported. Call dispatch() to start a fresh task.",
-        ])
+        withActiveContext(requestPtr: taskIdPtr) { ctx, taskId in
+            let result = jsonString([
+                "error": "not_supported",
+                "message":
+                    "dispatch_add_issue is no longer supported. Call dispatch() to start a fresh task.",
+            ])
+            logPluginCall(
+                pluginId: ctx.pluginId,
+                method: "POST",
+                path: "/host-api/tasks/\(taskId)/issues",
+                statusCode: 501,
+                durationMs: 0,
+                responseBody: result
+            )
+            return makeCString(result)
+        }
+    }
+
+    /// Cancel an in-flight `complete_stream` call by stream id. Non-blocking;
+    /// the streaming task observes the cancellation flag between deltas and
+    /// unwinds with `finish_reason: "cancelled"`. Logs the call to Insights
+    /// so the developer can correlate cancel intent with stream completion.
+    static let trampolineCompleteCancel: osr_complete_cancel_t = { streamIdPtr in
+        guard let streamIdPtr, let ctx = activeContext() else { return }
+        let streamId = String(cString: streamIdPtr)
+        ctx.completeCancel(streamId: streamId)
         logPluginCall(
             pluginId: ctx.pluginId,
-            method: "POST",
-            path: "/host-api/tasks/\(taskId)/issues",
-            statusCode: 410,
-            durationMs: 0,
-            responseBody: result
+            method: "DELETE",
+            path: "/host-api/streams/\(streamId)",
+            statusCode: 204,
+            durationMs: 0
         )
-        return makeCString(result)
     }
 
     // MARK: Inference Trampolines
 
     static let trampolineComplete: osr_complete_t = { requestPtr in
-        guard let requestPtr, let ctx = activeContext() else { return nil }
-        let json = String(cString: requestPtr)
-        var result = ""
-        let ms = measureMs { result = ctx.complete(requestJSON: json) }
-        let model = extractJSONStringValue(from: json, key: "model")
-        logPluginCall(
-            pluginId: ctx.pluginId,
-            method: "POST",
-            path: "/host-api/chat/completions",
-            statusCode: responseContainsError(result) ? 500 : 200,
-            durationMs: ms,
-            requestBody: json,
-            responseBody: result,
-            model: model
-        )
-        return makeCString(result)
+        withActiveContext(requestPtr: requestPtr) { ctx, json in
+            var result = ""
+            let ms = measureMs { result = ctx.complete(requestJSON: json) }
+            let model = extractJSONStringValue(from: json, key: "model")
+            logPluginCall(
+                pluginId: ctx.pluginId,
+                method: "POST",
+                path: "/host-api/chat/completions",
+                statusCode: errorStatusCode(for: result) ?? 200,
+                durationMs: ms,
+                requestBody: json,
+                responseBody: result,
+                model: model
+            )
+            return makeCString(result)
+        }
     }
 
     static let trampolineCompleteStream: osr_complete_stream_t = { requestPtr, onChunk, userData in
-        guard let requestPtr, let ctx = activeContext() else { return nil }
-        let json = String(cString: requestPtr)
-        var result = ""
-        let ms = measureMs { result = ctx.completeStream(requestJSON: json, onChunk: onChunk, userData: userData) }
-        let model = extractJSONStringValue(from: json, key: "model")
-        logPluginCall(
-            pluginId: ctx.pluginId,
-            method: "POST",
-            path: "/host-api/chat/completions",
-            statusCode: responseContainsError(result) ? 500 : 200,
-            durationMs: ms,
-            requestBody: json,
-            responseBody: result,
-            model: model
-        )
-        return makeCString(result)
+        withActiveContext(requestPtr: requestPtr) { ctx, json in
+            var result = ""
+            let ms = measureMs { result = ctx.completeStream(requestJSON: json, onChunk: onChunk, userData: userData) }
+            let model = extractJSONStringValue(from: json, key: "model")
+            logPluginCall(
+                pluginId: ctx.pluginId,
+                method: "POST",
+                path: "/host-api/chat/completions",
+                statusCode: errorStatusCode(for: result) ?? 200,
+                durationMs: ms,
+                requestBody: json,
+                responseBody: result,
+                model: model
+            )
+            return makeCString(result)
+        }
     }
 
     static let trampolineEmbed: osr_embed_t = { requestPtr in
-        guard let requestPtr, let ctx = activeContext() else { return nil }
-        let json = String(cString: requestPtr)
-        var result = ""
-        let ms = measureMs { result = ctx.embed(requestJSON: json) }
-        logPluginCall(
-            pluginId: ctx.pluginId,
-            method: "POST",
-            path: "/host-api/embeddings",
-            statusCode: responseContainsError(result) ? 500 : 200,
-            durationMs: ms,
-            requestBody: json,
-            responseBody: result
-        )
-        return makeCString(result)
+        withActiveContext(requestPtr: requestPtr) { ctx, json in
+            var result = ""
+            let ms = measureMs { result = ctx.embed(requestJSON: json) }
+            logPluginCall(
+                pluginId: ctx.pluginId,
+                method: "POST",
+                path: "/host-api/embeddings",
+                statusCode: errorStatusCode(for: result) ?? 200,
+                durationMs: ms,
+                requestBody: json,
+                responseBody: result
+            )
+            return makeCString(result)
+        }
     }
 
     // MARK: Models Trampoline
 
     static let trampolineListModels: osr_list_models_t = {
-        guard let ctx = activeContext() else { return nil }
-        var result = ""
-        let ms = measureMs { result = ctx.listModels() }
-        logPluginCall(
-            pluginId: ctx.pluginId,
-            method: "GET",
-            path: "/host-api/models",
-            statusCode: 200,
-            durationMs: ms,
-            responseBody: result
-        )
-        return makeCString(result)
+        withActiveContext { ctx in
+            var result = ""
+            let ms = measureMs { result = ctx.listModels() }
+            logPluginCall(
+                pluginId: ctx.pluginId,
+                method: "GET",
+                path: "/host-api/models",
+                statusCode: 200,
+                durationMs: ms,
+                responseBody: result
+            )
+            return makeCString(result)
+        }
     }
 
     // MARK: HTTP Client Trampoline
 
     static let trampolineHttpRequest: osr_http_request_t = { requestPtr in
-        guard let requestPtr, let ctx = activeContext() else { return nil }
-        let json = String(cString: requestPtr)
-        var result = ""
-        let ms = measureMs { result = ctx.httpRequest(requestJSON: json) }
-        let method = extractJSONStringValue(from: json, key: "method") ?? "GET"
-        let url = extractJSONStringValue(from: json, key: "url") ?? "?"
-        let statusStr = extractJSONStringValue(from: result, key: "status")
-        let statusCode = statusStr.flatMap { Int($0) } ?? (responseContainsError(result) ? 500 : 200)
-        logPluginCall(
-            pluginId: ctx.pluginId,
-            method: method,
-            path: "/host-api/http \u{2192} \(url)",
-            statusCode: statusCode,
-            durationMs: ms,
-            requestBody: json,
-            responseBody: result
-        )
-        return makeCString(result)
+        withActiveContext(requestPtr: requestPtr) { ctx, json in
+            var result = ""
+            let ms = measureMs { result = ctx.httpRequest(requestJSON: json) }
+            let method = extractJSONStringValue(from: json, key: "method") ?? "GET"
+            let url = extractJSONStringValue(from: json, key: "url") ?? "?"
+            let statusStr = extractJSONStringValue(from: result, key: "status")
+            let statusCode = statusStr.flatMap { Int($0) } ?? (errorStatusCode(for: result) ?? 200)
+            logPluginCall(
+                pluginId: ctx.pluginId,
+                method: method,
+                path: "/host-api/http \u{2192} \(url)",
+                statusCode: statusCode,
+                durationMs: ms,
+                requestBody: json,
+                responseBody: result
+            )
+            return makeCString(result)
+        }
     }
 
     // MARK: File Read Trampoline
 
     static let trampolineFileRead: osr_file_read_t = { requestPtr in
-        guard let requestPtr, let ctx = activeContext() else { return nil }
-        let json = String(cString: requestPtr)
-        var result = ""
-        let ms = measureMs { result = ctx.fileRead(requestJSON: json) }
-        let path = extractJSONStringValue(from: json, key: "path") ?? "?"
-        logPluginCall(
-            pluginId: ctx.pluginId,
-            method: "GET",
-            path: "/host-api/file_read \u{2192} \(path)",
-            statusCode: responseContainsError(result) ? 500 : 200,
-            durationMs: ms,
-            requestBody: json,
-            responseBody: nil
-        )
-        return makeCString(result)
+        withActiveContext(requestPtr: requestPtr) { ctx, json in
+            var result = ""
+            let ms = measureMs { result = ctx.fileRead(requestJSON: json) }
+            let path = extractJSONStringValue(from: json, key: "path") ?? "?"
+            logPluginCall(
+                pluginId: ctx.pluginId,
+                method: "GET",
+                path: "/host-api/file_read \u{2192} \(path)",
+                statusCode: errorStatusCode(for: result) ?? 200,
+                durationMs: ms,
+                requestBody: json,
+                responseBody: nil
+            )
+            return makeCString(result)
+        }
     }
 }

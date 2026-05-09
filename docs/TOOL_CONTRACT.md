@@ -1,10 +1,15 @@
 # Tool Contract
 
-Every Osaurus tool — global built-in, folder tool, sandbox tool — returns a
+Every Osaurus tool — global built-in, folder tool, sandbox tool, **plugin tool** — returns a
 JSON string in exactly one of two shapes. This page is the one-stop
 reference for tool authors.
 
 The type lives at [`Tools/ToolEnvelope.swift`](../Packages/OsaurusCore/Tools/ToolEnvelope.swift).
+
+> **Plugin authors:** the contract on this page applies to your tools too.
+> The `invoke` callback's return JSON must match the success or failure
+> envelope below. See [`docs/plugins/AUTHORING.md`](plugins/AUTHORING.md#tools)
+> for the plugin-specific manifest declaration.
 
 ---
 

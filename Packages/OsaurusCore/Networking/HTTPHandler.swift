@@ -237,8 +237,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 }
             }
 
-            // Handle simple HEAD
-            if head.method == .HEAD {
+            // Handle simple HEAD for non-plugin paths only. Plugin routes
+            // need the same matching/auth pipeline as GET so they can return
+            // accurate Content-Type/Content-Length headers; falling through
+            // to `handlePluginRoute` for HEAD lets the plugin handler decide,
+            // and the response writer suppresses the body for HEAD.
+            if head.method == .HEAD && !path.hasPrefix("/plugins/") {
                 var headers = [("Content-Type", "text/plain; charset=utf-8")]
                 headers.append(contentsOf: stateRef.value.corsHeaders)
                 sendResponse(
@@ -399,7 +403,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     head: head,
                     context: context,
                     startTime: startTime,
-                    userAgent: userAgent
+                    userAgent: userAgent,
+                    isLoopback: isLoopback
                 )
             } else {
                 var headers = [("Content-Type", "text/plain; charset=utf-8")]
@@ -434,7 +439,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         head: HTTPRequestHead,
         context: ChannelHandlerContext,
         startTime: Date,
-        userAgent: String?
+        userAgent: String?,
+        isLoopback: Bool
     ) {
         let path = stateRef.value.normalizedPath
         let method = head.method.rawValue
@@ -485,14 +491,30 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         )
         let version = head.version
 
-        // All plugin route access requires an agent context
-        let agentIdStr = headersDict["x-osaurus-agent-id"]
+        // All plugin route access requires an agent context.
+        // Accept either the `X-Osaurus-Agent-Id` header (preferred for SDK
+        // and tunnel callers) or the `osr_agent` query parameter (for
+        // browser-launched web UIs that cannot set custom headers on the
+        // top-level navigation). The injected `window.__osaurus` script
+        // then carries the same id forward to the page's fetch calls.
+        let queryAgent: String? = {
+            guard let q = head.uri.split(separator: "?").dropFirst().first else { return nil }
+            for pair in q.split(separator: "&") {
+                let kv = pair.split(separator: "=", maxSplits: 1).map(String.init)
+                if kv.count == 2, kv[0] == "osr_agent" {
+                    return kv[1].removingPercentEncoding ?? kv[1]
+                }
+            }
+            return nil
+        }()
+        let agentIdStr = headersDict["x-osaurus-agent-id"] ?? queryAgent
         guard let agentIdStr, let agentUUID = UUID(uuidString: agentIdStr) else {
             sendPluginError(
                 context: context,
                 head: head,
                 status: .unauthorized,
-                message: "Plugin routes require an agent context (X-Osaurus-Agent-Id header)",
+                message:
+                    "Plugin routes require an agent context (X-Osaurus-Agent-Id header or osr_agent query parameter)",
                 corsHeaders: corsHeaders,
                 startTime: startTime,
                 method: method,
@@ -531,6 +553,25 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             if let webSpec = loaded.webConfig {
                 let mountPrefix = webSpec.mount.hasPrefix("/") ? webSpec.mount : "/\(webSpec.mount)"
                 if subpath.hasPrefix(mountPrefix) {
+                    // Tunnel exposure gate: web UIs are loopback-only by
+                    // default. Plugins must opt in via `capabilities.web.tunnel_exposed`
+                    // for the static UI to be reachable over the tunnel.
+                    // We return 404 (not 403) so the existence of the
+                    // route is not advertised to outside callers.
+                    if !isLoopback && !webSpec.isTunnelExposed {
+                        return self.sendPluginErrorFromTask(
+                            loop: loop,
+                            ctxBound: ctxBound,
+                            version: version,
+                            status: .notFound,
+                            message: "No matching route",
+                            corsHeaders: corsHeaders,
+                            startTime: startTime,
+                            method: method,
+                            path: path,
+                            userAgent: userAgent
+                        )
+                    }
                     if webSpec.auth == .owner && !self.isValidOwnerAuth(headers: headersDict) {
                         return self.sendPluginErrorFromTask(
                             loop: loop,
@@ -550,10 +591,22 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     if let proxyURL = Self.loadDevProxyURL(for: pluginId) {
                         let relPath = String(subpath.dropFirst(mountPrefix.count))
                         let targetPath = relPath.isEmpty ? "/" : relPath
+                        // Forward the original method/headers/body so HMR,
+                        // POST APIs, and any non-GET dev-server traffic
+                        // works during plugin development.
+                        let proxyBody: Data? = {
+                            guard let buf = bodyBuffer, buf.readableBytes > 0 else { return nil }
+                            return Data(buffer: buf)
+                        }()
                         return await self.proxyToDevServer(
                             proxyBaseURL: proxyURL,
                             targetPath: targetPath,
                             pluginId: pluginId,
+                            apiMount: webSpec.api_mount ?? "/api",
+                            agentId: agentIdStr,
+                            requestMethod: method,
+                            requestHeaders: headersDict,
+                            requestBody: proxyBody,
                             loop: loop,
                             ctxBound: ctxBound,
                             version: version,
@@ -595,6 +648,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         )
                     }
 
+                    let apiMount = webSpec.api_mount ?? "/api"
                     if FileManager.default.fileExists(atPath: resolvedPath) {
                         return self.serveStaticFile(
                             loop: loop,
@@ -602,6 +656,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                             version: version,
                             filePath: resolvedPath,
                             pluginId: pluginId,
+                            apiMount: apiMount,
+                            agentId: agentIdStr,
                             corsHeaders: corsHeaders,
                             startTime: startTime,
                             method: method,
@@ -619,6 +675,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                             version: version,
                             filePath: entryPath,
                             pluginId: pluginId,
+                            apiMount: apiMount,
+                            agentId: agentIdStr,
                             corsHeaders: corsHeaders,
                             startTime: startTime,
                             method: method,
@@ -642,8 +700,28 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 }
             }
 
-            // Dynamic route matching
-            guard let route = manifest.matchRoute(method: method, subpath: subpath) else {
+            // Dynamic route matching with path-parameter extraction.
+            guard let routeMatch = manifest.matchRouteWithParams(method: method, subpath: subpath) else {
+                return self.sendPluginErrorFromTask(
+                    loop: loop,
+                    ctxBound: ctxBound,
+                    version: version,
+                    status: .notFound,
+                    message: "No matching route",
+                    corsHeaders: corsHeaders,
+                    startTime: startTime,
+                    method: method,
+                    path: path,
+                    userAgent: userAgent
+                )
+            }
+            let route = routeMatch.route
+
+            // Tunnel exposure gate: dynamic routes are loopback-only by
+            // default. Plugins must opt in via `tunnel_exposed: true` on
+            // the route spec for it to be reachable over the tunnel.
+            // We return 404 (not 403) so route existence isn't leaked.
+            if !isLoopback && !route.isTunnelExposed {
                 return self.sendPluginErrorFromTask(
                     loop: loop,
                     ctxBound: ctxBound,
@@ -739,6 +817,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 method: method,
                 path: subpath,
                 query: queryParams,
+                path_params: routeMatch.pathParams,
                 headers: headersDict,
                 body: bodyString,
                 body_encoding: bodyEncoding,
@@ -815,6 +894,23 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                             )
                             return
                         }
+                        // Plugin claimed base64 but the body did not decode.
+                        // Surface the corruption rather than silently sending
+                        // the raw string; binary clients would otherwise get
+                        // garbage they cannot detect.
+                        return self.sendPluginErrorFromTask(
+                            loop: loop,
+                            ctxBound: ctxBound,
+                            version: version,
+                            status: .badGateway,
+                            message:
+                                "Plugin response declared body_encoding=base64 but the body is not valid base64.",
+                            corsHeaders: corsHeaders,
+                            startTime: startTime,
+                            method: method,
+                            path: path,
+                            userAgent: userAgent
+                        )
                     }
                     responseBody = body
                 }
@@ -993,6 +1089,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         version: HTTPVersion,
         filePath: String,
         pluginId: String,
+        apiMount: String = "/api",
+        agentId: String? = nil,
         corsHeaders: [(String, String)],
         startTime: Date,
         method: String,
@@ -1022,7 +1120,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         headers.append(("Cache-Control", "public, max-age=3600"))
 
         if ext == "html" || ext == "htm", var html = String(data: fileData, encoding: .utf8) {
-            Self.injectOsaurusContext(into: &html, pluginId: pluginId)
+            Self.injectOsaurusContext(into: &html, pluginId: pluginId, apiMount: apiMount, agentId: agentId)
             sendPluginResponse(
                 loop: loop,
                 ctxBound: ctxBound,
@@ -1061,13 +1159,41 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     }
 
     /// Injects the `window.__osaurus` context object into an HTML string before `</head>`.
-    private static func injectOsaurusContext(into html: inout String, pluginId: String) {
+    /// Injects a small context object into the plugin's web HTML. Plugins
+    /// can opt in to a custom API mount via `capabilities.web.api_mount`
+    /// (e.g. `"/v2"`); the default `/api` is preserved when unset.
+    /// `agentId` is propagated to the page so the plugin's `fetch()` calls
+    /// can attach it as the `X-Osaurus-Agent-Id` header without re-entering
+    /// the URL bar.
+    private static func injectOsaurusContext(
+        into html: inout String,
+        pluginId: String,
+        apiMount: String = "/api",
+        agentId: String? = nil
+    ) {
+        let normalizedApiMount: String = {
+            let trimmed = apiMount.trimmingCharacters(in: .whitespaces)
+            if trimmed.isEmpty { return "/api" }
+            return trimmed.hasPrefix("/") ? trimmed : "/\(trimmed)"
+        }()
+        let agentField = agentId.map { #"agentId: "\#($0)","# } ?? ""
         let script = """
             <script>
             window.__osaurus = {
               pluginId: "\(pluginId)",
               baseUrl: "/plugins/\(pluginId)",
-              apiUrl: "/plugins/\(pluginId)/api"
+              apiUrl: "/plugins/\(pluginId)\(normalizedApiMount)",
+              \(agentField)
+              // Helper that wraps fetch with the X-Osaurus-Agent-Id header
+              // so the page never accidentally drops the agent context.
+              fetch: function(input, init) {
+                init = init || {};
+                init.headers = new Headers(init.headers || {});
+                if (window.__osaurus.agentId && !init.headers.has("X-Osaurus-Agent-Id")) {
+                  init.headers.set("X-Osaurus-Agent-Id", window.__osaurus.agentId);
+                }
+                return fetch(input, init);
+              }
             };
             </script>
             """
@@ -1093,6 +1219,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         proxyBaseURL: String,
         targetPath: String,
         pluginId: String,
+        apiMount: String = "/api",
+        agentId: String? = nil,
+        requestMethod: String,
+        requestHeaders: [String: String],
+        requestBody: Data?,
         loop: EventLoop,
         ctxBound: NIOLoopBound<ChannelHandlerContext>,
         version: HTTPVersion,
@@ -1120,8 +1251,23 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         }
 
         var request = URLRequest(url: url)
-        request.httpMethod = "GET"
+        request.httpMethod = requestMethod
         request.timeoutInterval = 10
+        // Forward the request body for non-GET methods so things like Vite
+        // HMR pings, plugin POST APIs, and form submissions work.
+        if let body = requestBody, !body.isEmpty {
+            request.httpBody = body
+        }
+        // Forward most headers verbatim. Drop hop-by-hop and host-management
+        // headers that URLSession should set for us, and the agent header
+        // (which is host-internal context, not relevant to the dev server).
+        let stripped: Set<String> = [
+            "host", "content-length", "connection", "transfer-encoding",
+            "x-osaurus-agent-id", "authorization",
+        ]
+        for (k, v) in requestHeaders where !stripped.contains(k.lowercased()) {
+            request.setValue(v, forHTTPHeaderField: k)
+        }
 
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
@@ -1147,7 +1293,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             headers.append(("Access-Control-Allow-Origin", "*"))
 
             if contentType.contains("text/html"), var html = String(data: data, encoding: .utf8) {
-                Self.injectOsaurusContext(into: &html, pluginId: pluginId)
+                Self.injectOsaurusContext(into: &html, pluginId: pluginId, apiMount: apiMount, agentId: agentId)
                 sendPluginResponse(
                     loop: loop,
                     ctxBound: ctxBound,

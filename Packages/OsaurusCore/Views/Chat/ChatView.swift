@@ -577,6 +577,18 @@ final class ChatSession: ObservableObject {
         }
     }
 
+    /// Appends a `user`-role turn carrying a plugin-supplied interrupt
+    /// message. Called by `BackgroundTaskManager.interruptTask` when a
+    /// plugin invokes `dispatch_interrupt(taskId, message)` with a
+    /// non-empty `message`. The turn lands in the persisted transcript
+    /// so the model picks it up on the next completion round.
+    func appendInterruptMessage(_ message: String) {
+        let turn = ChatTurn(role: .user, content: message)
+        turns.append(turn)
+        isDirty = true
+        rebuildVisibleBlocks()
+    }
+
     func reset() {
         stop()
         turns.removeAll()

@@ -271,6 +271,6 @@ The server's tools will now be available in Osaurus as:
 ## Related Documentation
 
 - [Remote Providers](REMOTE_PROVIDERS.md) — Connect to inference APIs
-- [Plugin Authoring](PLUGIN_AUTHORING.md) — Create local plugins
+- [Plugin Authoring](plugins/README.md) — Create local plugins
 - [FEATURES.md](FEATURES.md) — Feature inventory
 - [README](../README.md) — Quick start guide
