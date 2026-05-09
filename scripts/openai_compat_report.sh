@@ -118,7 +118,7 @@ text_streaming_test() {
 
   local payload
   payload=$(jq -nc --arg m "$model" '{model:$m, messages:[{role:"user", content:"Say hello in one short sentence."}], stream:true, temperature:0.2, max_tokens:64}')
-  printf '%s\n' "$payload" > "$OUT_DIR/text_stream_request.json"
+  jq '.' <<< "$payload" > "$OUT_DIR/text_stream_request.json"
 
   curl -sS -N \
     -D "$hdrs" \
@@ -172,7 +172,7 @@ tool_call_streaming_test() {
 
   local payload
   payload=$(jq -nc --arg m "$model" --argjson t "$tools" '{model:$m, messages:[{role:"user", content:"Using tools if available, get weather for city=San Francisco."}], tools:$t, tool_choice:"auto", stream:true, temperature:0.0, max_tokens:64}')
-  printf '%s\n' "$payload" > "$OUT_DIR/tool_stream_request.json"
+  jq '.' <<< "$payload" > "$OUT_DIR/tool_stream_request.json"
 
   curl -sS -N \
     -D "$hdrs" \
