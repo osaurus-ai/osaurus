@@ -3,6 +3,28 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.18.13</title>
+            <pubDate>Fri, 08 May 2026 16:11:49 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.18.13</sparkle:version>
+            <sparkle:shortVersionString>0.18.13</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.18.13/Osaurus-0.18.13.dmg" length="40388069" type="application/octet-stream" sparkle:edSignature="xAYAjIxBvqTwroMvZjtnhTeJSF9e/3sBWEYkNtyXJs6Umep+V+jQMqYoSgitCl7NZlz9YTgHGo9WBBVWIRbqAQ=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- custom avatar support for agents (#1051) by @RaajeevChandran
+
+## 🧰 Maintenance
+
+- moved sandbox secrets to agent details view (#1053) by @tpae
+- improve accessibility in light themes (#1052) by @RaajeevChandran
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.18.12...0.18.13
+]]></description>
+        </item>
+        <item>
             <title>0.18.12</title>
             <pubDate>Fri, 08 May 2026 00:22:09 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
