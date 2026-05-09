@@ -376,6 +376,22 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         // ChatEngine actor's executor. This prevents deadlocks when the MainActor
         // consumes this stream while waiting for actor-isolated yields.
         let producerTask = Task.detached(priority: .userInitiated) {
+            // Mark the chat generation as in-flight so background paths
+            // (notably `MemoryService.distillSession` via
+            // `DistillationCoordinator`) can defer until the user's
+            // chat completes — see InferenceLoadCoordinator's header
+            // for the OOM/jetsam rationale on heavy MLX core models.
+            // The begin/end calls form a refcount so multiple
+            // concurrent chat windows are tracked correctly.
+            await InferenceLoadCoordinator.shared.beginChatGeneration()
+            defer {
+                // `defer` can't be async; fire-and-forget the actor
+                // hop. Decrementing slightly after the producer task
+                // returns is fine — distillation's idle waiter doesn't
+                // care about microsecond accuracy.
+                Task { await InferenceLoadCoordinator.shared.endChatGeneration() }
+            }
+
             let startTime = Date()
             var outputTokenCount = 0
             var deltaCount = 0
@@ -530,6 +546,14 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
 
         switch route {
         case .service(let service, let effectiveModel):
+            // Match the streaming path — register the chat generation
+            // for the lifetime of the LLM dispatch so distillation can
+            // defer. Detached fire-and-forget for the end-decrement
+            // mirrors the streaming wrapper above.
+            await InferenceLoadCoordinator.shared.beginChatGeneration()
+            defer {
+                Task { await InferenceLoadCoordinator.shared.endChatGeneration() }
+            }
             // If tools were provided and the service supports them, use the message-based API
             if let tools = request.tools, !tools.isEmpty, let toolSvc = service as? ToolCapableService {
                 let stopSequences = request.stop ?? []

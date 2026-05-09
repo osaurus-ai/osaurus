@@ -51,6 +51,8 @@ struct MemoryView: View {
     @State var diagnosticsExpanded: Bool = false
     @State var bufferTelemetry = BufferTurnTelemetry()
     @State var memoryDBOpen: Bool = false
+    @State var chatActive: Bool = false
+    @State var distillSnapshot = DistillationCoordinator.Snapshot(queued: 0, active: false)
     @State var probeBufferRunning: Bool = false
     @State var probeBufferResult: BufferProbeOutcome?
     @State var backfillRunning: Bool = false
@@ -279,7 +281,11 @@ struct MemoryView: View {
                 guard !isDistilling else { return }
                 isDistilling = true
                 Task.detached {
-                    await MemoryService.shared.syncNow()
+                    // `force: true` — user explicitly asked, so the
+                    // coordinator's residency gate is bypassed. Chat-
+                    // idle wait still applies per-distill so a live
+                    // chat doesn't get its tok/sec halved.
+                    await MemoryService.shared.syncNow(force: true)
                     await MainActor.run {
                         isDistilling = false
                         loadData()
@@ -293,7 +299,7 @@ struct MemoryView: View {
                 guard !isSyncing else { return }
                 isSyncing = true
                 Task.detached {
-                    await MemoryService.shared.syncNow()
+                    await MemoryService.shared.syncNow(force: true)
                     await MainActor.run {
                         isSyncing = false
                         loadData()
@@ -939,6 +945,8 @@ struct MemoryView: View {
             let loadedCoreModelStatus = await CoreModelService.shared.resolveStatus()
             let loadedTelemetry = await MemoryService.shared.bufferTelemetry()
             let loadedDBOpen = MemoryDatabase.shared.isOpen
+            let loadedChatActive = await InferenceLoadCoordinator.shared.chatActive
+            let loadedDistillSnapshot = await DistillationCoordinator.shared.snapshot()
 
             await MainActor.run {
                 identity = loadedIdentity
@@ -954,6 +962,8 @@ struct MemoryView: View {
                 coreModelStatus = loadedCoreModelStatus
                 bufferTelemetry = loadedTelemetry
                 memoryDBOpen = loadedDBOpen
+                chatActive = loadedChatActive
+                distillSnapshot = loadedDistillSnapshot
                 isLoading = false
                 onComplete?()
                 if let loadError {

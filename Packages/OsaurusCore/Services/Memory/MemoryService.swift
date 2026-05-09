@@ -139,16 +139,37 @@ public actor MemoryService {
     }
 
     /// Distill every pending conversation and run identity regeneration if needed.
-    public func syncNow() async {
+    ///
+    /// `force = false` (the default) means background paths
+    /// (`recoverOrphanedSignals` at launch, the per-turn debounced
+    /// flow indirectly): skip when the core model would require an
+    /// expensive cold load — pending signals stay pending. `force =
+    /// true` is the user-driven path (the "Distill pending" button,
+    /// the chat-history backfill) where the user has explicitly opted
+    /// into the cold load.
+    ///
+    /// Either way, each `distillSession` still routes through
+    /// `DistillationCoordinator`, so the calls inside this loop are
+    /// *guaranteed serial across the whole app* and yield to live
+    /// chat. Pre-coordinator, three windows going idle simultaneously
+    /// could still produce three concurrent reentries here.
+    public func syncNow(force: Bool = false) async {
         let config = MemoryConfigurationStore.load()
         guard config.enabled else { return }
         guard await hasCoreModel() else {
-            // .info (not .debug) so support can see this in Console
-            // without enabling debug logs. Background consolidation
-            // has no per-turn chat model to fall back to, so it stays
-            // opt-in via Settings → Core Model.
-            MemoryLogger.service.info(
+            // Promoted from .info to .warning — the diagnostics panel
+            // surfaces this elsewhere, but the Console log is the
+            // fallback for support. Background consolidation has no
+            // per-turn chat model to fall back to, so it stays opt-in
+            // via Settings → Core Model.
+            MemoryLogger.service.warning(
                 "syncNow: no core model configured; memory consolidation skipped (configure one in Settings → Core Model)"
+            )
+            return
+        }
+        if !force, !(await canDistillCheaply()) {
+            MemoryLogger.service.info(
+                "syncNow: deferring — core model not resident or too large to cold-load (use force=true to override)"
             )
             return
         }
@@ -160,21 +181,25 @@ public actor MemoryService {
         }
 
         for conv in conversations {
-            await distillSession(agentId: conv.agentId, conversationId: conv.conversationId)
+            // `requireResident: !force` — match the same gate at the
+            // coordinator layer so a force-sync still proceeds while a
+            // background-sync skips per-conversation if the residency
+            // status changes mid-loop (e.g. the model gets evicted by
+            // a chat closing its lease while we're partway through).
+            await distillSession(
+                agentId: conv.agentId,
+                conversationId: conv.conversationId,
+                requireResident: !force
+            )
         }
     }
 
     /// Startup hook: drain anything that didn't get distilled before the
-    /// previous launch was killed. Skips when cold-loading the core model
-    /// would peg the GPU on app open (see `canDistillCheaply`).
+    /// previous launch was killed. The `canDistillCheaply` guard inside
+    /// `syncNow(force: false)` is the same gate that used to live here
+    /// — kept the wrapper for callsite clarity at the AppDelegate.
     public func recoverOrphanedSignals() async {
-        guard await canDistillCheaply() else {
-            MemoryLogger.service.info(
-                "recoverOrphanedSignals: deferring — core model not resident, avoiding cold load on launch"
-            )
-            return
-        }
-        await syncNow()
+        await syncNow(force: false)
     }
 
     /// Best-effort flush of every armed debounce task at app quit. Cancels
@@ -203,8 +228,8 @@ public actor MemoryService {
         // `bufferTurn` that hasn't reached the debounce-arm step).
         let pendingFromDb: [(agentId: String, conversationId: String)] =
             (try? db.pendingConversations()) ?? []
-        let alreadyArmed = Set(armed.keys)
-        let extras = pendingFromDb.filter { !alreadyArmed.contains($0.conversationId) }
+        let armedConvIds = Set(armed.keys)
+        let extras = pendingFromDb.filter { !armedConvIds.contains($0.conversationId) }
 
         guard !armed.isEmpty || !extras.isEmpty else { return }
 
@@ -212,73 +237,74 @@ public actor MemoryService {
             "flushAllPending: draining \(armed.count) armed + \(extras.count) extra conversation(s) (timeout=\(timeoutSeconds)s)"
         )
 
-        // Cancel every armed sleep so each distillation can fire ASAP.
+        // Cancel every armed sleep so the per-debounce Task wakes up
+        // and exits immediately. We don't run distillation through
+        // those cancelled tasks (they'd see Task.isCancelled and
+        // return) — we drive performDistillSession directly below.
         for (_, task) in armed { task.cancel() }
 
-        // Race the actual draining work against `timeoutSeconds`. We
-        // intentionally avoid throwing on timeout — quit can't wait
-        // forever, and the leftover signals will be picked up by
-        // `recoverOrphanedSignals` next launch.
-        let started = Date()
-        await withTaskGroup(of: Void.self) { group in
-            // Resolve the orphaned-but-not-armed conversations.
-            for conv in extras {
-                group.addTask { [weak self] in
-                    await self?.distillSession(
-                        agentId: conv.agentId,
-                        conversationId: conv.conversationId
-                    )
-                }
+        // Build the full drain list. `extras` already have their
+        // agent ids; for the armed conversations, look up the agent
+        // via the actor's `activeConversation` map first (set by the
+        // most recent `bufferTurn`), then fall back to the DB row in
+        // case the map is stale.
+        let pendingByConvId = Dictionary(
+            pendingFromDb.map { ($0.conversationId, $0.agentId) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        let agentByConv: (String) -> String? = { [activeConversation] convId in
+            if let agentId = activeConversation.first(where: { $0.value == convId })?.key {
+                return agentId
             }
-            // Resolve the armed-but-cancelled conversations directly. We
-            // don't await the cancelled tasks themselves because their
-            // `Task.sleep` will return on cancellation and they'd run
-            // `distillSession` again concurrently — instead we drive
-            // distillation explicitly here so the actor's serial reentry
-            // is the only synchronization we rely on.
-            for (conversationId, _) in armed {
-                guard let agentId = activeConversation.first(where: { $0.value == conversationId })?.key
-                else {
-                    // Fall back to scanning pending_signals when the
-                    // agent map is stale (rare, but safe).
-                    if let match = pendingFromDb.first(where: { $0.conversationId == conversationId }) {
-                        let resolvedAgent = match.agentId
-                        group.addTask { [weak self] in
-                            await self?.distillSession(
-                                agentId: resolvedAgent,
-                                conversationId: conversationId
-                            )
-                        }
-                    }
-                    continue
-                }
-                group.addTask { [weak self] in
-                    await self?.distillSession(
-                        agentId: agentId,
-                        conversationId: conversationId
-                    )
-                }
-            }
+            return pendingByConvId[convId]
+        }
+        let armedDrain: [(agentId: String, conversationId: String)] = armed.keys.compactMap { convId in
+            guard let agentId = agentByConv(convId) else { return nil }
+            return (agentId: agentId, conversationId: convId)
+        }
+        let toDrain = extras + armedDrain
 
-            // Time-bounded await: cancel the group when the deadline
-            // hits so callers can proceed with the rest of shutdown.
-            group.addTask {
-                try? await Task.sleep(for: .seconds(timeoutSeconds))
-            }
-            // Drain results until either everything is done OR the
-            // timeout task completed (which it does after `timeoutSeconds`).
-            // Either way we let the group's cancellation propagate.
-            await group.waitForAll()
+        // Serial drain bounded by a wallclock deadline. Pre-fix this
+        // ran every distill in parallel via a `withTaskGroup` — at
+        // app quit, exactly when MLX/NIO/SQLCipher are being torn
+        // down. Multiple concurrent prefills against unified memory
+        // at the worst possible moment was the documented OOM /
+        // jetsam-kill class on heavy MLX core models. Sequential
+        // execution against a deadline trades "drain everything" for
+        // "drain what we safely can"; whatever doesn't fit gets
+        // recovered next launch via `recoverOrphanedSignals`.
+        //
+        // We bypass the DistillationCoordinator on purpose here —
+        // shutdown can't afford to wait for chat-idle, and there
+        // shouldn't be a live chat at this point anyway because
+        // ChatWindowManager.stopAllSessions ran before us in the
+        // applicationShouldTerminate sequence.
+        let started = Date()
+        let deadline = started.addingTimeInterval(timeoutSeconds)
+        var drained = 0
+        for conv in toDrain {
+            if Date() >= deadline { break }
+            await performDistillSession(
+                agentId: conv.agentId,
+                conversationId: conv.conversationId
+            )
+            drained += 1
         }
 
         let elapsed = Int(Date().timeIntervalSince(started) * 1000)
-        MemoryLogger.service.info("flushAllPending: complete in \(elapsed)ms")
+        MemoryLogger.service.info(
+            "flushAllPending: drained \(drained)/\(toDrain.count) in \(elapsed)ms"
+        )
     }
 
     /// Foundation/remote: always cheap. Local MLX: cheap iff already
     /// cached or small (<= `coldLoadParamBudgetBillions`). Unknown
-    /// param count is treated as large
-    private func canDistillCheaply() async -> Bool {
+    /// param count is treated as large.
+    ///
+    /// Internal (not private) so `DistillationCoordinator` can use it
+    /// as the residency gate before yielding to chat-idle. Both live
+    /// under `Services/Memory/` so the coupling is intentional.
+    func canDistillCheaply() async -> Bool {
         guard let modelId = await MainActor.run(body: { ChatConfigurationStore.load().coreModelIdentifier }) else {
             return false
         }
@@ -451,7 +477,11 @@ public actor MemoryService {
         let beforeDistill = snapshot
         await MainActor.run { progress(beforeDistill) }
 
-        await syncNow()
+        // `force: true` because the user explicitly clicked Backfill;
+        // they've opted into the cold load if the core model isn't
+        // resident. The coordinator's chat-idle wait still applies
+        // per-distill, so backfill yields to live chat regardless.
+        await syncNow(force: true)
 
         snapshot.stage = .done
         let final = snapshot
@@ -511,7 +541,52 @@ public actor MemoryService {
 
     // MARK: - Distillation (one LLM call per session)
 
+    /// Public entry point. Routes through `DistillationCoordinator` so
+    /// every distill trigger (per-turn debounce, syncNow, backfill,
+    /// recoverOrphanedSignals) shares a single-flight queue and yields
+    /// to live chat. The actual work is in `performDistillSession`,
+    /// which the quit-time `flushAllPending` drain calls *directly* to
+    /// bypass the coordinator's chat-idle wait (shutdown can't block
+    /// on an active chat stream).
+    ///
+    /// `requireResident` controls the coordinator's residency gate:
+    ///   * `true` (default) — the per-turn debounced flow + background
+    ///     recovery: skip when a heavy MLX core model isn't already
+    ///     loaded. Pending signals stay pending; they'll get picked up
+    ///     next launch or after the model becomes resident.
+    ///   * `false` — user explicitly asked (the "Distill pending"
+    ///     button + the chat-history backfill): proceed regardless;
+    ///     the user has opted into the cold load.
     private func distillSession(
+        agentId: String,
+        conversationId: String,
+        sessionDate: String? = nil,
+        requireResident: Bool = true
+    ) async {
+        // Quick global gate before queuing — signals stale-by-the-time-
+        // we-run is not an issue because `performDistillSession`
+        // re-reads from `pending_signals` inside the coordinator body.
+        let config = MemoryConfigurationStore.load()
+        guard config.enabled else { return }
+
+        await DistillationCoordinator.shared.run(requireResident: requireResident) { [weak self] in
+            guard let self else { return }
+            await self.performDistillSession(
+                agentId: agentId,
+                conversationId: conversationId,
+                sessionDate: sessionDate
+            )
+        }
+    }
+
+    /// The actual distillation body. Holds every cheap pre-LLM gate
+    /// (hasCoreModel, signals empty, low novelty) AND the LLM call —
+    /// re-loading signals fresh so we don't miss turns that were
+    /// buffered while the call was queued behind another distill.
+    ///
+    /// Called via `DistillationCoordinator` by `distillSession` and
+    /// directly (no coordinator) by `flushAllPending` at app quit.
+    private func performDistillSession(
         agentId: String,
         conversationId: String,
         sessionDate: String? = nil

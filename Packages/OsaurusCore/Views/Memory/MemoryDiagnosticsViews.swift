@@ -283,8 +283,41 @@ extension MemoryView {
                 value: "\(totalPinned)",
                 statusColor: totalPinned == 0 ? .gray : .green
             )
+            // The two coordinators added in 2026-05 to make
+            // distillation safe on heavy MLX core models. "Live chat"
+            // shows whether ChatEngine has any in-flight generation;
+            // "Distill queue" shows the DistillationCoordinator's
+            // single-flight depth + whether a body is executing right
+            // now. Together they explain "why is my distillation
+            // pausing?" without the user needing to read logs.
+            diagnosticRow(
+                label: "Live chat",
+                value: chatActive ? "active" : "idle",
+                statusColor: chatActive ? .orange : .green,
+                detail: chatActive
+                    ? "Background distillation is paused while a chat generation is streaming — they share GPU/unified memory."
+                    : nil
+            )
+            diagnosticRow(
+                label: "Distill queue",
+                value: distillQueueValueText,
+                statusColor: distillQueueStatusColor
+            )
             bufferTelemetryRow
         }
+    }
+
+    private var distillQueueValueText: String {
+        let q = distillSnapshot.queued
+        let activeMarker = distillSnapshot.active ? "running" : "idle"
+        if q == 0 { return "0 queued · \(activeMarker)" }
+        return "\(q) queued · \(activeMarker)"
+    }
+
+    private var distillQueueStatusColor: Color {
+        if distillSnapshot.active { return .blue }
+        if distillSnapshot.queued > 0 { return .orange }
+        return .gray
     }
 
     private var pendingSignalsStatusColor: Color {
@@ -423,7 +456,7 @@ extension MemoryView {
                     .foregroundColor(theme.tertiaryText)
                     .tracking(0.4)
                 Spacer()
-                if recentLogs.count > 0 {
+                if !recentLogs.isEmpty {
                     Text("\(recentLogs.count) row\(recentLogs.count == 1 ? "" : "s")")
                         .font(.system(size: 10))
                         .foregroundColor(theme.tertiaryText)
