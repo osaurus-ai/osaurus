@@ -98,6 +98,15 @@ public enum ToolSecretsKeychain {
         }
     }
 
+    /// Delete every per-agent secret across all plugins for the given
+    /// `agentId`. Called from `AgentManager.delete(id:)` so deleting an
+    /// agent does not leave stale `bot_token` / OAuth credentials /
+    /// per-agent webhook URLs accumulating in Keychain Access. Sweeps
+    /// any account whose prefix is `"{agentId}."`.
+    public static func deleteAllSecrets(forAgent agentId: UUID) {
+        deleteAllMatchingPrefix("\(agentId.uuidString).")
+    }
+
     public static func getAllSecrets(for pluginId: String, agentId: UUID) -> [String: String] {
         let accountPrefix = agentAccountPrefix(agentId: agentId, pluginId: pluginId)
 

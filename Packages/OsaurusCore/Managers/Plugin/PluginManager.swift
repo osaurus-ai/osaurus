@@ -49,6 +49,34 @@ final class PluginManager {
 
     private var tunnelObserver: AnyCancellable?
 
+    /// NotificationCenter tokens for `.agentAdded` / `.agentRemoved`. Held for
+    /// the lifetime of the singleton so the closures stay live.
+    private var agentLifecycleObservers: [NSObjectProtocol] = []
+
+    /// Last `tunnel_url` value we pushed to each `(pluginId, agentId)` pair.
+    /// Used to dedup `pushTunnelURL` calls *against the host's own delivery
+    /// history* rather than against the keychain entry — which the plugin
+    /// can mutate via `config_delete`, defeating the dedup and causing
+    /// repeated webhook setups during launch races. The inner Optional
+    /// stores `String?` (nil = "tunnel down was the last thing we pushed").
+    /// Internal so unit tests can inspect the cache structure.
+    var lastPushedTunnelURL: [String: [UUID: String?]] = [:]
+
+    /// Pure decision function for `handleTunnelStatusChange`: returns
+    /// true when the host should push `url` to `(pluginId, agentId)`,
+    /// false when the prior push was identical and we should dedup.
+    /// Extracted as a static helper so the dedup contract can be unit
+    /// tested without a real plugin.
+    static func shouldPushTunnelURL(
+        url: String?,
+        pluginId: String,
+        agentId: UUID,
+        cache: [String: [UUID: String?]]
+    ) -> Bool {
+        let lastPushed: String? = cache[pluginId]?[agentId] ?? nil
+        return lastPushed != url
+    }
+
     /// Serializes reload operations to prevent concurrent `performPluginScan`
     /// calls from overwriting and deallocating each other's host contexts.
     private var activeReloadTask: Task<Void, Never>?
@@ -115,6 +143,7 @@ final class PluginManager {
                 }
                 await loaded.plugin.shutdown()
                 PluginHostContext.getContext(for: loaded.plugin.id)?.teardown()
+                lastPushedTunnelURL.removeValue(forKey: loaded.plugin.id)
                 // Do not dlclose here. The plugin is already unloaded from the
                 // registry, but dlclose on macOS ARM64 causes stale PAC
                 // signatures if the same path is ever reloaded.
@@ -153,6 +182,7 @@ final class PluginManager {
                 }
                 await loaded.plugin.shutdown()
                 PluginHostContext.getContext(for: loaded.plugin.id)?.teardown()
+                lastPushedTunnelURL.removeValue(forKey: loaded.plugin.id)
                 // Do not dlclose here. The plugin is already unloaded from the
                 // registry, but dlclose on macOS ARM64 causes stale PAC
                 // signatures if the same path is ever reloaded.
@@ -206,63 +236,91 @@ final class PluginManager {
     /// Sending the batch here (for all agents) corrects that.
     private func notifyNewPluginsWithAgentConfig(from scanResult: PluginScanResult) {
         let agents = AgentManager.shared.agents
-
         for entry in scanResult.loadResults {
             guard case .success(let loaded) = entry.result else { continue }
-            let pluginId = loaded.plugin.id
-            guard let configSpec = loaded.plugin.manifest.capabilities.config,
-                PluginHostContext.getContext(for: pluginId) != nil
-            else { continue }
-
-            let allFieldKeys = Set(configSpec.sections.flatMap { $0.fields.map { $0.key } })
-
             for agent in agents {
-                let agentId = agent.id
-                var values = ToolSecretsKeychain.getAllSecrets(for: pluginId, agentId: agentId)
-
-                for section in configSpec.sections {
-                    for field in section.fields {
-                        if values[field.key] == nil, field.type != .readonly, field.type != .status,
-                            let val = ToolSecretsKeychain.getSecret(id: field.key, for: pluginId, agentId: agentId)
-                        {
-                            values[field.key] = val
-                        }
-                        if values[field.key] == nil, let def = field.default {
-                            values[field.key] = def.stringValue
-                        }
-                        if let connKey = field.connected_when, values[connKey] == nil,
-                            let val = ToolSecretsKeychain.getSecret(id: connKey, for: pluginId, agentId: agentId)
-                        {
-                            values[connKey] = val
-                        }
-                    }
-                }
-
-                let changes: [(key: String, value: String)] = values.compactMap { key, value in
-                    allFieldKeys.contains(key) ? (key: key, value: value) : nil
-                }
-                guard !changes.isEmpty else { continue }
-                loaded.plugin.notifyConfigBatch(changes, agentId: agentId)
+                deliverInitialConfig(to: loaded, agentId: agent.id)
             }
         }
     }
 
+    /// Push the resolved config for `(plugin, agent)` to the plugin via
+    /// `notifyConfigBatch`. Reads agent-scoped secrets, falls back to
+    /// per-key keychain entries and field defaults, and filters by the
+    /// plugin's declared config field keys. No-op when the plugin has no
+    /// config spec, no host context, or yields zero changes.
+    private func deliverInitialConfig(to loaded: LoadedPlugin, agentId: UUID) {
+        let pluginId = loaded.plugin.id
+        guard let configSpec = loaded.plugin.manifest.capabilities.config,
+            PluginHostContext.getContext(for: pluginId) != nil
+        else { return }
+
+        let allFieldKeys = Set(configSpec.sections.flatMap { $0.fields.map { $0.key } })
+        var values = ToolSecretsKeychain.getAllSecrets(for: pluginId, agentId: agentId)
+
+        for section in configSpec.sections {
+            for field in section.fields {
+                if values[field.key] == nil, field.type != .readonly, field.type != .status,
+                    let val = ToolSecretsKeychain.getSecret(id: field.key, for: pluginId, agentId: agentId)
+                {
+                    values[field.key] = val
+                }
+                if values[field.key] == nil, let def = field.default {
+                    values[field.key] = def.stringValue
+                }
+                if let connKey = field.connected_when, values[connKey] == nil,
+                    let val = ToolSecretsKeychain.getSecret(id: connKey, for: pluginId, agentId: agentId)
+                {
+                    values[connKey] = val
+                }
+            }
+        }
+
+        let changes: [(key: String, value: String)] = values.compactMap { key, value in
+            allFieldKeys.contains(key) ? (key: key, value: value) : nil
+        }
+        guard !changes.isEmpty else { return }
+        loaded.plugin.notifyConfigBatch(changes, agentId: agentId)
+    }
+
     // MARK: - One-Time Migration (global config → per-agent)
 
-    private static var hasMigrated = false
+    /// UserDefaults key tracking which plugin ids have already been
+    /// migrated from legacy global keychain entries to per-agent ones.
+    /// Persisted (not a process-lifetime static) so plugins installed
+    /// AFTER startup also get migrated on the next `_loadAll` pass —
+    /// the old once-per-process gate would skip them entirely.
+    /// Internal so unit tests can read/write the persisted set
+    /// directly without needing to construct fake plugins. Production
+    /// callers go through `migrateGlobalConfigToPerAgent()`.
+    static let migratedPluginIdsDefaultsKey = "PluginManager.migratedPluginIds"
+
+    static func loadMigratedPluginIds() -> Set<String> {
+        let raw = UserDefaults.standard.array(forKey: migratedPluginIdsDefaultsKey) as? [String] ?? []
+        return Set(raw)
+    }
+
+    static func saveMigratedPluginIds(_ ids: Set<String>) {
+        UserDefaults.standard.set(Array(ids), forKey: migratedPluginIdsDefaultsKey)
+    }
 
     /// Copies legacy global keychain entries (`{pluginId}.{key}`) into
     /// agent-scoped entries (`{agentId}.{pluginId}.{key}`) for every agent
     /// that has the plugin enabled, then removes the legacy entries.
+    /// Tracks migration state per plugin id in UserDefaults so a plugin
+    /// installed mid-session still receives migration on its first scan.
     private func migrateGlobalConfigToPerAgent() {
-        guard !Self.hasMigrated else { return }
-        Self.hasMigrated = true
-
+        var migrated = Self.loadMigratedPluginIds()
         let agents = AgentManager.shared.agents
         let pluginIds = plugins.map { $0.plugin.id }
 
-        for pluginId in pluginIds {
+        var didChange = false
+        for pluginId in pluginIds where !migrated.contains(pluginId) {
             let legacySecrets = ToolSecretsKeychain.legacySecrets(for: pluginId)
+            // Mark migrated even if there are no legacy secrets — we've
+            // checked once and there's nothing to do on subsequent runs.
+            migrated.insert(pluginId)
+            didChange = true
             guard !legacySecrets.isEmpty else { continue }
 
             let destinations = agents.map { $0.id }
@@ -278,13 +336,19 @@ final class PluginManager {
 
             ToolSecretsKeychain.deleteLegacySecrets(for: pluginId)
         }
+
+        if didChange {
+            Self.saveMigratedPluginIds(migrated)
+        }
     }
 
     // MARK: - Tunnel URL Propagation
 
     /// Observes relay tunnel status changes and propagates the tunnel URL
     /// to plugins that declare routes, so they can register webhooks with
-    /// external services (e.g. Telegram).
+    /// external services (e.g. Telegram). Also subscribes to agent
+    /// lifecycle notifications so newly added / removed agents trigger a
+    /// per-agent config push (or webhook deregister) on every loaded plugin.
     private func observeTunnelStatus() {
         guard tunnelObserver == nil else { return }
         tunnelObserver = RelayTunnelManager.shared.$agentStatuses
@@ -292,6 +356,67 @@ final class PluginManager {
             .sink { [weak self] statuses in
                 self?.handleTunnelStatusChange(statuses)
             }
+
+        // Idempotent — the only writer is `_loadAll`, which only ever
+        // calls this once because of the `tunnelObserver == nil` guard
+        // above. The same guard protects the agent observers.
+        if agentLifecycleObservers.isEmpty {
+            agentLifecycleObservers.append(
+                subscribeAgentLifecycle(.agentAdded) { $0.handleAgentAdded($1) }
+            )
+            agentLifecycleObservers.append(
+                subscribeAgentLifecycle(.agentRemoved) { $0.handleAgentRemoved($1) }
+            )
+        }
+    }
+
+    /// Wires a `NotificationCenter` observer for `name` that decodes
+    /// `userInfo["agentId"]` and hops to the main actor before invoking
+    /// `handler` against the live `PluginManager` instance. Collapses
+    /// the two near-identical observer blocks for `.agentAdded` /
+    /// `.agentRemoved` and keeps both behind a single weak self capture.
+    private func subscribeAgentLifecycle(
+        _ name: Notification.Name,
+        _ handler: @escaping @MainActor (PluginManager, UUID) -> Void
+    ) -> NSObjectProtocol {
+        NotificationCenter.default.addObserver(
+            forName: name,
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
+            guard let self, let agentId = note.userInfo?["agentId"] as? UUID else { return }
+            Task { @MainActor in handler(self, agentId) }
+        }
+    }
+
+    /// Deliver the full per-agent config + current tunnel URL to every
+    /// loaded plugin for a freshly added agent. Mirrors what `_loadAll`
+    /// does at startup, scoped to a single agent.
+    private func handleAgentAdded(_ agentId: UUID) {
+        for loaded in plugins {
+            deliverInitialConfig(to: loaded, agentId: agentId)
+        }
+        let statuses = RelayTunnelManager.shared.agentStatuses
+        guard case .connected(let url) = statuses[agentId] else { return }
+        for loaded in plugins where !loaded.routes.isEmpty {
+            pushTunnelURL(url, to: loaded, agentId: agentId)
+        }
+    }
+
+    /// Tear down per-agent state on every loaded plugin when an agent is
+    /// deleted: push `tunnel_url=""` so plugins can deregister their
+    /// webhooks. Per-agent keychain secrets are swept by
+    /// `AgentManager.delete(id:)` itself before this handler runs.
+    private func handleAgentRemoved(_ agentId: UUID) {
+        for loaded in plugins where !loaded.routes.isEmpty {
+            pushTunnelURL(nil, to: loaded, agentId: agentId)
+        }
+        // Drop the dedup entry for this agent across every plugin slot
+        // so a future agent re-using this UUID (extremely unlikely, but
+        // possible if a user restores from backup) gets a fresh push.
+        for pluginId in lastPushedTunnelURL.keys {
+            lastPushedTunnelURL[pluginId]?.removeValue(forKey: agentId)
+        }
     }
 
     private func handleTunnelStatusChange(_ statuses: [UUID: AgentRelayStatus]) {
@@ -299,12 +424,18 @@ final class PluginManager {
             for (agentId, status) in statuses {
                 let tunnelURL: String? = if case .connected(let url) = status { url } else { nil }
 
-                let storedValue = ToolSecretsKeychain.getSecret(
-                    id: "tunnel_url",
-                    for: loaded.plugin.id,
-                    agentId: agentId
-                )
-                guard storedValue != tunnelURL else { continue }
+                // Dedup against the value we last pushed for this
+                // `(plugin, agent)` pair, NOT the keychain entry — the
+                // plugin can mutate the keychain via `config_delete` and
+                // we still need to deliver the next status change.
+                guard
+                    Self.shouldPushTunnelURL(
+                        url: tunnelURL,
+                        pluginId: loaded.plugin.id,
+                        agentId: agentId,
+                        cache: lastPushedTunnelURL
+                    )
+                else { continue }
 
                 pushTunnelURL(tunnelURL, to: loaded, agentId: agentId)
             }
@@ -335,6 +466,12 @@ final class PluginManager {
         } else {
             ToolSecretsKeychain.deleteSecret(id: "tunnel_url", for: pluginId, agentId: agentId)
         }
+
+        // Record the value we pushed so `handleTunnelStatusChange` can
+        // dedup. Setting `[agentId] = nil` removes the entry; that's
+        // intentional — an absent entry is treated as "last pushed = nil"
+        // by the dedup, which preserves correctness.
+        lastPushedTunnelURL[pluginId, default: [:]][agentId] = url
 
         NotificationCenter.default.post(
             name: .pluginConfigDidChange,

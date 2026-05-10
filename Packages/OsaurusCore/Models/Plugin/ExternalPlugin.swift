@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import os
 
 // MARK: - C ABI Mirror
 //
@@ -513,13 +514,41 @@ final class ExternalPlugin: @unchecked Sendable {
     private let handle: UnsafeMutableRawPointer
     private let api: osr_plugin_api
     private let ctx: osr_plugin_ctx_t
-    private var isShutDown = false
+
+    /// Atomic latch flipped exactly once by `shutdown()`. Read from
+    /// `dispatchPluginCall` (invokeQueue), `notifyConfigBatch`
+    /// (configEventQueue), and `notifyTaskEvent` (per-task queues) — three
+    /// distinct queues, so a plain `Bool` would race per Swift 6 strict
+    /// concurrency / TSan. The unfair lock matches the pattern used for
+    /// `dbOpenLogLock` in `PluginHostContext`.
+    private let isShutDown = OSAllocatedUnfairLock<Bool>(initialState: false)
 
     /// Per-plugin concurrent queue for C ABI calls. Each plugin gets its own
     /// queue so that long-running operations (e.g. agentic inference) in one
     /// plugin don't block other plugins or additional requests to the same plugin.
     /// Concurrent (not serial) so multiple route handlers can run in parallel.
     private let invokeQueue: DispatchQueue
+
+    /// Per-plugin **serial** queue for `on_config_changed` delivery.
+    ///
+    /// Config-change callbacks routinely mutate plugin-scoped state
+    /// (HTTP clients, caches, webhook registrations) without internal
+    /// locking, so two parallel invocations on the concurrent
+    /// `invokeQueue` can race and corrupt that state. Routing config
+    /// events through their own serial queue gives the plugin a one-at-a-
+    /// time guarantee for the same plugin while leaving `invoke` /
+    /// `handle_route` concurrency untouched. Contract is documented on
+    /// `on_config_changed` in `osaurus_plugin.h`.
+    private let configEventQueue: DispatchQueue
+
+    /// Per `(agentId, key)` snapshot of the last value we successfully
+    /// delivered through `on_config_changed`. Used by `notifyConfigBatch`
+    /// to drop no-op pairs (same value as the prior delivery), so that a
+    /// single rapid `Save` click — or the launch-time fan-out from
+    /// `PluginManager` — does not cause the plugin to redo an expensive
+    /// `setupWebhook` for a value it already saw. Cleared on shutdown.
+    /// The key format is `"<agentId-or-default>|<configKey>"`.
+    private let lastDeliveredConfig = OSAllocatedUnfairLock<[String: String]>(initialState: [:])
 
     /// Per-task serial queues for event delivery. Each task gets its own queue
     /// so a slow event handler (e.g. http_request inside on_task_event) for one
@@ -567,16 +596,20 @@ final class ExternalPlugin: @unchecked Sendable {
             qos: .userInitiated,
             attributes: .concurrent
         )
+        self.configEventQueue = DispatchQueue(
+            label: "com.osaurus.plugin.config.\(manifest.plugin_id)",
+            qos: .userInitiated
+        )
     }
 
     var hasRouteHandler: Bool { abiVersion >= 2 && api.handle_route != nil }
     var hasTaskEventHandler: Bool { abiVersion >= 2 && api.on_task_event != nil }
 
-    /// Tears down the plugin context by draining all per-task event queues
-    /// first, then the invoke queue (barrier), before calling `destroy`.
-    /// Uses async dispatch so the destroy callback (which may call host API
-    /// trampolines like httpRequest) never runs on the main thread, avoiding
-    /// deadlocks with `blockingAsync`.
+    /// Tears down the plugin context by draining the per-task event queues
+    /// and the config event queue first, then the invoke queue (barrier),
+    /// before calling `destroy`. Uses async dispatch so the destroy callback
+    /// (which may call host API trampolines like httpRequest) never runs on
+    /// the main thread, avoiding deadlocks with `blockingAsync`.
     func shutdown() async {
         let queues: [DispatchQueue] = taskEventQueuesLock.withLock {
             Array(taskEventQueues.values)
@@ -588,12 +621,28 @@ final class ExternalPlugin: @unchecked Sendable {
                 group.enter()
                 q.async(flags: .barrier) { group.leave() }
             }
+            // configEventQueue is serial, so a plain async tail-blocks
+            // until every queued on_config_changed callback has returned.
+            group.enter()
+            configEventQueue.async { group.leave() }
             group.notify(flags: .barrier, queue: self.invokeQueue) { [self] in
-                guard !self.isShutDown else {
+                // Flip the latch atomically. `firstShutdown` is true only
+                // for the caller that won the race; all other concurrent
+                // shutdown attempts (re-entry from PluginManager hot
+                // reload, etc.) become no-ops. Pre-existing behavior.
+                let firstShutdown = self.isShutDown.withLock { wasDown -> Bool in
+                    if wasDown { return false }
+                    wasDown = true
+                    return true
+                }
+                guard firstShutdown else {
                     continuation.resume()
                     return
                 }
-                self.isShutDown = true
+                // Drop the dedup snapshot so a future re-load of the
+                // same plugin path does not see stale "already delivered"
+                // entries against a fresh ctx pointer.
+                self.lastDeliveredConfig.withLock { $0.removeAll(keepingCapacity: false) }
                 self.api.destroy?(self.ctx)
                 continuation.resume()
             }
@@ -616,7 +665,7 @@ final class ExternalPlugin: @unchecked Sendable {
 
         return try await withCheckedThrowingContinuation { continuation in
             self.invokeQueue.async { [self] in
-                guard !self.isShutDown else {
+                guard !self.isShutDown.withLock({ $0 }) else {
                     continuation.resume(
                         throwing: NSError(
                             domain: "ExternalPlugin",
@@ -626,16 +675,10 @@ final class ExternalPlugin: @unchecked Sendable {
                     )
                     return
                 }
-                PluginHostContext.setActivePlugin(pluginId)
-                if let agentId {
-                    PluginHostContext.setActiveAgent(agentId)
+                let resPtr = PluginHostContext.withTLSScope(pluginId: pluginId, agentId: agentId) {
+                    call(ctx)
                 }
-                defer {
-                    PluginHostContext.clearActivePlugin()
-                    PluginHostContext.clearActiveAgent()
-                }
-
-                guard let resPtr = call(ctx) else {
+                guard let resPtr else {
                     continuation.resume(
                         throwing: NSError(
                             domain: "ExternalPlugin",
@@ -742,23 +785,37 @@ final class ExternalPlugin: @unchecked Sendable {
         guard abiVersion >= 2, let configFn = api.on_config_changed, !changes.isEmpty else { return }
         nonisolated(unsafe) let ctx = self.ctx
         let pluginId = self.id
+        let agentScope = agentId?.uuidString ?? "default"
 
-        invokeQueue.async { [self] in
-            guard !self.isShutDown else { return }
-
-            PluginHostContext.setActivePlugin(pluginId)
-            if let agentId {
-                PluginHostContext.setActiveAgent(agentId)
+        // Drop pairs that match the prior delivery for the same
+        // `(agent, key)`. PluginConfigView's `loadConfig()` and the
+        // launch-time fan-out both re-deliver the entire snapshot
+        // unconditionally; this dedup keeps the plugin's
+        // `on_config_changed` body from re-running expensive work
+        // (Telegram `setupWebhook`, OAuth refresh, etc.) on no-op pushes.
+        let filtered: [(key: String, value: String)] = self.lastDeliveredConfig.withLock {
+            last -> [(key: String, value: String)] in
+            var keep: [(key: String, value: String)] = []
+            keep.reserveCapacity(changes.count)
+            for change in changes {
+                let cacheKey = "\(agentScope)|\(change.key)"
+                if last[cacheKey] == change.value { continue }
+                last[cacheKey] = change.value
+                keep.append(change)
             }
-            defer {
-                PluginHostContext.clearActivePlugin()
-                PluginHostContext.clearActiveAgent()
-            }
+            return keep
+        }
+        guard !filtered.isEmpty else { return }
 
-            for (key, value) in changes {
-                key.withCString { keyPtr in
-                    value.withCString { valuePtr in
-                        configFn(ctx, keyPtr, valuePtr)
+        // Serial — see `configEventQueue` for the rationale and contract.
+        configEventQueue.async { [self] in
+            guard !self.isShutDown.withLock({ $0 }) else { return }
+            PluginHostContext.withTLSScope(pluginId: pluginId, agentId: agentId) {
+                for (key, value) in filtered {
+                    key.withCString { keyPtr in
+                        value.withCString { valuePtr in
+                            configFn(ctx, keyPtr, valuePtr)
+                        }
                     }
                 }
             }
@@ -774,22 +831,14 @@ final class ExternalPlugin: @unchecked Sendable {
         let isTerminal = eventType == .completed || eventType == .failed || eventType == .cancelled
 
         eventQueue(for: taskId).async { [self] in
-            guard !self.isShutDown else { return }
-            PluginHostContext.setActivePlugin(pluginId)
-            if let agentId {
-                PluginHostContext.setActiveAgent(agentId)
-            }
-            defer {
-                PluginHostContext.clearActivePlugin()
-                PluginHostContext.clearActiveAgent()
-            }
-
-            taskId.withCString { taskIdPtr in
-                eventJSON.withCString { jsonPtr in
-                    eventFn(ctx, taskIdPtr, rawType, jsonPtr)
+            guard !self.isShutDown.withLock({ $0 }) else { return }
+            PluginHostContext.withTLSScope(pluginId: pluginId, agentId: agentId) {
+                taskId.withCString { taskIdPtr in
+                    eventJSON.withCString { jsonPtr in
+                        eventFn(ctx, taskIdPtr, rawType, jsonPtr)
+                    }
                 }
             }
-
             if isTerminal {
                 self.removeEventQueue(for: taskId)
             }

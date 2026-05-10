@@ -42,11 +42,21 @@ if (!api_key) {
 
 ### `config_set(key, value) -> void`
 
-Stores or overwrites a secret. Triggers `on_config_changed` on the plugin.
+Stores or overwrites a secret. **Does not** echo the change back to the calling plugin via `on_config_changed` — the plugin already knows what it just wrote, and echoing would create a feedback loop for plugins that mutate state inside their config handler. UI-driven changes from the host (Save / Disconnect, tunnel up/down) DO call `on_config_changed`.
+
+Values larger than 1 MiB are silently rejected with a one-shot warning (the keychain is for credentials, not blob storage; use `db_exec` / `db_query` for larger payloads).
 
 ### `config_delete(key) -> void`
 
-Removes a secret. Triggers `on_config_changed` with `value = nil`.
+Removes a secret. Like `config_set`, the calling plugin does **not** receive an `on_config_changed` echo for its own delete. UI-driven deletes do.
+
+### Cleared values: `""` vs deleted
+
+Empty string `""` is a real value, distinct from a delete. Use `config_delete` to remove a key entirely. Host-side pushes that signal a transition (e.g. `tunnel_url` going down) deliver `""` to `on_config_changed`; treat that as "no value right now" rather than "no value ever stored."
+
+### `on_config_changed(key, value) -> void` threading
+
+The host serializes invocations of `on_config_changed` per plugin: two callbacks for the same plugin will never run in parallel, even when the host fans out per-agent notifications back-to-back at launch. State touched only from this callback can stay lock-free; state shared with `invoke` / `handle_route` still needs its own synchronization (those paths run concurrently).
 
 ---
 
@@ -86,6 +96,8 @@ host->log(1, "Plugin started");
 ## Inference
 
 Synchronous and streaming chat completion plus embeddings. Routed through the same inference layer the main chat uses, with full agent context (system prompt, tools, execution mode).
+
+**Agent scoping (security boundary).** Every inference call (`complete`, `complete_stream`, `embed`) and every `dispatch` automatically inherits the agent that invoked the plugin — set by the host on `handle_route`, `invoke`, `on_config_changed`, and `on_task_event`. Plugins do **not** pass `agent_address` or `agent_id`; if either is present in the request body the host **ignores** it and logs a one-shot warning per `(plugin, op)`. A plugin called from agent A can never run inference or spawn dispatches in agent B's context. Background work the plugin spawned itself (no invoke / route / event frame above it) resolves to the built-in default agent and is also logged once. See the matching note on `dispatch` below.
 
 **Concurrency cap**: each plugin can have at most 2 inference calls in flight at once. Bursts above this fail fast with `{"error": "plugin_busy"}` so a misbehaving plugin can't starve host worker threads.
 
@@ -192,12 +204,12 @@ Schema:
   "mode": "optional execution mode",
   "title": "Optional title shown in the task toast",
   "id": "Optional caller-supplied UUID",
-  "agent_address": "Optional. crypto address for the target agent",
-  "agent_id": "Optional UUID. Used if agent_address is absent",
   "folder_bookmark": "Optional base64-encoded security-scoped bookmark",
   "session_id": "Optional UUID. Reattach to an existing session"
 }
 ```
+
+**Agent scoping.** The dispatched task always runs under the agent that invoked the plugin (see the "Agent scoping" note in the [Inference](#inference) section). `agent_address` / `agent_id` are not part of the schema; if either is present they are ignored and a one-shot warning is logged. `session_id` reattach is naturally agent-scoped — a session belonging to a different agent silently misses and a fresh task is created.
 
 Returns `{"id": "<uuid>", "status": "running"}` immediately or an error envelope. Non-blocking.
 

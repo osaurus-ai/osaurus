@@ -62,6 +62,30 @@ typedef void* osr_plugin_ctx_t;
 // ── Plugin → Host callbacks (injected at init for v2+ plugins) ──
 
 // Config store (Keychain-backed).
+//
+// Scope. Every entry is keyed by `(plugin_id, agent_id, key)`. The
+// `agent_id` is resolved from the host-enforced agent scope (see the
+// "AGENT SCOPING" note on `osr_dispatch_fn` for how that's set). One
+// plugin's config never collides with another plugin's, and one
+// agent's config never collides with another agent's.
+//
+// Echo. `config_set` and `config_delete` do NOT echo the change back
+// through `on_config_changed`. The plugin already knows what it just
+// wrote; echoing would create a feedback loop for plugins that mutate
+// state inside their config handler. UI-driven changes from the host
+// (Save / Disconnect, tunnel up/down, fresh load) DO call
+// `on_config_changed` so the plugin can reconcile.
+//
+// Cleared values. Empty string `""` is a real value, distinct from
+// "deleted". Use `config_delete` to remove a key entirely. Host-side
+// pushes that signal a transition (e.g. `tunnel_url` going down)
+// deliver `""` to `on_config_changed`; treat it as "no value right
+// now" rather than "no value ever stored".
+//
+// Size. `config_set` rejects values larger than 1 MiB silently with a
+// one-shot warning. The keychain is for credentials and small state,
+// not blob storage; use `db_exec` / `db_query` for larger payloads.
+//
 // Returns NULL when the key is missing. All other host callbacks return
 // a structured JSON error envelope; `config_get` is the single exception
 // because the value space is arbitrary strings.
@@ -80,15 +104,32 @@ typedef void        (*osr_log_fn)(int level, const char* message);
 
 // Agent dispatch (via BackgroundTaskManager).
 //
+// AGENT SCOPING (security boundary):
+//   Plugin-initiated dispatches always run under the agent that invoked
+//   the plugin — i.e. the agent whose route delivered the webhook
+//   (`handle_route`), whose tool call entered (`invoke`), or whose
+//   config / task-event callback fired. The host enforces this scope
+//   from thread-local state captured before this trampoline is
+//   entered. Caller-supplied `agent_address` / `agent_id` keys in
+//   `request_json` are IGNORED, and a one-shot warning is logged so
+//   cross-agent dispatch attempts remain visible. A plugin can never
+//   spawn work in another agent's context. Background work the plugin
+//   spawned itself (no invoke / route / event frame above it) is
+//   resolved against the built-in default agent and also logged once.
+//
 // Schema for `osr_dispatch_request` (passed as JSON):
 //   prompt          (required, string)        — initial prompt
 //   mode            (optional, string)        — execution mode
 //   title           (optional, string)        — display title
 //   id              (optional, UUID string)   — caller-supplied request id
-//   agent_address   (optional, string)        — crypto address; or:
-//   agent_id        (optional, UUID string)
 //   folder_bookmark (optional, base64 string) — security-scoped folder bookmark
-//   session_id      (optional, UUID string)   — reattach to an existing session
+//   session_id      (optional, UUID string)   — reattach to an existing
+//                                                session. Reattach is
+//                                                naturally agent-scoped:
+//                                                a session belonging to a
+//                                                different agent silently
+//                                                misses and a fresh one
+//                                                is created.
 //
 // Returns: {"id": "<uuid>", "status": "running"} on success or an error envelope.
 // Non-blocking. Rate-limited to 10 dispatches per minute per (plugin, agent) pair.
@@ -113,6 +154,14 @@ typedef void        (*osr_dispatch_clarify_fn)(const char* task_id,
 // Inference — routes through the Osaurus unified inference layer.
 // Model resolution: specific name, null/"" for default, "local" for MLX,
 // "foundation" for Apple Foundation Model.
+//
+// AGENT SCOPING (security boundary): identical to `osr_dispatch_fn`.
+// Inference inherits per-agent system prompt, tool surface, model
+// override, temperature, and max_tokens from the agent that invoked
+// the plugin. Caller-supplied `agent_address` / `agent_id` keys in
+// `request_json` are IGNORED and warned-once. Use `messages` and
+// the explicit `tools` / `model` fields to override per-call;
+// agent identity itself cannot be overridden.
 //
 // Schema for `osr_complete_request` (passed as JSON, OpenAI-compatible):
 //   model        (optional, string)
@@ -157,6 +206,10 @@ typedef void        (*osr_complete_cancel_fn)(const char* stream_id);
 
 // Generate embeddings. `request_json` has "model" and "input" (string or
 // string array). Returns JSON with embedding vectors and usage stats.
+//
+// AGENT SCOPING: identical to `osr_dispatch_fn`. The host enforces the
+// invoking agent's scope; caller-supplied `agent_address` / `agent_id`
+// is ignored and warned-once.
 typedef const char* (*osr_embed_fn)(const char* request_json);
 
 // Models — enumerate available models (local MLX, Apple Foundation, remote).
@@ -321,6 +374,14 @@ typedef struct {
 
     // Called when a config value changes in the host UI.
     // May be NULL if the plugin doesn't need config change notifications.
+    //
+    // THREADING: the host serializes invocations of this callback per
+    // plugin — two `on_config_changed` calls for the same plugin never
+    // run in parallel, even when the host fans out per-agent
+    // notifications back-to-back at launch. State touched only from
+    // here can stay lock-free; state shared with `invoke` /
+    // `handle_route` still needs its own synchronization (those paths
+    // run concurrently).
     void (*on_config_changed)(osr_plugin_ctx_t ctx, const char* key, const char* value);
 
     // Unified task lifecycle callback. Called for every dispatched-task event:

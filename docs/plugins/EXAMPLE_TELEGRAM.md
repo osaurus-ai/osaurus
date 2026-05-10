@@ -313,6 +313,13 @@ if let active = activeDispatch(forChat: msg.chat.id) {
 }
 
 // 9. Dispatch. Fire and forget. The agent will call our reply tool.
+//
+// Notice we don't pass `agent_address` or `agent_id` — and we couldn't
+// even if we tried. The host enforces that plugin-initiated dispatches
+// run under whichever agent invoked the plugin (here, the agent whose
+// tunnel routed the webhook into `handle_route`). Caller-supplied
+// agent identifiers are ignored and warned-once. This keeps every
+// agent's bot strictly scoped to its own conversations.
 let dispatchReq: [String: Any] = [
     "prompt": prompt,
     "title": "Telegram \(displayName)",

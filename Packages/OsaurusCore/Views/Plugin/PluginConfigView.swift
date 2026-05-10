@@ -25,6 +25,13 @@ struct PluginConfigView: View {
 
     @State private var saveIndicator: String?
 
+    /// Hash of the last `(key, value)` snapshot we delivered to the plugin
+    /// from `loadConfig()`. Used to skip redundant `notifyConfigBatch`
+    /// calls when the user opens the config sheet without anything having
+    /// changed. The host-side `lastDeliveredConfig` lock would short-circuit
+    /// these anyway; this just avoids building the change array.
+    @State private var lastDeliveredHash: Int?
+
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             ForEach(Array(configSpec.sections.enumerated()), id: \.offset) { _, section in
@@ -496,6 +503,15 @@ struct PluginConfigView: View {
                                 values.removeValue(forKey: key)
                                 ToolSecretsKeychain.deleteSecret(id: key, for: pluginId, agentId: agentId)
                             }
+                            // Without notifying the plugin, its in-memory
+                            // state (HTTP clients, webhook registrations,
+                            // OAuth tokens) keeps using the now-deleted
+                            // credentials until the next launch. Push the
+                            // cleared keys as empty strings so the plugin
+                            // can deregister / drop caches synchronously.
+                            let cleared: [(key: String, value: String)] =
+                                keys.map { (key: $0, value: "") }
+                            plugin?.notifyConfigBatch(cleared, agentId: agentId)
                         }
                         isDirty = false
                     } label: {
@@ -590,7 +606,19 @@ struct PluginConfigView: View {
         let changes = values.compactMap { (key, value) in
             findField(key: key) != nil ? (key: key, value: value) : nil
         }
-        plugin?.notifyConfigBatch(changes, agentId: agentId)
+        // Skip the round-trip when nothing has changed since the last
+        // `loadConfig` for this view instance. We hash the sorted (key,
+        // value) pairs so stable orderings produce the same hash.
+        var hasher = Hasher()
+        for (k, v) in changes.sorted(by: { $0.key < $1.key }) {
+            hasher.combine(k)
+            hasher.combine(v)
+        }
+        let snapshotHash = hasher.finalize()
+        if snapshotHash != lastDeliveredHash {
+            lastDeliveredHash = snapshotHash
+            plugin?.notifyConfigBatch(changes, agentId: agentId)
+        }
     }
 
     private func saveConfig() {

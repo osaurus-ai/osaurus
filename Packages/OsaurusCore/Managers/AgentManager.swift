@@ -14,6 +14,18 @@ import SwiftUI
 extension Notification.Name {
     static let activeAgentChanged = Notification.Name("activeAgentChanged")
     static let agentUpdated = Notification.Name("agentUpdated")
+    /// Posted from `AgentManager.add(_:)` after the new agent is persisted
+    /// and an address has been assigned (best effort). `userInfo["agentId"]`
+    /// is the new agent's UUID. Subscribed by `PluginManager` so plugins
+    /// receive an initial config + tunnel-URL push for the new agent
+    /// (otherwise plugins only see the agent on the next force-reload).
+    static let agentAdded = Notification.Name("agentAdded")
+    /// Posted from `AgentManager.delete(id:)` after the agent record is
+    /// removed. `userInfo["agentId"]` is the deleted agent's UUID.
+    /// Subscribed by `PluginManager` to push `tunnel_url=""` (so plugins
+    /// like Telegram can deregister webhooks) and to clean up per-agent
+    /// keychain secrets that would otherwise be orphaned.
+    static let agentRemoved = Notification.Name("agentRemoved")
 }
 
 public struct AgentDeleteResult: Sendable {
@@ -122,6 +134,14 @@ public final class AgentManager: ObservableObject {
         AgentStore.save(agent)
         refresh()
         try? assignAddress(to: agent)
+        // Notify subscribers (e.g. PluginManager) so plugins get an
+        // initial config / tunnel-URL push for the new agent without
+        // needing to wait for the next plugin force-reload.
+        NotificationCenter.default.post(
+            name: .agentAdded,
+            object: nil,
+            userInfo: ["agentId": agent.id]
+        )
     }
 
     /// Set or replace the custom avatar image for `agentId`. Writes the bytes
@@ -262,6 +282,23 @@ public final class AgentManager: ObservableObject {
         }
 
         refresh()
+
+        // Sweep every plugin's per-agent secrets for this agent. Without
+        // this, deleting an agent would leave its `bot_token` / OAuth
+        // credentials / `tunnel_url` / etc. in Keychain Access forever.
+        // Done before posting `.agentRemoved` so subscribers see the
+        // post-cleanup keychain state.
+        ToolSecretsKeychain.deleteAllSecrets(forAgent: id)
+
+        // Notify subscribers (e.g. PluginManager) so plugins can
+        // deregister webhooks (push tunnel_url=nil) and tear down any
+        // per-agent state of their own.
+        NotificationCenter.default.post(
+            name: .agentRemoved,
+            object: nil,
+            userInfo: ["agentId": id]
+        )
+
         let cleanupNotice = await SandboxAgentProvisioner.shared.unprovision(agentId: id).notice
         return AgentDeleteResult(deleted: true, sandboxCleanupNotice: cleanupNotice)
     }
