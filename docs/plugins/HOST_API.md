@@ -328,11 +328,31 @@ Schema:
   "title": "Optional title shown in the task toast",
   "id": "Optional caller-supplied UUID",
   "folder_bookmark": "Optional base64-encoded security-scoped bookmark",
-  "session_id": "Optional UUID. Reattach to an existing session"
+  "session_id": "Optional UUID. Reattach to an existing session",
+  "tools": ["Optional. Tool names to expose to the model on top of the agent's normal selection."]
 }
 ```
 
 **Agent scoping.** The dispatched task always runs under the agent that invoked the plugin (see the "Agent scoping" note in the [Inference](#inference) section). `agent_address` / `agent_id` are not part of the schema; if either is present they are ignored and a one-shot warning is logged. `session_id` reattach is naturally agent-scoped — a session belonging to a different agent silently misses and a fresh task is created.
+
+**Tool selection.** The optional `tools` array pins specific tool names so the dispatched chat is guaranteed to see them on turn 1 — useful for "the agent must be able to call `reply` to talk back to the user" patterns where you can't rely on the agent's auto-mode preflight to surface them. Names are *additive* on top of the agent's existing selection (auto-mode preflight or manual list); they don't replace it. Allowed names are restricted to:
+
+- the calling plugin's own manifest tool ids (the `id` field on each entry in `manifest.capabilities.tools`), and
+- host built-in always-loaded names such as `share_artifact`, `search_memory`, sandbox tools, etc.
+
+Names outside that set are dropped silently and a one-shot `[PluginHostAPI] Plugin '<id>' requested tool '<name>' on dispatch but it is not in the allowed set` warning is logged per `(plugin, name)` per process. The rest of the dispatch proceeds normally — a typo in `tools` never fails the call. Omitting the field, passing an empty array, or passing non-string entries all behave like the field wasn't there.
+
+Example — a Telegram-style plugin guaranteeing the model can reply:
+
+```json
+{
+  "prompt": "User said: hello",
+  "session_id": "<deterministic-uuid-for-chat>",
+  "tools": ["reply", "reply_typing", "reply_photo"]
+}
+```
+
+The dispatched chat will see `reply` / `reply_typing` / `reply_photo` in its `<tools>` schema on turn 1, on top of whatever the agent's auto-mode preflight picked. See [Example: Telegram bridge plugin](EXAMPLE_TELEGRAM.md) for the full flow.
 
 Returns `{"id": "<uuid>", "status": "running"}` immediately or an error envelope. Non-blocking.
 

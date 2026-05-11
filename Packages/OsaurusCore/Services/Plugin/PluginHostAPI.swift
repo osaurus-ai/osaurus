@@ -340,7 +340,8 @@ final class PluginHostContext: @unchecked Sendable {
     static func planDispatch(
         requestJSON: String,
         pluginId: String,
-        activeAgent: UUID?
+        activeAgent: UUID?,
+        allowedToolNames: Set<String> = []
     ) -> DispatchPlan {
         let data = Data(requestJSON.utf8)
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -385,6 +386,16 @@ final class PluginHostContext: @unchecked Sendable {
         // alias was removed; old plugins passing it will need to migrate.
         let externalSessionKey = json["session_id"] as? String
 
+        // Optional `tools` array — see `parseRequestedTools` for the
+        // validation contract. Empty when the plugin omits the field
+        // or `allowedToolNames` is empty (e.g. test paths that drive
+        // `planDispatch` directly without the MainActor lookup).
+        let requestedToolNames = parseRequestedTools(
+            json: json,
+            pluginId: pluginId,
+            allowedToolNames: allowedToolNames
+        )
+
         let request = DispatchRequest(
             id: requestId,
             prompt: prompt,
@@ -394,9 +405,61 @@ final class PluginHostContext: @unchecked Sendable {
             showToast: true,
             sourcePluginId: pluginId,
             source: .plugin,
-            externalSessionKey: externalSessionKey
+            externalSessionKey: externalSessionKey,
+            requestedToolNames: requestedToolNames
         )
         return .request(request)
+    }
+
+    /// Parses the optional `tools` field on a dispatch JSON payload and
+    /// returns the validated, deduplicated subset that survives the
+    /// allowed-set scope check. Pure helper — extracted so unit tests
+    /// can pin the validation table independently of the rest of
+    /// `planDispatch`.
+    ///
+    /// Order is preserved (first occurrence wins). Non-string entries,
+    /// blanks, and duplicates are dropped silently. Names outside the
+    /// allowed set fire one `PluginOnceLogger.warnOnce` per (plugin,
+    /// name) so plugin authors see the drop without flooding the log
+    /// on hot paths.
+    static func parseRequestedTools(
+        json: [String: Any],
+        pluginId: String,
+        allowedToolNames: Set<String>
+    ) -> [String] {
+        guard let raw = json["tools"] as? [Any] else { return [] }
+        var seen = Set<String>()
+        var ordered: [String] = []
+        for entry in raw {
+            guard let name = entry as? String else { continue }
+            let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty, seen.insert(trimmed).inserted else { continue }
+            if allowedToolNames.contains(trimmed) {
+                ordered.append(trimmed)
+            } else {
+                warnDispatchToolScopeOnce(pluginId: pluginId, name: trimmed)
+            }
+        }
+        return ordered
+    }
+
+    /// Tool names a plugin's `dispatch` call is allowed to request:
+    /// the plugin's own manifest tool ids
+    /// (`ExternalTool.name == manifest.tools[].id`) plus host built-in
+    /// always-loaded names (`builtInToolNames` ∪ `runtimeManagedToolNames`).
+    /// Plugins can pin their own tools and host built-ins like
+    /// `share_artifact` / `search_memory`, but cannot smuggle in another
+    /// plugin's tools. A missing loaded-plugin record (e.g. mid-unload)
+    /// collapses to "built-ins only"; `parseRequestedTools` then
+    /// warn-onces any of the plugin's own names that no longer resolve.
+    @MainActor
+    static func dispatchToolAllowedSet(pluginId: String) -> Set<String> {
+        let registry = ToolRegistry.shared
+        var allowed = registry.builtInToolNames.union(registry.runtimeManagedToolNames)
+        if let loaded = PluginManager.shared.loadedPlugin(for: pluginId) {
+            for tool in loaded.tools { allowed.insert(tool.name) }
+        }
+        return allowed
     }
 
     func dispatch(requestJSON: String) -> (result: String, taskId: UUID?) {
@@ -410,10 +473,17 @@ final class PluginHostContext: @unchecked Sendable {
         // dispatch attempt remains visible in the unified log.
         let activeAgent = Self.activeAgentId()
         return Self.blockingAsync { [pluginId, activeAgent] in
+            // PluginManager + ToolRegistry are MainActor-isolated; hop
+            // once and hand `planDispatch` a plain `Set` so the planner
+            // stays a pure transform driveable from tests.
+            let allowedTools: Set<String> = await MainActor.run {
+                Self.dispatchToolAllowedSet(pluginId: pluginId)
+            }
             let plan = Self.planDispatch(
                 requestJSON: requestJSON,
                 pluginId: pluginId,
-                activeAgent: activeAgent
+                activeAgent: activeAgent,
+                allowedToolNames: allowedTools
             )
             let request: DispatchRequest
             switch plan {
@@ -653,14 +723,7 @@ final class PluginHostContext: @unchecked Sendable {
         var enriched = enrichRequest(request, context: agentCtx, options: options)
         if let pid = pluginId {
             let instructions: String? = await MainActor.run {
-                if let agentId = agentCtx?.agentId,
-                    let agent = AgentManager.shared.agent(for: agentId),
-                    let override = agent.pluginInstructions?[pid],
-                    !override.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                {
-                    return override
-                }
-                return PluginManager.shared.loadedPlugin(for: pid)?.plugin.manifest.instructions
+                PluginInstructionsResolver.instructions(pluginId: pid, agentId: agentCtx?.agentId)
             }
             if let instructions {
                 SystemPromptComposer.appendSystemContent(instructions, into: &enriched.request.messages)
@@ -1791,6 +1854,23 @@ final class PluginHostContext: @unchecked Sendable {
         if activeAgent == nil {
             warnNoAgentContextOnce(pluginId: pluginId, op: op)
         }
+    }
+
+    /// One-shot warning when a plugin's `dispatch` JSON requests a tool
+    /// name outside the plugin's allowed surface (own manifest tools or
+    /// host built-in always-loaded names). The name is dropped from the
+    /// dispatch's `requestedToolNames`; the rest of the dispatch
+    /// proceeds normally. Public so tests can pin the dedup behaviour.
+    static func warnDispatchToolScopeOnce(pluginId: String, name: String) {
+        PluginOnceLogger.warnOnce(
+            key: "\(pluginId)|dispatch|tool_scope|\(name)",
+            "[PluginHostAPI] Plugin '%@' requested tool '%@' on dispatch but it is not in the allowed "
+                + "set (own manifest tools or host built-ins). The name was dropped; the rest of the "
+                + "dispatch proceeds. "
+                + "This warning is logged once per (plugin, name) per process.",
+            pluginId,
+            name
+        )
     }
 
     /// One-shot warning when a plugin supplies `agent_address` / `agent_id`
