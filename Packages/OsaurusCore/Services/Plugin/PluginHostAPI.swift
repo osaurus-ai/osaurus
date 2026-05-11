@@ -96,6 +96,18 @@ final class PluginHostContext: @unchecked Sendable {
     private static let dispatchRateLimit = 10
     private static let dispatchRateWindow: TimeInterval = 60
 
+    /// Sliding-window timestamps for `http_request` rate limiting,
+    /// keyed by the resolved active agent so each agent's bucket is
+    /// independent (matches the dispatch limiter's shape). Caps a
+    /// chatty plugin's outbound HTTP traffic so it can't saturate the
+    /// `httpSession` connection pool or trip third-party rate limits
+    /// silently. Note: this is a *host-side* control to stop runaway
+    /// plugins, not a substitute for the plugin's own backoff against
+    /// upstream APIs.
+    private var httpTimestamps: [UUID: [Date]] = [:]
+    static let httpRateLimit = 60
+    static let httpRateWindow: TimeInterval = 60
+
     // MARK: - Per-Plugin In-Flight Inference Cap
 
     /// Maximum simultaneous inference calls (`complete` + `completeStream` + `embed`)
@@ -234,6 +246,9 @@ final class PluginHostContext: @unchecked Sendable {
     // MARK: - Config Callbacks
 
     func configGet(key: String) -> String? {
+        if Self.activeAgentId() == nil {
+            Self.warnNoAgentContextOnce(pluginId: pluginId, op: "config_get")
+        }
         return ToolSecretsKeychain.getSecret(id: key, for: pluginId, agentId: resolvedAgentId)
     }
 
@@ -258,11 +273,17 @@ final class PluginHostContext: @unchecked Sendable {
             )
             return
         }
+        if Self.activeAgentId() == nil {
+            Self.warnNoAgentContextOnce(pluginId: pluginId, op: "config_set")
+        }
         ToolSecretsKeychain.saveSecret(value, id: key, for: pluginId, agentId: resolvedAgentId)
         postConfigChange(key: key, value: value)
     }
 
     func configDelete(key: String) {
+        if Self.activeAgentId() == nil {
+            Self.warnNoAgentContextOnce(pluginId: pluginId, op: "config_delete")
+        }
         ToolSecretsKeychain.deleteSecret(id: key, for: pluginId, agentId: resolvedAgentId)
         postConfigChange(key: key, value: nil)
     }
@@ -1953,6 +1974,21 @@ final class PluginHostContext: @unchecked Sendable {
             return Self.jsonString(["error": "ssrf_blocked", "message": ssrfError])
         }
 
+        // Per-(plugin, agent) HTTP token bucket. Caps the host-side
+        // outbound traffic a single plugin can emit; mirrors the
+        // dispatch limiter's shape. Plugins that need higher
+        // throughput should batch upstream or backoff on
+        // `rate_limit_exceeded` like any other API client.
+        guard checkHttpRateLimit(agentId: resolvedAgentId) else {
+            return Self.jsonString([
+                "error": "rate_limit_exceeded",
+                "message":
+                    "http_request rate limit (\(Self.httpRateLimit)/\(Int(Self.httpRateWindow))s) "
+                    + "exceeded for this plugin and agent.",
+                "retry_after_ms": Int(Self.httpRateWindow * 1000),
+            ])
+        }
+
         let timeoutMs = json["timeout_ms"] as? Int ?? 30000
         let clampedTimeout = min(timeoutMs, 300000)
         let followRedirects = json["follow_redirects"] as? Bool ?? true
@@ -2104,10 +2140,18 @@ final class PluginHostContext: @unchecked Sendable {
         let ptr = UnsafeMutablePointer<osr_host_api>.allocate(capacity: 1)
         ptr.initialize(
             to: osr_host_api(
-                // v3 surface — frozen layout. Two trampoline slots
+                // v6 surface — frozen layout. Two trampoline slots
                 // (`dispatch_clarify`, `dispatch_add_issue`) remain wired
                 // for ABI compat but return structured `not_supported` JSON.
-                version: 3,
+                // `get_active_agent_id` (v4) lets plugins key per-agent
+                // state without caching across callbacks. `log_structured`
+                // (v5) attaches searchable JSON fields to log entries.
+                // `free_string` (v6) is the host-controlled `free()`
+                // pair for every host-returned `const char*` — added so
+                // plugins don't accidentally route host-allocated
+                // pointers through their own `free_string` callback,
+                // which can corrupt the heap if it isn't plain `free`.
+                version: 6,
                 config_get: PluginHostContext.trampolineConfigGet,
                 config_set: PluginHostContext.trampolineConfigSet,
                 config_delete: PluginHostContext.trampolineConfigDelete,
@@ -2128,7 +2172,10 @@ final class PluginHostContext: @unchecked Sendable {
                 send_draft: PluginHostContext.trampolineSendDraft,
                 dispatch_interrupt: PluginHostContext.trampolineDispatchInterrupt,
                 dispatch_add_issue: PluginHostContext.trampolineDispatchAddIssue,
-                complete_cancel: PluginHostContext.trampolineCompleteCancel
+                complete_cancel: PluginHostContext.trampolineCompleteCancel,
+                get_active_agent_id: PluginHostContext.trampolineGetActiveAgentId,
+                log_structured: PluginHostContext.trampolineLogStructured,
+                free_string: PluginHostContext.trampolineHostFreeString
             )
         )
         hostAPIPtr = ptr
@@ -2145,20 +2192,55 @@ final class PluginHostContext: @unchecked Sendable {
 // MARK: - Rate Limiting
 
 extension PluginHostContext {
+    /// Sliding-window check: returns true and records `now` if there
+    /// are fewer than `limit` recorded timestamps inside `window`,
+    /// false otherwise. The timestamp array is rewritten in place
+    /// under `rateLimitLock` (already held by the caller), so this is
+    /// a pure helper — both `checkDispatchRateLimit` and
+    /// `checkHttpRateLimit` route through it to keep their semantics
+    /// in lockstep.
+    private func consumeSlidingWindow(
+        timestamps: inout [Date],
+        limit: Int,
+        window: TimeInterval
+    ) -> Bool {
+        let now = Date()
+        let cutoff = now.addingTimeInterval(-window)
+        timestamps.removeAll { $0 < cutoff }
+        guard timestamps.count < limit else { return false }
+        timestamps.append(now)
+        return true
+    }
+
     /// Returns true if the dispatch is allowed under the per-agent rate limit.
     func checkDispatchRateLimit(agentId: UUID) -> Bool {
         rateLimitLock.withLock {
-            let now = Date()
-            let cutoff = now.addingTimeInterval(-Self.dispatchRateWindow)
             var timestamps = dispatchTimestamps[agentId, default: []]
-            timestamps.removeAll { $0 < cutoff }
-            guard timestamps.count < Self.dispatchRateLimit else {
-                dispatchTimestamps[agentId] = timestamps
-                return false
-            }
-            timestamps.append(now)
+            let allowed = consumeSlidingWindow(
+                timestamps: &timestamps,
+                limit: Self.dispatchRateLimit,
+                window: Self.dispatchRateWindow
+            )
             dispatchTimestamps[agentId] = timestamps
-            return true
+            return allowed
+        }
+    }
+
+    /// Returns true if an `http_request` call from the current
+    /// `(plugin, agent)` is under the sliding-window rate limit.
+    /// Sharing the same `rateLimitLock` as dispatch keeps both
+    /// counters consistent under concurrency without adding another
+    /// lock.
+    func checkHttpRateLimit(agentId: UUID) -> Bool {
+        rateLimitLock.withLock {
+            var timestamps = httpTimestamps[agentId, default: []]
+            let allowed = consumeSlidingWindow(
+                timestamps: &timestamps,
+                limit: Self.httpRateLimit,
+                window: Self.httpRateWindow
+            )
+            httpTimestamps[agentId] = timestamps
+            return allowed
         }
     }
 }
@@ -2166,27 +2248,101 @@ extension PluginHostContext {
 // MARK: - SSRF Protection
 
 extension PluginHostContext {
-    /// Returns an error message if the URL targets a private/loopback address, nil if safe.
+    /// Returns an error message if the URL targets a private / loopback /
+    /// link-local / IPv6-mapped-private address, nil if safe.
+    ///
+    /// **Known limitation:** this check operates on the URL string only —
+    /// it does NOT resolve the hostname before deciding. A hostname that
+    /// looks public (`evil.example.com`) but resolves to a private IP at
+    /// connection time (DNS rebinding, attacker-controlled DNS, internal
+    /// CNAME) WILL pass this check and the host will issue the request.
+    /// Mitigating that requires a custom URLSession delegate that
+    /// inspects the resolved IP at the network-layer (see
+    /// `URLSessionDelegate.urlSession(_:task:willPerformHTTPRedirection:newRequest:completionHandler:)`
+    /// + a `Network.framework` resolution step). Tracked separately;
+    /// document it under HOST_API.md so plugin authors don't assume
+    /// SSRF is end-to-end.
     static func checkSSRF(url: URL) -> String? {
-        guard let host = url.host?.lowercased() else { return "Missing host" }
+        guard let rawHost = url.host?.lowercased() else { return "Missing host" }
+        // URL.host strips the surrounding `[` `]` for IPv6 literals,
+        // but be defensive in case a future call site passes them in.
+        let host = rawHost.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
 
-        if host == "localhost" || host == "::1" {
+        if host == "localhost" || host == "ip6-localhost" || host == "ip6-loopback" {
             return ssrfBlocked("localhost")
         }
 
-        if host.hasPrefix("fe80:") || host.hasPrefix("[fe80:") {
-            return ssrfBlocked("link-local IPv6")
+        // IPv6 literal handling. URL.host returns the bracket-stripped
+        // form (`::1`, `fe80::1`, `::ffff:127.0.0.1`). We catch the
+        // common loopback / link-local / unique-local prefixes, plus
+        // IPv4-mapped (`::ffff:a.b.c.d`) and IPv4-compatible (`::a.b.c.d`)
+        // forms that point at private IPv4 space — those are the
+        // common SSRF bypass tricks against an IPv4-only blocklist.
+        if host.contains(":") {
+            if host == "::1" { return ssrfBlocked("loopback IPv6") }
+            if host == "::" { return ssrfBlocked("unspecified IPv6") }
+            if host.hasPrefix("fe80:") { return ssrfBlocked("link-local IPv6") }
+            // Unique local (RFC 4193: fc00::/7 — fc00–fdff). We're
+            // already inside the `host.contains(":")` IPv6 branch, so
+            // an `fc`/`fd` prefix is unambiguously the literal — a
+            // hostname like `fcc.gov` would have been routed to the
+            // IPv4 branch above (no colon).
+            if host.hasPrefix("fc") || host.hasPrefix("fd") {
+                return ssrfBlocked("unique-local IPv6")
+            }
+            // IPv4-mapped (`::ffff:a.b.c.d`) and IPv4-compatible (`::a.b.c.d`):
+            // extract the trailing IPv4 dotted-quad and re-run the IPv4 check.
+            if let v4 = embeddedIPv4(in: host),
+                let blocked = ssrfBlockedIPv4(v4)
+            {
+                return ssrfBlocked("IPv6-mapped \(blocked)")
+            }
+            // Any other IPv6 literal we didn't recognize — out of scope
+            // for the IPv4-centric blocklist.
+            return nil
         }
 
         let octets = host.split(separator: ".").compactMap { UInt8($0) }
         guard octets.count == 4 else { return nil }
+        if let blocked = ssrfBlockedIPv4(octets) {
+            return ssrfBlocked(blocked)
+        }
+        return nil
+    }
+
+    /// Pulls the trailing dotted-quad out of an IPv6 literal that
+    /// embeds an IPv4 address (`::ffff:127.0.0.1` or `::127.0.0.1`).
+    /// Returns the four-octet form so the IPv4 blocklist can run.
+    private static func embeddedIPv4(in host: String) -> [UInt8]? {
+        guard let lastColon = host.lastIndex(of: ":") else { return nil }
+        let tail = String(host[host.index(after: lastColon)...])
+        let octets = tail.split(separator: ".").compactMap { UInt8($0) }
+        guard octets.count == 4 else { return nil }
+        return octets
+    }
+
+    /// Returns the human-readable block reason for a given IPv4
+    /// dotted-quad, or nil when the address is public-routable. Pulled
+    /// out so the IPv6-mapped path can reuse the same blocklist.
+    private static func ssrfBlockedIPv4(_ octets: [UInt8]) -> String? {
+        guard octets.count == 4 else { return nil }
         let (a, b) = (octets[0], octets[1])
-
-        let isPrivate =
-            a == 127 || a == 10 || (a == 172 && b >= 16 && b <= 31) || (a == 192 && b == 168) || a == 0
-            || (a == 169 && b == 254)
-
-        return isPrivate ? ssrfBlocked(host) : nil
+        let dotted = "\(octets[0]).\(octets[1]).\(octets[2]).\(octets[3])"
+        if a == 127 { return "IPv4 loopback (\(dotted))" }
+        if a == 10 { return "RFC1918 10.0.0.0/8 (\(dotted))" }
+        if a == 172 && b >= 16 && b <= 31 { return "RFC1918 172.16.0.0/12 (\(dotted))" }
+        if a == 192 && b == 168 { return "RFC1918 192.168.0.0/16 (\(dotted))" }
+        if a == 0 { return "RFC1122 \"this network\" 0.0.0.0/8 (\(dotted))" }
+        if a == 169 && b == 254 {
+            // 169.254.169.254 is the AWS / GCP / Azure / DO instance
+            // metadata IP. The whole 169.254/16 link-local range is
+            // already blocked, but call it out so the message is
+            // diagnosable.
+            return "link-local 169.254.0.0/16 (cloud metadata, \(dotted))"
+        }
+        if a == 100 && b >= 64 && b <= 127 { return "carrier-grade NAT 100.64.0.0/10 (\(dotted))" }
+        if a >= 224 && a <= 239 { return "multicast 224.0.0.0/4 (\(dotted))" }
+        return nil
     }
 
     private static func ssrfBlocked(_ target: String) -> String {
@@ -2574,9 +2730,31 @@ extension PluginHostContext {
     static let contextUnavailableJSON: String =
         #"{"error":"context_unavailable","message":"Plugin host API was called from a thread with no resolvable plugin context. This typically indicates the call originated from a background thread the host did not register; reconsider using thread-local context or call from an invokeQueue/eventQueue thread."}"#
 
+    /// Allocates a fresh NUL-terminated C string the plugin owns and
+    /// must free via `host->free_string` (v6+) or `libc free()`.
+    ///
+    /// We deliberately bounce through `withCString` instead of letting
+    /// the compiler implicitly bridge `String → UnsafePointer<CChar>!`
+    /// for `strdup`. The implicit bridge can route through NSString /
+    /// the bridged buffer pool, and there are subtle interactions
+    /// with autorelease and concurrent invocation that produced a
+    /// `pointer being freed was not allocated` malloc abort in
+    /// production when the plugin freed the returned pointer from a
+    /// `@convention(c)` callback frame. The explicit pattern below
+    /// guarantees:
+    ///   1. `cStrPtr` is a stable, valid C-string pointer for the
+    ///      duration of the `strdup` call (UTF-8 contiguous).
+    ///   2. `strdup` runs against libc directly with no Foundation
+    ///      bridging, returning a freshly malloc'd buffer.
+    ///   3. The returned pointer is independent of any temporary
+    ///      buffer the bridging step might have used, so the plugin
+    ///      can free it from any thread / autorelease frame.
+    /// `nil` only when `strdup` itself fails (process-wide OOM).
     private static func makeCString(_ str: String) -> UnsafePointer<CChar>? {
-        let cStr = strdup(str)
-        return UnsafePointer(cStr)
+        str.withCString { cStrPtr -> UnsafePointer<CChar>? in
+            guard let copy = Darwin.strdup(cStrPtr) else { return nil }
+            return UnsafePointer(copy)
+        }
     }
 
     /// Resolves the active plugin context for a JSON-returning trampoline
@@ -2702,6 +2880,19 @@ extension PluginHostContext {
         ctx.configDelete(key: key)
     }
 
+    // MARK: Agent Context Introspection (v4)
+
+    /// Returns the TLS-resolved active agent UUID as a heap-allocated
+    /// C string the plugin owns (free with `free_string`), or NULL when
+    /// no agent context is bound to the calling thread (init, plugin-
+    /// spawned background work). One-line trampoline against the
+    /// existing TLS getter — no new lookup machinery, no race surface
+    /// beyond what `activeAgentId()` already has.
+    static let trampolineGetActiveAgentId: osr_get_active_agent_id_t = {
+        guard let agentId = activeAgentId() else { return nil }
+        return makeCString(agentId.uuidString)
+    }
+
     // MARK: Database Trampolines
 
     static let trampolineDbExec: osr_db_exec_t = { sqlPtr, paramsPtr in
@@ -2720,18 +2911,27 @@ extension PluginHostContext {
 
     // MARK: Logging Trampoline
 
+    /// Maps the integer log level to the human-readable label and the
+    /// synthetic HTTP status used by Insights filters. Levels mirror
+    /// the documented contract in `osaurus_plugin.h`:
+    /// `0=trace, 1=debug, 2=info, 3=warn, 4=error`. Shared between
+    /// `trampolineLog` and `trampolineLogStructured` so the two log
+    /// sources stay consistent in the dashboard.
+    static func levelMetadata(for level: Int32) -> (name: String, statusCode: Int) {
+        switch level {
+        case 0: return ("TRACE", 200)
+        case 1: return ("DEBUG", 200)
+        case 2: return ("INFO", 200)
+        case 3: return ("WARN", 299)
+        case 4: return ("ERROR", 500)
+        default: return ("LOG", 200)
+        }
+    }
+
     static let trampolineLog: osr_log_t = { level, msgPtr in
         guard let msgPtr, let ctx = activeContext() else { return }
         let message = String(cString: msgPtr)
-        let levelName: String
-        let statusCode: Int
-        switch level {
-        case 0: levelName = "DEBUG"; statusCode = 200
-        case 1: levelName = "INFO"; statusCode = 200
-        case 2: levelName = "WARN"; statusCode = 299
-        case 3: levelName = "ERROR"; statusCode = 500
-        default: levelName = "LOG"; statusCode = 200
-        }
+        let (levelName, statusCode) = levelMetadata(for: level)
         NSLog("[Plugin:%@] [%@] %@", ctx.pluginId, levelName, message)
         logPluginCall(
             pluginId: ctx.pluginId,
@@ -2740,6 +2940,50 @@ extension PluginHostContext {
             statusCode: statusCode,
             durationMs: 0,
             requestBody: message
+        )
+    }
+
+    /// Frees a string the host previously returned to a plugin (v6).
+    /// Internally `libc free()` — which pairs with the `strdup` every
+    /// host trampoline uses to allocate its return value. NULL is a
+    /// no-op so the plugin can wire it into a generic defer block
+    /// without an explicit guard. See `osr_host_free_string_fn` in
+    /// `osaurus_plugin.h` for the contract rationale (plugins should
+    /// never use their own `free_string` callback for host-allocated
+    /// strings — that direction is reversed and may corrupt heap if
+    /// the plugin's `free_string` does anything besides plain `free`).
+    static let trampolineHostFreeString: osr_host_free_string_t = { ptr in
+        guard let ptr else { return }
+        Darwin.free(UnsafeMutableRawPointer(mutating: ptr))
+    }
+
+    /// Structured-log trampoline (v5). The plugin attaches a JSON
+    /// payload that surfaces in Insights as searchable fields. NULL
+    /// payload degrades gracefully to the same shape `trampolineLog`
+    /// produces. Invalid JSON is treated as opaque text — the host
+    /// doesn't reject the call (the plugin author would have no way
+    /// to learn) but the payload appears as-is in the log row.
+    static let trampolineLogStructured: osr_log_structured_t = { level, msgPtr, payloadPtr in
+        guard let msgPtr, let ctx = activeContext() else { return }
+        let message = String(cString: msgPtr)
+        let payload = payloadPtr.map { String(cString: $0) }
+        let (levelName, statusCode) = levelMetadata(for: level)
+
+        // Console line keeps the structured payload visible alongside
+        // the message. Operators reading the unified log want both.
+        if let payload {
+            NSLog("[Plugin:%@] [%@] %@ %@", ctx.pluginId, levelName, message, payload)
+        } else {
+            NSLog("[Plugin:%@] [%@] %@", ctx.pluginId, levelName, message)
+        }
+
+        logPluginCall(
+            pluginId: ctx.pluginId,
+            method: "LOG",
+            path: "[\(levelName)] \(message)",
+            statusCode: statusCode,
+            durationMs: 0,
+            requestBody: payload ?? message
         )
     }
 

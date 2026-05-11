@@ -111,27 +111,33 @@ A tool is a function the agent can call from chat.
 - `requirements` — optional list of system permissions the tool needs (e.g. `["network", "filesystem"]`).
 - `permission_policy` — `"auto"` (no prompt), `"deny"` (always reject), or `"ask"` (prompt the user the first time). Defaults to `"ask"`.
 
-Tool return values must conform to `ToolEnvelope` from [../TOOL_CONTRACT.md](../TOOL_CONTRACT.md):
+Tool return values must conform to the canonical `ToolEnvelope` shape — the single source of truth is [../TOOL_CONTRACT.md](../TOOL_CONTRACT.md). Two envelopes:
+
+**Success:**
 
 ```json
 {
   "ok": true,
-  "data": {"result": "..."},
-  "summary": "Brief summary for the model"
+  "tool": "my_tool",
+  "result": { "anything": "the model needs" }
 }
 ```
 
-For errors:
+`tool` is optional (helpers populate it). `result` carries the payload — object, array, string, number, bool, or null. Add `warnings: ["..."]` for non-fatal notes.
+
+**Failure:**
 
 ```json
 {
   "ok": false,
-  "error": {
-    "code": "execution_error",
-    "message": "Human-readable description"
-  }
+  "kind": "execution_error",
+  "message": "Human-readable description",
+  "tool": "my_tool",
+  "retryable": true
 }
 ```
+
+`kind` must be one of the documented kinds (`invalid_args`, `rejected`, `user_denied`, `timeout`, `execution_error`, `unavailable`, `tool_not_found`). See the kinds table in [TOOL_CONTRACT.md](../TOOL_CONTRACT.md#kinds) for `retryable` defaults and the full field reference.
 
 ### Routes
 

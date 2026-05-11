@@ -31,12 +31,24 @@ final class PluginDatabase: @unchecked Sendable {
     let pluginId: String
     private var db: OpaquePointer?
     private let queue = DispatchQueue(label: "ai.osaurus.plugin.db")
+    private let maxBytes: Int64
 
     /// SQLite SQLITE_TRANSIENT destructor: tells SQLite to make its own copy of bound data.
     private static let sqliteTransient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
-    init(pluginId: String) {
+    /// Default per-plugin DB size cap. Plugins use SQLite for state
+    /// that should fit comfortably alongside a few hundred installed
+    /// plugins; large blobs belong in shared artifacts. SQLite enforces
+    /// the limit via `PRAGMA max_page_count` — INSERTs past the cap
+    /// fail with `database or disk is full`, the plugin sees a normal
+    /// SQL error (no host crash), and the user's disk is protected
+    /// from a runaway plugin filling up `~/.osaurus/Tools/<id>/data/`.
+    /// Documented under `db_exec` in `osaurus_plugin.h`.
+    public static let defaultMaxBytes: Int64 = 100 * 1024 * 1024  // 100 MiB
+
+    init(pluginId: String, maxBytes: Int64 = PluginDatabase.defaultMaxBytes) {
         self.pluginId = pluginId
+        self.maxBytes = maxBytes
     }
 
     deinit {
@@ -47,7 +59,9 @@ final class PluginDatabase: @unchecked Sendable {
 
     /// Opens an in-memory SQLite database (for tests). **Plaintext** —
     /// production plugin DBs are SQLCipher-encrypted using the
-    /// shared storage key, transparently to plugin SQL.
+    /// shared storage key, transparently to plugin SQL. Honors the
+    /// `maxBytes` cap so size-limit tests can exercise the same
+    /// `applyMaxPageCount` path as production.
     func openInMemory() throws {
         try queue.sync {
             guard db == nil else { return }
@@ -148,6 +162,40 @@ final class PluginDatabase: @unchecked Sendable {
             let msg = errMsg.map { String(cString: $0) } ?? "unknown"
             sqlite3_free(errMsg)
             throw PluginDatabaseError.failedToExecute("PRAGMA failed: \(msg)")
+        }
+
+        try applyMaxPageCount(connection: connection)
+    }
+
+    /// Caps total DB size at `maxBytes` via `PRAGMA max_page_count`.
+    /// Reads the live `page_size` (SQLCipher defaults to 4096 but the
+    /// opener may override) and divides — `max_page_count` is rounded
+    /// down so the *actual* disk ceiling is always ≤ `maxBytes`.
+    /// SQLite returns `SQLITE_FULL` (`database or disk is full`) when
+    /// an INSERT/UPDATE would push past the cap; the plugin sees a
+    /// normal SQL error in the JSON envelope, no host-side crash.
+    private func applyMaxPageCount(connection: OpaquePointer) throws {
+        guard maxBytes > 0 else { return }
+
+        // Read the actual page_size SQLCipher selected for this DB.
+        var pageStmt: OpaquePointer?
+        var pageSize: Int64 = 4096  // safe fallback
+        if sqlite3_prepare_v2(connection, "PRAGMA page_size", -1, &pageStmt, nil) == SQLITE_OK,
+            sqlite3_step(pageStmt) == SQLITE_ROW
+        {
+            pageSize = sqlite3_column_int64(pageStmt, 0)
+        }
+        sqlite3_finalize(pageStmt)
+        guard pageSize > 0 else { return }
+
+        let maxPages = max(1, maxBytes / pageSize)
+        let pragma = "PRAGMA max_page_count=\(maxPages)"
+        var errMsg: UnsafeMutablePointer<CChar>?
+        let rc = sqlite3_exec(connection, pragma, nil, nil, &errMsg)
+        if rc != SQLITE_OK {
+            let msg = errMsg.map { String(cString: $0) } ?? "unknown"
+            sqlite3_free(errMsg)
+            throw PluginDatabaseError.failedToExecute("PRAGMA max_page_count failed: \(msg)")
         }
     }
 

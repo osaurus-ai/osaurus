@@ -31,12 +31,37 @@ final class PluginManager {
     struct FailedPlugin: Sendable {
         let pluginId: String
         let error: String
+        /// Last manifest the host successfully decoded for this plugin
+        /// before the failure. Populated for failures that happen AFTER
+        /// `get_manifest` (compatibility check, web/route conflict,
+        /// first-delivery handshake), nil for failures that happen
+        /// before (dlopen / init / parse manifest / quarantine). Lets
+        /// the agent detail view filter failed plugins the same way it
+        /// filters loaded ones (routes / secrets / instructions /
+        /// config / web), and surface a meaningful name.
+        let lastKnownManifest: PluginManifest?
+
+        init(pluginId: String, error: String, lastKnownManifest: PluginManifest? = nil) {
+            self.pluginId = pluginId
+            self.error = error
+            self.lastKnownManifest = lastKnownManifest
+        }
     }
 
     /// Error type for plugin loading failures
     struct PluginLoadError: Error, CustomStringConvertible, Sendable {
         let message: String
+        /// Manifest that was successfully decoded before the failure was
+        /// raised, if any. Surfaced through `FailedPlugin.lastKnownManifest`
+        /// so the UI can show the plugin's display name and filter it the
+        /// same way loaded plugins are filtered.
+        let manifest: PluginManifest?
         var description: String { message }
+
+        init(message: String, manifest: PluginManifest? = nil) {
+            self.message = message
+            self.manifest = manifest
+        }
 
         static let consentRequiredPrefix = "consent_required:"
     }
@@ -216,7 +241,11 @@ final class PluginManager {
 
             case .failure(let error):
                 let pluginId = Self.extractPluginId(from: entry.url)
-                failedPlugins[pluginId] = FailedPlugin(pluginId: pluginId, error: error.message)
+                failedPlugins[pluginId] = FailedPlugin(
+                    pluginId: pluginId,
+                    error: error.message,
+                    lastKnownManifest: error.manifest
+                )
             }
         }
 
@@ -225,23 +254,108 @@ final class PluginManager {
         }
 
         migrateGlobalConfigToPerAgent()
-        notifyNewPluginsWithAgentConfig(from: scanResult)
         observeTunnelStatus()
-        sendCurrentTunnelURLToNewPlugins(from: scanResult)
+        // Per-plugin first-delivery sweep, each step bracketed by the
+        // `.currently_loading` marker. A SIGABRT inside the plugin's
+        // `on_config_changed` (e.g. misaligned ABI mirror calling
+        // `host->free_string` on a non-malloc pointer) leaves the marker
+        // on disk; the next launch reads it via `promoteStaleLoadingMarker`
+        // and quarantines the plugin instead of crash-looping the host.
+        runFirstDeliverySweep(from: scanResult)
     }
 
-    /// For each newly loaded plugin, re-deliver its config for every agent.
-    /// `initPlugin` runs before any agent is wired up, so `configGet` falls
-    /// back to `Agent.defaultId` and misses secrets stored under custom agents.
-    /// Sending the batch here (for all agents) corrects that.
-    private func notifyNewPluginsWithAgentConfig(from scanResult: PluginScanResult) {
+    /// Synthetic config key the host pushes once per plugin at load time
+    /// to exercise the plugin's view of `host->get_active_agent_id` +
+    /// `host->free_string` round-trip BEFORE the first real config push.
+    /// Plugins should treat any unknown key as a no-op (per
+    /// `osaurus_plugin.h`), but most plugins call `host->get_active_agent_id`
+    /// at the top of `on_config_changed` to resolve the active agent —
+    /// so a misaligned `osr_host_api` mirror trips the libmalloc abort
+    /// here, INSIDE the loading marker, which then quarantines the
+    /// plugin on the next launch instead of crash-looping.
+    ///
+    /// Plugins that explicitly want to opt out of the probe can match
+    /// `key == "__osaurus_abi_probe__"` and early-return; the value is
+    /// always a fresh UUID with no semantic meaning. Documented under
+    /// `docs/plugins/HOST_API.md` so authors know to ignore it.
+    ///
+    /// `nonisolated` because the constant is a literal string — safe
+    /// to read from any actor / queue, including plugin-author tests
+    /// that match against it from a non-MainActor context.
+    nonisolated static let abiProbeKey = "__osaurus_abi_probe__"
+
+    /// Per-plugin first-delivery sweep. The synthetic ABI probe is
+    /// delivered SYNCHRONOUSLY inside a `.currently_loading` marker so
+    /// that a misaligned `osr_host_api` mirror — the production
+    /// crash-loop signature where `host->free_string` resolves to the
+    /// wrong slot and `libc free()` aborts on a non-malloc pointer —
+    /// quarantines the plugin on the next launch instead of crash-
+    /// looping the host. The real per-agent config snapshot and the
+    /// relay tunnel URL push run AFTER the probe via the existing
+    /// async path so a plugin's expensive `on_config_changed` work
+    /// (Telegram `setupWebhook`, OAuth refresh, etc.) does not block
+    /// the launch sequence.
+    ///
+    /// The probe is fast (a single `(__osaurus_abi_probe__, <UUID>)`
+    /// pair through the plugin's serial `configEventQueue`) and runs
+    /// the same code path the first real config push would: top of
+    /// `on_config_changed` → `host->get_active_agent_id()` →
+    /// `host->free_string(ptr)`. Plugins that resolve the agent at
+    /// the top of `on_config_changed` (the documented pattern) will
+    /// trip the misalignment here. Plugins that short-circuit unknown
+    /// keys before the host call avoid the probe but also avoid the
+    /// production crash signature, so the trade-off is acceptable.
+    ///
+    /// Sequenced per plugin (not interleaved) so the marker file —
+    /// which holds at most one plugin id at a time — always reflects
+    /// the plugin currently inside the danger zone.
+    private func runFirstDeliverySweep(from scanResult: PluginScanResult) {
         let agents = AgentManager.shared.agents
+        let statuses = RelayTunnelManager.shared.agentStatuses
+
         for entry in scanResult.loadResults {
             guard case .success(let loaded) = entry.result else { continue }
+
+            let pluginId = loaded.plugin.id
+            Self.writeLoadingMarker(pluginId: pluginId)
+            // Deliberately no `defer`: the marker must persist on the
+            // SIGABRT path. It is cleared only after the probe returns
+            // cleanly below.
+            runAbiHandshakeProbe(loaded: loaded, agentId: agents.first?.id ?? Agent.defaultId)
+            Self.clearLoadingMarker()
+
+            // Real per-agent config + tunnel URL pushes resume the
+            // existing async fire-and-forget path. The probe above
+            // already exercised the misalignment-prone host call
+            // pattern, so this fan-out preserves perf without giving
+            // up the crash-loop guard.
             for agent in agents {
                 deliverInitialConfig(to: loaded, agentId: agent.id)
             }
+
+            if !loaded.routes.isEmpty {
+                for agent in agents {
+                    guard case .connected(let url) = statuses[agent.id] else { continue }
+                    pushTunnelURL(url, to: loaded, agentId: agent.id)
+                }
+            }
         }
+    }
+
+    /// One-shot synthetic `on_config_changed` push that exercises the
+    /// plugin's view of the host vtable on the same code path the first
+    /// real config push would take. The plugin's body is invoked via
+    /// `notifyConfigBatchSync` so the call returns inside the loading
+    /// marker window — a SIGABRT here writes the quarantine marker
+    /// instead of crash-looping the host on every subsequent launch.
+    ///
+    /// No-op for v1 plugins (no `on_config_changed` slot to dispatch to).
+    private func runAbiHandshakeProbe(loaded: LoadedPlugin, agentId: UUID) {
+        guard loaded.plugin.abiVersion >= 2 else { return }
+        loaded.plugin.notifyConfigBatchSync(
+            [(key: Self.abiProbeKey, value: UUID().uuidString)],
+            agentId: agentId
+        )
     }
 
     /// Push the resolved config for `(plugin, agent)` to the plugin via
@@ -249,7 +363,19 @@ final class PluginManager {
     /// per-key keychain entries and field defaults, and filters by the
     /// plugin's declared config field keys. No-op when the plugin has no
     /// config spec, no host context, or yields zero changes.
-    private func deliverInitialConfig(to loaded: LoadedPlugin, agentId: UUID) {
+    ///
+    /// `sync == true` routes through `notifyConfigBatchSync` so the call
+    /// returns inside the load-time `.currently_loading` marker window
+    /// — used by `runFirstDeliverySweep` so a plugin abort during initial
+    /// delivery quarantines the plugin on the next launch instead of
+    /// crash-looping the host. Runtime callers (agent added,
+    /// PluginConfigView save) leave `sync == false` to keep the existing
+    /// fire-and-forget semantics.
+    private func deliverInitialConfig(
+        to loaded: LoadedPlugin,
+        agentId: UUID,
+        sync: Bool = false
+    ) {
         let pluginId = loaded.plugin.id
         guard let configSpec = loaded.plugin.manifest.capabilities.config,
             PluginHostContext.getContext(for: pluginId) != nil
@@ -280,7 +406,11 @@ final class PluginManager {
             allFieldKeys.contains(key) ? (key: key, value: value) : nil
         }
         guard !changes.isEmpty else { return }
-        loaded.plugin.notifyConfigBatch(changes, agentId: agentId)
+        if sync {
+            loaded.plugin.notifyConfigBatchSync(changes, agentId: agentId)
+        } else {
+            loaded.plugin.notifyConfigBatch(changes, agentId: agentId)
+        }
     }
 
     // MARK: - One-Time Migration (global config → per-agent)
@@ -442,23 +572,18 @@ final class PluginManager {
         }
     }
 
-    /// Delivers the current tunnel URL to freshly loaded plugins that declare
-    /// routes, bypassing the keychain dedup so that newly-loaded plugins
-    /// always receive the URL when the relay is already connected.
-    private func sendCurrentTunnelURLToNewPlugins(from scanResult: PluginScanResult) {
-        let statuses = RelayTunnelManager.shared.agentStatuses
-
-        for entry in scanResult.loadResults {
-            guard case .success(let loaded) = entry.result, !loaded.routes.isEmpty else { continue }
-
-            for (agentId, status) in statuses {
-                guard case .connected(let url) = status else { continue }
-                pushTunnelURL(url, to: loaded, agentId: agentId)
-            }
-        }
-    }
-
-    private func pushTunnelURL(_ url: String?, to loaded: LoadedPlugin, agentId: UUID) {
+    /// `sync == true` routes through `notifyConfigBatchSync` so the call
+    /// returns inside the load-time loading marker window, matching the
+    /// crash-loop-guard contract `runFirstDeliverySweep` relies on.
+    /// Runtime callers (`handleAgentAdded`, `handleTunnelStatusChange`)
+    /// leave `sync == false` to preserve the existing fire-and-forget
+    /// semantics.
+    private func pushTunnelURL(
+        _ url: String?,
+        to loaded: LoadedPlugin,
+        agentId: UUID,
+        sync: Bool = false
+    ) {
         let pluginId = loaded.plugin.id
 
         if let url {
@@ -479,11 +604,18 @@ final class PluginManager {
             userInfo: ["pluginId": pluginId, "key": "tunnel_url", "value": url ?? ""]
         )
 
-        loaded.plugin.notifyConfigChanged(
-            key: "tunnel_url",
-            value: url ?? "",
-            agentId: agentId
-        )
+        if sync {
+            loaded.plugin.notifyConfigBatchSync(
+                [(key: "tunnel_url", value: url ?? "")],
+                agentId: agentId
+            )
+        } else {
+            loaded.plugin.notifyConfigChanged(
+                key: "tunnel_url",
+                value: url ?? "",
+                agentId: agentId
+            )
+        }
     }
 
     // MARK: - Artifact Handler Notifications
@@ -566,6 +698,137 @@ final class PluginManager {
         let versionDir = url.deletingLastPathComponent()
         let pluginDir = versionDir.deletingLastPathComponent()
         return pluginDir.lastPathComponent
+    }
+
+    // MARK: - Manifest Compatibility Enforcement
+
+    /// Reads the host's `CFBundleShortVersionString` for `min_osaurus`
+    /// comparison. Falls back to a sentinel that compares as 0.0.0 so
+    /// Returns the empty string when bundle metadata is absent —
+    /// `compatibilityFailure` interprets that as "host version
+    /// unknown" and fails *open* with a one-shot warning rather than
+    /// rejecting every plugin that declares `min_osaurus`. Erroring
+    /// closed (the previous behavior) bricked dev builds where
+    /// `Bundle.main` is the swiftpm helper or an Xcode build that
+    /// only sets `MARKETING_VERSION = 1.0`.
+    nonisolated static func currentHostVersionString() -> String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? ""
+    }
+
+    /// Lenient semver parser for the *host* version. The strict
+    /// `SemanticVersion.parse` requires `M.m.p`, but Xcode's default
+    /// `MARKETING_VERSION` is often `1.0` (or even `1`). Treat missing
+    /// components as zero so `"1.0"` → `1.0.0`, matching how Apple
+    /// itself expresses bundle versions. Returns nil only when the
+    /// leading component isn't an integer.
+    nonisolated static func parseHostVersion(_ s: String) -> SemanticVersion? {
+        if let strict = SemanticVersion.parse(s) { return strict }
+        let core = s.split(separator: "-", maxSplits: 1).first.map(String.init) ?? s
+        let parts = core.split(separator: ".", omittingEmptySubsequences: false).map(String.init)
+        guard let major = parts.first.flatMap(Int.init) else { return nil }
+        let minor = parts.count > 1 ? Int(parts[1]) ?? 0 : 0
+        let patch = parts.count > 2 ? Int(parts[2]) ?? 0 : 0
+        return SemanticVersion(major: major, minor: minor, patch: patch)
+    }
+
+    /// Returns a `PluginLoadError` when the manifest declares a
+    /// `min_osaurus` or `min_macos` constraint that the running host
+    /// does not satisfy. Returns nil when both constraints are met
+    /// (or absent). Unparseable declarations on *either* side are not
+    /// treated as a hard failure — we log a one-off warning so the
+    /// developer sees it but the plugin still loads. This matters for
+    /// dev builds where the host's bundle metadata may be missing or
+    /// shaped like `1.0` instead of `1.0.0`. Pure function: takes
+    /// injected host / OS versions so unit tests can drive every
+    /// branch without touching real bundle metadata.
+    nonisolated static func compatibilityFailure(
+        manifest: PluginManifest,
+        hostVersion: String,
+        osVersion: OperatingSystemVersion
+    ) -> PluginLoadError? {
+        if let minHost = manifest.min_osaurus, !minHost.isEmpty {
+            if let required = SemanticVersion.parse(minHost) {
+                if let current = parseHostVersion(hostVersion) {
+                    if current < required {
+                        return PluginLoadError(
+                            message:
+                                "Plugin \(manifest.plugin_id) requires Osaurus \(required) or later; "
+                                + "this host is \(current). Update Osaurus to load this plugin."
+                        )
+                    }
+                } else {
+                    // Unknown host version (no bundle metadata, or a
+                    // shape we can't make sense of). Fail open so dev
+                    // builds aren't blocked, but make it visible.
+                    NSLog(
+                        "[Osaurus] Cannot enforce min_osaurus='%@' for %@ — host version "
+                            + "'%@' is empty or unparseable. Allowing load (dev build?).",
+                        minHost,
+                        manifest.plugin_id,
+                        hostVersion
+                    )
+                }
+            } else {
+                NSLog(
+                    "[Osaurus] Plugin %@ has unparseable min_osaurus '%@' — ignoring constraint.",
+                    manifest.plugin_id,
+                    minHost
+                )
+            }
+        }
+
+        if let minOS = manifest.min_macos, !minOS.isEmpty {
+            if let required = parseOSVersion(minOS) {
+                if !osVersionAtLeast(current: osVersion, required: required) {
+                    let req = "\(required.majorVersion).\(required.minorVersion).\(required.patchVersion)"
+                    let cur =
+                        "\(osVersion.majorVersion).\(osVersion.minorVersion).\(osVersion.patchVersion)"
+                    return PluginLoadError(
+                        message:
+                            "Plugin \(manifest.plugin_id) requires macOS \(req) or later; "
+                            + "this Mac is on \(cur). Update macOS to load this plugin."
+                    )
+                }
+            } else {
+                NSLog(
+                    "[Osaurus] Plugin %@ has unparseable min_macos '%@' — ignoring constraint.",
+                    manifest.plugin_id,
+                    minOS
+                )
+            }
+        }
+
+        return nil
+    }
+
+    /// Parses a "MAJOR[.MINOR[.PATCH]]" macOS version string into an
+    /// `OperatingSystemVersion`. Trailing components default to zero,
+    /// matching how Apple expresses min-required SDK versions
+    /// (`"14"` / `"14.5"` / `"14.5.1"` are all valid). Returns nil
+    /// when no leading integer can be parsed.
+    nonisolated static func parseOSVersion(_ s: String) -> OperatingSystemVersion? {
+        let parts = s.split(separator: ".", omittingEmptySubsequences: false).map(String.init)
+        guard let major = parts.first.flatMap(Int.init) else { return nil }
+        let minor = parts.count > 1 ? Int(parts[1]) ?? 0 : 0
+        let patch = parts.count > 2 ? Int(parts[2]) ?? 0 : 0
+        return OperatingSystemVersion(majorVersion: major, minorVersion: minor, patchVersion: patch)
+    }
+
+    /// `OperatingSystemVersion` doesn't conform to `Comparable`, so we
+    /// roll a small lexicographic comparison rather than pulling in
+    /// `Foundation`'s `isOperatingSystemAtLeast(_:)` which always reads
+    /// the live system version (untestable).
+    nonisolated static func osVersionAtLeast(
+        current: OperatingSystemVersion,
+        required: OperatingSystemVersion
+    ) -> Bool {
+        if current.majorVersion != required.majorVersion {
+            return current.majorVersion > required.majorVersion
+        }
+        if current.minorVersion != required.minorVersion {
+            return current.minorVersion > required.minorVersion
+        }
+        return current.patchVersion >= required.patchVersion
     }
 
     /// Loads a single plugin from a dylib URL via dlopen + C ABI handshake.
@@ -708,6 +971,28 @@ final class PluginManager {
             PluginHostContext.rekeyContext(from: hc.pluginId, to: manifest.plugin_id)
         }
 
+        // Enforce manifest-declared compatibility constraints. Authors
+        // declare `min_osaurus` and `min_macos` so they can opt into ABI
+        // surfaces that older hosts don't have (e.g. the v4
+        // `get_active_agent_id` callback). Without enforcement the
+        // declarations were purely advisory and the plugin would crash
+        // at the first call to a missing slot. Fail the load with a
+        // structured message instead — surfaced in `failedPlugins` and
+        // visible in the UI.
+        if let compatError = compatibilityFailure(
+            manifest: manifest,
+            hostVersion: currentHostVersionString(),
+            osVersion: ProcessInfo.processInfo.operatingSystemVersion
+        ) {
+            print("[Osaurus] \(compatError.message)")
+            api.destroy?(ctx)
+            hostContext?.teardown()
+            dlclose(handle)
+            return .failure(
+                PluginLoadError(message: compatError.message, manifest: manifest)
+            )
+        }
+
         // Validate that web mount paths don't silently shadow dynamic routes.
         // The runtime checks the static branch first, so any overlap means
         // the plugin's `handle_route` for that path can never fire.
@@ -727,7 +1012,7 @@ final class PluginManager {
                     api.destroy?(ctx)
                     hostContext?.teardown()
                     dlclose(handle)
-                    return .failure(PluginLoadError(message: errorMsg))
+                    return .failure(PluginLoadError(message: errorMsg, manifest: manifest))
                 }
             }
         }
@@ -930,6 +1215,27 @@ final class PluginManager {
         try? FileManager.default.removeItem(at: currentlyLoadingURL())
     }
 
+    /// Removes a single plugin from the quarantine list. Used by the
+    /// per-plugin "Retry" button surfaced in `AgentDetailView` for
+    /// failed plugins. Whole-list `clearQuarantine()` would unhide
+    /// every other quarantined plugin too, which surprises users who
+    /// only intended to retry one.
+    nonisolated static func removeFromQuarantine(_ pluginId: String) {
+        var ids = quarantinedPluginIds()
+        guard ids.remove(pluginId) != nil else { return }
+        let url = quarantineURL()
+        if ids.isEmpty {
+            try? FileManager.default.removeItem(at: url)
+        } else if let data = try? JSONEncoder().encode(Array(ids)) {
+            try? data.write(to: url)
+        }
+        // Wipe the loading marker too — it's the matched cause for
+        // most quarantine entries (a SIGABRT inside init or
+        // `on_config_changed`), and leaving it would re-quarantine
+        // this plugin on the next launch even though we just cleared.
+        try? FileManager.default.removeItem(at: currentlyLoadingURL())
+    }
+
     /// If a `.currently_loading` marker was left behind by a crash during
     /// dlopen/init, quarantine that plugin so it is skipped on future launches.
     private nonisolated static func promoteStaleLoadingMarker() {
@@ -942,12 +1248,50 @@ final class PluginManager {
         try? FileManager.default.removeItem(at: markerURL)
     }
 
+    /// Writes the `.currently_loading` marker so that if the plugin
+    /// crashes the host inside `runFirstDeliverySweep`, the next launch
+    /// can quarantine it. Durability matters here: a SIGABRT may fire
+    /// milliseconds after the write, well before the page cache is
+    /// naturally flushed. We tmp-write → fsync the bytes → atomic
+    /// rename → fsync the parent directory so the marker survives a
+    /// hard process abort. Falls back to a plain `Data.write` if the
+    /// durable path fails for any reason — partial protection beats
+    /// none.
     private nonisolated static func writeLoadingMarker(pluginId: String) {
-        try? pluginId.data(using: .utf8)?.write(to: currentlyLoadingURL())
+        let url = currentlyLoadingURL()
+        let data = Data(pluginId.utf8)
+        let fm = FileManager.default
+        let tmpURL = url.appendingPathExtension("tmp-\(UUID().uuidString)")
+        do {
+            try data.write(to: tmpURL, options: [.atomic])
+            if let handle = try? FileHandle(forUpdating: tmpURL) {
+                try? handle.synchronize()
+                try? handle.close()
+            }
+            if fm.fileExists(atPath: url.path) {
+                _ = try fm.replaceItemAt(url, withItemAt: tmpURL)
+            } else {
+                try fm.moveItem(at: tmpURL, to: url)
+            }
+            fsyncDirectory(url.deletingLastPathComponent())
+        } catch {
+            try? data.write(to: url)
+        }
     }
 
     private nonisolated static func clearLoadingMarker() {
         try? FileManager.default.removeItem(at: currentlyLoadingURL())
+    }
+
+    /// `fsync()`s the directory containing `url` so a preceding atomic
+    /// rename is durable across a hard abort. macOS does not flush
+    /// directory metadata implicitly when the contained file is
+    /// fsynced, so this needs to be done as a separate step.
+    private nonisolated static func fsyncDirectory(_ url: URL) {
+        let fd = open(url.path, O_RDONLY)
+        guard fd >= 0 else { return }
+        _ = fsync(fd)
+        close(fd)
     }
 
     /// Returns dylib URLs to load and a dictionary of verification failures (pluginId -> error message)
@@ -974,7 +1318,13 @@ final class PluginManager {
             let pluginId = pluginDir.lastPathComponent
 
             if quarantined.contains(pluginId) {
-                failures[pluginId] = "Plugin quarantined after a crash during load — run `osaurus tools reset` to retry"
+                // Surfaced verbatim in PluginsView and the AgentsView
+                // "Failed" tab — point users at the in-app Retry /
+                // Uninstall buttons rather than the legacy
+                // `osaurus tools reset` CLI (which unquarantines all
+                // failed plugins at once).
+                failures[pluginId] =
+                    "Plugin quarantined after a crash during load — use the Retry or Uninstall button below to recover."
                 continue
             }
 

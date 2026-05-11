@@ -6,9 +6,9 @@ Quick answers to common questions. For deeper guides see [README.md](README.md).
 
 ### Do old plugins still work?
 
-Yes. The Plugin ABI is **frozen**. Plugins compiled against v1 (`osaurus_plugin_entry`, no host API access) and v2 (`osaurus_plugin_entry_v2`) continue to load unchanged. The v3 surface is purely additive — same struct layout, two reserved slots that return `not_supported`, and a `version` field bumped from 2 to 3 to advertise the new documented surface.
+Yes. The Plugin ABI is **frozen** — the `osr_host_api` struct layout never changes; new versions only append optional slots at the end. Plugins compiled against v1 (`osaurus_plugin_entry`, no host API access) through v4 continue to load against the current v5 host unchanged. Two slots (`dispatch_clarify`, `dispatch_add_issue`) are reserved and return `not_supported` envelopes for backwards compat.
 
-You should rebuild against the v3 docs **only** to pick up new guarantees (clearer error envelopes, path parameters, etc.). There is no forced migration.
+You only need to rebuild to pick up new callbacks (`complete_cancel` in v3, `get_active_agent_id` in v4, `log_structured` in v5). There is no forced migration. See [ABI_VERSIONS.md](ABI_VERSIONS.md) for the per-version evolution and the `host->version >= N` defensive-check pattern.
 
 ### What's the difference between native plugins and sandbox plugins?
 
@@ -106,11 +106,11 @@ No — the web mount would shadow the route, and the manifest validation will re
 
 ### How do I cancel a streaming completion?
 
-Currently you can't from inside the plugin. The aggregated return value is bound by the per-plugin inflight cap (default 2), so a stream that goes idle eventually surfaces as `plugin_busy` for new calls. Mid-stream cancellation is a planned feature.
+Pass a `stream_id` UUID in the `complete_stream` request body, then call `complete_cancel(stream_id)` from anywhere — the `on_chunk` callback, a separate worker, etc. The host emits a final chunk with `finish_reason: "cancelled"` and the `complete_stream` return envelope is `{"error": "cancelled", "partial_content": "...", ...}`. The cancel call is non-blocking — the streaming task observes the flag between deltas and unwinds. See [HOST_API.md `complete_cancel`](HOST_API.md#complete_cancelstream_id---void) for the full envelope shape.
 
 ### Why does my streaming response not include `usage`?
 
-It does as of v3. Look for the `delta.usage` chunk near the end of the stream — it carries `completion_tokens`, `tokens_per_second`, and `unclosed_reasoning`. The aggregated return value also includes a top-level `usage` block. If you're not seeing it, you may be reading an older delta — check that you're filtering chunks correctly and not dropping the `usage` field as an unknown delta key.
+It should. Look for the `delta.usage` chunk near the end of the stream — it carries `completion_tokens`, `tokens_per_second`, and `unclosed_reasoning`. The aggregated return value also includes a top-level `usage` block. If you're not seeing it, check that your chunk filter isn't dropping the `usage` field as an unknown delta key.
 
 ### What happens if I exceed `max_iterations` in a streaming completion?
 

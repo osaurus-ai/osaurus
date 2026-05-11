@@ -12,13 +12,26 @@ import OsaurusRepository
 public struct ToolsInstall {
     public static func execute(args: [String]) async {
         guard let src = args.first, !src.isEmpty else {
-            fputs("Usage: osaurus tools install <plugin_id|url-or-path> [--version <semver>]\n", stderr)
+            fputs(
+                "Usage: osaurus tools install <plugin_id|url-or-path> [--version <semver>] [--no-consent]\n",
+                stderr
+            )
             exit(EXIT_FAILURE)
         }
 
+        // The release-build loader requires a `.user_consent` marker
+        // alongside `receipt.json` before it will dlopen a plugin. The
+        // registry-install path (`PluginInstallManager.install`) writes
+        // it automatically; manual sideload via `tools install` should
+        // be symmetric so authors iterating with `tools install
+        // ./my-plugin-1.0.0` don't get a silent `consent_required:`
+        // load failure they then have to clear in the UI. `--no-consent`
+        // opts out for users who want the explicit Approve gate.
+        let grantConsent = !args.contains("--no-consent")
+
         // Check if argument is a local path or URL
         if src.hasPrefix("/") || src.hasPrefix("./") || src.hasPrefix("http://") || src.hasPrefix("https://") {
-            await installManual(src: src)
+            await installManual(src: src, grantConsent: grantConsent)
         } else {
             await installFromRegistry(pluginId: src, args: args)
         }
@@ -51,7 +64,7 @@ public struct ToolsInstall {
         }
     }
 
-    private static func installManual(src: String) async {
+    private static func installManual(src: String, grantConsent: Bool) async {
         let fm = FileManager.default
         // Create a temporary staging directory
         let tmpDir = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -146,6 +159,31 @@ public struct ToolsInstall {
             // ignore - use tmpDir as root
         }
 
+        // 2b. Validate the bundled manifest before staging so a bad
+        // `osaurus-plugin.json` is caught BEFORE we touch the install
+        // directory. Without this, the install would succeed and the
+        // plugin would silently fail at host load time with no
+        // actionable error in the CLI. Recognized manifest filenames
+        // mirror what the CLI scaffold emits and what the host accepts.
+        for candidate in ["osaurus-plugin.json", "plugin.json", "manifest.json"] {
+            let manifestURL = pluginRoot.appendingPathComponent(candidate)
+            guard fm.fileExists(atPath: manifestURL.path) else { continue }
+            do {
+                let data = try Data(contentsOf: manifestURL)
+                let report = ManifestValidate.validate(data: data)
+                if !report.errors.isEmpty {
+                    fputs("Manifest validation failed (\(candidate)):\n", stderr)
+                    for e in report.errors { fputs("  - \(e)\n", stderr) }
+                    exit(EXIT_FAILURE)
+                }
+                for w in report.warnings { fputs("  ! \(w)\n", stderr) }
+            } catch {
+                fputs("Failed to read \(candidate): \(error.localizedDescription)\n", stderr)
+                exit(EXIT_FAILURE)
+            }
+            break  // first manifest wins, stop probing alternates
+        }
+
         // 3. Install to Tools/<id>/<version>
         let installDir = PluginInstallManager.toolsVersionDirectory(pluginId: pluginId, version: semver)
 
@@ -159,10 +197,25 @@ public struct ToolsInstall {
             // 4. Create receipt.json for manual installs
             try createManualInstallReceipt(pluginId: pluginId, version: semver, installDir: installDir)
 
+            // 4b. Auto-grant consent (matches registry install). The
+            // release loader checks for `.user_consent` next to the
+            // receipt; without it, the plugin fails verification with
+            // `consent_required:` and the user has to tap Approve in
+            // the app. `--no-consent` keeps the explicit gate.
+            if grantConsent {
+                let consentURL = installDir.appendingPathComponent(".user_consent", isDirectory: false)
+                try Data().write(to: consentURL)
+            }
+
             // 5. Update Current Symlink
             try PluginInstallManager.updateCurrentSymlink(pluginId: pluginId, version: semver)
 
             print("Installed \(pluginId) @ \(semver) to \(installDir.path)")
+            if !grantConsent {
+                print(
+                    "Consent NOT granted (--no-consent). Approve in Osaurus settings before the plugin will load."
+                )
+            }
 
             // Notify app
             AppControl.postDistributedNotification(name: "com.dinoki.osaurus.control.toolsReload", userInfo: [:])
