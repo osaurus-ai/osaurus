@@ -151,7 +151,8 @@ public actor ModelRuntime {
 
         for (_, record) in records {
             if let holder = try? await record.task.value,
-               supersededLoadingTaskIDs.contains(record.id) {
+                supersededLoadingTaskIDs.contains(record.id)
+            {
                 holder.container.disableCaching()
             }
         }
@@ -177,7 +178,7 @@ public actor ModelRuntime {
         }
 
         guard loadingTasks[name]?.id == loadID,
-              !supersededLoadingTaskIDs.contains(loadID)
+            !supersededLoadingTaskIDs.contains(loadID)
         else {
             holder.container.disableCaching()
             throw CancellationError()
@@ -327,9 +328,11 @@ public actor ModelRuntime {
         guard limit > 0 else { return }
 
         while residentWeightBytes(excluding: targetName) + incomingWeightsSizeBytes > limit {
-            guard let candidate = modelCache
-                .filter({ $0.key != targetName })
-                .max(by: { $0.value.weightsSizeBytes < $1.value.weightsSizeBytes })
+            guard
+                let candidate =
+                    modelCache
+                    .filter({ $0.key != targetName })
+                    .max(by: { $0.value.weightsSizeBytes < $1.value.weightsSizeBytes })
             else {
                 return
             }
@@ -407,7 +410,8 @@ public actor ModelRuntime {
             }
 
             if policy == .strictSingleModel,
-               let other = modelCache.keys.first(where: { $0 != name }) {
+                let other = modelCache.keys.first(where: { $0 != name })
+            {
                 genLog.info("loadContainer: strict eviction of \(other, privacy: .public)")
                 await unload(name: other)
                 continue

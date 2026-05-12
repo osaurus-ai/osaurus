@@ -14,9 +14,11 @@ struct SwiftTransformersTokenizerLoaderTests {
         let defaultPath = "/Users/eric/models/JANGQ/DeepSeek-V4-Flash-JANGTQ-K"
         let modelPath = ProcessInfo.processInfo.environment["OSAURUS_DSV4_TEST_MODEL"] ?? defaultPath
         let modelURL = URL(fileURLWithPath: modelPath)
-        guard FileManager.default.fileExists(
-            atPath: modelURL.appendingPathComponent("tokenizer.json").path
-        ) else {
+        guard
+            FileManager.default.fileExists(
+                atPath: modelURL.appendingPathComponent("tokenizer.json").path
+            )
+        else {
             return
         }
 

@@ -134,7 +134,7 @@ enum ModelProfileRegistry {
         values: [String: ModelOptionValue]
     ) -> Bool? {
         guard let option = profile(for: modelId)?.thinkingOption,
-              let value = boolOptionValue(for: modelId, optionId: option.id, values: values)
+            let value = boolOptionValue(for: modelId, optionId: option.id, values: values)
         else {
             return nil
         }

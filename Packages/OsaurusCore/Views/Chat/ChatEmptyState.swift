@@ -236,7 +236,8 @@ private struct ChatEmptyStateNoModels: View {
     /// where there is no active chat agent to anchor to.
     @ViewBuilder
     private var welcomeAvatar: some View {
-        let agent = AgentManager.shared.agents.first(where: { $0.id == Agent.defaultId })
+        let agent =
+            AgentManager.shared.agents.first(where: { $0.id == Agent.defaultId })
             ?? Agent.default
         if agent.isBuiltIn {
             ZStack {

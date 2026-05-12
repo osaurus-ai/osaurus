@@ -63,7 +63,8 @@ private struct TokenizerBridge: MLXLMCommon.Tokenizer, @unchecked Sendable {
     ) throws -> [Int] {
         let env = ProcessInfo.processInfo.environment
         if let path = env["VMLX_CHAT_TEMPLATE_OVERRIDE"], !path.isEmpty,
-           let src = try? String(contentsOfFile: path, encoding: .utf8) {
+            let src = try? String(contentsOfFile: path, encoding: .utf8)
+        {
             do {
                 return try upstream.applyChatTemplate(
                     messages: messages,
@@ -72,7 +73,8 @@ private struct TokenizerBridge: MLXLMCommon.Tokenizer, @unchecked Sendable {
                     truncation: false,
                     maxLength: nil,
                     tools: tools,
-                    additionalContext: additionalContext)
+                    additionalContext: additionalContext
+                )
             } catch Tokenizers.TokenizerError.missingChatTemplate {
                 throw MLXLMCommon.TokenizerError.missingChatTemplate
             }
@@ -91,32 +93,34 @@ private struct TokenizerBridge: MLXLMCommon.Tokenizer, @unchecked Sendable {
             && upstream.convertTokenToId("</think>") != nil
         let hasDSV4Sentinel =
             upstream.bosToken == Self.dsv4Bos
-            || (
-                upstream.convertTokenToId(Self.dsv4Bos) != nil
-                && upstream.convertTokenToId(Self.dsv4Eos) != nil
-            )
+            || (upstream.convertTokenToId(Self.dsv4Bos) != nil
+                && upstream.convertTokenToId(Self.dsv4Eos) != nil)
         if hasLagunaSentinel
-            && (env["VMLX_CHAT_TEMPLATE_FALLBACK_DISABLE"] ?? "0") != "1" {
+            && (env["VMLX_CHAT_TEMPLATE_FALLBACK_DISABLE"] ?? "0") != "1"
+        {
             return try fallback(
                 label: "LagunaMinimal",
                 template: MLXLMCommon.ChatTemplateFallbacks.lagunaMinimal,
                 messages: messages,
                 tools: tools,
-                additionalContext: additionalContext)
+                additionalContext: additionalContext
+            )
         }
 
         if let ctx = additionalContext,
-           let enableThinking = ctx["enable_thinking"] as? Bool,
-           enableThinking == false,
-           upstream.bosToken == "]~!b[",
-           upstream.eosToken == "[e~[" {
+            let enableThinking = ctx["enable_thinking"] as? Bool,
+            enableThinking == false,
+            upstream.bosToken == "]~!b[",
+            upstream.eosToken == "[e~["
+        {
             do {
                 return try fallback(
                     label: "MiniMaxM2Minimal",
                     template: MLXLMCommon.ChatTemplateFallbacks.minimaxM2Minimal,
                     messages: messages,
                     tools: tools,
-                    additionalContext: additionalContext)
+                    additionalContext: additionalContext
+                )
             } catch {
                 // Fall through to native template if the corrected template
                 // trips a Jinja runtime issue.
@@ -125,16 +129,18 @@ private struct TokenizerBridge: MLXLMCommon.Tokenizer, @unchecked Sendable {
 
         var adjustedContext = additionalContext
         if adjustedContext?["reasoning_effort"] == nil,
-           upstream.convertTokenToId("[MODEL_SETTINGS]") != nil,
-           let enableThinking = adjustedContext?["enable_thinking"] as? Bool {
+            upstream.convertTokenToId("[MODEL_SETTINGS]") != nil,
+            let enableThinking = adjustedContext?["enable_thinking"] as? Bool
+        {
             var ctx = adjustedContext ?? [:]
             ctx["reasoning_effort"] = enableThinking ? "high" : "none"
             adjustedContext = ctx
         }
         if hasDSV4Sentinel,
-           let enableThinking = adjustedContext?["enable_thinking"] as? Bool,
-           enableThinking == false,
-           adjustedContext?["reasoning_effort"] != nil {
+            let enableThinking = adjustedContext?["enable_thinking"] as? Bool,
+            enableThinking == false,
+            adjustedContext?["reasoning_effort"] != nil
+        {
             adjustedContext?.removeValue(forKey: "reasoning_effort")
         }
 
@@ -154,7 +160,8 @@ private struct TokenizerBridge: MLXLMCommon.Tokenizer, @unchecked Sendable {
                     template: MLXLMCommon.ChatTemplateFallbacks.lagunaMinimal,
                     messages: messages,
                     tools: tools,
-                    additionalContext: adjustedContext)
+                    additionalContext: adjustedContext
+                )
             }
             if hasDSV4Sentinel {
                 return try fallback(
@@ -162,19 +169,23 @@ private struct TokenizerBridge: MLXLMCommon.Tokenizer, @unchecked Sendable {
                     template: MLXLMCommon.ChatTemplateFallbacks.dsv4Minimal,
                     messages: messages,
                     tools: tools,
-                    additionalContext: adjustedContext)
+                    additionalContext: adjustedContext
+                )
             }
             if upstream.bosToken == "]~!b[",
-               upstream.eosToken == "[e~[" {
+                upstream.eosToken == "[e~["
+            {
                 return try fallback(
                     label: "MiniMaxM2Minimal",
                     template: MLXLMCommon.ChatTemplateFallbacks.minimaxM2Minimal,
                     messages: messages,
                     tools: tools,
-                    additionalContext: additionalContext)
+                    additionalContext: additionalContext
+                )
             }
             if upstream.bosToken == "<bos>" {
-                let template = (tools?.isEmpty ?? true)
+                let template =
+                    (tools?.isEmpty ?? true)
                     ? MLXLMCommon.ChatTemplateFallbacks.gemma4Minimal
                     : MLXLMCommon.ChatTemplateFallbacks.gemma4WithTools
                 return try fallback(
@@ -182,16 +193,19 @@ private struct TokenizerBridge: MLXLMCommon.Tokenizer, @unchecked Sendable {
                     template: template,
                     messages: messages,
                     tools: tools,
-                    additionalContext: additionalContext)
+                    additionalContext: additionalContext
+                )
             }
             if upstream.bosToken == "<s>",
-               upstream.convertTokenToId("<|im_end|>") != nil {
+                upstream.convertTokenToId("<|im_end|>") != nil
+            {
                 return try fallback(
                     label: "NemotronMinimal",
                     template: MLXLMCommon.ChatTemplateFallbacks.nemotronMinimal,
                     messages: messages,
                     tools: tools,
-                    additionalContext: additionalContext)
+                    additionalContext: additionalContext
+                )
             }
             throw MLXLMCommon.TokenizerError.missingChatTemplate
         } catch {
@@ -228,7 +242,8 @@ private struct TokenizerBridge: MLXLMCommon.Tokenizer, @unchecked Sendable {
                         template: candidate.template,
                         messages: messages,
                         tools: tools,
-                        additionalContext: adjustedContext)
+                        additionalContext: adjustedContext
+                    )
                 } catch {
                     continue
                 }
@@ -247,7 +262,8 @@ private struct TokenizerBridge: MLXLMCommon.Tokenizer, @unchecked Sendable {
         if (ProcessInfo.processInfo.environment["VMLX_CHAT_TEMPLATE_FALLBACK_LOG"] ?? "0") == "1" {
             FileHandle.standardError.write(
                 "[osaurus] chat-template fallback engaged: \(label)\n"
-                    .data(using: .utf8)!)
+                    .data(using: .utf8)!
+            )
         }
         return try upstream.applyChatTemplate(
             messages: messages,
@@ -256,6 +272,7 @@ private struct TokenizerBridge: MLXLMCommon.Tokenizer, @unchecked Sendable {
             truncation: false,
             maxLength: nil,
             tools: tools,
-            additionalContext: additionalContext)
+            additionalContext: additionalContext
+        )
     }
 }

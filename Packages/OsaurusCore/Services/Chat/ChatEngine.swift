@@ -104,8 +104,9 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         var modelOptions = request.modelOptions ?? [:]
         let isHy3 = Hy3ReasoningProfile.matches(modelId: request.model)
         let requestReasoningEffort: String? = {
-            guard let value = request.reasoning_effort?
-                .trimmingCharacters(in: .whitespacesAndNewlines),
+            guard
+                let value = request.reasoning_effort?
+                    .trimmingCharacters(in: .whitespacesAndNewlines),
                 !value.isEmpty
             else { return nil }
             return value
@@ -117,7 +118,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                     Hy3ReasoningProfile.normalizedEffort(requestReasoningEffort)
                 )
             } else if modelOptions["reasoningEffort"] == nil,
-                      let enableThinking = request.enable_thinking {
+                let enableThinking = request.enable_thinking
+            {
                 modelOptions["reasoningEffort"] = .string(enableThinking ? "high" : "no_think")
             }
             modelOptions.removeValue(forKey: "disableThinking")

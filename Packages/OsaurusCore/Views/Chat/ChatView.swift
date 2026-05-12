@@ -2496,15 +2496,15 @@ struct ChatView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .chatToolbarSelectDiscoveredAgent)) { notification in
             guard let targetWindowId = notification.userInfo?["windowId"] as? UUID,
-                  targetWindowId == windowState.windowId,
-                  let agent = notification.object as? DiscoveredAgent
+                targetWindowId == windowState.windowId,
+                let agent = notification.object as? DiscoveredAgent
             else { return }
             selectDiscoveredAgent(agent)
         }
         .onReceive(NotificationCenter.default.publisher(for: .chatToolbarSelectRelayAgent)) { notification in
             guard let targetWindowId = notification.userInfo?["windowId"] as? UUID,
-                  targetWindowId == windowState.windowId,
-                  let relay = notification.object as? PairedRelayAgent
+                targetWindowId == windowState.windowId,
+                let relay = notification.object as? PairedRelayAgent
             else { return }
             connectToRelayAgent(relay)
         }

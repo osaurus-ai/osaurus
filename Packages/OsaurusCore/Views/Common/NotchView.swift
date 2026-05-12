@@ -208,7 +208,8 @@ struct NotchView: View {
     /// when there is no task or the task's agent has since been deleted.
     private var notchAgent: Agent {
         if let agentId = activeTask?.agentId,
-           let match = AgentManager.shared.agents.first(where: { $0.id == agentId }) {
+            let match = AgentManager.shared.agents.first(where: { $0.id == agentId })
+        {
             return match
         }
         return AgentManager.shared.agents.first(where: { $0.id == Agent.defaultId }) ?? .default

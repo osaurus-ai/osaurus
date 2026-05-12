@@ -224,7 +224,9 @@ struct RuntimePolicySourceTests {
         #expect(
             adapter.contains("post-generation disk-cache store")
                 && adapter.contains("for await event in upstream")
-                && adapter.contains("if case .info = event {\n                        continuation.yield(event)\n                        continue\n                    }"),
+                && adapter.contains(
+                    "if case .info = event {\n                        continuation.yield(event)\n                        continue\n                    }"
+                ),
             "adapter must forward terminal info but keep draining vmlx until the upstream stream finishes, so the solo lease covers post-generation cache persistence"
         )
         #expect(
@@ -247,27 +249,39 @@ struct RuntimePolicySourceTests {
         let chatEngine = try Self.source("Services/Chat/ChatEngine.swift")
 
         #expect(
-            !mapper.contains("for await event in events {\n                    if Task.isCancelled { break }\n                    switch event"),
+            !mapper.contains(
+                "for await event in events {\n                    if Task.isCancelled { break }\n                    switch event"
+            ),
             "GenerationEventMapper must switch on `.info` before checking Task.isCancelled, otherwise final stats/unclosedReasoning can be lost"
         )
         #expect(
-            !adapter.contains("for await event in upstream {\n                    if Task.isCancelled { break }\n                    continuation.yield(event)\n                }"),
+            !adapter.contains(
+                "for await event in upstream {\n                    if Task.isCancelled { break }\n                    continuation.yield(event)\n                }"
+            ),
             "MLXBatchAdapter must preserve upstream `.info` before honoring cancellation, otherwise vmlx's final cancelled/length/stop event is dropped"
         )
         #expect(
-            adapter.contains("if !Task.isCancelled {\n                        continuation.yield(event)\n                    }"),
+            adapter.contains(
+                "if !Task.isCancelled {\n                        continuation.yield(event)\n                    }"
+            ),
             "MLXBatchAdapter must keep draining cancelled upstream streams until `.info`, while suppressing only non-terminal deltas after cancellation"
         )
         #expect(
-            !adapter.contains("onCancel: {\n                // The upstream stream is bound to a single request inside\n                // the engine; cancelling the consumer task closes it\n                // cooperatively (engine emits a final `.info(.cancelled)`\n                // and finishes the stream).\n                continuation.finish()\n            }"),
+            !adapter.contains(
+                "onCancel: {\n                // The upstream stream is bound to a single request inside\n                // the engine; cancelling the consumer task closes it\n                // cooperatively (engine emits a final `.info(.cancelled)`\n                // and finishes the stream).\n                continuation.finish()\n            }"
+            ),
             "MLXBatchAdapter's cancellation handler must not immediately finish the wrapper stream while its producer can still drain vmlx's terminal `.info`"
         )
         #expect(
-            !runtime.contains("for try await ev in events {\n                    if Task.isCancelled {\n                        continuation.finish()\n                        return\n                    }\n                    switch ev"),
+            !runtime.contains(
+                "for try await ev in events {\n                    if Task.isCancelled {\n                        continuation.finish()\n                        return\n                    }\n                    switch ev"
+            ),
             "ModelRuntime.streamWithTools must encode `.completionInfo` into StreamingStatsHint before honoring cancellation"
         )
         #expect(
-            !chatEngine.contains("for try await delta in inner {\n                    // Check for task cancellation to allow early termination\n                    if Task.isCancelled"),
+            !chatEngine.contains(
+                "for try await delta in inner {\n                    // Check for task cancellation to allow early termination\n                    if Task.isCancelled"
+            ),
             "ChatEngine stream logging wrapper must pass StreamingStatsHint through before honoring cancellation"
         )
     }
@@ -409,7 +423,9 @@ struct RuntimePolicySourceTests {
 
         #expect(runtime.contains("loadConfiguration: .default"))
         #expect(
-            !runtime.contains("loadModelContainer(\n                from: localURL,\n                using: tokenizerLoader\n            )"),
+            !runtime.contains(
+                "loadModelContainer(\n                from: localURL,\n                using: tokenizerLoader\n            )"
+            ),
             "ModelRuntime must not use the plain local-directory load overload; it bypasses vmlx LoadConfiguration.default, including load-time memory caps, mmap safetensors, and JANGTQ prestack/alignment"
         )
     }

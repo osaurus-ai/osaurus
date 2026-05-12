@@ -231,9 +231,9 @@ enum LocalReasoningCapability {
     private static func readChatTemplateSidecar(at dir: URL) -> String? {
         let url = dir.appendingPathComponent("chat_template.json")
         guard FileManager.default.fileExists(atPath: url.path),
-              let data = try? Data(contentsOf: url),
-              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let template = obj["chat_template"] as? String
+            let data = try? Data(contentsOf: url),
+            let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let template = obj["chat_template"] as? String
         else {
             return nil
         }
@@ -250,8 +250,8 @@ enum LocalReasoningCapability {
     private static func readTokenizerConfigTemplate(at dir: URL) -> String? {
         let tokenizerCfg = dir.appendingPathComponent("tokenizer_config.json")
         guard FileManager.default.fileExists(atPath: tokenizerCfg.path),
-              let data = try? Data(contentsOf: tokenizerCfg),
-              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            let data = try? Data(contentsOf: tokenizerCfg),
+            let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else {
             return nil
         }

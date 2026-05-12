@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import os
 
 /// Errors specific to remote provider operations
 public enum RemoteProviderServiceError: LocalizedError {
@@ -44,8 +45,35 @@ public actor RemoteProviderService: ToolCapableService {
     private var session: URLSession
     private var cachedOAuthTokens: RemoteProviderOAuthTokens?
 
+    /// Race-resistant flag set by `invalidateSession()`. The connect-retry
+    /// loop in `connectWithRetry` MUST consult this before every
+    /// `URLSession.bytes(for:)` attempt: calling `bytes(for:)` on a session
+    /// that has already had `invalidateAndCancel()` called raises an
+    /// uncatchable Obj-C `NSInvalidArgumentException` from
+    /// `-[__NSURLSessionLocal taskForClassInfo:]` (synchronously, inside
+    /// the Swift-generated closure passed to `withTaskCancellationHandler`).
+    /// Swift `try`/`catch` does not catch Obj-C exceptions, so the
+    /// exception unwinds straight into `_objc_terminate` and `abort()`s
+    /// the entire xctest process — an entire test bundle dies. The flag
+    /// is checked across an actor boundary by a non-isolated, lock-backed
+    /// accessor so the producer task can read it without an `await` hop
+    /// (no actor reentrancy, no extra suspension point per retry attempt).
+    /// Closing the residual microsecond TOCTOU window between this check
+    /// and `bytes(for:)` requires an Obj-C `@try`/`@catch` bridge — left
+    /// out here because it would require restructuring the package as
+    /// mixed-source SPM. The flag-based mitigation eliminates the
+    /// dominant 200ms / 800ms backoff-window race that surfaces in
+    /// parallel CI test runs.
+    private let sessionInvalidatedFlag = OSAllocatedUnfairLock<Bool>(initialState: false)
+
     nonisolated public var id: String {
         "remote-\(provider.id.uuidString)"
+    }
+
+    /// Lock-backed sync read of the session-invalidated flag. Safe to call
+    /// from any thread / actor / Task without awaiting the actor.
+    nonisolated public var isSessionInvalidated: Bool {
+        sessionInvalidatedFlag.withLock { $0 }
     }
 
     public init(provider: RemoteProvider, models: [String], resolvedHeaders: [String: String]) {
@@ -126,7 +154,16 @@ public actor RemoteProviderService: ToolCapableService {
 
     /// Invalidate the URLSession to release its strong delegate reference.
     /// Must be called before discarding this service instance to avoid leaking.
+    ///
+    /// Sets `sessionInvalidatedFlag` BEFORE `invalidateAndCancel()` so any
+    /// concurrent connect-retry loop in `connectWithRetry` observes the
+    /// flag on its next pre-attempt check and bails out with a Swift
+    /// `CancellationError` instead of calling `bytes(for:)` on the now-
+    /// invalidated session and triggering the uncatchable Obj-C
+    /// `NSException` abort. See the doc comment on
+    /// `sessionInvalidatedFlag` for the full hazard description.
     public func invalidateSession() {
+        sessionInvalidatedFlag.withLock { $0 = true }
         session.invalidateAndCancel()
     }
 
@@ -511,21 +548,37 @@ public actor RemoteProviderService: ToolCapableService {
     ///
     /// Backoff: 200ms, 800ms (exponential, capped). Total wall time at
     /// `maxAttempts = 3` is therefore ≤ ~1s of added latency on success.
+    ///
+    /// `isCancelled` is consulted after every backoff sleep AND before
+    /// each `bytes(for:)` retry. The owning `RemoteProviderService` passes
+    /// a closure backed by `isSessionInvalidated`; if `invalidateSession()`
+    /// fires while we are sleeping in the retry window, the next
+    /// `bytes(for:)` call would raise an uncatchable Obj-C `NSException`
+    /// from `-[__NSURLSessionLocal taskForClassInfo:]` and `abort()` the
+    /// xctest process. See the long doc comment on
+    /// `RemoteProviderService.sessionInvalidatedFlag` for the full
+    /// hazard. The default (`{ false }`) preserves the previous behaviour
+    /// for any caller that owns its session lifetime explicitly and does
+    /// not invalidate concurrently.
     static func connectWithRetry(
         session: URLSession,
         urlRequest: URLRequest,
-        maxAttempts: Int = 3
+        maxAttempts: Int = 3,
+        isCancelled: @Sendable () -> Bool = { false }
     ) async throws -> (URLSession.AsyncBytes, URLResponse) {
         var lastError: Error?
         for attempt in 0 ..< maxAttempts {
             if attempt > 0 {
                 let delayMs: UInt64 = attempt == 1 ? 200_000_000 : 800_000_000
                 try? await Task.sleep(nanoseconds: delayMs)
+                if Task.isCancelled || isCancelled() {
+                    throw lastError ?? CancellationError()
+                }
             }
             do {
                 return try await session.bytes(for: urlRequest)
             } catch {
-                if Task.isCancelled { throw error }
+                if Task.isCancelled || isCancelled() { throw error }
                 lastError = error
                 // Only retry on classic transient categories. Auth /
                 // bad-request type errors are not retried.
@@ -1221,9 +1274,21 @@ public actor RemoteProviderService: ToolCapableService {
                 // upstream yet, so retrying is safe). Once we start
                 // iterating bytes / dispatching SSE chunks we never
                 // retry — the consumer has already begun seeing output.
+                //
+                // The `isCancelled` closure is the dominant CI-flake
+                // mitigation: between retry attempts (200ms / 800ms
+                // sleeps) the owning service's `invalidateSession()` may
+                // fire from a sibling test's teardown, after which any
+                // further `bytes(for:)` call on this session raises an
+                // uncatchable Obj-C `NSException` and `abort()`s the
+                // entire xctest process. See the doc comment on
+                // `sessionInvalidatedFlag`.
                 let (bytes, response) = try await Self.connectWithRetry(
                     session: currentSession,
-                    urlRequest: urlRequest
+                    urlRequest: urlRequest,
+                    isCancelled: { [weak self] in
+                        self?.isSessionInvalidated ?? true
+                    }
                 )
 
                 guard let httpResponse = response as? HTTPURLResponse else {

@@ -11,14 +11,16 @@ import Testing
 struct ChatEngineTests {
 
     @Test func chatCompletionRequest_decodesReasoningEffortAndEnableThinking() throws {
-        let data = Data("""
-        {
-          "model": "JANGQ-AI/Hy3-preview-JANGTQ",
-          "messages": [{"role":"user","content":"hi"}],
-          "reasoning_effort": "high",
-          "enable_thinking": true
-        }
-        """.utf8)
+        let data = Data(
+            """
+            {
+              "model": "JANGQ-AI/Hy3-preview-JANGTQ",
+              "messages": [{"role":"user","content":"hi"}],
+              "reasoning_effort": "high",
+              "enable_thinking": true
+            }
+            """.utf8
+        )
 
         let request = try JSONDecoder().decode(ChatCompletionRequest.self, from: data)
         #expect(request.reasoning_effort == "high")
@@ -26,13 +28,15 @@ struct ChatEngineTests {
     }
 
     @Test func openResponsesRequest_threadsReasoningEffortIntoChatRequest() throws {
-        let data = Data("""
-        {
-          "model": "JANGQ-AI/Hy3-preview-JANGTQ",
-          "input": "hi",
-          "reasoning": {"effort": "low"}
-        }
-        """.utf8)
+        let data = Data(
+            """
+            {
+              "model": "JANGQ-AI/Hy3-preview-JANGTQ",
+              "input": "hi",
+              "reasoning": {"effort": "low"}
+            }
+            """.utf8
+        )
 
         let request = try JSONDecoder().decode(OpenResponsesRequest.self, from: data)
         let chat = request.toChatCompletionRequest()

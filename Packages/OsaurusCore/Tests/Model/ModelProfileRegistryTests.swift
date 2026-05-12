@@ -295,18 +295,21 @@ struct ModelProfileRegistryTests {
                 for: model,
                 optionId: "disableThinking",
                 values: [:]
-            ) == true)
+            ) == true
+        )
         #expect(ModelProfileRegistry.thinkingEnabled(for: model, values: [:]) == false)
         #expect(
             ModelProfileRegistry.thinkingEnabled(
                 for: model,
                 values: ["disableThinking": .bool(false)]
-            ) == true)
+            ) == true
+        )
         #expect(
             ModelProfileRegistry.thinkingEnabled(
                 for: model,
                 values: ["disableThinking": .bool(true)]
-            ) == false)
+            ) == false
+        )
     }
 
     @Test("Hy3 bundles expose native reasoning_effort values")
