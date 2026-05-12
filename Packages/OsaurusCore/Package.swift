@@ -254,10 +254,17 @@ let package = Package(
         // close-token injection, trims B=1 full-cache hits before seed prefill,
         // preserves assistant `reasoning_content`, adds ZAYA reasoning stamps,
         // and skips per-expert source tensors when a JangPress prestacked
-        // overlay is present.
+        // overlay is present. `b350af6` preserves DSV4 JANGTQ-K routed
+        // expert layer bit plans, keeps routed bit-plan metadata out of
+        // generic affine quantization overrides, and wires DSV4 routed MoE
+        // top-k into the existing lower-only override path. `6de602c`
+        // makes the DSV4 tokenizer fallback match the canonical multi-turn
+        // chat encoder so generated cache boundaries can be reused. `ad1d231`
+        // synchronizes before and after safetensors disk writes so
+        // post-answer cache storage cannot crash after generation.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift-lm",
-            revision: "78cf6ac9dd1742c51a8f737bd4abe6c68282072e"
+            revision: "ad1d23199b056ed502124717e6ca8877f2fb303a"
         ),
         // Osaurus-owned transformers/Jinja chain. `swift-transformers`
         // depends on `osaurus-ai/Jinja`, but its semver range can fresh-

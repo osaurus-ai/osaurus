@@ -24,6 +24,18 @@ enum ModelFamilyNames {
         ) != nil
     }
 
+    /// DeepSeek-V4 / DSV4 Flash bundles (`model_type=deepseek_v4`).
+    /// Match both public repo forms (`DeepSeek-V4-...`) and shorthand
+    /// runtime names (`DSV4-...`, `deepseekv4-...`) while avoiding
+    /// DeepSeek-V3 / R1 / generic DeepSeek matches.
+    static func isDSV4Family(_ modelId: String) -> Bool {
+        let lower = modelId.lowercased()
+        return lower.range(
+            of: #"(^|/|[\-_])(dsv4|deepseek[\-_]?v4|deepseekv4)($|[\-_/\.])"#,
+            options: .regularExpression
+        ) != nil
+    }
+
     /// Match Zyphra ZAYA bundles (`model_type=zaya`). Matches the bare
     /// repo form (`Zaya1-…`, `Zaya2-…`, `Zaya-S-…`) and any
     /// `<owner>/Zaya…` path. The required digit-or-dash boundary after

@@ -81,6 +81,7 @@ enum ModelProfileRegistry {
         QwenThinkingProfile.self,
         NemotronThinkingProfile.self,
         LagunaThinkingProfile.self,
+        DSV4ReasoningProfile.self,
         Hy3ReasoningProfile.self,
         LingRuntimeProfile.self,
         ZayaThinkingProfile.self,
@@ -138,6 +139,52 @@ enum ModelProfileRegistry {
             return nil
         }
         return option.inverted ? !value : value
+    }
+}
+
+// MARK: - DSV4 Reasoning Profile
+
+/// DeepSeek-V4 / DSV4 Flash JANG bundles use vmlx's dedicated DSV4 encoder
+/// rather than a generic `enable_thinking`-only Jinja path. The runtime has
+/// three intentional modes:
+/// - instruct: closed `</think>` assistant tail, answer on content rail
+/// - reasoning: open `<think>` assistant tail, normal reasoning split
+/// - max: open `<think>` tail plus the DSV4 max-reasoning preface
+struct DSV4ReasoningProfile: ModelProfile {
+    static let displayName = "DSV4 Reasoning"
+
+    static func matches(modelId: String) -> Bool {
+        ModelFamilyNames.isDSV4Family(modelId)
+    }
+
+    static let options: [ModelOptionDefinition] = [
+        ModelOptionDefinition(
+            id: "reasoningEffort",
+            label: "Reasoning Mode",
+            icon: "brain.head.profile",
+            kind: .segmented([
+                ModelOptionSegment(id: "instruct", label: "Instruct"),
+                ModelOptionSegment(id: "high", label: "Reasoning"),
+                ModelOptionSegment(id: "max", label: "Max"),
+            ])
+        )
+    ]
+
+    static let defaults: [String: ModelOptionValue] = [
+        "reasoningEffort": .string("instruct")
+    ]
+
+    static func normalizedEffort(_ value: String) -> String {
+        switch value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "instruct", "chat", "none", "no_think", "off", "disabled", "false":
+            return "instruct"
+        case "max", "maximum":
+            return "max"
+        case "reasoning", "think", "thinking", "high", "medium", "low", "true":
+            return "high"
+        default:
+            return "instruct"
+        }
     }
 }
 
