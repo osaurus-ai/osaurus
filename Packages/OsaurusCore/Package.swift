@@ -264,10 +264,13 @@ let package = Package(
         // post-answer cache storage cannot crash after generation. `c0f8b3b`
         // adds Nemotron Omni live-voice handoff support, including
         // pre-encoded Parakeet/audio embeddings and updated Osaurus hookup
-        // docs for media-aware cache verification.
+        // docs for media-aware cache verification. `e497f61` adds the
+        // reusable thread-safe live PCM buffer and recorder streaming cursor
+        // needed by real VAD/call-mode polling while preserving the full
+        // retained waveform for the final Omni request.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift-lm",
-            revision: "c0f8b3b1e87f92983bb82f8ace2ec6fd3779c471"
+            revision: "e497f61c3a68c6d70334d8a14a7ad0a58864af9b"
         ),
         // Osaurus-owned transformers/Jinja chain. `swift-transformers`
         // depends on `osaurus-ai/Jinja`, but its semver range can fresh-

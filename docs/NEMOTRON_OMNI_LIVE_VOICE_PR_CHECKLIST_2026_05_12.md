@@ -3,9 +3,10 @@
 ## Scope
 
 This checklist tracks the Osaurus side of live voice input for Nemotron Omni
-models. This branch pins `vmlx-swift-lm` to `c0f8b3b`, which can consume
-`UserInput.Audio` and preserves pre-encoded Parakeet/audio embeddings. Omni
-audio support is gated by `ModelMediaCapabilities.supportsAudio`.
+models. This branch pins `vmlx-swift-lm` to `e497f61`, which can consume
+`UserInput.Audio`, preserves pre-encoded Parakeet/audio embeddings, and exposes
+a reusable retained live PCM buffer with a streaming cursor for VAD/call-mode
+polling. Omni audio support is gated by `ModelMediaCapabilities.supportsAudio`.
 
 ## Current Hookups
 
@@ -19,8 +20,8 @@ audio support is gated by `ModelMediaCapabilities.supportsAudio`.
   `input_audio` content parts.
 - `ModelRuntime.extractAudioSources(from:)` materializes `input_audio` into a
   temp audio file and hands `UserInput.Audio.url` to vMLX.
-- `Packages/OsaurusCore/Package.swift` pins `vmlx-swift-lm` to `c0f8b3b` so
-  the app consumes the Swift live-voice handoff support.
+- `Packages/OsaurusCore/Package.swift` pins `vmlx-swift-lm` to `e497f61` so
+  the app consumes the Swift live-voice handoff and live PCM streaming cursor.
 - Live voice timing is now visible in the normal debug path:
   - `FloatingInputCard` logs `snapshot_ms`, `wav_encode_ms`, `wav_bytes`,
     `sample_rate`, and `duration_ms` when a voice turn is captured.
@@ -37,7 +38,7 @@ audio support is gated by `ModelMediaCapabilities.supportsAudio`.
 ## Verified Evidence
 
 - `swift build --target OsaurusCore` passed after the live voice snapshot
-  changes, after the `vmlx-swift-lm` pin bump to `c0f8b3b`, and after the
+  changes, after the `vmlx-swift-lm` pin bump to `e497f61`, and after the
   TTFT/live-voice timing instrumentation. It also passed after the API-level
   `/chat/completions` trace recorder was added.
 - Xcode app build passed from the workspace:
