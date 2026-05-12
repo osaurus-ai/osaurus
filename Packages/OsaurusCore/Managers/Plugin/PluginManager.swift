@@ -158,7 +158,23 @@ final class PluginManager {
         /// Test-only: matched cleanup for `injectLoadedPluginForTesting`.
         /// Removes the plugin without touching `ToolRegistry` / `SkillManager`
         /// (the fake plugin never registered with either).
+        ///
+        /// IMPORTANT: synchronously drains the plugin's per-task event
+        /// queues and config event queue BEFORE removing it from `plugins`.
+        /// Tests that pass a `TaskEventRecorder` (or any other captured
+        /// state) through the opaque `ctx` pointer release their
+        /// `Unmanaged.passRetained(...)` retain in the same `defer` block —
+        /// any `notifyTaskEvent` callback still queued on a per-task
+        /// dispatch queue would otherwise fire AFTER the recorder is
+        /// deallocated and segfault the entire xctest process. This is
+        /// the regression that surfaced as the "100+ tests crashed with
+        /// signal segv" pattern in CI runs 25738325529 (PR #1066) and
+        /// 25742705850 (PR #1068); see `ExternalPlugin
+        /// .drainEventQueuesForTesting()` for the full root-cause writeup.
         func removeLoadedPluginForTesting(pluginId: String) {
+            if let plugin = plugins.first(where: { $0.plugin.id == pluginId })?.plugin {
+                plugin.drainEventQueuesForTesting()
+            }
             plugins.removeAll { $0.plugin.id == pluginId }
         }
     #endif

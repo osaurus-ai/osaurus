@@ -60,6 +60,11 @@ jobs:
       WORKSPACE: osaurus.xcworkspace
       SPM_CACHE: .spm-cache
       XCRESULT_PATH: build/Tests.xcresult
+      # Mirror of xcbeautify stdout/stderr. The `Print failure summary`
+      # step greps this for the last `Test Case ... started` line on the
+      # dying PID when Mode E (single-process SIGSEGV) fires — see the
+      # comment block above the Mode E branch in that step.
+      XCBEAUTIFY_LOG: build/test-core.log
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
@@ -163,6 +168,17 @@ jobs:
           # wall-clock cost of every hang for zero diagnostic gain. Both
           # are off by default — re-add only if you have a per-PR reason
           # and an exit plan.
+          # `tee` the xcbeautify output to a log file so the failure
+          # summary step below can grep for the dying-PID's last
+          # `Test Case ... started` line. We tee AFTER xcbeautify (not
+          # before) because the raw xcodebuild output for Swift Testing
+          # is bare `Test name() started.` lines with no PID attached;
+          # xcbeautify enriches each result with `on 'My Mac - xctest
+          # (PID)'`, which is the signal Mode E correlates against. Both
+          # the GHA renderer output (consumed by GitHub) and the
+          # tee'd file see the same enriched line stream. `set -o
+          # pipefail` above means xcodebuild's failure exit code still
+          # propagates through the longer pipeline.
           xcodebuild test \
             -workspace "$WORKSPACE" \
             -scheme OsaurusCoreTests \
@@ -177,7 +193,8 @@ jobs:
             -maximum-test-execution-time-allowance 120 \
             COMPILER_INDEX_STORE_ENABLE=NO \
             SWIFT_COMPILATION_MODE=incremental \
-            | xcbeautify --renderer github-actions --is-ci
+            | xcbeautify --renderer github-actions --is-ci \
+            | tee "$XCBEAUTIFY_LOG"
 
       - name: Annotate timing
         if: always()
@@ -200,7 +217,7 @@ jobs:
           set +e
           echo "## test-core failures" >> "$GITHUB_STEP_SUMMARY"
 
-          # Four real failure modes we want to disambiguate. Each conflation
+          # Five real failure modes we want to disambiguate. Each conflation
           # has historically cost us hours of misdirected debugging, so this
           # step exists specifically to put the right diagnosis at the top
           # of the GitHub job summary instead of forcing the next person to
@@ -229,8 +246,29 @@ jobs:
           #          intentionally NOT passed to xcbeautify so the line is
           #          present.)
           #
-          # Mode D — xcresult exists with failed test cases
-          #          ⇒ ordinary test failures; render the failures table.
+          # Mode E — xcresult has failed test cases AND ≥80% of the failure
+          #          messages are an identical `"Test crashed with signal
+          #          ..."` line. That's the fingerprint of a single xctest
+          #          process crash that took out every test scheduled after
+          #          it: xctest restarts the bundle in a new PID and
+          #          finishes the rest of the suite, but the tests that
+          #          were queued (not yet run) on the dying PID all get
+          #          tagged "crashed with signal ..." regardless of their
+          #          actual code. PR #1066 (run 25738325529) hit this
+          #          flavor — 106 tests across 50+ unrelated suites all
+          #          reported the same crash message, with 98 of them also
+          #          reported by PR #1068 (run 25742705850); the actual
+          #          culprit is a single test that ran in parallel with
+          #          the dying batch. Mode E surfaces the dying-PID's last
+          #          `Test Case ... started` line from the raw log so the
+          #          next person doesn't have to download the xcresult
+          #          bundle to start bisecting. Pair with the
+          #          `~/Library/Logs/DiagnosticReports/*.ips` artifact
+          #          uploaded below for a symbolicated stack.
+          #
+          # Mode D — xcresult exists with failed test cases (and Mode E
+          #          ruled out). Ordinary test failures; render the
+          #          failures table.
 
           # Resolve the xctest binary path. Xcode hashes the DerivedData
           # subdirectory off the workspace path, so glob rather than
@@ -286,6 +324,130 @@ jobs:
             echo "Test execution was killed before any test recorded a result — most likely a hung test that ate the job wall-timeout, or a runner crash. Check the raw log for the last \`Test Case ... started\` line; that's the prime suspect for the hang." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
+
+          # Mode E vs Mode D classifier. Pull every Failure Message attached
+          # to a failed test case and compute the share that look like a
+          # single-process signal crash. We treat ≥80% of the same
+          # `"Test crashed with signal ..."` message as the Mode E
+          # fingerprint. The 80% threshold (vs. 100%) tolerates the
+          # occasional real-failure tag that lands in the same xcresult
+          # alongside a process crash — those should still trigger the
+          # Mode E bisection workflow, not the Mode D table that buries
+          # the crash story under 100+ identical rows.
+          FAILURE_MSGS_JSON="$(printf '%s' "$XCRESULT_JSON" | jq -c '
+              [ .. | objects
+                | select(.result? == "Failed"
+                         and (.nodeType? == "Test Case" or .nodeType? == "Test"))
+                | { name: (.name // "(unknown)"),
+                    msg: ( [ .. | objects | select(.nodeType? == "Failure Message") | .name ] | join("|") ) }
+              ]
+            ' 2>/dev/null || echo '[]')"
+          FAILED_COUNT="$(printf '%s' "$FAILURE_MSGS_JSON" | jq 'length' 2>/dev/null || echo 0)"
+          # Just the most common failure message and its count.
+          read -r CRASH_SHARE CRASH_MSG <<<"$(printf '%s' "$FAILURE_MSGS_JSON" \
+            | jq -r '
+                if length == 0 then "0 _"
+                else
+                  group_by(.msg)
+                  | map({msg: .[0].msg, n: length})
+                  | sort_by(-.n)[0]
+                  | "\(.n) \(.msg)"
+                end
+              ' 2>/dev/null || echo '0 _')"
+          IS_SIGNAL_CRASH=0
+          case "$CRASH_MSG" in
+            *"Test crashed with signal"*) IS_SIGNAL_CRASH=1 ;;
+          esac
+          # Bash arithmetic, not jq, so we don't fail on edge cases.
+          if [ "${FAILED_COUNT:-0}" -gt 0 ] \
+             && [ "$IS_SIGNAL_CRASH" = "1" ] \
+             && [ "$(( CRASH_SHARE * 100 / FAILED_COUNT ))" -ge 80 ]; then
+            # Mode E. Find the dying PID and its last `Test Case ... started`
+            # line from the tee'd raw log. xcbeautify's pretty output strips
+            # `Test Case` lines, but the file we tee BEFORE xcbeautify keeps
+            # the raw xcodebuild output that includes them. The dying PID is
+            # the one that appears in the log up to a point and then is
+            # never seen again — easiest heuristic: the SECOND-to-last
+            # unique `xctest (NNNN)` PID, because xctest restarts the
+            # bundle and the LAST PID is the new (post-crash) one.
+            DYING_PID=""
+            LAST_RESULT_ON_DYING=""
+            CRASH_BATCH_ON_DYING=""
+            PID_TIMELINE=""
+            if [ -f "$XCBEAUTIFY_LOG" ]; then
+              # xcbeautify's output decorates every test-result line with
+              # `on 'My Mac - xctest (PID)'`. Pull the unique PIDs in
+              # encounter order. With Swift Testing's parallel runner the
+              # raw xcodebuild output has no per-test PID — xcbeautify is
+              # the source of truth for this signal.
+              PIDS_ORDERED="$(grep -oE "xctest \([0-9]+\)" "$XCBEAUTIFY_LOG" \
+                | awk -F'[()]' '!seen[$2]++ { print $2 }')"
+              PID_COUNT="$(printf '%s\n' "$PIDS_ORDERED" | grep -c . || echo 0)"
+              PID_TIMELINE="$(printf '%s\n' "$PIDS_ORDERED" | paste -sd' → ' -)"
+              # The dying PID is the SECOND-to-last unique PID in the
+              # timeline because xctest restarts the bundle and the LAST
+              # PID is the post-crash survivor. If only one PID is
+              # observed (no restart), assume it died at the end.
+              if [ "$PID_COUNT" -ge 2 ]; then
+                DYING_PID="$(printf '%s\n' "$PIDS_ORDERED" | sed -n "$((PID_COUNT - 1))p")"
+              else
+                DYING_PID="$(printf '%s\n' "$PIDS_ORDERED" | head -1)"
+              fi
+              if [ -n "$DYING_PID" ]; then
+                # Last test-result line attributed to the dying PID. With
+                # parallel testing this is the LAST test that completed
+                # before the crash — the offender is one of the tests
+                # running concurrently with this one. The next batch of
+                # `##[error]` lines pinned to the same PID is the herd
+                # of tests that got tagged crashed when the bundle died.
+                LAST_RESULT_ON_DYING="$(grep -F "xctest ($DYING_PID)" "$XCBEAUTIFY_LOG" \
+                  | grep -vE "^##\[error\]" \
+                  | tail -1 || true)"
+                # Show the first three crashed-tag lines on the dying PID
+                # so a reader can immediately see the size of the herd
+                # without downloading the xcresult bundle.
+                CRASH_BATCH_ON_DYING="$(grep -E "^##\[error\]" "$XCBEAUTIFY_LOG" \
+                  | grep -F "xctest ($DYING_PID)" \
+                  | head -3 || true)"
+              fi
+            fi
+            {
+              echo "**Mode E — single-process crash (\`$CRASH_MSG\`) — ${CRASH_SHARE} of ${FAILED_COUNT} \"failures\" share this message.**"
+              echo
+              echo "These tests didn't actually fail in their own code — they were scheduled on the xctest process that died and got tagged \"crashed\" en masse when the bundle restarted. The actual culprit is the test that was running in parallel with the crash, which xctest cannot identify on its own."
+              echo
+              if [ -n "$PID_TIMELINE" ]; then
+                echo "**xctest PID timeline:** \`${PID_TIMELINE}\`"
+                echo
+              fi
+              if [ -n "$DYING_PID" ]; then
+                echo "**Dying PID:** \`${DYING_PID}\`"
+                echo
+                if [ -n "$LAST_RESULT_ON_DYING" ]; then
+                  echo "**Last completed test on the dying PID** (the offender ran in parallel with this one — start your bisect with the suite this test belongs to):"
+                  echo
+                  echo '```'
+                  printf '%s\n' "$LAST_RESULT_ON_DYING"
+                  echo '```'
+                  echo
+                fi
+                if [ -n "$CRASH_BATCH_ON_DYING" ]; then
+                  echo "**First few crashed-tag rows on the dying PID** (these are the tests xctest had queued for this PID at the time of the crash; the actual culprit is a sibling running in parallel, NOT one of these):"
+                  echo
+                  echo '```'
+                  printf '%s\n' "$CRASH_BATCH_ON_DYING"
+                  echo '```'
+                  echo
+                fi
+              else
+                echo "_(could not derive a dying PID from the raw log; see the \`Test OsaurusCore\` step output for the last test result line on the dying \`xctest (PID)\` instance)_"
+                echo
+              fi
+              echo "**Next step:** download the \`test-core-diagnostic-reports-${{ github.run_attempt }}\` artifact from this run for the symbolicated \`xctest-*.ips\` crash report; the offending frame is on top of the thread that took the signal. To bisect locally, run the suspect suite with \`-parallel-testing-enabled NO\` and a few neighbouring suites under parallelism. Also see the \`test-core-xcbeautify-log-${{ github.run_attempt }}\` artifact for the unfiltered xctest output."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
           echo "**Mode D — failed test cases:**" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
 
@@ -315,6 +477,50 @@ jobs:
           path: ${{ env.XCRESULT_PATH }}
           retention-days: 7
           if-no-files-found: warn
+
+      - name: Upload xctest crash reports on failure
+        # macOS writes a per-process `.ips` JSON crash report into
+        # `~/Library/Logs/DiagnosticReports/` whenever a process takes a
+        # signal (SIGSEGV, SIGBUS, SIGILL, etc.). The xcresult bundle
+        # itself does NOT include these — the bundled failure message
+        # is just `"Test crashed with signal segv."` with no frame info.
+        # Uploading the raw `.ips` files alongside the xcresult turns
+        # Mode E into a one-step bisect: download the artifact, open the
+        # `xctest-<timestamp>-<pid>.ips`, find the crashing thread's top
+        # frame. Without this, we'd have to ask the runner to keep its
+        # filesystem (it doesn't) or reproduce locally on macOS to get
+        # a stack — both ate hours during the PR #1066 / PR #1068
+        # fallout.
+        #
+        # `if-no-files-found: ignore` because:
+        #   - Compile-time failures (Mode A) leave nothing here.
+        #   - A non-signal failure (Mode D) likewise leaves nothing here
+        #     and shouldn't surface a warning.
+        #   - The artifact uploader interprets `error` as "fail the job"
+        #     and `warn` as "noisy log entry"; neither is what we want
+        #     for the empty-directory case.
+        if: ${{ failure() || cancelled() }}
+        uses: actions/upload-artifact@v5
+        with:
+          name: test-core-diagnostic-reports-${{ github.run_attempt }}
+          path: ~/Library/Logs/DiagnosticReports/
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Upload xcbeautify raw log on failure
+        # The Mode E branch above relies on `XCBEAUTIFY_LOG` to recover
+        # the dying PID and its last `Test Case ... started` line. Keep
+        # the same file as a downloadable artifact so anyone debugging a
+        # crash from the GitHub UI can scroll the unfiltered xctest
+        # output without re-running the job. Costs ~1-2 MB on a normal
+        # run.
+        if: ${{ failure() || cancelled() }}
+        uses: actions/upload-artifact@v5
+        with:
+          name: test-core-xcbeautify-log-${{ github.run_attempt }}
+          path: ${{ env.XCBEAUTIFY_LOG }}
+          retention-days: 7
+          if-no-files-found: ignore
 
       # Save the cache only on `main` so a half-baked PR can never poison it.
       # `actions/cache/save@v5` is a no-op when the key already exists, so a

@@ -326,6 +326,127 @@ struct PluginClarifyEmissionTests {
         #expect((payload?["options"] as? [String]) == ["Postgres", "SQLite"])
     }
 
+    /// Regression guard for the "100+ tests crashed with signal segv"
+    /// pattern that hit `main` after PR #1066 (CI runs 25738325529 and
+    /// 25742705850). The actual crash was a use-after-free in this very
+    /// suite: `clarifyEvent_emittedOnce_noTerminalFollows` would
+    /// `Unmanaged.passRetained(recorder)` and then `release()` it in the
+    /// outer `defer` — but `removeLoadedPluginForTesting` did NOT drain
+    /// the plugin's per-task event dispatch queue first, so a terminal
+    /// event queued by the inner `BackgroundTaskManager.finalizeTask`
+    /// defer would fire AFTER the recorder was deallocated and SIGSEGV
+    /// the entire xctest process. Because the dying process took out
+    /// every test scheduled on the same worker, the failure surfaced as
+    /// 100+ unrelated tests tagged "crashed with signal segv" across
+    /// 50+ suites — the actual culprit was invisible without a
+    /// symbolicated crash report.
+    ///
+    /// This test pins the contract that fixes the crash:
+    /// `removeLoadedPluginForTesting(pluginId:)` MUST synchronously
+    /// drain every pending `notifyTaskEvent` callback for that plugin
+    /// before returning, so a test's matched `Unmanaged.release()` in
+    /// the same `defer` is always safe. We make the contract observable
+    /// by injecting a deliberately-slow event handler (50 ms `usleep`)
+    /// and firing three events across two task IDs immediately before
+    /// `removeLoadedPluginForTesting`. With the drain, the call blocks
+    /// until all three handlers complete; without it, the call returns
+    /// immediately and the counter is still 0.
+    @Test
+    func removeLoadedPluginForTesting_drainsPendingTaskEvents() async throws {
+        final class CallCounter: @unchecked Sendable {
+            private let lock = NSLock()
+            private var _count = 0
+            var count: Int { lock.withLock { _count } }
+            // 50 ms is well above the few µs `q.sync(flags: .barrier)`
+            // takes to schedule on an idle queue — large enough that an
+            // un-drained `removeLoadedPluginForTesting` would race past
+            // the increment and observe `count == 0`.
+            func slowIncrement() {
+                usleep(50_000)
+                lock.withLock { _count += 1 }
+            }
+        }
+
+        let counter = CallCounter()
+        let pluginId = "com.test.drain.\(UUID().uuidString)"
+        let retain = Unmanaged.passRetained(counter)
+        let ctx = retain.toOpaque()
+        // The whole point of the bug was that this `release()` would run
+        // BEFORE pending events drained. With the drain in place, every
+        // queued handler has already completed by the time we get here,
+        // so the release is safe.
+        defer { retain.release() }
+
+        let api = osr_plugin_api(
+            free_string: nil,
+            init: nil,
+            destroy: nil,
+            get_manifest: nil,
+            invoke: nil,
+            version: 2,
+            handle_route: nil,
+            on_config_changed: nil,
+            on_task_event: { ctxPtr, _, _, _ in
+                guard let ctxPtr else { return }
+                let c = Unmanaged<CallCounter>.fromOpaque(ctxPtr).takeUnretainedValue()
+                c.slowIncrement()
+            }
+        )
+        let manifest = PluginManifest(
+            plugin_id: pluginId,
+            description: nil,
+            capabilities: .init(tools: nil, routes: nil, config: nil, web: nil, artifact_handler: nil),
+            instructions: nil,
+            name: nil,
+            version: nil,
+            license: nil,
+            authors: nil,
+            min_macos: nil,
+            min_osaurus: nil,
+            secrets: nil,
+            docs: nil
+        )
+        let plugin = ExternalPlugin(
+            handle: ctx,
+            api: api,
+            ctx: ctx,
+            manifest: manifest,
+            path: "/tmp/test-\(pluginId)",
+            abiVersion: 2
+        )
+        let loaded = PluginManager.LoadedPlugin(
+            plugin: plugin,
+            handle: ctx,
+            tools: [],
+            skills: [],
+            routes: [],
+            webConfig: nil,
+            readmePath: nil,
+            changelogPath: nil
+        )
+
+        let mgr = PluginManager.shared
+        mgr.injectLoadedPluginForTesting(loaded)
+
+        // Fan-out: two events on `task-1` (same serial queue) and one on
+        // `task-2` (separate serial queue). The drain must wait for
+        // BOTH per-task queues, not just the first one created.
+        plugin.notifyTaskEvent(taskId: "task-1", eventType: .clarification, eventJSON: "{}")
+        plugin.notifyTaskEvent(taskId: "task-1", eventType: .clarification, eventJSON: "{}")
+        plugin.notifyTaskEvent(taskId: "task-2", eventType: .clarification, eventJSON: "{}")
+
+        // The synchronous contract: when `removeLoadedPluginForTesting`
+        // returns, ALL three queued events have run to completion. The
+        // pre-fix behavior returned immediately and observed
+        // `counter.count == 0`.
+        mgr.removeLoadedPluginForTesting(pluginId: pluginId)
+
+        #expect(
+            counter.count == 3,
+            "removeLoadedPluginForTesting must synchronously drain pending events; counter was \(counter.count) (expected 3)"
+        )
+    }
+
     /// After the user answers, the next streaming-end DOES emit a
     /// COMPLETED event — confirming the suppression is a per-pause
     /// guard, not a permanent block.

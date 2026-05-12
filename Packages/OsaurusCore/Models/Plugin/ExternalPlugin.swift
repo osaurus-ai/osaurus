@@ -633,6 +633,45 @@ final class ExternalPlugin: @unchecked Sendable {
     var hasRouteHandler: Bool { abiVersion >= 2 && api.handle_route != nil }
     var hasTaskEventHandler: Bool { abiVersion >= 2 && api.on_task_event != nil }
 
+    #if DEBUG
+        /// Test-only: synchronously drains every per-task event queue and the
+        /// config event queue, then returns. Intended to be called from the
+        /// matched `removeLoadedPluginForTesting` cleanup so that any
+        /// pending `notifyTaskEvent` / `notifyConfigBatch` callbacks have
+        /// fired BEFORE the test's `Unmanaged.passRetained(...).release()`
+        /// runs on the recorder it owns.
+        ///
+        /// Why this exists: the test seam in `PluginManager`
+        /// (`removeLoadedPluginForTesting`) historically just dropped the
+        /// plugin from `plugins`. The test then released its
+        /// `Unmanaged<TaskEventRecorder>` retain in the same `defer`. Any
+        /// event already enqueued on this plugin's per-task serial queue
+        /// (typically a terminal event from `BackgroundTaskManager
+        /// .finalizeTask` running in the inner `defer`) would fire AFTER
+        /// the recorder was deallocated, dereferencing freed memory through
+        /// the opaque `ctx` pointer and SIGSEGV-ing the xctest process.
+        /// Symptom: 100+ tests across 50+ unrelated suites tagged
+        /// "Test crashed with signal segv." in CI run 25738325529 (PR
+        /// #1066). The actual offender — `PluginClarifyEmissionTests
+        /// .clarifyEvent_emittedOnce_noTerminalFollows()` — was running in
+        /// parallel with the dying batch, which xctest cannot identify on
+        /// its own.
+        ///
+        /// `q.sync(flags: .barrier)` blocks the caller until the queue is
+        /// idle. Safe to call from a `@MainActor` test body because the
+        /// per-task event closures are pure CPU work (lock + Array
+        /// append) and never re-enter the main actor.
+        func drainEventQueuesForTesting() {
+            let queues: [DispatchQueue] = taskEventQueuesLock.withLock {
+                Array(taskEventQueues.values)
+            }
+            for q in queues {
+                q.sync(flags: .barrier) {}
+            }
+            configEventQueue.sync {}
+        }
+    #endif
+
     /// Tears down the plugin context by draining the per-task event queues
     /// and the config event queue first, then the invoke queue (barrier),
     /// before calling `destroy`. Uses async dispatch so the destroy callback
