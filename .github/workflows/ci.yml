@@ -376,8 +376,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v5
 
-      - name: Install shellcheck
-        run: sudo apt-get update && sudo apt-get install -y shellcheck
-
       - name: Lint shell scripts
-        run: find scripts -name '*.sh' -print0 | xargs -0 shellcheck --severity=warning
+        run: |
+          shellcheck --version
+          find scripts -name '*.sh' -print0 | xargs -0 shellcheck --severity=warning

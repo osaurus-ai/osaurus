@@ -513,6 +513,10 @@ struct ChatCompletionRequest: Codable, Sendable {
     /// Per-request thinking toggle. Translated to `modelOptions["disableThinking"]`
     /// at request entry; absent preserves server defaults.
     var enable_thinking: Bool? = nil
+    /// OpenAI-compatible reasoning effort. Local Hy3 uses this as the native
+    /// `reasoning_effort` chat-template kwarg; remote providers forward it
+    /// natively where supported.
+    var reasoning_effort: String? = nil
 
     /// Resolved max tokens, preferring max_tokens then max_completion_tokens.
     var resolvedMaxTokens: Int? { max_tokens ?? max_completion_tokens }
@@ -522,7 +526,7 @@ struct ChatCompletionRequest: Codable, Sendable {
         case frequency_penalty, presence_penalty, stop, n
         case tools, tool_choice, session_id
         case seed, response_format, stream_options
-        case enable_thinking
+        case enable_thinking, reasoning_effort
     }
 
     func withModel(_ newModel: String) -> ChatCompletionRequest {
@@ -545,6 +549,9 @@ struct ChatCompletionRequest: Codable, Sendable {
             stream_options: stream_options
         )
         copy.modelOptions = modelOptions
+        copy.ttftTrace = ttftTrace
+        copy.enable_thinking = enable_thinking
+        copy.reasoning_effort = reasoning_effort
         return copy
     }
 }

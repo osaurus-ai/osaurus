@@ -63,7 +63,8 @@ protocol ModelProfile: Sendable {
     static var defaults: [String: ModelOptionValue] { get }
 
     /// Mapping for a dedicated "Thinking/Reasoning" toggle in the input area.
-    /// Returns the option ID (like "disableThinking") and whether true means "Enabled".
+    /// Returns the option ID (like "disableThinking") and whether the stored
+    /// boolean is inverted (`true` means disabled, so the UI shows OFF).
     static var thinkingOption: (id: String, inverted: Bool)? { get }
 }
 
@@ -80,8 +81,9 @@ enum ModelProfileRegistry {
         QwenThinkingProfile.self,
         NemotronThinkingProfile.self,
         LagunaThinkingProfile.self,
+        Hy3ReasoningProfile.self,
         LingRuntimeProfile.self,
-        ZayaRuntimeProfile.self,
+        ZayaThinkingProfile.self,
         Gemini31FlashImageProfile.self,
         GeminiProImageProfile.self,
         GeminiFlashImageProfile.self,
@@ -113,6 +115,29 @@ enum ModelProfileRegistry {
             values[id] = value
         }
         return values
+    }
+
+    static func boolOptionValue(
+        for modelId: String,
+        optionId: String,
+        values: [String: ModelOptionValue]
+    ) -> Bool? {
+        if let value = values[optionId]?.boolValue {
+            return value
+        }
+        return defaults(for: modelId)[optionId]?.boolValue
+    }
+
+    static func thinkingEnabled(
+        for modelId: String,
+        values: [String: ModelOptionValue]
+    ) -> Bool? {
+        guard let option = profile(for: modelId)?.thinkingOption,
+              let value = boolOptionValue(for: modelId, optionId: option.id, values: values)
+        else {
+            return nil
+        }
+        return option.inverted ? !value : value
     }
 }
 
@@ -255,6 +280,56 @@ struct LagunaThinkingProfile: ModelProfile {
     static let thinkingOption: (id: String, inverted: Bool)? = ("disableThinking", true)
 }
 
+// MARK: - Hy3 Reasoning Profile
+
+/// Tencent Hunyuan v3 / Hy3 (`model_type=hy_v3`) uses a `reasoning_effort`
+/// chat-template kwarg instead of the boolean `enable_thinking` convention.
+/// The shipped template defaults to `no_think` and opens `<think>` only for
+/// `low` / `high`, so expose the native effort values rather than mapping it
+/// through the generic Disable Thinking toggle.
+struct Hy3ReasoningProfile: ModelProfile {
+    static let displayName = "Hy3 Reasoning"
+
+    static func matches(modelId: String) -> Bool {
+        let lower = modelId.lowercased()
+        return lower.contains("hy3")
+            || lower.contains("hy-v3")
+            || lower.contains("hy_v3")
+            || lower.contains("hunyuan-v3")
+            || lower.contains("hunyuan_v3")
+    }
+
+    static let options: [ModelOptionDefinition] = [
+        ModelOptionDefinition(
+            id: "reasoningEffort",
+            label: "Reasoning Effort",
+            icon: "brain.head.profile",
+            kind: .segmented([
+                ModelOptionSegment(id: "no_think", label: "Off"),
+                ModelOptionSegment(id: "low", label: "Low"),
+                ModelOptionSegment(id: "high", label: "High"),
+            ])
+        )
+    ]
+
+    static let defaults: [String: ModelOptionValue] = [
+        "reasoningEffort": .string("no_think")
+    ]
+
+    static func normalizedEffort(_ value: String) -> String {
+        switch value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "no_think", "none", "off", "disabled", "false":
+            return "no_think"
+        case "low":
+            return "low"
+        case "high", "medium", "max", "maximum":
+            return "high"
+        default:
+            return "no_think"
+        }
+    }
+}
+
 // MARK: - Ling Runtime Profile
 
 /// Ling-2.6 Flash (`model_type=bailing_hybrid`) is served as a non-reasoning
@@ -273,27 +348,37 @@ struct LingRuntimeProfile: ModelProfile {
     static let defaults: [String: ModelOptionValue] = [:]
 }
 
-// MARK: - Zaya Runtime Profile
+// MARK: - Zaya Thinking Profile
 
 /// ZAYA1 (Zyphra; `model_type=zaya`) — hybrid CCA-attention bundles
-/// (BF16 base + JANGTQ2 / JANGTQ4 / MXFP4 routed-expert variants). Per the
-/// 2026-05-06 vmlx Osaurus runtime handoff, ZAYA is served as non-reasoning
-/// in osaurus until the JANGTQ thinking-on path is verified to close
-/// reasoning and emit visible content. The chat template ships standard
-/// `<think>` markers and an `enable_thinking` Jinja kwarg, so without this
-/// reservation `AutoThinkingProfile` would expose a misleading Thinking
-/// toggle. `MLXBatchAdapter` separately forces `enable_thinking=false` for
-/// ZAYA at tokenization, and vmlx's `LLMUserInputProcessor.defaultContext`
-/// clamps the same value for `model_type=zaya`/`zyphra` as defense in depth.
-struct ZayaRuntimeProfile: ModelProfile {
-    static let displayName = "Zaya"
+/// (BF16 base + JANGTQ2 / JANGTQ4 / MXFP4 routed-expert variants). ZAYA is
+/// reasoning-capable, but its template default is a closed/no-thinking
+/// assistant prefix (`think_in_template=false`): callers must opt in with
+/// `enable_thinking=true` to open a reasoning block. The profile therefore
+/// exposes the standard Disable Thinking toggle and defaults it ON, while
+/// still allowing users/API callers to enable thinking per request.
+struct ZayaThinkingProfile: ModelProfile {
+    static let displayName = "Zaya Thinking"
 
     static func matches(modelId: String) -> Bool {
         ModelFamilyNames.isZayaFamily(modelId)
+            && !ModelFamilyNames.isZayaVLFamily(modelId)
     }
 
-    static let options: [ModelOptionDefinition] = []
-    static let defaults: [String: ModelOptionValue] = [:]
+    static let options: [ModelOptionDefinition] = [
+        ModelOptionDefinition(
+            id: "disableThinking",
+            label: "Disable Thinking",
+            icon: "brain.head.profile",
+            kind: .toggle(default: true)
+        )
+    ]
+
+    static let defaults: [String: ModelOptionValue] = [
+        "disableThinking": .bool(true)
+    ]
+
+    static let thinkingOption: (id: String, inverted: Bool)? = ("disableThinking", true)
 }
 
 // MARK: - Auto Thinking Profile (chat-template driven)

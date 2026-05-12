@@ -239,4 +239,38 @@ struct LocalReasoningCapabilityTests {
 
         #expect(LocalReasoningCapability.readJangConfigReasoning(at: tmp) == nil)
     }
+
+    @Test("Filesystem: VLM chat_template.json sidecar wins when tokenizer_config is text-only")
+    func filesystemVisionSidecarWinsOverTextOnlyTokenizerTemplate() throws {
+        let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent(
+                "osaurus-reasoning-vlm-sidecar-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        try FileManager.default.createDirectory(
+            at: tmp,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        try #"""
+        {"chat_template": "{% for m in messages %}<|im_start|>{{ m.role }}\n{{ m.content }}<|im_end|>{% endfor %}"}
+        """#.write(
+            to: tmp.appendingPathComponent("tokenizer_config.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try #"""
+        {"chat_template": "{% for m in messages %}<|vision_start|><|image_pad|><|vision_end|>{{ m.content }}<|im_end|>{% endfor %}"}
+        """#.write(
+            to: tmp.appendingPathComponent("chat_template.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let template = try #require(LocalReasoningCapability.readChatTemplate(at: tmp))
+        #expect(template.contains("<|vision_start|>"))
+        #expect(template.contains("<|image_pad|>"))
+        #expect(!LocalReasoningCapability.analyze(template: template).isToggleableThinking)
+    }
 }

@@ -8,6 +8,65 @@
 import Foundation
 import Combine
 
+private let toolBodyTimeoutQueue = DispatchQueue(label: "ai.osaurus.tool-registry.timeout")
+
+private final class ToolBodyRaceState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var didResume = false
+    private var pendingResult: String?
+    private var continuation: CheckedContinuation<String, Never>?
+    private var bodyTask: Task<Void, Never>?
+    private var timeoutTimer: DispatchSourceTimer?
+
+    func install(continuation: CheckedContinuation<String, Never>) {
+        lock.lock()
+        if didResume, let pendingResult {
+            self.pendingResult = nil
+            lock.unlock()
+            continuation.resume(returning: pendingResult)
+            return
+        }
+        self.continuation = continuation
+        lock.unlock()
+    }
+
+    func setTasks(bodyTask: Task<Void, Never>, timeoutTimer: DispatchSourceTimer) {
+        lock.lock()
+        if didResume {
+            lock.unlock()
+            bodyTask.cancel()
+            timeoutTimer.cancel()
+            return
+        }
+        self.bodyTask = bodyTask
+        self.timeoutTimer = timeoutTimer
+        lock.unlock()
+    }
+
+    func complete(_ result: String) {
+        lock.lock()
+        guard !didResume else {
+            lock.unlock()
+            return
+        }
+        didResume = true
+        let continuation = self.continuation
+        if continuation == nil {
+            pendingResult = result
+        }
+        self.continuation = nil
+        let bodyTask = self.bodyTask
+        let timeoutTimer = self.timeoutTimer
+        self.bodyTask = nil
+        self.timeoutTimer = nil
+        lock.unlock()
+
+        bodyTask?.cancel()
+        timeoutTimer?.cancel()
+        continuation?.resume(returning: result)
+    }
+}
+
 @MainActor
 final class ToolRegistry: ObservableObject {
     static let shared = ToolRegistry()
@@ -428,13 +487,12 @@ final class ToolRegistry: ObservableObject {
     /// tests can drive it with a small `timeoutSeconds` value without
     /// waiting for the full 120s production budget.
     ///
-    /// Each branch of the race converts thrown errors (including
-    /// `CancellationError` from the loser when we `cancelAll`) into a
-    /// structured `ToolEnvelope` *inside* its child task. That keeps
-    /// `withTaskGroup` non-throwing and prevents the cancelled sibling's
-    /// post-return throw from reaching the caller as the function's
-    /// error — historically the slow-tool case rethrew CancellationError
-    /// and stalled while the group drained.
+    /// This intentionally does not use `withTaskGroup`: structured child
+    /// groups must drain before returning, so a non-cooperative tool body
+    /// that ignores cancellation can still hold the caller until it exits.
+    /// The timeout branch also uses a dedicated GCD timer queue rather than
+    /// `Task.sleep`, because a saturated Swift executor can otherwise delay
+    /// the "wall-clock" timeout behind unrelated async work.
     internal nonisolated static func runToolBody(
         _ tool: OsaurusTool,
         argumentsJSON: String,
@@ -448,49 +506,39 @@ final class ToolRegistry: ObservableObject {
             tool: toolName,
             retryable: true
         )
-        // Sentinel returned by the cancelled loser branch so the
-        // consumer loop knows to ignore it. Cannot collide with any
-        // legitimate envelope because real envelopes are JSON.
-        let cancelledSentinel = "__osaurus_runToolBody_cancelled__"
+        let cancellationEnvelope = ToolEnvelope.failure(
+            kind: .executionError,
+            message: "Tool '\(toolName)' was cancelled.",
+            tool: toolName,
+            retryable: false
+        )
+        let race = ToolBodyRaceState()
 
-        return await withTaskGroup(of: String.self) { group in
-            group.addTask {
-                do {
-                    return try await tool.execute(argumentsJSON: argumentsJSON)
-                } catch is CancellationError {
-                    return cancelledSentinel
-                } catch {
-                    return ToolEnvelope.fromError(error, tool: toolName)
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                race.install(continuation: continuation)
+                let timeoutTimer = DispatchSource.makeTimerSource(queue: toolBodyTimeoutQueue)
+                let timeoutNanoseconds = max(0, Int(timeoutSeconds * 1_000_000_000))
+                timeoutTimer.schedule(deadline: .now() + .nanoseconds(timeoutNanoseconds))
+                timeoutTimer.setEventHandler {
+                    race.complete(timeoutEnvelope)
                 }
-            }
-            group.addTask {
-                let nanos = UInt64(timeoutSeconds * 1_000_000_000)
-                do {
-                    try await Task.sleep(nanoseconds: nanos)
-                } catch {
-                    // Cancelled because the body finished first — yield
-                    // the sentinel so the caller's first non-sentinel
-                    // result wins.
-                    return cancelledSentinel
-                }
-                return timeoutEnvelope
-            }
+                timeoutTimer.resume()
 
-            // The first non-sentinel result is the winner; cancel the
-            // sibling and let `withTaskGroup` auto-drain on closure
-            // return. The drain is safe because every child branch
-            // converts its own errors into envelope strings — there
-            // are no uncaught throws to surface.
-            for await result in group {
-                if result == cancelledSentinel { continue }
-                group.cancelAll()
-                return result
+                let bodyTask = Task {
+                    do {
+                        let result = try await tool.execute(argumentsJSON: argumentsJSON)
+                        race.complete(result)
+                    } catch is CancellationError {
+                        race.complete(cancellationEnvelope)
+                    } catch {
+                        race.complete(ToolEnvelope.fromError(error, tool: toolName))
+                    }
+                }
+                race.setTasks(bodyTask: bodyTask, timeoutTimer: timeoutTimer)
             }
-            return ToolEnvelope.failure(
-                kind: .executionError,
-                message: "Tool '\(toolName)' produced no result.",
-                tool: toolName
-            )
+        } onCancel: {
+            race.complete(cancellationEnvelope)
         }
     }
 

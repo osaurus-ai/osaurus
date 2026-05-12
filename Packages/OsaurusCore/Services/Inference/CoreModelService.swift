@@ -92,6 +92,26 @@ public actor CoreModelService {
         timeout: TimeInterval = 60,
         fallbackModel: String? = nil
     ) async throws -> String {
+        try await generate(
+            prompt: prompt,
+            systemPrompt: systemPrompt,
+            temperature: temperature,
+            maxTokens: maxTokens,
+            timeout: timeout,
+            fallbackModel: fallbackModel,
+            modelOptions: [:]
+        )
+    }
+
+    func generate(
+        prompt: String,
+        systemPrompt: String? = nil,
+        temperature: Double = 0.3,
+        maxTokens: Int = 2048,
+        timeout: TimeInterval = 60,
+        fallbackModel: String? = nil,
+        modelOptions: [String: ModelOptionValue]
+    ) async throws -> String {
         try checkBreakerOrEnterHalfOpen()
 
         let configured = await MainActor.run {
@@ -99,7 +119,11 @@ public actor CoreModelService {
         }
         let fallback = Self.normaliseFallback(fallbackModel)
         let messages = buildMessages(prompt: prompt, systemPrompt: systemPrompt)
-        let params = GenerationParameters(temperature: Float(temperature), maxTokens: maxTokens)
+        let params = GenerationParameters(
+            temperature: Float(temperature),
+            maxTokens: maxTokens,
+            modelOptions: modelOptions
+        )
 
         do {
             return try await runWithChatModelFallback(

@@ -52,17 +52,47 @@ struct RuntimePolicySourceTests {
     @Test("vmlx pin includes Ling multi-turn + ZAYA hardening commit")
     func vmlxPinIncludesRuntimeHardening() throws {
         let manifest = try Self.source("Package.swift")
+        let workspaceResolved = try Self.source(
+            "../../osaurus.xcworkspace/xcshareddata/swiftpm/Package.resolved"
+        )
+        let appResolved = try Self.source(
+            "../../App/osaurus.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved"
+        )
 
-        // Bumped 2026-05-07 from 4a832400 (DSV4 + Laguna) to b9da180
-        // (BailingHybrid B>1 RoPE/per-slot offsets, ZAYA1 CCA hybrid,
-        // ReasoningParser prompt-tail, Gemma4 SWA, audio MediaSalt; PLUS
-        // BatchEngine isShutdown/updateMaxBatchSize/controlPlaneYield,
-        // BailingLinearAttention.recurrentGLA fused Metal kernel, and
-        // .info-before-cacheStoreAction reordering). The earlier comments
-        // still document DSV4Cache and Laguna so those content anchors
-        // remain valid as a smoke that the bump narrative wasn't dropped
-        // wholesale.
-        #expect(manifest.contains("b9da180158365c20a0fab130217e4fa50b8ec674"))
+        // Bumped 2026-05-10 from b9da180 to ac60b5d. This keeps the
+        // 2026-05-07 Bailing/ZAYA/Gemma4/Ling hardening and adds the
+        // Osaurus readiness wave: Hy3 native runtime, native ZAYA1-VL
+        // image/text generation with disk-backed CCA cache restore,
+        // reasoning/media cache-scope salt, generation_config defaults,
+        // JANGTQ top-k override plumbing, B>1 admission coalescing, and
+        // the MiniMax B=1 BatchEngine speed restoration. It also keeps bare
+        // `zaya` out of the VLM registry so text bundles stay on MLXLLM, closes
+        // the solo lifecycle completion race, indexes pre-stacked streaming
+        // experts, advances Qwen3.5-VL gated-delta cache offsets, and routes
+        // MiniMax tool-call wrappers correctly through reasoning streams. It
+        // also synthesizes terminal `.info` on early token-stream close so
+        // reasoning-only completions preserve final stats and `unclosedReasoning`.
+        // `fee2583` reverts a later MiniMax blank-content watchdog, keeping this
+        // pin free of heuristic generation cutoffs. `bf4087f` then keeps
+        // MiniMax tool-call parsing lossless so invalid tag-looking reasoning
+        // text cannot freeze behind a missing closing wrapper. `ac60b5d` also
+        // widens defensive EOS token coverage for Laguna / wide-pipe
+        // DeepSeek-style bundles in both generation paths. `d8c2bb2` keeps
+        // TokenIterator's B=1 disk-cache restore materialization aligned with
+        // BatchEngine. `541b380` hardens MiniMax close-token detection and
+        // removes Hy3's per-token fp32 dequantized lm_head hot path. `78cf6ac`
+        // adds Gemma4 PLE-off config tolerance, process-wide safetensors disk
+        // cache IO serialization, MiniMax compile denial / forced-close removal,
+        // B=1 full-cache-hit trimming, `reasoning_content` plumbing, ZAYA
+        // reasoning stamps, and JangPress overlay load hygiene.
+        #expect(manifest.contains("78cf6ac9dd1742c51a8f737bd4abe6c68282072e"))
+        #expect(workspaceResolved.contains("78cf6ac9dd1742c51a8f737bd4abe6c68282072e"))
+        #expect(appResolved.contains("78cf6ac9dd1742c51a8f737bd4abe6c68282072e"))
+        #expect(!workspaceResolved.contains("541b380784f812eef9098f370eebaea2ae4948c9"))
+        #expect(!appResolved.contains("541b380784f812eef9098f370eebaea2ae4948c9"))
+        #expect(!workspaceResolved.contains("f07214428be2a6ab742a992075c844f2c78dabaf"))
+        #expect(!appResolved.contains("f07214428be2a6ab742a992075c844f2c78dabaf"))
+        #expect(manifest.contains("d8c2bb2"))
         #expect(manifest.contains("DeepseekV4Cache"))
         #expect(manifest.contains("Laguna include-only bundles"))
     }
@@ -79,7 +109,7 @@ struct RuntimePolicySourceTests {
         let contributing = try Self.source("../../docs/CONTRIBUTING.md")
 
         #expect(manifest.contains("https://github.com/osaurus-ai/swift-transformers"))
-        #expect(manifest.contains("b4a094b34b997167549c7f45bde16c80f18ed5a8"))
+        #expect(manifest.contains("087a66b17e482220b94909c5cf98688383ae481a"))
         #expect(manifest.contains("https://github.com/osaurus-ai/Jinja.git"))
         #expect(manifest.contains("58d21aa5b69fdd9eb7e23ce2c3730f47db8e0c9d"))
         #expect(manifest.contains(".product(name: \"Jinja\", package: \"jinja\")"))
@@ -121,6 +151,18 @@ struct RuntimePolicySourceTests {
         )
     }
 
+    @Test("Flexible model residency respects load-time memory budget")
+    func flexibleModelResidencyEvictsBeforeOversizedLoads() throws {
+        let runtime = try Self.source("Services/ModelRuntime.swift")
+
+        #expect(runtime.contains("flexibleResidentBudgetBytes"))
+        #expect(runtime.contains("ProcessInfo.processInfo.physicalMemory) * 0.70"))
+        #expect(runtime.contains("unloadForFlexibleResidentBudget"))
+        #expect(runtime.contains("policy == .manualMultiModel"))
+        #expect(runtime.contains("flexible budget eviction"))
+        #expect(runtime.contains("incomingWeightsSizeBytes"))
+    }
+
     /// Lock the `.engineShutdown` evict-and-rebuild path. If
     /// `BatchEngine.updateMaxBatchSize(_:)` throws `engineShutdown`
     /// (the cached engine has been torn down between calls), the
@@ -153,6 +195,130 @@ struct RuntimePolicySourceTests {
         )
     }
 
+    /// With the default `maxBatchSize == 1`, vmlx can use its solo
+    /// TokenIterator-backed fast path. Osaurus must not let a second same-model
+    /// request run prompt tokenization / `MLXArray.asArray(...)` while that
+    /// decode is still active; the 2026-05-10 MiniMax crash report showed the
+    /// exact Metal overlap (`TokenIterator.next()` plus `prepareInput`).
+    @Test("MLXBatchAdapter gates same-model solo generation and propagates stream cancellation")
+    func mlxBatchAdapterGatesSoloGenerationAndCancelsProducer() throws {
+        let adapter = try Self.source("Services/ModelRuntime/MLXBatchAdapter.swift")
+
+        #expect(adapter.contains("actor SoloGenerationGate"))
+        #expect(adapter.contains("maxBatchSize == 1"))
+        #expect(adapter.contains("acquireSoloLease"))
+        #expect(adapter.contains("await soloLease.release()"))
+        #expect(
+            adapter.contains("continuation.onTermination = { @Sendable _ in")
+                && adapter.contains("producerTask.cancel()"),
+            "adapter stream termination must cancel the producer so UI Stop reaches vmlx's upstream AsyncStream termination handler"
+        )
+    }
+
+    /// The terminal `.info` event carries stopReason, token counts, and
+    /// `unclosedReasoning`. Dropping it is exactly how a reasoning-only MiniMax
+    /// run can finish with a visible Thinking pane but no "thinking did not
+    /// close" diagnostic. Cancellation must not be checked before preserving
+    /// `.info` / stats sentinels at any Osaurus stream boundary.
+    @Test("Generation stream wrappers preserve terminal info before honoring cancellation")
+    func generationWrappersPreserveTerminalInfoBeforeCancellation() throws {
+        let mapper = try Self.source("Services/ModelRuntime/GenerationEventMapper.swift")
+        let adapter = try Self.source("Services/ModelRuntime/MLXBatchAdapter.swift")
+        let runtime = try Self.source("Services/ModelRuntime.swift")
+        let chatEngine = try Self.source("Services/Chat/ChatEngine.swift")
+
+        #expect(
+            !mapper.contains("for await event in events {\n                    if Task.isCancelled { break }\n                    switch event"),
+            "GenerationEventMapper must switch on `.info` before checking Task.isCancelled, otherwise final stats/unclosedReasoning can be lost"
+        )
+        #expect(
+            !adapter.contains("for await event in upstream {\n                    if Task.isCancelled { break }\n                    continuation.yield(event)\n                }"),
+            "MLXBatchAdapter must preserve upstream `.info` before honoring cancellation, otherwise vmlx's final cancelled/length/stop event is dropped"
+        )
+        #expect(
+            adapter.contains("if !Task.isCancelled {\n                        continuation.yield(event)\n                    }"),
+            "MLXBatchAdapter must keep draining cancelled upstream streams until `.info`, while suppressing only non-terminal deltas after cancellation"
+        )
+        #expect(
+            !adapter.contains("onCancel: {\n                // The upstream stream is bound to a single request inside\n                // the engine; cancelling the consumer task closes it\n                // cooperatively (engine emits a final `.info(.cancelled)`\n                // and finishes the stream).\n                continuation.finish()\n            }"),
+            "MLXBatchAdapter's cancellation handler must not immediately finish the wrapper stream while its producer can still drain vmlx's terminal `.info`"
+        )
+        #expect(
+            !runtime.contains("for try await ev in events {\n                    if Task.isCancelled {\n                        continuation.finish()\n                        return\n                    }\n                    switch ev"),
+            "ModelRuntime.streamWithTools must encode `.completionInfo` into StreamingStatsHint before honoring cancellation"
+        )
+        #expect(
+            !chatEngine.contains("for try await delta in inner {\n                    // Check for task cancellation to allow early termination\n                    if Task.isCancelled"),
+            "ChatEngine stream logging wrapper must pass StreamingStatsHint through before honoring cancellation"
+        )
+    }
+
+    /// Preflight tool selection is a background prompt-ranking call, not the user's
+    /// answer. It can fall back to the active chat model, so reasoning families
+    /// must be forced onto their short non-thinking path or they can monopolize
+    /// the single B=1 engine slot before the real chat request starts.
+    @Test("Preflight fallback LLM forces no-think model options")
+    func preflightFallbackLLMForcesNoThinkOptions() throws {
+        let coreModel = try Self.source("Services/Inference/CoreModelService.swift")
+        let preflight = try Self.source("Services/Context/PreflightCapabilitySearch.swift")
+
+        #expect(
+            coreModel.contains("modelOptions: [String: ModelOptionValue]"),
+            "CoreModelService.generate must provide an internal per-call modelOptions path so background callers can choose non-thinking rails without exposing internal option types as public API"
+        )
+        #expect(
+            coreModel.contains("modelOptions: modelOptions"),
+            "CoreModelService.generate must thread modelOptions into GenerationParameters before routing to MLX/remote services"
+        )
+        #expect(
+            preflight.contains("modelOptions: [\"reasoningEffort\": .string(\"no_think\")]"),
+            "PreflightCapabilitySearch.defaultLLM must force no_think so Hy3/ZAYA/Qwen-style reasoning templates do not spend the tool-ranking timeout generating long reasoning traces"
+        )
+    }
+
+    @Test("MLXBatchAdapter image preprocessing preserves media, reasoning, and tool metadata")
+    func mlxBatchAdapterPreprocessingPreservesMediaReasoningAndToolMetadata() throws {
+        let adapter = try Self.source("Services/ModelRuntime/MLXBatchAdapter.swift")
+        guard let rebuildRange = adapter.range(of: "return MLXLMCommon.Chat.Message(") else {
+            Issue.record("Could not find Chat.Message rebuild in MLXBatchAdapter.preprocessImages")
+            return
+        }
+        let rebuild = adapter[rebuildRange.lowerBound...]
+            .prefix(while: { $0 != ")" })
+
+        #expect(rebuild.contains("images: processedImages"))
+        #expect(rebuild.contains("videos: message.videos"))
+        #expect(
+            rebuild.contains("audios: message.audios"),
+            "preprocessImages must not drop audio inputs before vmlx omni/audio tokenization"
+        )
+        #expect(
+            rebuild.contains("reasoningContent: message.reasoningContent"),
+            "preprocessImages must not drop assistant reasoning history before vmlx Jinja templates render message.reasoning_content"
+        )
+        #expect(rebuild.contains("toolCalls: message.toolCalls"))
+        #expect(rebuild.contains("toolCallId: message.toolCallId"))
+    }
+
+    @Test("HTTP streams preserve stats hints before generic sentinel filters")
+    func httpStreamsPreserveStatsHintsBeforeGenericSentinelFilters() throws {
+        let handler = try Self.source("Networking/HTTPHandler.swift")
+
+        let segments = handler.components(separatedBy: "StreamingToolHint.isSentinel(delta)")
+
+        #expect(
+            segments.count == 6,
+            "HTTPHandler should have five generic StreamingToolHint sentinel filters; update this guard when adding another HTTP stream writer"
+        )
+
+        for segment in segments.dropLast() {
+            #expect(
+                segment.contains("StreamingStatsHint.decode(delta)"),
+                "Each HTTP stream writer must decode StreamingStatsHint before the generic U+FFFE sentinel filter, otherwise API usage stats and unclosedReasoning are dropped"
+            )
+        }
+    }
+
     /// Lock the removal of the `activeGenerationTask?.value` gate at
     /// the entry of `generateEventStream`. The gate was serializing
     /// every same-model overlapping request before vmlx's `BatchEngine`
@@ -183,9 +349,62 @@ struct RuntimePolicySourceTests {
         // The cancelActiveGeneration helper still legitimately awaits
         // the task; that's fine and remains in the file.
         #expect(
-            runtime.contains("private func cancelActiveGeneration() async {"),
+            runtime.contains("private func cancelActiveGeneration(for modelName: String? = nil) async {"),
             "cancelActiveGeneration() must still exist for shutdown / clearAll cancellation paths"
         )
+        #expect(
+            runtime.contains("if let modelName, record.modelName != modelName { return }"),
+            "ModelRuntime.unload(name:) must not cancel a generation belonging to a different model"
+        )
+        #expect(
+            runtime.contains("await cancelActiveGeneration(for: name)"),
+            "ModelRuntime.unload(name:) must scope defensive cancellation to the model being unloaded"
+        )
+    }
+
+    /// Lock the cold-load drain discipline. Swift task cancellation is
+    /// cooperative; a cancelled `loadModelContainer` can still be inside MLX
+    /// weight materialization. Starting a replacement load before the old task
+    /// drains leaves two independent MLX load/eval paths racing on Metal.
+    @Test("ModelRuntime drains superseded cold loads before starting replacements")
+    func modelRuntimeDrainsSupersededColdLoads() throws {
+        let runtime = try Self.source("Services/ModelRuntime.swift")
+
+        #expect(runtime.contains("private struct LoadingTaskRecord"))
+        #expect(runtime.contains("supersededLoadingTaskIDs"))
+        #expect(runtime.contains("private func cancelAndDrainLoadingTasks"))
+        #expect(runtime.contains("record.task.cancel()"))
+        #expect(runtime.contains("try? await record.task.value"))
+        #expect(runtime.contains("holder.container.disableCaching()"))
+        #expect(runtime.contains("loadContainer: strict drain of in-flight load"))
+        #expect(runtime.contains("return try await finishLoadedContainer"))
+        #expect(
+            !runtime.contains("loadingTasks[other]?.cancel()"),
+            "Strict single-model replacement must not fire-and-forget cancel an in-flight model load"
+        )
+    }
+
+    @Test("ModelRuntime uses typed vmlx load configuration")
+    func modelRuntimeUsesTypedVMLXLoadConfiguration() throws {
+        let runtime = try Self.source("Services/ModelRuntime.swift")
+
+        #expect(runtime.contains("loadConfiguration: .default"))
+        #expect(
+            !runtime.contains("loadModelContainer(\n                from: localURL,\n                using: tokenizerLoader\n            )"),
+            "ModelRuntime must not use the plain local-directory load overload; it bypasses vmlx LoadConfiguration.default, including load-time memory caps, mmap safetensors, and JANGTQ prestack/alignment"
+        )
+    }
+
+    @Test("ModelRuntime does not block model-ready on hidden Hy3 warmup generation")
+    func modelRuntimeDoesNotBlockModelReadyOnHy3WarmupGeneration() throws {
+        let runtime = try Self.source("Services/ModelRuntime.swift")
+
+        #expect(
+            !runtime.contains("runPostLoadWarmupIfNeeded("),
+            "ModelRuntime must not await a hidden Hy3 generation inside loadContainer; it makes the UI report first-forward materialization as model loading / TTFT"
+        )
+        #expect(!runtime.contains("loadContainer: post-load warmup completed"))
+        #expect(!runtime.contains("input.additionalContext = [\"reasoning_effort\": \"no_think\"]"))
     }
 
     @Test("Inference docs match max-batch hot-resize semantics")

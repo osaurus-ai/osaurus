@@ -877,7 +877,7 @@ extension OpenResponsesRequest {
             }
         }
 
-        return ChatCompletionRequest(
+        var request = ChatCompletionRequest(
             model: model,
             messages: messages,
             temperature: temperature,
@@ -892,6 +892,8 @@ extension OpenResponsesRequest {
             tool_choice: openAIToolChoice,
             session_id: nil
         )
+        request.reasoning_effort = reasoning?.effort
+        return request
     }
 }
 

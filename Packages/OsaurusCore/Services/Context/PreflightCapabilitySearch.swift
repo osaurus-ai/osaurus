@@ -770,7 +770,8 @@ enum PreflightCapabilitySearch {
                 temperature: 0.0,
                 maxTokens: 256,
                 timeout: selectionTimeout,
-                fallbackModel: fallbackModel
+                fallbackModel: fallbackModel,
+                modelOptions: ["reasoningEffort": .string("no_think")]
             )
         }
     }

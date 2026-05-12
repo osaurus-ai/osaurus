@@ -197,13 +197,19 @@ enum LocalReasoningCapability {
         )
     }
 
-    private static func readChatTemplate(at dir: URL) -> String? {
+    static func readChatTemplate(at dir: URL) -> String? {
         let fm = FileManager.default
         let jinja = dir.appendingPathComponent("chat_template.jinja")
         if fm.fileExists(atPath: jinja.path),
             let s = try? String(contentsOf: jinja, encoding: .utf8)
         {
             return s
+        }
+        if let sidecar = readChatTemplateSidecar(at: dir),
+            isVisionChatTemplate(sidecar),
+            !tokenizerConfigTemplateContainsVisionMarker(at: dir)
+        {
+            return sidecar
         }
         let tokenizerCfg = dir.appendingPathComponent("tokenizer_config.json")
         if fm.fileExists(atPath: tokenizerCfg.path),
@@ -220,5 +226,50 @@ enum LocalReasoningCapability {
             }
         }
         return nil
+    }
+
+    private static func readChatTemplateSidecar(at dir: URL) -> String? {
+        let url = dir.appendingPathComponent("chat_template.json")
+        guard FileManager.default.fileExists(atPath: url.path),
+              let data = try? Data(contentsOf: url),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let template = obj["chat_template"] as? String
+        else {
+            return nil
+        }
+        return template
+    }
+
+    private static func tokenizerConfigTemplateContainsVisionMarker(at dir: URL) -> Bool {
+        guard let template = readTokenizerConfigTemplate(at: dir) else {
+            return false
+        }
+        return isVisionChatTemplate(template)
+    }
+
+    private static func readTokenizerConfigTemplate(at dir: URL) -> String? {
+        let tokenizerCfg = dir.appendingPathComponent("tokenizer_config.json")
+        guard FileManager.default.fileExists(atPath: tokenizerCfg.path),
+              let data = try? Data(contentsOf: tokenizerCfg),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            return nil
+        }
+        if let tmpl = obj["chat_template"] as? String { return tmpl }
+        if let arr = obj["chat_template"] as? [[String: Any]],
+            let first = arr.first,
+            let tmpl = first["template"] as? String
+        {
+            return tmpl
+        }
+        return nil
+    }
+
+    private static func isVisionChatTemplate(_ template: String) -> Bool {
+        template.contains("<|vision_start|>")
+            || template.contains("<|image_pad|>")
+            || template.contains("<|video_pad|>")
+            || template.contains("<|image|>")
+            || template.contains("<image>")
     }
 }

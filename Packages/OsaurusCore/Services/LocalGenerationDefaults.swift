@@ -3,8 +3,9 @@
 //  osaurus
 //
 //  Reads sampling defaults from a locally-installed model bundle and
-//  surfaces them (temperature / top_p / top_k / repetition_penalty) so
-//  osaurus can honor them when the OpenAI-wire request omits the
+//  surfaces them (max_new_tokens / temperature / top_p / top_k / min_p /
+//  repetition_penalty / do_sample) so osaurus can honor them when the
+//  OpenAI-wire request omits the
 //  corresponding field.
 //
 //  Two sources are consulted, primary → fallback:
@@ -21,10 +22,9 @@
 //    2. `generation_config.json` — Hugging Face's standard
 //       sampling-defaults file, shipped with every instruction-tuned
 //       checkpoint regardless of quantization format (base MLX, MXFP4,
-//       JANG, JANGTQ, FP16, …). vmlx's `GenerationConfigFile`
-//       (Libraries/MLXLMCommon/GenerationConfigFile.swift) only decodes
-//       `eos_token_id` from this file, so reading the sampling fields is
-//       osaurus's job.
+//       JANG, JANGTQ, FP16, …). osaurus mirrors vmlx's
+//       `GenerationConfigFile` sampling fields so the app and direct-engine
+//       paths use the same bundle defaults.
 //
 //  Ignoring these served, e.g., Qwen 3.5 397B-A17B at 0.7 temperature when
 //  its recipe specifies 0.6, Gemma-4 26B-A4B with top_k disabled when the
@@ -50,10 +50,13 @@ import Foundation
 enum LocalGenerationDefaults {
 
     struct Defaults: Sendable, Equatable {
+        var maxTokens: Int?
         var temperature: Float?
         var topP: Float?
         var topK: Int?
+        var minP: Float?
         var repetitionPenalty: Float?
+        var doSample: Bool?
 
         static let empty = Defaults()
     }
@@ -191,19 +194,25 @@ enum LocalGenerationDefaults {
     /// the source model's HF config specifies.
     static func merge(primary: Defaults, fallback: Defaults) -> Defaults {
         var out = primary
+        if out.maxTokens == nil { out.maxTokens = fallback.maxTokens }
         if out.temperature == nil { out.temperature = fallback.temperature }
         if out.topP == nil { out.topP = fallback.topP }
         if out.topK == nil { out.topK = fallback.topK }
+        if out.minP == nil { out.minP = fallback.minP }
         if out.repetitionPenalty == nil { out.repetitionPenalty = fallback.repetitionPenalty }
+        if out.doSample == nil { out.doSample = fallback.doSample }
         return out
     }
 
     private static func extractSamplingFields(from obj: [String: Any]) -> Defaults {
         var out = Defaults()
+        if let maxTokens = readInt(obj["max_new_tokens"]) { out.maxTokens = maxTokens }
         if let t = readFloat(obj["temperature"]) { out.temperature = t }
         if let p = readFloat(obj["top_p"]) { out.topP = p }
         if let k = readInt(obj["top_k"]) { out.topK = k }
+        if let minP = readFloat(obj["min_p"]) { out.minP = minP }
         if let rp = readFloat(obj["repetition_penalty"]) { out.repetitionPenalty = rp }
+        if let doSample = readBool(obj["do_sample"]) { out.doSample = doSample }
         return out
     }
 
@@ -218,6 +227,12 @@ enum LocalGenerationDefaults {
 
     private static func readInt(_ any: Any?) -> Int? {
         if let n = any as? NSNumber { return n.intValue }
+        return nil
+    }
+
+    private static func readBool(_ any: Any?) -> Bool? {
+        if let b = any as? Bool { return b }
+        if let n = any as? NSNumber { return n.boolValue }
         return nil
     }
 }

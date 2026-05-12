@@ -22,7 +22,11 @@ enum VLMDetection {
 
     /// Check if a model_type string is a known VLM architecture.
     static func isVLM(modelType: String) -> Bool {
-        VLMTypeRegistry.supportedModelTypes.contains(modelType)
+        let trimmed = modelType.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalized = trimmed.lowercased()
+        guard normalized != "zaya" else { return false }
+        return VLMTypeRegistry.supportedModelTypes.contains(trimmed)
+            || VLMTypeRegistry.supportedModelTypes.contains(normalized)
     }
 
     /// Best-effort check for a model by its Hugging Face repo ID.

@@ -43,6 +43,88 @@ struct MLXBatchAdapter {
         let genTask: Task<Void, Never>
     }
 
+    struct EffectiveGenerationSettings: Equatable, Sendable {
+        let temperature: Float
+        let maxTokens: Int
+        let topP: Float
+        let topK: Int
+        let minP: Float
+        let repetitionPenalty: Float?
+        let compiledBatchDecode: Bool
+    }
+
+    static func effectiveGenerationSettings(
+        modelName: String,
+        generation: GenerationParameters,
+        runtimeTopP: Float,
+        maxBatchSize: Int,
+        modelDefaults: LocalGenerationDefaults.Defaults
+    ) -> EffectiveGenerationSettings {
+        let defaultTemperature: Float? = {
+            if modelDefaults.doSample == false {
+                return 0
+            }
+            return modelDefaults.temperature
+        }()
+
+        return EffectiveGenerationSettings(
+            temperature: generation.temperature ?? defaultTemperature ?? 0.7,
+            maxTokens: generation.maxTokensExplicit
+                ? generation.maxTokens
+                : (modelDefaults.maxTokens ?? generation.maxTokens),
+            topP: generation.topPOverride ?? modelDefaults.topP ?? runtimeTopP,
+            topK: modelDefaults.topK ?? 0,
+            minP: generation.minPOverride ?? modelDefaults.minP ?? 0,
+            repetitionPenalty: generation.repetitionPenalty ?? modelDefaults.repetitionPenalty,
+            compiledBatchDecode: shouldEnableCompiledBatchDecode(
+                modelName: modelName,
+                maxBatchSize: maxBatchSize
+            )
+        )
+    }
+
+    /// Same-model gate for the single-slot runtime path. With
+    /// `maxBatchSize == 1`, vmlx can route through its TokenIterator-backed
+    /// solo fast path. There is no batching upside to overlapping a second
+    /// prompt-prep/eval against that active decode, and MLX/Metal command
+    /// encoders are not safe to drive concurrently from the same container.
+    actor SoloGenerationGate {
+        private var busyModels: Set<String> = []
+        private var waiters: [String: [CheckedContinuation<Void, Never>]] = [:]
+
+        struct Lease: @unchecked Sendable {
+            fileprivate let modelName: String
+            fileprivate let gate: SoloGenerationGate
+
+            func release() async {
+                await gate.release(modelName)
+            }
+        }
+
+        func acquire(modelName: String) async -> Lease {
+            if !busyModels.contains(modelName) {
+                busyModels.insert(modelName)
+                return Lease(modelName: modelName, gate: self)
+            }
+
+            await withCheckedContinuation { continuation in
+                waiters[modelName, default: []].append(continuation)
+            }
+            return Lease(modelName: modelName, gate: self)
+        }
+
+        private func release(_ modelName: String) {
+            guard busyModels.contains(modelName) else { return }
+            if var queue = waiters[modelName], !queue.isEmpty {
+                let next = queue.removeFirst()
+                waiters[modelName] = queue.isEmpty ? nil : queue
+                next.resume()
+            } else {
+                busyModels.remove(modelName)
+            }
+        }
+    }
+
     // MARK: - Per-model engine cache
 
     /// Per-process cache of `BatchEngine` instances keyed by model name.
@@ -54,6 +136,7 @@ struct MLXBatchAdapter {
     /// only happen if those requests submit into the *same* engine instance.
     actor Registry {
         static let shared = Registry()
+        private let soloGate = SoloGenerationGate()
 
         /// Single-flight cache for the per-model `BatchEngine` instance.
         /// Coalesces concurrent first-fetch callers onto the same
@@ -201,6 +284,10 @@ struct MLXBatchAdapter {
             }
         }
 
+        func acquireSoloLease(for modelName: String) async -> SoloGenerationGate.Lease {
+            await soloGate.acquire(modelName: modelName)
+        }
+
     }
 
     // MARK: - Image preprocessing
@@ -216,11 +303,12 @@ struct MLXBatchAdapter {
     /// Downscale CIImage attachments to a sane upper bound before tokenization.
     /// Pre-existing `URL` / `array` cases pass through untouched.
     ///
-    /// Preserves `toolCalls` and `toolCallId` through the rebuild — dropping
-    /// them here would silently unwind the structured tool-call handoff set
-    /// up by `ModelRuntime.mapOpenAIChatToMLX`, and MiniMax (plus every other
-    /// template that reads `message.tool_calls[i]`) would fall back to the
-    /// old "no previous assistant message with a tool call" hard fail.
+    /// Preserves media plus `reasoningContent`, `toolCalls`, and `toolCallId`
+    /// through the rebuild. Dropping any of these fields silently unwinds the
+    /// structured handoff set up by `ModelRuntime.mapOpenAIChatToMLX`: ZAYA,
+    /// Nemotron-H/Omni, MiniMax, and DSV4 templates read
+    /// `message.reasoning_content`; MiniMax and other templates read
+    /// `message.tool_calls[i]`; omni/VL processors read media arrays.
     private static func preprocessImages(in chat: [MLXLMCommon.Chat.Message]) -> [MLXLMCommon.Chat.Message] {
         chat.map { message in
             let processedImages = message.images.map { userInputImage -> UserInput.Image in
@@ -236,6 +324,8 @@ struct MLXBatchAdapter {
                 content: message.content,
                 images: processedImages,
                 videos: message.videos,
+                audios: message.audios,
+                reasoningContent: message.reasoningContent,
                 toolCalls: message.toolCalls,
                 toolCallId: message.toolCallId
             )
@@ -248,15 +338,54 @@ struct MLXBatchAdapter {
         for generation: GenerationParameters,
         modelName: String
     ) -> [String: any Sendable] {
-        if ModelFamilyNames.isLingFamily(modelName)
-            || ModelFamilyNames.isZayaFamily(modelName)
-        {
-            return ["enable_thinking": false]
+        var context: [String: any Sendable] = [:]
+        let normalizedReasoningEffort: String? = {
+            guard let effort = generation.modelOptions["reasoningEffort"]?.stringValue else {
+                return nil
+            }
+            let normalized = effort.trimmingCharacters(in: .whitespacesAndNewlines)
+            return normalized.isEmpty ? nil : normalized
+        }()
+        let disableThinking = generation.modelOptions["disableThinking"]?.boolValue
+
+        if Hy3ReasoningProfile.matches(modelId: modelName) {
+            if let normalizedReasoningEffort {
+                context["reasoning_effort"] = Hy3ReasoningProfile.normalizedEffort(
+                    normalizedReasoningEffort
+                )
+            } else if let disableThinking {
+                context["reasoning_effort"] = disableThinking ? "no_think" : "high"
+            }
+            return context
         }
-        if let disableThinking = generation.modelOptions["disableThinking"]?.boolValue {
-            return ["enable_thinking": !disableThinking]
+
+        if ModelFamilyNames.isZayaVLFamily(modelName) {
+            return context
         }
-        return ["enable_thinking": true]
+
+        if let normalizedReasoningEffort {
+            context["reasoning_effort"] = normalizedReasoningEffort
+        }
+        if ModelFamilyNames.isLingFamily(modelName) {
+            context["enable_thinking"] = false
+            return context
+        }
+        if let disableThinking {
+            context["enable_thinking"] = !disableThinking
+            return context
+        }
+        if ModelFamilyNames.isZayaFamily(modelName) {
+            context["enable_thinking"] = false
+            return context
+        }
+        context["enable_thinking"] = true
+        return context
+    }
+
+    static func shouldEnableCompiledBatchDecode(modelName: String, maxBatchSize: Int) -> Bool {
+        maxBatchSize == 1
+            && !Hy3ReasoningProfile.matches(modelId: modelName)
+            && !ModelFamilyNames.isMiniMaxFamily(modelName)
     }
 
     // MARK: - Submission
@@ -276,15 +405,29 @@ struct MLXBatchAdapter {
     ) async throws -> PreparedStream {
         let trace = generation.ttftTrace
         trace?.mark("batch_prepare_start")
+        let soloLease =
+            maxBatchSize == 1
+            ? await Registry.shared.acquireSoloLease(for: modelName)
+            : nil
+        if Task.isCancelled {
+            if let soloLease { await soloLease.release() }
+            throw CancellationError()
+        }
 
-        let prepared = try await prepareInput(
-            modelName: modelName,
-            container: container,
-            buildChat: buildChat,
-            buildToolsSpec: buildToolsSpec,
-            generation: generation,
-            trace: trace
-        )
+        let prepared: PreparedInput
+        do {
+            prepared = try await prepareInput(
+                modelName: modelName,
+                container: container,
+                buildChat: buildChat,
+                buildToolsSpec: buildToolsSpec,
+                generation: generation,
+                trace: trace
+            )
+        } catch {
+            if let soloLease { await soloLease.release() }
+            throw error
+        }
 
         let engine = await Registry.shared.engine(
             for: modelName,
@@ -292,21 +435,27 @@ struct MLXBatchAdapter {
             maxBatchSize: maxBatchSize
         )
 
-        // Honor the model's shipped sampling defaults (Hugging Face
-        // `generation_config.json`) when the OpenAI-wire request omits a
-        // field. Without this overlay osaurus served, e.g., Qwen 3.5 397B
-        // at 0.7 temperature when its recipe specifies 0.6, and Gemma-4
-        // 26B-A4B with top_k disabled when the recipe specifies top_k=64.
-        // Explicit client values still win — the `?? modelDefaults`
-        // ordering only applies when `generation.*` is nil.
+        // Honor the model's shipped generation defaults when the OpenAI-wire
+        // request omits a field. This mirrors vmlx's direct-engine
+        // `GenerateParameters(generationConfig:fallback:)` behavior for the
+        // local app path instead of inventing osaurus-specific defaults.
         let modelDefaults = LocalGenerationDefaults.defaults(forModelId: modelName)
+        let effective = Self.effectiveGenerationSettings(
+            modelName: modelName,
+            generation: generation,
+            runtimeTopP: runtime.topP,
+            maxBatchSize: maxBatchSize,
+            modelDefaults: modelDefaults
+        )
         let mlxParams = ModelRuntime.makeGenerateParameters(
-            temperature: generation.temperature ?? modelDefaults.temperature ?? 0.7,
-            maxTokens: generation.maxTokens,
-            topP: generation.topPOverride ?? modelDefaults.topP ?? runtime.topP,
-            topK: modelDefaults.topK ?? 0,
-            repetitionPenalty: generation.repetitionPenalty ?? modelDefaults.repetitionPenalty,
-            stopSequences: stopSequences
+            temperature: effective.temperature,
+            maxTokens: effective.maxTokens,
+            topP: effective.topP,
+            topK: effective.topK,
+            minP: effective.minP,
+            repetitionPenalty: effective.repetitionPenalty,
+            stopSequences: stopSequences,
+            enableCompiledBatchDecode: effective.compiledBatchDecode
         )
 
         // Best-effort per-request determinism: seed the MLX global random
@@ -330,23 +479,38 @@ struct MLXBatchAdapter {
 
         let (outStream, continuation) = AsyncStream<Generation>.makeStream()
         let producerTask = Task<Void, Never> {
+            defer {
+                continuation.finish()
+                if let soloLease {
+                    Task { await soloLease.release() }
+                }
+            }
             await withTaskCancellationHandler {
                 for await event in upstream {
-                    if Task.isCancelled { break }
-                    continuation.yield(event)
+                    if case .info = event {
+                        continuation.yield(event)
+                        return
+                    }
+                    if !Task.isCancelled {
+                        continuation.yield(event)
+                    }
                 }
-                continuation.finish()
             } onCancel: {
                 // The upstream stream is bound to a single request inside
                 // the engine; cancelling the consumer task closes it
                 // cooperatively (engine emits a final `.info(.cancelled)`
-                // and finishes the stream).
-                continuation.finish()
+                // and finishes the stream). Do not finish the wrapper from
+                // here; the operation body gets the chance to drain and
+                // forward that terminal `.info` event first.
             }
         }
 
+        continuation.onTermination = { @Sendable _ in
+            producerTask.cancel()
+        }
+
         batchAdapterLog.info(
-            "submit: model=\(modelName, privacy: .public) promptTokens=\(prepared.promptTokens.count, privacy: .public)"
+            "submit: model=\(modelName, privacy: .public) promptTokens=\(prepared.promptTokens.count, privacy: .public) temperature=\(effective.temperature, privacy: .public) topP=\(effective.topP, privacy: .public) topK=\(effective.topK, privacy: .public) minP=\(effective.minP, privacy: .public) maxTokens=\(effective.maxTokens, privacy: .public) compiledBatchDecode=\(effective.compiledBatchDecode, privacy: .public)"
         )
 
         return PreparedStream(
@@ -373,22 +537,44 @@ struct MLXBatchAdapter {
     ) async throws -> PreparedInput {
         // Heap-allocated outbox so the throwing closure can hand a value back
         // across the actor boundary.
-        final class OutBox: @unchecked Sendable { var result: PreparedInput? }
+        final class OutBox: @unchecked Sendable {
+            var result: PreparedInput?
+            var performEnteredAt: CFAbsoluteTime?
+            var chatBuiltAt: CFAbsoluteTime?
+            var toolsBuiltAt: CFAbsoluteTime?
+            var contextBuiltAt: CFAbsoluteTime?
+            var processorDoneAt: CFAbsoluteTime?
+            var tokenArrayDoneAt: CFAbsoluteTime?
+            var chatCount = 0
+            var toolCount = 0
+            var imageCount = 0
+            var contextKeys: [String] = []
+            var contextSummary = ""
+            var promptTokenCount = 0
+        }
         let box = OutBox()
+        let prepareStartedAt = CFAbsoluteTimeGetCurrent()
 
         try await container.perform { (context: MLXLMCommon.ModelContext) in
+            box.performEnteredAt = CFAbsoluteTimeGetCurrent()
             trace?.mark("batch_container_perform_entered")
             let chat = preprocessImages(in: buildChat())
+            box.chatBuiltAt = CFAbsoluteTimeGetCurrent()
+            box.chatCount = chat.count
+            box.imageCount = chat.reduce(0) { $0 + $1.images.count }
             let toolsSpec = buildToolsSpec()
+            box.toolsBuiltAt = CFAbsoluteTimeGetCurrent()
+            box.toolCount = toolsSpec?.count ?? 0
 
-            // `enable_thinking` handling. Ling-2.6 Flash is served as a
-            // non-reasoning model, so force it off even when a caller omits
-            // model options or an older saved preference says otherwise.
-            // Other families still honor explicit `disableThinking`; when
-            // unspecified, default to `true` because thinking-capable Gemma,
-            // Qwen, and auto-detected templates rely on a present truthy
-            // kwarg to activate reasoning.
+            // Reasoning template context. Hy3 uses `reasoning_effort`
+            // instead of the generic boolean; Ling is force-off; ZAYA is
+            // reasoning-capable but defaults off unless explicitly opted in.
+            // Other thinking-capable families default to a truthy
+            // `enable_thinking` kwarg.
             let additionalContext = additionalContext(for: generation, modelName: modelName)
+            box.contextBuiltAt = CFAbsoluteTimeGetCurrent()
+            box.contextKeys = additionalContext.keys.sorted()
+            box.contextSummary = Self.safeContextSummary(additionalContext)
             let userInput = MLXLMCommon.UserInput(
                 chat: chat,
                 processing: .init(),
@@ -410,9 +596,12 @@ struct MLXBatchAdapter {
                     userInfo: [NSLocalizedDescriptionKey: "Chat template error: \(detail)"]
                 )
             }
+            box.processorDoneAt = CFAbsoluteTimeGetCurrent()
             trace?.mark("batch_tokenization_done")
 
             let tokens = lmInput.text.tokens.asArray(Int.self)
+            box.tokenArrayDoneAt = CFAbsoluteTimeGetCurrent()
+            box.promptTokenCount = tokens.count
             guard !tokens.isEmpty else {
                 throw NSError(
                     domain: "MLXBatchAdapter",
@@ -424,6 +613,16 @@ struct MLXBatchAdapter {
             box.result = PreparedInput(input: lmInput, promptTokens: tokens)
         }
 
+        let doneAt = CFAbsoluteTimeGetCurrent()
+        func ms(_ start: CFAbsoluteTime?, _ end: CFAbsoluteTime?) -> Int {
+            guard let start, let end else { return -1 }
+            return Int((end - start) * 1000)
+        }
+        let contextKeyString = box.contextKeys.joined(separator: ",")
+        batchAdapterLog.info(
+            "prepareInput: model=\(modelName, privacy: .public) totalMs=\(Int((doneAt - prepareStartedAt) * 1000), privacy: .public) waitForContainerMs=\(ms(prepareStartedAt, box.performEnteredAt), privacy: .public) chatBuildMs=\(ms(box.performEnteredAt, box.chatBuiltAt), privacy: .public) toolsBuildMs=\(ms(box.chatBuiltAt, box.toolsBuiltAt), privacy: .public) contextMs=\(ms(box.toolsBuiltAt, box.contextBuiltAt), privacy: .public) processorPrepareMs=\(ms(box.contextBuiltAt, box.processorDoneAt), privacy: .public) tokenArrayMs=\(ms(box.processorDoneAt, box.tokenArrayDoneAt), privacy: .public) chat=\(box.chatCount, privacy: .public) tools=\(box.toolCount, privacy: .public) images=\(box.imageCount, privacy: .public) promptTokens=\(box.promptTokenCount, privacy: .public) contextKeys=\(contextKeyString, privacy: .public) context=\(box.contextSummary, privacy: .public)"
+        )
+
         guard let prepared = box.result else {
             throw NSError(
                 domain: "MLXBatchAdapter",
@@ -432,5 +631,21 @@ struct MLXBatchAdapter {
             )
         }
         return prepared
+    }
+
+    private static func safeContextSummary(_ context: [String: any Sendable]) -> String {
+        context.keys.sorted().compactMap { key in
+            guard key == "enable_thinking" || key == "reasoning_effort" else {
+                return nil
+            }
+            let value = context[key]
+            if let bool = value as? Bool {
+                return "\(key)=\(bool)"
+            }
+            if let string = value as? String {
+                return "\(key)=\(string)"
+            }
+            return "\(key)=<\(type(of: value))>"
+        }.joined(separator: ",")
     }
 }

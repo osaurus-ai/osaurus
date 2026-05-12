@@ -75,16 +75,26 @@ public actor ModelRuntime {
     // MARK: - State
 
     private var modelCache: [String: SessionHolder] = [:]
-    private var loadingTasks: [String: Task<SessionHolder, Error>] = [:]
+    private struct LoadingTaskRecord {
+        let id: UInt64
+        let task: Task<SessionHolder, Error>
+    }
+
+    private var loadingTasks: [String: LoadingTaskRecord] = [:]
+    private var supersededLoadingTaskIDs = Set<UInt64>()
+    private var nextLoadingTaskID: UInt64 = 0
     private var currentModelName: String?
     private var cachedConfig: RuntimeConfig?
 
     /// Most recently launched generation wrapper task. `ModelLease` is the
-    /// authoritative "is anyone still using the model" signal; this property
-    /// only exists so `cancelActiveGeneration()` can defensively kill an
-    /// in-flight task during shutdown / `clearAll`. It tracks at most one
-    /// task even when many are active — the lease drains the rest.
-    private var activeGenerationTask: Task<Void, Never>?
+    /// authoritative "is anyone still using the model" signal; this record only
+    /// exists so shutdown / same-model unload can defensively kill a task that
+    /// was cancelled mid-setup before its lease became visible.
+    private struct ActiveGenerationRecord {
+        let modelName: String
+        let task: Task<Void, Never>
+    }
+    private var activeGenerationTask: ActiveGenerationRecord?
 
     private init() {}
 
@@ -116,10 +126,76 @@ public actor ModelRuntime {
     /// the unload paths already wait on `waitForZero(name)` first, so this
     /// only catches the rare race where a task was launched but never made
     /// it to `acquire`. Callers should still treat the lease as authoritative.
-    private func cancelActiveGeneration() async {
-        activeGenerationTask?.cancel()
-        _ = await activeGenerationTask?.value
+    private func cancelActiveGeneration(for modelName: String? = nil) async {
+        guard let record = activeGenerationTask else { return }
+        if let modelName, record.modelName != modelName { return }
+        record.task.cancel()
+        _ = await record.task.value
         activeGenerationTask = nil
+    }
+
+    private func allocateLoadingTaskID() -> UInt64 {
+        nextLoadingTaskID &+= 1
+        return nextLoadingTaskID
+    }
+
+    private func cancelAndDrainLoadingTasks(_ records: [(String, LoadingTaskRecord)]) async {
+        guard !records.isEmpty else { return }
+
+        for (name, record) in records {
+            if loadingTasks[name]?.id == record.id {
+                supersededLoadingTaskIDs.insert(record.id)
+            }
+            record.task.cancel()
+        }
+
+        for (_, record) in records {
+            if let holder = try? await record.task.value,
+               supersededLoadingTaskIDs.contains(record.id) {
+                holder.container.disableCaching()
+            }
+        }
+
+        for (name, record) in records {
+            if loadingTasks[name]?.id == record.id {
+                loadingTasks.removeValue(forKey: name)
+            }
+            supersededLoadingTaskIDs.remove(record.id)
+        }
+
+        Stream.gpu.synchronize()
+        Memory.clearCache()
+    }
+
+    private func finishLoadedContainer(
+        name: String,
+        holder: SessionHolder,
+        loadID: UInt64
+    ) async throws -> SessionHolder {
+        if let cached = modelCache[name], cached === holder {
+            return cached
+        }
+
+        guard loadingTasks[name]?.id == loadID,
+              !supersededLoadingTaskIDs.contains(loadID)
+        else {
+            holder.container.disableCaching()
+            throw CancellationError()
+        }
+
+        modelCache[name] = holder
+        loadingTasks.removeValue(forKey: name)
+        currentModelName = name
+        Memory.cacheLimit = mlxCacheLimit()
+
+        // Enable multi-tier KV caching via vmlx-swift-lm's CacheCoordinator.
+        // Cache tier config is entirely osaurus-internal — not user-visible.
+        await installCacheCoordinator(on: holder)
+
+        genLog.info(
+            "loadContainer: loaded \(name, privacy: .public) isVLM=\(holder.isVLM, privacy: .public)"
+        )
+        return holder
     }
 
     /// Unload `name`, blocking until any in-flight generation against this
@@ -135,17 +211,17 @@ public actor ModelRuntime {
         // Defensive: cancel the latest tracked wrapper task. The lease drain
         // above already covers in-flight requests; this only catches the
         // rare case where a task was cancelled mid-setup before acquiring.
-        await cancelActiveGeneration()
+        await cancelActiveGeneration(for: name)
 
-        if let holder = modelCache[name] {
-            holder.container.disableCaching()
+        if let record = loadingTasks[name] {
+            await cancelAndDrainLoadingTasks([(name, record)])
         }
+
+        modelCache[name]?.container.disableCaching()
 
         autoreleasepool {
             _ = modelCache.removeValue(forKey: name)
         }
-        loadingTasks[name]?.cancel()
-        loadingTasks.removeValue(forKey: name)
         if currentModelName == name { currentModelName = nil }
 
         Memory.cacheLimit = mlxCacheLimit()
@@ -178,6 +254,9 @@ public actor ModelRuntime {
             await ModelLease.shared.waitForZero(name)
         }
 
+        let loadingRecords = loadingTasks.map { ($0.key, $0.value) }
+        await cancelAndDrainLoadingTasks(loadingRecords)
+
         for holder in modelCache.values {
             holder.container.disableCaching()
         }
@@ -185,8 +264,8 @@ public actor ModelRuntime {
         autoreleasepool {
             modelCache.removeAll()
         }
-        for task in loadingTasks.values { task.cancel() }
         loadingTasks.removeAll()
+        supersededLoadingTaskIDs.removeAll()
         currentModelName = nil
         cachedConfig = nil
 
@@ -225,39 +304,116 @@ public actor ModelRuntime {
         return min(byModel, bySystem)
     }
 
+    private static func flexibleResidentBudgetBytes() -> Int64 {
+        Int64(Double(ProcessInfo.processInfo.physicalMemory) * 0.70)
+    }
+
+    private func residentWeightBytes(excluding excludedName: String? = nil) -> Int64 {
+        modelCache.reduce(Int64(0)) { total, entry in
+            if entry.key == excludedName { return total }
+            return total + entry.value.weightsSizeBytes
+        }
+    }
+
+    /// Flexible mode can keep multiple small models resident, but it must not
+    /// keep a huge model while starting another huge load. The vmlx load path
+    /// applies a 70% MLX memory budget; mirror that budget before entering
+    /// `loadWeights` so Hy3-sized residents do not collide with the next load.
+    private func unloadForFlexibleResidentBudget(
+        targetName: String,
+        incomingWeightsSizeBytes: Int64
+    ) async {
+        let limit = Self.flexibleResidentBudgetBytes()
+        guard limit > 0 else { return }
+
+        while residentWeightBytes(excluding: targetName) + incomingWeightsSizeBytes > limit {
+            guard let candidate = modelCache
+                .filter({ $0.key != targetName })
+                .max(by: { $0.value.weightsSizeBytes < $1.value.weightsSizeBytes })
+            else {
+                return
+            }
+
+            genLog.info(
+                "loadContainer: flexible budget eviction of \(candidate.key, privacy: .public) before loading \(targetName, privacy: .public) residentBytes=\(self.residentWeightBytes(excluding: targetName), privacy: .public) incomingBytes=\(incomingWeightsSizeBytes, privacy: .public) limitBytes=\(limit, privacy: .public)"
+            )
+            await unload(name: candidate.key)
+        }
+    }
+
     private func loadContainer(id: String, name: String) async throws -> SessionHolder {
-        if let existing = modelCache[name] { return existing }
-
         let policy = await ServerConfigurationStore.load()?.modelEvictionPolicy ?? .strictSingleModel
+        let loadStartedAt = CFAbsoluteTimeGetCurrent()
+        genLog.info(
+            "loadContainer: begin model=\(name, privacy: .public) id=\(id, privacy: .public) policy=\(policy.rawValue, privacy: .public)"
+        )
 
-        if policy == .strictSingleModel {
-            for other in modelCache.keys where other != name {
+        while true {
+            if let existing = modelCache[name] {
+                let elapsedMs = Int((CFAbsoluteTimeGetCurrent() - loadStartedAt) * 1000)
+                genLog.info(
+                    "loadContainer: cache hit model=\(name, privacy: .public) elapsedMs=\(elapsedMs, privacy: .public)"
+                )
+                return existing
+            }
+
+            if let existingRecord = loadingTasks[name] {
+                do {
+                    let holder = try await existingRecord.task.value
+                    return try await finishLoadedContainer(
+                        name: name,
+                        holder: holder,
+                        loadID: existingRecord.id
+                    )
+                } catch is CancellationError {
+                    if loadingTasks[name]?.id == existingRecord.id {
+                        loadingTasks.removeValue(forKey: name)
+                    }
+                    supersededLoadingTaskIDs.remove(existingRecord.id)
+                    continue
+                } catch {
+                    if loadingTasks[name]?.id == existingRecord.id {
+                        loadingTasks.removeValue(forKey: name)
+                    }
+                    supersededLoadingTaskIDs.remove(existingRecord.id)
+                    throw error
+                }
+            }
+
+            if let otherLoading = loadingTasks.first(where: { $0.key != name }) {
+                let otherName = otherLoading.key
+                let otherRecord = otherLoading.value
+                if policy == .strictSingleModel {
+                    genLog.info(
+                        "loadContainer: strict drain of in-flight load \(otherName, privacy: .public)"
+                    )
+                    await cancelAndDrainLoadingTasks([(otherName, otherRecord)])
+                } else {
+                    do {
+                        let holder = try await otherRecord.task.value
+                        _ = try? await finishLoadedContainer(
+                            name: otherName,
+                            holder: holder,
+                            loadID: otherRecord.id
+                        )
+                    } catch {
+                        if loadingTasks[otherName]?.id == otherRecord.id {
+                            loadingTasks.removeValue(forKey: otherName)
+                        }
+                        supersededLoadingTaskIDs.remove(otherRecord.id)
+                    }
+                }
+                continue
+            }
+
+            if policy == .strictSingleModel,
+               let other = modelCache.keys.first(where: { $0 != name }) {
                 genLog.info("loadContainer: strict eviction of \(other, privacy: .public)")
                 await unload(name: other)
+                continue
             }
-            for other in loadingTasks.keys where other != name {
-                loadingTasks[other]?.cancel()
-                loadingTasks.removeValue(forKey: other)
-            }
-        }
 
-        // Re-entry fast path: another caller is already loading this model.
-        // If their task was cancelled by an evictor between our enqueue and
-        // our await (a real race when two chat windows trigger concurrent
-        // loads under `strictSingleModel`), fall through and create a new
-        // task instead of propagating the stale CancellationError to our
-        // caller — which would leave the UI stuck at "loading" with no
-        // recovery path short of quitting the app.
-        if let existingTask = loadingTasks[name] {
-            do {
-                return try await existingTask.value
-            } catch is CancellationError {
-                genLog.info(
-                    "loadContainer: existing load for \(name, privacy: .public) was cancelled mid-flight; retrying with fresh task"
-                )
-                loadingTasks[name] = nil
-                // fall through to create a new task below
-            }
+            break
         }
 
         guard let localURL = Self.findLocalDirectory(forModelId: id) else {
@@ -267,6 +423,9 @@ public actor ModelRuntime {
                 userInfo: [NSLocalizedDescriptionKey: "Model not downloaded: \(name)"]
             )
         }
+        genLog.info(
+            "loadContainer: local directory model=\(name, privacy: .public) path=\(localURL.path, privacy: .public)"
+        )
 
         let probe = MLXModel(id: id, name: name, description: "", downloadURL: "")
         await ModelDownloadService.ensureComplete(for: probe, directory: localURL)
@@ -281,6 +440,17 @@ public actor ModelRuntime {
         // the whole process — taking osaurus with it. Caught here so the user
         // gets a clear error and the server stays up.
         try await Self.ensureJANGTQSidecar(at: localURL, modelId: id, name: name)
+        let weightsBytes = Self.computeWeightsSizeBytes(at: localURL)
+        genLog.info(
+            "loadContainer: pre-load checks done model=\(name, privacy: .public) weightsBytes=\(weightsBytes, privacy: .public)"
+        )
+
+        if policy == .manualMultiModel {
+            await unloadForFlexibleResidentBudget(
+                targetName: name,
+                incomingWeightsSizeBytes: weightsBytes
+            )
+        }
 
         // Tool-call format + reasoning parser are stamped automatically by
         // vmlx-swift-lm's LLM/VLM factories from `jang_config.json` capabilities
@@ -288,14 +458,23 @@ public actor ModelRuntime {
         // the app layer — `BatchEngine.generate` reads them directly from
         // the resolved `ModelConfiguration` to emit `.toolCall` events.
 
+        let loadID = allocateLoadingTaskID()
         let task = Task<SessionHolder, Error> {
+            let taskStartedAt = CFAbsoluteTimeGetCurrent()
+            genLog.info(
+                "loadContainer: task start model=\(name, privacy: .public) loadID=\(loadID, privacy: .public)"
+            )
             let tokenizerLoader = SwiftTransformersTokenizerLoader()
             let container = try await loadModelContainer(
                 from: localURL,
-                using: tokenizerLoader
+                using: tokenizerLoader,
+                loadConfiguration: .default
             )
             let isVLM = await container.isVLM
-            let weightsBytes = Self.computeWeightsSizeBytes(at: localURL)
+            let elapsedMs = Int((CFAbsoluteTimeGetCurrent() - taskStartedAt) * 1000)
+            genLog.info(
+                "loadContainer: task loaded model=\(name, privacy: .public) loadID=\(loadID, privacy: .public) elapsedMs=\(elapsedMs, privacy: .public) isVLM=\(isVLM, privacy: .public)"
+            )
             return SessionHolder(
                 name: name,
                 container: container,
@@ -304,25 +483,24 @@ public actor ModelRuntime {
             )
         }
 
-        loadingTasks[name] = task
+        loadingTasks[name] = LoadingTaskRecord(id: loadID, task: task)
 
         do {
             let holder = try await task.value
-            modelCache[name] = holder
-            loadingTasks[name] = nil
-            currentModelName = name
-            Memory.cacheLimit = mlxCacheLimit()
-
-            // Enable multi-tier KV caching via vmlx-swift-lm's CacheCoordinator.
-            // Cache tier config is entirely osaurus-internal — not user-visible.
-            await installCacheCoordinator(on: holder)
-
+            let elapsedMs = Int((CFAbsoluteTimeGetCurrent() - loadStartedAt) * 1000)
             genLog.info(
-                "loadContainer: loaded \(name, privacy: .public) isVLM=\(holder.isVLM, privacy: .public)"
+                "loadContainer: task value returned model=\(name, privacy: .public) loadID=\(loadID, privacy: .public) elapsedMs=\(elapsedMs, privacy: .public)"
             )
-            return holder
+            return try await finishLoadedContainer(
+                name: name,
+                holder: holder,
+                loadID: loadID
+            )
         } catch {
-            loadingTasks[name] = nil
+            if loadingTasks[name]?.id == loadID {
+                loadingTasks.removeValue(forKey: name)
+            }
+            supersededLoadingTaskIDs.remove(loadID)
             throw error
         }
     }
@@ -558,12 +736,13 @@ public actor ModelRuntime {
     /// 3.x MoE quant tier) flip the flag without a registry edit.
     nonisolated static func isKnownHybridModel(name: String) -> Bool {
         let lower = name.lowercased()
-        // Mamba+Attn+MoE — Nemotron-3 / Cascade-2 / Hyper. vmlx
+        // Mamba+Attn+MoE — Nemotron-3 / Omni / Cascade-2 / Hyper. vmlx
         // `Models/NemotronH.swift` allocates `MambaCache` slots for the
         // Mamba layers and standard KV for the attention layers; the
         // `SSMStateCache` companion covers the Mamba state.
         if lower.contains("nemotron-3") || lower.contains("nemotron-cascade")
-            || lower.contains("nemotron_h")
+            || lower.contains("nemotron_h") || lower.contains("nemotron-omni")
+            || lower.contains("nemotron_omni")
         {
             return true
         }
@@ -760,7 +939,7 @@ public actor ModelRuntime {
         // finishes (success or cancellation). The adapter's producer task
         // forwards Swift cancellation into the upstream stream.
         let innerProducer = prepared.genTask
-        activeGenerationTask = Task<Void, Never> {
+        let activeTask = Task<Void, Never> {
             await withTaskCancellationHandler {
                 await innerProducer.value
             } onCancel: {
@@ -768,6 +947,7 @@ public actor ModelRuntime {
             }
             await ModelLease.shared.release(modelName)
         }
+        activeGenerationTask = ActiveGenerationRecord(modelName: modelName, task: activeTask)
 
         return GenerationEventMapper.map(events: prepared.stream, modelName: modelName)
     }
@@ -872,6 +1052,17 @@ public actor ModelRuntime {
             var scrubber = ThinkTagScrubber()
             do {
                 for try await ev in events {
+                    if case .completionInfo(let tokenCount, let tokensPerSecond, let unclosedReasoning) = ev {
+                        continuation.yield(
+                            StreamingStatsHint.encode(
+                                tokenCount: tokenCount,
+                                tokensPerSecond: tokensPerSecond,
+                                unclosedReasoning: unclosedReasoning
+                            )
+                        )
+                        continue
+                    }
+
                     if Task.isCancelled {
                         continuation.finish()
                         return
@@ -896,14 +1087,8 @@ public actor ModelRuntime {
                         pendingTools.append(
                             ServiceToolInvocation(toolName: name, jsonArguments: argsJSON)
                         )
-                    case .completionInfo(let tokenCount, let tokensPerSecond, let unclosedReasoning):
-                        continuation.yield(
-                            StreamingStatsHint.encode(
-                                tokenCount: tokenCount,
-                                tokensPerSecond: tokensPerSecond,
-                                unclosedReasoning: unclosedReasoning
-                            )
-                        )
+                    case .completionInfo:
+                        continue
                     }
                 }
                 // Drain any tail bytes the scrubber held back as a
@@ -968,8 +1153,8 @@ public actor ModelRuntime {
     /// from the app layer here historically caused
     /// `[broadcast_shapes] (1,1,1,N) and (1,16,1,1024)` crashes on the
     /// first decode step. Per OSAURUS-INTEGRATION.md, the only inputs the
-    /// engine wants from us are temperature / topP / maxTokens / penalties /
-    /// stop sequences. `stopSequences` becomes `extraStopStrings` — the
+    /// engine wants from us are temperature / topP / topK / minP / maxTokens /
+    /// penalties / stop sequences. `stopSequences` becomes `extraStopStrings` — the
     /// library matches against the post-reasoning, post-tool-call `.chunk`
     /// stream and halts with `.info(stopReason: .stop)` on a hit.
     nonisolated static func makeGenerateParameters(
@@ -977,14 +1162,18 @@ public actor ModelRuntime {
         maxTokens: Int,
         topP: Float,
         topK: Int = 0,
+        minP: Float = 0,
         repetitionPenalty: Float?,
-        stopSequences: [String] = []
+        stopSequences: [String] = [],
+        enableCompiledBatchDecode: Bool = true
     ) -> MLXLMCommon.GenerateParameters {
         MLXLMCommon.GenerateParameters(
             maxTokens: maxTokens,
+            enableCompiledBatchDecode: enableCompiledBatchDecode,
             temperature: temperature,
             topP: topP,
             topK: topK,
+            minP: minP,
             repetitionPenalty: repetitionPenalty,
             repetitionContextSize: 20,
             extraStopStrings: stopSequences
@@ -1089,9 +1278,19 @@ public actor ModelRuntime {
                 )
             case "assistant":
                 let content = (m.content ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                let reasoningContent = m.reasoning_content?.trimmingCharacters(in: .whitespacesAndNewlines)
                 let toolCalls = toMLXToolCalls(m.tool_calls)
-                // Skip fully-empty assistant turns (no content AND no tool calls).
-                if content.isEmpty && (toolCalls?.isEmpty ?? true) { continue }
+                // Skip fully-empty assistant turns. Reasoning-only assistant
+                // turns are NOT empty for local MLX templates: ZAYA,
+                // Nemotron-H/Omni, MiniMax and DSV4 read
+                // `message.reasoning_content` to reconstruct prior
+                // `<think>...</think>` history on follow-ups.
+                if content.isEmpty
+                    && (reasoningContent?.isEmpty ?? true)
+                    && (toolCalls?.isEmpty ?? true)
+                {
+                    continue
+                }
                 out.append(
                     MLXLMCommon.Chat.Message(
                         role: .assistant,
@@ -1099,6 +1298,7 @@ public actor ModelRuntime {
                         images: images,
                         videos: videos,
                         audios: audios,
+                        reasoningContent: reasoningContent,
                         toolCalls: toolCalls,
                         toolCallId: nil
                     )

@@ -48,7 +48,11 @@ public enum InferenceFeatureFlags {
     /// Capped at 32 to match BatchEngine's documented per-engine slot
     /// ceiling. Values <=0 fall back to the compile-friendly 1.
     public static var mlxBatchEngineMaxBatchSize: Int {
-        let raw = UserDefaults.standard.integer(forKey: Keys.mlxBatchEngineMaxSize)
+        mlxBatchEngineMaxBatchSize(in: .standard)
+    }
+
+    static func mlxBatchEngineMaxBatchSize(in userDefaults: UserDefaults) -> Int {
+        let raw = userDefaults.integer(forKey: Keys.mlxBatchEngineMaxSize)
         return raw > 0 ? min(raw, 32) : 1
     }
 }

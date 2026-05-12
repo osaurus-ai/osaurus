@@ -142,6 +142,44 @@ struct ModelRuntimeMappingTests {
         #expect(mapped[0].role == .user)
     }
 
+    /// Local Jinja templates for ZAYA, Nemotron-H/Omni, MiniMax, and DSV4
+    /// read `message.reasoning_content` on assistant history turns. Dropping
+    /// it changes the rendered prompt across turns and can make thinking
+    /// toggles or prefix-cache hits appear flaky.
+    @Test func preservesAssistantReasoningContentTurns() throws {
+        let assistant = ChatMessage(
+            role: "assistant",
+            content: "Final answer.",
+            tool_calls: nil,
+            tool_call_id: nil,
+            reasoning_content: "Prior reasoning."
+        )
+
+        let mapped = ModelRuntime.mapOpenAIChatToMLX([assistant])
+
+        #expect(mapped.count == 1)
+        #expect(mapped[0].role == .assistant)
+        #expect(mapped[0].content == "Final answer.")
+        #expect(mapped[0].reasoningContent == "Prior reasoning.")
+    }
+
+    @Test func preservesReasoningOnlyAssistantTurns() throws {
+        let assistant = ChatMessage(
+            role: "assistant",
+            content: nil,
+            tool_calls: nil,
+            tool_call_id: nil,
+            reasoning_content: "Reasoning with no visible content yet."
+        )
+
+        let mapped = ModelRuntime.mapOpenAIChatToMLX([assistant])
+
+        #expect(mapped.count == 1)
+        #expect(mapped[0].role == .assistant)
+        #expect(mapped[0].content == "")
+        #expect(mapped[0].reasoningContent == "Reasoning with no visible content yet.")
+    }
+
     /// Malformed / non-object arguments must not crash the mapper — they
     /// decode to an empty dict and the tool call still emits.
     @Test func handlesMalformedArgumentsJson() throws {

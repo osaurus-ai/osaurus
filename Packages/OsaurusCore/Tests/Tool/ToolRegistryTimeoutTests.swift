@@ -9,6 +9,7 @@
 //
 
 import Foundation
+import Dispatch
 import Testing
 
 @testable import OsaurusCore
@@ -24,15 +25,22 @@ struct ToolRegistryTimeoutTests {
         static let sleepSeconds: TimeInterval = 8
         static let timeoutSeconds: TimeInterval = 0.5
         static let minimumTimeoutLeadSeconds: TimeInterval = 1
-        private static let sleepNanoseconds = UInt64(sleepSeconds * 1_000_000_000)
 
         let name: String = "test_slow_sleep"
         let description: String = "Test fixture: sleeps 8 seconds, exceeding the test timeout."
         let parameters: JSONValue? = .object(["type": .string("object")])
 
         func execute(argumentsJSON: String) async throws -> String {
-            try await Task.sleep(nanoseconds: Self.sleepNanoseconds)
-            return ToolEnvelope.success(tool: name, text: "did not time out")
+            return await withCheckedContinuation { continuation in
+                DispatchQueue.global(qos: .utility).async {
+                    // Deliberately blocking, not cooperative. The registry
+                    // timeout is the wall-clock safety net for hung
+                    // subprocess/network-style bodies that do not observe
+                    // Swift task cancellation promptly.
+                    Thread.sleep(forTimeInterval: Self.sleepSeconds)
+                    continuation.resume(returning: ToolEnvelope.success(tool: name, text: "did not time out"))
+                }
+            }
         }
     }
 

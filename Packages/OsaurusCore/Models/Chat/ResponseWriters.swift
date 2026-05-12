@@ -563,6 +563,10 @@ final class AnthropicSSEResponseWriter {
         writeSSEEvent("content_block_delta", payload: event, context: context)
     }
 
+    func setOutputTokens(_ tokenCount: Int) {
+        outputTokens = max(0, tokenCount)
+    }
+
     /// Write tool_use block start
     func writeToolUseBlockStart(
         toolId: String,
@@ -888,6 +892,10 @@ final class OpenResponsesSSEWriter {
             delta: text
         )
         writeSSEEvent("response.output_text.delta", payload: event, context: context)
+    }
+
+    func setOutputTokens(_ tokenCount: Int) {
+        outputTokens = max(0, tokenCount)
     }
 
     /// Write response.output_text.done event

@@ -1297,8 +1297,9 @@ extension FloatingInputCard {
         if let model = selectedModel,
             let thinkingOpt = ModelProfileRegistry.profile(for: model)?.thinkingOption
         {
-            let isCurrentlyEnabled = activeModelOptions[thinkingOpt.id]?.boolValue ?? false
-            let isEnabled = thinkingOpt.inverted ? !isCurrentlyEnabled : isCurrentlyEnabled
+            let isEnabled =
+                ModelProfileRegistry.thinkingEnabled(for: model, values: activeModelOptions)
+                ?? false
 
             SelectorChip(isActive: isEnabled) {
                 toggleThinking(id: thinkingOpt.id)
@@ -1342,7 +1343,10 @@ extension FloatingInputCard {
     }
 
     private func toggleThinking(id: String) {
-        let current = activeModelOptions[id]?.boolValue ?? false
+        let current =
+            selectedModel.flatMap {
+                ModelProfileRegistry.boolOptionValue(for: $0, optionId: id, values: activeModelOptions)
+            } ?? false
         let newVal = !current
 
         withAnimation(.spring(response: 0.2, dampingFraction: 0.7)) {

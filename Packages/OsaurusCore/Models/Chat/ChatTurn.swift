@@ -47,6 +47,13 @@ final class ChatTurn: ObservableObject, Identifiable {
     /// Whether content is empty - O(1) access without forcing lazy join
     var contentIsEmpty: Bool { _contentLength == 0 }
 
+    /// Whether content has no user-visible characters. This intentionally
+    /// treats streamed newline-only completions as blank for rendering and
+    /// follow-up prompt construction.
+    var contentIsBlank: Bool {
+        content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     /// Efficiently append content without triggering immediate UI update.
     /// Call `notifyContentChanged()` after batch appends to update UI.
     func appendContent(_ s: String) {
@@ -111,6 +118,11 @@ final class ChatTurn: ObservableObject, Identifiable {
 
     /// Whether thinking is empty - O(1) access without forcing lazy join
     var thinkingIsEmpty: Bool { _thinkingLength == 0 }
+
+    /// Whether thinking has no renderable text.
+    var thinkingIsBlank: Bool {
+        thinking.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
 
     /// Efficiently append thinking without triggering immediate UI update.
     func appendThinking(_ s: String) {
@@ -238,6 +250,11 @@ final class ChatTurn: ObservableObject, Identifiable {
     /// Whether this turn has any thinking/reasoning content
     var hasThinking: Bool {
         _thinkingLength > 0
+    }
+
+    /// Whether this turn has thinking/reasoning text worth showing.
+    var hasRenderableThinking: Bool {
+        hasThinking && !thinkingIsBlank
     }
 }
 

@@ -28,21 +28,17 @@ private let mapperLog = Logger(subsystem: "ai.osaurus", category: "Generation")
 
 enum GenerationEventMapper {
 
-    /// True when the model family is configured as non-reasoning in osaurus
-    /// (Ling, ZAYA1). For these families, vmlx's `ReasoningParser` may still
-    /// switch into reasoning mode if the model emits a `<think>` token despite
-    /// `enable_thinking=false` — it has to, because the parser has no idea
-    /// whether the host has clamped thinking off. The 2026-05-07 production
-    /// repro showed Ling 2.6 Flash emitting a runaway hidden reasoning block
-    /// after a tiny visible greeting, surfacing in the chat UI as
-    /// "greeting → 30s freeze → end" because reasoning deltas land on a
-    /// channel the visible-text view doesn't render. For non-reasoning
-    /// families we therefore promote `.reasoning` deltas (markers already
-    /// stripped by the parser) to visible `.tokens` so the user always sees
-    /// streaming text and the EOS doesn't gate the entire answer.
+    /// True when `.reasoning` deltas are the user-visible answer, not a hidden
+    /// chain-of-thought side channel.
+    ///
+    /// Ling is configured as a non-reasoning family in osaurus; if it leaks
+    /// `<think>`, the stripped inner text is still visible answer text.
+    /// MiniMax M2/M2.7 must stay on the reasoning rail when Thinking is on.
+    /// The vmlx parser starts inside the prompt-side `<think>` block and
+    /// transitions to content when the model emits `</think>`; promoting that
+    /// rail to content hides the Thinking panel and breaks the UI contract.
     static func treatReasoningAsContent(modelName: String) -> Bool {
         ModelFamilyNames.isLingFamily(modelName)
-            || ModelFamilyNames.isZayaFamily(modelName)
     }
 
     /// Map a `Generation` stream into the typed `ModelRuntimeEvent` stream
@@ -57,6 +53,7 @@ enum GenerationEventMapper {
         modelName: String = ""
     ) -> AsyncThrowingStream<ModelRuntimeEvent, Error> {
         let mergeReasoning = treatReasoningAsContent(modelName: modelName)
+        let suppressUnclosedReasoning = ModelFamilyNames.isLingFamily(modelName)
         return AsyncThrowingStream<ModelRuntimeEvent, Error> { continuation in
             let task = Task {
                 let interval = mapperSignposter.beginInterval(
@@ -66,8 +63,27 @@ enum GenerationEventMapper {
                 let startedAt = CFAbsoluteTimeGetCurrent()
                 var firstChunk = true
                 var finalTokenCount = 0
+                var sawCompletionInfo = false
+                var sawReasoning = false
+                var estimatedTextTokens = 0
 
                 for await event in events {
+                    if case .info(let info) = event {
+                        sawCompletionInfo = true
+                        finalTokenCount = info.generationTokenCount
+                        logCompletionInfo(info)
+                        continuation.yield(
+                            .completionInfo(
+                                tokenCount: info.generationTokenCount,
+                                tokensPerSecond: info.tokensPerSecond,
+                                unclosedReasoning: suppressUnclosedReasoning
+                                    ? false
+                                    : info.unclosedReasoning
+                            )
+                        )
+                        continue
+                    }
+
                     if Task.isCancelled { break }
                     switch event {
                     case .chunk(let text):
@@ -76,10 +92,13 @@ enum GenerationEventMapper {
                             InferenceProgressManager.shared.prefillDidFinishAsync()
                         }
                         guard !text.isEmpty else { continue }
+                        estimatedTextTokens += max(1, text.count / 4)
                         continuation.yield(.tokens(text))
 
                     case .reasoning(let text):
                         guard !text.isEmpty else { continue }
+                        sawReasoning = true
+                        estimatedTextTokens += max(1, text.count / 4)
                         // Reasoning-capable families (DSV4-Flash thinking,
                         // Qwen 3.5 / 3.6 thinking-on, etc.) can stream
                         // `.reasoning` deltas for many seconds before the
@@ -93,10 +112,9 @@ enum GenerationEventMapper {
                             InferenceProgressManager.shared.prefillDidFinishAsync()
                         }
                         if mergeReasoning {
-                            // Ling / ZAYA — non-reasoning families. vmlx
-                            // already stripped the `<think>` / `</think>`
-                            // markers; the inner text is plain content the
-                            // user should see in real time.
+                            // vmlx already stripped the family-specific
+                            // reasoning markers; for merge families the inner
+                            // text is plain visible content.
                             continuation.yield(.tokens(text))
                         } else {
                             continuation.yield(.reasoning(text))
@@ -111,22 +129,28 @@ enum GenerationEventMapper {
                             .toolInvocation(name: call.function.name, argsJSON: argsJSON)
                         )
 
-                    case .info(let info):
-                        finalTokenCount = info.generationTokenCount
-                        logCompletionInfo(info)
-                        continuation.yield(
-                            .completionInfo(
-                                tokenCount: info.generationTokenCount,
-                                tokensPerSecond: info.tokensPerSecond,
-                                unclosedReasoning: info.unclosedReasoning
-                            )
-                        )
+                    case .info:
+                        continue
 
                     @unknown default:
                         // Forward-compat: unknown future cases are skipped
                         // so a library bump cannot leak raw markers to the UI.
                         continue
                     }
+                }
+
+                if !sawCompletionInfo {
+                    finalTokenCount = estimatedTextTokens
+                    mapperLog.notice(
+                        "generation stream ended without vmlx completion info; synthesizing stats model=\(modelName, privacy: .public) estimatedTokens=\(estimatedTextTokens, privacy: .public) unclosedReasoning=\(sawReasoning, privacy: .public)"
+                    )
+                    continuation.yield(
+                        .completionInfo(
+                            tokenCount: estimatedTextTokens,
+                            tokensPerSecond: 0,
+                            unclosedReasoning: sawReasoning && !suppressUnclosedReasoning
+                        )
+                    )
                 }
 
                 let durationMs = Int((CFAbsoluteTimeGetCurrent() - startedAt) * 1000)

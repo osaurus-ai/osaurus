@@ -9,7 +9,9 @@
 // short-circuits on the first true block):
 //
 //   Block 1:  contains("nemotron-3") ∨ contains("nemotron-cascade")
-//                                    ∨ contains("nemotron_h")        → true
+//                                    ∨ contains("nemotron_h")
+//                                    ∨ contains("nemotron-omni")
+//                                    ∨ contains("nemotron_omni")     → true
 //   Block 2:  contains("qwen3.5") ∨ contains("qwen3.6")
 //                                 ∨ contains("holo3") ∨ contains("holo-3") → true
 //   Block 3:  contains("qwen3-next") ∨ contains("qwen3_next")
@@ -69,7 +71,19 @@ struct IsKnownHybridModelMCDCTests {
         #expect(ModelRuntime.isKnownHybridModel(name: "nemotron_h-cascade-3"))
     }
 
-    @Test("B1 all-false: bare 'nemotron' (no -3, no -cascade, no _h) does NOT flip")
+    @Test("B1.nemotron-omni substring independently flips Block 1")
+    func b1_nemotronOmniDash() {
+        #expect(ModelRuntime.isKnownHybridModel(name: "dealign.ai/Nemotron-Omni-Nano-JANGTQ4-CRACK"))
+        #expect(ModelRuntime.isKnownHybridModel(name: "Nemotron-Omni-Nano-MXFP4-CRACK"))
+    }
+
+    @Test("B1.nemotron_omni substring independently flips Block 1")
+    func b1_nemotronOmniUnderscore() {
+        #expect(ModelRuntime.isKnownHybridModel(name: "nemotron_omni_nano_jangtq"))
+        #expect(ModelRuntime.isKnownHybridModel(name: "OsaurusAI/Nemotron_Omni_Nano_Future"))
+    }
+
+    @Test("B1 all-false: bare 'nemotron' (no -3, no -cascade, no _h, no omni) does NOT flip")
     func b1_allFalse_bareNemotron() {
         // Bare 'nemotron' is intentionally NOT in the matcher — older
         // Nemotron-2 / NeMo dense bundles aren't hybrid. Locks against

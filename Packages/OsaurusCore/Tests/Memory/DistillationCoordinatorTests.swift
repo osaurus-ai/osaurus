@@ -75,26 +75,28 @@ struct DistillationCoordinatorTests {
     }
 
     @Test func chatIdleWaitMs_zero_proceeds_even_with_active_chat() async {
-        let coord = DistillationCoordinator.shared
-        let load = InferenceLoadCoordinator.shared
+        await InferenceLoadCoordinatorTestLock.shared.run {
+            let coord = DistillationCoordinator.shared
+            let load = InferenceLoadCoordinator.shared
 
-        // Simulate a long-running chat. With chatIdleWaitMs=0 the
-        // coordinator must skip the idle wait entirely, so the body
-        // runs without waiting on `endChatGeneration`.
-        await load.beginChatGeneration()
-        defer { Task { await load.endChatGeneration() } }
+            // Simulate a long-running chat. With chatIdleWaitMs=0 the
+            // coordinator must skip the idle wait entirely, so the body
+            // runs without waiting on `endChatGeneration`.
+            await load.beginChatGeneration()
 
-        let started = Date()
-        let bodyRan = AtomicBoolFlag()
-        await coord.run(chatIdleWaitMs: 0, requireResident: false) {
-            bodyRan.set()
+            let started = Date()
+            let bodyRan = AtomicBoolFlag()
+            await coord.run(chatIdleWaitMs: 0, requireResident: false) {
+                bodyRan.set()
+            }
+            let elapsed = Date().timeIntervalSince(started)
+            await load.endChatGeneration()
+
+            #expect(bodyRan.value)
+            // 0.5s is generous; the actual run should be < 50ms. We just
+            // need to confirm it didn't sit waiting on a chat-idle signal.
+            #expect(elapsed < 0.5)
         }
-        let elapsed = Date().timeIntervalSince(started)
-
-        #expect(bodyRan.value)
-        // 0.5s is generous; the actual run should be < 50ms. We just
-        // need to confirm it didn't sit waiting on a chat-idle signal.
-        #expect(elapsed < 0.5)
     }
 
     @Test func snapshot_marks_active_during_body() async {

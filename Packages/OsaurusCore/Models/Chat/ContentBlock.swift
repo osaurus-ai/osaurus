@@ -366,19 +366,23 @@ extension ContentBlock {
                 )
             }
 
-            if turn.hasThinking {
+            let hasVisibleContent =
+                !turn.visibleContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            let hasRenderableThinking = turn.hasRenderableThinking
+
+            if hasRenderableThinking {
                 turnBlocks.append(
                     .thinking(
                         turnId: turn.id,
                         index: 0,
                         text: turn.thinking,
-                        isStreaming: isStreaming && turn.contentIsEmpty,
+                        isStreaming: isStreaming && !hasVisibleContent,
                         position: .middle
                     )
                 )
             }
 
-            if !turn.contentIsEmpty {
+            if hasVisibleContent {
                 // during streaming, skip the regex-based metadata strip (O(n) on every sync).
                 // visibleContent is used for the final render once streaming ends.
                 let text = isStreaming ? turn.content : turn.visibleContent
@@ -391,7 +395,7 @@ extension ContentBlock {
                 turnBlocks.append(contentsOf: chartBlocks)
             }
 
-            if isStreaming && turn.contentIsEmpty && !turn.hasThinking
+            if isStreaming && !hasVisibleContent && !hasRenderableThinking
                 && (turn.toolCalls ?? []).isEmpty && turn.pendingToolName == nil
             {
                 // During prefill (no content/thinking/tools yet), always show the typing
@@ -410,6 +414,22 @@ extension ContentBlock {
                     )
                 }
                 turnBlocks.append(.typingIndicator(turnId: turn.id, position: .middle))
+            }
+
+            if !isStreaming && !hasVisibleContent && !hasRenderableThinking
+                && (turn.toolCalls ?? []).isEmpty && turn.pendingToolName == nil
+                && (turn.generationTokenCount != nil || turn.generationTokensPerSecond != nil)
+            {
+                turnBlocks.append(
+                    .paragraph(
+                        turnId: turn.id,
+                        index: 0,
+                        text: "No visible text was produced.",
+                        isStreaming: false,
+                        role: turn.role,
+                        position: .middle
+                    )
+                )
             }
 
             if let toolCalls = turn.toolCalls, !toolCalls.isEmpty {
@@ -499,7 +519,7 @@ extension ContentBlock {
             // turn in a consecutive assistant group — intermediate tool-calling turns in
             // an agent loop don't get their own footer.
             if !isStreaming && turn.role == .assistant && isLastInGroup,
-                !turn.contentIsEmpty || !(turn.toolCalls ?? []).isEmpty
+                hasVisibleContent || hasRenderableThinking || !(turn.toolCalls ?? []).isEmpty
             {
                 turnBlocks.append(.assistantActions(turnId: turn.id, position: .last))
             }

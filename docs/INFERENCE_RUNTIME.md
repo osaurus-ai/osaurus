@@ -185,7 +185,7 @@ reasoning gets dropped together with the other sentinels.
 
 | File | Coverage |
 |---|---|
-| `MLXBatchAdapterTests` | Max-batch-size flag clamping; Ling/ZAYA thinking-off context; registry-shutdown safety. |
+| `MLXBatchAdapterTests` | Max-batch-size flag clamping; Ling forced thinking-off context; ZAYA default-off but explicit thinking opt-in context; registry-shutdown safety. |
 | `TaskCoalescerTests` | Single-flight engine-creation discipline and teardown-during-creation races. |
 | `RuntimePolicySourceTests` | Source-level guardrails for DSV4 cache ownership, vmlx pin, SSM re-derive opt-out, and max-batch docs. |
 | `GenerationEventMapperTests` | `chunk` -> `tokens`; `toolCall` -> `toolInvocation` JSON serialization (happy path + failure envelope); `info` -> `completionInfo`; cross-chunk stop-sequence cut. |

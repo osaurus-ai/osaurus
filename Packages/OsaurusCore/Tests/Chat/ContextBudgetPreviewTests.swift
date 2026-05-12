@@ -43,6 +43,25 @@ struct ContextBudgetPreviewTests {
         body: @MainActor @Sendable (UUID) async -> Void
     ) async {
         await SandboxTestLock.runWithStoragePaths {
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+                "osaurus-context-budget-preview-\(UUID().uuidString)",
+                isDirectory: true
+            )
+            try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            let previousRoot = OsaurusPaths.overrideRoot
+            OsaurusPaths.overrideRoot = root
+            MemoryConfigurationStore.invalidateCache()
+            var memoryConfig = MemoryConfiguration.default
+            memoryConfig.enabled = true
+            MemoryConfigurationStore.save(memoryConfig)
+            AgentManager.shared.refresh()
+            defer {
+                MemoryConfigurationStore.invalidateCache()
+                OsaurusPaths.overrideRoot = previousRoot
+                AgentManager.shared.refresh()
+                try? FileManager.default.removeItem(at: root)
+            }
+
             let agent = Agent(
                 name: "PreviewTestAgent-\(UUID().uuidString.prefix(6))",
                 systemPrompt: "Test identity",

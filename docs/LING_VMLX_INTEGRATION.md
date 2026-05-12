@@ -7,7 +7,7 @@ BailingHybrid runtime path.
 
 ## Dependency Pins
 
-- `vmlx-swift-lm`: `b9da180158365c20a0fab130217e4fa50b8ec674`
+- `vmlx-swift-lm`: `7273ba22d6e608b5575bef91e70975a8ad3e1862`
   - Carries forward the prior `4a832400` + `88fc352b` content (BailingHybrid
     model/factory for `bailing_moe`, `bailing_hybrid`, `bailing_moe_v2_5`;
     Bailing/Ling `think_xml` reasoning stamp; Bailing input processor

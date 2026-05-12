@@ -30,6 +30,9 @@ struct ModelRuntimeIsHybridTests {
             "OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-JANGTQ4",
             "OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-JANGTQ",
             "nemotron-3-nano-omni-30b-a3b-mxfp4",  // case-folded picker form
+            "dealign.ai/Nemotron-Omni-Nano-JANGTQ4-CRACK",
+            "dealign.ai/Nemotron-Omni-Nano-MXFP4-CRACK",
+            "nemotron_omni_nano_jangtq",
             "JANGQ-AI/Nemotron-3-Reasoning-Future-Variant",  // forward-compat
         ] {
             #expect(

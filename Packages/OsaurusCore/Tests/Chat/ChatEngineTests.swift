@@ -10,6 +10,37 @@ import Testing
 
 struct ChatEngineTests {
 
+    @Test func chatCompletionRequest_decodesReasoningEffortAndEnableThinking() throws {
+        let data = Data("""
+        {
+          "model": "JANGQ-AI/Hy3-preview-JANGTQ",
+          "messages": [{"role":"user","content":"hi"}],
+          "reasoning_effort": "high",
+          "enable_thinking": true
+        }
+        """.utf8)
+
+        let request = try JSONDecoder().decode(ChatCompletionRequest.self, from: data)
+        #expect(request.reasoning_effort == "high")
+        #expect(request.enable_thinking == true)
+    }
+
+    @Test func openResponsesRequest_threadsReasoningEffortIntoChatRequest() throws {
+        let data = Data("""
+        {
+          "model": "JANGQ-AI/Hy3-preview-JANGTQ",
+          "input": "hi",
+          "reasoning": {"effort": "low"}
+        }
+        """.utf8)
+
+        let request = try JSONDecoder().decode(OpenResponsesRequest.self, from: data)
+        let chat = request.toChatCompletionRequest()
+
+        #expect(chat.reasoning_effort == "low")
+        #expect(chat.model == "JANGQ-AI/Hy3-preview-JANGTQ")
+    }
+
     @Test func streamChat_yields_deltas_success() async throws {
         let svc = FakeModelService(deltas: ["a", "b", "c"])
         let engine = ChatEngine(services: [svc], installedModelsProvider: { [] })
@@ -58,6 +89,194 @@ struct ChatEngineTests {
         #expect(resp.choices.count == 1)
         #expect(resp.choices.first?.finish_reason == "stop")
         #expect(resp.choices.first?.message.content == "hello")
+    }
+
+    @Test func completeChat_threadsOpenAIReasoningFieldsIntoModelOptions() async throws {
+        actor Capture {
+            var params: GenerationParameters?
+            func set(_ params: GenerationParameters) { self.params = params }
+        }
+        struct CaptureService: ModelService {
+            let capture: Capture
+            var id: String { "hy3" }
+            func isAvailable() -> Bool { true }
+            func handles(requestedModel: String?) -> Bool { requestedModel == "hy3" }
+            func generateOneShot(
+                messages: [ChatMessage],
+                parameters: GenerationParameters,
+                requestedModel: String?
+            ) async throws -> String {
+                await capture.set(parameters)
+                return "ok"
+            }
+            func streamDeltas(
+                messages: [ChatMessage],
+                parameters: GenerationParameters,
+                requestedModel: String?,
+                stopSequences: [String]
+            ) async throws -> AsyncThrowingStream<String, Error> {
+                await capture.set(parameters)
+                return AsyncThrowingStream { continuation in
+                    continuation.yield("ok")
+                    continuation.finish()
+                }
+            }
+        }
+
+        let capture = Capture()
+        let engine = ChatEngine(services: [CaptureService(capture: capture)], installedModelsProvider: { [] })
+        var req = ChatCompletionRequest(
+            model: "hy3",
+            messages: [ChatMessage(role: "user", content: "hi")],
+            temperature: 0.5,
+            max_tokens: 32,
+            stream: false,
+            top_p: nil,
+            frequency_penalty: nil,
+            presence_penalty: nil,
+            stop: nil,
+            n: nil,
+            tools: nil,
+            tool_choice: nil,
+            session_id: nil
+        )
+        req.enable_thinking = true
+        req.reasoning_effort = "high"
+
+        _ = try await engine.completeChat(request: req)
+        let params = await capture.params
+        #expect(params?.modelOptions["reasoningEffort"]?.stringValue == "high")
+        #expect(
+            params?.modelOptions["disableThinking"] == nil,
+            "Hy3 uses reasoningEffort; the generic disableThinking bool must not survive and create a second, contradictory cache-scope signal"
+        )
+    }
+
+    @Test func completeChat_mapsHy3LegacyThinkingBoolToReasoningEffort() async throws {
+        actor Capture {
+            var params: GenerationParameters?
+            func set(_ params: GenerationParameters) { self.params = params }
+        }
+        struct CaptureService: ModelService {
+            let capture: Capture
+            var id: String { "hy3" }
+            func isAvailable() -> Bool { true }
+            func handles(requestedModel: String?) -> Bool { requestedModel == "hy3" }
+            func generateOneShot(
+                messages: [ChatMessage],
+                parameters: GenerationParameters,
+                requestedModel: String?
+            ) async throws -> String {
+                await capture.set(parameters)
+                return "ok"
+            }
+            func streamDeltas(
+                messages: [ChatMessage],
+                parameters: GenerationParameters,
+                requestedModel: String?,
+                stopSequences: [String]
+            ) async throws -> AsyncThrowingStream<String, Error> {
+                await capture.set(parameters)
+                return AsyncThrowingStream { continuation in
+                    continuation.yield("ok")
+                    continuation.finish()
+                }
+            }
+        }
+
+        let capture = Capture()
+        let engine = ChatEngine(services: [CaptureService(capture: capture)], installedModelsProvider: { [] })
+        var req = ChatCompletionRequest(
+            model: "hy3",
+            messages: [ChatMessage(role: "user", content: "hi")],
+            temperature: 0.5,
+            max_tokens: 32,
+            stream: false,
+            top_p: nil,
+            frequency_penalty: nil,
+            presence_penalty: nil,
+            stop: nil,
+            n: nil,
+            tools: nil,
+            tool_choice: nil,
+            session_id: nil
+        )
+        req.enable_thinking = false
+
+        _ = try await engine.completeChat(request: req)
+        let params = await capture.params
+        #expect(params?.modelOptions["reasoningEffort"]?.stringValue == "no_think")
+        #expect(params?.modelOptions["disableThinking"] == nil)
+    }
+
+    @Test func streamChat_threadsGenericReasoningFieldsAndStopsIntoModelService() async throws {
+        actor Capture {
+            var params: GenerationParameters?
+            var stopSequences: [String]?
+            func set(_ params: GenerationParameters, stopSequences: [String]) {
+                self.params = params
+                self.stopSequences = stopSequences
+            }
+        }
+        struct CaptureService: ModelService {
+            let capture: Capture
+            var id: String { "fake" }
+            func isAvailable() -> Bool { true }
+            func handles(requestedModel: String?) -> Bool { requestedModel == "fake" }
+            func generateOneShot(
+                messages: [ChatMessage],
+                parameters: GenerationParameters,
+                requestedModel: String?
+            ) async throws -> String {
+                await capture.set(parameters, stopSequences: [])
+                return "ok"
+            }
+            func streamDeltas(
+                messages: [ChatMessage],
+                parameters: GenerationParameters,
+                requestedModel: String?,
+                stopSequences: [String]
+            ) async throws -> AsyncThrowingStream<String, Error> {
+                await capture.set(parameters, stopSequences: stopSequences)
+                return AsyncThrowingStream { continuation in
+                    continuation.yield("ok")
+                    continuation.finish()
+                }
+            }
+        }
+
+        let capture = Capture()
+        let engine = ChatEngine(services: [CaptureService(capture: capture)], installedModelsProvider: { [] })
+        var req = ChatCompletionRequest(
+            model: "fake",
+            messages: [ChatMessage(role: "user", content: "hi")],
+            temperature: 0.2,
+            max_tokens: 32,
+            stream: true,
+            top_p: nil,
+            frequency_penalty: nil,
+            presence_penalty: nil,
+            stop: ["</final>"],
+            n: nil,
+            tools: nil,
+            tool_choice: nil,
+            session_id: nil
+        )
+        req.enable_thinking = false
+        req.reasoning_effort = "high"
+        req.modelOptions = ["customFlag": .string("kept")]
+
+        let stream = try await engine.streamChat(request: req)
+        var text = ""
+        for try await delta in stream { text += delta }
+
+        let params = await capture.params
+        let stopSequences = await capture.stopSequences
+        #expect(text == "ok")
+        #expect(stopSequences == ["</final>"])
+        #expect(params?.modelOptions["disableThinking"]?.boolValue == true)
+        #expect(params?.modelOptions["reasoningEffort"]?.stringValue == "high")
+        #expect(params?.modelOptions["customFlag"]?.stringValue == "kept")
     }
 
     @Test func completeChat_returns_tool_calls_when_tool_invoked() async throws {

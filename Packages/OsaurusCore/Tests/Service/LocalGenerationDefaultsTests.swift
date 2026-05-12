@@ -35,6 +35,7 @@ struct LocalGenerationDefaultsTests {
         #expect(d.temperature == 1.0)
         #expect(d.topK == 64)
         #expect(d.topP == 0.95)
+        #expect(d.doSample == true)
         #expect(d.repetitionPenalty == nil)
     }
 
@@ -59,6 +60,7 @@ struct LocalGenerationDefaultsTests {
         #expect(d.temperature == 0.6)
         #expect(d.topK == 20)
         #expect(d.topP == 0.95)
+        #expect(d.doSample == true)
     }
 
     @Test("MiniMax M2.7: top_k=40")
@@ -79,6 +81,7 @@ struct LocalGenerationDefaultsTests {
         #expect(d.temperature == 1.0)
         #expect(d.topK == 40)
         #expect(d.topP == 0.95)
+        #expect(d.doSample == true)
     }
 
     @Test("Nemotron-Cascade-2: no sampling fields, only EOS")
@@ -98,9 +101,36 @@ struct LocalGenerationDefaultsTests {
                 """#
         )
         #expect(d.temperature == nil)
+        #expect(d.maxTokens == nil)
         #expect(d.topK == nil)
         #expect(d.topP == nil)
+        #expect(d.minP == nil)
         #expect(d.repetitionPenalty == nil)
+        #expect(d.doSample == nil)
+    }
+
+    @Test("Full generation_config surface mirrors vmlx GenerationConfigFile")
+    func fullGenerationConfigSurface() {
+        let d = Self.defaults(
+            fromJSON: #"""
+                {
+                  "max_new_tokens": 300,
+                  "temperature": 0.0,
+                  "top_p": 0.8,
+                  "top_k": 12,
+                  "min_p": 0.05,
+                  "repetition_penalty": 1.03,
+                  "do_sample": false
+                }
+                """#
+        )
+        #expect(d.maxTokens == 300)
+        #expect(d.temperature == 0.0)
+        #expect(d.topP == 0.8)
+        #expect(d.topK == 12)
+        #expect(d.minP == 0.05)
+        #expect(d.repetitionPenalty == 1.03)
+        #expect(d.doSample == false)
     }
 
     @Test("Mistral-Small-4: sampling fields absent — defaults empty")
@@ -172,13 +202,16 @@ struct LocalGenerationDefaultsTests {
 
         let cfg = tmp.appendingPathComponent("generation_config.json")
         try #"""
-        {"temperature": 0.6, "top_p": 0.9, "top_k": 32}
+        {"max_new_tokens": 300, "temperature": 0.6, "top_p": 0.9, "top_k": 32, "min_p": 0.02, "do_sample": true}
         """#.write(to: cfg, atomically: true, encoding: .utf8)
 
         let d = LocalGenerationDefaults.load(fromDirectory: tmp)
+        #expect(d.maxTokens == 300)
         #expect(d.temperature == 0.6)
         #expect(d.topP == 0.9)
         #expect(d.topK == 32)
+        #expect(d.minP == 0.02)
+        #expect(d.doSample == true)
     }
 
     @Test("Missing generation_config.json returns empty, does not throw")
@@ -214,11 +247,15 @@ struct LocalGenerationDefaultsTests {
 
         let temp = clientTemp ?? modelDefaults.temperature ?? 0.7
         let topP = clientTopP ?? modelDefaults.topP ?? serverFallbackTopP
+        let maxTokens = modelDefaults.maxTokens ?? 16
         let topK = modelDefaults.topK ?? 0
+        let minP = modelDefaults.minP ?? 0
 
         #expect(temp == 0.2)
+        #expect(maxTokens == 16)
         #expect(topP == 0.5)
         #expect(topK == 20)
+        #expect(minP == 0)
     }
 
     @Test("Precedence: model defaults fill omitted client fields")
@@ -227,6 +264,7 @@ struct LocalGenerationDefaultsTests {
             temperature: 0.6,
             topP: 0.95,
             topK: 20,
+            minP: 0.02,
             repetitionPenalty: nil
         )
         let clientTemp: Float? = nil
@@ -236,10 +274,12 @@ struct LocalGenerationDefaultsTests {
         let temp = clientTemp ?? modelDefaults.temperature ?? 0.7
         let topP = clientTopP ?? modelDefaults.topP ?? serverFallbackTopP
         let topK = modelDefaults.topK ?? 0
+        let minP = modelDefaults.minP ?? 0
 
         #expect(temp == 0.6)
         #expect(topP == 0.95)
         #expect(topK == 20)
+        #expect(minP == 0.02)
     }
 
     @Test("Precedence: hardcoded fallback when neither client nor model set fields")
@@ -310,6 +350,7 @@ struct LocalGenerationDefaultsTests {
                     "sampling_defaults": {
                       "temperature": 0.6,
                       "top_p": 0.95,
+                      "min_p": 0.01,
                       "max_new_tokens": 300
                     }
                   },
@@ -320,8 +361,8 @@ struct LocalGenerationDefaultsTests {
         )
         #expect(d.temperature == 0.6)
         #expect(d.topP == 0.95)
-        // `max_new_tokens` is not a GenerationParameters field we honor at
-        // the sampling layer; intentionally ignored.
+        #expect(d.minP == 0.01)
+        #expect(d.maxTokens == 300)
         #expect(d.topK == nil)
         #expect(d.repetitionPenalty == nil)
     }
@@ -337,6 +378,9 @@ struct LocalGenerationDefaultsTests {
                       "temperature": 0.8,
                       "top_p": 0.9,
                       "top_k": 50,
+                      "min_p": 0.04,
+                      "max_new_tokens": 128,
+                      "do_sample": false,
                       "repetition_penalty": 1.05
                     }
                   }
@@ -347,6 +391,9 @@ struct LocalGenerationDefaultsTests {
         #expect(d.temperature == 0.8)
         #expect(d.topP == 0.9)
         #expect(d.topK == 50)
+        #expect(d.minP == 0.04)
+        #expect(d.maxTokens == 128)
+        #expect(d.doSample == false)
         #expect(d.repetitionPenalty == 1.05)
     }
 
@@ -400,18 +447,21 @@ struct LocalGenerationDefaultsTests {
             temperature: 0.6,
             topP: nil,
             topK: nil,
+            minP: nil,
             repetitionPenalty: nil
         )
         let hf = LocalGenerationDefaults.Defaults(
             temperature: 1.0,
             topP: 0.95,
             topK: 64,
+            minP: 0.03,
             repetitionPenalty: nil
         )
         let merged = LocalGenerationDefaults.merge(primary: jang, fallback: hf)
         #expect(merged.temperature == 0.6)
         #expect(merged.topP == 0.95)
         #expect(merged.topK == 64)
+        #expect(merged.minP == 0.03)
     }
 
     @Test("merge: primary-only fields preserved")
@@ -420,6 +470,7 @@ struct LocalGenerationDefaultsTests {
             temperature: 0.6,
             topP: 0.9,
             topK: 32,
+            minP: 0.02,
             repetitionPenalty: 1.05
         )
         let merged = LocalGenerationDefaults.merge(
@@ -429,6 +480,7 @@ struct LocalGenerationDefaultsTests {
         #expect(merged.temperature == 0.6)
         #expect(merged.topP == 0.9)
         #expect(merged.topK == 32)
+        #expect(merged.minP == 0.02)
         #expect(merged.repetitionPenalty == 1.05)
     }
 
@@ -438,6 +490,7 @@ struct LocalGenerationDefaultsTests {
             temperature: 1.0,
             topP: 0.95,
             topK: 64,
+            minP: 0.03,
             repetitionPenalty: nil
         )
         let merged = LocalGenerationDefaults.merge(
@@ -447,6 +500,7 @@ struct LocalGenerationDefaultsTests {
         #expect(merged.temperature == 1.0)
         #expect(merged.topP == 0.95)
         #expect(merged.topK == 64)
+        #expect(merged.minP == 0.03)
     }
 
     // MARK: - Integration: filesystem with BOTH files
@@ -466,7 +520,7 @@ struct LocalGenerationDefaultsTests {
 
         // HF file ships upstream's training defaults.
         try #"""
-        {"temperature": 1.0, "top_p": 0.95, "top_k": 64}
+        {"temperature": 1.0, "top_p": 0.95, "top_k": 64, "min_p": 0.03, "max_new_tokens": 300}
         """#.write(
             to: tmp.appendingPathComponent("generation_config.json"),
             atomically: true,
@@ -487,6 +541,8 @@ struct LocalGenerationDefaultsTests {
         // …HF fills the rest.
         #expect(d.topP == 0.95)
         #expect(d.topK == 64)
+        #expect(d.minP == 0.03)
+        #expect(d.maxTokens == 300)
     }
 
     @Test("Filesystem: jang_config alone suffices (HF file absent)")
