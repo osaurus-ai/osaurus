@@ -696,6 +696,10 @@ Telegram needs to know your tunnel URL, but the plugin can't currently derive it
 
 This is more robust than trying to learn the URL from the first incoming request (chicken-and-egg: Telegram won't deliver until `setWebhook` runs) or via a fake dispatch round-trip. Once `host_get_route_url` lands, this field can become optional.
 
+### Re-registration on relay reconnect
+
+The host force-redelivers the full per-agent config snapshot when an agent's relay status transitions `non-.connected -> .connected(U)` (see "Repeat-value deliveries on relay reconnect" in `HOST_API.md`). That means after a tunnel drop + recover, this `on_config_changed` body re-fires for `bot_token` and `public_base_url` even though the values are identical to before — `setWebhook` gets re-called with the same URL, which Telegram treats as an idempotent refresh. Plugin authors writing their own webhook integrations should keep `setWebhook`-style calls idempotent (or guard them with an in-plugin "have I synced this value to upstream" check) so the reconnect-redelivery is safe and useful rather than wasteful.
+
 ---
 
 ## 11. Edge cases

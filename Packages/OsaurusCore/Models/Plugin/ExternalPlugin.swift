@@ -805,12 +805,28 @@ final class ExternalPlugin: @unchecked Sendable {
         }
     }
 
-    func notifyConfigChanged(key: String, value: String, agentId: UUID? = nil) {
-        notifyConfigBatch([(key: key, value: value)], agentId: agentId)
+    func notifyConfigChanged(
+        key: String,
+        value: String,
+        agentId: UUID? = nil,
+        force: Bool = false
+    ) {
+        notifyConfigBatch([(key: key, value: value)], agentId: agentId, force: force)
     }
 
-    func notifyConfigBatch(_ changes: [(key: String, value: String)], agentId: UUID? = nil) {
-        guard let prep = prepareConfigDelivery(changes: changes, agentId: agentId) else { return }
+    /// `force == true` bypasses the value-equality dedup in
+    /// `prepareConfigDelivery` so `on_config_changed` re-fires even
+    /// when every pair matches the prior delivery. Used by
+    /// `PluginManager.handleAgentReconnected` so plugins re-assert
+    /// upstream registrations after a relay reconnect.
+    func notifyConfigBatch(
+        _ changes: [(key: String, value: String)],
+        agentId: UUID? = nil,
+        force: Bool = false
+    ) {
+        guard
+            let prep = prepareConfigDelivery(changes: changes, agentId: agentId, force: force)
+        else { return }
         nonisolated(unsafe) let ctx = prep.ctx
         let configFn = prep.configFn
         let filtered = prep.filtered
@@ -847,8 +863,14 @@ final class ExternalPlugin: @unchecked Sendable {
     /// `on_config_changed` (HTTP, OAuth refresh) will block the caller —
     /// the load path accepts that cost as part of a one-shot launch
     /// sweep; runtime callers should keep using the async variant.
-    func notifyConfigBatchSync(_ changes: [(key: String, value: String)], agentId: UUID? = nil) {
-        guard let prep = prepareConfigDelivery(changes: changes, agentId: agentId) else { return }
+    func notifyConfigBatchSync(
+        _ changes: [(key: String, value: String)],
+        agentId: UUID? = nil,
+        force: Bool = false
+    ) {
+        guard
+            let prep = prepareConfigDelivery(changes: changes, agentId: agentId, force: force)
+        else { return }
         nonisolated(unsafe) let ctx = prep.ctx
         let configFn = prep.configFn
         let filtered = prep.filtered
@@ -874,24 +896,26 @@ final class ExternalPlugin: @unchecked Sendable {
     /// regardless of which path delivered them.
     private func prepareConfigDelivery(
         changes: [(key: String, value: String)],
-        agentId: UUID?
+        agentId: UUID?,
+        force: Bool = false
     ) -> (configFn: osr_on_config_changed_t, ctx: osr_plugin_ctx_t, filtered: [(key: String, value: String)])? {
         guard abiVersion >= 2, let configFn = api.on_config_changed, !changes.isEmpty else { return nil }
         let agentScope = agentId?.uuidString ?? "default"
 
         // Drop pairs that match the prior delivery for the same
-        // `(agent, key)`. PluginConfigView's `loadConfig()` and the
-        // launch-time fan-out both re-deliver the entire snapshot
-        // unconditionally; this dedup keeps the plugin's
-        // `on_config_changed` body from re-running expensive work
-        // (Telegram `setupWebhook`, OAuth refresh, etc.) on no-op pushes.
+        // `(agent, key)` so the plugin's `on_config_changed` body
+        // doesn't re-run expensive work (Telegram `setupWebhook`,
+        // OAuth refresh, etc.) on no-op pushes from
+        // `PluginConfigView.loadConfig()` or the launch-time fan-out.
+        // `force == true` skips the filter but still updates the
+        // cache — opted in on relay reconnect, see callers.
         let filtered: [(key: String, value: String)] = self.lastDeliveredConfig.withLock {
             last -> [(key: String, value: String)] in
             var keep: [(key: String, value: String)] = []
             keep.reserveCapacity(changes.count)
             for change in changes {
                 let cacheKey = "\(agentScope)|\(change.key)"
-                if last[cacheKey] == change.value { continue }
+                if !force, last[cacheKey] == change.value { continue }
                 last[cacheKey] = change.value
                 keep.append(change)
             }

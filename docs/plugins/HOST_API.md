@@ -134,6 +134,16 @@ Removes a secret. Like `config_set`, the calling plugin does **not** receive an 
 
 Empty string `""` is a real value, distinct from a delete. Use `config_delete` to remove a key entirely. Host-side pushes that signal a transition (e.g. `tunnel_url` going down) deliver `""` to `on_config_changed`; treat that as "no value right now" rather than "no value ever stored."
 
+### Repeat-value deliveries on relay reconnect
+
+Normal config pushes are deduped on value equality — the host drops `(key, value)` pairs that match the prior delivery for the same `(agent, key)`, so plugins that do expensive work in `on_config_changed` (Telegram `setupWebhook`, OAuth refresh, etc.) don't re-run on no-op pushes. There is one explicit exception: when an agent's relay status transitions `non-.connected -> .connected(U)` (a relay reconnect), the host force-redelivers the **full per-agent config snapshot** plus `tunnel_url=U` to every loaded plugin, **bypassing the dedup**. The relay assigns a stable URL to each agent so the URL is usually unchanged across the gap, but the upstream service (Telegram, etc.) needs the plugin to re-assert the registration after the disconnect window.
+
+The practical contract for plugin authors:
+
+- `on_config_changed` MUST be idempotent for repeat values. A `setupWebhook(URL)` call with the same URL the upstream service already has should be safe (Telegram-style upstreams typically treat this as a no-op refresh; if your upstream isn't idempotent, gate the work yourself with an in-plugin "have I synced this value" check).
+- The first observation of an agent's status on app launch is **not** treated as a reconnect — `runFirstDeliverySweep` already pushed the snapshot synchronously inside the loading marker. Only `non-.connected -> .connected(U)` transitions for agents the host has already observed (typically the same agent transitioning through `.connecting` or `.disconnected` and back) trigger the force redelivery.
+- Newly added agents go through `host_agent_added` → `deliverInitialConfig` (NOT through the reconnect path), so the dedup contract for first-delivery on a new agent is unchanged.
+
 ### `on_config_changed(key, value) -> void` threading
 
 The host serializes invocations of `on_config_changed` per plugin: two callbacks for the same plugin will never run in parallel, even when the host fans out per-agent notifications back-to-back at launch. State touched only from this callback can stay lock-free; state shared with `invoke` / `handle_route` still needs its own synchronization (those paths run concurrently).
