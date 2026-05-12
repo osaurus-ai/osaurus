@@ -841,7 +841,17 @@ extension FloatingInputCard {
     private func sendVoiceMessage(_ message: String) {
         print("[FloatingInputCard] Sending voice message. Continuous mode: \(isContinuousVoiceMode)")
         logVoiceState(trigger: "sendVoiceMessage-start")
-        let voiceAudioData = mediaCapabilities.supportsAudio ? speechService.currentLiveAudioWAVData() : nil
+        let voiceCaptureStart = CFAbsoluteTimeGetCurrent()
+        let voiceSnapshot = mediaCapabilities.supportsAudio ? speechService.currentLiveAudioSnapshot() : nil
+        let snapshotMs = Int((CFAbsoluteTimeGetCurrent() - voiceCaptureStart) * 1000)
+        let wavEncodeStart = CFAbsoluteTimeGetCurrent()
+        let voiceAudioData = voiceSnapshot?.wavData()
+        let wavEncodeMs = Int((CFAbsoluteTimeGetCurrent() - wavEncodeStart) * 1000)
+        if mediaCapabilities.supportsAudio {
+            let wavBytes = voiceAudioData?.count ?? 0
+            let durationMs = Int((voiceSnapshot?.durationSeconds ?? 0) * 1000)
+            print("[Osaurus][LiveVoice] snapshot_ms=\(snapshotMs) wav_encode_ms=\(wavEncodeMs) wav_bytes=\(wavBytes) sample_rate=\(voiceSnapshot?.sampleRate ?? 0) duration_ms=\(durationMs)")
+        }
 
         // show sending state first
         voiceInputState = .sending

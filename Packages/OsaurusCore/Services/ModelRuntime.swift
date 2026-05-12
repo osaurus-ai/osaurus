@@ -953,7 +953,7 @@ public actor ModelRuntime {
         }
         activeGenerationTask = ActiveGenerationRecord(modelName: modelName, task: activeTask)
 
-        return GenerationEventMapper.map(events: prepared.stream, modelName: modelName)
+        return GenerationEventMapper.map(events: prepared.stream, modelName: modelName, trace: trace)
     }
 
     // MARK: - New message-based (OpenAI ChatMessage) APIs
@@ -984,7 +984,7 @@ public actor ModelRuntime {
         var pendingTools: [ServiceToolInvocation] = []
         let augmented = ModelRuntime.applyJSONMode(messages, jsonMode: parameters.jsonMode)
         let events = try await generateEventStream(
-            chatBuilder: { ModelRuntime.mapOpenAIChatToMLX(augmented) },
+            chatBuilder: { ModelRuntime.mapOpenAIChatToMLX(augmented, trace: parameters.ttftTrace) },
             parameters: parameters,
             stopSequences: stopSequences,
             tools: tools,
@@ -1028,7 +1028,7 @@ public actor ModelRuntime {
     ) async throws -> AsyncThrowingStream<String, Error> {
         let augmented = ModelRuntime.applyJSONMode(messages, jsonMode: parameters.jsonMode)
         let events = try await generateEventStream(
-            chatBuilder: { ModelRuntime.mapOpenAIChatToMLX(augmented) },
+            chatBuilder: { ModelRuntime.mapOpenAIChatToMLX(augmented, trace: parameters.ttftTrace) },
             parameters: parameters,
             stopSequences: stopSequences,
             tools: tools,
@@ -1251,14 +1251,16 @@ public actor ModelRuntime {
     /// `TemplateException: "Message has tool role, but there was no
     /// previous assistant message with a tool call!"` on MiniMax).
     nonisolated static func mapOpenAIChatToMLX(
-        _ msgs: [ChatMessage]
+        _ msgs: [ChatMessage],
+        trace: TTFTTrace? = nil
     ) -> [MLXLMCommon.Chat.Message] {
         var out: [MLXLMCommon.Chat.Message] = []
         out.reserveCapacity(max(6, msgs.count))
+        var audioMetrics = AudioMaterializationMetrics()
         for m in msgs {
             let images = extractImageSources(from: m)
             let videos = extractVideoSources(from: m)
-            let audios = extractAudioSources(from: m)
+            let audios = extractAudioSources(from: m, metrics: &audioMetrics)
             switch m.role {
             case "system":
                 out.append(
@@ -1330,6 +1332,13 @@ public actor ModelRuntime {
                     )
                 )
             }
+        }
+        if audioMetrics.inputCount > 0 {
+            trace?.set("input_audio_count", audioMetrics.inputCount)
+            trace?.set("input_audio_materialized_count", audioMetrics.materializedCount)
+            trace?.set("input_audio_bytes", audioMetrics.byteCount)
+            trace?.set("input_audio_materialize_ms", audioMetrics.materializeMs)
+            trace?.mark("input_audio_materialize_done")
         }
         return out
     }
@@ -1412,13 +1421,23 @@ public actor ModelRuntime {
     /// uniform across formats — there is no in-memory `[Float]` decode here
     /// because we'd have to duplicate vmlx's AVAudioConverter rig and lose
     /// resampling fidelity in the process.
+    private struct AudioMaterializationMetrics {
+        var inputCount = 0
+        var materializedCount = 0
+        var byteCount = 0
+        var materializeMs = 0
+    }
+
     nonisolated private static func extractAudioSources(
-        from message: ChatMessage
+        from message: ChatMessage,
+        metrics: inout AudioMaterializationMetrics
     ) -> [MLXLMCommon.UserInput.Audio] {
         let inputs = message.audioInputs
         guard !inputs.isEmpty else { return [] }
 
         var sources: [MLXLMCommon.UserInput.Audio] = []
+        let startedAt = CFAbsoluteTimeGetCurrent()
+        metrics.inputCount += inputs.count
         for (data, format) in inputs {
             let ext = format.lowercased()
             // Synthesize a `data:audio/<format>;base64,<data>` URL so we can
@@ -1427,10 +1446,13 @@ public actor ModelRuntime {
             // data URL — wrap it before handing off so the helper's data-URL
             // parsing applies uniformly.
             let dataUrl = "data:audio/\(ext);base64,\(data)"
-            if let url = materializeMediaDataUrl(dataUrl, defaultExtension: ext.isEmpty ? "wav" : ext) {
-                sources.append(.url(url))
+            if let file = materializeMediaDataUrlResult(dataUrl, defaultExtension: ext.isEmpty ? "wav" : ext) {
+                metrics.materializedCount += 1
+                metrics.byteCount += file.byteCount
+                sources.append(.url(file.url))
             }
         }
+        metrics.materializeMs += Int((CFAbsoluteTimeGetCurrent() - startedAt) * 1000)
         return sources
     }
 
@@ -1448,6 +1470,18 @@ public actor ModelRuntime {
         _ urlString: String,
         defaultExtension: String
     ) -> URL? {
+        materializeMediaDataUrlResult(urlString, defaultExtension: defaultExtension)?.url
+    }
+
+    private struct MaterializedMediaFile {
+        let url: URL
+        let byteCount: Int
+    }
+
+    nonisolated private static func materializeMediaDataUrlResult(
+        _ urlString: String,
+        defaultExtension: String
+    ) -> MaterializedMediaFile? {
         // Expect `data:<mediatype>[;base64],<payload>`. Pull the mediatype
         // subtype as the file extension when available so AVFoundation /
         // AVAudioConverter's extension-keyed dispatch picks the right decoder.
@@ -1488,7 +1522,7 @@ public actor ModelRuntime {
             .appendingPathExtension(ext)
         do {
             try bytes.write(to: tmp, options: .atomic)
-            return tmp
+            return MaterializedMediaFile(url: tmp, byteCount: bytes.count)
         } catch {
             return nil
         }

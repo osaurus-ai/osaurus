@@ -578,6 +578,8 @@ struct MLXBatchAdapter {
             var chatCount = 0
             var toolCount = 0
             var imageCount = 0
+            var videoCount = 0
+            var audioCount = 0
             var contextKeys: [String] = []
             var contextSummary = ""
             var promptTokenCount = 0
@@ -592,6 +594,8 @@ struct MLXBatchAdapter {
             box.chatBuiltAt = CFAbsoluteTimeGetCurrent()
             box.chatCount = chat.count
             box.imageCount = chat.reduce(0) { $0 + $1.images.count }
+            box.videoCount = chat.reduce(0) { $0 + $1.videos.count }
+            box.audioCount = chat.reduce(0) { $0 + $1.audios.count }
             let toolsSpec = buildToolsSpec()
             box.toolsBuiltAt = CFAbsoluteTimeGetCurrent()
             box.toolCount = toolsSpec?.count ?? 0
@@ -649,8 +653,16 @@ struct MLXBatchAdapter {
             return Int((end - start) * 1000)
         }
         let contextKeyString = box.contextKeys.joined(separator: ",")
+        let totalPrepareMs = Int((doneAt - prepareStartedAt) * 1000)
+        trace?.set("prompt_prepare_ms", totalPrepareMs)
+        trace?.set("processor_prepare_ms", ms(box.contextBuiltAt, box.processorDoneAt))
+        trace?.set("token_array_ms", ms(box.processorDoneAt, box.tokenArrayDoneAt))
+        trace?.set("chat_message_count", box.chatCount)
+        trace?.set("chat_image_count", box.imageCount)
+        trace?.set("chat_video_count", box.videoCount)
+        trace?.set("chat_audio_count", box.audioCount)
         batchAdapterLog.info(
-            "prepareInput: model=\(modelName, privacy: .public) totalMs=\(Int((doneAt - prepareStartedAt) * 1000), privacy: .public) waitForContainerMs=\(ms(prepareStartedAt, box.performEnteredAt), privacy: .public) chatBuildMs=\(ms(box.performEnteredAt, box.chatBuiltAt), privacy: .public) toolsBuildMs=\(ms(box.chatBuiltAt, box.toolsBuiltAt), privacy: .public) contextMs=\(ms(box.toolsBuiltAt, box.contextBuiltAt), privacy: .public) processorPrepareMs=\(ms(box.contextBuiltAt, box.processorDoneAt), privacy: .public) tokenArrayMs=\(ms(box.processorDoneAt, box.tokenArrayDoneAt), privacy: .public) chat=\(box.chatCount, privacy: .public) tools=\(box.toolCount, privacy: .public) images=\(box.imageCount, privacy: .public) promptTokens=\(box.promptTokenCount, privacy: .public) contextKeys=\(contextKeyString, privacy: .public) context=\(box.contextSummary, privacy: .public)"
+            "prepareInput: model=\(modelName, privacy: .public) totalMs=\(totalPrepareMs, privacy: .public) waitForContainerMs=\(ms(prepareStartedAt, box.performEnteredAt), privacy: .public) chatBuildMs=\(ms(box.performEnteredAt, box.chatBuiltAt), privacy: .public) toolsBuildMs=\(ms(box.chatBuiltAt, box.toolsBuiltAt), privacy: .public) contextMs=\(ms(box.toolsBuiltAt, box.contextBuiltAt), privacy: .public) processorPrepareMs=\(ms(box.contextBuiltAt, box.processorDoneAt), privacy: .public) tokenArrayMs=\(ms(box.processorDoneAt, box.tokenArrayDoneAt), privacy: .public) chat=\(box.chatCount, privacy: .public) tools=\(box.toolCount, privacy: .public) images=\(box.imageCount, privacy: .public) videos=\(box.videoCount, privacy: .public) audios=\(box.audioCount, privacy: .public) promptTokens=\(box.promptTokenCount, privacy: .public) contextKeys=\(contextKeyString, privacy: .public) context=\(box.contextSummary, privacy: .public)"
         )
 
         guard let prepared = box.result else {

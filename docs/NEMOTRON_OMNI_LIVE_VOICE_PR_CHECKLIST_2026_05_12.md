@@ -21,11 +21,19 @@ audio support is gated by `ModelMediaCapabilities.supportsAudio`.
   temp audio file and hands `UserInput.Audio.url` to vMLX.
 - `Packages/OsaurusCore/Package.swift` pins `vmlx-swift-lm` to `c0f8b3b` so
   the app consumes the Swift live-voice handoff support.
+- Live voice timing is now visible in the normal debug path:
+  - `FloatingInputCard` logs `snapshot_ms`, `wav_encode_ms`, `wav_bytes`,
+    `sample_rate`, and `duration_ms` when a voice turn is captured.
+  - `TTFTTrace` records `input_audio_count`, `input_audio_materialized_count`,
+    `input_audio_bytes`, `input_audio_materialize_ms`, `prompt_prepare_ms`,
+    `processor_prepare_ms`, `chat_audio_count`, `first_token_ms`, and
+    `first_chunk_ms`.
 
 ## Verified Evidence
 
 - `swift build --target OsaurusCore` passed after the live voice snapshot
-  changes and after the `vmlx-swift-lm` pin bump to `c0f8b3b`.
+  changes, after the `vmlx-swift-lm` pin bump to `c0f8b3b`, and after the
+  TTFT/live-voice timing instrumentation.
 - `swift test --filter LiveVoiceAudioSnapshotTests` is blocked by the existing
   local toolchain issue: the package test target imports Swift `Testing`, which
   is unavailable in this environment.
@@ -47,7 +55,9 @@ audio support is gated by `ModelMediaCapabilities.supportsAudio`.
   3. Confirm the sent chat turn contains cleaned transcript text plus an audio
      attachment.
   4. Confirm the vMLX request includes `input_audio`.
-  5. Confirm response stream starts and TTFT trace includes preprocessing time.
+  5. Confirm response stream starts and `/tmp/osaurus_ttft_trace.log` includes
+     `input_audio_materialize_ms`, `prompt_prepare_ms`, `first_token_ms`, and
+     `first_chunk_ms`.
 - Negative smoke:
   1. Select a text-only model.
   2. Send a voice message.
@@ -56,9 +66,6 @@ audio support is gated by `ModelMediaCapabilities.supportsAudio`.
 
 ## Remaining Work
 
-- Add app-level timing logs around live voice handoff:
-  `snapshot_ms`, `wav_bytes`, `input_audio_materialize_ms`,
-  `prepare_ms`, `first_token_ms`, `first_chunk_ms`.
 - Add a direct pre-encoded audio path only after an Osaurus voice component can
   emit stable Parakeet/sound-projection embeddings. The current WAV path is
   correct but pays model-side encoding.
