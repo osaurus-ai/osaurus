@@ -105,29 +105,31 @@ The agent sees the error in the next iteration and can stop trying, log internal
 
 Some messages exist outside the agent's control:
 
-| Message type                     | Owner  |
-| -------------------------------- | ------ |
-| Conversational reply             | Agent  |
-| Typing / "thinking" indicator    | Agent  |
-| Rich content (photos, files)     | Agent  |
-| Rate-limit apology               | Plugin |
-| `/reset` confirmation            | Plugin |
-| FAILED safety-net                | Plugin |
-| COMPLETED-without-reply fallback | Plugin |
-| Auth-error notifications         | Plugin |
+| Message type                     | Owner                  |
+| -------------------------------- | ---------------------- |
+| Conversational reply             | Agent                  |
+| Typing / "thinking" indicator    | Agent                  |
+| Rich content (photos, files)     | Agent                  |
+| Clarify pause question           | Plugin (mirrors agent) |
+| Rate-limit apology               | Plugin                 |
+| `/reset` confirmation            | Plugin                 |
+| FAILED safety-net                | Plugin                 |
+| COMPLETED-without-reply fallback | Plugin                 |
+| Auth-error notifications         | Plugin                 |
 
 The rule: agent owns content; plugin owns states the agent cannot or did not handle. Plugin-owned messages should be rare in healthy runs.
 
-### 7. `on_task_event` is observability + a safety net, not the delivery path
+### 7. `on_task_event` is observability + clarify forwarding + a safety net, not the primary delivery path
 
 Activity events should not be bridged to the channel automatically. The agent calls `reply_typing` itself when about to do slow work — that's a cleaner UX than blasting status pings on every internal tool call.
 
-`on_task_event` does two jobs only:
+`on_task_event` does three jobs only:
 
 - **Observability**: log lifecycle.
+- **CLARIFICATION (type 3) forwarding**: when the agent calls the inline `clarify` tool to pause, the host fires type 3 with the parsed `{question, options, allow_multiple}` payload and SUPPRESSES the trailing COMPLETED for the duration of the pause. The plugin renders the question (and chips, if any) to the channel and marks the task as "replied" so the safety net stays disarmed. Skipping this branch leaves the user staring at silence — the question text only ever lives in the host's parsed payload, never in any other event.
 - **Safety net**: if COMPLETED arrives with `has_replied = 0`, post `event.summary` so the user isn't left hanging. Same for FAILED.
 
-If you find yourself bridging more events to the channel, you've probably moved delivery responsibility from the agent to the plugin, which violates invariant 6.
+If you find yourself bridging more events to the channel, you've probably moved delivery responsibility from the agent to the plugin, which violates invariant 6. The clarify-forwarding case is special precisely because the question text isn't an agent-owned tool call to a plugin-supplied `reply` tool — it's a host-mediated pause whose payload only the host sees.
 
 ---
 
@@ -309,6 +311,7 @@ Worth restating because it's where most messaging plugins go wrong. The plugin s
 - **Rate-limit hit on dispatch**: agent never started, user must hear something.
 - **Control command** (`/reset`, `/help`, `/start`): deterministic responses, no inference needed.
 - **Webhook arrived for blocked conversation**: short-circuit; do nothing.
+- **CLARIFICATION (type 3)**: agent paused via the inline `clarify` tool; render the parsed `question` (and `options`, when present) to the channel. Mark the task as "replied" so the safety net stays disarmed. The `(task_id, reply_token)` binding survives the pause so the agent can `reply` once it resumes — do NOT delete the active-dispatch row here.
 - **COMPLETED with `has_replied = 0`**: safety-net summary.
 - **FAILED with `has_replied = 0`**: apology.
 - **Auth error on outbound send**: notify the user the bot is misconfigured (carefully — don't leak that the integration exists if the user might not know).
@@ -420,6 +423,7 @@ Channel-agnostic tests every messaging plugin should have:
 - **Concurrency**: simulate two webhooks 500ms apart for the same conversation → exactly one active dispatch at end, transcript contains both messages.
 - **Per-conversation ordering**: ten sequential `reply` calls from a mock agent → outbound network sequence matches call sequence.
 - **Safety net**: COMPLETED with `has_replied = 0` posts summary; with `has_replied = 1` posts nothing.
+- **CLARIFICATION (type 3) forwarding**: feed a synthetic CLARIFICATION event with `{question, options, allow_multiple}` to your `on_task_event` handler and assert one outbound call carrying the rendered question (free-form vs chip-style depending on whether `options` is present), and that the active-dispatch row survives the pause.
 - **Plugin-owned meta-messages**: `/reset`, rate limit, FAILED-without-reply each trigger the right outbound call.
 - **Channel-specific dead destination**: simulate the API's "user blocked bot" / "channel archived" / "phone unreachable" response → conversation marked blocked, dispatch cancelled, future webhooks short-circuit.
 

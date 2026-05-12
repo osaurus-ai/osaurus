@@ -187,7 +187,7 @@ public final class CompleteTool: OsaurusTool, @unchecked Sendable {
 /// drive the inline prompt UI: free-form questions render with an
 /// embedded text field; questions with `options` render as clickable
 /// chips so the user can answer with one tap.
-public struct ClarifyPayload: Sendable {
+public struct ClarifyPayload: Sendable, Equatable {
     public let question: String
     public let options: [String]
     public let allowMultiple: Bool

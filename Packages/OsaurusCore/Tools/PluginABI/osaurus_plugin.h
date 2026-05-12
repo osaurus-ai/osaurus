@@ -428,7 +428,29 @@ typedef struct {
 #define OSR_TASK_EVENT_STARTED          0
 #define OSR_TASK_EVENT_ACTIVITY         1
 #define OSR_TASK_EVENT_PROGRESS         2
-#define OSR_TASK_EVENT_CLARIFICATION    3  // RESERVED — clarification is inline now
+// Fired when the agent calls the inline `clarify` tool to pause for
+// a user response. Payload JSON:
+//   {"question": "<text>", "allow_multiple": <bool>,
+//    "options"?: ["a","b",...]}
+// `options` is OMITTED entirely (not an empty array) when the agent
+// asked a free-form question, so `options` key-presence is a clean
+// "free-form vs choice" discriminator on the plugin side.
+//
+// CONTRACT — COMPLETED suppression. The host transitions the task to
+// "awaiting clarification" and SUPPRESSES the COMPLETED event that
+// would otherwise fire when the agent loop yields on the intercept.
+// The next event for this task is either the next ACTIVITY tick
+// after the user answers (the loop resumes inside the same task
+// id and the same chat session) or a fresh terminal event after
+// the resumed loop runs to completion.
+//
+// Plugins should render `question`/`options` to their channel when
+// this event arrives. Do NOT post the previous COMPLETED-style
+// safety-net summary on this event — and after rendering, mark the
+// task as "replied" in your local state so a stale or downgraded
+// host that ever does fire COMPLETED-with-clarify-output still
+// short-circuits the safety net.
+#define OSR_TASK_EVENT_CLARIFICATION    3
 #define OSR_TASK_EVENT_COMPLETED        4
 #define OSR_TASK_EVENT_FAILED           5
 #define OSR_TASK_EVENT_CANCELLED        6

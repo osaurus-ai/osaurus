@@ -71,6 +71,12 @@ The `host->version` field on `osr_host_api` advertises the highest documented su
   ```
 - Behavior preservation: nothing about what the host returns changed. Existing plugins that already call `libc free()` directly keep working unchanged.
 
+### Event additions (no struct change)
+
+These changes alter `on_task_event` payloads or fire previously-silent slots without bumping `OSR_ABI_VERSION`. The struct layout is untouched, so older plugins keep loading; newer plugins simply add a `case` to their switch.
+
+- **`OSR_TASK_EVENT_CLARIFICATION` (type 3) un-reserved.** Previously documented as RESERVED and never emitted. Now fired when the agent calls the inline `clarify` tool to pause for a user response, with payload `{question, allow_multiple, options?}`. The host transitions the task to "awaiting clarification" and **suppresses** the COMPLETED event that would otherwise fire when the agent loop yields on the intercept. Plugins that only switch on COMPLETED/FAILED keep working unchanged (they fall through `default`); plugins that opt into a `case 3` branch render the question to their channel. See [HOST_API.md — Task lifecycle events](HOST_API.md#task-lifecycle-events-on_task_event) for the full contract.
+
 ## Mirror Struct Audit
 
 Plugins that mirror `osr_host_api` in a non-C language (Swift, Rust, Zig, etc.) MUST keep their mirror byte-identical to the host's frozen layout. The host appends new callbacks to the end of the struct on every version bump (v4: `get_active_agent_id`, v5: `log_structured`, v6: `free_string`); mirrors that drop or reorder a slot dispatch every callback past the mismatch into the wrong host function.

@@ -394,6 +394,40 @@ This lets a plugin redirect a long-running task ("stop and instead do X") withou
 
 No-ops silently if `task_id` is invalid or does not belong to the calling plugin (a one-shot warning is logged on first invalid call).
 
+### Task lifecycle events (`on_task_event`)
+
+The host fans every dispatched task's lifecycle into the originating plugin's `on_task_event` callback as `(task_id, event_type, event_json)` tuples. Event types match the `OSR_TASK_EVENT_*` constants in `osaurus_plugin.h`:
+
+| Type | Constant | Payload |
+| ---- | -------- | ------- |
+| 0 | `OSR_TASK_EVENT_STARTED` | `{status, title}` |
+| 1 | `OSR_TASK_EVENT_ACTIVITY` | `{kind, title, detail?, timestamp, metadata?}` |
+| 2 | `OSR_TASK_EVENT_PROGRESS` | `{progress, current_step?, title}` |
+| 3 | `OSR_TASK_EVENT_CLARIFICATION` | `{question, allow_multiple, options?}` |
+| 4 | `OSR_TASK_EVENT_COMPLETED` | `{success, summary, title, session_id?, output?, artifacts?}` |
+| 5 | `OSR_TASK_EVENT_FAILED` | `{success, summary, title, session_id?, output?, artifacts?}` |
+| 6 | `OSR_TASK_EVENT_CANCELLED` | `{title}` |
+| 7 | `OSR_TASK_EVENT_OUTPUT` | `{text, title}` |
+| 8 | `OSR_TASK_EVENT_DRAFT` | `{draft, title}` |
+
+#### CLARIFICATION (type 3) and the COMPLETED-suppression contract
+
+Fired when the agent calls the inline `clarify` tool to pause for a user response. The payload carries the parsed clarify call:
+
+```json
+{
+  "question": "Use Postgres or SQLite?",
+  "allow_multiple": false,
+  "options": ["Postgres", "SQLite"]
+}
+```
+
+`options` is **omitted entirely** (not an empty array) when the agent asked a free-form question. Plugins can use key-presence as the "free-form vs choice" discriminator.
+
+**Contract — COMPLETED is suppressed for the duration of the pause.** Without this contract the chat-layer intercept's `break outer` would trip the streaming-state observer's terminal branch and fire COMPLETED with the literal `clarify` tool envelope (`{"ok":true,"result":{"text":"Awaiting user response."},"tool":"clarify"}`) in `output` — useless to users and missing the actual question text. With the contract, the host transitions the task to "awaiting clarification" and skips the COMPLETED emission. The next event for this task is either an ACTIVITY tick (the loop resumed inside the same task id and the same chat session) or a fresh terminal event after the user answers and the resumed loop runs to completion.
+
+**Plugin guidance.** Render `question` (and `options`, when present) to your channel. Keep your `(task_id, reply_token)` binding alive across the pause — the agent will call `reply` once it resumes. Mark the task as "replied" in your local state so a hypothetical regression that ever does fire COMPLETED-with-clarify-output can't re-trigger your safety-net summary post.
+
 ---
 
 ## HTTP

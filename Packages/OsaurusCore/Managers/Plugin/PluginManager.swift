@@ -145,6 +145,24 @@ final class PluginManager {
         return plugins.first { $0.plugin.id == pluginId }
     }
 
+    #if DEBUG
+        /// Test-only: insert a pre-built `LoadedPlugin` so regression tests
+        /// can exercise the `BackgroundTaskManager` → `emitPluginEvent` →
+        /// `ExternalPlugin.notifyTaskEvent` chain without going through
+        /// dlopen + the full scan pipeline. The matched `removeLoadedPluginForTesting`
+        /// must be called in `defer` so the singleton is left clean.
+        func injectLoadedPluginForTesting(_ loaded: LoadedPlugin) {
+            plugins.append(loaded)
+        }
+
+        /// Test-only: matched cleanup for `injectLoadedPluginForTesting`.
+        /// Removes the plugin without touching `ToolRegistry` / `SkillManager`
+        /// (the fake plugin never registered with either).
+        func removeLoadedPluginForTesting(pluginId: String) {
+            plugins.removeAll { $0.plugin.id == pluginId }
+        }
+    #endif
+
     // MARK: - Loading
 
     /// Result of heavy plugin scanning performed on a background thread.
