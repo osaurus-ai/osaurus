@@ -254,10 +254,12 @@ let package = Package(
         // close-token injection, trims B=1 full-cache hits before seed prefill,
         // preserves assistant `reasoning_content`, adds ZAYA reasoning stamps,
         // and skips per-expert source tensors when a JangPress prestacked
-        // overlay is present.
+        // overlay is present. `b166896` preserves DSV4 JANGTQ-K routed
+        // expert layer bit plans and wires DSV4 routed MoE top-k into the
+        // existing lower-only override path.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift-lm",
-            revision: "78cf6ac9dd1742c51a8f737bd4abe6c68282072e"
+            revision: "b166896353b9c95d773de993990c20a0b5ba6905"
         ),
         // Osaurus-owned transformers/Jinja chain. `swift-transformers`
         // depends on `osaurus-ai/Jinja`, but its semver range can fresh-

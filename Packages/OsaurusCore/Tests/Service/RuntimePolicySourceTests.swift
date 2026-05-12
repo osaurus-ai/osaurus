@@ -49,7 +49,7 @@ struct RuntimePolicySourceTests {
         #expect(source.contains("SWA+CSA+HSA"))
     }
 
-    @Test("vmlx pin includes Ling multi-turn + ZAYA hardening commit")
+    @Test("vmlx pin includes Ling, ZAYA, and DSV4 hardening commits")
     func vmlxPinIncludesRuntimeHardening() throws {
         let manifest = try Self.source("Package.swift")
         let workspaceResolved = try Self.source(
@@ -84,10 +84,12 @@ struct RuntimePolicySourceTests {
         // adds Gemma4 PLE-off config tolerance, process-wide safetensors disk
         // cache IO serialization, MiniMax compile denial / forced-close removal,
         // B=1 full-cache-hit trimming, `reasoning_content` plumbing, ZAYA
-        // reasoning stamps, and JangPress overlay load hygiene.
-        #expect(manifest.contains("78cf6ac9dd1742c51a8f737bd4abe6c68282072e"))
-        #expect(workspaceResolved.contains("78cf6ac9dd1742c51a8f737bd4abe6c68282072e"))
-        #expect(appResolved.contains("78cf6ac9dd1742c51a8f737bd4abe6c68282072e"))
+        // reasoning stamps, and JangPress overlay load hygiene. `b166896`
+        // preserves DSV4 JANGTQ-K routed expert layer bit plans and wires DSV4
+        // routed MoE top-k into the lower-only runtime override path.
+        #expect(manifest.contains("b166896353b9c95d773de993990c20a0b5ba6905"))
+        #expect(workspaceResolved.contains("b166896353b9c95d773de993990c20a0b5ba6905"))
+        #expect(appResolved.contains("b166896353b9c95d773de993990c20a0b5ba6905"))
         #expect(!workspaceResolved.contains("541b380784f812eef9098f370eebaea2ae4948c9"))
         #expect(!appResolved.contains("541b380784f812eef9098f370eebaea2ae4948c9"))
         #expect(!workspaceResolved.contains("f07214428be2a6ab742a992075c844f2c78dabaf"))
