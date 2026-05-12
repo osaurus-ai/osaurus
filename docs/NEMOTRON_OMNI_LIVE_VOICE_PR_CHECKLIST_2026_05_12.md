@@ -3,8 +3,9 @@
 ## Scope
 
 This checklist tracks the Osaurus side of live voice input for Nemotron Omni
-models. It assumes vMLX can consume `UserInput.Audio` and that Omni audio
-support is gated by `ModelMediaCapabilities.supportsAudio`.
+models. This branch pins `vmlx-swift-lm` to `c0f8b3b`, which can consume
+`UserInput.Audio` and preserves pre-encoded Parakeet/audio embeddings. Omni
+audio support is gated by `ModelMediaCapabilities.supportsAudio`.
 
 ## Current Hookups
 
@@ -18,11 +19,13 @@ support is gated by `ModelMediaCapabilities.supportsAudio`.
   `input_audio` content parts.
 - `ModelRuntime.extractAudioSources(from:)` materializes `input_audio` into a
   temp audio file and hands `UserInput.Audio.url` to vMLX.
+- `Packages/OsaurusCore/Package.swift` pins `vmlx-swift-lm` to `c0f8b3b` so
+  the app consumes the Swift live-voice handoff support.
 
 ## Verified Evidence
 
 - `swift build --target OsaurusCore` passed after the live voice snapshot
-  changes.
+  changes and after the `vmlx-swift-lm` pin bump to `c0f8b3b`.
 - `swift test --filter LiveVoiceAudioSnapshotTests` is blocked by the existing
   local toolchain issue: the package test target imports Swift `Testing`, which
   is unavailable in this environment.

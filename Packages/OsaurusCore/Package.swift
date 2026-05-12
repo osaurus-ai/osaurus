@@ -261,10 +261,13 @@ let package = Package(
         // makes the DSV4 tokenizer fallback match the canonical multi-turn
         // chat encoder so generated cache boundaries can be reused. `ad1d231`
         // synchronizes before and after safetensors disk writes so
-        // post-answer cache storage cannot crash after generation.
+        // post-answer cache storage cannot crash after generation. `c0f8b3b`
+        // adds Nemotron Omni live-voice handoff support, including
+        // pre-encoded Parakeet/audio embeddings and updated Osaurus hookup
+        // docs for media-aware cache verification.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift-lm",
-            revision: "ad1d23199b056ed502124717e6ca8877f2fb303a"
+            revision: "c0f8b3b1e87f92983bb82f8ace2ec6fd3779c471"
         ),
         // Osaurus-owned transformers/Jinja chain. `swift-transformers`
         // depends on `osaurus-ai/Jinja`, but its semver range can fresh-
