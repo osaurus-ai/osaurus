@@ -518,7 +518,10 @@ struct ModelDetailView: View, Identifiable {
                     notStartedFooter
 
                 case .downloading(let progress):
-                    downloadingFooter(progress: progress)
+                    downloadingFooter(progress: progress, isPaused: false)
+
+                case .paused(let progress):
+                    downloadingFooter(progress: progress, isPaused: true)
 
                 case .completed:
                     completedFooter
@@ -562,28 +565,35 @@ struct ModelDetailView: View, Identifiable {
         }
     }
 
-    private func downloadingFooter(progress: Double) -> some View {
+    private func downloadingFooter(progress: Double, isPaused: Bool) -> some View {
         VStack(spacing: 10) {
-            // Progress bar
             GeometryReader { geometry in
                 ZStack(alignment: .leading) {
                     RoundedRectangle(cornerRadius: 4)
                         .fill(theme.tertiaryBackground)
 
                     RoundedRectangle(cornerRadius: 4)
-                        .fill(theme.accentColor)
+                        .fill(isPaused ? theme.tertiaryText : theme.accentColor)
                         .frame(width: max(0, geometry.size.width * progress))
                 }
             }
             .frame(height: 6)
 
-            // Info row
-            HStack {
+            HStack(spacing: 8) {
                 Text("\(Int(progress * 100))%", bundle: .module)
                     .font(.system(size: 12, weight: .semibold, design: .monospaced))
                     .foregroundColor(theme.primaryText)
 
-                if let line = formattedMetricsLine() {
+                if isPaused {
+                    Text("Paused", bundle: .module)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(theme.warningColor)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(
+                            Capsule().fill(theme.warningColor.opacity(0.12))
+                        )
+                } else if let line = formattedMetricsLine() {
                     Text("•")
                         .foregroundColor(theme.tertiaryText)
                     Text(line)
@@ -592,6 +602,22 @@ struct ModelDetailView: View, Identifiable {
                 }
 
                 Spacer()
+
+                if isPaused {
+                    Button(action: { modelManager.resumeDownload(model.id) }) {
+                        Text("Resume", bundle: .module)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(theme.accentColor)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                } else {
+                    Button(action: { modelManager.pauseDownload(model.id) }) {
+                        Text("Pause", bundle: .module)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(theme.secondaryText)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                }
 
                 Button(action: { modelManager.cancelDownload(model.id) }) {
                     Text("Cancel", bundle: .module)

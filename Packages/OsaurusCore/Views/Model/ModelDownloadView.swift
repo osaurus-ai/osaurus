@@ -576,7 +576,9 @@ struct ModelDownloadView: View {
                     metrics: modelManager.downloadMetrics[model.id],
                     totalMemoryGB: systemMonitor.totalMemoryGB,
                     onViewDetails: { modelToShowDetails = model },
-                    onCancel: { modelManager.cancelDownload(model.id) }
+                    onCancel: { modelManager.cancelDownload(model.id) },
+                    onPause: { modelManager.pauseDownload(model.id) },
+                    onResume: { modelManager.resumeDownload(model.id) }
                 )
                 .gridDiffCell()
             }
@@ -818,6 +820,10 @@ struct ModelDownloadView: View {
             case .downloading:
                 pillButton("Cancel", color: theme.secondaryText, bg: theme.tertiaryBackground) {
                     modelManager.cancelDownload(notice.newId)
+                }
+            case .paused:
+                pillButton("Resume", color: .white, bg: theme.accentColor) {
+                    modelManager.resumeDownload(notice.newId)
                 }
             case .failed:
                 pillButton("Retry", color: .white, bg: theme.accentColor) {
@@ -1071,8 +1077,10 @@ struct ModelDownloadView: View {
     private func computeDownloadedList(memory mem: Double) -> [MLXModel] {
         let all = modelManager.deduplicatedModels()
         let isActive: (MLXModel) -> Bool = { m in
-            if case .downloading = (modelManager.downloadStates[m.id] ?? .notStarted) { return true }
-            return false
+            switch modelManager.downloadStates[m.id] ?? .notStarted {
+            case .downloading, .paused: return true
+            default: return false
+            }
         }
         let active = all.filter(isActive)
         let completed = all.filter { $0.isDownloaded }

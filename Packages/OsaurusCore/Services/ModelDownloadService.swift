@@ -81,14 +81,43 @@ final class ModelDownloadService: ObservableObject {
     ]
 
     private var activeDownloadTasks: [String: Task<Void, Never>] = [:]
+    private var activeDownloaders: [String: DirectDownloader] = [:]
     private var downloadTokens: [String: UUID] = [:]
     private var progressSamples: [String: [(timestamp: TimeInterval, completed: Int64)]] = [:]
     private var lastKnownSpeed: [String: Double] = [:]
+    /// In-memory pause snapshot. Survives a pause within an app session, but
+    /// is intentionally not persisted across launches in v1 — `URLSession`
+    /// resume data references temporary cache files that don't necessarily
+    /// outlive the process. Coarse per-file resume (skip files whose on-disk
+    /// size matches the expected size) covers the cross-launch case.
+    private var pausedDownloads: [String: PausedSnapshot] = [:]
     private var hasRunTopUp = false
+
+    /// Snapshot captured at the moment the user paused, used by `resume(_:)`
+    /// to feed the in-flight file's `cancelByProducingResumeData` blob back
+    /// into a fresh `URLSession` download task so the download continues
+    /// from the same byte offset.
+    private struct PausedSnapshot {
+        let inFlightFilePath: String?
+        let resumeData: Data?
+    }
 
     // MARK: - Download Methods
 
     func download(_ model: MLXModel) {
+        startOrchestration(model: model, resuming: nil)
+    }
+
+    /// Resumes a previously paused download, picking up the in-flight file
+    /// from its exact byte offset when `URLSession` resume data is available
+    /// and falling back to the per-file skip-if-already-on-disk path
+    /// otherwise.
+    func resume(_ model: MLXModel) {
+        let snapshot = pausedDownloads.removeValue(forKey: model.id)
+        startOrchestration(model: model, resuming: snapshot)
+    }
+
+    private func startOrchestration(model: MLXModel, resuming: PausedSnapshot?) {
         if model.isDownloaded {
             downloadStates[model.id] = .completed
             return
@@ -97,6 +126,7 @@ final class ModelDownloadService: ObservableObject {
         if case .downloading = state { return }
 
         activeDownloadTasks[model.id]?.cancel()
+        activeDownloaders[model.id]?.invalidate()
         let token = UUID()
         downloadTokens[model.id] = token
 
@@ -122,8 +152,17 @@ final class ModelDownloadService: ObservableObject {
             return
         }
 
-        let task = Task { [weak self] in
+        let downloader = DirectDownloader()
+        activeDownloaders[model.id] = downloader
+
+        let task = Task { [weak self, resuming] in
             guard let self = self else { return }
+
+            // Mutable window into the orchestration loop so the catch
+            // handlers (pause / cancel / failure) know which file was
+            // mid-flight and how many bytes had completed before it.
+            var inFlightFilePath: String? = nil
+            var inFlightFileBaseBytes: Int64 = 0
 
             defer {
                 Task { @MainActor [weak self] in
@@ -140,12 +179,13 @@ final class ModelDownloadService: ObservableObject {
                     ), !files.isEmpty
                 else {
                     await MainActor.run {
-                        if self.downloadTokens[model.id] == token {
-                            self.downloadStates[model.id] = .failed(
+                        self.finalizeOrchestration(
+                            modelId: model.id,
+                            token: token,
+                            finalState: .failed(
                                 error: "Could not retrieve file list from Hugging Face"
                             )
-                            self.clearDownloadTracking(for: model.id)
-                        }
+                        )
                     }
                     return
                 }
@@ -180,10 +220,11 @@ final class ModelDownloadService: ObservableObject {
                     )
                 {
                     await MainActor.run {
-                        if self.downloadTokens[model.id] == token {
-                            self.downloadStates[model.id] = .failed(error: refusal)
-                            self.clearDownloadTracking(for: model.id)
-                        }
+                        self.finalizeOrchestration(
+                            modelId: model.id,
+                            token: token,
+                            finalState: .failed(error: refusal)
+                        )
                     }
                     return
                 }
@@ -200,9 +241,6 @@ final class ModelDownloadService: ObservableObject {
                     )
                 }
 
-                let downloader = DirectDownloader()
-                defer { downloader.invalidate() }
-
                 for file in filesToDownload {
                     try Task.checkCancellation()
 
@@ -211,6 +249,9 @@ final class ModelDownloadService: ObservableObject {
                     let destination = model.localDirectory.appendingPathComponent(file.path)
 
                     let baseCompleted = completedFileBytes
+                    inFlightFilePath = file.path
+                    inFlightFileBaseBytes = baseCompleted
+
                     let onProgress: @Sendable (Int64, Int64) -> Void = {
                         [weak self] bytesWritten, _ in
                         Task { @MainActor [weak self] in
@@ -224,44 +265,70 @@ final class ModelDownloadService: ObservableObject {
                         }
                     }
 
+                    // Only the file that was actually mid-flight when the
+                    // user paused gets URLSession resume data. Other files
+                    // start fresh — with the per-file skip path above
+                    // having already short-circuited fully-downloaded ones.
+                    let resumeDataForFile: Data? =
+                        (resuming?.inFlightFilePath == file.path) ? resuming?.resumeData : nil
+
                     try await downloader.download(
                         from: downloadURL,
                         to: destination,
                         expectedSize: file.size,
+                        resumeData: resumeDataForFile,
                         onProgress: onProgress
                     )
                     completedFileBytes += file.size
+                    inFlightFilePath = nil
                 }
 
-                let completed = model.isDownloaded
+                let isComplete = model.isDownloaded
+                let finalState: DownloadState =
+                    isComplete ? .completed : .failed(error: "Download incomplete")
                 await MainActor.run {
-                    if self.downloadTokens[model.id] == token {
-                        self.downloadStates[model.id] =
-                            completed ? .completed : .failed(error: "Download incomplete")
-                        self.clearDownloadTracking(for: model.id)
-                        if completed {
-                            NotificationService.shared.postModelReady(
-                                modelId: model.id,
-                                modelName: model.name
-                            )
-                            ModelManager.invalidateLocalModelsCache()
-                            NotificationCenter.default.post(name: .localModelsChanged, object: nil)
-                        }
+                    let didFinalize = self.finalizeOrchestration(
+                        modelId: model.id,
+                        token: token,
+                        finalState: finalState
+                    )
+                    if didFinalize && isComplete {
+                        NotificationService.shared.postModelReady(
+                            modelId: model.id,
+                            modelName: model.name
+                        )
+                        ModelManager.invalidateLocalModelsCache()
+                        NotificationCenter.default.post(name: .localModelsChanged, object: nil)
                     }
+                }
+            } catch let pauseInfo as DirectDownloader.PauseInfo {
+                let snapshotPath = inFlightFilePath
+                let baseBytes = inFlightFileBaseBytes
+                await MainActor.run {
+                    self.commitPause(
+                        modelId: model.id,
+                        token: token,
+                        bytesDownloadedInFile: pauseInfo.bytesDownloaded,
+                        baseBytesBeforeFile: baseBytes,
+                        inFlightFilePath: snapshotPath,
+                        resumeData: pauseInfo.resumeData
+                    )
                 }
             } catch is CancellationError {
                 await MainActor.run {
-                    if self.downloadTokens[model.id] == token {
-                        self.downloadStates[model.id] = .notStarted
-                        self.clearDownloadTracking(for: model.id)
-                    }
+                    self.finalizeOrchestration(
+                        modelId: model.id,
+                        token: token,
+                        finalState: .notStarted
+                    )
                 }
             } catch {
                 await MainActor.run {
-                    if self.downloadTokens[model.id] == token {
-                        self.downloadStates[model.id] = .failed(error: error.localizedDescription)
-                        self.clearDownloadTracking(for: model.id)
-                    }
+                    self.finalizeOrchestration(
+                        modelId: model.id,
+                        token: token,
+                        finalState: .failed(error: error.localizedDescription)
+                    )
                 }
             }
         }
@@ -269,16 +336,88 @@ final class ModelDownloadService: ObservableObject {
         activeDownloadTasks[model.id] = task
     }
 
-    func cancel(_ modelId: String) {
-        activeDownloadTasks[modelId]?.cancel()
+    /// Token-guarded transition from `.downloading` → `.paused`. Freezes
+    /// `downloadMetrics` (clears speed/ETA, keeps received/total bytes so
+    /// the user still sees "X / Y"), drops the live downloader/task, and
+    /// stashes the in-flight file's resume-data blob so a later
+    /// `resume(_:)` can hand it to a fresh `URLSessionDownloadTask`.
+    private func commitPause(
+        modelId: String,
+        token: UUID,
+        bytesDownloadedInFile: Int64,
+        baseBytesBeforeFile: Int64,
+        inFlightFilePath: String?,
+        resumeData: Data?
+    ) {
+        guard downloadTokens[modelId] == token else { return }
+        let metrics = downloadMetrics[modelId]
+        let total = metrics?.totalBytes ?? 0
+        let completed = baseBytesBeforeFile + bytesDownloadedInFile
+        let fraction = total > 0
+            ? min(1.0, max(0.0, Double(completed) / Double(total)))
+            : 0
+        downloadStates[modelId] = .paused(progress: fraction)
+        downloadMetrics[modelId] = DownloadMetrics(
+            bytesReceived: completed,
+            totalBytes: metrics?.totalBytes,
+            bytesPerSecond: nil,
+            etaSeconds: nil
+        )
+        progressSamples[modelId] = []
+        lastKnownSpeed[modelId] = nil
+        pausedDownloads[modelId] = PausedSnapshot(
+            inFlightFilePath: inFlightFilePath,
+            resumeData: resumeData
+        )
+        activeDownloaders[modelId]?.invalidate()
+        activeDownloaders[modelId] = nil
         activeDownloadTasks[modelId] = nil
+    }
+
+    /// Suspends the in-flight download for `modelId` and transitions state to
+    /// `.paused`. When there's an active `URLSessionDownloadTask` the
+    /// downloader's pause path produces resume data so a later `resume(_:)`
+    /// continues from the same byte offset. In the rare between-files
+    /// window with no in-flight task, falls back to a coarse pause that
+    /// relies on the per-file skip path to make the eventual resume cheap.
+    func pause(_ modelId: String) {
+        guard case .downloading(let progress) = downloadStates[modelId] else { return }
+
+        if let downloader = activeDownloaders[modelId] {
+            downloader.pause()
+            return
+        }
+
+        // Coarse fallback: no live URLSession task to capture resume data
+        // from. Tear down the orchestration, freeze metrics, and stash an
+        // empty pause snapshot so resume() takes the orchestration-restart
+        // path with per-file skip-if-on-disk-size-matches resume.
+        releaseOrchestrationResources(for: modelId)
+        downloadTokens[modelId] = nil
+        progressSamples[modelId] = nil
+        lastKnownSpeed[modelId] = nil
+        if let metrics = downloadMetrics[modelId] {
+            downloadMetrics[modelId] = DownloadMetrics(
+                bytesReceived: metrics.bytesReceived,
+                totalBytes: metrics.totalBytes,
+                bytesPerSecond: nil,
+                etaSeconds: nil
+            )
+        }
+        pausedDownloads[modelId] = PausedSnapshot(inFlightFilePath: nil, resumeData: nil)
+        downloadStates[modelId] = .paused(progress: progress)
+    }
+
+    func cancel(_ modelId: String) {
+        releaseOrchestrationResources(for: modelId)
+        pausedDownloads[modelId] = nil
         clearDownloadTracking(for: modelId)
         downloadStates[modelId] = .notStarted
     }
 
     func delete(_ model: MLXModel) {
-        activeDownloadTasks[model.id]?.cancel()
-        activeDownloadTasks[model.id] = nil
+        releaseOrchestrationResources(for: model.id)
+        pausedDownloads[model.id] = nil
         clearDownloadTracking(for: model.id)
 
         let fm = FileManager.default
@@ -318,15 +457,17 @@ final class ModelDownloadService: ObservableObject {
     // MARK: - Query Methods
 
     func effectiveState(for model: MLXModel) -> DownloadState {
-        if case .downloading = downloadStates[model.id] {
+        switch downloadStates[model.id] {
+        case .downloading, .paused:
             return downloadStates[model.id] ?? .notStarted
+        default:
+            return model.isDownloaded ? .completed : (downloadStates[model.id] ?? .notStarted)
         }
-        return model.isDownloaded ? .completed : (downloadStates[model.id] ?? .notStarted)
     }
 
     func progress(for modelId: String) -> Double {
         switch downloadStates[modelId] {
-        case .downloading(let progress): return progress
+        case .downloading(let progress), .paused(let progress): return progress
         case .completed: return 1.0
         default: return 0.0
         }
@@ -373,6 +514,39 @@ final class ModelDownloadService: ObservableObject {
         downloadMetrics[modelId] = nil
         progressSamples[modelId] = nil
         lastKnownSpeed[modelId] = nil
+    }
+
+    /// Cancels the orchestration `Task` and tears down the per-model
+    /// `DirectDownloader`. Safe to call from any path before transitioning
+    /// to a terminal state. Doesn't touch `downloadStates` /
+    /// `downloadMetrics` / `pausedDownloads` so callers stay in control of
+    /// the published surface.
+    private func releaseOrchestrationResources(for modelId: String) {
+        activeDownloadTasks[modelId]?.cancel()
+        activeDownloadTasks[modelId] = nil
+        activeDownloaders[modelId]?.invalidate()
+        activeDownloaders[modelId] = nil
+    }
+
+    /// Token-guarded terminal cleanup. Used by the orchestration `Task`'s
+    /// completion / cancellation / failure paths so a concurrent
+    /// `cancel(_:)` on the main path can't be silently overwritten by a
+    /// stale completion. Returns `true` when the write actually landed —
+    /// callers can use that to gate post-success side effects (notifications,
+    /// cache invalidation, etc.).
+    @discardableResult
+    private func finalizeOrchestration(
+        modelId: String,
+        token: UUID,
+        finalState: DownloadState
+    ) -> Bool {
+        guard downloadTokens[modelId] == token else { return false }
+        downloadStates[modelId] = finalState
+        clearDownloadTracking(for: modelId)
+        pausedDownloads[modelId] = nil
+        activeDownloaders[modelId]?.invalidate()
+        activeDownloaders[modelId] = nil
+        return true
     }
 
     nonisolated static func resolveURL(repoId: String, path: String) -> URL? {
@@ -607,14 +781,32 @@ final class ModelDownloadService: ObservableObject {
 // MARK: - Direct file downloader with session-level delegate
 
 /// Downloads files using a session-level URLSessionDownloadDelegate for reliable
-/// per-byte progress reporting.
-private final class DirectDownloader: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
+/// per-byte progress reporting. Supports per-file pause / resume via
+/// `URLSessionDownloadTask.cancel(byProducingResumeData:)` so a paused
+/// download can pick up from the same byte offset on resume.
+final class DirectDownloader: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
+    /// Thrown by `download(...)` when the user paused the in-flight task via
+    /// `pause()`. Carries the resume-data blob (when the server cooperates
+    /// with HTTP Range; nil otherwise) plus the highest byte count seen so
+    /// far so the orchestration can compute global progress for `.paused`.
+    struct PauseInfo: Error {
+        let resumeData: Data?
+        let bytesDownloaded: Int64
+    }
+
     private let lock = NSLock()
     private var currentContinuation: CheckedContinuation<Void, Error>?
+    private var currentDownloadTask: URLSessionDownloadTask?
     private var currentDestination: URL?
     private var currentExpectedSize: Int64?
     private var onProgress: (@Sendable (Int64, Int64) -> Void)?
     private var lastProgressTime: CFAbsoluteTime = 0
+    private var lastBytesWritten: Int64 = 0
+    /// Set by `pause()` so the `didCompleteWithError(NSURLErrorCancelled)`
+    /// delegate callback knows to swallow the cancellation — the
+    /// `cancelByProducingResumeData` callback owns the continuation
+    /// resumption with `PauseInfo`.
+    private var pauseRequested = false
     private static let progressInterval: CFAbsoluteTime = 0.25
 
     private lazy var session: URLSession = {
@@ -625,6 +817,7 @@ private final class DirectDownloader: NSObject, URLSessionDownloadDelegate, @unc
         from url: URL,
         to destination: URL,
         expectedSize: Int64,
+        resumeData: Data? = nil,
         onProgress: @escaping @Sendable (Int64, Int64) -> Void
     ) async throws {
         let fm = FileManager.default
@@ -639,13 +832,72 @@ private final class DirectDownloader: NSObject, URLSessionDownloadDelegate, @unc
             self.currentExpectedSize = expectedSize
             self.onProgress = onProgress
             self.lastProgressTime = 0
+            self.lastBytesWritten = 0
+            self.pauseRequested = false
+            let task: URLSessionDownloadTask
+            if let resumeData {
+                task = session.downloadTask(withResumeData: resumeData)
+            } else {
+                task = session.downloadTask(with: url)
+            }
+            self.currentDownloadTask = task
             lock.unlock()
-            let task = session.downloadTask(with: url)
             task.resume()
         }
     }
 
+    /// Suspends the in-flight download, capturing `URLSession`-level resume
+    /// data so a future `download(...resumeData:)` call can continue from
+    /// the same byte offset. If no download is in flight, this is a no-op.
+    func pause() {
+        lock.lock()
+        guard let task = self.currentDownloadTask else {
+            lock.unlock()
+            return
+        }
+        self.pauseRequested = true
+        lock.unlock()
+        task.cancel(byProducingResumeData: { [weak self] data in
+            self?.handlePauseCompletion(resumeData: data)
+        })
+    }
+
+    private func handlePauseCompletion(resumeData: Data?) {
+        lock.lock()
+        // Race-guard: `didCompleteWithError(NSURLErrorCancelled)` may have
+        // also fired and already cleared the continuation. In that case
+        // there's nothing to resume — the swallow-on-pause path in the
+        // delegate kept things consistent.
+        guard let continuation = self.currentContinuation, self.pauseRequested else {
+            lock.unlock()
+            return
+        }
+        let bytes = self.lastBytesWritten
+        self.currentContinuation = nil
+        self.currentDownloadTask = nil
+        self.currentDestination = nil
+        self.currentExpectedSize = nil
+        self.onProgress = nil
+        self.pauseRequested = false
+        lock.unlock()
+        continuation.resume(throwing: PauseInfo(resumeData: resumeData, bytesDownloaded: bytes))
+    }
+
     func invalidate() { session.invalidateAndCancel() }
+
+    func urlSession(
+        _: URLSession,
+        downloadTask _: URLSessionDownloadTask,
+        didResumeAtOffset fileOffset: Int64,
+        expectedTotalBytes _: Int64
+    ) {
+        // URLSession reports cumulative `totalBytesWritten` across resumes,
+        // so we just seed `lastBytesWritten` with the offset and the next
+        // `didWriteData` callback will report the absolute total.
+        lock.lock()
+        self.lastBytesWritten = fileOffset
+        lock.unlock()
+    }
 
     func urlSession(
         _: URLSession,
@@ -656,6 +908,7 @@ private final class DirectDownloader: NSObject, URLSessionDownloadDelegate, @unc
     ) {
         let now = CFAbsoluteTimeGetCurrent()
         lock.lock()
+        self.lastBytesWritten = totalBytesWritten
         let elapsed = now - lastProgressTime
         let isFileComplete =
             totalBytesExpectedToWrite > 0 && totalBytesWritten >= totalBytesExpectedToWrite
@@ -679,9 +932,11 @@ private final class DirectDownloader: NSObject, URLSessionDownloadDelegate, @unc
         let destination = currentDestination
         let expectedSize = currentExpectedSize
         currentContinuation = nil
+        currentDownloadTask = nil
         currentDestination = nil
         currentExpectedSize = nil
         onProgress = nil
+        pauseRequested = false
         lock.unlock()
         guard let continuation, let destination else { return }
 
@@ -727,8 +982,16 @@ private final class DirectDownloader: NSObject, URLSessionDownloadDelegate, @unc
     func urlSession(_: URLSession, task _: URLSessionTask, didCompleteWithError error: Error?) {
         guard let error else { return }
         lock.lock()
+        // When pause is in flight the `cancelByProducingResumeData` callback
+        // will resume the continuation with `PauseInfo`. Swallow the
+        // cancellation here so we don't double-resume.
+        if pauseRequested {
+            lock.unlock()
+            return
+        }
         let continuation = currentContinuation
         currentContinuation = nil
+        currentDownloadTask = nil
         currentDestination = nil
         currentExpectedSize = nil
         onProgress = nil

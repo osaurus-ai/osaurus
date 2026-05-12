@@ -328,6 +328,11 @@ enum ModelCompatibility {
 enum DownloadState: Equatable {
     case notStarted
     case downloading(progress: Double)
+    /// Paused mid-download. The orchestration task has been cancelled, but
+    /// the partial bytes on disk are kept and (when supported by the server)
+    /// `URLSession`-level resume data is held in memory by the download
+    /// service so that `resume(_:)` can pick up from the same byte offset.
+    case paused(progress: Double)
     case completed
     case failed(error: String)
 }

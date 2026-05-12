@@ -120,8 +120,6 @@ final class ConfigureAIState: ObservableObject {
 
     // Local
     @Published var selectedModel: MLXModel? = nil
-    @Published var showDownloadError = false
-    @Published var downloadErrorMessage = ""
 
     // API
     @Published var apiKey: String = ""
@@ -182,13 +180,13 @@ final class ConfigureAIState: ObservableObject {
         return ModelManager.shared.downloadStates[model.id] ?? .notStarted
     }
 
-    var localDownloadProgress: Double {
-        if case .downloading(let p) = localDownloadState { return p }
-        return 0
-    }
-
     var isLocalDownloading: Bool {
         if case .downloading = localDownloadState { return true }
+        return false
+    }
+
+    var isLocalPaused: Bool {
+        if case .paused = localDownloadState { return true }
         return false
     }
 
@@ -205,6 +203,17 @@ final class ConfigureAIState: ObservableObject {
     var localFailedError: String? {
         if case .failed(let e) = localDownloadState { return e }
         return nil
+    }
+
+    /// Progress fraction (0…1) of the latest download attempt regardless
+    /// of whether it's currently in flight or paused. Used by the shimmer
+    /// bar so the rendering site doesn't have to branch on the state case.
+    var localBarProgress: Double {
+        switch localDownloadState {
+        case .downloading(let p), .paused(let p): return p
+        case .completed: return 1
+        case .notStarted, .failed: return 0
+        }
     }
 
     func ensureLocalSelection() {
@@ -227,6 +236,27 @@ final class ConfigureAIState: ObservableObject {
     func startLocalDownload() {
         guard let model = selectedModel else { return }
         ModelManager.shared.downloadModel(model)
+    }
+
+    func pauseLocalDownload() {
+        guard let model = selectedModel else { return }
+        ModelManager.shared.pauseDownload(model.id)
+    }
+
+    func resumeLocalDownload() {
+        guard let model = selectedModel else { return }
+        ModelManager.shared.resumeDownload(model.id)
+    }
+
+    /// Cancels an in-flight or paused download and returns the user to the
+    /// model picker. Used by the inline Cancel control on the downloading
+    /// screen so the user has a clear escape route — the previous version
+    /// only had the small back chevron at the top of the section.
+    func cancelLocalDownload() {
+        if let model = selectedModel {
+            ModelManager.shared.cancelDownload(model.id)
+        }
+        popLocalToPicker()
     }
 
     // MARK: API
@@ -414,25 +444,6 @@ struct ConfigureAIBody: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .onAppear { state.ensureLocalSelection() }
-        .onChange(of: state.isLocalFailed) { _, failed in
-            if failed, let error = state.localFailedError {
-                state.downloadErrorMessage = error
-                state.showDownloadError = true
-            }
-        }
-        .alert(Text("Download Failed", bundle: .module), isPresented: $state.showDownloadError) {
-            Button {
-                state.startLocalDownload()
-            } label: {
-                Text("Try Again", bundle: .module)
-            }
-            Button(role: .cancel) {
-            } label: {
-                Text("Dismiss", bundle: .module)
-            }
-        } message: {
-            Text(state.downloadErrorMessage)
-        }
     }
 
     // MARK: - Path subtitle
@@ -709,7 +720,23 @@ struct ConfigureAIBody: View {
 
     // MARK: - Local downloading
 
+    /// State-driven downloading view. Renders one of three layouts depending
+    /// on the live `localDownloadState`:
+    /// - `.downloading` / `.paused` (or initial): progress card with inline
+    ///   Pause / Resume / Cancel controls.
+    /// - `.failed`: an inline error card with Retry and Choose-another-model
+    ///   actions, replacing the disruptive alert that previously could leave
+    ///   the user stuck on a dead screen with a disabled Continue button.
+    @ViewBuilder
     private var localDownloadingView: some View {
+        if case .failed(let message) = state.localDownloadState {
+            localDownloadFailedCard(message: message)
+        } else {
+            localDownloadProgressCard
+        }
+    }
+
+    private var localDownloadProgressCard: some View {
         OnboardingGlassCard {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(spacing: 12) {
@@ -722,21 +749,27 @@ struct ConfigureAIBody: View {
                             .foregroundColor(theme.accentColor)
                     }
                     VStack(alignment: .leading, spacing: 3) {
-                        Text("Downloading \(state.selectedModel?.name ?? "model")")
-                            .font(theme.font(size: 14, weight: .semibold))
-                            .foregroundColor(theme.primaryText)
-                            .lineLimit(1)
+                        HStack(spacing: 6) {
+                            Text(downloadHeadline)
+                                .font(theme.font(size: 14, weight: .semibold))
+                                .foregroundColor(theme.primaryText)
+                                .lineLimit(1)
+                            if state.isLocalPaused {
+                                pausedPill
+                            }
+                        }
                         Text(localProgressText)
                             .font(theme.font(size: 11))
                             .foregroundColor(theme.tertiaryText)
                             .lineLimit(1)
                     }
                     Spacer(minLength: 0)
+                    inlineDownloadControls
                 }
 
                 OnboardingShimmerBar(
-                    progress: state.localDownloadProgress,
-                    color: theme.accentColor,
+                    progress: state.localBarProgress,
+                    color: state.isLocalPaused ? theme.tertiaryText : theme.accentColor,
                     height: 6
                 )
             }
@@ -745,28 +778,177 @@ struct ConfigureAIBody: View {
         }
     }
 
-    private var localProgressText: String {
-        guard let model = state.selectedModel else { return "" }
-        if let metrics = modelManager.downloadMetrics[model.id] {
-            var parts: [String] = []
-            if let received = metrics.bytesReceived, let total = metrics.totalBytes {
-                parts.append("\(formatBytes(received)) / \(formatBytes(total))")
+    private var downloadHeadline: String {
+        let modelName = state.selectedModel?.name ?? L("model")
+        if state.isLocalPaused {
+            return L("Paused — \(modelName)")
+        }
+        return L("Downloading \(modelName)")
+    }
+
+    private var pausedPill: some View {
+        Text("Paused", bundle: .module)
+            .font(theme.font(size: 10, weight: .bold))
+            .foregroundColor(theme.warningColor)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(
+                Capsule().fill(theme.warningColor.opacity(0.14))
+            )
+    }
+
+    /// Pause / Resume + Cancel inline controls — keep the Continue CTA below
+    /// for "Continue when done", but give the user immediate, visible
+    /// control over the in-flight download so they're never stuck (issue
+    /// [#1071](https://github.com/osaurus-ai/osaurus/issues/1071)).
+    @ViewBuilder
+    private var inlineDownloadControls: some View {
+        HStack(spacing: 6) {
+            switch state.localDownloadState {
+            case .paused:
+                inlineIconButton(
+                    systemName: "play.fill",
+                    help: L("Resume download"),
+                    tint: theme.accentColor,
+                    action: state.resumeLocalDownload
+                )
+            case .downloading:
+                inlineIconButton(
+                    systemName: "pause.fill",
+                    help: L("Pause download"),
+                    tint: theme.secondaryText,
+                    action: state.pauseLocalDownload
+                )
+            case .notStarted, .completed, .failed:
+                EmptyView()
             }
-            if let speed = metrics.bytesPerSecond {
-                parts.append("\(formatBytes(Int64(speed)))/s")
-            }
-            if let eta = metrics.etaSeconds, eta > 0 && eta < 3600 {
-                let m = Int(eta) / 60
-                let s = Int(eta) % 60
-                if m > 0 {
-                    parts.append(L("\(m)m \(s)s remaining"))
-                } else {
-                    parts.append(L("\(s)s remaining"))
+            inlineIconButton(
+                systemName: "xmark",
+                help: L("Cancel download"),
+                tint: theme.tertiaryText,
+                action: state.cancelLocalDownload
+            )
+        }
+    }
+
+    private func inlineIconButton(
+        systemName: String,
+        help: String,
+        tint: Color,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(tint)
+                .frame(width: 24, height: 24)
+                .background(
+                    Circle().fill(theme.tertiaryBackground)
+                )
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .help(Text(help))
+    }
+
+    /// Inline failure card. Replaces the previous alert-based UX so the user
+    /// always has a clear path forward (Try again / Choose another model)
+    /// without the chrome dead-ending into a disabled Continue button.
+    private func localDownloadFailedCard(message: String) -> some View {
+        OnboardingGlassCard {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 12) {
+                    ZStack {
+                        Circle()
+                            .fill(theme.errorColor.opacity(0.14))
+                            .frame(width: OnboardingMetrics.cardIcon, height: OnboardingMetrics.cardIcon)
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 16, weight: .medium))
+                            .foregroundColor(theme.errorColor)
+                    }
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Download failed", bundle: .module)
+                            .font(theme.font(size: 14, weight: .semibold))
+                            .foregroundColor(theme.primaryText)
+                        Text(message)
+                            .font(theme.font(size: 11))
+                            .foregroundColor(theme.secondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 0)
+                }
+
+                HStack(spacing: 10) {
+                    Spacer()
+                    Button {
+                        state.popLocalToPicker()
+                    } label: {
+                        Text("Choose another model", bundle: .module)
+                            .font(theme.font(size: 12, weight: .medium))
+                            .foregroundColor(theme.secondaryText)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                    }
+                    .buttonStyle(.plain)
+
+                    Button {
+                        state.startLocalDownload()
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "arrow.clockwise")
+                                .font(.system(size: 11, weight: .semibold))
+                            Text("Try again", bundle: .module)
+                                .font(theme.font(size: 12, weight: .semibold))
+                        }
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8).fill(theme.accentColor)
+                        )
+                    }
+                    .buttonStyle(.plain)
                 }
             }
-            return parts.joined(separator: " · ")
+            .padding(.horizontal, OnboardingMetrics.cardPaddingH)
+            .padding(.vertical, OnboardingMetrics.cardPaddingV)
         }
-        return L("Preparing download...")
+    }
+
+    /// Single-line status text shown beneath the model headline. Pause hides
+    /// live speed/ETA (they're meaningless when paused, and the pill above
+    /// already communicates the pause state); the active download adds them
+    /// when available.
+    private var localProgressText: String {
+        guard let model = state.selectedModel,
+              let metrics = modelManager.downloadMetrics[model.id]
+        else {
+            return state.isLocalPaused ? L("Paused") : L("Preparing download...")
+        }
+
+        var parts: [String] = []
+        if let received = metrics.bytesReceived, let total = metrics.totalBytes {
+            parts.append("\(formatBytes(received)) / \(formatBytes(total))")
+        }
+
+        if state.isLocalPaused {
+            return parts.isEmpty ? L("Paused") : parts.joined(separator: " · ")
+        }
+
+        if let speed = metrics.bytesPerSecond {
+            parts.append("\(formatBytes(Int64(speed)))/s")
+        }
+        if let etaText = formatETA(metrics.etaSeconds) {
+            parts.append(etaText)
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    private func formatETA(_ seconds: Double?) -> String? {
+        guard let eta = seconds, eta > 0, eta < 3600 else { return nil }
+        let m = Int(eta) / 60
+        let s = Int(eta) % 60
+        return m > 0 ? L("\(m)m \(s)s remaining") : L("\(s)s remaining")
     }
 
     private func formatBytes(_ bytes: Int64) -> String {
@@ -1048,14 +1230,7 @@ struct ConfigureAICTA: View {
                 )
                 .frame(width: OnboardingMetrics.ctaWidthCompact)
             case .downloading:
-                // Downloading view's primary CTA finishes immediately —
-                // background continuation lives in the secondary slot.
-                OnboardingBrandButton(
-                    title: "Continue",
-                    action: onComplete,
-                    isEnabled: state.isLocalCompleted
-                )
-                .frame(width: OnboardingMetrics.ctaWidthCompact)
+                localDownloadingCTA
             }
 
         case .apiProvider:
@@ -1074,6 +1249,29 @@ struct ConfigureAICTA: View {
             case .keyForm, .customForm:
                 apiActionButton
             }
+        }
+    }
+
+    /// CTA for the local downloading screen. Mirrors the inline state-driven
+    /// downloading view: while the download is in flight or paused, the
+    /// CTA is disabled and the inline Pause/Resume/Cancel controls own the
+    /// action surface. On failure the CTA flips to a "Try Again" button so
+    /// the user always has a path forward — issue [#1071](https://github.com/osaurus-ai/osaurus/issues/1071).
+    @ViewBuilder
+    private var localDownloadingCTA: some View {
+        if state.isLocalFailed {
+            OnboardingBrandButton(
+                title: "Try Again",
+                action: { state.startLocalDownload() }
+            )
+            .frame(width: OnboardingMetrics.ctaWidthCompact)
+        } else {
+            OnboardingBrandButton(
+                title: "Continue",
+                action: onComplete,
+                isEnabled: state.isLocalCompleted
+            )
+            .frame(width: OnboardingMetrics.ctaWidthCompact)
         }
     }
 
@@ -1112,8 +1310,13 @@ struct ConfigureAISecondary: View {
         case .local:
             switch state.localSubstate {
             case .downloading:
+                // Always offer a soft escape so the user can finish
+                // onboarding even mid-download. The inline failure card
+                // already exposes Retry + Choose-another-model, so when
+                // failed we just show "Skip for now" rather than a
+                // duplicate retry affordance.
                 OnboardingTextButton(
-                    title: state.isLocalDownloading ? "Continue in background" : "Download later",
+                    title: secondaryDownloadingTitle,
                     action: onComplete
                 )
             case .picker:
@@ -1121,6 +1324,15 @@ struct ConfigureAISecondary: View {
             }
         case .apiProvider, .appleFoundation:
             EmptyView()
+        }
+    }
+
+    private var secondaryDownloadingTitle: String {
+        switch state.localDownloadState {
+        case .failed: return L("Skip for now")
+        case .paused: return L("Finish later")
+        case .downloading: return L("Continue in background")
+        case .completed, .notStarted: return L("Download later")
         }
     }
 }

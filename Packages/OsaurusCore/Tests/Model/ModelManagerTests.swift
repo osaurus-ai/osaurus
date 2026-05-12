@@ -49,6 +49,61 @@ struct ModelManagerTests {
 
     }
 
+    /// Pausing a synthetic in-flight download (no active URLSession task —
+    /// this is the rare "pause between files" path) must transition state
+    /// to `.paused(progress)`, freeze the metrics (clear speed/ETA, keep
+    /// received/total bytes), and seed `pausedDownloads` so a later
+    /// `resume(_:)` call has somewhere to look. Regression for the
+    /// onboarding "stuck Continue button" UX (issue #1071).
+    @Test func pauseDownload_transitionsToPausedAndFreezesMetrics() async throws {
+        let manager = await MainActor.run { ModelManager() }
+
+        let testModelId = "test-pause-\(UUID().uuidString)"
+        await MainActor.run {
+            manager.downloadService.downloadStates[testModelId] = .downloading(progress: 0.42)
+            manager.downloadService.downloadMetrics[testModelId] = ModelDownloadService.DownloadMetrics(
+                bytesReceived: 4_200_000,
+                totalBytes: 10_000_000,
+                bytesPerSecond: 1_500_000,
+                etaSeconds: 3.8
+            )
+        }
+
+        await MainActor.run { manager.pauseDownload(testModelId) }
+
+        let state = await MainActor.run { manager.downloadStates[testModelId] }
+        let metrics = await MainActor.run { manager.downloadMetrics[testModelId] }
+
+        #expect(state == .paused(progress: 0.42))
+        // bytesReceived / totalBytes survive so the user still sees "X / Y"
+        #expect(metrics?.bytesReceived == 4_200_000)
+        #expect(metrics?.totalBytes == 10_000_000)
+        // speed / ETA are frozen (cleared) so the UI doesn't display stale
+        // numbers next to a paused pill.
+        #expect(metrics?.bytesPerSecond == nil)
+        #expect(metrics?.etaSeconds == nil)
+    }
+
+    /// Cancelling a paused download must drop both the state AND the
+    /// `pausedDownloads` snapshot so a subsequent `download(_:)` starts
+    /// fresh rather than trying to consume a stale resume-data blob.
+    @Test func cancelDownload_clearsPausedState() async throws {
+        let manager = await MainActor.run { ModelManager() }
+
+        let testModelId = "test-cancel-paused-\(UUID().uuidString)"
+        await MainActor.run {
+            manager.downloadService.downloadStates[testModelId] = .downloading(progress: 0.3)
+        }
+        await MainActor.run { manager.pauseDownload(testModelId) }
+
+        let pausedState = await MainActor.run { manager.downloadStates[testModelId] }
+        #expect(pausedState == .paused(progress: 0.3))
+
+        await MainActor.run { manager.cancelDownload(testModelId) }
+        let finalState = await MainActor.run { manager.downloadStates[testModelId] }
+        #expect(finalState == .notStarted)
+    }
+
     @Test func downloadProgress_matchesState() async throws {
         let manager = await MainActor.run { ModelManager() }
         let testModelId = "test-progress-\(UUID().uuidString)"
@@ -61,10 +116,43 @@ struct ModelManagerTests {
         p = await MainActor.run { manager.downloadProgress(for: testModelId) }
         #expect(abs(p - 0.25) < 0.0001)
 
+        // Paused state must report its frozen progress through the same
+        // `progress(for:)` accessor — the paused row in Settings reads it.
+        await MainActor.run { manager.downloadService.downloadStates[testModelId] = .paused(progress: 0.5) }
+        p = await MainActor.run { manager.downloadProgress(for: testModelId) }
+        #expect(abs(p - 0.5) < 0.0001)
+
         await MainActor.run { manager.downloadService.downloadStates[testModelId] = .completed }
         p = await MainActor.run { manager.downloadProgress(for: testModelId) }
         #expect(p == 1.0)
 
+    }
+
+    /// `effectiveState` must surface `.paused` as-is (rather than collapsing
+    /// it to the `model.isDownloaded` fork) so the row UI can render the
+    /// Resume control instead of the Download button.
+    @Test func effectiveDownloadState_preservesPaused() async throws {
+        let manager = await MainActor.run { ModelManager() }
+
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("osu-paused-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let model = MLXModel(
+            id: "paused/test",
+            name: "Test Paused",
+            description: "",
+            downloadURL: "https://example.com/test",
+            rootDirectory: tempDir
+        )
+
+        await MainActor.run {
+            manager.downloadService.downloadStates[model.id] = .paused(progress: 0.6)
+        }
+
+        let state = await MainActor.run { manager.effectiveDownloadState(for: model) }
+        #expect(state == .paused(progress: 0.6))
     }
 
     @Test func totalDownloadedSize_nonNegative() async throws {

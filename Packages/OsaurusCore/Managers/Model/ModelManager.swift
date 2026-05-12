@@ -466,6 +466,11 @@ final class ModelManager: NSObject, ObservableObject {
 
     func downloadModel(_ model: MLXModel) { downloadService.download(model) }
     func cancelDownload(_ modelId: String) { downloadService.cancel(modelId) }
+    func pauseDownload(_ modelId: String) { downloadService.pause(modelId) }
+    func resumeDownload(_ modelId: String) {
+        guard let model = resolveModel(byRepoId: modelId) else { return }
+        downloadService.resume(model)
+    }
     func deleteModel(_ model: MLXModel) { downloadService.delete(model) }
 
     func estimateDownloadSize(for model: MLXModel) async -> Int64? {

@@ -34,8 +34,14 @@ struct ModelRowView: View {
     /// Callback when user taps the Details button
     let onViewDetails: () -> Void
 
-    /// Optional cancel action when downloading
+    /// Optional cancel action when downloading or paused
     let onCancel: (() -> Void)?
+
+    /// Optional pause action while a download is in flight
+    var onPause: (() -> Void)? = nil
+
+    /// Optional resume action while a download is paused
+    var onResume: (() -> Void)? = nil
 
     // MARK: - State
 
@@ -60,8 +66,13 @@ struct ModelRowView: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
 
-                    if case .downloading(let progress) = downloadState {
-                        downloadProgressView(progress: progress)
+                    switch downloadState {
+                    case .downloading(let progress):
+                        downloadProgressView(progress: progress, isPaused: false)
+                    case .paused(let progress):
+                        downloadProgressView(progress: progress, isPaused: true)
+                    default:
+                        EmptyView()
                     }
 
                     Spacer(minLength: 0)
@@ -248,24 +259,40 @@ struct ModelRowView: View {
 
     // MARK: - Download Progress View
 
-    private func downloadProgressView(progress: Double) -> some View {
+    private func downloadProgressView(progress: Double, isPaused: Bool) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
-                // Progress bar
                 GeometryReader { geometry in
                     ZStack(alignment: .leading) {
                         RoundedRectangle(cornerRadius: 3)
                             .fill(theme.tertiaryBackground)
 
                         RoundedRectangle(cornerRadius: 3)
-                            .fill(theme.accentColor)
+                            .fill(isPaused ? theme.tertiaryText : theme.accentColor)
                             .frame(width: geometry.size.width * progress)
                             .animation(.easeOut(duration: 0.3), value: progress)
                     }
                 }
                 .frame(height: 6)
 
-                // Cancel button
+                if isPaused, let onResume = onResume {
+                    Button(action: onResume) {
+                        Image(systemName: "play.circle.fill")
+                            .font(.system(size: 16))
+                            .foregroundColor(theme.accentColor)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .help(Text("Resume download", bundle: .module))
+                } else if !isPaused, let onPause = onPause {
+                    Button(action: onPause) {
+                        Image(systemName: "pause.circle.fill")
+                            .font(.system(size: 16))
+                            .foregroundColor(theme.secondaryText)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .help(Text("Pause download", bundle: .module))
+                }
+
                 if let onCancel = onCancel {
                     Button(action: onCancel) {
                         Image(systemName: "xmark.circle.fill")
@@ -277,7 +304,11 @@ struct ModelRowView: View {
                 }
             }
 
-            if let line = formattedMetricsLine() {
+            if isPaused {
+                Text("Paused", bundle: .module)
+                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .foregroundColor(theme.warningColor)
+            } else if let line = formattedMetricsLine() {
                 Text(line)
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundColor(theme.tertiaryText)
