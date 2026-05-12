@@ -84,12 +84,21 @@ struct RuntimePolicySourceTests {
         // adds Gemma4 PLE-off config tolerance, process-wide safetensors disk
         // cache IO serialization, MiniMax compile denial / forced-close removal,
         // B=1 full-cache-hit trimming, `reasoning_content` plumbing, ZAYA
-        // reasoning stamps, and JangPress overlay load hygiene. `b166896`
-        // preserves DSV4 JANGTQ-K routed expert layer bit plans and wires DSV4
+        // reasoning stamps, and JangPress overlay load hygiene. `b350af6`
+        // preserves DSV4 JANGTQ-K routed expert layer bit plans, skips routed
+        // bit-plan metadata in generic quantization decoding, and wires DSV4
         // routed MoE top-k into the lower-only runtime override path.
-        #expect(manifest.contains("b166896353b9c95d773de993990c20a0b5ba6905"))
-        #expect(workspaceResolved.contains("b166896353b9c95d773de993990c20a0b5ba6905"))
-        #expect(appResolved.contains("b166896353b9c95d773de993990c20a0b5ba6905"))
+        // `6de602c` makes DSV4's fallback chat template byte-match the
+        // canonical multi-turn encoder so UI-generated cache boundaries can
+        // be reused on growing chat prompts. `ad1d231` synchronizes before and
+        // after safetensors disk writes against the GPU stream after generation.
+        #expect(manifest.contains("ad1d23199b056ed502124717e6ca8877f2fb303a"))
+        #expect(workspaceResolved.contains("ad1d23199b056ed502124717e6ca8877f2fb303a"))
+        #expect(appResolved.contains("ad1d23199b056ed502124717e6ca8877f2fb303a"))
+        #expect(!workspaceResolved.contains("6de602c6d18daf2c1a07cef16b79b507a25feafd"))
+        #expect(!appResolved.contains("6de602c6d18daf2c1a07cef16b79b507a25feafd"))
+        #expect(!workspaceResolved.contains("b350af6daad0d25c39335356f56de2ae8d70226c"))
+        #expect(!appResolved.contains("b350af6daad0d25c39335356f56de2ae8d70226c"))
         #expect(!workspaceResolved.contains("541b380784f812eef9098f370eebaea2ae4948c9"))
         #expect(!appResolved.contains("541b380784f812eef9098f370eebaea2ae4948c9"))
         #expect(!workspaceResolved.contains("f07214428be2a6ab742a992075c844f2c78dabaf"))
@@ -200,8 +209,10 @@ struct RuntimePolicySourceTests {
     /// With the default `maxBatchSize == 1`, vmlx can use its solo
     /// TokenIterator-backed fast path. Osaurus must not let a second same-model
     /// request run prompt tokenization / `MLXArray.asArray(...)` while that
-    /// decode is still active; the 2026-05-10 MiniMax crash report showed the
-    /// exact Metal overlap (`TokenIterator.next()` plus `prepareInput`).
+    /// decode is still active. vmlx emits `.info` before its post-generation
+    /// cache store finishes, so Osaurus also must not release the solo lease
+    /// at `.info`; otherwise a second request can enter `prepareInput` while
+    /// the first one is still materializing safetensors cache tensors on Metal.
     @Test("MLXBatchAdapter gates same-model solo generation and propagates stream cancellation")
     func mlxBatchAdapterGatesSoloGenerationAndCancelsProducer() throws {
         let adapter = try Self.source("Services/ModelRuntime/MLXBatchAdapter.swift")
@@ -210,6 +221,12 @@ struct RuntimePolicySourceTests {
         #expect(adapter.contains("maxBatchSize == 1"))
         #expect(adapter.contains("acquireSoloLease"))
         #expect(adapter.contains("await soloLease.release()"))
+        #expect(
+            adapter.contains("post-generation disk-cache store")
+                && adapter.contains("for await event in upstream")
+                && adapter.contains("if case .info = event {\n                        continuation.yield(event)\n                        continue\n                    }"),
+            "adapter must forward terminal info but keep draining vmlx until the upstream stream finishes, so the solo lease covers post-generation cache persistence"
+        )
         #expect(
             adapter.contains("continuation.onTermination = { @Sendable _ in")
                 && adapter.contains("producerTask.cancel()"),

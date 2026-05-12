@@ -348,6 +348,29 @@ struct MLXBatchAdapter {
         }()
         let disableThinking = generation.modelOptions["disableThinking"]?.boolValue
 
+        if DSV4ReasoningProfile.matches(modelId: modelName) {
+            let effort: String
+            if let normalizedReasoningEffort {
+                effort = DSV4ReasoningProfile.normalizedEffort(normalizedReasoningEffort)
+            } else if let disableThinking {
+                effort = disableThinking ? "instruct" : "high"
+            } else {
+                effort = "instruct"
+            }
+
+            switch effort {
+            case "max":
+                context["enable_thinking"] = true
+                context["reasoning_effort"] = "max"
+            case "high":
+                context["enable_thinking"] = true
+                context["reasoning_effort"] = "high"
+            default:
+                context["enable_thinking"] = false
+            }
+            return context
+        }
+
         if Hy3ReasoningProfile.matches(modelId: modelName) {
             if let normalizedReasoningEffort {
                 context["reasoning_effort"] = Hy3ReasoningProfile.normalizedEffort(
@@ -471,6 +494,13 @@ struct MLXBatchAdapter {
         // `engine.generate` returns `AsyncStream<Generation>` directly with
         // reasoning + tool-call extraction handled inside vmlx. We re-wrap
         // it so we can attach a producer `Task` for cancellation.
+        //
+        // Important: vmlx emits terminal `.info` before it performs the
+        // post-generation disk-cache store and then finishes its stream. The
+        // solo lease must be held until the upstream stream is actually done;
+        // releasing it at `.info` lets the next same-model request enter
+        // `prepareInput` while the previous request is still materializing
+        // cache tensors on Metal.
         trace?.mark("batch_submit")
         let upstream = await engine.generate(
             input: prepared.input,
@@ -489,7 +519,7 @@ struct MLXBatchAdapter {
                 for await event in upstream {
                     if case .info = event {
                         continuation.yield(event)
-                        return
+                        continue
                     }
                     if !Task.isCancelled {
                         continuation.yield(event)

@@ -362,6 +362,64 @@ struct MLXBatchAdapterTests {
         }
     }
 
+    @Test func additionalContext_mapsDSV4ReasoningModesToEncoderKwargs() {
+        let modelName = "JANGQ-AI/DeepSeek-V4-Flash-JANGTQ-K"
+
+        let unspecified = MLXBatchAdapter.additionalContext(
+            for: GenerationParameters(temperature: nil, maxTokens: 16),
+            modelName: modelName
+        )
+        #expect(unspecified["enable_thinking"] as? Bool == false)
+        #expect(
+            unspecified["reasoning_effort"] == nil,
+            "Instruct mode must not send a stale reasoning_effort with enable_thinking=false"
+        )
+
+        let instruct = MLXBatchAdapter.additionalContext(
+            for: GenerationParameters(
+                temperature: nil,
+                maxTokens: 16,
+                modelOptions: ["reasoningEffort": .string("instruct")]
+            ),
+            modelName: modelName
+        )
+        #expect(instruct["enable_thinking"] as? Bool == false)
+        #expect(instruct["reasoning_effort"] == nil)
+
+        let reasoning = MLXBatchAdapter.additionalContext(
+            for: GenerationParameters(
+                temperature: nil,
+                maxTokens: 16,
+                modelOptions: ["reasoningEffort": .string("high")]
+            ),
+            modelName: modelName
+        )
+        #expect(reasoning["enable_thinking"] as? Bool == true)
+        #expect(reasoning["reasoning_effort"] as? String == "high")
+
+        let maxReasoning = MLXBatchAdapter.additionalContext(
+            for: GenerationParameters(
+                temperature: nil,
+                maxTokens: 16,
+                modelOptions: ["reasoningEffort": .string("max")]
+            ),
+            modelName: modelName
+        )
+        #expect(maxReasoning["enable_thinking"] as? Bool == true)
+        #expect(maxReasoning["reasoning_effort"] as? String == "max")
+
+        let legacyToggle = MLXBatchAdapter.additionalContext(
+            for: GenerationParameters(
+                temperature: nil,
+                maxTokens: 16,
+                modelOptions: ["disableThinking": .bool(false)]
+            ),
+            modelName: modelName
+        )
+        #expect(legacyToggle["enable_thinking"] as? Bool == true)
+        #expect(legacyToggle["reasoning_effort"] as? String == "high")
+    }
+
     @Test func additionalContext_forcesLingThinkingOff() {
         let unspecified = GenerationParameters(temperature: nil, maxTokens: 16)
         let userEnabled = GenerationParameters(

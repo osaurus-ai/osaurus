@@ -330,6 +330,39 @@ struct ModelProfileRegistryTests {
         #expect(explicit["reasoningEffort"]?.stringValue == "high")
     }
 
+    @Test("DSV4 bundles expose instruct, reasoning, and max modes")
+    func dsv4_matchesReasoningModeProfile() {
+        for id in [
+            "JANGQ-AI/DeepSeek-V4-Flash-JANGTQ-K",
+            "DeepSeek-V4-Flash-JANGTQ-K",
+            "deepseekv4-flash-jangtq",
+            "dsv4-flash-jangtq-k",
+        ] {
+            let profile = ModelProfileRegistry.profile(for: id)
+            #expect(profile?.displayName == DSV4ReasoningProfile.displayName)
+            #expect(profile?.defaults["reasoningEffort"]?.stringValue == "instruct")
+            #expect(profile?.thinkingOption?.id == nil)
+
+            let definitions = ModelProfileRegistry.options(for: id)
+            guard case .segmented(let segments)? = definitions.first?.kind else {
+                Issue.record("DSV4 should expose segmented reasoning modes")
+                continue
+            }
+            #expect(segments.map(\.id) == ["instruct", "high", "max"])
+        }
+
+        for id in [
+            "deepseek-v3-jangtq",
+            "deepseek-r1",
+            "notdeepseekv4",
+        ] {
+            #expect(
+                ModelProfileRegistry.profile(for: id)?.displayName != DSV4ReasoningProfile.displayName,
+                "DSV4 matcher must not catch unrelated DeepSeek names: \(id)"
+            )
+        }
+    }
+
     /// Mistral Medium 3.5 has no thinking toggle today (no `<think>` block
     /// in its chat template). Match must NOT shortcut into a thinking
     /// profile; if it falls through to `AutoThinkingProfile` that's fine
