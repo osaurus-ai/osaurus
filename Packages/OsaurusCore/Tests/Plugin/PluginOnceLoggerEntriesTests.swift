@@ -2,12 +2,7 @@
 //  PluginOnceLoggerEntriesTests.swift
 //  OsaurusCoreTests
 //
-//  Pins the entry-retention behavior added so plugin authors can see
-//  ABI-misuse warnings the host has already flagged via the plugin
-//  detail UI's Diagnostics section, instead of having to grep
-//  `Console.app`. The dedup contract (one warning per `key` per
-//  process) is preserved — the new behavior just retains the
-//  formatted message alongside the dedup set.
+//  Pins entry retention + dedup for the Diagnostics UI.
 //
 
 import Foundation
@@ -15,15 +10,13 @@ import Testing
 
 @testable import OsaurusCore
 
-/// `PluginOnceLogger` keeps process-global dedup + entry state, so
-/// these tests must run serially — otherwise one test's
-/// `_resetForTesting()` wipes another's freshly-added entry mid-run.
-@Suite(.serialized)
+/// Each test uses a UUID-suffixed pluginId and resets only its own
+/// prefix so parallel suites can't race on the process-global state.
 struct PluginOnceLoggerEntriesTests {
 
     @Test func warnOnceRetainsEntry() {
-        PluginOnceLogger._resetForTesting()
         let pid = "com.test.warn-once.\(UUID())"
+        PluginOnceLogger._resetForTesting(forKeyPrefix: pid)
         let key = "\(pid)|complete_stream|null_chunk"
         PluginOnceLogger.warnOnce(key: key, "plugin %@ misused", pid)
 
@@ -35,10 +28,8 @@ struct PluginOnceLoggerEntriesTests {
     }
 
     @Test func dedupStillSuppressesDuplicateKey() {
-        // The whole point of `warnOnce` is dedup. Pin that the new
-        // retention doesn't accidentally start storing every call.
-        PluginOnceLogger._resetForTesting()
         let pid = "com.test.dedup.\(UUID())"
+        PluginOnceLogger._resetForTesting(forKeyPrefix: pid)
         let key = "\(pid)|noop"
         PluginOnceLogger.warnOnce(key: key, "first")
         PluginOnceLogger.warnOnce(key: key, "second")
@@ -49,8 +40,8 @@ struct PluginOnceLoggerEntriesTests {
     }
 
     @Test func differentKeysAccumulate() {
-        PluginOnceLogger._resetForTesting()
         let pid = "com.test.multi.\(UUID())"
+        PluginOnceLogger._resetForTesting(forKeyPrefix: pid)
         PluginOnceLogger.warnOnce(key: "\(pid)|op_a|reason", "msg A")
         PluginOnceLogger.warnOnce(key: "\(pid)|op_b|reason", "msg B")
         PluginOnceLogger.warnOnce(key: "\(pid)|op_c|reason", "msg C")
@@ -60,12 +51,10 @@ struct PluginOnceLoggerEntriesTests {
     }
 
     @Test func entriesScopedToPlugin() {
-        // `entries(forPlugin:)` must filter by the dedup-key prefix
-        // so the UI badge for plugin A doesn't include plugin B's
-        // warnings.
-        PluginOnceLogger._resetForTesting()
         let pidA = "com.test.scoped.A.\(UUID())"
         let pidB = "com.test.scoped.B.\(UUID())"
+        PluginOnceLogger._resetForTesting(forKeyPrefix: pidA)
+        PluginOnceLogger._resetForTesting(forKeyPrefix: pidB)
         PluginOnceLogger.warnOnce(key: "\(pidA)|op|x", "A1")
         PluginOnceLogger.warnOnce(key: "\(pidA)|op|y", "A2")
         PluginOnceLogger.warnOnce(key: "\(pidB)|op|x", "B1")
@@ -76,21 +65,15 @@ struct PluginOnceLoggerEntriesTests {
     }
 
     @Test func keyWithoutPipeIsFiledAsUnknown() {
-        // Defensive: a caller that forgets the `<pluginId>|...` prefix
-        // shouldn't crash. The entry is filed under "<unknown>" so the
-        // operator sees that something escaped the convention.
-        PluginOnceLogger._resetForTesting()
+        // Pipeless keys file under "<unknown>". UUID-unique so no reset needed.
         let key = "no_pipe_in_key_\(UUID())"
         PluginOnceLogger.warnOnce(key: key, "loose warning")
         #expect(PluginOnceLogger.entries(forPlugin: "<unknown>").contains { $0.key == key })
     }
 
     @Test func formattedMessageReflectsArguments() {
-        // Pin that printf-style arguments still format correctly after
-        // we moved formatting from `withVaList(...) { NSLogv(...) }`
-        // to a single-pass formatter.
-        PluginOnceLogger._resetForTesting()
         let pid = "com.test.fmt.\(UUID())"
+        PluginOnceLogger._resetForTesting(forKeyPrefix: pid)
         PluginOnceLogger.warnOnce(
             key: "\(pid)|fmt|once",
             "plugin %@ called %@ %d times",

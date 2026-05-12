@@ -34,7 +34,8 @@ struct PluginParseRequestedToolsTests {
     private let pluginId = "com.test.dispatch.parse"
 
     private func reset() {
-        PluginOnceLogger._resetForTesting()
+        // Scope reset to this suite's pluginId so parallel suites don't race.
+        PluginOnceLogger._resetForTesting(forKeyPrefix: "\(pluginId)|")
     }
 
     @Test func acceptsAllowedNamesPreservingOrder() {
@@ -208,7 +209,8 @@ struct PluginPlanDispatchToolSelectionTests {
     private let pluginId = "com.test.dispatch.plan-tools"
 
     private func reset() {
-        PluginOnceLogger._resetForTesting()
+        // Scope reset to this suite's pluginId so parallel suites don't race.
+        PluginOnceLogger._resetForTesting(forKeyPrefix: "\(pluginId)|")
     }
 
     private func extractRequest(_ plan: PluginHostContext.DispatchPlan) -> DispatchRequest? {
@@ -311,7 +313,7 @@ struct PluginDispatchToolStorePopulationTests {
 
     private func reset() async {
         await SessionToolStateStore.shared.reset()
-        PluginOnceLogger._resetForTesting()
+        PluginOnceLogger._resetForTesting(forKeyPrefix: "\(pluginId)|")
     }
 
     /// Dispatch a request and return the resolved task id. Caller is

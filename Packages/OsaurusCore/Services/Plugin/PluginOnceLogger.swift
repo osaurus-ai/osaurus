@@ -103,13 +103,16 @@ public enum PluginOnceLogger {
         lock.withLock { entries.reduce(0) { $0 + ($1.pluginId == pluginId ? 1 : 0) } }
     }
 
-    /// Test-only: clear all retained state.  Used by tests that need a
-    /// deterministic starting point — production code never resets the
-    /// dedup set or the entries list.
-    static func _resetForTesting() {
+    /// Test-only: clear retained state matching `keyPrefix`. Scoped because
+    /// `seen` + `entries` are process-global — a blanket reset races
+    /// across parallel `@Suite(.serialized)` blocks that share this state
+    /// (`.serialized` only orders tests within a single suite). Each test
+    /// passes its own pluginId-prefixed key so it can only ever clear
+    /// state it owns.
+    static func _resetForTesting(forKeyPrefix keyPrefix: String) {
         lock.withLock {
-            seen.removeAll()
-            entries.removeAll()
+            seen = seen.filter { !$0.hasPrefix(keyPrefix) }
+            entries.removeAll { $0.key.hasPrefix(keyPrefix) }
         }
     }
 }
