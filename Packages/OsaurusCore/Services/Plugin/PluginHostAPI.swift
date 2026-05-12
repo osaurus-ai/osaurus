@@ -2573,6 +2573,22 @@ extension PluginHostContext {
         return jsonString(dict)
     }
 
+    /// Serialize the payload for `OSR_TASK_EVENT_CLARIFICATION` (type 3).
+    /// Emitted when the agent calls the inline `clarify` tool to pause for
+    /// a user response. `options` is omitted entirely when empty so plugins
+    /// can use key-presence as the "free-form vs choice" signal.
+    @MainActor
+    static func serializeClarificationEvent(payload: ClarifyPayload) -> String {
+        var dict: [String: Any] = [
+            "question": payload.question,
+            "allow_multiple": payload.allowMultiple,
+        ]
+        if !payload.options.isEmpty {
+            dict["options"] = payload.options
+        }
+        return jsonString(dict)
+    }
+
     @MainActor
     static func serializeCompletedEvent(
         success: Bool,

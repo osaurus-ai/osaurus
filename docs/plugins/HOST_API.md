@@ -134,6 +134,16 @@ Removes a secret. Like `config_set`, the calling plugin does **not** receive an 
 
 Empty string `""` is a real value, distinct from a delete. Use `config_delete` to remove a key entirely. Host-side pushes that signal a transition (e.g. `tunnel_url` going down) deliver `""` to `on_config_changed`; treat that as "no value right now" rather than "no value ever stored."
 
+### Repeat-value deliveries on relay reconnect
+
+Normal config pushes are deduped on value equality — the host drops `(key, value)` pairs that match the prior delivery for the same `(agent, key)`, so plugins that do expensive work in `on_config_changed` (Telegram `setupWebhook`, OAuth refresh, etc.) don't re-run on no-op pushes. There is one explicit exception: when an agent's relay status transitions `non-.connected -> .connected(U)` (a relay reconnect), the host force-redelivers the **full per-agent config snapshot** plus `tunnel_url=U` to every loaded plugin, **bypassing the dedup**. The relay assigns a stable URL to each agent so the URL is usually unchanged across the gap, but the upstream service (Telegram, etc.) needs the plugin to re-assert the registration after the disconnect window.
+
+The practical contract for plugin authors:
+
+- `on_config_changed` MUST be idempotent for repeat values. A `setupWebhook(URL)` call with the same URL the upstream service already has should be safe (Telegram-style upstreams typically treat this as a no-op refresh; if your upstream isn't idempotent, gate the work yourself with an in-plugin "have I synced this value" check).
+- The first observation of an agent's status on app launch is **not** treated as a reconnect — `runFirstDeliverySweep` already pushed the snapshot synchronously inside the loading marker. Only `non-.connected -> .connected(U)` transitions for agents the host has already observed (typically the same agent transitioning through `.connecting` or `.disconnected` and back) trigger the force redelivery.
+- Newly added agents go through `host_agent_added` → `deliverInitialConfig` (NOT through the reconnect path), so the dedup contract for first-delivery on a new agent is unchanged.
+
 ### `on_config_changed(key, value) -> void` threading
 
 The host serializes invocations of `on_config_changed` per plugin: two callbacks for the same plugin will never run in parallel, even when the host fans out per-agent notifications back-to-back at launch. State touched only from this callback can stay lock-free; state shared with `invoke` / `handle_route` still needs its own synchronization (those paths run concurrently).
@@ -383,6 +393,40 @@ When `message` is non-empty, the trimmed content is appended to the dispatched c
 This lets a plugin redirect a long-running task ("stop and instead do X") without losing conversation context.
 
 No-ops silently if `task_id` is invalid or does not belong to the calling plugin (a one-shot warning is logged on first invalid call).
+
+### Task lifecycle events (`on_task_event`)
+
+The host fans every dispatched task's lifecycle into the originating plugin's `on_task_event` callback as `(task_id, event_type, event_json)` tuples. Event types match the `OSR_TASK_EVENT_*` constants in `osaurus_plugin.h`:
+
+| Type | Constant | Payload |
+| ---- | -------- | ------- |
+| 0 | `OSR_TASK_EVENT_STARTED` | `{status, title}` |
+| 1 | `OSR_TASK_EVENT_ACTIVITY` | `{kind, title, detail?, timestamp, metadata?}` |
+| 2 | `OSR_TASK_EVENT_PROGRESS` | `{progress, current_step?, title}` |
+| 3 | `OSR_TASK_EVENT_CLARIFICATION` | `{question, allow_multiple, options?}` |
+| 4 | `OSR_TASK_EVENT_COMPLETED` | `{success, summary, title, session_id?, output?, artifacts?}` |
+| 5 | `OSR_TASK_EVENT_FAILED` | `{success, summary, title, session_id?, output?, artifacts?}` |
+| 6 | `OSR_TASK_EVENT_CANCELLED` | `{title}` |
+| 7 | `OSR_TASK_EVENT_OUTPUT` | `{text, title}` |
+| 8 | `OSR_TASK_EVENT_DRAFT` | `{draft, title}` |
+
+#### CLARIFICATION (type 3) and the COMPLETED-suppression contract
+
+Fired when the agent calls the inline `clarify` tool to pause for a user response. The payload carries the parsed clarify call:
+
+```json
+{
+  "question": "Use Postgres or SQLite?",
+  "allow_multiple": false,
+  "options": ["Postgres", "SQLite"]
+}
+```
+
+`options` is **omitted entirely** (not an empty array) when the agent asked a free-form question. Plugins can use key-presence as the "free-form vs choice" discriminator.
+
+**Contract — COMPLETED is suppressed for the duration of the pause.** Without this contract the chat-layer intercept's `break outer` would trip the streaming-state observer's terminal branch and fire COMPLETED with the literal `clarify` tool envelope (`{"ok":true,"result":{"text":"Awaiting user response."},"tool":"clarify"}`) in `output` — useless to users and missing the actual question text. With the contract, the host transitions the task to "awaiting clarification" and skips the COMPLETED emission. The next event for this task is either an ACTIVITY tick (the loop resumed inside the same task id and the same chat session) or a fresh terminal event after the user answers and the resumed loop runs to completion.
+
+**Plugin guidance.** Render `question` (and `options`, when present) to your channel. Keep your `(task_id, reply_token)` binding alive across the pause — the agent will call `reply` once it resumes. Mark the task as "replied" in your local state so a hypothetical regression that ever does fire COMPLETED-with-clarify-output can't re-trigger your safety-net summary post.
 
 ---
 

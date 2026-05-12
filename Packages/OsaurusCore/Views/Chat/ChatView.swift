@@ -45,6 +45,17 @@ final class ChatSession: ObservableObject {
     /// mutually exclusive — the queue ensures arrival order is honored
     /// without two cards stacking. See `PromptQueue.swift`.
     @Published var promptQueue: PromptQueue = PromptQueue()
+
+    /// Set by the agent-loop `clarify` intercept when the chat is paused
+    /// for a clarify question. Cleared by `send(...)` before the next
+    /// user turn so the loop can resume cleanly. Observed by
+    /// `BackgroundTaskManager.observeChatTask` to flip the task status to
+    /// `.awaitingClarification`, emit the type-3 CLARIFICATION event with
+    /// the parsed payload to the source plugin, and suppress the spurious
+    /// COMPLETED that would otherwise fire when `isStreaming` goes false
+    /// on the intercept.
+    @Published var awaitingClarify: ClarifyPayload?
+
     /// Tracks expand/collapse state for tool calls, thinking blocks, etc.
     /// Lives on the session so state survives NSTableView cell reuse.
     let expandedBlocksStore = ExpandedBlocksStore()
@@ -1427,6 +1438,12 @@ final class ChatSession: ObservableObject {
         if promptQueue.current != nil {
             promptQueue.drainAll()
         }
+        // Resume from any prior clarify pause BEFORE the new run starts so
+        // the BTM streaming-state sink sees `.awaitingClarification`
+        // cleared and the next streaming tick transitions the task back
+        // to `.running` cleanly. Redundant nil → nil writes are
+        // collapsed downstream by `removeDuplicates`.
+        awaitingClarify = nil
 
         if hasContent {
             turns.append(ChatTurn(role: .user, content: trimmed, attachments: attachments))
@@ -1947,6 +1964,14 @@ final class ChatSession: ObservableObject {
                                     // answer in history.
                                     turns.append(recordToolTurn(resultText))
                                     rebuildVisibleBlocks()
+                                    // Surface the parsed payload on the
+                                    // session BEFORE breaking the loop so
+                                    // the BackgroundTaskManager observer
+                                    // sees the clarify state ahead of the
+                                    // streaming-end tick — that ordering
+                                    // is what gates the COMPLETED-suppression
+                                    // path for plugin-dispatched runs.
+                                    self.awaitingClarify = payload
                                     let clarifyState = ClarifyPromptState(
                                         question: payload.question,
                                         options: payload.options,

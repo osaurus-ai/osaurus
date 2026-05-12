@@ -530,9 +530,13 @@ A few edge cases worth handling:
 
 ---
 
-## 7. `on_task_event` — observability and a safety net only
+## 7. `on_task_event` — observability, clarify forwarding, and a safety net
 
-In the agent-driven model, `on_task_event` is **not the delivery mechanism**. It logs lifecycle and posts a fallback message if the agent finished without ever calling `reply`. Activity events are not bridged to Telegram automatically — the agent calls `reply_typing` itself when it's about to do slow work, which is a cleaner UX than blasting `sendChatAction` on every internal tool execution.
+In the agent-driven model, `on_task_event` is **not the primary delivery mechanism**. It does three things only:
+
+1. **Forward CLARIFICATION (type 3) pauses** to the channel. When the agent calls the inline `clarify` tool, the host fires type 3 with the parsed `{question, options, allow_multiple}` payload and SUPPRESSES the trailing COMPLETED that used to fire on the intercept. The plugin renders the question to Telegram and marks the task as "replied" so the safety net stays disarmed for the duration of the pause.
+2. **Log lifecycle** for observability.
+3. **Safety net**: if a COMPLETED arrives with `has_replied = 0`, post `summary` so the user isn't left hanging. Same for FAILED.
 
 ```swift
 api.on_task_event = { ctxPtr, taskIdPtr, eventType, eventJsonPtr in
@@ -541,15 +545,60 @@ api.on_task_event = { ctxPtr, taskIdPtr, eventType, eventJsonPtr in
     let json = String(cString: eventJsonPtr)
 
     switch eventType {
+    case 3:  // OSR_TASK_EVENT_CLARIFICATION
+        // Agent paused via the inline `clarify` tool. Render the
+        // question to Telegram. The host suppresses the trailing
+        // COMPLETED for this pause, but we still mark the task as
+        // replied so a hypothetical regression can't re-trigger
+        // the safety-net post in `case 4`.
+        guard let binding = lookupBindingByTask(taskId: taskId),
+              let parsed = parseJSON(json),
+              let question = parsed["question"] as? String,
+              !question.isEmpty
+        else { return }
+
+        let options = parsed["options"] as? [String] ?? []
+        let text: String
+        if options.isEmpty {
+            text = question
+        } else {
+            // Numbered choices keep the message UX simple. A real
+            // Telegram bot may prefer an inline keyboard.
+            let bullets = options.enumerated()
+                .map { i, opt in "\(i + 1). \(opt)" }
+                .joined(separator: "\n")
+            text = "\(question)\n\n\(bullets)"
+        }
+        _ = postBotAPI(method: "sendMessage",
+                       body: ["chat_id": binding.chatId, "text": text])
+        markReplied(taskId: taskId)
+
     case 4:  // OSR_TASK_EVENT_COMPLETED
         guard let binding = lookupBindingByTask(taskId: taskId) else { return }
 
         if !hasReplied(taskId: taskId) {
             // Safety net. Agent finished without calling reply.
             // Post `summary` so the user isn't left hanging.
-            let summary = (parseJSON(json)?["summary"] as? String) ?? "(done)"
+            //
+            // Defensive: if a downgraded host ever fires COMPLETED
+            // for a clarify pause (the bug this contract fixes),
+            // the `output` field carries the clarify tool envelope.
+            // Detect that and forward the inner `result.text` so
+            // we never post a raw `{"ok":true,...}` JSON blob.
+            let parsed = parseJSON(json)
+            let summary = (parsed?["summary"] as? String) ?? "(done)"
+            let output = parsed?["output"] as? String
+            let textToSend: String = {
+                if let output, let env = parseJSON(output),
+                   (env["tool"] as? String) == "clarify",
+                   let result = env["result"] as? [String: Any],
+                   let inner = result["text"] as? String, !inner.isEmpty {
+                    return inner
+                }
+                return summary
+            }()
             _ = postBotAPI(method: "sendMessage",
-                           body: ["chat_id": binding.chatId, "text": summary])
+                           body: ["chat_id": binding.chatId, "text": textToSend])
         }
         deleteActiveDispatch(taskId: taskId)
 
@@ -576,7 +625,9 @@ api.on_task_event = { ctxPtr, taskIdPtr, eventType, eventJsonPtr in
 
 **Why no activity bridge?** Because the agent decides what to surface. If the user asks "what's on my calendar?" and the agent uses three internal tools, the user shouldn't see three "typing..." indicators flicker on and off — they should see one typing indicator (the agent calls `reply_typing` once at the start) followed by the answer. Bridging activity events to Telegram conflates "internal progress" with "user-visible state."
 
-**Cleanup is structural.** `deleteActiveDispatch` runs in both COMPLETED and FAILED branches, so the binding never leaks. Add a periodic sweep (`DELETE FROM active_dispatches WHERE expires_at < now`) to handle host crashes that skip the event entirely.
+**Why not just trust the COMPLETED safety net to forward `clarify`?** Before the type-3 contract landed, COMPLETED fired the moment the chat-layer intercept yielded the loop, with the literal tool envelope JSON in `output`. The safety net then posted `{"ok":true,"result":{"text":"Awaiting user response."},"tool":"clarify"}` — useless to the user and missing the actual question text (which only ever lived in the agent's tool args). Type 3 is the channel that carries that question text out of the host.
+
+**Cleanup is structural.** `deleteActiveDispatch` runs in both COMPLETED and FAILED branches, so the binding never leaks. CLARIFICATION does NOT delete the binding — the same `(task_id, reply_token)` survives the pause so the agent can `reply` once it resumes. Add a periodic sweep (`DELETE FROM active_dispatches WHERE expires_at < now`) to handle host crashes that skip the terminal event entirely.
 
 ---
 
@@ -584,15 +635,16 @@ api.on_task_event = { ctxPtr, taskIdPtr, eventType, eventJsonPtr in
 
 Here's the split. **Memorize this — it generalizes to every messaging plugin.**
 
-| Message type                     | Owner  | Sent via                                 |
-| -------------------------------- | ------ | ---------------------------------------- |
-| Conversational reply             | Agent  | `reply` tool                             |
-| Typing indicator                 | Agent  | `reply_typing` tool                      |
-| Rich content (photos, etc.)      | Agent  | `reply_photo` tool                       |
-| Rate-limit apology               | Plugin | direct `postBotAPI` from `handle_route`  |
-| `/reset` confirmation            | Plugin | direct `postBotAPI` from `handle_route`  |
-| FAILED safety-net                | Plugin | direct `postBotAPI` from `on_task_event` |
-| COMPLETED-without-reply fallback | Plugin | direct `postBotAPI` from `on_task_event` |
+| Message type                     | Owner                | Sent via                                          |
+| -------------------------------- | -------------------- | ------------------------------------------------- |
+| Conversational reply             | Agent                | `reply` tool                                      |
+| Typing indicator                 | Agent                | `reply_typing` tool                               |
+| Rich content (photos, etc.)      | Agent                | `reply_photo` tool                                |
+| Clarify pause question           | Plugin (mirrors agent) | `postBotAPI` from `on_task_event` (CLARIFICATION) |
+| Rate-limit apology               | Plugin               | direct `postBotAPI` from `handle_route`           |
+| `/reset` confirmation            | Plugin               | direct `postBotAPI` from `handle_route`           |
+| FAILED safety-net                | Plugin               | direct `postBotAPI` from `on_task_event`          |
+| COMPLETED-without-reply fallback | Plugin               | direct `postBotAPI` from `on_task_event`          |
 
 The rule: **the agent owns content; the plugin owns meta-messages**. Plugin-owned messages exist to handle states the agent cannot or did not handle. They should be rare in healthy runs.
 
@@ -695,6 +747,10 @@ api.on_config_changed = { ctxPtr, keyPtr, valuePtr in
 Telegram needs to know your tunnel URL, but the plugin can't currently derive it from the host (no `host_get_route_url` primitive in v3). The cleanest solution is to ask the user for it once during install. The Osaurus tunnel page shows the URL; the user copies it into the plugin's config; `on_config_changed` fires; webhook gets registered.
 
 This is more robust than trying to learn the URL from the first incoming request (chicken-and-egg: Telegram won't deliver until `setWebhook` runs) or via a fake dispatch round-trip. Once `host_get_route_url` lands, this field can become optional.
+
+### Re-registration on relay reconnect
+
+The host force-redelivers the full per-agent config snapshot when an agent's relay status transitions `non-.connected -> .connected(U)` (see "Repeat-value deliveries on relay reconnect" in `HOST_API.md`). That means after a tunnel drop + recover, this `on_config_changed` body re-fires for `bot_token` and `public_base_url` even though the values are identical to before — `setWebhook` gets re-called with the same URL, which Telegram treats as an idempotent refresh. Plugin authors writing their own webhook integrations should keep `setWebhook`-style calls idempotent (or guard them with an in-plugin "have I synced this value to upstream" check) so the reconnect-redelivery is safe and useful rather than wasteful.
 
 ---
 

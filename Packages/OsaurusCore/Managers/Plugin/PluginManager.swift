@@ -87,6 +87,33 @@ final class PluginManager {
     /// Internal so unit tests can inspect the cache structure.
     var lastPushedTunnelURL: [String: [UUID: String?]] = [:]
 
+    /// Last `AgentRelayStatus` per agent, so `handleTunnelStatusChange`
+    /// can detect `non-.connected -> .connected(U)` reconnect
+    /// transitions (the agent's URL is usually unchanged across the
+    /// gap, so value-equality dedup would otherwise swallow the
+    /// redelivery and leave Telegram-style webhooks stale).
+    /// Internal for unit tests.
+    var lastObservedTunnelStatus: [UUID: AgentRelayStatus] = [:]
+
+    /// True when `status` is `.connected(_)`.
+    static func isConnectedStatus(_ status: AgentRelayStatus?) -> Bool {
+        guard let status else { return false }
+        if case .connected = status { return true }
+        return false
+    }
+
+    /// Relay-reconnect signal: `non-.connected -> .connected(_)` for
+    /// an agent we've already observed. First-ever observations
+    /// (`from == nil`) are NOT reconnects — `runFirstDeliverySweep`
+    /// already pushed the launch snapshot.
+    static func isReconnectTransition(
+        from old: AgentRelayStatus?,
+        to new: AgentRelayStatus
+    ) -> Bool {
+        guard old != nil else { return false }
+        return !isConnectedStatus(old) && isConnectedStatus(new)
+    }
+
     /// Pure decision function for `handleTunnelStatusChange`: returns
     /// true when the host should push `url` to `(pluginId, agentId)`,
     /// false when the prior push was identical and we should dedup.
@@ -117,6 +144,24 @@ final class PluginManager {
     func loadedPlugin(for pluginId: String) -> LoadedPlugin? {
         return plugins.first { $0.plugin.id == pluginId }
     }
+
+    #if DEBUG
+        /// Test-only: insert a pre-built `LoadedPlugin` so regression tests
+        /// can exercise the `BackgroundTaskManager` → `emitPluginEvent` →
+        /// `ExternalPlugin.notifyTaskEvent` chain without going through
+        /// dlopen + the full scan pipeline. The matched `removeLoadedPluginForTesting`
+        /// must be called in `defer` so the singleton is left clean.
+        func injectLoadedPluginForTesting(_ loaded: LoadedPlugin) {
+            plugins.append(loaded)
+        }
+
+        /// Test-only: matched cleanup for `injectLoadedPluginForTesting`.
+        /// Removes the plugin without touching `ToolRegistry` / `SkillManager`
+        /// (the fake plugin never registered with either).
+        func removeLoadedPluginForTesting(pluginId: String) {
+            plugins.removeAll { $0.plugin.id == pluginId }
+        }
+    #endif
 
     // MARK: - Loading
 
@@ -374,7 +419,8 @@ final class PluginManager {
     private func deliverInitialConfig(
         to loaded: LoadedPlugin,
         agentId: UUID,
-        sync: Bool = false
+        sync: Bool = false,
+        force: Bool = false
     ) {
         let pluginId = loaded.plugin.id
         guard let configSpec = loaded.plugin.manifest.capabilities.config,
@@ -407,9 +453,9 @@ final class PluginManager {
         }
         guard !changes.isEmpty else { return }
         if sync {
-            loaded.plugin.notifyConfigBatchSync(changes, agentId: agentId)
+            loaded.plugin.notifyConfigBatchSync(changes, agentId: agentId, force: force)
         } else {
-            loaded.plugin.notifyConfigBatch(changes, agentId: agentId)
+            loaded.plugin.notifyConfigBatch(changes, agentId: agentId, force: force)
         }
     }
 
@@ -481,6 +527,13 @@ final class PluginManager {
     /// per-agent config push (or webhook deregister) on every loaded plugin.
     private func observeTunnelStatus() {
         guard tunnelObserver == nil else { return }
+
+        // Seed before wiring the sink so the first delivery on launch
+        // hits the no-op first-observation branch in
+        // `isReconnectTransition` instead of force-redelivering work
+        // `runFirstDeliverySweep` just performed synchronously.
+        lastObservedTunnelStatus = RelayTunnelManager.shared.agentStatuses
+
         tunnelObserver = RelayTunnelManager.shared.$agentStatuses
             .receive(on: DispatchQueue.main)
             .sink { [weak self] statuses in
@@ -523,14 +576,11 @@ final class PluginManager {
     /// loaded plugin for a freshly added agent. Mirrors what `_loadAll`
     /// does at startup, scoped to a single agent.
     private func handleAgentAdded(_ agentId: UUID) {
-        for loaded in plugins {
-            deliverInitialConfig(to: loaded, agentId: agentId)
-        }
-        let statuses = RelayTunnelManager.shared.agentStatuses
-        guard case .connected(let url) = statuses[agentId] else { return }
-        for loaded in plugins where !loaded.routes.isEmpty {
-            pushTunnelURL(url, to: loaded, agentId: agentId)
-        }
+        deliverFullAgentSnapshot(
+            agentId: agentId,
+            status: RelayTunnelManager.shared.agentStatuses[agentId],
+            force: false
+        )
     }
 
     /// Tear down per-agent state on every loaded plugin when an agent is
@@ -550,8 +600,20 @@ final class PluginManager {
     }
 
     private func handleTunnelStatusChange(_ statuses: [UUID: AgentRelayStatus]) {
-        for loaded in plugins where !loaded.routes.isEmpty {
-            for (agentId, status) in statuses {
+        for (agentId, status) in statuses {
+            let oldStatus = lastObservedTunnelStatus[agentId]
+            lastObservedTunnelStatus[agentId] = status
+
+            // Reconnect: force-redeliver the full per-agent snapshot
+            // so plugins re-assert upstream registrations (Telegram
+            // `setWebhook`, OAuth refresh) even when the URL is
+            // unchanged across the disconnect window.
+            if Self.isReconnectTransition(from: oldStatus, to: status) {
+                deliverFullAgentSnapshot(agentId: agentId, status: status, force: true)
+                continue
+            }
+
+            for loaded in plugins where !loaded.routes.isEmpty {
                 let tunnelURL: String? = if case .connected(let url) = status { url } else { nil }
 
                 // Dedup against the value we last pushed for this
@@ -572,6 +634,28 @@ final class PluginManager {
         }
     }
 
+    /// Push the full per-agent config snapshot to every loaded plugin
+    /// and (if `status` is connected) the tunnel URL to plugins that
+    /// declare routes. Shared body for `handleAgentAdded` (force=false)
+    /// and the relay-reconnect branch in `handleTunnelStatusChange`
+    /// (force=true). With `force: true` both dedup layers are bypassed
+    /// so plugins re-fire `on_config_changed` on identical values —
+    /// documented under `docs/plugins/HOST_API.md`; plugin authors
+    /// must keep `on_config_changed` idempotent for repeat values.
+    private func deliverFullAgentSnapshot(
+        agentId: UUID,
+        status: AgentRelayStatus?,
+        force: Bool
+    ) {
+        for loaded in plugins {
+            deliverInitialConfig(to: loaded, agentId: agentId, force: force)
+        }
+        guard case .connected(let url) = status else { return }
+        for loaded in plugins where !loaded.routes.isEmpty {
+            pushTunnelURL(url, to: loaded, agentId: agentId, force: force)
+        }
+    }
+
     /// `sync == true` routes through `notifyConfigBatchSync` so the call
     /// returns inside the load-time loading marker window, matching the
     /// crash-loop-guard contract `runFirstDeliverySweep` relies on.
@@ -582,7 +666,8 @@ final class PluginManager {
         _ url: String?,
         to loaded: LoadedPlugin,
         agentId: UUID,
-        sync: Bool = false
+        sync: Bool = false,
+        force: Bool = false
     ) {
         let pluginId = loaded.plugin.id
 
@@ -607,13 +692,15 @@ final class PluginManager {
         if sync {
             loaded.plugin.notifyConfigBatchSync(
                 [(key: "tunnel_url", value: url ?? "")],
-                agentId: agentId
+                agentId: agentId,
+                force: force
             )
         } else {
             loaded.plugin.notifyConfigChanged(
                 key: "tunnel_url",
                 value: url ?? "",
-                agentId: agentId
+                agentId: agentId,
+                force: force
             )
         }
     }

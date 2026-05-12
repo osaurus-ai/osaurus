@@ -531,6 +531,20 @@ public final class BackgroundTaskManager: ObservableObject {
             }
             .store(in: &cancellables)
 
+        // Observe clarify pause state. Both the chat-layer intercept
+        // (which sets `awaitingClarify`) and the resume path in
+        // `ChatSession.send(...)` (which clears it) run on the main
+        // actor before `isStreaming` flips, so the clarify update
+        // always reaches `handleChatClarifyChange` ahead of the
+        // streaming-end tick — that ordering gates the COMPLETED
+        // suppression in `handleChatStreamingChange`.
+        session.$awaitingClarify
+            .removeDuplicates()
+            .sink { [weak self] payload in
+                self?.handleChatClarifyChange(taskId: taskId, payload: payload)
+            }
+            .store(in: &cancellables)
+
         taskObservers[taskId] = cancellables
     }
 
@@ -542,12 +556,33 @@ public final class BackgroundTaskManager: ObservableObject {
             state.status = .running
             state.currentStep = "Running..."
         } else if state.status == .running, streamingObserved.contains(taskId) {
+            // Belt-and-suspenders: if the streaming-end tick somehow
+            // races ahead of the clarify sink, inspect the live session
+            // before tripping the terminal branch. The `.running` guard
+            // above already excludes the normal post-bridge case.
+            if state.chatSession?.awaitingClarify != nil { return }
             if let lastError {
                 markCompleted(state, success: false, summary: lastError)
             } else {
                 markCompleted(state, success: true, summary: "Chat completed")
             }
         }
+    }
+
+    /// Bridge `ChatSession.awaitingClarify` into the per-task plugin event
+    /// surface. Setting a payload transitions the task to
+    /// `.awaitingClarification` and emits `OSR_TASK_EVENT_CLARIFICATION`.
+    /// Clearing it is a no-op here — the next streaming tick is the
+    /// single writer for the `.running` transition.
+    private func handleChatClarifyChange(taskId: UUID, payload: ClarifyPayload?) {
+        guard let state = backgroundTasks[taskId], let payload else { return }
+        state.status = .awaitingClarification
+        state.currentStep = "Waiting for clarification"
+        emitPluginEvent(
+            state,
+            type: .clarification,
+            json: PluginHostContext.serializeClarificationEvent(payload: payload)
+        )
     }
 
     /// Scan newly added turns for tool calls and record them as activity.
