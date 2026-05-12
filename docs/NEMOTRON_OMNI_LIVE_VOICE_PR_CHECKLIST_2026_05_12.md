@@ -34,6 +34,32 @@ audio support is gated by `ModelMediaCapabilities.supportsAudio`.
 - `swift build --target OsaurusCore` passed after the live voice snapshot
   changes, after the `vmlx-swift-lm` pin bump to `c0f8b3b`, and after the
   TTFT/live-voice timing instrumentation.
+- Xcode app build passed from the workspace:
+  `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild
+  -workspace osaurus.xcworkspace -scheme osaurus -configuration Debug
+  -destination 'platform=macOS,arch=arm64'
+  -derivedDataPath build/XcodeDerivedData-livevoice
+  CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= build`.
+  Xcode still reports the local CoreSimulator framework mismatch, but the macOS
+  app build succeeds.
+- Built-app API smoke passed against
+  `build/XcodeDerivedData-livevoice/Build/Products/Debug/osaurus.app` with
+  `OSU_MODELS_DIR=/Users/eric/models` and
+  `nemotron-omni-nano-jangtq-crack` loaded from
+  `/Users/eric/models/dealign.ai/Nemotron-Omni-Nano-JANGTQ-CRACK`.
+  The health endpoint reported the model loaded, and OpenAI-compatible
+  `/chat/completions` accepted `input_audio` WAV content.
+- Warm latency control from the built app:
+  - text-only streaming request: first semantic SSE delta at `358.3 ms`, total
+    `777.4 ms`.
+  - first audio streaming request after warm text load: first semantic SSE delta
+    at `5304.7 ms`, total `5513.7 ms`.
+  - repeated audio streaming request: first semantic SSE delta at `1601.1 ms`,
+    total `1815.3 ms`.
+  - Osaurus logs showed model cache hits for the audio requests; audio
+    `prepareInput` was `38 ms` on the first audio request and `16 ms` on the
+    repeated request, while the vMLX `engine.generate(...)` await dominated the
+    first semantic delta.
 - `swift test --filter LiveVoiceAudioSnapshotTests` is blocked by the existing
   local toolchain issue: the package test target imports Swift `Testing`, which
   is unavailable in this environment.
@@ -69,6 +95,9 @@ audio support is gated by `ModelMediaCapabilities.supportsAudio`.
 - Add a direct pre-encoded audio path only after an Osaurus voice component can
   emit stable Parakeet/sound-projection embeddings. The current WAV path is
   correct but pays model-side encoding.
+- Add API-level TTFT trace emission for `/chat/completions`; the current
+  `/tmp/osaurus_ttft_trace.log` emission is attached to the chat UI path, while
+  API smoke uses client-side SSE timing plus unified logs.
 - Add TTFAB coverage once a TTS backend is selected. Current evidence covers
   speech input into model output text, not first output audio byte.
 - Keep audio attachment spillover and temp-file cleanup under review for longer
