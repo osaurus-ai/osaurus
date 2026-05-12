@@ -203,6 +203,42 @@ struct NotchView: View {
         }
     }
 
+    /// Resolves the agent associated with the currently-surfaced task so we
+    /// can render its avatar in the notch. Falls back to the default agent
+    /// when there is no task or the task's agent has since been deleted.
+    private var notchAgent: Agent {
+        if let agentId = activeTask?.agentId,
+           let match = AgentManager.shared.agents.first(where: { $0.id == agentId }) {
+            return match
+        }
+        return AgentManager.shared.agents.first(where: { $0.id == Agent.defaultId }) ?? .default
+    }
+
+    @ViewBuilder
+    private func notchAvatar(size: CGFloat) -> some View {
+        let agent = notchAgent
+        if agent.isBuiltIn {
+            ZStack {
+                Circle()
+                    .fill(Color.white.opacity(0.12))
+                Image(systemName: "person.fill")
+                    .font(.system(size: size * 0.5, weight: .medium))
+                    .foregroundColor(.white.opacity(0.85))
+            }
+            .frame(width: size, height: size)
+        } else {
+            AgentAvatarView(
+                mascotId: agent.avatar,
+                name: agent.name,
+                tint: agentColorFor(agent.name),
+                diameter: size,
+                customImageURL: agent.customAvatarURL,
+                monogramFontSize: size * 0.5,
+                borderWidth: 1
+            )
+        }
+    }
+
     private var currentShape: NotchShape {
         NotchShape(topCornerRadius: topCornerRadius, bottomCornerRadius: bottomCornerRadius)
     }
@@ -322,15 +358,9 @@ struct NotchView: View {
     @ViewBuilder
     private var compactLeading: some View {
         if activeTask != nil || topPluginActivity != nil {
-            AnimatedOrb(
-                color: accentColor,
-                size: .custom(orbSize),
-                showGlow: false,
-                showFloat: false,
-                isInteractive: false
-            )
-            .animation(swingSpring, value: orbSize)
-            .transition(.opacity.combined(with: .scale(scale: 0.5)))
+            notchAvatar(size: orbSize)
+                .animation(swingSpring, value: orbSize)
+                .transition(.opacity.combined(with: .scale(scale: 0.5)))
         }
     }
 
@@ -399,13 +429,7 @@ struct NotchView: View {
 
     private var expandedHeader: some View {
         HStack(spacing: 8) {
-            AnimatedOrb(
-                color: accentColor,
-                size: .custom(orbSize),
-                showGlow: false,
-                showFloat: false,
-                isInteractive: false
-            )
+            notchAvatar(size: orbSize)
 
             if let task = activeTask {
                 VStack(alignment: .leading, spacing: 1) {

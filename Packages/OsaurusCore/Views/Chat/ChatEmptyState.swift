@@ -18,13 +18,8 @@ struct ChatEmptyState: View {
     let onOpenModelManager: () -> Void
     let onUseFoundation: (() -> Void)?
     let onQuickAction: (String) -> Void
-    let onSelectAgent: (UUID) -> Void
     let onOpenOnboarding: (() -> Void)?
-    var discoveredAgents: [DiscoveredAgent] = []
-    var onSelectDiscoveredAgent: ((DiscoveredAgent) -> Void)? = nil
     var activeDiscoveredAgent: DiscoveredAgent? = nil
-    var pairedRelayAgents: [PairedRelayAgent] = []
-    var onSelectRelayAgent: ((PairedRelayAgent) -> Void)? = nil
     var activeRelayAgent: PairedRelayAgent? = nil
 
     @State private var hasAppeared = false
@@ -70,38 +65,27 @@ struct ChatEmptyState: View {
 
     private var readyState: some View {
         VStack(spacing: 14) {
-            // Hero Orb - mesmerizing animated orb as the focal point
-            AnimatedOrb(color: theme.accentColor, size: .medium, seed: activeAgent.name)
-                .frame(width: 88, height: 88)
+            // Hero avatar — agent's mascot as the focal point
+            heroAvatar
                 .opacity(hasAppeared ? 1 : 0)
                 .scaleEffect(hasAppeared ? 1 : 0.85)
                 .animation(theme.springAnimation().delay(0.0), value: hasAppeared)
 
             // Greeting section
-            VStack(spacing: 20) {
-                // Greeting text - staggered entrance
-                VStack(spacing: 8) {
-                    Text(greeting)
-                        .font(theme.font(size: CGFloat(theme.titleSize) + 4, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
-                        .opacity(hasAppeared ? 1 : 0)
-                        .offset(y: hasAppeared ? 0 : 20)
-                        .animation(theme.springAnimation().delay(0.1), value: hasAppeared)
-
-                    Text("How can I help you today?", bundle: .module)
-                        .font(theme.font(size: CGFloat(theme.bodySize) + 2))
-                        .foregroundColor(theme.secondaryText)
-                        .opacity(hasAppeared ? 1 : 0)
-                        .offset(y: hasAppeared ? 0 : 15)
-                        .animation(theme.springAnimation().delay(0.17), value: hasAppeared)
-                }
-
-                // Agent selector - prominent card with delayed entrance
-                agentCard
+            VStack(spacing: 8) {
+                Text(greeting)
+                    .font(theme.font(size: CGFloat(theme.titleSize) + 4, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
                     .opacity(hasAppeared ? 1 : 0)
-                    .offset(y: hasAppeared ? 0 : 12)
-                    .scaleEffect(hasAppeared ? 1 : 0.97)
-                    .animation(theme.springAnimation().delay(0.25), value: hasAppeared)
+                    .offset(y: hasAppeared ? 0 : 20)
+                    .animation(theme.springAnimation().delay(0.1), value: hasAppeared)
+
+                Text("How can I help you today?", bundle: .module)
+                    .font(theme.font(size: CGFloat(theme.bodySize) + 2))
+                    .foregroundColor(theme.secondaryText)
+                    .opacity(hasAppeared ? 1 : 0)
+                    .offset(y: hasAppeared ? 0 : 15)
+                    .animation(theme.springAnimation().delay(0.17), value: hasAppeared)
             }
 
             if !quickActions.isEmpty {
@@ -109,6 +93,45 @@ struct ChatEmptyState: View {
             }
         }
         .padding(.horizontal, 40)
+    }
+
+    @ViewBuilder
+    private var heroAvatar: some View {
+        if let relay = activeRelayAgent {
+            remoteHeroAvatar(systemImage: "antenna.radiowaves.left.and.right", seed: relay.name)
+        } else if let discovered = activeDiscoveredAgent {
+            remoteHeroAvatar(systemImage: "network", seed: discovered.name)
+        } else if activeAgent.isBuiltIn {
+            ZStack {
+                Circle()
+                    .fill(theme.secondaryText.opacity(theme.isDark ? 0.12 : 0.08))
+                Image(systemName: "person.fill")
+                    .font(.system(size: 40, weight: .medium))
+                    .foregroundColor(theme.secondaryText.opacity(0.85))
+            }
+            .frame(width: 88, height: 88)
+        } else {
+            AgentAvatarView(
+                mascotId: activeAgent.avatar,
+                name: activeAgent.name,
+                tint: agentColorFor(activeAgent.name),
+                diameter: 88,
+                customImageURL: activeAgent.customAvatarURL,
+                monogramFontSize: 40,
+                borderWidth: 2
+            )
+        }
+    }
+
+    private func remoteHeroAvatar(systemImage: String, seed: String) -> some View {
+        ZStack {
+            Circle()
+                .fill(theme.accentColorLight.opacity(theme.isDark ? 0.18 : 0.12))
+            Image(systemName: systemImage)
+                .font(.system(size: 36, weight: .semibold))
+                .foregroundColor(theme.accentColorLight)
+        }
+        .frame(width: 88, height: 88)
     }
 
     private var staggeredQuickActions: some View {
@@ -130,22 +153,6 @@ struct ChatEmptyState: View {
             }
         }
         .frame(maxWidth: 440)
-    }
-
-    // MARK: - Agent Card (uses shared component)
-
-    private var agentCard: some View {
-        AgentPill(
-            agents: agents,
-            activeAgentId: activeAgentId,
-            onSelectAgent: onSelectAgent,
-            discoveredAgents: discoveredAgents,
-            onSelectDiscoveredAgent: onSelectDiscoveredAgent,
-            activeDiscoveredAgent: activeDiscoveredAgent,
-            pairedRelayAgents: pairedRelayAgents,
-            onSelectRelayAgent: onSelectRelayAgent,
-            activeRelayAgent: activeRelayAgent
-        )
     }
 
     // MARK: - Helpers
@@ -225,6 +232,34 @@ private struct ChatEmptyStateNoModels: View {
         return formatter.string(fromByteCount: bytes)
     }
 
+    /// Default agent avatar used for the no-models / downloading states,
+    /// where there is no active chat agent to anchor to.
+    @ViewBuilder
+    private var welcomeAvatar: some View {
+        let agent = AgentManager.shared.agents.first(where: { $0.id == Agent.defaultId })
+            ?? Agent.default
+        if agent.isBuiltIn {
+            ZStack {
+                Circle()
+                    .fill(theme.secondaryText.opacity(theme.isDark ? 0.12 : 0.08))
+                Image(systemName: "person.fill")
+                    .font(.system(size: 40, weight: .medium))
+                    .foregroundColor(theme.secondaryText.opacity(0.85))
+            }
+            .frame(width: 88, height: 88)
+        } else {
+            AgentAvatarView(
+                mascotId: agent.avatar,
+                name: agent.name,
+                tint: agentColorFor(agent.name),
+                diameter: 88,
+                customImageURL: agent.customAvatarURL,
+                monogramFontSize: 40,
+                borderWidth: 2
+            )
+        }
+    }
+
     var body: some View {
         if isDownloading {
             downloadingState
@@ -235,8 +270,7 @@ private struct ChatEmptyStateNoModels: View {
 
     private var noModelsState: some View {
         VStack(spacing: 14) {
-            AnimatedOrb(color: theme.accentColor, size: .medium, seed: "welcome")
-                .frame(width: 88, height: 88)
+            welcomeAvatar
                 .opacity(hasAppeared ? 1 : 0)
                 .scaleEffect(hasAppeared ? 1 : 0.85)
                 .animation(theme.springAnimation().delay(0.0), value: hasAppeared)
@@ -272,8 +306,7 @@ private struct ChatEmptyStateNoModels: View {
 
     private var downloadingState: some View {
         VStack(spacing: 14) {
-            AnimatedOrb(color: theme.accentColor, size: .medium, seed: "downloading")
-                .frame(width: 88, height: 88)
+            welcomeAvatar
                 .opacity(hasAppeared ? 1 : 0)
                 .scaleEffect(hasAppeared ? 1 : 0.85)
                 .animation(theme.springAnimation().delay(0.0), value: hasAppeared)
@@ -454,7 +487,6 @@ private struct GetStartedButton: View {
                     onOpenModelManager: {},
                     onUseFoundation: {},
                     onQuickAction: { _ in },
-                    onSelectAgent: { _ in },
                     onOpenOnboarding: nil
                 )
             }
@@ -471,7 +503,6 @@ private struct GetStartedButton: View {
                     onOpenModelManager: {},
                     onUseFoundation: {},
                     onQuickAction: { _ in },
-                    onSelectAgent: { _ in },
                     onOpenOnboarding: {}
                 )
             }

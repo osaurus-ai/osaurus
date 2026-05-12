@@ -2379,15 +2379,8 @@ struct ChatView: View {
                                     onQuickAction: { prompt in
                                         session.input = prompt
                                     },
-                                    onSelectAgent: { newAgentId in
-                                        windowState.switchAgent(to: newAgentId)
-                                    },
                                     onOpenOnboarding: nil,
-                                    discoveredAgents: windowState.discoveredAgents,
-                                    onSelectDiscoveredAgent: { agent in selectDiscoveredAgent(agent) },
                                     activeDiscoveredAgent: windowState.selectedDiscoveredAgent,
-                                    pairedRelayAgents: windowState.pairedRelayAgents,
-                                    onSelectRelayAgent: { relay in connectToRelayAgent(relay) },
                                     activeRelayAgent: windowState.selectedRelayAgent
                                 )
                                 .transition(.opacity.combined(with: .scale(scale: 0.98)))
@@ -2463,9 +2456,6 @@ struct ChatView: View {
                                         session.selectedModel = session.pickerItems.firstChatCapable?.id ?? "foundation"
                                     } : nil,
                                 onQuickAction: { _ in },
-                                onSelectAgent: { newAgentId in
-                                    windowState.switchAgent(to: newAgentId)
-                                },
                                 onOpenOnboarding: {
                                     // If onboarding was already completed, just refresh models
                                     // Don't reset onboarding - the user just finished it
@@ -2482,10 +2472,6 @@ struct ChatView: View {
                                     // Show onboarding window
                                     AppDelegate.shared?.showOnboardingWindow()
                                 },
-                                discoveredAgents: windowState.discoveredAgents,
-                                onSelectDiscoveredAgent: { agent in selectDiscoveredAgent(agent) },
-                                pairedRelayAgents: windowState.pairedRelayAgents,
-                                onSelectRelayAgent: { relay in connectToRelayAgent(relay) }
                             )
                         }
                     }
@@ -2507,6 +2493,20 @@ struct ChatView: View {
             // Lightweight state updates only - refreshAll() removed to prevent excessive re-renders
             focusTrigger &+= 1
             isPinnedToBottom = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .chatToolbarSelectDiscoveredAgent)) { notification in
+            guard let targetWindowId = notification.userInfo?["windowId"] as? UUID,
+                  targetWindowId == windowState.windowId,
+                  let agent = notification.object as? DiscoveredAgent
+            else { return }
+            selectDiscoveredAgent(agent)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .chatToolbarSelectRelayAgent)) { notification in
+            guard let targetWindowId = notification.userInfo?["windowId"] as? UUID,
+                  targetWindowId == windowState.windowId,
+                  let relay = notification.object as? PairedRelayAgent
+            else { return }
+            connectToRelayAgent(relay)
         }
         .onReceive(NotificationCenter.default.publisher(for: .vadStartNewSession)) { notification in
             // VAD requested a new session for a specific agent

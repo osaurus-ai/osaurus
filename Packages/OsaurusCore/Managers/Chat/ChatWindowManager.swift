@@ -574,6 +574,7 @@ private final class ChatPanel: NSPanel {
 @MainActor
 private final class ChatToolbarDelegate: NSObject, NSToolbarDelegate {
     private static let sidebarItem = NSToolbarItem.Identifier("ChatToolbar.sidebar")
+    private static let agentItem = NSToolbarItem.Identifier("ChatToolbar.agent")
     private static let actionItem = NSToolbarItem.Identifier("ChatToolbar.action")
     private static let pinItem = NSToolbarItem.Identifier("ChatToolbar.pin")
 
@@ -593,14 +594,14 @@ private final class ChatToolbarDelegate: NSObject, NSToolbarDelegate {
         // stale toolbar identifiers in user defaults render as no-ops
         // instead of crashing.
         [
-            Self.sidebarItem, .flexibleSpace, .flexibleSpace, Self.actionItem,
+            Self.sidebarItem, .flexibleSpace, Self.agentItem, .flexibleSpace, Self.actionItem,
             Self.pinItem,
         ]
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [
-            Self.sidebarItem, .flexibleSpace, .flexibleSpace, Self.actionItem,
+            Self.sidebarItem, .flexibleSpace, Self.agentItem, .flexibleSpace, Self.actionItem,
             Self.pinItem,
         ]
     }
@@ -618,6 +619,13 @@ private final class ChatToolbarDelegate: NSObject, NSToolbarDelegate {
                 identifier: itemIdentifier,
                 rootView:
                     ChatToolbarSidebarView(windowState: windowState)
+            )
+
+        case Self.agentItem:
+            return makeHostingItem(
+                identifier: itemIdentifier,
+                rootView:
+                    ChatToolbarAgentView(windowState: windowState, session: session)
             )
 
         case Self.actionItem:
@@ -669,6 +677,46 @@ private struct ChatToolbarSidebarView: View {
         )
         .environment(\.theme, windowState.theme)
     }
+}
+
+/// Agent selector pill that lives in the toolbar's centered slot.
+private struct ChatToolbarAgentView: View {
+    @ObservedObject var windowState: ChatWindowState
+    @ObservedObject var session: ChatSession
+
+    var body: some View {
+        AgentPill(
+            agents: windowState.agents,
+            activeAgentId: windowState.agentId,
+            onSelectAgent: { newAgentId in
+                windowState.switchAgent(to: newAgentId)
+            },
+            discoveredAgents: windowState.discoveredAgents,
+            onSelectDiscoveredAgent: { agent in
+                NotificationCenter.default.post(
+                    name: .chatToolbarSelectDiscoveredAgent,
+                    object: agent,
+                    userInfo: ["windowId": windowState.windowId]
+                )
+            },
+            activeDiscoveredAgent: windowState.selectedDiscoveredAgent,
+            pairedRelayAgents: windowState.pairedRelayAgents,
+            onSelectRelayAgent: { relay in
+                NotificationCenter.default.post(
+                    name: .chatToolbarSelectRelayAgent,
+                    object: relay,
+                    userInfo: ["windowId": windowState.windowId]
+                )
+            },
+            activeRelayAgent: windowState.selectedRelayAgent
+        )
+        .environment(\.theme, windowState.theme)
+    }
+}
+
+extension Notification.Name {
+    static let chatToolbarSelectDiscoveredAgent = Notification.Name("chatToolbarSelectDiscoveredAgent")
+    static let chatToolbarSelectRelayAgent = Notification.Name("chatToolbarSelectRelayAgent")
 }
 
 /// Contextual action button: settings (empty state) or new-chat plus.
