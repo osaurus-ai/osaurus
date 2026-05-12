@@ -1006,7 +1006,7 @@
             // separate process registry.
             if let onProcessStarted {
                 let handle = ProcessHandle(pid: process.pid) { signal in
-                    try await process.kill(signal)
+                    try await process.kill(Signal(rawValue: signal) ?? .kill)
                 }
                 onProcessStarted(handle)
             }
