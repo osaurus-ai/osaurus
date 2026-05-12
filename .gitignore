@@ -145,3 +145,7 @@ benchmarks/
 
 # Generated benchmark/test output
 results/
+
+# Swift test coverage artifacts
+default.profraw
+*.profraw
