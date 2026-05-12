@@ -92,9 +92,13 @@ struct RuntimePolicySourceTests {
         // canonical multi-turn encoder so UI-generated cache boundaries can
         // be reused on growing chat prompts. `ad1d231` synchronizes before and
         // after safetensors disk writes against the GPU stream after generation.
-        #expect(manifest.contains("ad1d23199b056ed502124717e6ca8877f2fb303a"))
-        #expect(workspaceResolved.contains("ad1d23199b056ed502124717e6ca8877f2fb303a"))
-        #expect(appResolved.contains("ad1d23199b056ed502124717e6ca8877f2fb303a"))
+        // `c0f8b3b` adds Nemotron Omni live-voice handoff support and preserves
+        // pre-encoded Parakeet/audio embeddings.
+        #expect(manifest.contains("c0f8b3b1e87f92983bb82f8ace2ec6fd3779c471"))
+        #expect(workspaceResolved.contains("c0f8b3b1e87f92983bb82f8ace2ec6fd3779c471"))
+        #expect(appResolved.contains("c0f8b3b1e87f92983bb82f8ace2ec6fd3779c471"))
+        #expect(!workspaceResolved.contains("ad1d23199b056ed502124717e6ca8877f2fb303a"))
+        #expect(!appResolved.contains("ad1d23199b056ed502124717e6ca8877f2fb303a"))
         #expect(!workspaceResolved.contains("6de602c6d18daf2c1a07cef16b79b507a25feafd"))
         #expect(!appResolved.contains("6de602c6d18daf2c1a07cef16b79b507a25feafd"))
         #expect(!workspaceResolved.contains("b350af6daad0d25c39335356f56de2ae8d70226c"))
