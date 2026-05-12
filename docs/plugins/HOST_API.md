@@ -1,13 +1,89 @@
 # Host API Reference
 
-Reference for the v3 host API. Every callback your plugin can invoke is listed here, grouped by category. The canonical C declarations live in `Packages/OsaurusCore/Tools/PluginABI/osaurus_plugin.h`.
+Reference for the **v6 host API**. Every callback your plugin can invoke is listed here, grouped by category. The canonical C declarations live in `Packages/OsaurusCore/Tools/PluginABI/osaurus_plugin.h`. Per-version evolution and the defensive-check pattern for older hosts are in [ABI_VERSIONS.md](ABI_VERSIONS.md).
 
 ## Conventions
 
-- **Most callbacks return JSON strings** with the structured envelope `{"error": "<code>", "message": "..."}` on error. The exceptions are `config_get` (returns `NULL` for missing key) and the void-returning callbacks (`config_set`, `config_delete`, `log`, `dispatch_cancel`, `send_draft`, `dispatch_interrupt`, `dispatch_clarify`, `complete_cancel`).
-- **Memory ownership**: strings returned by host callbacks are heap-allocated. The plugin must release them with the same `free_string` callback the plugin provides to the host.
+- **Most callbacks return JSON strings** with the structured envelope `{"error": "<code>", "message": "..."}` on error. The exceptions are `config_get` (returns `NULL` for missing key) and the void-returning callbacks (`config_set`, `config_delete`, `log`, `log_structured`, `free_string`, `dispatch_cancel`, `send_draft`, `dispatch_interrupt`, `dispatch_clarify`, `complete_cancel`).
+- **Memory ownership.** Strings returned by host callbacks are heap-allocated by the host with `strdup`. Free them with **`host->free_string(ptr)`** (v6+) — that's the host-controlled pair for `strdup` and stays correct across future allocator changes. On older hosts (v5 and earlier) the slot is NULL; fall back to **`libc free(ptr)`**:
+  ```c
+  if (host->version >= 6 && host->free_string) {
+      host->free_string(ptr);
+  } else {
+      free((void*)ptr);
+  }
+  ```
+  **Do NOT** route host-allocated strings through the plugin's own `free_string` callback (the one on `osr_plugin_api`). That direction is reversed — it's for the host calling on plugin-allocated strings — and routing host pointers through it WILL corrupt the heap (`pointer being freed was not allocated`) if your `free_string` does anything besides plain `free()`.
 - **Threading**: callbacks are safe to call from any thread that carries the plugin context. Prefer the call frame Osaurus invoked you on (`invoke`, `handle_route`, `on_*`).
 - **`host->version`** advertises the highest documented surface the host implements. Read it as a forward-compatible monotonic field.
+
+## Mirror Struct Audit
+
+If you mirror `osr_host_api` in a non-C language (Swift, Rust, etc.), the field order must match the host's frozen layout **exactly**. A skipped or reordered slot makes every callback past that point dispatch to the wrong host function — the production crash signature is `host->free_string(ptr)` resolving to `host->log_structured` (or another adjacent slot), which then either silently misbehaves or aborts inside `libc` on a non-malloc pointer (`pointer being freed was not allocated`).
+
+The canonical pin is [`PluginHostAPIStructLayoutTests`](../../Packages/OsaurusCore/Tests/Plugin/PluginHostAPIStructLayoutTests.swift); the offsets below MUST match what those tests assert. The most common foot-gun is jumping from a v4 mirror straight to v6 and skipping the v5 `log_structured` slot — this puts `free_string` at the v5 offset (`184`) instead of the v6 offset (`192`), with the corruption signature above.
+
+### Frozen field order
+
+| # | Field | Type | Added in |
+|---|---|---|---|
+| 0 | `version` | `uint32_t` | v1 |
+| 1 | `config_get` | `char* (*)(const char*)` | v2 |
+| 2 | `config_set` | `void (*)(const char*, const char*)` | v2 |
+| 3 | `config_delete` | `void (*)(const char*)` | v2 |
+| 4 | `db_exec` | `char* (*)(const char*, const char*)` | v2 |
+| 5 | `db_query` | `char* (*)(const char*, const char*)` | v2 |
+| 6 | `log` | `void (*)(int32_t, const char*)` | v2 |
+| 7 | `dispatch` | `char* (*)(const char*)` | v2 |
+| 8 | `task_status` | `char* (*)(const char*)` | v2 |
+| 9 | `dispatch_cancel` | `void (*)(const char*)` | v2 |
+| 10 | `dispatch_clarify` *(RESERVED)* | `void (*)(const char*, const char*)` | v2 |
+| 11 | `complete` | `char* (*)(const char*)` | v2 |
+| 12 | `complete_stream` | `char* (*)(const char*, on_chunk_t, void*)` | v2 |
+| 13 | `embed` | `char* (*)(const char*)` | v2 |
+| 14 | `list_models` | `char* (*)()` | v2 |
+| 15 | `http_request` | `char* (*)(const char*)` | v2 |
+| 16 | `file_read` | `char* (*)(const char*)` | v2 |
+| 17 | `list_active_tasks` | `char* (*)()` | v2 |
+| 18 | `send_draft` | `void (*)(const char*, const char*)` | v2 |
+| 19 | `dispatch_interrupt` | `void (*)(const char*, const char*)` | v2 |
+| 20 | `dispatch_add_issue` *(RESERVED)* | `char* (*)(const char*, const char*)` | v2 |
+| 21 | `complete_cancel` | `void (*)(const char*)` | v3 |
+| 22 | `get_active_agent_id` | `char* (*)()` | v4 |
+| 23 | **`log_structured`** | `void (*)(int32_t, const char*, const char*)` | **v5** |
+| 24 | `free_string` | `void (*)(const char*)` | v6 |
+
+### Pinned offsets (Apple Silicon, default alignment)
+
+The struct uses default C alignment — every pointer slot is 8 bytes after `version`'s 4-byte field plus its 4-byte trailing pad. The current locked offsets are:
+
+| Slot | Offset (bytes) |
+|---|---|
+| `version` | 0 |
+| `get_active_agent_id` | 176 |
+| `log_structured` | 184 |
+| `free_string` | 192 |
+| (struct stride) | 200 |
+
+If your mirror disagrees with any of these offsets, your `host->*` calls dispatch into adjacent slots and the host will look wedged or crash. Fix the mirror, don't add defensive checks downstream.
+
+### Pre-flight ABI probe
+
+The host pushes a synthetic `(__osaurus_abi_probe__, <fresh UUID>)` pair through every newly-loaded plugin's `on_config_changed` BEFORE any real config delivery, while a `.currently_loading` marker is on disk. Plugins that follow the documented pattern of resolving the active agent at the top of `on_config_changed` (i.e. `host->get_active_agent_id()` → `host->free_string(ptr)`) trigger a misalignment crash here, which:
+
+- Quarantines the plugin on the next launch instead of crash-looping the host (`promoteStaleLoadingMarker` flips the marker into `.quarantine`).
+- Surfaces a "Plugin failed to load" tab in the agent detail view with the structured error and a Retry button.
+
+If you want to opt out of the probe (e.g. because your `on_config_changed` performs expensive work for every key), match the constant `"__osaurus_abi_probe__"` and early-return:
+
+```c
+void on_config_changed(osr_plugin_ctx_t* ctx, const char* key, const char* value) {
+    if (strcmp(key, "__osaurus_abi_probe__") == 0) return;  // host's pre-flight handshake
+    // ... your real handler ...
+}
+```
+
+You give up the early misalignment detection if you do this, so prefer to leave the probe in place during development.
 
 ## Categories
 
@@ -28,15 +104,19 @@ Per-plugin secrets, scoped by `(plugin_id, agent_id)` and stored in the macOS Ke
 
 ### `config_get(key) -> char*`
 
-Returns the stored value or **NULL** if the key is missing. Free the returned string with the plugin's `free_string`.
+Returns the stored value or **NULL** if the key is missing. Free the returned string with `host->free_string` (v6+) or `libc free` on older hosts.
 
 ```c
 const char* api_key = host->config_get("api_key");
 if (!api_key) {
     // missing — surface a setup hint to the user
 } else {
-    // use it
-    plugin_free_string(api_key);
+    // use it ...
+    if (host->version >= 6 && host->free_string) {
+        host->free_string(api_key);
+    } else {
+        free((void*)api_key);
+    }
 }
 ```
 
@@ -58,11 +138,40 @@ Empty string `""` is a real value, distinct from a delete. Use `config_delete` t
 
 The host serializes invocations of `on_config_changed` per plugin: two callbacks for the same plugin will never run in parallel, even when the host fans out per-agent notifications back-to-back at launch. State touched only from this callback can stay lock-free; state shared with `invoke` / `handle_route` still needs its own synchronization (those paths run concurrently).
 
+### `get_active_agent_id() -> char*` (v4)
+
+Returns the UUID string of the agent that invoked the current callback frame (`handle_route`, `invoke`, `on_config_changed`, `on_task_event`), or **NULL** when the call is happening outside any per-agent frame (`init`, plugin-spawned background thread, callback fired before the host bound an agent to the calling thread). Free with **`host->free_string`** (v6+) or **`libc free`** on older hosts — see the Conventions section above for why this is NOT the plugin's own `free_string`.
+
+**Always re-call when you need the value — do not cache.** The same `osr_plugin_ctx_t` serves every agent the plugin runs under, and the active agent changes between callbacks. Use this to key per-agent state on the plugin side (e.g. a `bot_session` map keyed by agent UUID) so your in-memory state lines up with the `(plugin_id, agent_id, key)` scope of `config_get` / `config_set`.
+
+```c
+const char* agent_id = host->get_active_agent_id();
+if (!agent_id) {
+    // No active agent. Either:
+    //   (a) we're in init — defer per-agent setup to on_config_changed
+    //   (b) we're on a background thread we spawned — capture the agent
+    //       inside an event frame and pass it down explicitly
+    return;
+}
+// Use agent_id as the key into your per-agent state map, then:
+if (host->version >= 6 && host->free_string) {
+    host->free_string(agent_id);
+} else {
+    free((void*)agent_id);
+}
+```
+
+If a plugin compiled against ABI v3 or earlier dlopens against a v4 host, the slot is still present (the struct layout is frozen; v4 only appends). If a v4-aware plugin is loaded by an older host, the slot is NULL — defensively check before calling.
+
+The host also emits a one-shot warning per `(plugin, op)` to the unified log when `config_get` / `config_set` / `config_delete` runs without a TLS-bound agent (i.e. would silently use the default agent). This makes the failure mode visible to plugin authors at install time.
+
 ---
 
 ## Storage
 
 Per-plugin SQLite database, encrypted with SQLCipher and lazy-opened on first use. `ATTACH`, `DETACH`, and `LOAD_EXTENSION` are blocked at the SQL guard.
+
+**Size cap.** Each plugin's database is capped at **100 MiB** by default (configurable per-context, but not via the plugin API — this is a host-side guard). INSERT / UPDATE statements that would push past the cap fail with `database or disk is full`; the plugin sees a normal SQL error in the response envelope (no host crash). For larger payloads, use shared artifacts via the chat / dispatch flow, not `db_exec`.
 
 ### `db_exec(sql, params_json) -> char*`
 
@@ -88,8 +197,22 @@ Executes a SELECT and returns `{"rows": [{...}, ...], "columns": [...]}`.
 Levels: `0=trace`, `1=debug`, `2=info`, `3=warn`, `4=error`. Messages flow to both the macOS unified log and Osaurus Insights.
 
 ```c
-host->log(1, "Plugin started");
+host->log(2, "Plugin started");
 ```
+
+### `log_structured(level, message, payload) -> void` (v5)
+
+Same level scale as `log`, but `payload` is a JSON object string the host stores alongside the message — surfaced in Insights as searchable fields. Pass `NULL` for `payload` to log without fields (equivalent to `log`). The host doesn't enforce a payload schema; pick keys your dashboards / log filters will look for.
+
+```c
+host->log_structured(
+    2,
+    "Webhook registered",
+    "{\"event\":\"webhook_registered\",\"agent_id\":\"...\",\"status\":200}"
+);
+```
+
+Plugins compiled against ABI v4 or earlier see a NULL slot — defensively check `host->version >= 5 && host->log_structured` before calling. Dashboards on the host side filter by `pluginId` and the structured payload's keys.
 
 ---
 
@@ -205,11 +328,31 @@ Schema:
   "title": "Optional title shown in the task toast",
   "id": "Optional caller-supplied UUID",
   "folder_bookmark": "Optional base64-encoded security-scoped bookmark",
-  "session_id": "Optional UUID. Reattach to an existing session"
+  "session_id": "Optional UUID. Reattach to an existing session",
+  "tools": ["Optional. Tool names to expose to the model on top of the agent's normal selection."]
 }
 ```
 
 **Agent scoping.** The dispatched task always runs under the agent that invoked the plugin (see the "Agent scoping" note in the [Inference](#inference) section). `agent_address` / `agent_id` are not part of the schema; if either is present they are ignored and a one-shot warning is logged. `session_id` reattach is naturally agent-scoped — a session belonging to a different agent silently misses and a fresh task is created.
+
+**Tool selection.** The optional `tools` array pins specific tool names so the dispatched chat is guaranteed to see them on turn 1 — useful for "the agent must be able to call `reply` to talk back to the user" patterns where you can't rely on the agent's auto-mode preflight to surface them. Names are *additive* on top of the agent's existing selection (auto-mode preflight or manual list); they don't replace it. Allowed names are restricted to:
+
+- the calling plugin's own manifest tool ids (the `id` field on each entry in `manifest.capabilities.tools`), and
+- host built-in always-loaded names such as `share_artifact`, `search_memory`, sandbox tools, etc.
+
+Names outside that set are dropped silently and a one-shot `[PluginHostAPI] Plugin '<id>' requested tool '<name>' on dispatch but it is not in the allowed set` warning is logged per `(plugin, name)` per process. The rest of the dispatch proceeds normally — a typo in `tools` never fails the call. Omitting the field, passing an empty array, or passing non-string entries all behave like the field wasn't there.
+
+Example — a Telegram-style plugin guaranteeing the model can reply:
+
+```json
+{
+  "prompt": "User said: hello",
+  "session_id": "<deterministic-uuid-for-chat>",
+  "tools": ["reply", "reply_typing", "reply_photo"]
+}
+```
+
+The dispatched chat will see `reply` / `reply_typing` / `reply_photo` in its `<tools>` schema on turn 1, on top of whatever the agent's auto-mode preflight picked. See [Example: Telegram bridge plugin](EXAMPLE_TELEGRAM.md) for the full flow.
 
 Returns `{"id": "<uuid>", "status": "running"}` immediately or an error envelope. Non-blocking.
 
@@ -247,7 +390,13 @@ No-ops silently if `task_id` is invalid or does not belong to the calling plugin
 
 ### `http_request(request_json) -> char*`
 
-Outbound HTTP with built-in SSRF protection. Loopback, link-local, RFC1918, and 169.254 ranges are blocked.
+Outbound HTTP with built-in SSRF protection.
+
+**Blocked targets.** Literal loopback (`127.0.0.0/8`, `::1`, `ip6-localhost`), RFC1918 (`10/8`, `172.16/12`, `192.168/16`), CGN (`100.64/10`), link-local (`169.254/16` — including `169.254.169.254` cloud metadata), unspecified `0.0.0.0/8`, multicast `224.0.0.0/4`, IPv6 link-local `fe80::/10`, IPv6 unique-local `fc00::/7`, and **IPv4-mapped / IPv4-compatible IPv6** forms (`::ffff:127.0.0.1`, `::10.0.0.1`, etc.). Public hostnames and addresses pass through.
+
+**Rate limit.** Capped at **60 requests per (plugin, agent) per 60 s** (sliding window). Bursts above this fail fast with `{"error": "rate_limit_exceeded", "retry_after_ms": 60000}`. The cap is host-side defense against runaway plugins; well-behaved plugins still need their own backoff against upstream APIs.
+
+**Known limitation: DNS rebinding.** SSRF is enforced on the URL string before the request runs — the host does **not** resolve hostnames first. A hostname that looks public (`evil.example.com`) but resolves to a private IP at connection time will pass this check and the request will go through. End-to-end SSRF mitigation requires a network-layer hook on the resolved address; tracked separately. Plugins that issue user-controlled URLs should treat untrusted hostnames as a real threat and validate the upstream response.
 
 Schema:
 

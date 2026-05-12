@@ -134,6 +134,8 @@ struct OsaurusCLI {
                                       Dev mode with hot reload and optional web proxy
               osaurus manifest extract <dylib>
                                       Extract manifest JSON from built plugin
+              osaurus manifest validate <manifest.json>
+                                      Validate a plugin manifest's structure (run before packaging)
               osaurus bundle load <path.mcpb> [--name "Display Name"]
                                       Load and run an MCP Bundle (.mcpb file)
               osaurus help            Show this help

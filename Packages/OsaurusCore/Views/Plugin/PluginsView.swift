@@ -893,6 +893,11 @@ private struct PluginDetailView: View {
     @State private var showKeyMismatch = false
     @State private var showSecretsSheet = false
     @State private var showDeleteConfirm = false
+    /// Confirmation gate for the failed-plugin Retry button — keeps
+    /// "tap Retry" separate from "unquarantine + reload" so a user
+    /// can't accidentally crash-loop the host on a still-broken
+    /// plugin.
+    @State private var showRetryConfirm = false
     @State private var readmeContent: String?
     @State private var changelogContent: String?
     @State private var hasMissingSecrets = false
@@ -999,6 +1004,20 @@ private struct PluginDetailView: View {
                         errorMessage = error.localizedDescription
                         showError = true
                     }
+                }
+            },
+            secondaryButton: .cancel("Cancel")
+        )
+        .themedAlert(
+            "Retry plugin load?",
+            isPresented: $showRetryConfirm,
+            message:
+                "The host quarantined this plugin after it caused a crash during load. Retrying re-runs the same dylib against the same host build, so if the underlying bug (most often a misaligned `osr_host_api` mirror in the plugin) is unfixed it will crash again. Use this only after the plugin has been rebuilt or re-installed. Otherwise, use Uninstall to remove it.",
+            primaryButton: .destructive("Retry Anyway") {
+                PluginManager.removeFromQuarantine(plugin.pluginId)
+                Task {
+                    await PluginManager.shared.loadAll(forceReload: true)
+                    onChange()
                 }
             },
             secondaryButton: .cancel("Cancel")
@@ -1293,10 +1312,7 @@ private struct PluginDetailView: View {
                             Spacer()
 
                             Button {
-                                Task {
-                                    await PluginManager.shared.loadAll()
-                                    onChange()
-                                }
+                                showRetryConfirm = true
                             } label: {
                                 HStack(spacing: 4) {
                                     Image(systemName: "arrow.clockwise").font(.system(size: 11))

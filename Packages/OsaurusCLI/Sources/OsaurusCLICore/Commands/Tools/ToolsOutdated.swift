@@ -10,6 +10,17 @@ import OsaurusRepository
 
 public struct ToolsOutdated {
     public static func execute(args: [String]) {
+        let skipRefresh = args.contains("--no-refresh")
+
+        // `outdated` is the canonical "do I have updates?" command —
+        // not refreshing first means it can silently report
+        // "All up to date" against a stale clone. Honor `--no-refresh`
+        // for scripts / tight loops that don't want the network round-trip.
+        if !skipRefresh {
+            FileHandle.standardError.write(Data("Refreshing registry…\n".utf8))
+            _ = CentralRepositoryManager.shared.refresh()
+        }
+
         let specs = CentralRepositoryManager.shared.listAllSpecs()
         let fm = FileManager.default
         let root = PluginInstallManager.toolsRootDirectory()

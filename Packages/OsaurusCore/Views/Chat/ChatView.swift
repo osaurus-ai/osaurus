@@ -1518,8 +1518,28 @@ final class ChatSession: ObservableObject {
                 )
                 guard isRunActive(runId) else { return }
 
-                // Inject one-off skill if the user selected one via slash command
                 var sys = context.prompt
+
+                // Plugin-dispatched tasks (host->dispatch) carry their
+                // source plugin id on the session. Append that plugin's
+                // instructions so the dispatched chat sees the same
+                // contract the plugin would have published via
+                // host->complete. Mirrors `PluginHostAPI.prepareInference`
+                // through the shared `PluginInstructionsResolver`. Without
+                // this, plugin manifest `instructions` are silently
+                // dropped on the dispatch path, leaving the model
+                // unaware of plugin-specific contracts (e.g. Telegram's
+                // `[reply_token …]` / `reply` / `reply_typing` flow).
+                if let pid = sourcePluginId,
+                    let pluginInstructions = PluginInstructionsResolver.instructions(
+                        pluginId: pid,
+                        agentId: agentId
+                    )
+                {
+                    sys = sys.isEmpty ? pluginInstructions : sys + "\n\n" + pluginInstructions
+                }
+
+                // Inject one-off skill if the user selected one via slash command
                 if let skillId = pendingOneOffSkillId {
                     pendingOneOffSkillId = nil
                     if let skill = SkillManager.shared.skill(for: skillId) {

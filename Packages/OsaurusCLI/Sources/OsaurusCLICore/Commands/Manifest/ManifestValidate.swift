@@ -118,6 +118,13 @@ public struct ManifestValidate {
         let routesCount = validateRoutes(capsObj["routes"], into: &report)
         let hasWeb = validateWeb(capsObj["web"], into: &report)
         let hasConfig = validateConfig(capsObj["config"], into: &report)
+        if let h = capsObj["artifact_handler"], !(h is Bool) {
+            report.errors.append("`capabilities.artifact_handler` must be a boolean.")
+        }
+
+        validateSecrets(obj["secrets"], into: &report)
+        validateDocs(obj["docs"], into: &report)
+        validateCompatFields(obj, into: &report)
 
         // Optional well-formed-but-loose fields surface as warnings rather
         // than errors so a typo doesn't fail validation outright.
@@ -126,6 +133,21 @@ public struct ManifestValidate {
         }
         if let n = obj["name"], !(n is String) {
             report.warnings.append("`name` should be a string (got \(typeName(of: n))).")
+        }
+        if let i = obj["instructions"], !(i is String) {
+            report.errors.append("`instructions` must be a string (got \(typeName(of: i))).")
+        }
+        if let lic = obj["license"], !(lic is String) {
+            report.warnings.append("`license` should be a string (got \(typeName(of: lic))).")
+        }
+        if let authors = obj["authors"] {
+            if let arr = authors as? [Any] {
+                for (i, a) in arr.enumerated() where !(a is String) {
+                    report.errors.append("`authors[\(i)]` must be a string.")
+                }
+            } else {
+                report.errors.append("`authors` must be an array of strings.")
+            }
         }
 
         report.summary = Report.Summary(
@@ -137,6 +159,132 @@ public struct ManifestValidate {
             hasConfig: hasConfig
         )
         return report
+    }
+
+    // MARK: - Top-level field validators (added for plugin authoring v1)
+
+    /// Validates the optional top-level `secrets` array. Each entry is
+    /// a `SecretSpec`: required `id` + `label`, optional `description`
+    /// / `required` (bool) / `url`. Surfaced for authors so a typo in
+    /// `secrets` doesn't silently get the user a plugin that asks for
+    /// nothing on install.
+    private static func validateSecrets(_ raw: Any?, into report: inout Report) {
+        guard let raw else { return }
+        guard let arr = raw as? [Any] else {
+            report.errors.append("`secrets` must be an array (got \(typeName(of: raw))).")
+            return
+        }
+        for (i, entry) in arr.enumerated() {
+            guard let secret = entry as? [String: Any] else {
+                report.errors.append("`secrets[\(i)]` must be an object.")
+                continue
+            }
+            requireNonEmptyString(secret["id"], at: "secrets[\(i)].id", report: &report)
+            requireNonEmptyString(secret["label"], at: "secrets[\(i)].label", report: &report)
+            if let req = secret["required"], !(req is Bool) {
+                report.errors.append("`secrets[\(i)].required` must be a boolean.")
+            }
+            if let url = secret["url"], !(url is String) {
+                report.errors.append("`secrets[\(i)].url` must be a string.")
+            }
+            if let desc = secret["description"], !(desc is String) {
+                report.errors.append("`secrets[\(i)].description` must be a string.")
+            }
+        }
+    }
+
+    /// Validates `docs` shape (readme path, changelog path, optional
+    /// links array of `{label, url}`). All sub-fields are optional but
+    /// must be the right type if present.
+    private static func validateDocs(_ raw: Any?, into report: inout Report) {
+        guard let raw else { return }
+        guard let docs = raw as? [String: Any] else {
+            report.errors.append("`docs` must be an object.")
+            return
+        }
+        if let r = docs["readme"], !(r is String) {
+            report.errors.append("`docs.readme` must be a string.")
+        }
+        if let c = docs["changelog"], !(c is String) {
+            report.errors.append("`docs.changelog` must be a string.")
+        }
+        if let links = docs["links"] {
+            guard let arr = links as? [Any] else {
+                report.errors.append("`docs.links` must be an array.")
+                return
+            }
+            for (i, entry) in arr.enumerated() {
+                guard let link = entry as? [String: Any] else {
+                    report.errors.append("`docs.links[\(i)]` must be an object.")
+                    continue
+                }
+                requireNonEmptyString(link["label"], at: "docs.links[\(i)].label", report: &report)
+                requireNonEmptyString(link["url"], at: "docs.links[\(i)].url", report: &report)
+            }
+        }
+    }
+
+    /// Validates `min_osaurus` / `min_macos` shape. Host enforces
+    /// these at load time (see `PluginManager.compatibilityFailure`);
+    /// catching unparseable strings at validate time saves the
+    /// author a debug cycle.
+    private static func validateCompatFields(_ obj: [String: Any], into report: inout Report) {
+        validateVersionField(
+            obj["min_osaurus"],
+            field: "min_osaurus",
+            example: "semver like '0.18.0'",
+            isValid: looksLikeSemver,
+            into: &report
+        )
+        validateVersionField(
+            obj["min_macos"],
+            field: "min_macos",
+            example: "major[.minor[.patch]] like '14.5'",
+            isValid: looksLikeOSVersion,
+            into: &report
+        )
+    }
+
+    /// Shared shape check for the two version fields: type-error if
+    /// not a string; warning if non-empty but unparseable. Empty string
+    /// is treated as "no constraint" and passes silently — the host
+    /// would also ignore it.
+    private static func validateVersionField(
+        _ raw: Any?,
+        field: String,
+        example: String,
+        isValid: (String) -> Bool,
+        into report: inout Report
+    ) {
+        guard let raw else { return }
+        guard let s = raw as? String else {
+            report.errors.append("`\(field)` must be a string.")
+            return
+        }
+        if !s.isEmpty, !isValid(s) {
+            report.warnings.append(
+                "`\(field)` is '\(s)'; expected \(example) — host will ignore unparseable constraints."
+            )
+        }
+    }
+
+    /// Loose semver shape check: at least three dot-separated integer
+    /// components. Mirrors what `SemanticVersion.parse` accepts without
+    /// re-implementing it (the CLI module deliberately doesn't depend
+    /// on `OsaurusRepository`'s parser).
+    private static func looksLikeSemver(_ s: String) -> Bool {
+        let core = s.split(separator: "-", maxSplits: 1).first ?? Substring(s)
+        let nums = core.split(separator: ".", omittingEmptySubsequences: false)
+        guard nums.count == 3 else { return false }
+        return nums.allSatisfy { Int($0) != nil }
+    }
+
+    /// `min_macos` accepts "14", "14.5", or "14.5.1" — at least one
+    /// integer component, all-integer.
+    private static func looksLikeOSVersion(_ s: String) -> Bool {
+        let nums = s.split(separator: ".", omittingEmptySubsequences: false)
+        guard !nums.isEmpty else { return false }
+        return nums.allSatisfy { Int($0) != nil }
     }
 
     // MARK: - Capability validators
@@ -292,15 +440,75 @@ public struct ManifestValidate {
                 return true
             }
             for (i, entry) in arr.enumerated() {
-                guard entry is [String: Any] else {
+                guard let section = entry as? [String: Any] else {
                     report.errors.append("`capabilities.config.sections[\(i)]` must be an object.")
                     continue
                 }
+                requireNonEmptyString(
+                    section["title"],
+                    at: "capabilities.config.sections[\(i)].title",
+                    report: &report
+                )
+                validateConfigFields(
+                    section["fields"],
+                    sectionPath: "capabilities.config.sections[\(i)]",
+                    into: &report
+                )
             }
         } else {
             report.errors.append("`capabilities.config.sections` is required when `config` is set.")
         }
         return true
+    }
+
+    /// Validates each field inside a config section. Required: `key`,
+    /// `type`, `label`. `type` must be one of the documented enum
+    /// values — this catches typos like `"checkbox"` (should be
+    /// `toggle`) early instead of silently rendering nothing.
+    private static func validateConfigFields(
+        _ raw: Any?,
+        sectionPath: String,
+        into report: inout Report
+    ) {
+        guard let raw else {
+            report.errors.append("`\(sectionPath).fields` is required.")
+            return
+        }
+        guard let arr = raw as? [Any] else {
+            report.errors.append("`\(sectionPath).fields` must be an array.")
+            return
+        }
+        // Mirrors `PluginManifest.ConfigFieldType` exactly. Adding a
+        // new field type means updating both this list and the Swift
+        // enum — the validator failing loudly here is the "did you
+        // forget to update the validator?" trap.
+        let validTypes: Set<String> = [
+            "text", "secret", "toggle", "select", "multiselect",
+            "number", "readonly", "status",
+        ]
+        for (j, entry) in arr.enumerated() {
+            let path = "\(sectionPath).fields[\(j)]"
+            guard let field = entry as? [String: Any] else {
+                report.errors.append("`\(path)` must be an object.")
+                continue
+            }
+            requireNonEmptyString(field["key"], at: "\(path).key", report: &report)
+            requireNonEmptyString(field["label"], at: "\(path).label", report: &report)
+            if let t = field["type"] {
+                if let s = t as? String {
+                    if !validTypes.contains(s) {
+                        report.errors.append(
+                            "`\(path).type` is '\(s)'; expected one of: "
+                                + validTypes.sorted().joined(separator: ", ")
+                        )
+                    }
+                } else {
+                    report.errors.append("`\(path).type` must be a string.")
+                }
+            } else {
+                report.errors.append("`\(path).type` is required.")
+            }
+        }
     }
 
     // MARK: - Helpers

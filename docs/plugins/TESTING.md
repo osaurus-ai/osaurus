@@ -18,29 +18,35 @@ How to validate your plugin without installing it into Osaurus.
 
 ## Unit testing the plugin in Swift
 
-Spin up a Swift test target alongside your plugin:
+Spin up a Swift test target alongside your plugin. Assertions should be against the canonical [TOOL_CONTRACT](../TOOL_CONTRACT.md) shape — `result` for success, `kind` + `message` for failure:
 
 ```swift
 // Tests/MyPluginTests/HelloToolTests.swift
 import Testing
 @testable import MyPlugin
 
-@Test func helloWorldGreetsByName() {
+@Test func helloWorldGreetsByName() throws {
     let tool = HelloTool()
-    let result = tool.run(args: #"{"name":"World"}"#)
-    let data = result.data(using: .utf8)!
-    let dict = try! JSONSerialization.jsonObject(with: data) as! [String: Any]
-    #expect(dict["message"] as? String == "Hello, World!")
+    let json = tool.run(args: #"{"name":"World"}"#)
+    let dict = try JSONSerialization.jsonObject(with: Data(json.utf8)) as! [String: Any]
+    #expect(dict["ok"] as? Bool == true)
+    let result = dict["result"] as? [String: Any]
+    #expect(result?["text"] as? String == "Hello, World!")
 }
 
-@Test func invalidArgsReturnsError() {
+@Test func invalidArgsReturnsError() throws {
     let tool = HelloTool()
-    let result = tool.run(args: "not json")
-    #expect(result.contains("\"error\""))
+    let json = tool.run(args: "not json")
+    let dict = try JSONSerialization.jsonObject(with: Data(json.utf8)) as! [String: Any]
+    #expect(dict["ok"] as? Bool == false)
+    #expect(dict["kind"] as? String == "invalid_args")
+    #expect((dict["message"] as? String)?.isEmpty == false)
 }
 ```
 
 Run with `swift test`.
+
+For tests that drive the plugin's host-API callbacks (`init`, `invoke`, `on_config_changed`), use the [`OsaurusPluginTestKit`](../../Packages/OsaurusPluginTestKit/README.md) package — it provides a `MockHost` that records every host call your plugin made.
 
 ## Unit testing in Rust
 

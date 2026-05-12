@@ -320,10 +320,19 @@ if let active = activeDispatch(forChat: msg.chat.id) {
 // tunnel routed the webhook into `handle_route`). Caller-supplied
 // agent identifiers are ignored and warned-once. This keeps every
 // agent's bot strictly scoped to its own conversations.
+// `tools` pins the names the model is *guaranteed* to see on turn 1.
+// Without this we'd be relying on the agent's auto-mode preflight to
+// surface `reply` & friends from a generic prompt — which is fine in
+// practice but not deterministic. Listing them here makes the contract
+// explicit: every dispatched run can talk back to the chat. Names are
+// scope-checked to (this plugin's manifest tools + host built-ins),
+// so a typo or a foreign tool id is silently dropped with a one-shot
+// warning rather than failing the dispatch.
 let dispatchReq: [String: Any] = [
     "prompt": prompt,
     "title": "Telegram \(displayName)",
-    "session_id": sessionId.uuidString
+    "session_id": sessionId.uuidString,
+    "tools": ["reply", "reply_typing", "reply_photo"]
 ]
 let dispatchJSON = try JSONSerialization.data(withJSONObject: dispatchReq)
 let resultPtr = hostAPI?.pointee.dispatch?(

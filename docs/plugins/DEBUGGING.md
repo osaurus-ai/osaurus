@@ -108,9 +108,17 @@ If you see `{"error": "context_unavailable"}` from a host call, your plugin call
 
 Each plugin is capped at 2 concurrent inference calls. If you're seeing this, you've fired three or more `complete` / `complete_stream` / `embed` calls in flight at once. Either serialize them or batch the work into a single `complete` request with a richer prompt.
 
-## `dispatch_interrupt` message ignored
+## `dispatch_interrupt` not behaving as expected?
 
-The `message` argument to `dispatch_interrupt` is preserved in the ABI but is currently a no-op. The host logs a one-shot warning per plugin if you pass a non-empty message. To deliver context to a running task, dispatch a fresh task with `dispatch()` instead.
+`dispatch_interrupt(task_id, message)` cancels the task's current stream. When `message` is non-empty (and not just whitespace), the trimmed content is appended to the underlying chat session as a `user`-role turn **before** the cancel — so the model picks it up on the next completion round (when the user reopens the chat window, when the plugin dispatches a follow-up against the same `session_id`, or when the session is otherwise resumed). Pass `NULL` or an empty string to soft-stop without injecting context.
+
+If you're not seeing the injected message reach the model, confirm:
+
+- The `task_id` actually belongs to your plugin (host silently no-ops + warns once otherwise).
+- The task is still active (`task_status` should report `running` or `awaitingClarification` before the interrupt).
+- The session is being resumed somewhere — the appended turn waits for the next completion round; it doesn't trigger one on its own.
+
+See `osr_dispatch_interrupt_fn` in [HOST_API.md](HOST_API.md) and the example flow in [MESSAGING_PATTERN.md](MESSAGING_PATTERN.md) for the canonical usage.
 
 ## Streaming chunks dropped
 

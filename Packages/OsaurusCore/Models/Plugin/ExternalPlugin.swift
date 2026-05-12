@@ -110,6 +110,25 @@ typealias osr_dispatch_add_issue_t =
 // Streaming control
 typealias osr_complete_cancel_t = @convention(c) (UnsafePointer<CChar>?) -> Void
 
+// Agent context introspection (added in v4)
+typealias osr_get_active_agent_id_t = @convention(c) () -> UnsafePointer<CChar>?
+
+// Structured logging (added in v5)
+typealias osr_log_structured_t =
+    @convention(c) (
+        Int32,
+        UnsafePointer<CChar>?,
+        UnsafePointer<CChar>?
+    ) -> Void
+
+// Host-side string free (added in v6)
+typealias osr_host_free_string_t = @convention(c) (UnsafePointer<CChar>?) -> Void
+
+/// Frozen layout — field order and padding must match `osaurus_plugin.h`
+/// exactly (see `PluginHostAPIStructLayoutTests`). Swift plugins that mirror
+/// this struct must not skip middle fields (e.g. omitting v5 `log_structured`
+/// but adding v6 `free_string`); misaligned slots cause wrong `host` calls
+/// and heap aborts when freeing returned strings.
 struct osr_host_api {
     var version: UInt32
 
@@ -153,6 +172,15 @@ struct osr_host_api {
 
     // Streaming control (added in v3)
     var complete_cancel: osr_complete_cancel_t?
+
+    // Agent context introspection (added in v4)
+    var get_active_agent_id: osr_get_active_agent_id_t?
+
+    // Structured logging (added in v5)
+    var log_structured: osr_log_structured_t?
+
+    // Host-side string free (added in v6)
+    var free_string: osr_host_free_string_t?
 }
 
 struct osr_plugin_api {
@@ -782,9 +810,73 @@ final class ExternalPlugin: @unchecked Sendable {
     }
 
     func notifyConfigBatch(_ changes: [(key: String, value: String)], agentId: UUID? = nil) {
-        guard abiVersion >= 2, let configFn = api.on_config_changed, !changes.isEmpty else { return }
-        nonisolated(unsafe) let ctx = self.ctx
+        guard let prep = prepareConfigDelivery(changes: changes, agentId: agentId) else { return }
+        nonisolated(unsafe) let ctx = prep.ctx
+        let configFn = prep.configFn
+        let filtered = prep.filtered
         let pluginId = self.id
+
+        // Serial — see `configEventQueue` for the rationale and contract.
+        configEventQueue.async { [self] in
+            self.runConfigDelivery(
+                configFn: configFn,
+                ctx: ctx,
+                filtered: filtered,
+                pluginId: pluginId,
+                agentId: agentId
+            )
+            withExtendedLifetime(self) {}
+        }
+    }
+
+    /// Synchronous variant of `notifyConfigBatch` — blocks the caller until
+    /// the plugin's `on_config_changed` returns. Used by `PluginManager`
+    /// during the load-time first-delivery window so that any plugin
+    /// `abort()` (e.g. misaligned `osr_host_api` mirror calling
+    /// `host->free_string` on a non-malloc pointer) leaves the
+    /// `.currently_loading` marker on disk and quarantines the plugin on
+    /// the next launch instead of crash-looping the host. Runtime config
+    /// changes continue to use the async variant.
+    ///
+    /// Callers MUST hold the per-plugin loading marker around this call
+    /// (see `PluginManager.runFirstDeliverySweep`); without it the
+    /// crash-loop guard does nothing.
+    ///
+    /// Safe to call from any thread that is not the plugin's own
+    /// `configEventQueue` (would deadlock). Plugins that do heavy work in
+    /// `on_config_changed` (HTTP, OAuth refresh) will block the caller —
+    /// the load path accepts that cost as part of a one-shot launch
+    /// sweep; runtime callers should keep using the async variant.
+    func notifyConfigBatchSync(_ changes: [(key: String, value: String)], agentId: UUID? = nil) {
+        guard let prep = prepareConfigDelivery(changes: changes, agentId: agentId) else { return }
+        nonisolated(unsafe) let ctx = prep.ctx
+        let configFn = prep.configFn
+        let filtered = prep.filtered
+        let pluginId = self.id
+
+        configEventQueue.sync { [self] in
+            self.runConfigDelivery(
+                configFn: configFn,
+                ctx: ctx,
+                filtered: filtered,
+                pluginId: pluginId,
+                agentId: agentId
+            )
+            withExtendedLifetime(self) {}
+        }
+    }
+
+    /// Runs the dedup pass and returns the trio of (callback, ctx,
+    /// filtered changes) the queue body needs. Pulled out so `notifyConfigBatch`
+    /// (async) and `notifyConfigBatchSync` (sync, used by the load-time
+    /// crash-loop guard) share the same dedup contract — Telegram-style
+    /// expensive-on-config_changed work must not re-run on no-op pushes
+    /// regardless of which path delivered them.
+    private func prepareConfigDelivery(
+        changes: [(key: String, value: String)],
+        agentId: UUID?
+    ) -> (configFn: osr_on_config_changed_t, ctx: osr_plugin_ctx_t, filtered: [(key: String, value: String)])? {
+        guard abiVersion >= 2, let configFn = api.on_config_changed, !changes.isEmpty else { return nil }
         let agentScope = agentId?.uuidString ?? "default"
 
         // Drop pairs that match the prior delivery for the same
@@ -805,21 +897,29 @@ final class ExternalPlugin: @unchecked Sendable {
             }
             return keep
         }
-        guard !filtered.isEmpty else { return }
+        guard !filtered.isEmpty else { return nil }
+        return (configFn, ctx, filtered)
+    }
 
-        // Serial — see `configEventQueue` for the rationale and contract.
-        configEventQueue.async { [self] in
-            guard !self.isShutDown.withLock({ $0 }) else { return }
-            PluginHostContext.withTLSScope(pluginId: pluginId, agentId: agentId) {
-                for (key, value) in filtered {
-                    key.withCString { keyPtr in
-                        value.withCString { valuePtr in
-                            configFn(ctx, keyPtr, valuePtr)
-                        }
+    /// Body of the dispatch — checks the shutdown latch, scopes TLS,
+    /// drives `on_config_changed` for each filtered pair. Shared between
+    /// the async and sync delivery paths.
+    private func runConfigDelivery(
+        configFn: osr_on_config_changed_t,
+        ctx: osr_plugin_ctx_t,
+        filtered: [(key: String, value: String)],
+        pluginId: String,
+        agentId: UUID?
+    ) {
+        guard !self.isShutDown.withLock({ $0 }) else { return }
+        PluginHostContext.withTLSScope(pluginId: pluginId, agentId: agentId) {
+            for (key, value) in filtered {
+                key.withCString { keyPtr in
+                    value.withCString { valuePtr in
+                        configFn(ctx, keyPtr, valuePtr)
                     }
                 }
             }
-            withExtendedLifetime(self) {}
         }
     }
 

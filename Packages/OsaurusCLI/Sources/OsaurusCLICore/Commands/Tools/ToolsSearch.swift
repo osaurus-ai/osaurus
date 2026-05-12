@@ -10,7 +10,19 @@ import OsaurusRepository
 
 public struct ToolsSearch {
     public static func execute(args: [String]) {
-        let query = args.first?.lowercased() ?? ""
+        let positional = args.filter { !$0.hasPrefix("--") }
+        let query = positional.first?.lowercased() ?? ""
+        let skipRefresh = args.contains("--no-refresh")
+
+        // Refresh the registry clone before reading specs unless the
+        // user explicitly opted out. Otherwise a freshly published
+        // plugin is invisible until something else (an `install` call)
+        // happens to refresh first — surprising for a `search` command.
+        if !skipRefresh {
+            FileHandle.standardError.write(Data("Refreshing registry…\n".utf8))
+            _ = CentralRepositoryManager.shared.refresh()
+        }
+
         let specs = CentralRepositoryManager.shared.listAllSpecs()
         let filtered = specs.filter { spec in
             if query.isEmpty { return true }

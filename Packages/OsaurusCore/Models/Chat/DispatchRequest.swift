@@ -32,6 +32,15 @@ public struct DispatchRequest: Sendable {
     /// Lets repeated dispatches from the same conversation accrete into one
     /// persisted session row instead of a fresh one per call.
     public let externalSessionKey: String?
+    /// Tool names the dispatcher wants exposed to the model on top of the
+    /// agent's normal selection (auto-mode preflight or manual list).
+    /// Plugin-sourced dispatches populate this from the validated `tools`
+    /// array on the dispatch JSON; the host has already filtered names to
+    /// the calling plugin's own manifest tools plus host built-in
+    /// always-loaded names. Empty for non-plugin sources today; safe to
+    /// feed straight into `SessionToolStateStore.appendLoadedTools` since
+    /// the names are pre-validated.
+    public let requestedToolNames: [String]
 
     public init(
         id: UUID = UUID(),
@@ -44,7 +53,8 @@ public struct DispatchRequest: Sendable {
         showToast: Bool = true,
         sourcePluginId: String? = nil,
         source: SessionSource = .chat,
-        externalSessionKey: String? = nil
+        externalSessionKey: String? = nil,
+        requestedToolNames: [String] = []
     ) {
         self.id = id
         self.prompt = prompt
@@ -57,6 +67,7 @@ public struct DispatchRequest: Sendable {
         self.sourcePluginId = sourcePluginId
         self.source = source
         self.externalSessionKey = externalSessionKey
+        self.requestedToolNames = requestedToolNames
     }
 }
 

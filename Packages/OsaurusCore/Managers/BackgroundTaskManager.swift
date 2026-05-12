@@ -197,6 +197,22 @@ public final class BackgroundTaskManager: ObservableObject {
         }
         await context.prepare()
 
+        // Plugin-supplied tool whitelist (already host-validated in
+        // `planDispatch`) lands in the same `additionalToolNames`
+        // channel `capabilities_load` uses, so the dispatched
+        // `ChatSession.send -> composeChatContext` picks it up on
+        // turn 1. Reattach reuses `existing.id` as `context.id`, so
+        // successive dispatches into the same conversation accumulate
+        // via the store's underlying `Set`.
+        if !request.requestedToolNames.isEmpty {
+            await SessionToolStateStore.shared.appendLoadedTools(
+                context.id.uuidString,
+                names: request.requestedToolNames,
+                fallbackPreflight: .empty,
+                fallbackAlwaysLoadedNames: nil
+            )
+        }
+
         // Register state before starting so awaitCompletion always finds the task
         let state = BackgroundTaskState(
             id: context.id,

@@ -1,4 +1,5 @@
 import AppKit
+import OsaurusRepository
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -722,6 +723,12 @@ private enum DetailTab: String, CaseIterable {
 private enum AgentTab: Hashable {
     case builtIn(DetailTab)
     case plugin(String)
+    /// Tab for a plugin that the host tried to load but couldn't —
+    /// either failed during dlopen/init/handshake, or quarantined on
+    /// the previous launch. Surfaces the structured error from
+    /// `PluginManager.loadError(for:)` and a Retry button so the user
+    /// can act on the crash without dropping into a terminal.
+    case failedPlugin(String)
 }
 
 // MARK: - Tab Bar Preference Keys
@@ -826,6 +833,14 @@ struct AgentDetailView: View {
     @State private var isInitialLoadComplete = false
     @State private var agentSecrets: [AgentSecretEntry] = []
     @State private var editingSecretEntryId: AgentSecretEntry.ID?
+
+    /// Pending plugin id for the failed-plugin Retry / Uninstall
+    /// confirmation alerts. Kept separate so the two destructive
+    /// dialogs don't race each other. Both are gated through alerts
+    /// so a user can't crash-loop the host by mashing Retry on a
+    /// still-broken plugin.
+    @State private var pendingFailedPluginRetry: String?
+    @State private var pendingFailedPluginUninstall: String?
     /// Captured by `GeometryReader`s wrapped around the tab strip so the
     /// "scrollable" affordance (right-edge fade + chevron) only renders when
     /// the tab content actually overflows the viewport AND the user hasn't
@@ -833,6 +848,11 @@ struct AgentDetailView: View {
     @State private var tabBarContentWidth: CGFloat = 0
     @State private var tabBarViewportWidth: CGFloat = 0
     @State private var tabBarScrollOffset: CGFloat = 0
+    /// Bumped on `.toolsListChanged` so plugin tabs re-evaluate after async
+    /// `PluginManager.loadAll()` — `PluginManager` is not Observable, so without
+    /// this the tab strip can stay empty if the user opened this view before
+    /// plugins finished loading.
+    @State private var loadedPluginsRefreshNonce: UInt = 0
     private var tabsOverflowRight: Bool {
         // 1pt fudge so pixel-aligned end-of-scroll positions don't leave a
         // phantom indicator on screen.
@@ -860,15 +880,57 @@ struct AgentDetailView: View {
 
     private var agentColor: Color { agentColorFor(name) }
 
+    /// Plugins that expose any per-agent surface (config, instructions,
+    /// routes, Keychain-backed manifest secrets, or tunnel-mounted web UI).
     private var agentPlugins: [PluginManager.LoadedPlugin] {
-        PluginManager.shared.plugins.filter { loaded in
-            let hasConfig = loaded.plugin.manifest.capabilities.config != nil
-            let hasInstructions =
-                loaded.plugin.manifest.instructions != nil
-                || currentAgent.pluginInstructions?[loaded.plugin.id] != nil
-            let hasRoutes = !loaded.routes.isEmpty
-            return hasConfig || hasInstructions || hasRoutes
-        }
+        _ = loadedPluginsRefreshNonce
+        return PluginManager.shared.plugins.filter(pluginAppearsInAgentDetailTabs)
+    }
+
+    /// Whether this loaded plugin should get its own tab on this agent's detail
+    /// screen. Keep in sync with `agentPlugins` / `.toolsListChanged` invalidation.
+    private func pluginAppearsInAgentDetailTabs(_ loaded: PluginManager.LoadedPlugin) -> Bool {
+        let manifest = loaded.plugin.manifest
+        return manifestExposesAgentSurface(manifest, pluginId: loaded.plugin.id)
+            || !loaded.routes.isEmpty
+            || loaded.webConfig != nil
+    }
+
+    /// Same predicate, but applied to the cached `lastKnownManifest`
+    /// of a failed plugin. Failed plugins don't have a `LoadedPlugin`
+    /// (no routes/web config materialized), so we only check the
+    /// manifest-derived signals; `nil` manifest counts as "show
+    /// anyway" — a quarantined plugin the host couldn't decode is
+    /// still actionable (Retry / report the crash).
+    private func failedPluginAppearsInAgentDetailTabs(_ failed: PluginManager.FailedPlugin) -> Bool {
+        guard let manifest = failed.lastKnownManifest else { return true }
+        return manifestExposesAgentSurface(manifest, pluginId: failed.pluginId)
+            || (manifest.capabilities.routes?.isEmpty == false)
+            || (manifest.capabilities.web != nil)
+    }
+
+    /// Per-agent surface signals available from the manifest alone
+    /// (no `LoadedPlugin` required). Shared by the loaded-plugin and
+    /// failed-plugin filters so a failed plugin shows up under the
+    /// SAME conditions a successful load would have shown it.
+    private func manifestExposesAgentSurface(_ manifest: PluginManifest, pluginId: String) -> Bool {
+        let hasConfig = manifest.capabilities.config != nil
+        let hasInstructions =
+            manifest.instructions != nil
+            || currentAgent.pluginInstructions?[pluginId] != nil
+        let hasSecrets = !(manifest.secrets ?? []).isEmpty
+        return hasConfig || hasInstructions || hasSecrets
+    }
+
+    /// Failed plugins to surface as dedicated tabs. Sorted by id so
+    /// tab order is stable across launches; keying on the same
+    /// `loadedPluginsRefreshNonce` as `agentPlugins` so a `Retry` that
+    /// bumps `.toolsListChanged` re-renders both lists.
+    private var agentFailedPlugins: [PluginManager.FailedPlugin] {
+        _ = loadedPluginsRefreshNonce
+        return PluginManager.shared.failedPlugins.values
+            .filter(failedPluginAppearsInAgentDetailTabs)
+            .sorted { $0.pluginId < $1.pluginId }
     }
 
     var body: some View {
@@ -918,6 +980,37 @@ struct AgentDetailView: View {
             }
             withAnimation { hasAppeared = true }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .toolsListChanged)) { _ in
+            loadedPluginsRefreshNonce &+= 1
+            switch selectedTab {
+            case .plugin(let pid):
+                let stillVisible = PluginManager.shared.plugins.contains {
+                    $0.plugin.id == pid && pluginAppearsInAgentDetailTabs($0)
+                }
+                if !stillVisible {
+                    // After a Retry succeeds, a previously failed plugin
+                    // promotes from `failedPlugins` to `plugins`. We
+                    // intentionally let that flow drop the user back to
+                    // Configure here too, so they SEE the success
+                    // message and aren't sitting on a stale view.
+                    selectedTab = .builtIn(.configure)
+                }
+            case .failedPlugin(let pid):
+                // The plugin loaded successfully on Retry → switch to
+                // its real tab so the user lands on the happy path.
+                if let loaded = PluginManager.shared.plugins.first(where: { $0.plugin.id == pid }),
+                    pluginAppearsInAgentDetailTabs(loaded)
+                {
+                    selectedTab = .plugin(pid)
+                } else if PluginManager.shared.failedPlugins[pid] == nil {
+                    // Plugin no longer present in either bucket
+                    // (uninstalled while the failed tab was open).
+                    selectedTab = .builtIn(.configure)
+                }
+            case .builtIn:
+                break
+            }
+        }
         .onReceive(ModelPickerItemCache.shared.$items) { options in
             pickerItems = options
         }
@@ -936,6 +1029,38 @@ struct AgentDetailView: View {
                 "This will create a public URL for this agent via agent.osaurus.ai. Anyone with the URL can send requests to your local server. Your access keys still protect the API endpoints.",
             primaryButton: .destructive("Enable Relay") {
                 relayManager.setTunnelEnabled(true, for: agent.id)
+            },
+            secondaryButton: .cancel("Cancel")
+        )
+        .themedAlert(
+            "Retry plugin load?",
+            isPresented: Binding(
+                get: { pendingFailedPluginRetry != nil },
+                set: { if !$0 { pendingFailedPluginRetry = nil } }
+            ),
+            message:
+                "The host quarantined this plugin after it caused a crash during load. Retrying re-runs the same dylib against the same host build, so if the underlying bug (most often a misaligned `osr_host_api` mirror in the plugin) is unfixed it will crash again. Use this only after you have rebuilt or re-installed the plugin.",
+            primaryButton: .destructive("Retry Anyway") {
+                if let pid = pendingFailedPluginRetry {
+                    confirmRetryFailedPlugin(pid)
+                }
+                pendingFailedPluginRetry = nil
+            },
+            secondaryButton: .cancel("Cancel")
+        )
+        .themedAlert(
+            "Uninstall plugin?",
+            isPresented: Binding(
+                get: { pendingFailedPluginUninstall != nil },
+                set: { if !$0 { pendingFailedPluginUninstall = nil } }
+            ),
+            message:
+                "This permanently deletes the plugin's installed dylib, manifest, and per-agent secrets from disk. The host will stop attempting to load it on every launch — the only way to escape a crash-looping plugin without editing files by hand. You can reinstall it later from the Tools manager.",
+            primaryButton: .destructive("Uninstall") {
+                if let pid = pendingFailedPluginUninstall {
+                    confirmUninstallFailedPlugin(pid)
+                }
+                pendingFailedPluginUninstall = nil
             },
             secondaryButton: .cancel("Cancel")
         )
@@ -1240,6 +1365,11 @@ struct AgentDetailView: View {
             }
         case .plugin:
             return nil
+        case .failedPlugin:
+            // Suppress the badge so the warning icon (set in the strip)
+            // is the only visual signal for the failed state — adding
+            // a count on top would compete for attention.
+            return nil
         }
     }
 
@@ -1262,6 +1392,19 @@ struct AgentDetailView: View {
                             icon: "puzzlepiece.extension"
                         )
                         .id(AgentTab.plugin(loaded.plugin.id))
+                    }
+                    // Failed plugins surface AFTER successfully loaded ones
+                    // so the warning tabs cluster on the trailing edge of
+                    // the strip — visually obvious without crowding the
+                    // happy-path tabs. Each shows a structured error +
+                    // Retry button via `failedPluginTabContent`.
+                    ForEach(agentFailedPlugins, id: \.pluginId) { failed in
+                        tabButton(
+                            for: .failedPlugin(failed.pluginId),
+                            label: failedPluginTabLabel(for: failed),
+                            icon: "exclamationmark.triangle.fill"
+                        )
+                        .id(AgentTab.failedPlugin(failed.pluginId))
                     }
                 }
                 .padding(.horizontal, 4)
@@ -1358,6 +1501,22 @@ struct AgentDetailView: View {
 
     private func tabButton(for tab: AgentTab, label: String, icon: String) -> some View {
         let isSelected = selectedTab == tab
+        // Failed plugin tabs use the system warning color regardless of
+        // selection state so the user can spot them at a glance even
+        // in a long tab strip; the accent color is reserved for the
+        // happy-path "selected" signal.
+        let isFailed: Bool = {
+            if case .failedPlugin = tab { return true }
+            return false
+        }()
+        let foreground: Color
+        if isFailed {
+            foreground = .orange
+        } else if isSelected {
+            foreground = theme.accentColor
+        } else {
+            foreground = theme.tertiaryText
+        }
         return Button {
             selectedTab = tab
         } label: {
@@ -1381,13 +1540,13 @@ struct AgentDetailView: View {
                             )
                     }
                 }
-                .foregroundColor(isSelected ? theme.accentColor : theme.tertiaryText)
+                .foregroundColor(foreground)
                 .padding(.horizontal, 12)
                 .padding(.top, 10)
                 .padding(.bottom, 8)
 
                 Rectangle()
-                    .fill(isSelected ? theme.accentColor : Color.clear)
+                    .fill(isSelected ? (isFailed ? Color.orange : theme.accentColor) : Color.clear)
                     .frame(height: 2)
             }
             .contentShape(Rectangle())
@@ -1450,6 +1609,8 @@ struct AgentDetailView: View {
             EmptyView()
         case .plugin(let pid):
             pluginTabContent(for: pid)
+        case .failedPlugin(let pid):
+            failedPluginTabContent(for: pid)
         }
     }
 
@@ -1971,6 +2132,261 @@ struct AgentDetailView: View {
             if !loaded.routes.isEmpty {
                 pluginRoutesCard(for: loaded)
             }
+
+            pluginDiagnosticsCard(for: pid)
+        }
+    }
+
+    /// One-shot warnings emitted by `PluginOnceLogger` for this plugin
+    /// (NULL on_chunk callback, agent-scope override attempts, missing
+    /// agent context on background threads, oversized config_set, etc.).
+    /// Surfaces them in the plugin detail UI so authors don't have to
+    /// grep `Console.app` to find ABI misuse the host has already
+    /// flagged. Hidden when the plugin has no warnings yet.
+    @ViewBuilder
+    private func pluginDiagnosticsCard(for pluginId: String) -> some View {
+        let entries = PluginOnceLogger.entries(forPlugin: pluginId)
+        if !entries.isEmpty {
+            AgentDetailSection(title: "Diagnostics", icon: "exclamationmark.triangle") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(
+                        String(
+                            format: L("Host emitted %d one-shot warning%@ for this plugin."),
+                            entries.count,
+                            entries.count == 1 ? "" : "s"
+                        )
+                    )
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.secondaryText)
+                    .padding(.horizontal, 16)
+
+                    // Most-recent first so the latest issue is at the
+                    // top — matches how console viewers usually order.
+                    ForEach(entries.reversed()) { entry in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(entry.message)
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundColor(theme.primaryText)
+                                .textSelection(.enabled)
+                            Text(entry.date.formatted(date: .omitted, time: .standard))
+                                .font(.system(size: 10))
+                                .foregroundColor(theme.tertiaryText)
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 8)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(theme.cardBackground.opacity(0.4))
+                        )
+                        .padding(.horizontal, 16)
+                    }
+                }
+                .padding(.vertical, 8)
+            }
+        }
+    }
+
+    /// Tab label for a failed plugin. Prefers the manifest display
+    /// name when we managed to decode the manifest before the failure,
+    /// falling back to the plugin id. Suffix `(Failed)` keeps the
+    /// failure unambiguous in the tab strip.
+    private func failedPluginTabLabel(for failed: PluginManager.FailedPlugin) -> String {
+        let base = failed.lastKnownManifest?.name ?? failed.pluginId
+        return "\(base) (Failed)"
+    }
+
+    /// Tab body for a plugin in `PluginManager.failedPlugins`. Names
+    /// the likely cause (misaligned `osr_host_api` mirror), shows the
+    /// install path with a Reveal-in-Finder shortcut, and surfaces
+    /// two confirmation-gated actions: Retry (re-runs the same dylib,
+    /// will crash again if unfixed) and Uninstall (wipes the plugin
+    /// directory and secrets — the escape hatch).
+    @ViewBuilder
+    private func failedPluginTabContent(for pid: String) -> some View {
+        let display = PluginManager.shared.failedPlugins[pid]?.lastKnownManifest?.name ?? pid
+        let error =
+            PluginManager.shared.loadError(for: pid)
+            ?? "The host failed to load this plugin and the underlying error was not captured."
+        let installPath = PluginInstallManager.toolsPluginDirectory(pluginId: pid).path
+
+        tabHelperText(
+            String(format: L("\u{201C}%@\u{201D} could not be loaded for this agent."), display)
+        )
+
+        AgentDetailSection(title: "Plugin failed to load", icon: "exclamationmark.triangle.fill") {
+            VStack(alignment: .leading, spacing: 14) {
+                failedPluginField(label: "Error") {
+                    Text(error)
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundColor(theme.primaryText)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(12)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(theme.cardBackground.opacity(0.6))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .strokeBorder(Color.orange.opacity(0.4), lineWidth: 1)
+                                )
+                        )
+                }
+
+                failedPluginField(label: "Plugin id") {
+                    Text(pid)
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundColor(theme.secondaryText)
+                        .textSelection(.enabled)
+                }
+
+                failedPluginField(
+                    label: "Install path",
+                    trailing: { revealInFinderButton(path: installPath) }
+                ) {
+                    Text(installPath)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundColor(theme.secondaryText)
+                        .textSelection(.enabled)
+                        .lineLimit(2)
+                        .truncationMode(.middle)
+                }
+
+                failedPluginField(label: "Most likely cause") {
+                    Text(
+                        "The plugin's `osr_host_api` mirror struct does not match the host's v6 layout — most often the v5 `log_structured` slot is skipped, which shifts every later slot by 8 bytes. The plugin then dispatches `host->free_string` to the wrong host trampoline and `libc free()` aborts on a non-malloc pointer, killing the host. See `docs/plugins/HOST_API.md → Mirror Struct Audit` and `docs/plugins/ABI_VERSIONS.md` for the pinned offsets and the documented v1..v6 evolution.",
+                        bundle: .module
+                    )
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                }
+
+                HStack(spacing: 10) {
+                    failedPluginActionButton(
+                        title: "Retry Load",
+                        icon: "arrow.clockwise",
+                        tint: theme.primaryText,
+                        background: theme.cardBackground.opacity(0.6),
+                        border: theme.tertiaryText.opacity(0.4),
+                        helpText: "Re-load this plugin. Will crash again if the underlying bug is unfixed."
+                    ) {
+                        pendingFailedPluginRetry = pid
+                    }
+
+                    failedPluginActionButton(
+                        title: "Uninstall Plugin",
+                        icon: "trash",
+                        tint: .red,
+                        background: Color.red.opacity(0.15),
+                        border: Color.red.opacity(0.5),
+                        helpText: "Permanently delete this plugin from disk so the host stops trying to load it."
+                    ) {
+                        pendingFailedPluginUninstall = pid
+                    }
+
+                    Spacer()
+                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 8)
+            }
+        }
+
+        pluginDiagnosticsCard(for: pid)
+    }
+
+    /// Labeled section block used inside `failedPluginTabContent`.
+    /// `trailing` is rendered to the right of the label (e.g. the
+    /// "Reveal in Finder" button on the install-path row).
+    @ViewBuilder
+    private func failedPluginField<Trailing: View, Content: View>(
+        label: LocalizedStringKey,
+        @ViewBuilder trailing: () -> Trailing,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Text(label, bundle: .module)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(theme.tertiaryText)
+                    .textCase(.uppercase)
+                Spacer()
+                trailing()
+            }
+            content()
+        }
+        .padding(.horizontal, 16)
+    }
+
+    @ViewBuilder
+    private func failedPluginField<Content: View>(
+        label: LocalizedStringKey,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        failedPluginField(label: label, trailing: { EmptyView() }, content: content)
+    }
+
+    private func revealInFinderButton(path: String) -> some View {
+        Button {
+            NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: path)
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "folder")
+                    .font(.system(size: 10, weight: .semibold))
+                Text("Reveal in Finder", bundle: .module)
+                    .font(.system(size: 11, weight: .medium))
+            }
+            .foregroundColor(theme.accentColor)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func failedPluginActionButton(
+        title: LocalizedStringKey,
+        icon: String,
+        tint: Color,
+        background: Color,
+        border: Color,
+        helpText: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: icon)
+                    .font(.system(size: 11, weight: .semibold))
+                Text(title, bundle: .module)
+                    .font(.system(size: 12, weight: .semibold))
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(RoundedRectangle(cornerRadius: 8).fill(background))
+            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(border, lineWidth: 1))
+            .foregroundColor(tint)
+        }
+        .buttonStyle(.plain)
+        .help(helpText)
+    }
+
+    /// Drops the `pid` quarantine entry (and the stale
+    /// `.currently_loading` marker) then triggers a forced reload of
+    /// all plugins. Only invoked from the `pendingFailedPluginRetry`
+    /// alert's primary button so the user has explicitly acknowledged
+    /// that the plugin may crash again.
+    private func confirmRetryFailedPlugin(_ pid: String) {
+        PluginManager.removeFromQuarantine(pid)
+        Task {
+            await PluginManager.shared.loadAll(forceReload: true)
+        }
+    }
+
+    /// Routes through `PluginRepositoryService.uninstall` so secrets,
+    /// skills, and the install directory are cleaned up the same way
+    /// the Tools manager would handle a normal uninstall. Also wipes
+    /// the quarantine entry so a future re-install starts clean.
+    private func confirmUninstallFailedPlugin(_ pid: String) {
+        PluginManager.removeFromQuarantine(pid)
+        Task {
+            try? await PluginRepositoryService.shared.uninstall(pluginId: pid)
         }
     }
 
