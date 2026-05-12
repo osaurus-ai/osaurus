@@ -841,6 +841,7 @@ extension FloatingInputCard {
     private func sendVoiceMessage(_ message: String) {
         print("[FloatingInputCard] Sending voice message. Continuous mode: \(isContinuousVoiceMode)")
         logVoiceState(trigger: "sendVoiceMessage-start")
+        let voiceAudioData = mediaCapabilities.supportsAudio ? speechService.currentLiveAudioWAVData() : nil
 
         // show sending state first
         voiceInputState = .sending
@@ -861,6 +862,14 @@ extension FloatingInputCard {
 
                 let existing = localText.trimmingCharacters(in: .whitespacesAndNewlines)
                 let fullMessage = existing.isEmpty ? cleanedMessage : "\(existing) \(cleanedMessage)"
+
+                if let voiceAudioData {
+                    pendingAttachments.append(.audio(
+                        voiceAudioData,
+                        format: "wav",
+                        filename: "voice-input.wav"
+                    ))
+                }
 
                 // try to paste. if it fails (permissions), we fall back to direct text setting
                 if KeyboardSimulationService.shared.pasteText(cleanedMessage) {

@@ -23,6 +23,68 @@ public struct TranscriptionResult: Sendable {
     }
 }
 
+/// Raw audio captured during a live voice turn, preserved separately from the
+/// short STT chunks that the streaming worker drains.
+public struct LiveVoiceAudioSnapshot: Sendable {
+    public let samples: [Float]
+    public let sampleRate: Int
+
+    public init(samples: [Float], sampleRate: Int) {
+        self.samples = samples
+        self.sampleRate = sampleRate
+    }
+
+    public var durationSeconds: Double {
+        guard sampleRate > 0 else { return 0 }
+        return Double(samples.count) / Double(sampleRate)
+    }
+
+    public func wavData() -> Data {
+        var data = Data()
+        let channelCount: UInt16 = 1
+        let bitsPerSample: UInt16 = 16
+        let bytesPerSample = Int(bitsPerSample / 8)
+        let byteRate = UInt32(sampleRate * Int(channelCount) * bytesPerSample)
+        let blockAlign = UInt16(Int(channelCount) * bytesPerSample)
+        let pcmByteCount = UInt32(samples.count * bytesPerSample)
+
+        data.appendASCII("RIFF")
+        data.appendLittleEndian(UInt32(36) + pcmByteCount)
+        data.appendASCII("WAVE")
+        data.appendASCII("fmt ")
+        data.appendLittleEndian(UInt32(16))
+        data.appendLittleEndian(UInt16(1))
+        data.appendLittleEndian(channelCount)
+        data.appendLittleEndian(UInt32(sampleRate))
+        data.appendLittleEndian(byteRate)
+        data.appendLittleEndian(blockAlign)
+        data.appendLittleEndian(bitsPerSample)
+        data.appendASCII("data")
+        data.appendLittleEndian(pcmByteCount)
+
+        for sample in samples {
+            let clamped = max(-1.0, min(1.0, sample))
+            let pcm = Int16(clamped * Float(Int16.max))
+            data.appendLittleEndian(pcm)
+        }
+
+        return data
+    }
+}
+
+private extension Data {
+    mutating func appendASCII(_ string: String) {
+        append(contentsOf: string.utf8)
+    }
+
+    mutating func appendLittleEndian<T: FixedWidthInteger>(_ value: T) {
+        var littleEndianValue = value.littleEndian
+        Swift.withUnsafeBytes(of: &littleEndianValue) { buffer in
+            append(contentsOf: buffer)
+        }
+    }
+}
+
 /// Error types for speech operations
 public enum SpeechError: Error, LocalizedError {
     case noModelSelected
@@ -777,6 +839,20 @@ public final class SpeechService: ObservableObject {
 
     public var keepAudioEngineAlive: Bool = false
 
+    /// Captures the current live turn's raw PCM for direct Omni audio input.
+    /// Call before `stopStreamingTranscription()` clears the active buffer.
+    public func currentLiveAudioSnapshot() -> LiveVoiceAudioSnapshot? {
+        let samples = audioBuffer.snapshotRetained()
+        guard !samples.isEmpty else { return nil }
+
+        let sampleRate = Int(activeTapFormat?.sampleRate.rounded() ?? 16_000)
+        return LiveVoiceAudioSnapshot(samples: samples, sampleRate: max(1, sampleRate))
+    }
+
+    public func currentLiveAudioWAVData() -> Data? {
+        currentLiveAudioSnapshot()?.wavData()
+    }
+
     /// Start streaming transcription
     public func startStreamingTranscription() async throws {
         if isRecording {
@@ -1522,8 +1598,10 @@ private actor TranscriptionWorker {
 
 private final class ThreadSafeAudioBuffer: @unchecked Sendable {
     private var samples: [Float] = []
+    private var retainedSamples: [Float] = []
     private var _isActive: Bool = false
     private var _level: Float = 0.0
+    private let maxRetainedSamples = 48_000 * 60 * 5
     private let lock = OSAllocatedUnfairLock()
 
     var isActive: Bool {
@@ -1546,6 +1624,10 @@ private final class ThreadSafeAudioBuffer: @unchecked Sendable {
         lock.withLock {
             if _isActive {
                 samples.append(contentsOf: newSamples)
+                retainedSamples.append(contentsOf: newSamples)
+                if retainedSamples.count > maxRetainedSamples {
+                    retainedSamples.removeFirst(retainedSamples.count - maxRetainedSamples)
+                }
             }
         }
     }
@@ -1558,9 +1640,14 @@ private final class ThreadSafeAudioBuffer: @unchecked Sendable {
         }
     }
 
+    func snapshotRetained() -> [Float] {
+        lock.withLock { retainedSamples }
+    }
+
     func clear() {
         lock.withLock {
             samples = []
+            retainedSamples = []
             _isActive = false
             _level = 0.0
         }
