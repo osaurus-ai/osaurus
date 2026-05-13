@@ -14,27 +14,22 @@ import Testing
 
 @Suite("OAuth loopback server")
 struct OAuthLoopbackServerTests {
-    @Test func ephemeralPortBoundAfterStart() async throws {
+    @Test func startReturnsBoundPortImmediately() async throws {
+        // Regression: `start()` must await `.ready` before returning. The OAuth flow
+        // builds the redirect URI from `boundPort` on the very next line, and a
+        // returned-too-early `start()` produces `http://127.0.0.1:0/callback`,
+        // which Chrome rejects with ERR_UNSAFE_PORT.
         let server = try OAuthLoopbackServer(
             expectedState: "state-abc",
             port: .ephemeral,
             callbackPath: "/callback"
         )
-        try server.start()
+        try await server.start()
         defer { server.stop() }
 
-        // NWListener reports its port asynchronously after `start()`. Spin briefly.
-        var port: UInt16?
-        for _ in 0 ..< 20 {
-            if let bound = server.boundPort, bound != 0 {
-                port = bound
-                break
-            }
-            try await Task.sleep(nanoseconds: 50_000_000)
-        }
-
-        let resolved = try #require(port)
-        #expect(resolved > 1024)
+        let port = try #require(server.boundPort)
+        #expect(port != 0, "boundPort must be the kernel-assigned port, not the requested .any (0)")
+        #expect(port > 1024, "ephemeral ports should be in the unprivileged range")
     }
 
     @Test func successCallbackResolvesAwaiter() async throws {
@@ -43,26 +38,16 @@ struct OAuthLoopbackServerTests {
             port: .ephemeral,
             callbackPath: "/callback"
         )
-        try server.start()
+        try await server.start()
         defer { server.stop() }
 
-        // Wait for the listener to be ready before connecting.
-        var port: UInt16?
-        for _ in 0 ..< 40 {
-            if let bound = server.boundPort, bound != 0 {
-                port = bound
-                break
-            }
-            try await Task.sleep(nanoseconds: 50_000_000)
-        }
-        let resolved = try #require(port)
-
+        let port = try #require(server.boundPort)
         let task = Task { try await server.waitForCallback() }
 
-        // Hit the loopback URL after a small delay so the server is actually listening.
+        // Hit the loopback URL after a small delay so the callback handler is wired.
         try await Task.sleep(nanoseconds: 100_000_000)
         let callbackURL = URL(
-            string: "http://127.0.0.1:\(resolved)/callback?state=expected-state&code=auth-code"
+            string: "http://127.0.0.1:\(port)/callback?state=expected-state&code=auth-code"
         )!
         _ = try? await URLSession.shared.data(from: callbackURL)
 
@@ -77,24 +62,15 @@ struct OAuthLoopbackServerTests {
             port: .ephemeral,
             callbackPath: "/callback"
         )
-        try server.start()
+        try await server.start()
         defer { server.stop() }
 
-        var port: UInt16?
-        for _ in 0 ..< 40 {
-            if let bound = server.boundPort, bound != 0 {
-                port = bound
-                break
-            }
-            try await Task.sleep(nanoseconds: 50_000_000)
-        }
-        let resolved = try #require(port)
-
+        let port = try #require(server.boundPort)
         let task = Task { try await server.waitForCallback() }
 
         try await Task.sleep(nanoseconds: 100_000_000)
         let badURL = URL(
-            string: "http://127.0.0.1:\(resolved)/callback?state=tampered&code=x"
+            string: "http://127.0.0.1:\(port)/callback?state=tampered&code=x"
         )!
         _ = try? await URLSession.shared.data(from: badURL)
 

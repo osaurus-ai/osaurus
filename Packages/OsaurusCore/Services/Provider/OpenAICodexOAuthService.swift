@@ -191,7 +191,7 @@ public enum OpenAICodexOAuthService {
                 port: .fixed(1455),
                 callbackPath: "/auth/callback"
             )
-            try server.start()
+            try await server.start()
         } catch {
             throw OpenAICodexOAuthError.invalidAuthorizationCallback
         }

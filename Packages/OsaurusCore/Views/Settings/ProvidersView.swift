@@ -5,6 +5,7 @@
 //  UI for managing remote MCP providers.
 //
 
+import AppKit
 import SwiftUI
 
 struct ProvidersView: View {
@@ -99,11 +100,11 @@ struct ProvidersView: View {
                     .foregroundColor(theme.accentColor)
             }
 
-            Text("No MCP Providers", bundle: .module)
+            Text("No MCP providers yet", bundle: .module)
                 .font(.system(size: 17, weight: .semibold))
                 .foregroundColor(theme.primaryText)
 
-            Text("Add a remote MCP server to discover and use its tools", bundle: .module)
+            Text("Connect to a remote MCP server to give Osaurus more tools.", bundle: .module)
                 .font(.system(size: 14))
                 .foregroundColor(theme.secondaryText)
                 .multilineTextAlignment(.center)
@@ -112,7 +113,7 @@ struct ProvidersView: View {
                 HStack(spacing: 6) {
                     Image(systemName: "plus.circle.fill")
                         .font(.system(size: 14))
-                    Text("Add Your First Provider", bundle: .module)
+                    Text("Connect a Service", bundle: .module)
                         .font(.system(size: 14, weight: .medium))
                 }
                 .foregroundColor(theme.accentColor)
@@ -551,21 +552,30 @@ private struct ProviderEditSheet: View {
     /// "Sign In" vs "Re-authenticate" button label and the green check badge.
     @State private var isOAuthSignedIn: Bool = false
 
-    /// The template currently driving the prefilled fields, or `nil` for a freeform
-    /// "Custom" provider. Only meaningful in add-mode; editing an existing provider
-    /// keeps this `nil` and shows the unfiltered editor.
-    @State private var selectedTemplateId: String?
+    /// The sheet is a small two-step flow: first pick a service from the catalog
+    /// (or "Custom"), then configure / sign in. Editing an existing provider
+    /// jumps straight to `.configureCustom` and never sees the catalog.
+    enum Phase: Equatable {
+        case chooseProvider
+        case configureKnown(MCPProviderTemplate)
+        case configureCustom
+    }
+
+    @State private var phase: Phase = .chooseProvider
+
+    /// Search/filter query for the catalog grid. Reset whenever the user
+    /// returns to `.chooseProvider` so re-entering the catalog starts fresh.
+    @State private var catalogQuery: String = ""
 
     private var isEditing: Bool { provider != nil }
 
     /// Resolves the provider id used for OAuth flows (existing or fresh draft).
     private var effectiveProviderId: UUID { provider?.id ?? draftId }
 
-    /// Currently applied template, if any. Drives picker-row selection state and
-    /// the "lock the URL field / hide the auth picker" UX simplifications.
+    /// Convenience: the template the user is currently configuring, if any.
     private var activeTemplate: MCPProviderTemplate? {
-        guard let id = selectedTemplateId else { return nil }
-        return MCPProviderTemplate.allTemplates.first { $0.id == id }
+        if case .configureKnown(let template) = phase { return template }
+        return nil
     }
 
     struct HeaderEntry: Identifiable {
@@ -582,169 +592,16 @@ private struct ProviderEditSheet: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Header
             sheetHeader
 
-            // Content
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    // Connection section
-                    EditorCard(title: "Connection", icon: "link") {
-                        VStack(alignment: .leading, spacing: 14) {
-                            if !isEditing {
-                                templateChipRow
-                            }
-
-                            MCPStyledTextField(
-                                label: "Name",
-                                placeholder: "My MCP Server",
-                                text: $name
-                            )
-
-                            if activeTemplate != nil {
-                                templateURLDisplay
-                            } else {
-                                MCPStyledTextField(
-                                    label: "URL",
-                                    placeholder: "https://mcp.example.com",
-                                    text: $url,
-                                    isMonospaced: true
-                                )
-                            }
-
-                            // For known templates the auth scheme is fixed by the vendor, so
-                            // hiding the picker removes a "what should I pick?" decision.
-                            if activeTemplate == nil {
-                                authTypePicker
-                            }
-
-                            switch authType {
-                            case .none:
-                                EmptyView()
-                            case .bearerToken:
-                                MCPStyledSecureField(
-                                    label: "Bearer Token",
-                                    placeholder: "Optional - stored securely in Keychain",
-                                    text: $token
-                                )
-                            case .oauth:
-                                oauthSection
-                            }
-                        }
-                    }
-
-                    // Headers section
-                    EditorCard(title: "Custom Headers", icon: "list.bullet.rectangle") {
-                        VStack(alignment: .leading, spacing: 12) {
-                            if customHeaders.isEmpty {
-                                HStack {
-                                    Text("No custom headers configured", bundle: .module)
-                                        .font(.system(size: 13))
-                                        .foregroundColor(themeManager.currentTheme.tertiaryText)
-                                    Spacer()
-                                    addHeaderButton
-                                }
-                                .padding(.vertical, 4)
-                            } else {
-                                HStack {
-                                    Spacer()
-                                    addHeaderButton
-                                }
-                                ForEach($customHeaders) { $header in
-                                    HeaderRow(header: $header) {
-                                        customHeaders.removeAll { $0.id == header.id }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // Advanced section
-                    EditorCard(title: "Advanced", icon: "gearshape") {
-                        VStack(alignment: .leading, spacing: 0) {
-                            Button(action: {
-                                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                                    showAdvanced.toggle()
-                                }
-                            }) {
-                                HStack {
-                                    Text(showAdvanced ? "Hide advanced settings" : "Show advanced settings")
-                                        .font(.system(size: 13))
-                                        .foregroundColor(themeManager.currentTheme.accentColor)
-                                    Spacer()
-                                    Image(systemName: "chevron.right")
-                                        .font(.system(size: 11, weight: .semibold))
-                                        .foregroundColor(themeManager.currentTheme.tertiaryText)
-                                        .rotationEffect(.degrees(showAdvanced ? 90 : 0))
-                                }
-                                .contentShape(Rectangle())
-                            }
-                            .buttonStyle(PlainButtonStyle())
-
-                            if showAdvanced {
-                                VStack(alignment: .leading, spacing: 16) {
-                                    Divider()
-                                        .padding(.vertical, 8)
-
-                                    // Connection options
-                                    MCPToggleRow(
-                                        title: "Enable Streaming",
-                                        description: "Stream tool responses in real-time",
-                                        isOn: $streamingEnabled
-                                    )
-
-                                    MCPToggleRow(
-                                        title: "Auto-connect on Launch",
-                                        description: "Connect automatically when app starts",
-                                        isOn: $autoConnect
-                                    )
-
-                                    Divider()
-                                        .padding(.vertical, 4)
-
-                                    // Timeout settings
-                                    VStack(alignment: .leading, spacing: 16) {
-                                        VStack(alignment: .leading, spacing: 6) {
-                                            HStack {
-                                                Text("Discovery Timeout", bundle: .module)
-                                                    .font(.system(size: 12, weight: .medium))
-                                                    .foregroundColor(themeManager.currentTheme.primaryText)
-                                                Spacer()
-                                                Text("\(Int(discoveryTimeout))s", bundle: .module)
-                                                    .font(.system(size: 12, weight: .medium, design: .monospaced))
-                                                    .foregroundColor(themeManager.currentTheme.accentColor)
-                                            }
-                                            Slider(value: $discoveryTimeout, in: 5 ... 60, step: 5)
-                                                .tint(themeManager.currentTheme.accentColor)
-                                        }
-
-                                        VStack(alignment: .leading, spacing: 6) {
-                                            HStack {
-                                                Text("Tool Call Timeout", bundle: .module)
-                                                    .font(.system(size: 12, weight: .medium))
-                                                    .foregroundColor(themeManager.currentTheme.primaryText)
-                                                Spacer()
-                                                Text("\(Int(toolCallTimeout))s", bundle: .module)
-                                                    .font(.system(size: 12, weight: .medium, design: .monospaced))
-                                                    .foregroundColor(themeManager.currentTheme.accentColor)
-                                            }
-                                            Slider(value: $toolCallTimeout, in: 10 ... 120, step: 5)
-                                                .tint(themeManager.currentTheme.accentColor)
-                                        }
-                                    }
-                                }
-                                .transition(.opacity.combined(with: .move(edge: .top)))
-                            }
-                        }
-                    }
-                }
-                .padding(24)
+                phaseBody
+                    .padding(24)
             }
 
-            // Footer
             sheetFooter
         }
-        .frame(width: 540, height: 640)
+        .frame(width: 560, height: 660)
         .background(themeManager.currentTheme.primaryBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .overlay(
@@ -754,11 +611,57 @@ private struct ProviderEditSheet: View {
         .onAppear { loadProvider() }
     }
 
+    @ViewBuilder
+    private var phaseBody: some View {
+        switch phase {
+        case .chooseProvider:
+            catalogGridBody
+        case .configureKnown(let template):
+            configureKnownBody(template: template)
+        case .configureCustom:
+            configureCustomBody
+        }
+    }
+
     // MARK: - Sheet Header
 
+    /// Icon + title + subtitle for the current phase. Returning `Text` (rather
+    /// than `String`) lets us use SwiftUI's `Text("foo \(arg)")` interpolation
+    /// for the dynamic phases — that produces a stable localization key with
+    /// a format argument instead of a unique key per template name.
+    private var headerInfo: (icon: String, title: Text, subtitle: Text) {
+        if isEditing {
+            return (
+                "pencil.circle.fill",
+                Text("Edit MCP Provider", bundle: .module),
+                Text("Modify your MCP server connection", bundle: .module)
+            )
+        }
+        switch phase {
+        case .chooseProvider:
+            return (
+                "square.grid.2x2.fill",
+                Text("Add MCP Provider", bundle: .module),
+                Text("Choose a service to connect", bundle: .module)
+            )
+        case .configureKnown(let template):
+            return (
+                template.iconSystemName,
+                Text("Connect to \(template.displayName)", bundle: .module),
+                Text("Sign in with your account to give Osaurus access", bundle: .module)
+            )
+        case .configureCustom:
+            return (
+                "slider.horizontal.3",
+                Text("Custom Server", bundle: .module),
+                Text("Connect to any MCP-compatible server", bundle: .module)
+            )
+        }
+    }
+
     private var sheetHeader: some View {
-        HStack(spacing: 12) {
-            // Icon with gradient background
+        let info = headerInfo
+        return HStack(spacing: 12) {
             ZStack {
                 Circle()
                     .fill(
@@ -771,7 +674,7 @@ private struct ProviderEditSheet: View {
                             endPoint: .bottomTrailing
                         )
                     )
-                Image(systemName: isEditing ? "pencil.circle.fill" : "server.rack")
+                Image(systemName: info.icon)
                     .font(.system(size: 18, weight: .semibold))
                     .foregroundStyle(
                         LinearGradient(
@@ -787,11 +690,11 @@ private struct ProviderEditSheet: View {
             .frame(width: 40, height: 40)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(isEditing ? "Edit MCP Provider" : "Add MCP Provider")
+                info.title
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundColor(themeManager.currentTheme.primaryText)
 
-                Text(isEditing ? "Modify your MCP server connection" : "Connect to a remote MCP server")
+                info.subtitle
                     .font(.system(size: 12))
                     .foregroundColor(themeManager.currentTheme.secondaryText)
             }
@@ -830,90 +733,12 @@ private struct ProviderEditSheet: View {
 
     // MARK: - Sheet Footer
 
+    @ViewBuilder
     private var sheetFooter: some View {
         HStack(spacing: 12) {
-            // Test connection button
-            Button(action: {
-                if testResult != nil {
-                    testResult = nil
-                } else {
-                    testConnection()
-                }
-            }) {
-                HStack(spacing: 6) {
-                    Group {
-                        if isTesting {
-                            ProgressView().scaleEffect(0.6)
-                        } else if let result = testResult {
-                            switch result {
-                            case .success:
-                                Image(systemName: "checkmark.circle.fill")
-                                    .font(.system(size: 12))
-                            case .failure:
-                                Image(systemName: "xmark.circle.fill")
-                                    .font(.system(size: 12))
-                            }
-                        } else {
-                            Image(systemName: "antenna.radiowaves.left.and.right")
-                                .font(.system(size: 12))
-                        }
-                    }
-                    .frame(width: 16, height: 16)
-
-                    if let result = testResult {
-                        switch result {
-                        case .success(let count):
-                            Text("Connected! (\(count) tools)", bundle: .module)
-                                .font(.system(size: 12, weight: .medium))
-                        case .failure:
-                            Text("Failed - Tap to retry", bundle: .module)
-                                .font(.system(size: 12, weight: .medium))
-                        }
-                    } else {
-                        Text("Test", bundle: .module)
-                            .font(.system(size: 12, weight: .medium))
-                    }
-                }
-                .foregroundColor(testResultColor)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(RoundedRectangle(cornerRadius: 8).fill(testResultBackground))
-            }
-            .buttonStyle(PlainButtonStyle())
-            .disabled(url.isEmpty || isTesting)
-
-            // Keyboard hint
-            HStack(spacing: 4) {
-                Text("⌘")
-                    .font(.system(size: 10, weight: .medium, design: .rounded))
-                    .padding(.horizontal, 4)
-                    .padding(.vertical, 2)
-                    .background(
-                        RoundedRectangle(cornerRadius: 4)
-                            .fill(themeManager.currentTheme.tertiaryBackground)
-                    )
-                Text("+ Enter to save", bundle: .module)
-                    .font(.system(size: 11))
-            }
-            .foregroundColor(themeManager.currentTheme.tertiaryText)
-
+            footerLeading
             Spacer()
-
-            // Cancel
-            Button {
-                dismiss()
-            } label: {
-                Text("Cancel", bundle: .module)
-            }
-            .buttonStyle(MCPSecondaryButtonStyle())
-
-            // Save/Add
-            Button(action: save) {
-                Text(isEditing ? "Save" : "Add Provider")
-            }
-            .buttonStyle(MCPPrimaryButtonStyle())
-            .disabled(!canSave)
-            .keyboardShortcut(.return, modifiers: .command)
+            footerTrailing
         }
         .padding(.horizontal, 24)
         .padding(.vertical, 16)
@@ -928,110 +753,626 @@ private struct ProviderEditSheet: View {
         )
     }
 
-    // MARK: - Template Picker
+    @ViewBuilder
+    private var footerLeading: some View {
+        if phase != .chooseProvider, !isEditing {
+            Button(action: backToCatalog) {
+                HStack(spacing: 4) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text("Use a different service", bundle: .module)
+                        .font(.system(size: 12, weight: .medium))
+                }
+                .foregroundColor(themeManager.currentTheme.secondaryText)
+            }
+            .buttonStyle(PlainButtonStyle())
+        }
+
+        if case .configureCustom = phase {
+            testConnectionButton
+        }
+    }
 
     @ViewBuilder
-    private var templateChipRow: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 4) {
-                Text("Template", bundle: .module)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(themeManager.currentTheme.primaryText)
-                Text("· optional", bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(themeManager.currentTheme.tertiaryText)
-            }
+    private var footerTrailing: some View {
+        cancelButton
+        if case .configureKnown(let template) = phase {
+            primarySaveButton(
+                label: Text("Add Provider", bundle: .module),
+                enabled: canSaveKnown(template)
+            )
+        }
+        if case .configureCustom = phase {
+            primarySaveButton(
+                label: Text(isEditing ? "Save" : "Add Provider", bundle: .module),
+                enabled: canSave
+            )
+        }
+    }
 
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    templateChip(
-                        title: "Custom",
-                        systemImage: "slider.horizontal.3",
-                        isSelected: activeTemplate == nil,
-                        action: selectCustom
-                    )
-                    ForEach(MCPProviderTemplate.allTemplates) { template in
-                        templateChip(
-                            title: template.displayName,
-                            systemImage: template.iconSystemName,
-                            isSelected: selectedTemplateId == template.id,
-                            action: { applyTemplate(template) }
-                        )
-                        .help(template.tagline)
+    private var cancelButton: some View {
+        Button {
+            dismiss()
+        } label: {
+            Text("Cancel", bundle: .module)
+        }
+        .buttonStyle(MCPSecondaryButtonStyle())
+    }
+
+    private func primarySaveButton(label: Text, enabled: Bool) -> some View {
+        Button(action: save) { label }
+            .buttonStyle(MCPPrimaryButtonStyle())
+            .disabled(!enabled)
+            .keyboardShortcut(.return, modifiers: .command)
+    }
+
+    @ViewBuilder
+    private var testConnectionButton: some View {
+        Button(action: {
+            if testResult != nil {
+                testResult = nil
+            } else {
+                testConnection()
+            }
+        }) {
+            HStack(spacing: 6) {
+                Group {
+                    if isTesting {
+                        ProgressView().scaleEffect(0.6)
+                    } else if let result = testResult {
+                        switch result {
+                        case .success:
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.system(size: 12))
+                        case .failure:
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 12))
+                        }
+                    } else {
+                        Image(systemName: "antenna.radiowaves.left.and.right")
+                            .font(.system(size: 12))
                     }
                 }
-                .padding(.vertical, 2)
-            }
-        }
-    }
+                .frame(width: 16, height: 16)
 
-    @ViewBuilder
-    private func templateChip(
-        title: String,
-        systemImage: String,
-        isSelected: Bool,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            HStack(spacing: 6) {
-                Image(systemName: systemImage)
-                    .font(.system(size: 11, weight: .semibold))
-                Text(LocalizedStringKey(title), bundle: .module)
-                    .font(.system(size: 12, weight: .medium))
+                if let result = testResult {
+                    switch result {
+                    case .success(let count):
+                        Text("Connected! (\(count) tools)", bundle: .module)
+                            .font(.system(size: 12, weight: .medium))
+                    case .failure:
+                        Text("Failed - Tap to retry", bundle: .module)
+                            .font(.system(size: 12, weight: .medium))
+                    }
+                } else {
+                    Text("Test", bundle: .module)
+                        .font(.system(size: 12, weight: .medium))
+                }
             }
-            .foregroundColor(
-                isSelected ? .white : themeManager.currentTheme.primaryText
-            )
+            .foregroundColor(testResultColor)
             .padding(.horizontal, 12)
-            .padding(.vertical, 7)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(
-                        isSelected
-                            ? themeManager.currentTheme.accentColor
-                            : themeManager.currentTheme.tertiaryBackground
-                    )
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(
-                        isSelected
-                            ? Color.clear
-                            : themeManager.currentTheme.primaryBorder,
-                        lineWidth: 1
-                    )
-            )
+            .padding(.vertical, 8)
+            .background(RoundedRectangle(cornerRadius: 8).fill(testResultBackground))
         }
         .buttonStyle(PlainButtonStyle())
+        .disabled(url.isEmpty || isTesting)
+    }
+
+    /// Return to the catalog grid and clear any sign-in state from the previous selection.
+    private func backToCatalog() {
+        clearDraft(authType: .bearerToken)
+        catalogQuery = ""
+        transition(to: .chooseProvider)
+    }
+
+    /// Reset the draft to a blank slate. Used when transitioning between phases
+    /// so a previous selection's name / url / OAuth state doesn't leak through.
+    /// Token state is dropped from Keychain via `resetDraftOAuthState`.
+    private func clearDraft(authType: MCPProviderAuthType, name: String = "", url: String = "") {
+        self.name = name
+        self.url = url
+        self.authType = authType
+        customHeaders.removeAll()
+        testResult = nil
+        resetDraftOAuthState()
+    }
+
+    private func transition(to newPhase: Phase) {
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+            phase = newPhase
+        }
+    }
+
+    // MARK: - Catalog Grid (Phase 1)
+
+    private var catalogGridBody: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            catalogSearchField
+
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 160), spacing: 12)],
+                spacing: 12
+            ) {
+                ProviderCatalogCard(
+                    icon: "slider.horizontal.3",
+                    title: "Custom Server",
+                    tagline: "Connect to any other MCP-compatible server",
+                    action: selectCustomServer
+                )
+                ForEach(filteredTemplates) { template in
+                    ProviderCatalogCard(
+                        icon: template.iconSystemName,
+                        title: template.displayName,
+                        tagline: template.tagline,
+                        action: { selectTemplate(template) }
+                    )
+                }
+            }
+
+            if filteredTemplates.isEmpty && !trimmedCatalogQuery.isEmpty {
+                catalogNoMatchesHint
+            }
+        }
+    }
+
+    /// Templates that match the current `catalogQuery`. Empty query returns the
+    /// full catalog. Match is case-insensitive across `displayName` and
+    /// `tagline` so users can find Linear by typing "issues".
+    private var filteredTemplates: [MCPProviderTemplate] {
+        let query = trimmedCatalogQuery
+        guard !query.isEmpty else { return MCPProviderTemplate.allTemplates }
+        return MCPProviderTemplate.allTemplates.filter {
+            $0.displayName.localizedCaseInsensitiveContains(query)
+                || $0.tagline.localizedCaseInsensitiveContains(query)
+        }
+    }
+
+    private var trimmedCatalogQuery: String {
+        catalogQuery.trimmingCharacters(in: .whitespaces)
     }
 
     @ViewBuilder
-    private var templateURLDisplay: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("URL", bundle: .module)
+    private var catalogSearchField: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(themeManager.currentTheme.tertiaryText)
+
+            ZStack(alignment: .leading) {
+                if catalogQuery.isEmpty {
+                    Text("Search providers", bundle: .module)
+                        .font(.system(size: 13))
+                        .foregroundColor(themeManager.currentTheme.placeholderText)
+                        .allowsHitTesting(false)
+                }
+                TextField("", text: $catalogQuery)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 13))
+                    .foregroundColor(themeManager.currentTheme.primaryText)
+            }
+
+            if !catalogQuery.isEmpty {
+                Button(action: { catalogQuery = "" }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 12))
+                        .foregroundColor(themeManager.currentTheme.tertiaryText)
+                }
+                .buttonStyle(PlainButtonStyle())
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(themeManager.currentTheme.inputBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(themeManager.currentTheme.inputBorder, lineWidth: 1)
+                )
+        )
+    }
+
+    @ViewBuilder
+    private var catalogNoMatchesHint: some View {
+        VStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 22, weight: .light))
+                .foregroundColor(themeManager.currentTheme.tertiaryText)
+            Text("No services match \"\(trimmedCatalogQuery)\"", bundle: .module)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(themeManager.currentTheme.secondaryText)
+            Text("Try a different name, or pick Custom Server above.", bundle: .module)
+                .font(.system(size: 11))
+                .foregroundColor(themeManager.currentTheme.tertiaryText)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 24)
+    }
+
+    private func selectTemplate(_ template: MCPProviderTemplate) {
+        // Self-hosting templates (e.g. Google Workspace) have no hosted endpoint;
+        // open the docs in the browser and drop the user into the freeform editor
+        // with the name pre-filled so they can paste their deployment's URL.
+        if let helpURL = template.selfHostingHelpURL {
+            NSWorkspace.shared.open(helpURL)
+            clearDraft(authType: .bearerToken, name: template.displayName, url: "")
+            transition(to: .configureCustom)
+            return
+        }
+        // OAuth and bearer-token templates both go to .configureKnown — the screen
+        // branches on template.authType for the correct sign-in vs. API-key UI.
+        clearDraft(authType: template.authType, name: template.displayName, url: template.url)
+        transition(to: .configureKnown(template))
+    }
+
+    private func selectCustomServer() {
+        clearDraft(authType: .bearerToken)
+        transition(to: .configureCustom)
+    }
+
+    // MARK: - Configure Known Provider (Phase 2a)
+
+    @ViewBuilder
+    private func configureKnownBody(template: MCPProviderTemplate) -> some View {
+        VStack(spacing: 24) {
+            // Hero
+            VStack(spacing: 14) {
+                ZStack {
+                    Circle()
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    themeManager.currentTheme.accentColor.opacity(0.22),
+                                    themeManager.currentTheme.accentColor.opacity(0.06),
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                    Image(systemName: template.iconSystemName)
+                        .font(.system(size: 30, weight: .semibold))
+                        .foregroundStyle(
+                            LinearGradient(
+                                colors: [
+                                    themeManager.currentTheme.accentColor,
+                                    themeManager.currentTheme.accentColor.opacity(0.7),
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                }
+                .frame(width: 72, height: 72)
+
+                VStack(spacing: 4) {
+                    Text(LocalizedStringKey(template.displayName), bundle: .module)
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundColor(themeManager.currentTheme.primaryText)
+                    Text(LocalizedStringKey(template.tagline), bundle: .module)
+                        .font(.system(size: 13))
+                        .foregroundColor(themeManager.currentTheme.secondaryText)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(.top, 12)
+
+            // Auth-specific block
+            VStack(spacing: 12) {
+                switch template.authType {
+                case .oauth:
+                    if isOAuthSignedIn {
+                        connectedBlock(template: template)
+                    } else {
+                        signInBlock(template: template)
+                    }
+                case .bearerToken:
+                    apiKeyBlock(template: template)
+                case .none:
+                    noAuthBlock(template: template)
+                }
+
+                if let error = oauthError, template.authType == .oauth {
+                    Text(error)
+                        .font(.system(size: 12))
+                        .foregroundColor(themeManager.currentTheme.errorColor)
+                        .multilineTextAlignment(.center)
+                        .lineLimit(4)
+                        .padding(.horizontal, 8)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    @ViewBuilder
+    private func signInBlock(template: MCPProviderTemplate) -> some View {
+        VStack(spacing: 10) {
+            Button(action: signInWithOAuth) {
+                HStack(spacing: 8) {
+                    if isSigningIn {
+                        ProgressView()
+                            .scaleEffect(0.7)
+                            .frame(width: 14, height: 14)
+                    } else {
+                        Image(systemName: "person.badge.key.fill")
+                            .font(.system(size: 13, weight: .semibold))
+                    }
+                    Group {
+                        if isSigningIn {
+                            Text("Waiting for browser…", bundle: .module)
+                        } else {
+                            Text("Sign In with \(template.displayName)", bundle: .module)
+                        }
+                    }
+                    .font(.system(size: 14, weight: .semibold))
+                }
+                .foregroundColor(.white)
+                .padding(.horizontal, 22)
+                .padding(.vertical, 12)
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(themeManager.currentTheme.accentColor)
+                )
+            }
+            .buttonStyle(PlainButtonStyle())
+            .disabled(isSigningIn)
+
+            Text(
+                "We'll open your browser to sign in. After approving, you'll be redirected back to Osaurus.",
+                bundle: .module
+            )
+            .font(.system(size: 11))
+            .foregroundColor(themeManager.currentTheme.tertiaryText)
+            .multilineTextAlignment(.center)
+            .frame(maxWidth: 360)
+        }
+    }
+
+    @ViewBuilder
+    private func connectedBlock(template: MCPProviderTemplate) -> some View {
+        VStack(spacing: 12) {
+            HStack(spacing: 8) {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 18))
+                    .foregroundColor(themeManager.currentTheme.successColor)
+                Text("Connected to \(template.displayName)", bundle: .module)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(themeManager.currentTheme.primaryText)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(themeManager.currentTheme.successColor.opacity(0.12))
+            )
+
+            if let scopes = oauthConfig?.scopes, !scopes.isEmpty {
+                HStack(spacing: 4) {
+                    Image(systemName: "key.fill")
+                        .font(.system(size: 9))
+                    Text(scopes.joined(separator: " "))
+                        .font(.system(size: 10, design: .monospaced))
+                        .lineLimit(2)
+                        .multilineTextAlignment(.center)
+                }
+                .foregroundColor(themeManager.currentTheme.tertiaryText)
+                .frame(maxWidth: 360)
+            }
+
+            Button(action: signInWithOAuth) {
+                HStack(spacing: 4) {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 11))
+                    Text("Re-authenticate", bundle: .module)
+                        .font(.system(size: 12, weight: .medium))
+                }
+                .foregroundColor(themeManager.currentTheme.secondaryText)
+            }
+            .buttonStyle(PlainButtonStyle())
+            .disabled(isSigningIn)
+        }
+    }
+
+    @ViewBuilder
+    private func apiKeyBlock(template: MCPProviderTemplate) -> some View {
+        VStack(spacing: 10) {
+            MCPStyledSecureField(
+                label: "API Key",
+                placeholder: "Paste your API key",
+                text: $token
+            )
+            .frame(maxWidth: 420)
+
+            if let helpURL = template.apiKeyHelpURL {
+                Button(action: { NSWorkspace.shared.open(helpURL) }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "link.circle.fill")
+                            .font(.system(size: 11))
+                        Text("Where do I get my key?", bundle: .module)
+                            .font(.system(size: 12, weight: .medium))
+                    }
+                    .foregroundColor(themeManager.currentTheme.accentColor)
+                }
+                .buttonStyle(PlainButtonStyle())
+            }
+
+            Text(
+                "Your API key is stored in your macOS Keychain and only sent to \(template.displayName).",
+                bundle: .module
+            )
+            .font(.system(size: 11))
+            .foregroundColor(themeManager.currentTheme.tertiaryText)
+            .multilineTextAlignment(.center)
+            .frame(maxWidth: 360)
+        }
+    }
+
+    @ViewBuilder
+    private func noAuthBlock(template: MCPProviderTemplate) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "lock.open.fill")
+                .font(.system(size: 13))
+                .foregroundColor(themeManager.currentTheme.successColor)
+            Text("This server doesn't require authentication.", bundle: .module)
                 .font(.system(size: 12, weight: .medium))
                 .foregroundColor(themeManager.currentTheme.primaryText)
-            HStack(spacing: 8) {
-                Image(systemName: "lock.fill")
-                    .font(.system(size: 10))
-                    .foregroundColor(themeManager.currentTheme.tertiaryText)
-                Text(url)
-                    .font(.system(size: 12, design: .monospaced))
-                    .foregroundColor(themeManager.currentTheme.secondaryText)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(themeManager.currentTheme.successColor.opacity(0.10))
+        )
+    }
+
+    /// "Add Provider" enable rule for the connect-known footer. OAuth waits on
+    /// sign-in, bearer-token waits on a non-empty key, none is always ready.
+    private func canSaveKnown(_ template: MCPProviderTemplate) -> Bool {
+        switch template.authType {
+        case .oauth:
+            return isOAuthSignedIn
+        case .bearerToken:
+            return !token.trimmingCharacters(in: .whitespaces).isEmpty
+        case .none:
+            return true
+        }
+    }
+
+    // MARK: - Configure Custom Server (Phase 2b)
+
+    private var configureCustomBody: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            EditorCard(title: "Connection", icon: "link") {
+                VStack(alignment: .leading, spacing: 14) {
+                    MCPStyledTextField(
+                        label: "Name",
+                        placeholder: "My MCP Server",
+                        text: $name
+                    )
+
+                    MCPStyledTextField(
+                        label: "URL",
+                        placeholder: "https://mcp.example.com",
+                        text: $url,
+                        isMonospaced: true
+                    )
+
+                    authTypePicker
+
+                    switch authType {
+                    case .none:
+                        EmptyView()
+                    case .bearerToken:
+                        MCPStyledSecureField(
+                            label: "Bearer Token",
+                            placeholder: "Optional - stored securely in Keychain",
+                            text: $token
+                        )
+                    case .oauth:
+                        oauthSection
+                    }
+                }
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(themeManager.currentTheme.tertiaryBackground)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(themeManager.currentTheme.primaryBorder, lineWidth: 1)
-            )
+
+            EditorCard(title: "Custom Headers", icon: "list.bullet.rectangle") {
+                VStack(alignment: .leading, spacing: 12) {
+                    if customHeaders.isEmpty {
+                        HStack {
+                            Text("No custom headers configured", bundle: .module)
+                                .font(.system(size: 13))
+                                .foregroundColor(themeManager.currentTheme.tertiaryText)
+                            Spacer()
+                            addHeaderButton
+                        }
+                        .padding(.vertical, 4)
+                    } else {
+                        HStack {
+                            Spacer()
+                            addHeaderButton
+                        }
+                        ForEach($customHeaders) { $header in
+                            HeaderRow(header: $header) {
+                                customHeaders.removeAll { $0.id == header.id }
+                            }
+                        }
+                    }
+                }
+            }
+
+            EditorCard(title: "Advanced", icon: "gearshape") {
+                VStack(alignment: .leading, spacing: 0) {
+                    Button(action: {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                            showAdvanced.toggle()
+                        }
+                    }) {
+                        HStack {
+                            Text(showAdvanced ? "Hide advanced settings" : "Show advanced settings")
+                                .font(.system(size: 13))
+                                .foregroundColor(themeManager.currentTheme.accentColor)
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundColor(themeManager.currentTheme.tertiaryText)
+                                .rotationEffect(.degrees(showAdvanced ? 90 : 0))
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(PlainButtonStyle())
+
+                    if showAdvanced {
+                        VStack(alignment: .leading, spacing: 16) {
+                            Divider().padding(.vertical, 8)
+
+                            MCPToggleRow(
+                                title: "Enable Streaming",
+                                description: "Stream tool responses in real-time",
+                                isOn: $streamingEnabled
+                            )
+
+                            MCPToggleRow(
+                                title: "Auto-connect on Launch",
+                                description: "Connect automatically when app starts",
+                                isOn: $autoConnect
+                            )
+
+                            Divider().padding(.vertical, 4)
+
+                            VStack(alignment: .leading, spacing: 16) {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    HStack {
+                                        Text("Discovery Timeout", bundle: .module)
+                                            .font(.system(size: 12, weight: .medium))
+                                            .foregroundColor(themeManager.currentTheme.primaryText)
+                                        Spacer()
+                                        Text("\(Int(discoveryTimeout))s", bundle: .module)
+                                            .font(.system(size: 12, weight: .medium, design: .monospaced))
+                                            .foregroundColor(themeManager.currentTheme.accentColor)
+                                    }
+                                    Slider(value: $discoveryTimeout, in: 5 ... 60, step: 5)
+                                        .tint(themeManager.currentTheme.accentColor)
+                                }
+
+                                VStack(alignment: .leading, spacing: 6) {
+                                    HStack {
+                                        Text("Tool Call Timeout", bundle: .module)
+                                            .font(.system(size: 12, weight: .medium))
+                                            .foregroundColor(themeManager.currentTheme.primaryText)
+                                        Spacer()
+                                        Text("\(Int(toolCallTimeout))s", bundle: .module)
+                                            .font(.system(size: 12, weight: .medium, design: .monospaced))
+                                            .foregroundColor(themeManager.currentTheme.accentColor)
+                                    }
+                                    Slider(value: $toolCallTimeout, in: 10 ... 120, step: 5)
+                                        .tint(themeManager.currentTheme.accentColor)
+                                }
+                            }
+                        }
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                    }
+                }
+            }
         }
     }
 
@@ -1050,37 +1391,6 @@ private struct ProviderEditSheet: View {
             .pickerStyle(.segmented)
             .labelsHidden()
         }
-    }
-
-    // MARK: - Template Application
-
-    /// Apply a template's prefills to the draft. Resets any in-flight OAuth state
-    /// from a previous selection (so the "Signed in" badge from a partially completed
-    /// flow against a different server doesn't leak across templates) and, when the
-    /// template opts in, kicks off the OAuth sign-in flow immediately.
-    private func applyTemplate(_ template: MCPProviderTemplate) {
-        // No-op when re-tapping the same chip — avoids double-launching the browser.
-        guard selectedTemplateId != template.id else { return }
-
-        selectedTemplateId = template.id
-        name = template.displayName
-        url = template.url
-        authType = template.authType
-        resetDraftOAuthState()
-
-        if template.authType == .oauth, template.autoSignInOnApply {
-            signInWithOAuth()
-        }
-    }
-
-    /// Clear template selection and reset to a blank "Custom" draft.
-    private func selectCustom() {
-        guard selectedTemplateId != nil else { return }
-        selectedTemplateId = nil
-        name = ""
-        url = ""
-        authType = .bearerToken
-        resetDraftOAuthState()
     }
 
     /// Drop any in-flight OAuth credentials for the current draft id and clear
@@ -1234,11 +1544,14 @@ private struct ProviderEditSheet: View {
 
     private func loadProvider() {
         guard let provider = provider else {
-            // For new providers, the draftId stays — anything OAuth-saved during the
-            // sheet ends up on this id and persists through save().
+            // Add-mode: stay on the catalog grid. The draftId is preserved so
+            // anything OAuth-saved mid-flow ends up on this id and persists
+            // through save().
+            phase = .chooseProvider
             return
         }
-        // Re-use the existing record's id so OAuth tokens already in Keychain match.
+        // Edit-mode: jump straight to the freeform editor. Re-use the existing
+        // record's id so OAuth tokens already in Keychain match.
         draftId = provider.id
         name = provider.name
         url = provider.url
@@ -1252,15 +1565,13 @@ private struct ProviderEditSheet: View {
             provider.authType == .oauth
             && MCPProviderKeychain.hasOAuthTokens(for: provider.id)
 
-        // Load headers
         customHeaders = provider.customHeaders.map { HeaderEntry(key: $0.key, value: $0.value, isSecret: false) }
-
-        // Add secret header keys (values not loaded for security)
         for key in provider.secretHeaderKeys {
             customHeaders.append(HeaderEntry(key: key, value: "", isSecret: true))
         }
+        // Note: Token not loaded for security - user must re-enter if changing.
 
-        // Note: Token not loaded for security - user must re-enter if changing
+        phase = .configureCustom
     }
 
     private func testConnection() {
@@ -1357,6 +1668,73 @@ extension ProviderEditSheet.TestResult {
     var isSuccess: Bool {
         if case .success = self { return true }
         return false
+    }
+}
+
+// MARK: - Provider Catalog Card
+
+/// One cell in the catalog grid: icon, title, two-line tagline, full-cell tap target.
+private struct ProviderCatalogCard: View {
+    @ObservedObject private var themeManager = ThemeManager.shared
+    let icon: String
+    let title: String
+    let tagline: String
+    let action: () -> Void
+
+    @State private var isHovering = false
+
+    var body: some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 10) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(themeManager.currentTheme.accentColor.opacity(0.12))
+                    Image(systemName: icon)
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundColor(themeManager.currentTheme.accentColor)
+                }
+                .frame(width: 40, height: 40)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(LocalizedStringKey(title), bundle: .module)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(themeManager.currentTheme.primaryText)
+                        .lineLimit(1)
+                    Text(LocalizedStringKey(tagline), bundle: .module)
+                        .font(.system(size: 11))
+                        .foregroundColor(themeManager.currentTheme.secondaryText)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: 0)
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, minHeight: 130, alignment: .topLeading)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(
+                        isHovering
+                            ? themeManager.currentTheme.accentColor.opacity(0.06)
+                            : themeManager.currentTheme.tertiaryBackground
+                    )
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(
+                        isHovering
+                            ? themeManager.currentTheme.accentColor.opacity(0.4)
+                            : themeManager.currentTheme.primaryBorder,
+                        lineWidth: 1
+                    )
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(PlainButtonStyle())
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.15)) { isHovering = hovering }
+        }
     }
 }
 

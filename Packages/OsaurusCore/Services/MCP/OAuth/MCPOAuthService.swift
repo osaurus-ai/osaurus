@@ -130,7 +130,7 @@ public enum MCPOAuthService {
                 port: .ephemeral,
                 callbackPath: "/callback"
             )
-            try server.start()
+            try await server.start()
         } catch let error as OAuthLoopbackError {
             throw MCPOAuthError.loopback(error)
         } catch {
@@ -138,7 +138,7 @@ public enum MCPOAuthService {
         }
         defer { server.stop() }
 
-        guard let port = server.boundPort else {
+        guard let port = server.boundPort, port != 0 else {
             throw MCPOAuthError.loopback(.bindFailed("listener never reported a port"))
         }
         let redirectURI = "http://127.0.0.1:\(port)/callback"

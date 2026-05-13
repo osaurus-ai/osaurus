@@ -29,8 +29,11 @@ struct MCPProviderTemplateTests {
         #expect(Set(names).count == names.count)
     }
 
-    @Test func everyURLIsHTTPS() {
-        for template in MCPProviderTemplate.allTemplates {
+    @Test func everyConnectableURLIsHTTPS() {
+        // Self-hosting templates intentionally ship an empty `url` because the
+        // user supplies their own deployment endpoint. Skip them here; their
+        // helpURL is validated separately.
+        for template in MCPProviderTemplate.allTemplates where template.selfHostingHelpURL == nil {
             let url = URL(string: template.url)
             #expect(url != nil, "Template \(template.id) has unparseable URL: \(template.url)")
             #expect(
@@ -44,14 +47,30 @@ struct MCPProviderTemplateTests {
         }
     }
 
-    @Test func oauthTemplatesAutoSignIn() {
-        // The picker UX promises that tapping an OAuth chip immediately launches
-        // sign-in. Any OAuth template that opted out would silently break that.
-        for template in MCPProviderTemplate.allTemplates where template.authType == .oauth {
+    @Test func selfHostingTemplatesHaveHelpURL() {
+        // Self-hosting templates can't drop the user into a one-tap connect flow
+        // because there's no hosted endpoint, so they must point somewhere
+        // useful (deploy docs, vendor README) over https.
+        let selfHosting = MCPProviderTemplate.allTemplates.filter { $0.selfHostingHelpURL != nil }
+        #expect(!selfHosting.isEmpty, "expected at least one self-hosting template (e.g. Google Workspace)")
+        for template in selfHosting {
+            let url = template.selfHostingHelpURL
+            #expect(url?.scheme == "https", "Template \(template.id) selfHostingHelpURL must use https")
+            #expect(url?.host?.isEmpty == false, "Template \(template.id) selfHostingHelpURL is missing a host")
+        }
+    }
+
+    @Test func bearerTokenTemplatesHaveAPIKeyHelpURL() {
+        // Without a help link, a user lands on the API-key screen with no
+        // guidance on where to obtain a key — silently broken UX.
+        for template in MCPProviderTemplate.allTemplates where template.authType == .bearerToken {
+            let url = template.apiKeyHelpURL
             #expect(
-                template.autoSignInOnApply,
-                "OAuth template \(template.id) must set autoSignInOnApply=true"
+                url != nil,
+                "Bearer-token template \(template.id) must ship an apiKeyHelpURL"
             )
+            #expect(url?.scheme == "https", "Template \(template.id) apiKeyHelpURL must use https")
+            #expect(url?.host?.isEmpty == false, "Template \(template.id) apiKeyHelpURL is missing a host")
         }
     }
 

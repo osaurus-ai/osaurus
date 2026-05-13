@@ -139,7 +139,7 @@ Osaurus is a full MCP (Model Context Protocol) server. Give any MCP-compatible c
 }
 ```
 
-Also an MCP client -- aggregate tools from remote MCP servers into Osaurus. See the [Remote MCP Providers Guide](docs/REMOTE_MCP_PROVIDERS.md) for details.
+Also an MCP client -- aggregate tools from remote MCP servers into Osaurus. One-tap connect to ~25 well-known providers (Linear, Notion, GitHub, Vercel, Supabase, Sentry, Stripe, Cloudflare, ...) with auto OAuth 2.1 + Dynamic Client Registration, or paste an API key. See the [Remote MCP Providers Guide](docs/REMOTE_MCP_PROVIDERS.md) for details.
 
 ## Tools & Plugins
 

@@ -74,7 +74,8 @@ public enum MCPOAuthDiscoveryError: LocalizedError, Sendable {
         case .invalidServerURL:
             return "MCP server URL is not a valid HTTP(S) URL"
         case .prmNotFound:
-            return "Server did not advertise OAuth protected-resource metadata"
+            return
+                "This server doesn't advertise OAuth metadata, so automatic sign-in isn't supported. Try \"Custom Server\" with an API key or personal access token instead."
         case .asmNotFound:
             return "Authorization server does not publish OAuth metadata"
         case .prmDecodeFailed(let msg):

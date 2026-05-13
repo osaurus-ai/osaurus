@@ -205,21 +205,37 @@ See [INFERENCE_RUNTIME.md](./INFERENCE_RUNTIME.md) for the full runtime architec
 
 ### Remote MCP Providers
 
-**Purpose:** Connect to external MCP servers and aggregate their tools.
+**Purpose:** Connect to external MCP servers and aggregate their tools, with one-tap setup for ~25 well-known vendors.
 
 **Components:**
 
-- `Models/Configuration/MCPProviderConfiguration.swift` — Provider config model
-- `Managers/MCPProviderManager.swift` — Connection and tool discovery
-- `Services/MCP/MCPProviderKeychain.swift` — Secure token storage
+- `Models/Configuration/MCPProviderConfiguration.swift` — Provider config model (none / bearer / OAuth)
+- `Models/Configuration/MCPProviderTemplate.swift` — Hardcoded catalog of well-known providers
+- `Managers/MCPProviderManager.swift` — Connection, tool discovery, OAuth refresh & 401 retry
+- `Services/MCP/MCPProviderKeychain.swift` — Secure token, refresh-token, and client-secret storage
+- `Services/MCP/OAuth/MCPOAuthService.swift` — End-to-end OAuth sign-in orchestration
+- `Services/MCP/OAuth/MCPOAuthDiscovery.swift` — RFC 9728 PRM + RFC 8414 ASM discovery (with OIDC fallback)
+- `Services/MCP/OAuth/MCPOAuthRegistration.swift` — RFC 7591 Dynamic Client Registration
+- `Services/MCP/OAuth/MCPWWWAuthenticate.swift` — `WWW-Authenticate: Bearer` challenge parser
+- `Services/MCP/OAuth/MCPOAuthCanonicalURL.swift` — RFC 8707 canonical resource URL normalization
+- `Services/Auth/OAuthLoopbackServer.swift` — Shared RFC 8252 loopback callback server (also used by Codex)
+- `Services/Auth/PKCE.swift` — PKCE S256 challenge/verifier generator
+- `Services/Auth/OAuthFormEncoding.swift` — `application/x-www-form-urlencoded` helper
 - `Tools/MCPProviderTool.swift` — Wrapper for remote MCP tools
+- `Views/Settings/ProvidersView.swift` — Two-step add flow: catalog grid + connect screen
 
 **Features:**
 
-- Automatic tool discovery on connect
+- Provider catalog with search/filter for quick discovery
+- One-tap OAuth 2.1 sign-in via PKCE + Dynamic Client Registration (no client ID/secret to configure)
+- API-key templates for vendors without DCR (GitHub, Atlassian, HubSpot, Zapier)
+- Self-hosting templates (Google Workspace) that deeplink to setup docs
+- Custom Server fallback for any URL not in the catalog
+- Automatic tool discovery on connect, with namespaced tool names (`provider_toolname`)
+- Proactive OAuth token refresh + bounded 401-retry-with-refresh
 - Configurable discovery and execution timeouts
-- Tool namespacing (prefixed with provider name)
 - Streaming support (optional)
+- Backwards-compatible `mcp.json` migration (legacy records default to bearer-token)
 
 ---
 

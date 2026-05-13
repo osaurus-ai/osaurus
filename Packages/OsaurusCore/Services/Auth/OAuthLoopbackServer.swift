@@ -74,6 +74,12 @@ public final class OAuthLoopbackServer: @unchecked Sendable {
     private var pendingResult: Result<OAuthCallbackResult, Error>?
     private var isCompleted = false
 
+    /// Continuation that resumes when the listener first reaches `.ready` or
+    /// `.failed`. Resumed exactly once from `stateUpdateHandler`; subsequent
+    /// state changes still propagate failures into `waitForCallback`.
+    private var startContinuation: CheckedContinuation<Void, Error>?
+    private var hasReachedReady = false
+
     /// Create the listener. Throws if the port cannot be bound.
     /// - Parameters:
     ///   - expectedState: CSRF token; must match the `state` echoed by the provider.
@@ -100,22 +106,66 @@ public final class OAuthLoopbackServer: @unchecked Sendable {
         }
     }
 
-    /// The port the listener is actually bound to. Returns `nil` until `start()` is
-    /// called and the listener reaches `.ready`. `NWListener.port` is thread-safe.
+    /// The port the listener is actually bound to. Only valid after `await start()`
+    /// has returned successfully — before that, NWListener may report the
+    /// requested port (`0` for `.ephemeral`) instead of the kernel-assigned one.
     public var boundPort: UInt16? {
         listener.port?.rawValue
     }
 
-    public func start() throws {
+    /// Bind and begin listening. Returns once the kernel has assigned a port
+    /// (`stateUpdateHandler` reached `.ready`) or throws `bindFailed` if the
+    /// listener moves directly to `.failed`. After this returns, `boundPort`
+    /// is guaranteed to be non-zero.
+    public func start() async throws {
         listener.newConnectionHandler = { [weak self] connection in
             self?.handle(connection)
         }
         listener.stateUpdateHandler = { [weak self] state in
-            if case .failed(let error) = state {
-                self?.complete(.failure(OAuthLoopbackError.bindFailed(error.localizedDescription)))
-            }
+            self?.handleStateChange(state)
         }
-        listener.start(queue: Self.queue)
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            lock.lock()
+            // The state handler may fire `.ready` before we install the continuation
+            // if the kernel binds synchronously; that can't happen with NWListener
+            // in practice (the start call below is what kicks off binding), but
+            // defensively check anyway.
+            if hasReachedReady {
+                lock.unlock()
+                continuation.resume()
+                return
+            }
+            startContinuation = continuation
+            lock.unlock()
+            listener.start(queue: Self.queue)
+        }
+    }
+
+    private func handleStateChange(_ state: NWListener.State) {
+        switch state {
+        case .ready:
+            lock.lock()
+            hasReachedReady = true
+            let cont = startContinuation
+            startContinuation = nil
+            lock.unlock()
+            cont?.resume()
+        case .failed(let error):
+            let wrapped = OAuthLoopbackError.bindFailed(error.localizedDescription)
+            lock.lock()
+            let cont = startContinuation
+            startContinuation = nil
+            lock.unlock()
+            if let cont {
+                cont.resume(throwing: wrapped)
+            } else {
+                // Listener failed *after* binding (e.g. the OS revoked the port).
+                // Surface that to anyone awaiting a callback.
+                complete(.failure(wrapped))
+            }
+        default:
+            break
+        }
     }
 
     public func waitForCallback() async throws -> OAuthCallbackResult {
